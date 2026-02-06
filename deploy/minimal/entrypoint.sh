@@ -30,5 +30,14 @@ echo "Running database migrations..."
 
 echo "Migrations complete!"
 
+if [ -n "${STANDALONE_API_KEY:-}" ]; then
+    echo "Configuring CLI..."
+    cat > /root/.emergent/config.yaml <<EOF
+server_url: http://localhost:3002
+api_key: ${STANDALONE_API_KEY}
+EOF
+    echo "CLI configured!"
+fi
+
 echo "Starting Emergent server..."
 exec /usr/local/bin/emergent-server "$@"
