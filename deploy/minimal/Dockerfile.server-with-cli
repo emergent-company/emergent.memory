@@ -2,7 +2,7 @@
 # This image includes both the Go server and emergent-cli binary
 # Useful for standalone deployments where users want CLI access inside the container
 
-# Build stage - Server
+# Build stage - Server + Migration binary
 FROM golang:1.24-alpine AS server-builder
 
 WORKDIR /build/server
@@ -18,6 +18,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w" \
     -o emergent-server \
     ./cmd/server
+
+# Build migration binary
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w" \
+    -o emergent-migrate \
+    ./cmd/migrate
 
 # Build stage - CLI
 FROM golang:1.24-alpine AS cli-builder
@@ -49,12 +55,16 @@ RUN apk --no-cache add \
     curl \
     wget \
     bash \
-    jq
+    jq \
+    postgresql16-client
 
 WORKDIR /app
 
 # Copy server binary from server builder
 COPY --from=server-builder /build/server/emergent-server /usr/local/bin/
+
+# Copy migration binary from server builder
+COPY --from=server-builder /build/server/emergent-migrate /usr/local/bin/
 
 # Copy CLI binary from CLI builder
 COPY --from=cli-builder /build/cli/emergent-cli /usr/local/bin/
@@ -62,12 +72,15 @@ COPY --from=cli-builder /build/cli/emergent-cli /usr/local/bin/
 # Copy migrations (needed for server startup)
 COPY apps/server-go/migrations /app/migrations
 
+# Copy entrypoint script
+COPY deploy/minimal/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Create directory for CLI config
 RUN mkdir -p /root/.emergent
 
-# Default to running the server
-# Users can override to run CLI: docker exec emergent-server emergent-cli projects list
-ENTRYPOINT ["/usr/local/bin/emergent-server"]
+# Default to running the entrypoint (runs migrations then server)
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
