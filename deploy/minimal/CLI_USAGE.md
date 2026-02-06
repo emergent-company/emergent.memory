@@ -1,13 +1,13 @@
 # Emergent CLI Usage in Docker Deployment
 
-This guide explains how to use the `emergent-cli` inside your Docker deployment.
+This guide explains how to use the `emergent` command inside your Docker deployment.
 
 ## Overview
 
 The `emergent-server` container includes both:
 
 - **Server** (runs as default entrypoint on port 3002)
-- **CLI** (`emergent-cli` binary available at `/usr/local/bin/emergent-cli`)
+- **CLI** (`emergent` wrapper at `/usr/local/bin/emergent` that auto-configures connection)
 
 This allows you to run CLI commands inside the container without needing a separate CLI installation.
 
@@ -17,13 +17,13 @@ This allows you to run CLI commands inside the container without needing a separ
 
 ```bash
 # List projects
-docker exec emergent-server emergent-cli projects list
+docker exec emergent-server emergent projects list
 
 # Show configuration
-docker exec emergent-server emergent-cli config show
+docker exec emergent-server emergent config show
 
 # Check status
-docker exec emergent-server emergent-cli status
+docker exec emergent-server emergent status
 ```
 
 ### Interactive Shell Access
@@ -33,22 +33,22 @@ docker exec emergent-server emergent-cli status
 docker exec -it emergent-server sh
 
 # Inside container, run any CLI commands
-emergent-cli projects list
-emergent-cli config show
+emergent projects list
+emergent config show
 ```
 
 ## Configuration
 
-The CLI inside the container is pre-configured to connect to the local server.
+The CLI inside the container is pre-configured to connect to the local server automatically.
 
 ### Automatic Configuration
 
 When running inside the `emergent-server` container, the CLI automatically uses:
 
-```bash
-EMERGENT_SERVER_URL=http://localhost:3002
-EMERGENT_API_KEY=[value from STANDALONE_API_KEY env var]
-```
+- Config file at `/root/.emergent/config.yaml` (created on container startup)
+- Environment variables as fallback:
+  - `EMERGENT_SERVER_URL=http://localhost:3002`
+  - `EMERGENT_API_KEY=[value from STANDALONE_API_KEY env var]`
 
 ### Manual Configuration
 
@@ -59,7 +59,7 @@ docker exec \
   -e EMERGENT_SERVER_URL=http://localhost:3002 \
   -e EMERGENT_API_KEY=your-custom-key \
   emergent-server \
-  emergent-cli projects list
+  emergent projects list
 ```
 
 Or use a config file mounted into the container:
@@ -75,7 +75,7 @@ EOF
 docker run --rm \
   -v ~/.emergent:/root/.emergent:ro \
   emergent-server \
-  emergent-cli projects list
+  emergent projects list
 ```
 
 ## Common Commands
@@ -84,31 +84,31 @@ docker run --rm \
 
 ```bash
 # List all projects
-docker exec emergent-server emergent-cli projects list
+docker exec emergent-server emergent projects list
 
 # Create new project (interactive)
-docker exec -it emergent-server emergent-cli projects create
+docker exec -it emergent-server emergent projects create
 
 # Get project details
-docker exec emergent-server emergent-cli projects get <project-id>
+docker exec emergent-server emergent projects get <project-id>
 ```
 
 ### Configuration
 
 ```bash
 # Show current config
-docker exec emergent-server emergent-cli config show
+docker exec emergent-server emergent config show
 
 # Set default project
 docker exec emergent-server \
-  emergent-cli config set project_id <project-id>
+  emergent config set project_id <project-id>
 ```
 
 ### Authentication Status
 
 ```bash
 # Check auth status (shows API key mode)
-docker exec emergent-server emergent-cli status
+docker exec emergent-server emergent status
 ```
 
 ## Docker Compose Integration
@@ -123,7 +123,7 @@ services:
     # ... server config ...
 
 # Usage
-docker compose exec server emergent-cli projects list
+docker compose exec server emergent projects list
 ```
 
 ## Standalone CLI Container
@@ -137,7 +137,7 @@ docker run --rm \
   -e EMERGENT_SERVER_URL=http://server:3002 \
   -e EMERGENT_API_KEY=test-api-key-12345 \
   emergent-server-with-cli:latest \
-  emergent-cli projects list
+  emergent projects list
 
 # Interactive session
 docker run --rm -it \
@@ -156,7 +156,7 @@ docker run --rm -it \
 #!/bin/bash
 # Export all projects as JSON
 
-docker exec emergent-server emergent-cli projects list --output json > projects-backup.json
+docker exec emergent-server emergent projects list --output json > projects-backup.json
 ```
 
 ### CI/CD Pipeline
@@ -166,7 +166,7 @@ docker exec emergent-server emergent-cli projects list --output json > projects-
 # Create project in deployment pipeline
 
 PROJECT_ID=$(docker exec emergent-server \
-  emergent-cli projects create \
+  emergent projects create \
     --name "Production KB" \
     --output json | jq -r '.id')
 
@@ -179,10 +179,10 @@ echo "Created project: $PROJECT_ID"
 #!/bin/bash
 # Verify CLI can connect
 
-if docker exec emergent-server emergent-cli status &>/dev/null; then
-  echo "✅ CLI connection OK"
+if docker exec emergent-server emergent projects list &>/dev/null; then
+  echo "CLI connection OK"
 else
-  echo "❌ CLI connection failed"
+  echo "CLI connection failed"
   exit 1
 fi
 ```
@@ -191,12 +191,12 @@ fi
 
 ### CLI Not Found
 
-If `emergent-cli: not found`:
+If `emergent: not found`:
 
 ```bash
 # Verify binary exists
-docker exec emergent-server which emergent-cli
-# Should show: /usr/local/bin/emergent-cli
+docker exec emergent-server which emergent
+# Should show: /usr/local/bin/emergent
 
 # Check if using correct image
 docker inspect emergent-server | grep Image
