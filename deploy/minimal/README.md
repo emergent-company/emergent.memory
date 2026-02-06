@@ -7,7 +7,7 @@ Single-user deployment with MCP access and secure Tailscale networking.
 **Copy and paste this into your terminal:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install-online.sh | bash
 ```
 
 That's it! The installer will:
@@ -27,7 +27,28 @@ After installation:
 ~/emergent-standalone/deploy/minimal/credentials.txt
 
 # Test the installation
-docker exec emergent-server emergent-cli projects list
+docker exec emergent-server emergent projects list
+```
+
+## Management (emergent-ctl)
+
+A management script is included for easy service control:
+
+```bash
+# Check status
+~/emergent-standalone/deploy/minimal/emergent-ctl.sh status
+
+# View logs
+~/emergent-standalone/deploy/minimal/emergent-ctl.sh logs -f
+
+# Restart services
+~/emergent-standalone/deploy/minimal/emergent-ctl.sh restart
+
+# Check health
+~/emergent-standalone/deploy/minimal/emergent-ctl.sh health
+
+# Run CLI commands
+~/emergent-standalone/deploy/minimal/emergent-ctl.sh cli projects list
 ```
 
 ## Stack Components
@@ -40,11 +61,11 @@ docker exec emergent-server emergent-cli projects list
 
 ### CLI Access
 
-The server container includes the `emergent-cli` binary for management:
+The server container includes the `emergent` command for management:
 
 ```bash
 # List projects
-docker exec emergent-server emergent-cli projects list
+docker exec emergent-server emergent projects list
 
 # Interactive shell
 docker exec -it emergent-server sh
