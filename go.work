@@ -1,0 +1,8 @@
+go 1.24.12
+
+use (
+	./apps/server-go
+	./apps/website
+	./tests/api
+	./tools/emergent-cli
+)

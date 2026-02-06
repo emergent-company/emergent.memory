@@ -1,0 +1,74 @@
+# Emergent Server with CLI
+# This image includes both the Go server and emergent-cli binary
+# Useful for standalone deployments where users want CLI access inside the container
+
+# Build stage - Server
+FROM golang:1.24-alpine AS server-builder
+
+WORKDIR /build/server
+
+# Copy server source
+COPY apps/server-go/go.mod apps/server-go/go.sum ./
+RUN go mod download
+
+COPY apps/server-go/ ./
+
+# Build server binary
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w" \
+    -o emergent-server \
+    ./cmd/server
+
+# Build stage - CLI
+FROM golang:1.24-alpine AS cli-builder
+
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+WORKDIR /build/cli
+
+# Copy CLI source
+COPY tools/emergent-cli/go.mod tools/emergent-cli/go.sum ./
+RUN go mod download
+
+COPY tools/emergent-cli/ ./
+
+# Build CLI binary
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${GIT_COMMIT} -X main.BuildTime=${BUILD_TIME}" \
+    -o emergent-cli \
+    ./cmd
+
+# Runtime stage
+FROM alpine:latest
+
+# Install required runtime dependencies
+RUN apk --no-cache add \
+    ca-certificates \
+    curl \
+    wget \
+    bash \
+    jq
+
+WORKDIR /app
+
+# Copy server binary from server builder
+COPY --from=server-builder /build/server/emergent-server /usr/local/bin/
+
+# Copy CLI binary from CLI builder
+COPY --from=cli-builder /build/cli/emergent-cli /usr/local/bin/
+
+# Copy migrations (needed for server startup)
+COPY apps/server-go/migrations /app/migrations
+
+# Create directory for CLI config
+RUN mkdir -p /root/.emergent
+
+# Default to running the server
+# Users can override to run CLI: docker exec emergent-server emergent-cli projects list
+ENTRYPOINT ["/usr/local/bin/emergent-server"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3002/health || exit 1

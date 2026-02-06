@@ -1,0 +1,64 @@
+# Air configuration for hot reload
+# https://github.com/air-verse/air
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+# Command to build the binary
+cmd = "go build -buildvcs=false -o ./tmp/main ./cmd/server"
+# Binary to run
+bin = "./tmp/main"
+# Watch these file extensions
+include_ext = ["go", "tpl", "tmpl", "html"]
+# Exclude these directories
+exclude_dir = ["assets", "tmp", "vendor", "testdata", "node_modules"]
+# Exclude these files
+exclude_file = []
+# Exclude patterns (regex)
+exclude_regex = ["_test.go"]
+# Exclude unchanged files
+exclude_unchanged = false
+# Follow symlinks
+follow_symlink = false
+# Delay before rebuild (milliseconds)
+delay = 500
+# Stop running old binary when build errors occur
+stop_on_error = true
+# Send interrupt signal before killing the process
+send_interrupt = true
+# Delay after interrupt signal (milliseconds)
+kill_delay = 500
+# Rerun the binary when it exits
+rerun = false
+# Delay between reruns (milliseconds)
+rerun_delay = 500
+# Arguments to pass to the binary
+args_bin = []
+# Enable polling (useful for Docker/VM environments)
+poll = false
+# Polling interval (milliseconds)
+poll_interval = 500
+
+[log]
+# Show timestamp
+time = true
+# Show only main logs
+main_only = false
+
+[color]
+# Customize colors
+main = "magenta"
+watcher = "cyan"
+build = "yellow"
+runner = "green"
+
+[misc]
+# Delete tmp directory on exit
+clean_on_exit = true
+
+[screen]
+# Keep scroll position on rebuild
+keep_scroll = true
+# Clear the screen on rebuild
+clear_on_rebuild = true
