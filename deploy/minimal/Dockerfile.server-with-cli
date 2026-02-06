@@ -76,6 +76,10 @@ COPY apps/server-go/migrations /app/migrations
 COPY deploy/minimal/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# Copy CLI wrapper script (auto-configures env vars)
+COPY deploy/minimal/emergent-cli-wrapper.sh /usr/local/bin/emergent
+RUN chmod +x /usr/local/bin/emergent
+
 # Create directory for CLI config
 RUN mkdir -p /root/.emergent
 
