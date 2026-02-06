@@ -1,0 +1,18 @@
+mode: set
+github.com/emergent/emergent-core/pkg/adk/model.go:23.78,25.2 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:34.77,39.2 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:45.76,47.2 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:53.102,54.30 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:54.30,56.3 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:57.2,57.34 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:57.34,59.3 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:60.2,60.21 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:60.21,62.3 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:65.2,78.16 4 0
+github.com/emergent/emergent-core/pkg/adk/model.go:78.16,80.3 1 0
+github.com/emergent/emergent-core/pkg/adk/model.go:82.2,82.17 1 0
+github.com/emergent/emergent-core/pkg/adk/model.go:88.77,93.2 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:98.80,103.2 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:106.41,108.2 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:111.43,113.2 1 1
+github.com/emergent/emergent-core/pkg/adk/model.go:116.37,118.2 1 1

@@ -1,0 +1,21 @@
+mode: set
+github.com/emergent/emergent-core/internal/config/config.go:68.39,73.2 1 1
+github.com/emergent/emergent-core/internal/config/config.go:142.45,143.23 1 1
+github.com/emergent/emergent-core/internal/config/config.go:143.23,145.3 1 1
+github.com/emergent/emergent-core/internal/config/config.go:147.2,147.83 1 1
+github.com/emergent/emergent-core/internal/config/config.go:151.47,153.2 1 1
+github.com/emergent/emergent-core/internal/config/config.go:180.38,181.23 1 1
+github.com/emergent/emergent-core/internal/config/config.go:181.23,183.3 1 1
+github.com/emergent/emergent-core/internal/config/config.go:184.2,184.57 1 1
+github.com/emergent/emergent-core/internal/config/config.go:210.43,212.2 1 1
+github.com/emergent/emergent-core/internal/config/config.go:231.51,233.2 1 1
+github.com/emergent/emergent-core/internal/config/config.go:236.58,238.2 1 1
+github.com/emergent/emergent-core/internal/config/config.go:257.45,259.2 1 1
+github.com/emergent/emergent-core/internal/config/config.go:262.44,263.20 1 1
+github.com/emergent/emergent-core/internal/config/config.go:263.20,265.3 1 1
+github.com/emergent/emergent-core/internal/config/config.go:266.2,266.16 1 1
+github.com/emergent/emergent-core/internal/config/config.go:266.16,268.3 1 1
+github.com/emergent/emergent-core/internal/config/config.go:269.2,269.44 1 1
+github.com/emergent/emergent-core/internal/config/config.go:273.51,275.39 2 0
+github.com/emergent/emergent-core/internal/config/config.go:275.39,277.3 1 0
+github.com/emergent/emergent-core/internal/config/config.go:279.2,286.17 2 0

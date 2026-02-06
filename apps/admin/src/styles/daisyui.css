@@ -1,0 +1,4 @@
+@plugin "daisyui" {
+  exclude: rootscrollgutter;
+  themes: all;
+}

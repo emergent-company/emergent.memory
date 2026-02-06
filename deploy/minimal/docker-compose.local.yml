@@ -1,0 +1,179 @@
+# Emergent Minimal Standalone Deployment (Local Testing)
+# Simplified version without Tailscale for local CLI testing
+#
+# Quick Start:
+#   1. docker compose -f docker-compose.local.yml up -d
+#   2. Configure CLI: export EMERGENT_SERVER_URL=http://localhost:3002
+#   3. Configure API key: export EMERGENT_API_KEY=your-key-from-env
+
+version: '3.8'
+
+services:
+  db:
+    image: ghcr.io/emergent-company/emergent-postgres:dev
+    container_name: emergent-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-emergent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-emergent}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_USER:-emergent} -d ${POSTGRES_DB:-emergent}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - emergent
+
+  kreuzberg:
+    image: goldziher/kreuzberg:latest
+    container_name: emergent-kreuzberg
+    restart: unless-stopped
+    ports:
+      - '${KREUZBERG_PORT:-8000}:8000'
+    environment:
+      - LOG_LEVEL=${KREUZBERG_LOG_LEVEL:-info}
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    networks:
+      - emergent
+
+  minio:
+    image: minio/minio:latest
+    container_name: emergent-minio
+    restart: unless-stopped
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-changeme}
+      MINIO_DOMAIN: ${MINIO_DOMAIN:-minio}
+    ports:
+      - '${MINIO_API_PORT:-9000}:9000'
+      - '${MINIO_CONSOLE_PORT:-9001}:9001'
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - emergent
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: emergent-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      sleep 2;
+      /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-changeme};
+      /usr/bin/mc mb myminio/documents --ignore-existing;
+      /usr/bin/mc mb myminio/document-temp --ignore-existing;
+      echo 'MinIO buckets initialized: documents, document-temp';
+      exit 0;
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-changeme}
+    networks:
+      - emergent
+
+  server:
+    image: emergent-server-with-cli:latest
+    build:
+      context: ../..
+      dockerfile: deploy/minimal/Dockerfile.server-with-cli
+    container_name: emergent-server
+    restart: unless-stopped
+    ports:
+      - '${SERVER_PORT:-13002}:3002'
+    volumes:
+      - emergent_cli_config:/root/.emergent
+    environment:
+      STANDALONE_MODE: 'true'
+      STANDALONE_API_KEY: ${STANDALONE_API_KEY:-test-api-key-12345}
+      STANDALONE_USER_EMAIL: ${STANDALONE_USER_EMAIL:-admin@localhost}
+      STANDALONE_ORG_NAME: ${STANDALONE_ORG_NAME:-Default Organization}
+      STANDALONE_PROJECT_NAME: ${STANDALONE_PROJECT_NAME:-Default Project}
+
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-emergent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-emergent}
+
+      PORT: 3002
+      GO_ENV: production
+
+      KREUZBERG_SERVICE_URL: http://kreuzberg:8000
+      KREUZBERG_SERVICE_TIMEOUT: 300000
+      KREUZBERG_ENABLED: 'true'
+
+      STORAGE_PROVIDER: minio
+      STORAGE_ENDPOINT: http://minio:9000
+      STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-changeme}
+      STORAGE_BUCKET_DOCUMENTS: documents
+      STORAGE_BUCKET_TEMP: document-temp
+      STORAGE_USE_SSL: 'false'
+
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
+
+      DB_AUTOINIT: 'true'
+      SCOPES_DISABLED: 'true'
+    depends_on:
+      db:
+        condition: service_healthy
+      kreuzberg:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--no-verbose',
+          '--tries=1',
+          '--spider',
+          'http://localhost:3002/health',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - emergent
+
+volumes:
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+  emergent_cli_config:
+    driver: local
+
+networks:
+  emergent:
+    driver: bridge

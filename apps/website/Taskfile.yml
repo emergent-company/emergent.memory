@@ -1,0 +1,103 @@
+version: '3'
+
+dotenv:
+  - '../../.env'
+  - '../../.env.local'
+
+vars:
+  BIN_DIR: bin
+  TMP_DIR: tmp
+  SERVER_BIN: '{{.BIN_DIR}}/server'
+
+tasks:
+  build:
+    desc: Build the website server binary
+    cmds:
+      - go build -o {{.SERVER_BIN}} main.go
+    sources:
+      - main.go
+      - internal/**/*.go
+    generates:
+      - '{{.SERVER_BIN}}'
+
+  run:
+    desc: Build and run the website server
+    deps: [build]
+    cmds:
+      - '{{.SERVER_BIN}}'
+
+  dev:
+    desc: Run server in development mode (go run)
+    cmds:
+      - go run main.go
+
+  dev-air:
+    desc: Run server with Air hot reload (recommended for development)
+    cmds:
+      - |
+        if ! command -v air &> /dev/null; then
+          echo "Installing Air..."
+          go install github.com/air-verse/air@latest
+        fi
+        air
+
+  css-rebuild:
+    desc: Rebuild CSS from Tailwind
+    dir: styles
+    cmds:
+      - npm run build
+    sources:
+      - input.css
+      - themes/*.css
+    generates:
+      - ../static/styles.css
+
+  install-deps:
+    desc: Install all dependencies (Go modules, Air, npm)
+    cmds:
+      - echo "Installing Go dependencies..."
+      - go mod download
+      - echo "Installing Air for hot reload..."
+      - go install github.com/air-verse/air@latest
+      - echo "Installing npm dependencies for CSS build..."
+      - cd styles && npm install
+      - echo "✅ All dependencies installed"
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf {{.BIN_DIR}} {{.TMP_DIR}}
+      - echo "✅ Clean complete"
+
+  test:
+    desc: Run tests (if any)
+    cmds:
+      - go test ./... -v -count=1 {{.CLI_ARGS}}
+
+  lint:
+    desc: Run linter
+    cmds:
+      - |
+        if ! command -v golangci-lint &> /dev/null; then
+          echo "Installing golangci-lint..."
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        fi
+        golangci-lint run
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - gofmt -w .
+      - goimports -w . || true
+
+  help:
+    desc: Show available tasks
+    cmds:
+      - task --list-all
+    silent: true
+
+  default:
+    desc: Show help
+    cmds:
+      - task help
+    silent: true

@@ -1,0 +1,123 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "server-go",
+  "projectType": "application",
+  "sourceRoot": "apps/server-go",
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -c 'export PATH=/usr/local/go/bin:$PATH && VERSION=$(git describe --tags --always 2>/dev/null || echo dev) && COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) && go build -ldflags=\"-X github.com/emergent/emergent-core/internal/version.Version=$VERSION -X github.com/emergent/emergent-core/internal/version.GitCommit=$COMMIT\" -o dist/server ./cmd/server'",
+        "cwd": "apps/server-go"
+      },
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "setup": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "npx tsx tools/workspace-cli/src/cli.ts setup --service=server-go",
+        "forwardAllArgs": true
+      }
+    },
+    "start": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "npx tsx tools/workspace-cli/src/cli.ts start --service=server-go",
+        "forwardAllArgs": true
+      }
+    },
+    "start-dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -c 'export PATH=/usr/local/go/bin:$PATH && go run ./cmd/server'",
+        "cwd": "apps/server-go"
+      }
+    },
+    "dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -c 'export PATH=/root/go/bin:$PATH && SERVER_PORT=5300 air'",
+        "cwd": "apps/server-go"
+      }
+    },
+    "restart": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "npx tsx tools/workspace-cli/src/cli.ts restart --service=server-go",
+        "forwardAllArgs": true
+      }
+    },
+    "stop": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "npx tsx tools/workspace-cli/src/cli.ts stop --service=server-go",
+        "forwardAllArgs": true
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -c 'export PATH=/usr/local/go/bin:$PATH && go test ./... -v -count=1'",
+        "cwd": "apps/server-go"
+      }
+    },
+    "test-e2e": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./scripts/run-e2e-tests.sh {args.v:+-v} {args.run}",
+        "cwd": "apps/server-go"
+      }
+    },
+    "test-integration": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -c 'export PATH=/usr/local/go/bin:$PATH && go test ./tests/integration/... -v -count=1 {args.run:+-run} {args.run}'",
+        "cwd": "apps/server-go"
+      }
+    },
+    "test-coverage": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -c 'export PATH=/usr/local/go/bin:$PATH && go test ./... -v -count=1 -coverprofile=coverage.out && go tool cover -html=coverage.out -o coverage.html'",
+        "cwd": "apps/server-go"
+      },
+      "outputs": ["{projectRoot}/coverage.out", "{projectRoot}/coverage.html"]
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -c 'export PATH=/usr/local/go/bin:$PATH && golangci-lint run ./...'",
+        "cwd": "apps/server-go"
+      }
+    },
+    "migrate": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -c 'export PATH=/usr/local/go/bin:$PATH && go run ./cmd/migrate up'",
+        "cwd": "apps/server-go"
+      }
+    },
+    "migrate-down": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -c 'export PATH=/usr/local/go/bin:$PATH && go run ./cmd/migrate down'",
+        "cwd": "apps/server-go"
+      }
+    },
+    "migrate-status": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -c 'export PATH=/usr/local/go/bin:$PATH && go run ./cmd/migrate status'",
+        "cwd": "apps/server-go"
+      }
+    },
+    "docker-build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "docker build -f apps/server-go/Dockerfile -t emergent-server-go:latest .",
+        "cwd": "."
+      }
+    }
+  },
+  "tags": ["scope:server", "lang:go"]
+}
