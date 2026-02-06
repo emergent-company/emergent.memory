@@ -1,0 +1,90 @@
+node_modules/
+dist/
+.next/
+
+# Ignore build outputs in all packages (explicit paths to avoid accidental root-level patterns issues)
+apps/server-nest/dist/
+apps/server-nest/dist-openapi/
+
+# Generic patterns (keep after explicit so intent is clear)
+**/dist-openapi/
+
+# Environment files with secrets (never commit)
+.env.local
+**/.env.local
+.env.*.local
+.env.e2e.scenarios
+.env.infisical
+
+# Environment files for specific deployments (never commit)
+.env.staging
+.env.production
+
+# Backup and temporary env files (never commit)
+*.env.bak
+*.env.backup*
+.env.remote
+.env.opencode
+.env.dev.local
+
+# Note: .env files WITH SAFE DEFAULTS are committed
+# All secrets should be in .env.local files only
+
+# Credentials files
+credentials.txt
+**/credentials.txt
+
+.DS_Store
+
+# Secrets directory (service account JSON keys)
+secrets/
+!secrets/README.md
+
+# Database backups and schema dumps
+backups/
+
+# Playwright / E2E artifacts
+playwright-report/
+**/playwright-report/
+test-results/
+**/test-results/
+/.cache/ms-playwright/
+**/.cache/ms-playwright/
+
+# Coverage outputs
+coverage/
+**/coverage/
+lcov.info
+
+# Vitest / Jest snapshots (optional keep if needed)
+*.snap
+
+# Misc build caches
+.nx/
+.vite/
+**/.vite/
+
+# OS / IDE extras
+.idea/
+*.log
+*.tsbuildinfo
+
+# Server runtime logs (Nest error log output)
+apps/server-nest/logs/
+
+# Development PID files
+.dev-pids/
+apps/pids/
+
+# Misc
+*.log
+
+storybook-static
+logs
+apps/server-nest/migrations/_archive_*/
+
+# Duplicate detection reports
+/reports/jscpd/
+apps/server-go/server
+spec-server-dev-vertex-ai.json
+.gemini/

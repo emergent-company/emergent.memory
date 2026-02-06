@@ -1,0 +1,16 @@
+# Binaries
+emergent-cli
+emergent-cli.exe
+dist/
+
+# Test files
+*.test
+coverage.out
+
+# IDE
+.vscode/
+.idea/
+
+# Temp files
+*.tmp
+.DS_Store
