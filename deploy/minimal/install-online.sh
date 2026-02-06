@@ -167,11 +167,11 @@ else
     echo "  docker exec emergent-server emergent projects list"
     echo "  docker exec emergent-server emergent status"
     echo ""
-    echo -e "${BOLD}Manage Services:${NC}"
-    echo "  cd ${INSTALL_DIR}/deploy/minimal"
-    echo "  docker compose -f docker-compose.local.yml logs -f"
-    echo "  docker compose -f docker-compose.local.yml restart"
-    echo "  docker compose -f docker-compose.local.yml down"
+    echo -e "${BOLD}Manage Services (emergent-ctl):${NC}"
+    echo "  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh status"
+    echo "  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh logs -f"
+    echo "  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh restart"
+    echo "  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh health"
     echo ""
     echo -e "${BOLD}Uninstall:${NC}"
     echo "  curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/uninstall.sh | bash"
@@ -202,6 +202,12 @@ Installation Directory: ${INSTALL_DIR}
 Quick Commands:
   docker exec emergent-server emergent projects list
   docker exec emergent-server emergent status
+
+Management (emergent-ctl):
+  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh status
+  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh logs -f server
+  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh restart
+  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh health
 
 Uninstall:
   curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/uninstall.sh | bash
