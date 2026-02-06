@@ -114,7 +114,6 @@ CREATE FUNCTION core.update_email_preferences_timestamp() RETURNS trigger
 -- Name: get_object_revision_count(uuid); Type: FUNCTION; Schema: kb; Owner: -
 --
 
--- +goose StatementBegin
 CREATE FUNCTION kb.get_object_revision_count(p_object_id uuid) RETURNS integer
     LANGUAGE plpgsql STABLE
     AS $$
@@ -155,7 +154,6 @@ CREATE FUNCTION kb.get_object_revision_count(p_object_id uuid) RETURNS integer
 -- Name: refresh_revision_counts(); Type: FUNCTION; Schema: kb; Owner: -
 --
 
--- +goose StatementBegin
 CREATE FUNCTION kb.refresh_revision_counts() RETURNS integer
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
@@ -187,7 +185,6 @@ CREATE FUNCTION kb.refresh_revision_counts() RETURNS integer
 -- Name: update_data_source_integrations_updated_at(); Type: FUNCTION; Schema: kb; Owner: -
 --
 
--- +goose StatementBegin
 CREATE FUNCTION kb.update_data_source_integrations_updated_at() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -203,7 +200,6 @@ CREATE FUNCTION kb.update_data_source_integrations_updated_at() RETURNS trigger
 -- Name: update_data_source_sync_jobs_updated_at(); Type: FUNCTION; Schema: kb; Owner: -
 --
 
--- +goose StatementBegin
 CREATE FUNCTION kb.update_data_source_sync_jobs_updated_at() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -219,7 +215,6 @@ CREATE FUNCTION kb.update_data_source_sync_jobs_updated_at() RETURNS trigger
 -- Name: update_tsv(); Type: FUNCTION; Schema: kb; Owner: -
 --
 
--- +goose StatementBegin
 CREATE FUNCTION kb.update_tsv() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
