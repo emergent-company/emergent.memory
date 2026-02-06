@@ -1,0 +1,103 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "github-copilot/claude-opus-4.5",
+  // Use a fast, cheap model for automatic session title generation
+  "small_model": "github-copilot/gpt-4o-mini",
+  "theme": "tokyonight",
+  // Keybinds for session management
+  "keybinds": {
+    "session_rename": "ctrl+r",
+    "session_list": "ctrl+x l"
+  },
+  "mcp": {
+    // "figma": {
+    //   "type": "remote",
+    //   "url": "http://127.0.0.1:3845/mcp"
+    // },
+    // "playwright": {
+    //   "type": "local",
+    //   "command": [
+    //     "npx",
+    //     "@playwright/mcp@latest",
+    //     "--timeout-action=10000"
+    //   ]
+    // },
+    "postgres": {
+      "type": "local",
+      "command": ["./scripts/mcp-postgres-wrapper.sh"],
+      "timeout": 60000
+    },
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "[REDACTED_CONTEXT7_KEY]"
+      },
+      "timeout": 60000
+    },
+    "gh_grep": {
+      "type": "remote",
+      "url": "https://mcp.grep.app/sse",
+      "timeout": 60000
+    },
+    //    "react-daisyui Docs": {
+    //      "type": "remote",
+    //      "url": "https://gitmcp.io/daisyui/react-daisyui"
+    //   },
+    "chrome-devtools": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--browserUrl",
+        "http://127.0.0.1:9222"
+      ],
+      "timeout": 120000
+    },
+    "daisyui-blueprint": {
+      "type": "local",
+      "command": ["daisyui-blueprint"],
+      "environment": {
+        "LICENSE": "[REDACTED_DAISYUI_LICENSE]",
+        "EMAIL": "maciej@kucharz.net"
+      },
+      "timeout": 60000
+    },
+    "logs": {
+      "type": "local",
+      "command": ["npx", "tsx", "tools/logs-mcp/src/index.ts"],
+      "timeout": 60000
+    },
+    "workspace": {
+      "type": "local",
+      "command": ["npx", "tsx", "tools/workspace-mcp/src/index.ts"],
+      "timeout": 60000
+    },
+    "api-client": {
+      "type": "local",
+      "command": ["npx", "tsx", "tools/api-client-mcp/src/index.ts"],
+      "timeout": 60000
+    }
+    // "signoz": {
+    //   "type": "local",
+    //   "command": ["./tools/bin/signoz-mcp-server"],
+    //   "environment": {
+    //     "SIGNOZ_URL": "http://localhost:3301",
+    //     "SIGNOZ_API_KEY": "ek35B2Ka34ADSeOMLI+xV/1eZbXi7waouH3LfgafOkM=",
+    //     "LOG_LEVEL": "info"
+    //   },
+    //   "timeout": 60000
+    // }
+    // ,
+    // "nx-mcp": {
+    //   "command": "npx",
+    //   "args": ["nx-mcp@latest"]
+    // }
+  },
+  "instructions": [".opencode/instructions.md"],
+  "tools": {
+    "todowrite": true,
+    "webfetch": true
+  }
+}

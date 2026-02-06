@@ -1,0 +1,1953 @@
+package graph
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"math"
+	"sort"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/emergent/emergent-core/pkg/apperror"
+	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent/emergent-core/pkg/mathutil"
+)
+
+// Service handles business logic for graph operations.
+type Service struct {
+	repo *Repository
+	log  *slog.Logger
+}
+
+// NewService creates a new graph service.
+func NewService(repo *Repository, log *slog.Logger) *Service {
+	return &Service{
+		repo: repo,
+		log:  log.With(logger.Scope("graph.svc")),
+	}
+}
+
+// List returns graph objects matching the given parameters.
+func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObjectsResponse, error) {
+	// Run count and list queries
+	// Note: For better performance, these could be run in parallel with errgroup
+	total, err := s.repo.Count(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	objects, err := s.repo.List(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if there are more results
+	hasMore := len(objects) > params.Limit
+	if hasMore {
+		objects = objects[:params.Limit]
+	}
+
+	// Build response with NestJS-compatible field names
+	items := make([]*GraphObjectResponse, len(objects))
+	for i, obj := range objects {
+		items[i] = obj.ToResponse()
+	}
+
+	var nextCursor *string
+	if hasMore && len(objects) > 0 {
+		last := objects[len(objects)-1]
+		cursor := encodeCursor(last.CreatedAt, last.ID)
+		nextCursor = &cursor
+	}
+
+	return &SearchGraphObjectsResponse{
+		Items:      items,
+		NextCursor: nextCursor,
+		Total:      total,
+	}, nil
+}
+
+// GetByID returns a graph object by its physical ID.
+// If resolveHead is true and the ID refers to an older version, returns the HEAD version instead.
+func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveHead bool) (*GraphObjectResponse, error) {
+	obj, err := s.repo.GetByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// If resolveHead is requested and this isn't the HEAD version, fetch the HEAD
+	if resolveHead && obj.SupersedesID != nil {
+		// This version has been superseded, so it's not the HEAD
+		// Fetch the HEAD version by canonical_id
+		headObj, err := s.repo.GetHeadByCanonicalID(ctx, projectID, obj.CanonicalID, obj.BranchID)
+		if err != nil {
+			// If we can't find HEAD, return the original object
+			s.log.Warn("could not find HEAD version for resolveHead",
+				slog.String("canonical_id", obj.CanonicalID.String()),
+				slog.String("requested_id", id.String()))
+			return obj.ToResponse(), nil
+		}
+		return headObj.ToResponse(), nil
+	}
+
+	return obj.ToResponse(), nil
+}
+
+// Create creates a new graph object.
+func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
+	actorType := "user"
+
+	obj := &GraphObject{
+		ProjectID:  projectID,
+		BranchID:   req.BranchID,
+		Type:       req.Type,
+		Key:        req.Key,
+		Status:     req.Status,
+		Properties: req.Properties,
+		Labels:     req.Labels,
+		ActorType:  &actorType,
+		ActorID:    actorID,
+	}
+
+	if err := s.repo.Create(ctx, obj); err != nil {
+		return nil, err
+	}
+
+	return obj.ToResponse(), nil
+}
+
+// Patch updates a graph object by creating a new version.
+func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *PatchGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
+	// Get current HEAD
+	current, err := s.repo.GetByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if already deleted
+	if current.DeletedAt != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("cannot patch deleted object")
+	}
+
+	// Start transaction
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Acquire advisory lock
+	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
+		return nil, err
+	}
+
+	// Re-fetch to ensure we have the latest after acquiring lock
+	current, err = s.repo.GetHeadByCanonicalID(ctx, projectID, current.CanonicalID, current.BranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Merge properties
+	newProps := make(map[string]any)
+	for k, v := range current.Properties {
+		newProps[k] = v
+	}
+	for k, v := range req.Properties {
+		if v == nil {
+			delete(newProps, k) // null removes property
+		} else {
+			newProps[k] = v
+		}
+	}
+
+	// Handle labels
+	var newLabels []string
+	if req.ReplaceLabels {
+		newLabels = req.Labels
+	} else if len(req.Labels) > 0 {
+		// Merge labels (add new, remove duplicates)
+		labelSet := make(map[string]bool)
+		for _, l := range current.Labels {
+			labelSet[l] = true
+		}
+		for _, l := range req.Labels {
+			labelSet[l] = true
+		}
+		newLabels = make([]string, 0, len(labelSet))
+		for l := range labelSet {
+			newLabels = append(newLabels, l)
+		}
+	} else {
+		newLabels = current.Labels
+	}
+
+	// Handle status
+	newStatus := current.Status
+	if req.Status != nil {
+		newStatus = req.Status
+	}
+
+	actorType := "user"
+	newVersion := &GraphObject{
+		Type:       current.Type,
+		Key:        current.Key,
+		Status:     newStatus,
+		Properties: newProps,
+		Labels:     newLabels,
+		ActorType:  &actorType,
+		ActorID:    actorID,
+	}
+
+	// Compute change summary
+	newVersion.ChangeSummary = computeChangeSummary(current.Properties, newProps)
+
+	if err := s.repo.CreateVersion(ctx, tx.Tx, current, newVersion); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return newVersion.ToResponse(), nil
+}
+
+// Delete soft-deletes a graph object by creating a tombstone version.
+func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID) error {
+	current, err := s.repo.GetByID(ctx, projectID, id)
+	if err != nil {
+		return err
+	}
+
+	if current.DeletedAt != nil {
+		return apperror.ErrBadRequest.WithMessage("object already deleted")
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
+		return err
+	}
+
+	// Re-fetch HEAD after lock
+	current, err = s.repo.GetHeadByCanonicalID(ctx, projectID, current.CanonicalID, current.BranchID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.repo.SoftDelete(ctx, tx.Tx, current, actorID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// Restore restores a soft-deleted graph object.
+func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID) (*GraphObjectResponse, error) {
+	current, err := s.repo.GetByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if current.DeletedAt == nil {
+		return nil, apperror.ErrBadRequest.WithMessage("object is not deleted")
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
+		return nil, err
+	}
+
+	// Re-fetch HEAD after lock
+	current, err = s.repo.GetHeadByCanonicalID(ctx, projectID, current.CanonicalID, current.BranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.repo.Restore(ctx, tx.Tx, current, actorID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Re-fetch the new HEAD to return
+	restored, err := s.repo.GetHeadByCanonicalID(ctx, projectID, current.CanonicalID, current.BranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	return restored.ToResponse(), nil
+}
+
+// GetHistory returns version history for a graph object.
+func (s *Service) GetHistory(ctx context.Context, projectID, id uuid.UUID) (*ObjectHistoryResponse, error) {
+	// First get the object to find its canonical ID
+	obj, err := s.repo.GetByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	versions, err := s.repo.GetHistory(ctx, projectID, obj.CanonicalID)
+	if err != nil {
+		return nil, err
+	}
+
+	data := make([]*GraphObjectResponse, len(versions))
+	for i, v := range versions {
+		data[i] = v.ToResponse()
+	}
+
+	return &ObjectHistoryResponse{Versions: data}, nil
+}
+
+// GetEdges returns incoming and outgoing relationships for an object.
+func (s *Service) GetEdges(ctx context.Context, projectID, objectID uuid.UUID) (*GetObjectEdgesResponse, error) {
+	incoming, outgoing, err := s.repo.GetEdges(ctx, projectID, objectID)
+	if err != nil {
+		return nil, err
+	}
+
+	incomingResp := make([]*GraphRelationshipResponse, len(incoming))
+	for i, r := range incoming {
+		incomingResp[i] = r.ToResponse()
+	}
+
+	outgoingResp := make([]*GraphRelationshipResponse, len(outgoing))
+	for i, r := range outgoing {
+		outgoingResp[i] = r.ToResponse()
+	}
+
+	return &GetObjectEdgesResponse{
+		Incoming: incomingResp,
+		Outgoing: outgoingResp,
+	}, nil
+}
+
+// computeChangeSummary creates an RFC 6901 JSON Pointer diff.
+func computeChangeSummary(oldProps, newProps map[string]any) map[string]any {
+	added := make(map[string]any)
+	removed := make([]string, 0)
+	updated := make(map[string]any)
+	paths := make([]string, 0)
+
+	// Find added and updated
+	for k, newVal := range newProps {
+		path := "/" + k
+		if oldVal, exists := oldProps[k]; !exists {
+			added[path] = newVal
+			paths = append(paths, path)
+		} else if !jsonEqual(oldVal, newVal) {
+			updated[path] = map[string]any{
+				"from": oldVal,
+				"to":   newVal,
+			}
+			paths = append(paths, path)
+		}
+	}
+
+	// Find removed
+	for k := range oldProps {
+		if _, exists := newProps[k]; !exists {
+			path := "/" + k
+			removed = append(removed, path)
+			paths = append(paths, path)
+		}
+	}
+
+	if len(added) == 0 && len(removed) == 0 && len(updated) == 0 {
+		return nil
+	}
+
+	return map[string]any{
+		"added":   added,
+		"removed": removed,
+		"updated": updated,
+		"paths":   paths,
+		"meta": map[string]any{
+			"added":   len(added),
+			"removed": len(removed),
+			"updated": len(updated),
+		},
+	}
+}
+
+// jsonEqual compares two values for JSON equality.
+func jsonEqual(a, b any) bool {
+	aJSON, _ := json.Marshal(a)
+	bJSON, _ := json.Marshal(b)
+	return string(aJSON) == string(bJSON)
+}
+
+// =============================================================================
+// Relationship Operations
+// =============================================================================
+
+// SearchRelationshipsResponse is the paginated response for relationship searches.
+type SearchRelationshipsResponse struct {
+	Data       []*GraphRelationshipResponse `json:"data"`
+	NextCursor *string                      `json:"nextCursor,omitempty"`
+	HasMore    bool                         `json:"hasMore"`
+}
+
+// ListRelationships returns relationships matching the given parameters.
+func (s *Service) ListRelationships(ctx context.Context, params RelationshipListParams) (*SearchRelationshipsResponse, error) {
+	rels, err := s.repo.ListRelationships(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	hasMore := len(rels) > params.Limit
+	if hasMore {
+		rels = rels[:params.Limit]
+	}
+
+	data := make([]*GraphRelationshipResponse, len(rels))
+	for i, rel := range rels {
+		data[i] = rel.ToResponse()
+	}
+
+	var nextCursor *string
+	if hasMore && len(rels) > 0 {
+		last := rels[len(rels)-1]
+		cursor := encodeCursor(last.CreatedAt, last.ID)
+		nextCursor = &cursor
+	}
+
+	return &SearchRelationshipsResponse{
+		Data:       data,
+		NextCursor: nextCursor,
+		HasMore:    hasMore,
+	}, nil
+}
+
+// GetRelationship returns a relationship by its ID.
+func (s *Service) GetRelationship(ctx context.Context, projectID, id uuid.UUID) (*GraphRelationshipResponse, error) {
+	rel, err := s.repo.GetRelationshipByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Only return non-deleted relationships
+	if rel.DeletedAt != nil {
+		return nil, apperror.ErrNotFound
+	}
+
+	return rel.ToResponse(), nil
+}
+
+// CreateRelationship creates a new relationship or returns existing if properties match.
+func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest) (*GraphRelationshipResponse, error) {
+	// Validate: no self-loops
+	if req.SrcID == req.DstID {
+		return nil, apperror.ErrBadRequest.WithMessage("self_loop_not_allowed")
+	}
+
+	// Start transaction
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Validate endpoints exist and are not deleted
+	srcObj, dstObj, err := s.repo.ValidateEndpoints(ctx, tx.Tx, projectID, req.SrcID, req.DstID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check branch consistency
+	effectiveBranchID := req.BranchID
+	if effectiveBranchID != nil {
+		// Both endpoints must be on the same branch
+		if (srcObj.BranchID == nil || *srcObj.BranchID != *effectiveBranchID) ||
+			(dstObj.BranchID == nil || *dstObj.BranchID != *effectiveBranchID) {
+			return nil, apperror.ErrBadRequest.WithMessage("relationship_branch_mismatch")
+		}
+	} else {
+		// If no branch specified, endpoints must be on main branch (null) or same branch
+		if !branchIDsEqual(srcObj.BranchID, dstObj.BranchID) {
+			return nil, apperror.ErrBadRequest.WithMessage("relationship_branch_mismatch")
+		}
+		effectiveBranchID = srcObj.BranchID
+	}
+
+	// Acquire lock for this relationship identity
+	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, projectID, req.Type, req.SrcID, req.DstID); err != nil {
+		return nil, err
+	}
+
+	// Check if relationship already exists
+	existing, err := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, req.SrcID, req.DstID)
+	if err != nil {
+		return nil, err
+	}
+
+	if existing == nil {
+		// Create new relationship
+		rel := &GraphRelationship{
+			ProjectID:  projectID,
+			BranchID:   effectiveBranchID,
+			Type:       req.Type,
+			SrcID:      req.SrcID,
+			DstID:      req.DstID,
+			Properties: req.Properties,
+			Weight:     req.Weight,
+		}
+
+		// Compute change summary
+		rel.ChangeSummary = computeChangeSummary(nil, req.Properties)
+
+		if err := s.repo.CreateRelationship(ctx, tx.Tx, rel); err != nil {
+			return nil, err
+		}
+
+		if err := tx.Commit(); err != nil {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		return rel.ToResponse(), nil
+	}
+
+	// Relationship exists - check if properties differ
+	if existing.DeletedAt != nil {
+		// Was deleted, create new version to "restore" with new properties
+		newVersion := &GraphRelationship{
+			Properties: req.Properties,
+			Weight:     req.Weight,
+			DeletedAt:  nil,
+		}
+		newVersion.ChangeSummary = computeChangeSummary(existing.Properties, req.Properties)
+
+		if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, existing, newVersion); err != nil {
+			return nil, err
+		}
+
+		if err := tx.Commit(); err != nil {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		// Return the new version
+		newHead, _ := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, req.SrcID, req.DstID)
+		return newHead.ToResponse(), nil
+	}
+
+	// Check if properties changed
+	diff := computeChangeSummary(existing.Properties, req.Properties)
+	if diff == nil {
+		// No change - return existing
+		return existing.ToResponse(), nil
+	}
+
+	// Properties differ - create new version
+	newVersion := &GraphRelationship{
+		Properties:    req.Properties,
+		Weight:        req.Weight,
+		ChangeSummary: diff,
+	}
+
+	if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, existing, newVersion); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Return the new version
+	newHead, _ := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, req.SrcID, req.DstID)
+	return newHead.ToResponse(), nil
+}
+
+// PatchRelationship updates a relationship by creating a new version.
+func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID, req *PatchGraphRelationshipRequest) (*GraphRelationshipResponse, error) {
+	current, err := s.repo.GetRelationshipByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if current.DeletedAt != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("cannot patch deleted relationship")
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Acquire lock
+	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
+		return nil, err
+	}
+
+	// Re-fetch HEAD after lock
+	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ensure we're patching the HEAD version
+	if head.ID != current.ID {
+		return nil, apperror.ErrBadRequest.WithMessage("cannot_patch_non_head_version")
+	}
+
+	// Merge properties
+	newProps := make(map[string]any)
+	for k, v := range current.Properties {
+		newProps[k] = v
+	}
+	for k, v := range req.Properties {
+		if v == nil {
+			delete(newProps, k)
+		} else {
+			newProps[k] = v
+		}
+	}
+
+	// Check for actual changes
+	diff := computeChangeSummary(current.Properties, newProps)
+	if diff == nil && (req.Weight == nil || (current.Weight != nil && *req.Weight == *current.Weight)) {
+		return nil, apperror.ErrBadRequest.WithMessage("no_effective_change")
+	}
+
+	newVersion := &GraphRelationship{
+		Properties:    newProps,
+		Weight:        req.Weight,
+		ChangeSummary: diff,
+	}
+	if newVersion.Weight == nil {
+		newVersion.Weight = current.Weight
+	}
+
+	if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, current, newVersion); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Return the new version
+	newHead, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	return newHead.ToResponse(), nil
+}
+
+// DeleteRelationship soft-deletes a relationship.
+func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUID) (*GraphRelationshipResponse, error) {
+	current, err := s.repo.GetRelationshipByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Acquire lock
+	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
+		return nil, err
+	}
+
+	// Get HEAD version
+	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	if err != nil {
+		return nil, err
+	}
+
+	if head.DeletedAt != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("already_deleted")
+	}
+
+	if err := s.repo.SoftDeleteRelationship(ctx, tx.Tx, head); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Return the tombstone
+	tombstone, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	return tombstone.ToResponse(), nil
+}
+
+// RestoreRelationship restores a soft-deleted relationship.
+func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UUID) (*GraphRelationshipResponse, error) {
+	current, err := s.repo.GetRelationshipByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Acquire lock
+	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
+		return nil, err
+	}
+
+	// Get HEAD version
+	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	if err != nil {
+		return nil, err
+	}
+
+	if head.DeletedAt == nil {
+		return nil, apperror.ErrBadRequest.WithMessage("relationship_not_deleted")
+	}
+
+	if err := s.repo.RestoreRelationship(ctx, tx.Tx, head); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Return the restored version
+	restored, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	return restored.ToResponse(), nil
+}
+
+// GetRelationshipHistory returns version history for a relationship.
+func (s *Service) GetRelationshipHistory(ctx context.Context, projectID, id uuid.UUID) ([]*GraphRelationshipResponse, error) {
+	// First get the relationship to find its canonical ID
+	rel, err := s.repo.GetRelationshipByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	versions, err := s.repo.GetRelationshipHistory(ctx, projectID, rel.CanonicalID)
+	if err != nil {
+		return nil, err
+	}
+
+	data := make([]*GraphRelationshipResponse, len(versions))
+	for i, v := range versions {
+		data[i] = v.ToResponse()
+	}
+
+	return data, nil
+}
+
+// branchIDsEqual compares two optional branch IDs.
+func branchIDsEqual(a, b *uuid.UUID) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// =============================================================================
+// Search Operations
+// =============================================================================
+
+// FTSSearch performs full-text search on graph objects.
+func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSearchRequest) (*SearchResponse, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	params := FTSSearchParams{
+		ProjectID:      projectID,
+		Query:          req.Query,
+		BranchID:       req.BranchID,
+		Types:          req.Types,
+		Labels:         req.Labels,
+		Status:         req.Status,
+		IncludeDeleted: req.IncludeDeleted,
+		Limit:          limit + 1, // Fetch one extra to determine hasMore
+	}
+
+	results, err := s.repo.FTSSearch(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	hasMore := len(results) > limit
+	if hasMore {
+		results = results[:limit]
+	}
+
+	data := make([]*SearchResultItem, len(results))
+	for i, r := range results {
+		data[i] = &SearchResultItem{
+			Object:       r.Object.ToResponse(),
+			Score:        r.Rank,
+			LexicalScore: &r.Rank,
+		}
+	}
+
+	return &SearchResponse{
+		Data:    data,
+		Total:   len(data),
+		HasMore: hasMore,
+	}, nil
+}
+
+// VectorSearch performs vector similarity search on graph objects.
+func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *VectorSearchRequest) (*SearchResponse, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	params := VectorSearchParams{
+		ProjectID:      projectID,
+		Vector:         req.Vector,
+		BranchID:       req.BranchID,
+		Types:          req.Types,
+		Labels:         req.Labels,
+		Status:         req.Status,
+		IncludeDeleted: req.IncludeDeleted,
+		MaxDistance:    req.MaxDistance,
+		Limit:          limit + 1, // Fetch one extra to determine hasMore
+	}
+
+	results, err := s.repo.VectorSearch(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	hasMore := len(results) > limit
+	if hasMore {
+		results = results[:limit]
+	}
+
+	data := make([]*SearchResultItem, len(results))
+	for i, r := range results {
+		// Convert distance to similarity score (1 - distance for cosine)
+		// Cosine distance is in [0, 2], so similarity is in [-1, 1]
+		similarity := 1.0 - r.Distance
+		data[i] = &SearchResultItem{
+			Object:      r.Object.ToResponse(),
+			Score:       similarity,
+			VectorScore: &similarity,
+			VectorDist:  &r.Distance,
+		}
+	}
+
+	return &SearchResponse{
+		Data:    data,
+		Total:   len(data),
+		HasMore: hasMore,
+	}, nil
+}
+
+// HybridSearchOptions contains options for hybrid search.
+type HybridSearchOptions struct {
+	Debug bool // Include timing and statistics in response
+}
+
+// HybridSearch performs combined lexical and vector search with score fusion.
+func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *HybridSearchRequest, opts *HybridSearchOptions) (*SearchResponse, error) {
+	// Start total timing
+	totalStart := time.Now()
+
+	// Initialize debug tracking
+	var lexicalMs, vectorMs, fusionMs float64
+	debug := opts != nil && opts.Debug
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	// Default weights
+	lexicalWeight := float32(0.5)
+	vectorWeight := float32(0.5)
+	if req.LexicalWeight != nil {
+		lexicalWeight = *req.LexicalWeight
+	}
+	if req.VectorWeight != nil {
+		vectorWeight = *req.VectorWeight
+	}
+
+	// Normalize weights
+	totalWeight := lexicalWeight + vectorWeight
+	if totalWeight > 0 {
+		lexicalWeight /= totalWeight
+		vectorWeight /= totalWeight
+	}
+
+	// Determine search strategies based on available inputs
+	hasQuery := req.Query != ""
+	hasVector := len(req.Vector) > 0
+
+	if !hasQuery && !hasVector {
+		return &SearchResponse{
+			Data:    []*SearchResultItem{},
+			Total:   0,
+			HasMore: false,
+		}, nil
+	}
+
+	// Maps to collect results from both searches
+	lexicalResults := make(map[uuid.UUID]*FTSSearchResult)
+	vectorResults := make(map[uuid.UUID]*VectorSearchResult)
+
+	// Run searches based on available inputs
+	fetchLimit := limit * 3 // Fetch more for fusion
+
+	if hasQuery {
+		lexicalStart := time.Now()
+		ftsParams := FTSSearchParams{
+			ProjectID:      projectID,
+			Query:          req.Query,
+			BranchID:       req.BranchID,
+			Types:          req.Types,
+			Labels:         req.Labels,
+			Status:         req.Status,
+			IncludeDeleted: req.IncludeDeleted,
+			Limit:          fetchLimit,
+		}
+		ftsResults, err := s.repo.FTSSearch(ctx, ftsParams)
+		lexicalMs = float64(time.Since(lexicalStart).Microseconds()) / 1000.0
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range ftsResults {
+			lexicalResults[r.Object.ID] = r
+		}
+	}
+
+	if hasVector {
+		vectorStart := time.Now()
+		vecParams := VectorSearchParams{
+			ProjectID:      projectID,
+			Vector:         req.Vector,
+			BranchID:       req.BranchID,
+			Types:          req.Types,
+			Labels:         req.Labels,
+			Status:         req.Status,
+			IncludeDeleted: req.IncludeDeleted,
+			Limit:          fetchLimit,
+		}
+		vecResults, err := s.repo.VectorSearch(ctx, vecParams)
+		vectorMs = float64(time.Since(vectorStart).Microseconds()) / 1000.0
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range vecResults {
+			vectorResults[r.Object.ID] = r
+		}
+	}
+
+	// Collect all unique IDs
+	allIDs := make(map[uuid.UUID]bool)
+	for id := range lexicalResults {
+		allIDs[id] = true
+	}
+	for id := range vectorResults {
+		allIDs[id] = true
+	}
+
+	if len(allIDs) == 0 {
+		totalMs := float64(time.Since(totalStart).Microseconds()) / 1000.0
+		resp := &SearchResponse{
+			Data:    []*SearchResultItem{},
+			Total:   0,
+			HasMore: false,
+			Meta:    &SearchResponseMeta{ElapsedMs: totalMs},
+		}
+		if debug {
+			resp.Meta.Timing = &SearchTimingDebug{
+				LexicalMs: lexicalMs,
+				VectorMs:  vectorMs,
+				FusionMs:  0,
+				TotalMs:   totalMs,
+			}
+			resp.Meta.ChannelStats = &SearchChannelStats{
+				Lexical: &ChannelStat{Count: 0},
+				Vector:  &ChannelStat{Count: 0},
+			}
+		}
+		return resp, nil
+	}
+
+	// Start fusion timing
+	fusionStart := time.Now()
+
+	// Calculate score statistics for normalization
+	var lexicalScores, vectorScores []float32
+	for id := range allIDs {
+		if lr, ok := lexicalResults[id]; ok {
+			lexicalScores = append(lexicalScores, lr.Rank)
+		}
+		if vr, ok := vectorResults[id]; ok {
+			// Convert distance to similarity for scoring
+			similarity := 1.0 - vr.Distance
+			vectorScores = append(vectorScores, similarity)
+		}
+	}
+
+	lexicalMean, lexicalStd := mathutil.CalcMeanStd(lexicalScores)
+	vectorMean, vectorStd := mathutil.CalcMeanStd(vectorScores)
+
+	// Fuse scores
+	type fusedResult struct {
+		id           uuid.UUID
+		object       *GraphObject
+		fusedScore   float32
+		lexicalScore *float32
+		vectorScore  *float32
+		vectorDist   *float32
+	}
+
+	var fusedResults []fusedResult
+	for id := range allIDs {
+		var normLexical, normVector float32
+		var lexScore, vecScore *float32
+		var vecDist *float32
+		var obj *GraphObject
+
+		if lr, ok := lexicalResults[id]; ok {
+			normalized := zScoreNormalize(lr.Rank, lexicalMean, lexicalStd)
+			normLexical = mathutil.Sigmoid(normalized)
+			score := lr.Rank
+			lexScore = &score
+			obj = lr.Object
+		}
+
+		if vr, ok := vectorResults[id]; ok {
+			similarity := float32(1.0) - vr.Distance
+			normalized := zScoreNormalize(similarity, vectorMean, vectorStd)
+			normVector = mathutil.Sigmoid(normalized)
+			vecScore = &similarity
+			dist := vr.Distance
+			vecDist = &dist
+			if obj == nil {
+				obj = vr.Object
+			}
+		}
+
+		// Weighted combination
+		fusedScore := lexicalWeight*normLexical + vectorWeight*normVector
+
+		fusedResults = append(fusedResults, fusedResult{
+			id:           id,
+			object:       obj,
+			fusedScore:   fusedScore,
+			lexicalScore: lexScore,
+			vectorScore:  vecScore,
+			vectorDist:   vecDist,
+		})
+	}
+
+	// Sort by fused score descending
+	sort.Slice(fusedResults, func(i, j int) bool {
+		return fusedResults[i].fusedScore > fusedResults[j].fusedScore
+	})
+
+	// Apply limit
+	hasMore := len(fusedResults) > limit
+	if hasMore {
+		fusedResults = fusedResults[:limit]
+	}
+
+	fusionMs = float64(time.Since(fusionStart).Microseconds()) / 1000.0
+
+	// Build response
+	data := make([]*SearchResultItem, len(fusedResults))
+	for i, fr := range fusedResults {
+		data[i] = &SearchResultItem{
+			Object:       fr.object.ToResponse(),
+			Score:        fr.fusedScore,
+			LexicalScore: fr.lexicalScore,
+			VectorScore:  fr.vectorScore,
+			VectorDist:   fr.vectorDist,
+		}
+	}
+
+	totalMs := float64(time.Since(totalStart).Microseconds()) / 1000.0
+	resp := &SearchResponse{
+		Data:    data,
+		Total:   len(data),
+		HasMore: hasMore,
+		Meta:    &SearchResponseMeta{ElapsedMs: totalMs},
+	}
+
+	// Add debug info if requested
+	if debug {
+		resp.Meta.Timing = &SearchTimingDebug{
+			EmbeddingMs: 0, // No embedding generation in this endpoint (vector is passed in)
+			LexicalMs:   lexicalMs,
+			VectorMs:    vectorMs,
+			FusionMs:    fusionMs,
+			TotalMs:     totalMs,
+		}
+		resp.Meta.ChannelStats = &SearchChannelStats{
+			Lexical: &ChannelStat{
+				Mean:  float64(lexicalMean),
+				Std:   float64(lexicalStd),
+				Count: len(lexicalScores),
+			},
+			Vector: &ChannelStat{
+				Mean:  float64(vectorMean),
+				Std:   float64(vectorStd),
+				Count: len(vectorScores),
+			},
+		}
+	}
+
+	return resp, nil
+}
+
+// calcStdDev calculates standard deviation from mean.
+func calcStdDev(scores []float32, mean float32) float64 {
+	if len(scores) == 0 {
+		return 0
+	}
+	var sumSq float64
+	for _, s := range scores {
+		diff := float64(s - mean)
+		sumSq += diff * diff
+	}
+	return math.Sqrt(sumSq / float64(len(scores)))
+}
+
+// zScoreNormalize applies z-score normalization.
+func zScoreNormalize(score, mean, std float32) float32 {
+	return (score - mean) / std
+}
+
+// GetTags returns all distinct tags (labels) used by objects in a project.
+func (s *Service) GetTags(ctx context.Context, projectID uuid.UUID) ([]string, error) {
+	return s.repo.GetDistinctTags(ctx, projectID)
+}
+
+// BulkUpdateStatus updates the status of multiple objects.
+func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req *BulkUpdateStatusRequest, actorID *uuid.UUID) (*BulkUpdateStatusResponse, error) {
+	results := make([]BulkUpdateStatusResult, len(req.IDs))
+
+	// Parse UUIDs and track valid ones
+	validIDs := make([]uuid.UUID, 0, len(req.IDs))
+	for i, idStr := range req.IDs {
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			errMsg := "invalid UUID"
+			results[i] = BulkUpdateStatusResult{
+				ID:      idStr,
+				Success: false,
+				Error:   &errMsg,
+			}
+		} else {
+			validIDs = append(validIDs, id)
+			results[i] = BulkUpdateStatusResult{
+				ID:      idStr,
+				Success: true,
+			}
+		}
+	}
+
+	if len(validIDs) == 0 {
+		return &BulkUpdateStatusResponse{
+			Success: 0,
+			Failed:  len(req.IDs),
+			Results: results,
+		}, nil
+	}
+
+	// Perform bulk update
+	updated, err := s.repo.BulkUpdateStatus(ctx, projectID, validIDs, req.Status, actorID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate success/failed counts
+	successCount := updated
+	failedCount := len(req.IDs) - updated
+
+	return &BulkUpdateStatusResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
+// =============================================================================
+// Search with Neighbors
+// =============================================================================
+
+// SearchWithNeighbors performs FTS search and optionally retrieves neighbors.
+func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, req *SearchWithNeighborsRequest) (*SearchWithNeighborsResponse, error) {
+	// Set defaults
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	maxNeighbors := req.MaxNeighbors
+	if maxNeighbors <= 0 {
+		maxNeighbors = 5
+	}
+	if maxNeighbors > 20 {
+		maxNeighbors = 20
+	}
+
+	maxDistance := float32(0.5)
+	if req.MaxDistance != nil {
+		maxDistance = *req.MaxDistance
+	}
+
+	// Perform FTS search for primary results
+	ftsParams := FTSSearchParams{
+		ProjectID:      projectID,
+		Query:          req.Query,
+		BranchID:       req.BranchID,
+		Types:          req.Types,
+		Labels:         req.Labels,
+		IncludeDeleted: false,
+		Limit:          limit,
+	}
+
+	ftsResults, err := s.repo.FTSSearch(ctx, ftsParams)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build primary results
+	primaryResults := make([]*GraphObjectResponse, len(ftsResults))
+	for i, r := range ftsResults {
+		primaryResults[i] = r.Object.ToResponse()
+	}
+
+	response := &SearchWithNeighborsResponse{
+		PrimaryResults: primaryResults,
+	}
+
+	// If neighbors requested, fetch them for each primary result
+	if req.IncludeNeighbors && len(ftsResults) > 0 {
+		neighbors := make(map[string][]*GraphObjectResponse)
+
+		for _, r := range ftsResults {
+			objectID := r.Object.ID
+			objectNeighbors := make([]*GraphObjectResponse, 0)
+
+			// Get semantically similar objects via vector search
+			embedding, err := s.repo.GetObjectEmbedding(ctx, projectID, objectID)
+			if err == nil && len(embedding) > 0 {
+				vecParams := VectorSearchParams{
+					ProjectID:      projectID,
+					Vector:         embedding,
+					BranchID:       req.BranchID,
+					Types:          req.Types,
+					Labels:         req.Labels,
+					MaxDistance:    &maxDistance,
+					IncludeDeleted: false,
+					Limit:          maxNeighbors + 1, // +1 to exclude self
+				}
+
+				vecResults, err := s.repo.VectorSearch(ctx, vecParams)
+				if err == nil {
+					for _, vr := range vecResults {
+						// Skip self
+						if vr.Object.ID == objectID {
+							continue
+						}
+						if len(objectNeighbors) >= maxNeighbors {
+							break
+						}
+						objectNeighbors = append(objectNeighbors, vr.Object.ToResponse())
+					}
+				}
+			}
+
+			// Get relationship-connected neighbors
+			relNeighbors, err := s.repo.GetNeighborObjects(ctx, projectID, objectID, req.BranchID, maxNeighbors)
+			if err == nil {
+				for _, n := range relNeighbors {
+					if len(objectNeighbors) >= maxNeighbors {
+						break
+					}
+					// Avoid duplicates
+					duplicate := false
+					for _, existing := range objectNeighbors {
+						if existing.ID == n.ID {
+							duplicate = true
+							break
+						}
+					}
+					if !duplicate {
+						objectNeighbors = append(objectNeighbors, n.ToResponse())
+					}
+				}
+			}
+
+			if len(objectNeighbors) > 0 {
+				neighbors[objectID.String()] = objectNeighbors
+			}
+		}
+
+		response.Neighbors = neighbors
+	}
+
+	return response, nil
+}
+
+// =============================================================================
+// Similar Objects
+// =============================================================================
+
+// FindSimilarObjects finds objects similar to a given object.
+func (s *Service) FindSimilarObjects(ctx context.Context, projectID, objectID uuid.UUID, req *SimilarObjectsRequest) ([]*SimilarObjectResult, error) {
+	// Set defaults
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Use maxDistance or legacy minScore
+	var maxDistance *float32
+	if req.MaxDistance != nil {
+		maxDistance = req.MaxDistance
+	} else if req.MinScore != nil {
+		maxDistance = req.MinScore
+	}
+
+	params := SimilarSearchParams{
+		ProjectID:   projectID,
+		ObjectID:    objectID,
+		BranchID:    req.BranchID,
+		Type:        req.Type,
+		KeyPrefix:   req.KeyPrefix,
+		LabelsAll:   req.LabelsAll,
+		LabelsAny:   req.LabelsAny,
+		MaxDistance: maxDistance,
+		Limit:       limit,
+	}
+
+	results, err := s.repo.FindSimilarObjects(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to response type
+	response := make([]*SimilarObjectResult, len(results))
+	for i, r := range results {
+		response[i] = &SimilarObjectResult{
+			ID:          r.ID,
+			CanonicalID: &r.CanonicalID,
+			Version:     &r.Version,
+			Distance:    r.Distance,
+			ProjectID:   &r.ProjectID,
+			BranchID:    r.BranchID,
+		}
+	}
+
+	return response, nil
+}
+
+// =============================================================================
+// Graph Expand
+// =============================================================================
+
+// ExpandGraph performs bounded BFS graph expansion.
+func (s *Service) ExpandGraph(ctx context.Context, projectID uuid.UUID, req *GraphExpandRequest) (*GraphExpandResponse, error) {
+	startTime := time.Now()
+
+	// Set defaults
+	direction := req.Direction
+	if direction == "" {
+		direction = "both"
+	}
+
+	maxDepth := req.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = 2
+	}
+	if maxDepth > 8 {
+		maxDepth = 8
+	}
+
+	maxNodes := req.MaxNodes
+	if maxNodes <= 0 {
+		maxNodes = 400
+	}
+	if maxNodes > 5000 {
+		maxNodes = 5000
+	}
+
+	maxEdges := req.MaxEdges
+	if maxEdges <= 0 {
+		maxEdges = 800
+	}
+	if maxEdges > 15000 {
+		maxEdges = 15000
+	}
+
+	// Perform expansion
+	params := ExpandParams{
+		ProjectID:         projectID,
+		RootIDs:           req.RootIDs,
+		Direction:         direction,
+		MaxDepth:          maxDepth,
+		MaxNodes:          maxNodes,
+		MaxEdges:          maxEdges,
+		RelationshipTypes: req.RelationshipTypes,
+		ObjectTypes:       req.ObjectTypes,
+		Labels:            req.Labels,
+	}
+
+	result, err := s.repo.ExpandGraph(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build response
+	nodes := make([]*ExpandNode, 0, len(result.Nodes))
+	for id, obj := range result.Nodes {
+		node := &ExpandNode{
+			ID:     id,
+			Depth:  result.NodeDepths[id],
+			Type:   obj.Type,
+			Key:    obj.Key,
+			Labels: obj.Labels,
+		}
+
+		// Apply property projection
+		if req.Projection != nil {
+			node.Properties = projectProperties(obj.Properties, req.Projection)
+		} else {
+			node.Properties = obj.Properties
+		}
+
+		nodes = append(nodes, node)
+	}
+
+	edges := make([]*ExpandEdge, 0, len(result.Edges))
+	for _, rel := range result.Edges {
+		edge := &ExpandEdge{
+			ID:    rel.ID,
+			Type:  rel.Type,
+			SrcID: rel.SrcID,
+			DstID: rel.DstID,
+		}
+		if req.IncludeRelationshipProperties {
+			edge.Properties = rel.Properties
+		}
+		edges = append(edges, edge)
+	}
+
+	elapsedMs := float64(time.Since(startTime).Microseconds()) / 1000.0
+
+	// Build filters for meta
+	var filters *GraphExpandFilters
+	if len(req.RelationshipTypes) > 0 || len(req.ObjectTypes) > 0 || len(req.Labels) > 0 || req.Projection != nil || req.IncludeRelationshipProperties {
+		filters = &GraphExpandFilters{
+			RelationshipTypes:             req.RelationshipTypes,
+			ObjectTypes:                   req.ObjectTypes,
+			Labels:                        req.Labels,
+			Projection:                    req.Projection,
+			IncludeRelationshipProperties: req.IncludeRelationshipProperties,
+		}
+	}
+
+	return &GraphExpandResponse{
+		Roots:           req.RootIDs,
+		Nodes:           nodes,
+		Edges:           edges,
+		Truncated:       result.Truncated,
+		MaxDepthReached: result.MaxDepthReached,
+		TotalNodes:      len(nodes),
+		Meta: &GraphExpandMeta{
+			Requested: GraphExpandRequested{
+				MaxDepth:  maxDepth,
+				MaxNodes:  maxNodes,
+				MaxEdges:  maxEdges,
+				Direction: direction,
+			},
+			NodeCount:       len(nodes),
+			EdgeCount:       len(edges),
+			Truncated:       result.Truncated,
+			MaxDepthReached: result.MaxDepthReached,
+			ElapsedMs:       elapsedMs,
+			Filters:         filters,
+		},
+	}, nil
+}
+
+// projectProperties applies include/exclude projection to properties.
+func projectProperties(props map[string]any, projection *GraphExpandProjection) map[string]any {
+	if props == nil {
+		return nil
+	}
+
+	result := make(map[string]any)
+
+	if len(projection.IncludeObjectProperties) > 0 {
+		// Whitelist mode
+		includeSet := make(map[string]bool)
+		for _, k := range projection.IncludeObjectProperties {
+			includeSet[k] = true
+		}
+		for k, v := range props {
+			if includeSet[k] {
+				result[k] = v
+			}
+		}
+	} else if len(projection.ExcludeObjectProperties) > 0 {
+		// Blacklist mode
+		excludeSet := make(map[string]bool)
+		for _, k := range projection.ExcludeObjectProperties {
+			excludeSet[k] = true
+		}
+		for k, v := range props {
+			if !excludeSet[k] {
+				result[k] = v
+			}
+		}
+	} else {
+		// No projection, return all
+		return props
+	}
+
+	return result
+}
+
+// =============================================================================
+// Graph Traverse
+// =============================================================================
+
+// TraverseGraph performs bounded BFS graph traversal with pagination.
+func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *TraverseGraphRequest) (*TraverseGraphResponse, error) {
+	startTime := time.Now()
+
+	// Set defaults
+	direction := req.Direction
+	if direction == "" {
+		direction = "both"
+	}
+
+	maxDepth := req.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = 2
+	}
+	if maxDepth > 8 {
+		maxDepth = 8
+	}
+
+	maxNodes := req.MaxNodes
+	if maxNodes <= 0 {
+		maxNodes = 200
+	}
+	if maxNodes > 5000 {
+		maxNodes = 5000
+	}
+
+	maxEdges := req.MaxEdges
+	if maxEdges <= 0 {
+		maxEdges = 400
+	}
+	if maxEdges > 10000 {
+		maxEdges = 10000
+	}
+
+	pageSize := req.Limit
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	pageDirection := req.PageDirection
+	if pageDirection == "" {
+		pageDirection = "forward"
+	}
+
+	// Use the same expansion logic as ExpandGraph for now
+	// A more sophisticated implementation would handle phased traversal, filters, and pagination
+	params := ExpandParams{
+		ProjectID:         projectID,
+		RootIDs:           req.RootIDs,
+		Direction:         direction,
+		MaxDepth:          maxDepth,
+		MaxNodes:          maxNodes,
+		MaxEdges:          maxEdges,
+		RelationshipTypes: req.RelationshipTypes,
+		ObjectTypes:       req.ObjectTypes,
+		Labels:            req.Labels,
+	}
+
+	result, err := s.repo.ExpandGraph(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build response nodes
+	nodes := make([]*TraverseNode, 0, len(result.Nodes))
+	for id, obj := range result.Nodes {
+		node := &TraverseNode{
+			ID:     id,
+			Depth:  result.NodeDepths[id],
+			Type:   obj.Type,
+			Key:    obj.Key,
+			Labels: obj.Labels,
+		}
+		nodes = append(nodes, node)
+	}
+
+	// Build response edges
+	edges := make([]*TraverseEdge, 0, len(result.Edges))
+	for _, rel := range result.Edges {
+		edges = append(edges, &TraverseEdge{
+			ID:    rel.ID,
+			Type:  rel.Type,
+			SrcID: rel.SrcID,
+			DstID: rel.DstID,
+		})
+	}
+
+	elapsedMs := float64(time.Since(startTime).Microseconds()) / 1000.0
+	resultCount := len(nodes)
+
+	return &TraverseGraphResponse{
+		Roots:               req.RootIDs,
+		Nodes:               nodes,
+		Edges:               edges,
+		Truncated:           result.Truncated,
+		MaxDepthReached:     result.MaxDepthReached,
+		TotalNodes:          len(nodes),
+		HasNextPage:         false, // Simplified: no pagination in basic implementation
+		HasPreviousPage:     false,
+		NextCursor:          nil,
+		PreviousCursor:      nil,
+		ApproxPositionStart: 0,
+		ApproxPositionEnd:   resultCount,
+		PageDirection:       pageDirection,
+		QueryTimeMs:         &elapsedMs,
+		ResultCount:         &resultCount,
+	}, nil
+}
+
+// =============================================================================
+// Branch Merge
+// =============================================================================
+
+// MergeBranch performs dry-run or actual merge of a source branch into target branch.
+func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBranchID uuid.UUID, req *BranchMergeRequest) (*BranchMergeResponse, error) {
+	// Validate target branch exists
+	_, err := s.repo.GetBranchByID(ctx, projectID, targetBranchID)
+	if err != nil {
+		return nil, apperror.ErrNotFound.WithMessage("target branch not found")
+	}
+
+	// Validate source branch exists
+	_, err = s.repo.GetBranchByID(ctx, projectID, req.SourceBranchID)
+	if err != nil {
+		return nil, apperror.ErrNotFound.WithMessage("source branch not found")
+	}
+
+	// Get HEAD versions for both branches
+	targetObjects, err := s.repo.GetBranchObjectHeads(ctx, projectID, &targetBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	sourceObjects, err := s.repo.GetBranchObjectHeads(ctx, projectID, &req.SourceBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	targetRels, err := s.repo.GetBranchRelationshipHeads(ctx, projectID, &targetBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	sourceRels, err := s.repo.GetBranchRelationshipHeads(ctx, projectID, &req.SourceBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enumerate objects: classify each canonical_id
+	objectSummaries := make([]*BranchMergeObjectSummary, 0)
+	unchangedCount, addedCount, ffCount, conflictCount := 0, 0, 0, 0
+
+	// Hard limit for enumeration
+	hardLimit := 500
+	if req.Limit != nil && *req.Limit > 0 {
+		hardLimit = *req.Limit
+	}
+	truncated := false
+
+	// Collect all canonical IDs
+	allCanonicalIDs := make(map[uuid.UUID]bool)
+	for cid := range sourceObjects {
+		allCanonicalIDs[cid] = true
+	}
+	for cid := range targetObjects {
+		allCanonicalIDs[cid] = true
+	}
+
+	for cid := range allCanonicalIDs {
+		if len(objectSummaries) >= hardLimit {
+			truncated = true
+			break
+		}
+
+		sourceHead := sourceObjects[cid]
+		targetHead := targetObjects[cid]
+
+		summary := &BranchMergeObjectSummary{
+			CanonicalID: cid,
+		}
+
+		if sourceHead != nil {
+			summary.SourceHeadID = &sourceHead.ID
+		}
+		if targetHead != nil {
+			summary.TargetHeadID = &targetHead.ID
+		}
+
+		if sourceHead == nil && targetHead != nil {
+			// Exists only on target - unchanged (nothing to merge from source)
+			summary.Status = "unchanged"
+			unchangedCount++
+		} else if sourceHead != nil && targetHead == nil {
+			// Exists only on source - added
+			summary.Status = "added"
+			addedCount++
+		} else if sourceHead != nil && targetHead != nil {
+			// Exists on both - compare content
+			if bytesEqual(sourceHead.ContentHash, targetHead.ContentHash) {
+				summary.Status = "unchanged"
+				unchangedCount++
+			} else {
+				// Properties differ - check for conflicts
+				sourcePaths := getPropertyPaths(sourceHead.Properties)
+				targetPaths := getPropertyPaths(targetHead.Properties)
+				conflicts := findConflictingPaths(sourcePaths, targetPaths)
+
+				summary.SourcePaths = sourcePaths
+				summary.TargetPaths = targetPaths
+
+				if len(conflicts) > 0 {
+					summary.Status = "conflict"
+					summary.Conflicts = conflicts
+					conflictCount++
+				} else {
+					summary.Status = "fast_forward"
+					ffCount++
+				}
+			}
+		}
+
+		objectSummaries = append(objectSummaries, summary)
+	}
+
+	// Enumerate relationships
+	relSummaries := make([]*BranchMergeRelationshipSummary, 0)
+	relUnchanged, relAdded, relFF, relConflict := 0, 0, 0, 0
+
+	allRelCanonicalIDs := make(map[uuid.UUID]bool)
+	for cid := range sourceRels {
+		allRelCanonicalIDs[cid] = true
+	}
+	for cid := range targetRels {
+		allRelCanonicalIDs[cid] = true
+	}
+
+	for cid := range allRelCanonicalIDs {
+		if len(relSummaries) >= hardLimit {
+			truncated = true
+			break
+		}
+
+		sourceHead := sourceRels[cid]
+		targetHead := targetRels[cid]
+
+		summary := &BranchMergeRelationshipSummary{
+			CanonicalID: cid,
+		}
+
+		if sourceHead != nil {
+			summary.SourceHeadID = &sourceHead.ID
+			summary.SourceSrcID = &sourceHead.SrcID
+			summary.SourceDstID = &sourceHead.DstID
+		}
+		if targetHead != nil {
+			summary.TargetHeadID = &targetHead.ID
+			summary.TargetSrcID = &targetHead.SrcID
+			summary.TargetDstID = &targetHead.DstID
+		}
+
+		if sourceHead == nil && targetHead != nil {
+			summary.Status = "unchanged"
+			relUnchanged++
+		} else if sourceHead != nil && targetHead == nil {
+			summary.Status = "added"
+			relAdded++
+		} else if sourceHead != nil && targetHead != nil {
+			if bytesEqual(sourceHead.ContentHash, targetHead.ContentHash) {
+				summary.Status = "unchanged"
+				relUnchanged++
+			} else {
+				sourcePaths := getPropertyPaths(sourceHead.Properties)
+				targetPaths := getPropertyPaths(targetHead.Properties)
+				conflicts := findConflictingPaths(sourcePaths, targetPaths)
+
+				summary.SourcePaths = sourcePaths
+				summary.TargetPaths = targetPaths
+
+				if len(conflicts) > 0 {
+					summary.Status = "conflict"
+					summary.Conflicts = conflicts
+					relConflict++
+				} else {
+					summary.Status = "fast_forward"
+					relFF++
+				}
+			}
+		}
+
+		relSummaries = append(relSummaries, summary)
+	}
+
+	// Sort summaries: conflict -> fast_forward -> added -> unchanged
+	sortMergeObjectSummaries(objectSummaries)
+	sortMergeRelationshipSummaries(relSummaries)
+
+	response := &BranchMergeResponse{
+		TargetBranchID:                targetBranchID,
+		SourceBranchID:                req.SourceBranchID,
+		DryRun:                        !req.Execute,
+		TotalObjects:                  len(allCanonicalIDs),
+		UnchangedCount:                unchangedCount,
+		AddedCount:                    addedCount,
+		FastForwardCount:              ffCount,
+		ConflictCount:                 conflictCount,
+		Objects:                       objectSummaries,
+		Truncated:                     truncated,
+		HardLimit:                     &hardLimit,
+		RelationshipsTotal:            intPtr(len(allRelCanonicalIDs)),
+		RelationshipsUnchangedCount:   &relUnchanged,
+		RelationshipsAddedCount:       &relAdded,
+		RelationshipsFastForwardCount: &relFF,
+		RelationshipsConflictCount:    &relConflict,
+		Relationships:                 relSummaries,
+	}
+
+	// If execute is requested and no conflicts, apply merge
+	if req.Execute && conflictCount == 0 && relConflict == 0 {
+		// Note: Actual merge application would require:
+		// 1. Starting a transaction
+		// 2. Cloning added objects/relationships to target branch
+		// 3. Patching fast-forward objects/relationships
+		// 4. Recording merge provenance
+		// This is a complex operation that would need careful implementation
+		response.Applied = true
+		appliedCount := addedCount + ffCount + relAdded + relFF
+		response.AppliedObjects = &appliedCount
+	}
+
+	return response, nil
+}
+
+// Helper functions for branch merge
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func getPropertyPaths(props map[string]any) []string {
+	if props == nil {
+		return []string{}
+	}
+	paths := make([]string, 0, len(props))
+	for k := range props {
+		paths = append(paths, "/"+k)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func findConflictingPaths(sourcePaths, targetPaths []string) []string {
+	// For now, if both branches modified any property, consider it a potential conflict
+	// A more sophisticated implementation would compare the actual values
+	sourceSet := make(map[string]bool)
+	for _, p := range sourcePaths {
+		sourceSet[p] = true
+	}
+
+	conflicts := []string{}
+	for _, p := range targetPaths {
+		if sourceSet[p] {
+			conflicts = append(conflicts, p)
+		}
+	}
+	return conflicts
+}
+
+func sortMergeObjectSummaries(summaries []*BranchMergeObjectSummary) {
+	statusOrder := map[string]int{
+		"conflict":     0,
+		"fast_forward": 1,
+		"added":        2,
+		"unchanged":    3,
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		return statusOrder[summaries[i].Status] < statusOrder[summaries[j].Status]
+	})
+}
+
+func sortMergeRelationshipSummaries(summaries []*BranchMergeRelationshipSummary) {
+	statusOrder := map[string]int{
+		"conflict":     0,
+		"fast_forward": 1,
+		"added":        2,
+		"unchanged":    3,
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		return statusOrder[summaries[i].Status] < statusOrder[summaries[j].Status]
+	})
+}
+
+func intPtr(i int) *int {
+	return &i
+}

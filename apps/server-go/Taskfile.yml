@@ -1,0 +1,69 @@
+version: '3'
+
+dotenv:
+  - '../../.env'
+  - '../../.env.local'
+
+vars:
+  GO_TEST_FLAGS: -v -count=1
+
+tasks:
+  test:
+    desc: Run all unit tests
+    cmds:
+      - go test ./... {{.GO_TEST_FLAGS}} {{.CLI_ARGS}}
+
+  test:e2e:
+    desc: Run all e2e tests
+    cmds:
+      - go test ./tests/e2e/... {{.GO_TEST_FLAGS}} {{.CLI_ARGS}}
+
+  test:e2e:security:
+    desc: Run security and tenant isolation e2e tests
+    cmds:
+      - go test ./tests/e2e/... {{.GO_TEST_FLAGS}} -run "TestSecurityScopesSuite|TestTenantIsolationSuite"
+
+  test:e2e:chat:
+    desc: Run chat e2e tests
+    cmds:
+      - go test ./tests/e2e/... {{.GO_TEST_FLAGS}} -run "TestChat"
+
+  test:e2e:graph:
+    desc: Run graph e2e tests
+    cmds:
+      - go test ./tests/e2e/... {{.GO_TEST_FLAGS}} -run "TestGraph"
+
+  test:e2e:search:
+    desc: Run search e2e tests
+    cmds:
+      - go test ./tests/e2e/... {{.GO_TEST_FLAGS}} -run "TestSearch"
+
+  test:e2e:documents:
+    desc: Run document e2e tests
+    cmds:
+      - go test ./tests/e2e/... {{.GO_TEST_FLAGS}} -run "TestDocument"
+
+  build:
+    desc: Build the server binary
+    cmds:
+      - go build -o dist/server ./cmd/server
+
+  lint:
+    desc: Run linter
+    cmds:
+      - golangci-lint run ./...
+
+  migrate:up:
+    desc: Run database migrations up
+    cmds:
+      - go run ./cmd/migrate up
+
+  migrate:down:
+    desc: Run database migrations down
+    cmds:
+      - go run ./cmd/migrate down
+
+  migrate:status:
+    desc: Show migration status
+    cmds:
+      - go run ./cmd/migrate status
