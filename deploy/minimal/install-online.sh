@@ -164,14 +164,17 @@ else
     echo "  Password: (see .env.local)"
     echo ""
     echo -e "${BOLD}Quick Commands:${NC}"
-    echo "  docker exec emergent-server emergent-cli projects list"
-    echo "  docker exec emergent-server emergent-cli status"
+    echo "  docker exec emergent-server emergent projects list"
+    echo "  docker exec emergent-server emergent status"
     echo ""
     echo -e "${BOLD}Manage Services:${NC}"
     echo "  cd ${INSTALL_DIR}/deploy/minimal"
     echo "  docker compose -f docker-compose.local.yml logs -f"
     echo "  docker compose -f docker-compose.local.yml restart"
     echo "  docker compose -f docker-compose.local.yml down"
+    echo ""
+    echo -e "${BOLD}Uninstall:${NC}"
+    echo "  curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/uninstall.sh | bash"
     echo ""
 fi
 
@@ -196,8 +199,12 @@ MinIO:
 
 Installation Directory: ${INSTALL_DIR}
 
-Quick Start:
-  docker exec emergent-server emergent-cli projects list
+Quick Commands:
+  docker exec emergent-server emergent projects list
+  docker exec emergent-server emergent status
+
+Uninstall:
+  curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/uninstall.sh | bash
 EOF
 
 echo -e "${CYAN}Credentials saved to: ${INSTALL_DIR}/deploy/minimal/credentials.txt${NC}"
