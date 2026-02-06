@@ -83,6 +83,10 @@ func main() {
 	// Run command
 	switch command {
 	case "up":
+		if _, err := goose.EnsureDBVersionContext(ctx, db); err != nil {
+			fmt.Fprintf(os.Stderr, "Error ensuring version table: %v\n", err)
+			os.Exit(1)
+		}
 		if err := goose.UpContext(ctx, db, "."); err != nil {
 			fmt.Fprintf(os.Stderr, "Error running migrations: %v\n", err)
 			os.Exit(1)
