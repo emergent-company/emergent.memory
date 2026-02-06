@@ -45,21 +45,33 @@ echo ""
 echo -e "${YELLOW}Do you want to remove all data (database, files)?${NC}"
 echo "  This will permanently delete all stored documents and database contents."
 echo ""
-read -p "Remove all data? (y/N): " -r REMOVE_DATA
+
+if [ -t 0 ]; then
+    read -p "Remove all data? (y/N): " -r REMOVE_DATA
+else
+    REMOVE_DATA="${REMOVE_DATA:-N}"
+    echo "Non-interactive mode: REMOVE_DATA=${REMOVE_DATA}"
+fi
 
 if [[ "$REMOVE_DATA" =~ ^[Yy]$ ]]; then
     echo -e "${CYAN}Removing Docker volumes...${NC}"
     docker compose -f docker-compose.local.yml --env-file .env.local down -v 2>/dev/null || true
     
-    docker volume rm emergent-standalone_postgres_data 2>/dev/null || true
-    docker volume rm emergent-standalone_minio_data 2>/dev/null || true
-    docker volume rm emergent-standalone_emergent_cli_config 2>/dev/null || true
+    docker volume rm minimal_postgres_data 2>/dev/null || true
+    docker volume rm minimal_minio_data 2>/dev/null || true
+    docker volume rm minimal_emergent_cli_config 2>/dev/null || true
     
     echo -e "${GREEN}Volumes removed.${NC}"
 fi
 
 echo ""
-read -p "Remove Docker image (emergent-server-with-cli:latest)? (y/N): " -r REMOVE_IMAGE
+
+if [ -t 0 ]; then
+    read -p "Remove Docker image (emergent-server-with-cli:latest)? (y/N): " -r REMOVE_IMAGE
+else
+    REMOVE_IMAGE="${REMOVE_IMAGE:-N}"
+    echo "Non-interactive mode: REMOVE_IMAGE=${REMOVE_IMAGE}"
+fi
 
 if [[ "$REMOVE_IMAGE" =~ ^[Yy]$ ]]; then
     echo -e "${CYAN}Removing Docker image...${NC}"
