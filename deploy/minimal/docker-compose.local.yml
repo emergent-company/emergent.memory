@@ -106,7 +106,7 @@ services:
     container_name: emergent-server
     restart: unless-stopped
     ports:
-      - '${SERVER_PORT:-13002}:3002'
+      - '${SERVER_PORT:-3002}:3002'
     volumes:
       - emergent_cli_config:/root/.emergent
     environment:
