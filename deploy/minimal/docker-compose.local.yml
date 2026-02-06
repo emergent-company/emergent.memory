@@ -6,11 +6,9 @@
 #   2. Configure CLI: export EMERGENT_SERVER_URL=http://localhost:3002
 #   3. Configure API key: export EMERGENT_API_KEY=your-key-from-env
 
-version: '3.8'
-
 services:
   db:
-    image: ghcr.io/emergent-company/emergent-postgres:dev
+    image: pgvector/pgvector:pg16
     container_name: emergent-db
     restart: unless-stopped
     environment:
@@ -19,6 +17,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-emergent}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
     ports:
       - '${POSTGRES_PORT:-5432}:5432'
     healthcheck:
