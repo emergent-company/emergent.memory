@@ -184,12 +184,16 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-var logoutCmd = &cobra.Command{
-	Use:   "logout",
-	Short: "Clear stored credentials",
-	Long:  "Remove locally stored OAuth credentials and log out from the Emergent platform.",
-	RunE:  runLogout,
+func newLogoutCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "logout",
+		Short: "Clear stored credentials",
+		Long:  "Remove locally stored OAuth credentials and log out from the Emergent platform.",
+		RunE:  runLogout,
+	}
 }
+
+var logoutCmd = newLogoutCmd()
 
 func runLogout(cmd *cobra.Command, args []string) error {
 	homeDir, err := os.UserHomeDir()
