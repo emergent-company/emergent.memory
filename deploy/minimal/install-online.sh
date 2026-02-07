@@ -8,6 +8,8 @@ CLI_VERSION="${CLI_VERSION:-latest}"
 BASE_URL="https://raw.githubusercontent.com/${REPO_ORG}/${REPO_NAME}/${REPO_BRANCH}/deploy/minimal"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.emergent}"
 SERVER_PORT="${SERVER_PORT:-3002}"
+IMAGE_ORG=$(echo "$REPO_ORG" | tr '[:upper:]' '[:lower:]')
+SERVER_IMAGE="ghcr.io/${IMAGE_ORG}/emergent-server-with-cli:latest"
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -20,7 +22,6 @@ echo -e "${BOLD}Emergent Standalone Installer${NC}"
 echo "=============================="
 echo ""
 
-# Function definitions must come before they are used
 generate_secret() {
     if command -v openssl >/dev/null 2>&1; then
         openssl rand -hex 32
@@ -136,41 +137,31 @@ setup_path() {
     local shell_rc=""
     local path_line="export PATH=\"\$HOME/.emergent/bin:\$PATH\""
     
-    # Detect shell config file (in order of preference)
-    if [ -f "$HOME/.zshrc" ]; then
-        shell_rc="$HOME/.zshrc"
-    elif [ -f "$HOME/.bashrc" ]; then
-        shell_rc="$HOME/.bashrc"
-    elif [ -f "$HOME/.bash_profile" ]; then
-        shell_rc="$HOME/.bash_profile"
-    elif [ -f "$HOME/.profile" ]; then
-        shell_rc="$HOME/.profile"
+    if [ -f "$HOME/.zshrc" ]; then shell_rc="$HOME/.zshrc"
+    elif [ -f "$HOME/.bashrc" ]; then shell_rc="$HOME/.bashrc"
+    elif [ -f "$HOME/.bash_profile" ]; then shell_rc="$HOME/.bash_profile"
+    elif [ -f "$HOME/.profile" ]; then shell_rc="$HOME/.profile"
     fi
     
     if [ -z "$shell_rc" ]; then
         echo -e "${YELLOW}⚠${NC} Could not detect shell config file"
-        echo "  Add this to your shell config manually:"
-        echo "  $path_line"
+        echo "  Add this to your shell config manually: $path_line"
         return 1
     fi
     
-    # Check if already configured
     if grep -q "\.emergent/bin" "$shell_rc" 2>/dev/null; then
         echo -e "${GREEN}✓${NC} PATH already configured in $shell_rc"
         return 0
     fi
     
-    # Add to shell config
     echo "" >> "$shell_rc"
     echo "# Emergent CLI" >> "$shell_rc"
     echo "$path_line" >> "$shell_rc"
-    
     echo -e "${GREEN}✓${NC} Added to PATH in $shell_rc"
     echo "  Run 'source $shell_rc' or restart your shell to activate"
     return 0
 }
 
-# Client-Only Mode Check
 if [ "${CLIENT_ONLY:-}" = "true" ] || [ "${CLIENT_ONLY:-}" = "1" ]; then
     echo -e "${CYAN}Running in Client-Only Mode${NC}"
     echo "Skipping server and Docker checks..."
@@ -180,10 +171,7 @@ if [ "${CLIENT_ONLY:-}" = "true" ] || [ "${CLIENT_ONLY:-}" = "1" ]; then
     
     HOST_OS=$(detect_os)
     HOST_ARCH=$(detect_arch)
-    
-    if [ "$CLI_VERSION" = "latest" ]; then
-        CLI_VERSION=$(get_latest_cli_version)
-    fi
+    CLI_VERSION="${CLI_VERSION:-$(get_latest_cli_version)}"
     
     if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
         setup_path
@@ -192,8 +180,7 @@ if [ "${CLIENT_ONLY:-}" = "true" ] || [ "${CLIENT_ONLY:-}" = "1" ]; then
         echo -e "${GREEN}${BOLD}  ✓ Emergent CLI Installed!${NC}"
         echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
-        echo "Run 'emergent login' to authenticate with your server."
-        echo "Or set server URL: emergent config set-server <url>"
+        echo "Run 'emergent login' to authenticate."
         echo ""
         exit 0
     else
@@ -217,30 +204,10 @@ fi
 echo -e "${CYAN}Installing to: ${INSTALL_DIR}${NC}"
 mkdir -p "${INSTALL_DIR}/bin"
 mkdir -p "${INSTALL_DIR}/config"
-mkdir -p "${INSTALL_DIR}/build"
+mkdir -p "${INSTALL_DIR}/docker"
 
-echo -e "${CYAN}Downloading files...${NC}"
-
-BUILD_FILES=(
-    "docker-compose.local.yml"
-    "Dockerfile.server-with-cli"
-    "entrypoint.sh"
-    "emergent-cli-wrapper.sh"
-    "init.sql"
-)
-
-BIN_FILES=(
-    "emergent-ctl.sh:emergent-ctl"
-    "emergent-auth.sh:emergent-auth"
-)
-
-for file in "${BUILD_FILES[@]}"; do
-    download_file "${BASE_URL}/${file}" "${INSTALL_DIR}/build/${file}" || {
-        echo -e "${RED}Failed to download ${file}${NC}"
-        exit 1
-    }
-done
-
+echo -e "${CYAN}Downloading helper scripts...${NC}"
+BIN_FILES=("emergent-ctl.sh:emergent-ctl" "emergent-auth.sh:emergent-auth")
 for file_map in "${BIN_FILES[@]}"; do
     src="${file_map%%:*}"
     dest="${file_map##*:}"
@@ -251,22 +218,13 @@ for file_map in "${BIN_FILES[@]}"; do
     chmod +x "${INSTALL_DIR}/bin/${dest}"
 done
 
+echo -e "${CYAN}Downloading init.sql...${NC}"
+download_file "${BASE_URL}/init.sql" "${INSTALL_DIR}/docker/init.sql" || {
+    echo -e "${RED}Failed to download init.sql${NC}"
+    exit 1
+}
+
 echo -e "${GREEN}✓${NC} Files downloaded"
-
-echo ""
-echo -e "${CYAN}Downloading source code for build...${NC}"
-CLONE_DIR="${INSTALL_DIR}/build/src"
-if [ -d "${CLONE_DIR}" ]; then
-    rm -rf "${CLONE_DIR}"
-fi
-
-git clone --depth 1 --filter=blob:none --sparse \
-    "https://github.com/${REPO_ORG}/${REPO_NAME}.git" \
-    "${CLONE_DIR}" 2>/dev/null
-
-cd "${CLONE_DIR}"
-git sparse-checkout set apps/server-go tools/emergent-cli deploy/minimal 2>/dev/null
-echo -e "${GREEN}✓${NC} Source code ready"
 
 echo ""
 echo -e "${CYAN}Generating secure configuration...${NC}"
@@ -295,23 +253,153 @@ SERVER_PORT=${SERVER_PORT}
 
 GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
 EMBEDDING_DIMENSION=768
-
 KREUZBERG_LOG_LEVEL=info
 EOF
 
 echo -e "${GREEN}✓${NC} Configuration created"
 
 echo ""
-echo -e "${CYAN}Building Docker image (this may take 2-3 minutes)...${NC}"
-cd "${CLONE_DIR}"
-docker build -f deploy/minimal/Dockerfile.server-with-cli -t emergent-server-with-cli:latest . 2>&1 | tail -3
+echo -e "${CYAN}Generating Docker Compose file...${NC}"
+cat > "${INSTALL_DIR}/docker/docker-compose.yml" <<EOF
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: emergent-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: \${POSTGRES_USER:-emergent}
+      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: \${POSTGRES_DB:-emergent}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    ports:
+      - '\${POSTGRES_PORT:-5432}:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U \${POSTGRES_USER:-emergent} -d \${POSTGRES_DB:-emergent}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - emergent
 
-echo ""
-echo -e "${CYAN}Setting up docker compose...${NC}"
-mkdir -p "${INSTALL_DIR}/docker"
-cp "${CLONE_DIR}/deploy/minimal/docker-compose.local.yml" "${INSTALL_DIR}/docker/docker-compose.yml"
-cp "${CLONE_DIR}/deploy/minimal/init.sql" "${INSTALL_DIR}/docker/"
-echo -e "${GREEN}✓${NC} Docker compose ready"
+  kreuzberg:
+    image: goldziher/kreuzberg:latest
+    container_name: emergent-kreuzberg
+    restart: unless-stopped
+    ports:
+      - '\${KREUZBERG_PORT:-8000}:8000'
+    environment:
+      - LOG_LEVEL=\${KREUZBERG_LOG_LEVEL:-info}
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    networks:
+      - emergent
+
+  minio:
+    image: minio/minio:latest
+    container_name: emergent-minio
+    restart: unless-stopped
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: \${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: \${MINIO_ROOT_PASSWORD:-changeme}
+    ports:
+      - '\${MINIO_API_PORT:-9000}:9000'
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - emergent
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: emergent-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      sleep 2;
+      /usr/bin/mc alias set myminio http://minio:9000 \$\${MINIO_ROOT_USER:-minioadmin} \$\${MINIO_ROOT_PASSWORD:-changeme};
+      /usr/bin/mc mb myminio/documents --ignore-existing;
+      /usr/bin/mc mb myminio/document-temp --ignore-existing;
+      echo 'MinIO buckets initialized';
+      exit 0;
+      "
+    networks:
+      - emergent
+
+  server:
+    image: ${SERVER_IMAGE}
+    container_name: emergent-server
+    restart: unless-stopped
+    ports:
+      - '\${SERVER_PORT:-3002}:3002'
+    volumes:
+      - emergent_cli_config:/root/.emergent
+    environment:
+      STANDALONE_MODE: 'true'
+      STANDALONE_API_KEY: \${STANDALONE_API_KEY}
+      STANDALONE_USER_EMAIL: \${STANDALONE_USER_EMAIL}
+      STANDALONE_ORG_NAME: \${STANDALONE_ORG_NAME}
+      STANDALONE_PROJECT_NAME: \${STANDALONE_PROJECT_NAME}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: \${POSTGRES_USER:-emergent}
+      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: \${POSTGRES_DB:-emergent}
+      PORT: 3002
+      GO_ENV: production
+      KREUZBERG_SERVICE_URL: http://kreuzberg:8000
+      KREUZBERG_ENABLED: 'true'
+      STORAGE_PROVIDER: minio
+      STORAGE_ENDPOINT: http://minio:9000
+      STORAGE_ACCESS_KEY: \${MINIO_ROOT_USER:-minioadmin}
+      STORAGE_SECRET_KEY: \${MINIO_ROOT_PASSWORD:-changeme}
+      STORAGE_BUCKET_DOCUMENTS: documents
+      STORAGE_BUCKET_TEMP: document-temp
+      STORAGE_USE_SSL: 'false'
+      GOOGLE_API_KEY: \${GOOGLE_API_KEY:-}
+      EMBEDDING_DIMENSION: \${EMBEDDING_DIMENSION:-768}
+      DB_AUTOINIT: 'true'
+      SCOPES_DISABLED: 'true'
+    depends_on:
+      db:
+        condition: service_healthy
+      kreuzberg:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:3002/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - emergent
+
+volumes:
+  postgres_data:
+  minio_data:
+  emergent_cli_config:
+
+networks:
+  emergent:
+EOF
 
 echo ""
 echo -e "${CYAN}Starting services...${NC}"
@@ -322,7 +410,7 @@ echo ""
 echo -e "${CYAN}Waiting for services to become healthy...${NC}"
 sleep 5
 
-MAX_WAIT=90
+MAX_WAIT=120
 WAITED=0
 while [ $WAITED -lt $MAX_WAIT ]; do
     if curl -sf "http://localhost:${SERVER_PORT}/health" > /dev/null 2>&1; then
@@ -336,115 +424,33 @@ done
 echo ""
 
 if [ $WAITED -ge $MAX_WAIT ]; then
-    echo -e "${YELLOW}Server health check timeout after ${MAX_WAIT}s.${NC}"
+    echo -e "${YELLOW}Server health check timeout.${NC}"
     echo "Checking logs..."
     docker compose -f "${INSTALL_DIR}/docker/docker-compose.yml" --env-file "${INSTALL_DIR}/config/.env.local" logs server --tail 20
-    echo ""
-    echo "Installation may still be starting. Check with:"
-    echo "  ${INSTALL_DIR}/bin/emergent-ctl logs -f"
 fi
 
 echo ""
 echo -e "${CYAN}Installing Emergent CLI...${NC}"
 HOST_OS=$(detect_os)
 HOST_ARCH=$(detect_arch)
-
-if [ "$CLI_VERSION" = "latest" ]; then
-    CLI_VERSION=$(get_latest_cli_version)
-fi
+CLI_VERSION="${CLI_VERSION:-$(get_latest_cli_version)}"
 
 CLI_INSTALLED=false
 if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
     CLI_INSTALLED=true
-    
     cat > "${INSTALL_DIR}/config.yaml" <<EOF
 server_url: http://localhost:${SERVER_PORT}
 api_key: ${API_KEY}
 EOF
     echo -e "${GREEN}✓${NC} CLI config created at ${INSTALL_DIR}/config.yaml"
-    
     setup_path
 fi
 
-if [ $WAITED -lt $MAX_WAIT ]; then
-    echo ""
-    echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${GREEN}${BOLD}  ✓ Emergent Installation Complete!${NC}"
-    echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
-    echo -e "${BOLD}Server:${NC}"
-    echo "  URL: http://localhost:${SERVER_PORT}"
-    echo "  API Key: ${API_KEY}"
-    echo ""
-    if [ "$CLI_INSTALLED" = true ]; then
-        echo -e "${BOLD}CLI Commands:${NC}"
-        echo "  emergent projects list"
-        echo "  emergent status"
-        echo ""
-    else
-        echo -e "${BOLD}Quick Commands:${NC}"
-        echo "  docker exec emergent-server emergent projects list"
-        echo "  docker exec emergent-server emergent status"
-        echo ""
-    fi
-    echo -e "${BOLD}Manage Services:${NC}"
-    echo "  ${INSTALL_DIR}/bin/emergent-ctl status"
-    echo "  ${INSTALL_DIR}/bin/emergent-ctl logs -f"
-    echo "  ${INSTALL_DIR}/bin/emergent-ctl restart"
-    echo ""
-    echo -e "${YELLOW}${BOLD}Enable Embeddings:${NC}"
-    echo "  Run: ${INSTALL_DIR}/bin/emergent-auth"
-    echo "  This will set up Google Cloud API for embeddings."
-    echo ""
-fi
-
-CLI_COMMANDS=""
-if [ "$CLI_INSTALLED" = true ]; then
-    CLI_COMMANDS="CLI Commands:
-  ${INSTALL_DIR}/bin/emergent projects list
-  ${INSTALL_DIR}/bin/emergent status
-  ${INSTALL_DIR}/bin/emergent config show
-
-Add to PATH:
-  export PATH=\"${INSTALL_DIR}/bin:\$PATH\"
-"
-else
-    CLI_COMMANDS="CLI Commands (via Docker):
-  docker exec emergent-server emergent projects list
-  docker exec emergent-server emergent status
-"
-fi
-
-cat > "${INSTALL_DIR}/config/credentials.txt" <<EOF
-Emergent Standalone - Credentials
-Generated: $(date)
-
-Server URL: http://localhost:${SERVER_PORT}
-API Key: ${API_KEY}
-
-PostgreSQL:
-  Host: localhost:15432
-  User: emergent
-  Password: ${POSTGRES_PASSWORD}
-  Database: emergent
-
-Installation Directory: ${INSTALL_DIR}
-
-${CLI_COMMANDS}
-Management:
-  ${INSTALL_DIR}/bin/emergent-ctl status
-  ${INSTALL_DIR}/bin/emergent-ctl logs -f
-  ${INSTALL_DIR}/bin/emergent-ctl restart
-  ${INSTALL_DIR}/bin/emergent-auth    # Set up Google Cloud for embeddings
-
-Uninstall:
-  curl -fsSL https://raw.githubusercontent.com/${REPO_ORG}/${REPO_NAME}/main/deploy/minimal/uninstall.sh | bash
-EOF
-
-echo -e "${CYAN}Credentials saved to: ${INSTALL_DIR}/config/credentials.txt${NC}"
 echo ""
-
-echo -e "${CYAN}Cleaning up build files...${NC}"
-rm -rf "${INSTALL_DIR}/build"
-echo -e "${GREEN}✓${NC} Cleanup complete"
+echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}${BOLD}  ✓ Emergent Installation Complete!${NC}"
+echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo "Server URL: http://localhost:${SERVER_PORT}"
+echo "API Key: ${API_KEY}"
 echo ""
