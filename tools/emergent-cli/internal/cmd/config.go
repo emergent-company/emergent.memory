@@ -114,6 +114,14 @@ func newConfigShowCmd() *cobra.Command {
 			table.Header("Setting", "Value")
 
 			table.Append("Server URL", cfg.ServerURL)
+
+			if cfg.APIKey != "" {
+				maskedKey := cfg.APIKey[:8] + "..." + cfg.APIKey[len(cfg.APIKey)-4:]
+				table.Append("API Key", maskedKey+" (configured)")
+			} else {
+				table.Append("API Key", "(not set)")
+			}
+
 			table.Append("Email", cfg.Email)
 			table.Append("Organization ID", cfg.OrgID)
 			table.Append("Project ID", cfg.ProjectID)
