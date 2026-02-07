@@ -184,7 +184,37 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+var logoutCmd = &cobra.Command{
+	Use:   "logout",
+	Short: "Clear stored credentials",
+	Long:  "Remove locally stored OAuth credentials and log out from the Emergent platform.",
+	RunE:  runLogout,
+}
+
+func runLogout(cmd *cobra.Command, args []string) error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	credsPath := filepath.Join(homeDir, ".emergent", "credentials.json")
+
+	if _, err := os.Stat(credsPath); os.IsNotExist(err) {
+		fmt.Println("No credentials found")
+		return nil
+	}
+
+	if err := os.Remove(credsPath); err != nil {
+		return fmt.Errorf("failed to remove credentials: %w", err)
+	}
+
+	fmt.Println("Logged out successfully")
+	fmt.Printf("Credentials removed from: %s\n", credsPath)
+	return nil
+}
+
 func init() {
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(logoutCmd)
 }
