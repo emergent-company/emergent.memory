@@ -1,24 +1,11 @@
 #!/usr/bin/env bash
-#
-# Emergent Standalone Installer
-# ============================
-#
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install-online.sh | bash
-#
-# This script installs the Emergent standalone stack:
-# - Go Backend (API + CLI)
-# - PostgreSQL + pgvector
-# - MinIO (Object Storage)
-# - Kreuzberg (Document Extraction)
-#
-
 set -euo pipefail
 
 REPO_ORG="Emergent-Comapny"
 REPO_NAME="emergent"
 REPO_BRANCH="${EMERGENT_VERSION:-main}"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/emergent-standalone}"
+BASE_URL="https://raw.githubusercontent.com/${REPO_ORG}/${REPO_NAME}/${REPO_BRANCH}/deploy/minimal"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.emergent}"
 SERVER_PORT="${SERVER_PORT:-3002}"
 
 BOLD='\033[1m'
@@ -32,18 +19,17 @@ echo -e "${BOLD}Emergent Standalone Installer${NC}"
 echo "=============================="
 echo ""
 
-command -v docker >/dev/null 2>&1 || { echo -e "${RED}Error: docker is required.${NC}"; echo "Install: https://docs.docker.com/get-docker/"; exit 1; }
-command -v git >/dev/null 2>&1 || { echo -e "${RED}Error: git is required.${NC}"; exit 1; }
-
-if ! docker compose version >/dev/null 2>&1; then
-    echo -e "${RED}Error: docker compose v2 is required.${NC}"
-    echo "Install: https://docs.docker.com/compose/install/"
+if ! command -v docker >/dev/null 2>&1; then
+    echo -e "${RED}Error: Docker is required but not installed.${NC}"
+    echo "Install: https://docs.docker.com/get-docker/"
     exit 1
 fi
 
-echo -e "${GREEN}✓${NC} Docker: $(docker --version | cut -d' ' -f3 | tr -d ',')"
-echo -e "${GREEN}✓${NC} Docker Compose: $(docker compose version --short)"
-echo ""
+if ! docker compose version >/dev/null 2>&1; then
+    echo -e "${RED}Error: Docker Compose v2 is required but not installed.${NC}"
+    echo "Install: https://docs.docker.com/compose/install/"
+    exit 1
+fi
 
 generate_secret() {
     if command -v openssl >/dev/null 2>&1; then
@@ -53,23 +39,72 @@ generate_secret() {
     fi
 }
 
-echo -e "${CYAN}Installing to: ${INSTALL_DIR}${NC}"
-mkdir -p "${INSTALL_DIR}"
-cd "${INSTALL_DIR}"
+download_file() {
+    local url="$1"
+    local dest="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$url" -o "$dest"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "$url" -O "$dest"
+    else
+        echo -e "${RED}Error: curl or wget required${NC}"
+        exit 1
+    fi
+}
 
-if [ -d ".git" ]; then
-    echo -e "${CYAN}Updating existing installation...${NC}"
-    git pull --quiet
-else
-    echo -e "${CYAN}Downloading Emergent...${NC}"
-    git clone --depth 1 --branch "${REPO_BRANCH}" "https://github.com/${REPO_ORG}/${REPO_NAME}.git" . 2>/dev/null || {
-        echo -e "${RED}Failed to clone repository.${NC}"
-        echo "Check if https://github.com/${REPO_ORG}/${REPO_NAME} is accessible."
+echo -e "${CYAN}Installing to: ${INSTALL_DIR}${NC}"
+mkdir -p "${INSTALL_DIR}/bin"
+mkdir -p "${INSTALL_DIR}/config"
+mkdir -p "${INSTALL_DIR}/build"
+
+echo -e "${CYAN}Downloading files...${NC}"
+
+BUILD_FILES=(
+    "docker-compose.local.yml"
+    "Dockerfile.server-with-cli"
+    "entrypoint.sh"
+    "emergent-cli-wrapper.sh"
+    "init.sql"
+)
+
+BIN_FILES=(
+    "emergent-ctl.sh:emergent-ctl"
+    "emergent-auth.sh:emergent-auth"
+)
+
+for file in "${BUILD_FILES[@]}"; do
+    download_file "${BASE_URL}/${file}" "${INSTALL_DIR}/build/${file}" || {
+        echo -e "${RED}Failed to download ${file}${NC}"
         exit 1
     }
+done
+
+for file_map in "${BIN_FILES[@]}"; do
+    src="${file_map%%:*}"
+    dest="${file_map##*:}"
+    download_file "${BASE_URL}/${src}" "${INSTALL_DIR}/bin/${dest}" || {
+        echo -e "${RED}Failed to download ${src}${NC}"
+        exit 1
+    }
+    chmod +x "${INSTALL_DIR}/bin/${dest}"
+done
+
+echo -e "${GREEN}✓${NC} Files downloaded"
+
+echo ""
+echo -e "${CYAN}Downloading source code for build...${NC}"
+CLONE_DIR="${INSTALL_DIR}/build/src"
+if [ -d "${CLONE_DIR}" ]; then
+    rm -rf "${CLONE_DIR}"
 fi
 
-cd deploy/minimal
+git clone --depth 1 --filter=blob:none --sparse \
+    "https://github.com/${REPO_ORG}/${REPO_NAME}.git" \
+    "${CLONE_DIR}" 2>/dev/null
+
+cd "${CLONE_DIR}"
+git sparse-checkout set apps/server-go tools/emergent-cli deploy/minimal 2>/dev/null
+echo -e "${GREEN}✓${NC} Source code ready"
 
 echo ""
 echo -e "${CYAN}Generating secure configuration...${NC}"
@@ -77,7 +112,7 @@ POSTGRES_PASSWORD=$(generate_secret)
 MINIO_PASSWORD=$(generate_secret)
 API_KEY=$(generate_secret)
 
-cat > .env.local <<EOF
+cat > "${INSTALL_DIR}/config/.env.local" <<EOF
 POSTGRES_USER=emergent
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=emergent
@@ -86,7 +121,6 @@ POSTGRES_PORT=15432
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=${MINIO_PASSWORD}
 MINIO_API_PORT=19000
-MINIO_CONSOLE_PORT=19001
 
 STANDALONE_MODE=true
 STANDALONE_API_KEY=${API_KEY}
@@ -105,24 +139,15 @@ EOF
 
 echo -e "${GREEN}✓${NC} Configuration created"
 
-if [ -z "${GOOGLE_API_KEY:-}" ]; then
-    echo ""
-    echo -e "${YELLOW}Note:${NC} No GOOGLE_API_KEY provided. Embeddings will be disabled."
-    echo "You can add it later: edit ${INSTALL_DIR}/deploy/minimal/.env.local"
-fi
-
 echo ""
 echo -e "${CYAN}Building Docker image (this may take 2-3 minutes)...${NC}"
-if [ -f "build-server-with-cli.sh" ]; then
-    chmod +x build-server-with-cli.sh
-    ./build-server-with-cli.sh 2>&1 | tail -5
-else
-    docker compose -f docker-compose.local.yml build 2>&1 | tail -5
-fi
+cd "${CLONE_DIR}"
+docker build -f deploy/minimal/Dockerfile.server-with-cli -t emergent-server-with-cli:latest . 2>&1 | tail -3
 
 echo ""
 echo -e "${CYAN}Starting services...${NC}"
-docker compose -f docker-compose.local.yml --env-file .env.local up -d
+cd "${CLONE_DIR}/deploy/minimal"
+docker compose -f docker-compose.local.yml --env-file "${INSTALL_DIR}/config/.env.local" up -d
 
 echo ""
 echo -e "${CYAN}Waiting for services to become healthy...${NC}"
@@ -147,7 +172,7 @@ if [ $WAITED -ge $MAX_WAIT ]; then
     docker compose -f docker-compose.local.yml logs server --tail 20
     echo ""
     echo "Installation may still be starting. Check with:"
-    echo "  cd ${INSTALL_DIR}/deploy/minimal && docker compose -f docker-compose.local.yml logs -f"
+    echo "  ${INSTALL_DIR}/bin/emergent-ctl logs -f"
 else
     echo ""
     echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -162,18 +187,18 @@ else
     echo "  docker exec emergent-server emergent projects list"
     echo "  docker exec emergent-server emergent status"
     echo ""
-    echo -e "${BOLD}Manage Services (emergent-ctl):${NC}"
-    echo "  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh status"
-    echo "  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh logs -f"
-    echo "  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh restart"
-    echo "  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh health"
+    echo -e "${BOLD}Manage Services:${NC}"
+    echo "  ${INSTALL_DIR}/bin/emergent-ctl status"
+    echo "  ${INSTALL_DIR}/bin/emergent-ctl logs -f"
+    echo "  ${INSTALL_DIR}/bin/emergent-ctl restart"
     echo ""
-    echo -e "${BOLD}Uninstall:${NC}"
-    echo "  curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/uninstall.sh | bash"
+    echo -e "${YELLOW}${BOLD}Enable Embeddings:${NC}"
+    echo "  Run: ${INSTALL_DIR}/bin/emergent-ctl auth"
+    echo "  This will set up Google Cloud API for embeddings."
     echo ""
 fi
 
-cat > "${INSTALL_DIR}/deploy/minimal/credentials.txt" <<EOF
+cat > "${INSTALL_DIR}/config/credentials.txt" <<EOF
 Emergent Standalone - Credentials
 Generated: $(date)
 
@@ -192,18 +217,26 @@ Quick Commands:
   docker exec emergent-server emergent projects list
   docker exec emergent-server emergent status
 
-Management (emergent-ctl):
-  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh status
-  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh logs -f server
-  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh restart
-  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh health
-
-Google Cloud Setup (for embeddings):
-  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh auth
+Management:
+  ${INSTALL_DIR}/bin/emergent-ctl status
+  ${INSTALL_DIR}/bin/emergent-ctl logs -f
+  ${INSTALL_DIR}/bin/emergent-ctl restart
+  ${INSTALL_DIR}/bin/emergent-ctl auth    # Set up Google Cloud for embeddings
 
 Uninstall:
-  curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/uninstall.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/${REPO_ORG}/${REPO_NAME}/main/deploy/minimal/uninstall.sh | bash
 EOF
 
-echo -e "${CYAN}Credentials saved to: ${INSTALL_DIR}/deploy/minimal/credentials.txt${NC}"
+echo -e "${CYAN}Credentials saved to: ${INSTALL_DIR}/config/credentials.txt${NC}"
+echo ""
+
+echo -e "${CYAN}Copying compose files for management...${NC}"
+mkdir -p "${INSTALL_DIR}/docker"
+cp "${CLONE_DIR}/deploy/minimal/docker-compose.local.yml" "${INSTALL_DIR}/docker/docker-compose.yml"
+cp "${CLONE_DIR}/deploy/minimal/init.sql" "${INSTALL_DIR}/docker/"
+echo -e "${GREEN}✓${NC} Compose files copied"
+
+echo -e "${CYAN}Cleaning up build files...${NC}"
+rm -rf "${INSTALL_DIR}/build"
+echo -e "${GREEN}✓${NC} Cleanup complete"
 echo ""
