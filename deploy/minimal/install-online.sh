@@ -145,9 +145,16 @@ cd "${CLONE_DIR}"
 docker build -f deploy/minimal/Dockerfile.server-with-cli -t emergent-server-with-cli:latest . 2>&1 | tail -3
 
 echo ""
+echo -e "${CYAN}Setting up docker compose...${NC}"
+mkdir -p "${INSTALL_DIR}/docker"
+cp "${CLONE_DIR}/deploy/minimal/docker-compose.local.yml" "${INSTALL_DIR}/docker/docker-compose.yml"
+cp "${CLONE_DIR}/deploy/minimal/init.sql" "${INSTALL_DIR}/docker/"
+echo -e "${GREEN}✓${NC} Docker compose ready"
+
+echo ""
 echo -e "${CYAN}Starting services...${NC}"
-cd "${CLONE_DIR}/deploy/minimal"
-docker compose -f docker-compose.local.yml --env-file "${INSTALL_DIR}/config/.env.local" up -d
+cd "${INSTALL_DIR}/docker"
+docker compose -f docker-compose.yml --env-file "${INSTALL_DIR}/config/.env.local" up -d
 
 echo ""
 echo -e "${CYAN}Waiting for services to become healthy...${NC}"
@@ -169,7 +176,7 @@ echo ""
 if [ $WAITED -ge $MAX_WAIT ]; then
     echo -e "${YELLOW}Server health check timeout after ${MAX_WAIT}s.${NC}"
     echo "Checking logs..."
-    docker compose -f docker-compose.local.yml logs server --tail 20
+    docker compose -f "${INSTALL_DIR}/docker/docker-compose.yml" --env-file "${INSTALL_DIR}/config/.env.local" logs server --tail 20
     echo ""
     echo "Installation may still be starting. Check with:"
     echo "  ${INSTALL_DIR}/bin/emergent-ctl logs -f"
@@ -229,12 +236,6 @@ EOF
 
 echo -e "${CYAN}Credentials saved to: ${INSTALL_DIR}/config/credentials.txt${NC}"
 echo ""
-
-echo -e "${CYAN}Copying compose files for management...${NC}"
-mkdir -p "${INSTALL_DIR}/docker"
-cp "${CLONE_DIR}/deploy/minimal/docker-compose.local.yml" "${INSTALL_DIR}/docker/docker-compose.yml"
-cp "${CLONE_DIR}/deploy/minimal/init.sql" "${INSTALL_DIR}/docker/"
-echo -e "${GREEN}✓${NC} Compose files copied"
 
 echo -e "${CYAN}Cleaning up build files...${NC}"
 rm -rf "${INSTALL_DIR}/build"
