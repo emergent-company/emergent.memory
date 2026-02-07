@@ -362,12 +362,9 @@ jobs:
           export EMERGENT_SERVER_URL=http://localhost:3002
           export EMERGENT_API_KEY=your-api-key-here
 
-          # Or create config file
-          mkdir -p ~/.emergent
-          cat > ~/.emergent/config.yaml << EOF
-          server_url: http://localhost:3002
-          api_key: your-api-key-here
-          EOF
+          # Or create config file at ~/.emergent/config.yaml:
+          # server_url: http://localhost:3002
+          # api_key: your-api-key-here
 
           # Test connection
           emergent projects list
@@ -444,8 +441,10 @@ jobs:
         id: version
         run: |
           VERSION=${GITHUB_REF#refs/tags/cli-v}
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "owner_lc=$OWNER_LC" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -454,8 +453,8 @@ jobs:
           file: tools/emergent-cli/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/emergent-cli:${{ steps.version.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/emergent-cli:latest
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:latest
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
             GIT_COMMIT=${{ steps.version.outputs.commit }}
