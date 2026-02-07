@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_ORG="Emergent-Comapny"
 REPO_NAME="emergent"
 REPO_BRANCH="${EMERGENT_VERSION:-main}"
+CLI_VERSION="${CLI_VERSION:-latest}"
 BASE_URL="https://raw.githubusercontent.com/${REPO_ORG}/${REPO_NAME}/${REPO_BRANCH}/deploy/minimal"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.emergent}"
 SERVER_PORT="${SERVER_PORT:-3002}"
@@ -50,6 +51,96 @@ download_file() {
         echo -e "${RED}Error: curl or wget required${NC}"
         exit 1
     fi
+}
+
+detect_os() {
+    local os
+    case "$(uname -s)" in
+        Linux*)     os=linux;;
+        Darwin*)    os=darwin;;
+        CYGWIN*|MINGW*|MSYS_NT*) os=windows;;
+        FreeBSD*)   os=freebsd;;
+        *)
+            echo -e "${RED}Unsupported OS: $(uname -s)${NC}"
+            exit 1
+            ;;
+    esac
+    echo "$os"
+}
+
+detect_arch() {
+    local arch
+    case "$(uname -m)" in
+        x86_64|amd64)   arch=amd64;;
+        aarch64|arm64)  arch=arm64;;
+        armv7l)         arch=arm;;
+        i386|i686)      arch=386;;
+        *)
+            echo -e "${RED}Unsupported architecture: $(uname -m)${NC}"
+            exit 1
+            ;;
+    esac
+    echo "$arch"
+}
+
+get_latest_cli_version() {
+    local version
+    if command -v curl >/dev/null 2>&1; then
+        version=$(curl -fsSL "https://api.github.com/repos/${REPO_ORG}/${REPO_NAME}/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | grep "^cli-v" || echo "")
+    elif command -v wget >/dev/null 2>&1; then
+        version=$(wget -qO- "https://api.github.com/repos/${REPO_ORG}/${REPO_NAME}/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | grep "^cli-v" || echo "")
+    fi
+    echo "$version"
+}
+
+install_cli() {
+    local os="$1"
+    local arch="$2"
+    local version="$3"
+    
+    if [ -z "$version" ]; then
+        echo -e "${YELLOW}⚠${NC} CLI release not found, skipping CLI installation"
+        echo "  You can still use: docker exec emergent-server emergent <command>"
+        return 1
+    fi
+    
+    local ext="tar.gz"
+    [ "$os" = "windows" ] && ext="zip"
+    
+    local download_url="https://github.com/${REPO_ORG}/${REPO_NAME}/releases/download/${version}/emergent-cli-${os}-${arch}.${ext}"
+    local tmp_dir=$(mktemp -d)
+    
+    echo -e "${CYAN}Downloading CLI ${version} for ${os}/${arch}...${NC}"
+    
+    if ! download_file "$download_url" "${tmp_dir}/emergent-cli.${ext}" 2>/dev/null; then
+        echo -e "${YELLOW}⚠${NC} Failed to download CLI binary"
+        echo "  You can still use: docker exec emergent-server emergent <command>"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    cd "$tmp_dir"
+    if [ "$ext" = "zip" ]; then
+        unzip -q "emergent-cli.${ext}" 2>/dev/null || { rm -rf "$tmp_dir"; return 1; }
+    else
+        tar xzf "emergent-cli.${ext}" 2>/dev/null || { rm -rf "$tmp_dir"; return 1; }
+    fi
+    
+    local binary_name="emergent-cli-${os}-${arch}"
+    [ "$os" = "windows" ] && binary_name="${binary_name}.exe"
+    
+    if [ -f "$binary_name" ]; then
+        mv "$binary_name" "${INSTALL_DIR}/bin/emergent"
+        chmod +x "${INSTALL_DIR}/bin/emergent"
+        echo -e "${GREEN}✓${NC} CLI installed to ${INSTALL_DIR}/bin/emergent"
+    else
+        echo -e "${YELLOW}⚠${NC} CLI binary not found in archive"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    rm -rf "$tmp_dir"
+    return 0
 }
 
 echo -e "${CYAN}Installing to: ${INSTALL_DIR}${NC}"
@@ -180,7 +271,29 @@ if [ $WAITED -ge $MAX_WAIT ]; then
     echo ""
     echo "Installation may still be starting. Check with:"
     echo "  ${INSTALL_DIR}/bin/emergent-ctl logs -f"
-else
+fi
+
+echo ""
+echo -e "${CYAN}Installing Emergent CLI...${NC}"
+HOST_OS=$(detect_os)
+HOST_ARCH=$(detect_arch)
+
+if [ "$CLI_VERSION" = "latest" ]; then
+    CLI_VERSION=$(get_latest_cli_version)
+fi
+
+CLI_INSTALLED=false
+if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
+    CLI_INSTALLED=true
+    
+    cat > "${INSTALL_DIR}/config/config.yaml" <<EOF
+server_url: http://localhost:${SERVER_PORT}
+api_key: ${API_KEY}
+EOF
+    echo -e "${GREEN}✓${NC} CLI config created at ${INSTALL_DIR}/config/config.yaml"
+fi
+
+if [ $WAITED -lt $MAX_WAIT ]; then
     echo ""
     echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}${BOLD}  ✓ Emergent Installation Complete!${NC}"
@@ -190,19 +303,46 @@ else
     echo "  URL: http://localhost:${SERVER_PORT}"
     echo "  API Key: ${API_KEY}"
     echo ""
-    echo -e "${BOLD}Quick Commands:${NC}"
-    echo "  docker exec emergent-server emergent projects list"
-    echo "  docker exec emergent-server emergent status"
-    echo ""
+    if [ "$CLI_INSTALLED" = true ]; then
+        echo -e "${BOLD}CLI Commands:${NC}"
+        echo "  ${INSTALL_DIR}/bin/emergent projects list"
+        echo "  ${INSTALL_DIR}/bin/emergent status"
+        echo ""
+        echo -e "${BOLD}Add to PATH (optional):${NC}"
+        echo "  export PATH=\"${INSTALL_DIR}/bin:\$PATH\""
+        echo ""
+    else
+        echo -e "${BOLD}Quick Commands:${NC}"
+        echo "  docker exec emergent-server emergent projects list"
+        echo "  docker exec emergent-server emergent status"
+        echo ""
+    fi
     echo -e "${BOLD}Manage Services:${NC}"
     echo "  ${INSTALL_DIR}/bin/emergent-ctl status"
     echo "  ${INSTALL_DIR}/bin/emergent-ctl logs -f"
     echo "  ${INSTALL_DIR}/bin/emergent-ctl restart"
     echo ""
     echo -e "${YELLOW}${BOLD}Enable Embeddings:${NC}"
-    echo "  Run: ${INSTALL_DIR}/bin/emergent-ctl auth"
+    echo "  Run: ${INSTALL_DIR}/bin/emergent-auth"
     echo "  This will set up Google Cloud API for embeddings."
     echo ""
+fi
+
+CLI_COMMANDS=""
+if [ "$CLI_INSTALLED" = true ]; then
+    CLI_COMMANDS="CLI Commands:
+  ${INSTALL_DIR}/bin/emergent projects list
+  ${INSTALL_DIR}/bin/emergent status
+  ${INSTALL_DIR}/bin/emergent config show
+
+Add to PATH:
+  export PATH=\"${INSTALL_DIR}/bin:\$PATH\"
+"
+else
+    CLI_COMMANDS="CLI Commands (via Docker):
+  docker exec emergent-server emergent projects list
+  docker exec emergent-server emergent status
+"
 fi
 
 cat > "${INSTALL_DIR}/config/credentials.txt" <<EOF
@@ -220,15 +360,12 @@ PostgreSQL:
 
 Installation Directory: ${INSTALL_DIR}
 
-Quick Commands:
-  docker exec emergent-server emergent projects list
-  docker exec emergent-server emergent status
-
+${CLI_COMMANDS}
 Management:
   ${INSTALL_DIR}/bin/emergent-ctl status
   ${INSTALL_DIR}/bin/emergent-ctl logs -f
   ${INSTALL_DIR}/bin/emergent-ctl restart
-  ${INSTALL_DIR}/bin/emergent-ctl auth    # Set up Google Cloud for embeddings
+  ${INSTALL_DIR}/bin/emergent-auth    # Set up Google Cloud for embeddings
 
 Uninstall:
   curl -fsSL https://raw.githubusercontent.com/${REPO_ORG}/${REPO_NAME}/main/deploy/minimal/uninstall.sh | bash
