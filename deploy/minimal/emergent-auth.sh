@@ -7,7 +7,10 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="$SCRIPT_DIR/.env.local"
+INSTALL_DIR="${SCRIPT_DIR%/bin}"
+CONFIG_DIR="$INSTALL_DIR/config"
+DOCKER_DIR="$INSTALL_DIR/docker"
+ENV_FILE="$CONFIG_DIR/.env.local"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -43,7 +46,7 @@ if ! command -v gcloud &> /dev/null; then
     echo "3. Enable 'Generative Language API'"
     echo "4. Edit ${ENV_FILE}"
     echo "5. Add: GOOGLE_API_KEY=your-key-here"
-    echo "6. Run: ~/emergent-standalone/deploy/minimal/emergent-ctl.sh restart"
+    echo "6. Run: ~/.emergent/bin/emergent-ctl restart"
     exit 1
 fi
 
@@ -229,11 +232,11 @@ echo ""
 read -p "Restart Emergent server now to apply changes? (Y/n): " -r DO_RESTART
 
 if [[ ! "$DO_RESTART" =~ ^[Nn]$ ]]; then
-    if [ -f "$SCRIPT_DIR/emergent-ctl.sh" ]; then
-        "$SCRIPT_DIR/emergent-ctl.sh" restart
+    if [ -f "$SCRIPT_DIR/emergent-ctl" ]; then
+        "$SCRIPT_DIR/emergent-ctl" restart
     else
-        cd "$SCRIPT_DIR"
-        docker compose -f docker-compose.local.yml --env-file .env.local restart server
+        cd "$DOCKER_DIR"
+        docker compose -f docker-compose.yml --env-file "$CONFIG_DIR/.env.local" restart server
     fi
     echo ""
     echo -e "${GREEN}Server restarted!${NC}"

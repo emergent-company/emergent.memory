@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
-#
-# Emergent Standalone Uninstaller
-#
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/uninstall.sh | bash
-#
-# Or run locally:
-#   ~/emergent-standalone/deploy/minimal/uninstall.sh
-#
-
 set -euo pipefail
 
-INSTALL_DIR="${INSTALL_DIR:-$HOME/emergent-standalone}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.emergent}"
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -30,16 +20,14 @@ if [ ! -d "${INSTALL_DIR}" ]; then
     exit 0
 fi
 
-cd "${INSTALL_DIR}/deploy/minimal" 2>/dev/null || {
-    echo -e "${YELLOW}Deploy directory not found.${NC}"
-    echo "Removing installation directory only..."
-    rm -rf "${INSTALL_DIR}"
-    echo -e "${GREEN}Done!${NC}"
-    exit 0
-}
+DOCKER_DIR="${INSTALL_DIR}/docker"
+CONFIG_DIR="${INSTALL_DIR}/config"
 
-echo -e "${CYAN}Stopping services...${NC}"
-docker compose -f docker-compose.local.yml --env-file .env.local down 2>/dev/null || true
+if [ -f "${DOCKER_DIR}/docker-compose.yml" ] && [ -f "${CONFIG_DIR}/.env.local" ]; then
+    echo -e "${CYAN}Stopping services...${NC}"
+    cd "${DOCKER_DIR}"
+    docker compose -f docker-compose.yml --env-file "${CONFIG_DIR}/.env.local" down 2>/dev/null || true
+fi
 
 echo ""
 echo -e "${YELLOW}Do you want to remove all data (database, files)?${NC}"
@@ -55,7 +43,10 @@ fi
 
 if [[ "$REMOVE_DATA" =~ ^[Yy]$ ]]; then
     echo -e "${CYAN}Removing Docker volumes...${NC}"
-    docker compose -f docker-compose.local.yml --env-file .env.local down -v 2>/dev/null || true
+    if [ -f "${DOCKER_DIR}/docker-compose.yml" ] && [ -f "${CONFIG_DIR}/.env.local" ]; then
+        cd "${DOCKER_DIR}"
+        docker compose -f docker-compose.yml --env-file "${CONFIG_DIR}/.env.local" down -v 2>/dev/null || true
+    fi
     
     docker volume rm minimal_postgres_data 2>/dev/null || true
     docker volume rm minimal_minio_data 2>/dev/null || true
