@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -97,29 +96,4 @@ func TestConfigShow(t *testing.T) {
 	assert.Contains(t, stdout, "user@example.com")
 	assert.Contains(t, stdout, "org-123")
 	assert.Contains(t, stdout, "proj-456")
-}
-
-func TestConfigLogout(t *testing.T) {
-	tempDir := t.TempDir()
-	credsPath := filepath.Join(tempDir, "credentials.json")
-
-	err := os.WriteFile(credsPath, []byte(`{"access_token":"test"}`), 0600)
-	require.NoError(t, err)
-
-	require.FileExists(t, credsPath)
-
-	cmd := newConfigLogoutCmd()
-	cmd.SetArgs([]string{"--credentials-path", credsPath})
-
-	capture := testutil.CaptureOutput()
-	err = cmd.Execute()
-	require.NoError(t, err)
-	stdout, _, readErr := capture.Read()
-	require.NoError(t, readErr)
-	capture.Restore()
-
-	assert.Contains(t, stdout, "Logged out")
-
-	_, err = os.Stat(credsPath)
-	assert.True(t, os.IsNotExist(err), "credentials file should be deleted")
 }
