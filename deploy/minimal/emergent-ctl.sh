@@ -15,6 +15,7 @@
 #   shell       Open shell in server container
 #   rebuild     Rebuild and restart services
 #   uninstall   Run uninstall script
+#   auth        Set up Google Cloud authentication for embeddings
 #
 
 set -e
@@ -47,6 +48,7 @@ print_usage() {
     echo "  shell       Open shell in server container"
     echo "  rebuild     Rebuild and restart services"
     echo "  uninstall   Run uninstall script"
+    echo "  auth        Set up Google Cloud authentication for embeddings"
     echo ""
     echo "Examples:"
     echo "  emergent-ctl start"
@@ -149,6 +151,15 @@ cmd_uninstall() {
     fi
 }
 
+cmd_auth() {
+    if [ -f "$SCRIPT_DIR/emergent-auth.sh" ]; then
+        bash "$SCRIPT_DIR/emergent-auth.sh"
+    else
+        echo -e "${RED}Auth script not found${NC}"
+        exit 1
+    fi
+}
+
 # Main
 check_requirements
 
@@ -184,6 +195,9 @@ case "${1:-}" in
         ;;
     uninstall)
         cmd_uninstall
+        ;;
+    auth)
+        cmd_auth
         ;;
     -h|--help|help|"")
         print_usage
