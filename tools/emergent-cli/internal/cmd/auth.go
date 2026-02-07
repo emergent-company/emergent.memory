@@ -119,6 +119,27 @@ var statusCmd = &cobra.Command{
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
+	// First, check for API key authentication (standalone mode)
+	var configPath string
+	configPath, _ = cmd.Flags().GetString("config")
+	if configPath == "" {
+		configPath = config.DiscoverPath("")
+	}
+
+	cfg, err := config.LoadWithEnv(configPath)
+	if err == nil && cfg != nil && cfg.APIKey != "" {
+		fmt.Println("Authentication Status:")
+		fmt.Println()
+		fmt.Println("  Mode:        API Key (Standalone)")
+		fmt.Printf("  Server:      %s\n", cfg.ServerURL)
+		fmt.Printf("  API Key:     %s...%s\n", cfg.APIKey[:8], cfg.APIKey[len(cfg.APIKey)-4:])
+		fmt.Println("  Status:      ✓ Configured")
+		fmt.Println()
+		fmt.Println("Using API key authentication. No login required.")
+		return nil
+	}
+
+	// Fall back to OAuth credentials check
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)
@@ -130,7 +151,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Println("Not authenticated.")
-			fmt.Println("\nRun 'emergent-cli login' to authenticate.")
+			fmt.Println("\nRun 'emergent login' to authenticate, or configure an API key:")
+			fmt.Println("  export EMERGENT_API_KEY=your-api-key")
+			fmt.Println("  # or add 'api_key: your-api-key' to ~/.emergent/config.yaml")
 			return nil
 		}
 		return fmt.Errorf("failed to load credentials: %w", err)
@@ -138,6 +161,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("Authentication Status:")
 	fmt.Println()
+	fmt.Println("  Mode:        OAuth (Zitadel)")
 
 	if creds.UserEmail != "" {
 		fmt.Printf("  User:        %s\n", creds.UserEmail)
@@ -151,7 +175,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	if creds.IsExpired() {
 		fmt.Println("  Status:      ⚠️  EXPIRED")
-		fmt.Println("\nYour session has expired. Run 'emergent-cli login' to re-authenticate.")
+		fmt.Println("\nYour session has expired. Run 'emergent login' to re-authenticate.")
 	} else {
 		timeUntilExpiry := time.Until(creds.ExpiresAt)
 		fmt.Printf("  Status:      ✓ Valid (expires in %s)\n", timeUntilExpiry.Round(time.Minute))
