@@ -143,6 +143,44 @@ install_cli() {
     return 0
 }
 
+setup_path() {
+    local shell_rc=""
+    local path_line="export PATH=\"\$HOME/.emergent/bin:\$PATH\""
+    
+    # Detect shell config file (in order of preference)
+    if [ -f "$HOME/.zshrc" ]; then
+        shell_rc="$HOME/.zshrc"
+    elif [ -f "$HOME/.bashrc" ]; then
+        shell_rc="$HOME/.bashrc"
+    elif [ -f "$HOME/.bash_profile" ]; then
+        shell_rc="$HOME/.bash_profile"
+    elif [ -f "$HOME/.profile" ]; then
+        shell_rc="$HOME/.profile"
+    fi
+    
+    if [ -z "$shell_rc" ]; then
+        echo -e "${YELLOW}⚠${NC} Could not detect shell config file"
+        echo "  Add this to your shell config manually:"
+        echo "  $path_line"
+        return 1
+    fi
+    
+    # Check if already configured
+    if grep -q "\.emergent/bin" "$shell_rc" 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} PATH already configured in $shell_rc"
+        return 0
+    fi
+    
+    # Add to shell config
+    echo "" >> "$shell_rc"
+    echo "# Emergent CLI" >> "$shell_rc"
+    echo "$path_line" >> "$shell_rc"
+    
+    echo -e "${GREEN}✓${NC} Added to PATH in $shell_rc"
+    echo "  Run 'source $shell_rc' or restart your shell to activate"
+    return 0
+}
+
 echo -e "${CYAN}Installing to: ${INSTALL_DIR}${NC}"
 mkdir -p "${INSTALL_DIR}/bin"
 mkdir -p "${INSTALL_DIR}/config"
@@ -291,6 +329,8 @@ server_url: http://localhost:${SERVER_PORT}
 api_key: ${API_KEY}
 EOF
     echo -e "${GREEN}✓${NC} CLI config created at ${INSTALL_DIR}/config.yaml"
+    
+    setup_path
 fi
 
 if [ $WAITED -lt $MAX_WAIT ]; then
@@ -305,11 +345,8 @@ if [ $WAITED -lt $MAX_WAIT ]; then
     echo ""
     if [ "$CLI_INSTALLED" = true ]; then
         echo -e "${BOLD}CLI Commands:${NC}"
-        echo "  ${INSTALL_DIR}/bin/emergent projects list"
-        echo "  ${INSTALL_DIR}/bin/emergent status"
-        echo ""
-        echo -e "${BOLD}Add to PATH (optional):${NC}"
-        echo "  export PATH=\"${INSTALL_DIR}/bin:\$PATH\""
+        echo "  emergent projects list"
+        echo "  emergent status"
         echo ""
     else
         echo -e "${BOLD}Quick Commands:${NC}"
