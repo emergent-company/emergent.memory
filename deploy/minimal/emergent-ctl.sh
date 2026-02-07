@@ -1,38 +1,35 @@
 #!/bin/bash
-#
-# emergent-ctl - Emergent Standalone Management Script
-#
-# Usage: emergent-ctl <command> [options]
-#
-# Commands:
-#   start       Start all services
-#   stop        Stop all services
-#   restart     Restart all services
-#   status      Show service status
-#   logs        Show logs (add -f for follow, service name for specific)
-#   cli         Run emergent CLI command
-#   health      Check server health
-#   shell       Open shell in server container
-#   rebuild     Rebuild and restart services
-#   uninstall   Run uninstall script
-#   auth        Set up Google Cloud authentication for embeddings
-#
-
 set -e
 
-# Find installation directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="${SCRIPT_DIR%/deploy/minimal}"
-COMPOSE_DIR="$SCRIPT_DIR"
-ENV_FILE="$COMPOSE_DIR/.env.local"
-COMPOSE_FILE="$COMPOSE_DIR/docker-compose.local.yml"
+INSTALL_DIR="${SCRIPT_DIR%/bin}"
+CONFIG_DIR="$INSTALL_DIR/config"
+ENV_FILE="$CONFIG_DIR/.env.local"
 
-# Colors for output
+find_compose_file() {
+    if [ -f "$INSTALL_DIR/build/src/deploy/minimal/docker-compose.local.yml" ]; then
+        echo "$INSTALL_DIR/build/src/deploy/minimal/docker-compose.local.yml"
+    elif [ -f "$INSTALL_DIR/docker/docker-compose.yml" ]; then
+        echo "$INSTALL_DIR/docker/docker-compose.yml"
+    else
+        for f in "$HOME"/.emergent/*/deploy/minimal/docker-compose.local.yml; do
+            if [ -f "$f" ]; then
+                echo "$f"
+                return
+            fi
+        done
+        echo ""
+    fi
+}
+
+COMPOSE_FILE=$(find_compose_file)
+COMPOSE_DIR=$(dirname "$COMPOSE_FILE" 2>/dev/null || echo "")
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 print_usage() {
     echo "Usage: emergent-ctl <command> [options]"
@@ -62,9 +59,10 @@ check_requirements() {
         echo -e "${RED}Error: Docker is not installed${NC}"
         exit 1
     fi
-    if [ ! -f "$COMPOSE_FILE" ]; then
-        echo -e "${RED}Error: docker-compose.local.yml not found${NC}"
-        echo "Expected at: $COMPOSE_FILE"
+    if [ -z "$COMPOSE_FILE" ] || [ ! -f "$COMPOSE_FILE" ]; then
+        echo -e "${RED}Error: docker-compose file not found${NC}"
+        echo "Expected at: $INSTALL_DIR/build/src/deploy/minimal/docker-compose.local.yml"
+        echo "or: $INSTALL_DIR/docker/docker-compose.yml"
         exit 1
     fi
 }
@@ -114,7 +112,6 @@ cmd_cli() {
 }
 
 cmd_health() {
-    # Get server port from env file or use default
     SERVER_PORT="${SERVER_PORT:-3002}"
     if [ -f "$ENV_FILE" ]; then
         source "$ENV_FILE" 2>/dev/null || true
@@ -143,24 +140,20 @@ cmd_rebuild() {
 }
 
 cmd_uninstall() {
-    if [ -f "$COMPOSE_DIR/uninstall.sh" ]; then
-        bash "$COMPOSE_DIR/uninstall.sh"
-    else
-        echo -e "${RED}Uninstall script not found${NC}"
-        exit 1
-    fi
+    UNINSTALL_URL="https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/uninstall.sh"
+    echo -e "${BLUE}Running uninstaller...${NC}"
+    curl -fsSL "$UNINSTALL_URL" | bash
 }
 
 cmd_auth() {
-    if [ -f "$SCRIPT_DIR/emergent-auth.sh" ]; then
-        bash "$SCRIPT_DIR/emergent-auth.sh"
+    if [ -f "$SCRIPT_DIR/emergent-auth" ]; then
+        bash "$SCRIPT_DIR/emergent-auth"
     else
         echo -e "${RED}Auth script not found${NC}"
         exit 1
     fi
 }
 
-# Main
 check_requirements
 
 case "${1:-}" in
