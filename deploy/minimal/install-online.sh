@@ -20,18 +20,7 @@ echo -e "${BOLD}Emergent Standalone Installer${NC}"
 echo "=============================="
 echo ""
 
-if ! command -v docker >/dev/null 2>&1; then
-    echo -e "${RED}Error: Docker is required but not installed.${NC}"
-    echo "Install: https://docs.docker.com/get-docker/"
-    exit 1
-fi
-
-if ! docker compose version >/dev/null 2>&1; then
-    echo -e "${RED}Error: Docker Compose v2 is required but not installed.${NC}"
-    echo "Install: https://docs.docker.com/compose/install/"
-    exit 1
-fi
-
+# Function definitions must come before they are used
 generate_secret() {
     if command -v openssl >/dev/null 2>&1; then
         openssl rand -hex 32
@@ -180,6 +169,50 @@ setup_path() {
     echo "  Run 'source $shell_rc' or restart your shell to activate"
     return 0
 }
+
+# Client-Only Mode Check
+if [ "${CLIENT_ONLY:-}" = "true" ] || [ "${CLIENT_ONLY:-}" = "1" ]; then
+    echo -e "${CYAN}Running in Client-Only Mode${NC}"
+    echo "Skipping server and Docker checks..."
+    
+    echo -e "${CYAN}Installing CLI to: ${INSTALL_DIR}${NC}"
+    mkdir -p "${INSTALL_DIR}/bin"
+    
+    HOST_OS=$(detect_os)
+    HOST_ARCH=$(detect_arch)
+    
+    if [ "$CLI_VERSION" = "latest" ]; then
+        CLI_VERSION=$(get_latest_cli_version)
+    fi
+    
+    if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
+        setup_path
+        echo ""
+        echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${GREEN}${BOLD}  ✓ Emergent CLI Installed!${NC}"
+        echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        echo "Run 'emergent login' to authenticate with your server."
+        echo "Or set server URL: emergent config set-server <url>"
+        echo ""
+        exit 0
+    else
+        echo -e "${RED}Failed to install CLI${NC}"
+        exit 1
+    fi
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+    echo -e "${RED}Error: Docker is required but not installed.${NC}"
+    echo "Install: https://docs.docker.com/get-docker/"
+    exit 1
+fi
+
+if ! docker compose version >/dev/null 2>&1; then
+    echo -e "${RED}Error: Docker Compose v2 is required but not installed.${NC}"
+    echo "Install: https://docs.docker.com/compose/install/"
+    exit 1
+fi
 
 echo -e "${CYAN}Installing to: ${INSTALL_DIR}${NC}"
 mkdir -p "${INSTALL_DIR}/bin"
