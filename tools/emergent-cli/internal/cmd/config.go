@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
 	"github.com/olekukonko/tablewriter"
@@ -136,44 +135,9 @@ func newConfigShowCmd() *cobra.Command {
 	return cmd
 }
 
-func newConfigLogoutCmd() *cobra.Command {
-	var credsPath string
-
-	cmd := &cobra.Command{
-		Use:   "logout",
-		Short: "Clear stored credentials",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if credsPath == "" {
-				homeDir, err := os.UserHomeDir()
-				if err != nil {
-					return fmt.Errorf("failed to get home directory: %w", err)
-				}
-				credsPath = filepath.Join(homeDir, ".emergent", "credentials.json")
-			}
-
-			if _, err := os.Stat(credsPath); os.IsNotExist(err) {
-				fmt.Println("No credentials found")
-				return nil
-			}
-
-			if err := os.Remove(credsPath); err != nil {
-				return fmt.Errorf("failed to remove credentials: %w", err)
-			}
-
-			fmt.Println("Logged out successfully")
-			fmt.Printf("Credentials removed from: %s\n", credsPath)
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVar(&credsPath, "credentials-path", "", "path to credentials file")
-	return cmd
-}
-
 func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(newConfigSetServerCmd())
 	configCmd.AddCommand(newConfigSetCredentialsCmd())
 	configCmd.AddCommand(newConfigShowCmd())
-	configCmd.AddCommand(newConfigLogoutCmd())
 }
