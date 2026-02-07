@@ -286,11 +286,11 @@ CLI_INSTALLED=false
 if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
     CLI_INSTALLED=true
     
-    cat > "${INSTALL_DIR}/config/config.yaml" <<EOF
+    cat > "${INSTALL_DIR}/config.yaml" <<EOF
 server_url: http://localhost:${SERVER_PORT}
 api_key: ${API_KEY}
 EOF
-    echo -e "${GREEN}✓${NC} CLI config created at ${INSTALL_DIR}/config/config.yaml"
+    echo -e "${GREEN}✓${NC} CLI config created at ${INSTALL_DIR}/config.yaml"
 fi
 
 if [ $WAITED -lt $MAX_WAIT ]; then
