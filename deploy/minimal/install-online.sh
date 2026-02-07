@@ -158,11 +158,6 @@ else
     echo "  URL: http://localhost:${SERVER_PORT}"
     echo "  API Key: ${API_KEY}"
     echo ""
-    echo -e "${BOLD}MinIO Console:${NC}"
-    echo "  URL: http://localhost:19001"
-    echo "  User: minioadmin"
-    echo "  Password: (see .env.local)"
-    echo ""
     echo -e "${BOLD}Quick Commands:${NC}"
     echo "  docker exec emergent-server emergent projects list"
     echo "  docker exec emergent-server emergent status"
@@ -191,12 +186,6 @@ PostgreSQL:
   Password: ${POSTGRES_PASSWORD}
   Database: emergent
 
-MinIO:
-  Console: http://localhost:19001
-  API: http://localhost:19000
-  User: minioadmin
-  Password: ${MINIO_PASSWORD}
-
 Installation Directory: ${INSTALL_DIR}
 
 Quick Commands:
@@ -208,6 +197,9 @@ Management (emergent-ctl):
   ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh logs -f server
   ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh restart
   ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh health
+
+Google Cloud Setup (for embeddings):
+  ${INSTALL_DIR}/deploy/minimal/emergent-ctl.sh auth
 
 Uninstall:
   curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/uninstall.sh | bash
