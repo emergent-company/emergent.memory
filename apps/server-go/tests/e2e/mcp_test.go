@@ -554,3 +554,135 @@ func (s *MCPTestSuite) initializeMCPSessionWithProject(projectID string) {
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
 }
+
+// =============================================================================
+// Test: Unified MCP Endpoint (Spec 2025-11-25)
+// =============================================================================
+
+func (s *MCPTestSuite) TestUnified_POST_RequiresAuth() {
+	resp := s.Client.POST("/mcp",
+		testutil.WithJSON(),
+		testutil.WithBody(`{"jsonrpc": "2.0", "method": "initialize", "id": 1}`),
+	)
+	s.Equal(http.StatusUnauthorized, resp.StatusCode)
+}
+
+func (s *MCPTestSuite) TestUnified_POST_Initialize() {
+	resp := s.Client.POST("/mcp",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithHeader("Accept", "application/json, text/event-stream"),
+		testutil.WithJSONBody(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "initialize",
+			"id":      1,
+			"params": map[string]any{
+				"protocolVersion": "2025-11-25",
+				"clientInfo": map[string]any{
+					"name":    "test-client",
+					"version": "1.0.0",
+				},
+			},
+		}),
+	)
+
+	s.Equal(http.StatusOK, resp.StatusCode)
+
+	var body map[string]any
+	err := json.Unmarshal(resp.Body, &body)
+	s.NoError(err)
+
+	s.Equal("2.0", body["jsonrpc"])
+	s.Nil(body["error"])
+
+	result, ok := body["result"].(map[string]any)
+	s.True(ok)
+	s.Equal("2025-11-25", result["protocolVersion"])
+
+	sessionID := resp.Headers.Get("Mcp-Session-Id")
+	s.NotEmpty(sessionID, "Expected Mcp-Session-Id header")
+}
+
+func (s *MCPTestSuite) TestUnified_POST_SessionManagement() {
+	resp1 := s.Client.POST("/mcp",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithHeader("Accept", "application/json, text/event-stream"),
+		testutil.WithJSONBody(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "initialize",
+			"id":      1,
+			"params": map[string]any{
+				"protocolVersion": "2025-11-25",
+				"clientInfo":      map[string]any{"name": "test", "version": "1.0"},
+			},
+		}),
+	)
+	s.Equal(http.StatusOK, resp1.StatusCode)
+	sessionID := resp1.Headers.Get("Mcp-Session-Id")
+	s.NotEmpty(sessionID)
+
+	resp2 := s.Client.POST("/mcp",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithHeader("Accept", "application/json, text/event-stream"),
+		testutil.WithHeader("Mcp-Session-Id", sessionID),
+		testutil.WithJSONBody(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "tools/list",
+			"id":      2,
+		}),
+	)
+	s.Equal(http.StatusOK, resp2.StatusCode)
+
+	var body map[string]any
+	err := json.Unmarshal(resp2.Body, &body)
+	s.NoError(err)
+	s.Nil(body["error"])
+
+	result, ok := body["result"].(map[string]any)
+	s.True(ok)
+	tools, ok := result["tools"].([]any)
+	s.True(ok)
+	s.GreaterOrEqual(len(tools), 4)
+}
+
+func (s *MCPTestSuite) TestUnified_DELETE_TerminatesSession() {
+	resp1 := s.Client.POST("/mcp",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithHeader("Accept", "application/json, text/event-stream"),
+		testutil.WithJSONBody(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "initialize",
+			"id":      1,
+			"params": map[string]any{
+				"protocolVersion": "2025-11-25",
+				"clientInfo":      map[string]any{"name": "test", "version": "1.0"},
+			},
+		}),
+	)
+	sessionID := resp1.Headers.Get("Mcp-Session-Id")
+	s.NotEmpty(sessionID)
+
+	resp2 := s.Client.DELETE("/mcp",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithHeader("Mcp-Session-Id", sessionID),
+	)
+	s.Equal(http.StatusNoContent, resp2.StatusCode)
+
+	resp3 := s.Client.POST("/mcp",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithHeader("Accept", "application/json, text/event-stream"),
+		testutil.WithHeader("Mcp-Session-Id", sessionID),
+		testutil.WithJSONBody(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "tools/list",
+			"id":      3,
+		}),
+	)
+	s.Equal(http.StatusNotFound, resp3.StatusCode)
+}
+
+func (s *MCPTestSuite) TestUnified_DELETE_RequiresSessionID() {
+	resp := s.Client.DELETE("/mcp",
+		testutil.WithAuth("e2e-test-user"),
+	)
+	s.Equal(http.StatusBadRequest, resp.StatusCode)
+}
