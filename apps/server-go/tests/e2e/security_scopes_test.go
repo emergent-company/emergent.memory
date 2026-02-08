@@ -268,13 +268,13 @@ func (s *SecurityScopesTestSuite) TestChunks_AllowsReadScope() {
 // =============================================================================
 
 func (s *SecurityScopesTestSuite) TestProjects_RequiresAuth() {
-	resp := s.client.GET("/api/v2/projects")
+	resp := s.client.GET("/api/projects")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *SecurityScopesTestSuite) TestProjects_AllowsAnyAuthenticatedUser() {
 	// Go server doesn't enforce scopes on projects endpoint
-	resp := s.client.GET("/api/v2/projects",
+	resp := s.client.GET("/api/projects",
 		testutil.WithAuth("no-scope"),
 	)
 	// Go server: 200 (no scope enforcement) or NestJS: 403 (scope required)
@@ -282,7 +282,7 @@ func (s *SecurityScopesTestSuite) TestProjects_AllowsAnyAuthenticatedUser() {
 }
 
 func (s *SecurityScopesTestSuite) TestProjects_AllowsProjectReadScope() {
-	resp := s.client.GET("/api/v2/projects",
+	resp := s.client.GET("/api/projects",
 		testutil.WithAuth("with-scope"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)

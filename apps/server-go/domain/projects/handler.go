@@ -21,7 +21,7 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // List returns all projects the authenticated user is a member of
-// GET /api/v2/projects
+// GET /api/projects
 // Query params: limit (1-500, default 100), orgId (optional UUID filter)
 func (h *Handler) List(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -52,7 +52,7 @@ func (h *Handler) List(c echo.Context) error {
 }
 
 // Get returns a single project by ID
-// GET /api/v2/projects/:id
+// GET /api/projects/:id
 func (h *Handler) Get(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -70,7 +70,7 @@ func (h *Handler) Get(c echo.Context) error {
 }
 
 // Create creates a new project
-// POST /api/v2/projects
+// POST /api/projects
 func (h *Handler) Create(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -91,7 +91,7 @@ func (h *Handler) Create(c echo.Context) error {
 }
 
 // Update updates a project
-// PATCH /api/v2/projects/:id
+// PATCH /api/projects/:id
 func (h *Handler) Update(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -114,7 +114,7 @@ func (h *Handler) Update(c echo.Context) error {
 }
 
 // Delete deletes a project by ID
-// DELETE /api/v2/projects/:id
+// DELETE /api/projects/:id
 func (h *Handler) Delete(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -131,7 +131,7 @@ func (h *Handler) Delete(c echo.Context) error {
 }
 
 // ListMembers returns all members of a project
-// GET /api/v2/projects/:id/members
+// GET /api/projects/:id/members
 func (h *Handler) ListMembers(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -149,7 +149,7 @@ func (h *Handler) ListMembers(c echo.Context) error {
 }
 
 // RemoveMember removes a member from a project
-// DELETE /api/v2/projects/:id/members/:userId
+// DELETE /api/projects/:id/members/:userId
 func (h *Handler) RemoveMember(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

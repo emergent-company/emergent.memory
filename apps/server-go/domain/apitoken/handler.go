@@ -20,7 +20,7 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // Create creates a new API token
-// POST /api/v2/projects/:projectId/tokens
+// POST /api/projects/:projectId/tokens
 func (h *Handler) Create(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -57,7 +57,7 @@ func (h *Handler) Create(c echo.Context) error {
 }
 
 // List returns all API tokens for a project
-// GET /api/v2/projects/:projectId/tokens
+// GET /api/projects/:projectId/tokens
 func (h *Handler) List(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -78,7 +78,7 @@ func (h *Handler) List(c echo.Context) error {
 }
 
 // Get returns a single API token by ID
-// GET /api/v2/projects/:projectId/tokens/:tokenId
+// GET /api/projects/:projectId/tokens/:tokenId
 func (h *Handler) Get(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -104,7 +104,7 @@ func (h *Handler) Get(c echo.Context) error {
 }
 
 // Revoke revokes an API token
-// DELETE /api/v2/projects/:projectId/tokens/:tokenId
+// DELETE /api/projects/:projectId/tokens/:tokenId
 func (h *Handler) Revoke(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

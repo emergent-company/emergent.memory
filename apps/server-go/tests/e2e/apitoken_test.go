@@ -25,7 +25,7 @@ func (s *ApiTokenSuite) SetupSuite() {
 
 func (s *ApiTokenSuite) TestCreateToken_Success() {
 	rec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   "Test Token",
@@ -50,7 +50,7 @@ func (s *ApiTokenSuite) TestCreateToken_Success() {
 
 func (s *ApiTokenSuite) TestCreateToken_RequiresAuth() {
 	rec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithJSONBody(map[string]any{
 			"name":   "Test Token",
 			"scopes": []string{"schema:read"},
@@ -62,7 +62,7 @@ func (s *ApiTokenSuite) TestCreateToken_RequiresAuth() {
 
 func (s *ApiTokenSuite) TestCreateToken_MissingName() {
 	rec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"scopes": []string{"schema:read"},
@@ -74,7 +74,7 @@ func (s *ApiTokenSuite) TestCreateToken_MissingName() {
 
 func (s *ApiTokenSuite) TestCreateToken_MissingScopes() {
 	rec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name": "Test Token",
@@ -86,7 +86,7 @@ func (s *ApiTokenSuite) TestCreateToken_MissingScopes() {
 
 func (s *ApiTokenSuite) TestCreateToken_EmptyScopes() {
 	rec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   "Test Token",
@@ -99,7 +99,7 @@ func (s *ApiTokenSuite) TestCreateToken_EmptyScopes() {
 
 func (s *ApiTokenSuite) TestCreateToken_InvalidScope() {
 	rec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   "Test Token",
@@ -114,7 +114,7 @@ func (s *ApiTokenSuite) TestCreateToken_DuplicateName() {
 	// Create first token with unique name
 	tokenName := "Duplicate Name " + uuid.New().String()[:8]
 	rec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   tokenName,
@@ -125,7 +125,7 @@ func (s *ApiTokenSuite) TestCreateToken_DuplicateName() {
 
 	// Try to create second token with same name
 	rec = s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   tokenName,
@@ -142,7 +142,7 @@ func (s *ApiTokenSuite) TestCreateToken_NameTooLong() {
 	}
 
 	rec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   string(longName),
@@ -161,7 +161,7 @@ func (s *ApiTokenSuite) TestListTokens_ReturnsTokens() {
 	token2Name := "Token 2 " + uuid.New().String()[:8]
 
 	s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   token1Name,
@@ -169,7 +169,7 @@ func (s *ApiTokenSuite) TestListTokens_ReturnsTokens() {
 		}),
 	)
 	s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   token2Name,
@@ -178,7 +178,7 @@ func (s *ApiTokenSuite) TestListTokens_ReturnsTokens() {
 	)
 
 	rec := s.Client.GET(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -194,7 +194,7 @@ func (s *ApiTokenSuite) TestListTokens_ReturnsTokens() {
 }
 
 func (s *ApiTokenSuite) TestListTokens_RequiresAuth() {
-	rec := s.Client.GET("/api/v2/projects/" + s.ProjectID + "/tokens")
+	rec := s.Client.GET("/api/projects/" + s.ProjectID + "/tokens")
 
 	s.Equal(http.StatusUnauthorized, rec.StatusCode)
 }
@@ -203,7 +203,7 @@ func (s *ApiTokenSuite) TestListTokens_DoesNotIncludeTokenValue() {
 	// Create a token
 	tokenName := "Test Token " + uuid.New().String()[:8]
 	createRec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   tokenName,
@@ -214,7 +214,7 @@ func (s *ApiTokenSuite) TestListTokens_DoesNotIncludeTokenValue() {
 
 	// List tokens
 	rec := s.Client.GET(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -239,7 +239,7 @@ func (s *ApiTokenSuite) TestGetToken_Success() {
 	// Create a token
 	tokenName := "Test Token " + uuid.New().String()[:8]
 	createRec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   tokenName,
@@ -253,7 +253,7 @@ func (s *ApiTokenSuite) TestGetToken_Success() {
 
 	// Get the token
 	rec := s.Client.GET(
-		"/api/v2/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
+		"/api/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -272,7 +272,7 @@ func (s *ApiTokenSuite) TestGetToken_Success() {
 
 func (s *ApiTokenSuite) TestGetToken_NotFound() {
 	rec := s.Client.GET(
-		"/api/v2/projects/"+s.ProjectID+"/tokens/"+uuid.New().String(),
+		"/api/projects/"+s.ProjectID+"/tokens/"+uuid.New().String(),
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -280,7 +280,7 @@ func (s *ApiTokenSuite) TestGetToken_NotFound() {
 }
 
 func (s *ApiTokenSuite) TestGetToken_RequiresAuth() {
-	rec := s.Client.GET("/api/v2/projects/" + s.ProjectID + "/tokens/" + uuid.New().String())
+	rec := s.Client.GET("/api/projects/" + s.ProjectID + "/tokens/" + uuid.New().String())
 
 	s.Equal(http.StatusUnauthorized, rec.StatusCode)
 }
@@ -291,7 +291,7 @@ func (s *ApiTokenSuite) TestRevokeToken_Success() {
 	// Create a token
 	tokenName := "Token to Revoke " + uuid.New().String()[:8]
 	createRec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   tokenName,
@@ -305,7 +305,7 @@ func (s *ApiTokenSuite) TestRevokeToken_Success() {
 
 	// Revoke the token
 	rec := s.Client.DELETE(
-		"/api/v2/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
+		"/api/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -318,7 +318,7 @@ func (s *ApiTokenSuite) TestRevokeToken_Success() {
 
 	// Verify token is now revoked
 	getRecPost := s.Client.GET(
-		"/api/v2/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
+		"/api/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, getRecPost.StatusCode)
@@ -330,7 +330,7 @@ func (s *ApiTokenSuite) TestRevokeToken_Success() {
 
 func (s *ApiTokenSuite) TestRevokeToken_NotFound() {
 	rec := s.Client.DELETE(
-		"/api/v2/projects/"+s.ProjectID+"/tokens/"+uuid.New().String(),
+		"/api/projects/"+s.ProjectID+"/tokens/"+uuid.New().String(),
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -341,7 +341,7 @@ func (s *ApiTokenSuite) TestRevokeToken_AlreadyRevoked() {
 	// Create a token
 	tokenName := "Token to Revoke Twice " + uuid.New().String()[:8]
 	createRec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   tokenName,
@@ -355,21 +355,21 @@ func (s *ApiTokenSuite) TestRevokeToken_AlreadyRevoked() {
 
 	// Revoke once
 	rec := s.Client.DELETE(
-		"/api/v2/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
+		"/api/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, rec.StatusCode)
 
 	// Try to revoke again
 	rec = s.Client.DELETE(
-		"/api/v2/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
+		"/api/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusConflict, rec.StatusCode)
 }
 
 func (s *ApiTokenSuite) TestRevokeToken_RequiresAuth() {
-	rec := s.Client.DELETE("/api/v2/projects/" + s.ProjectID + "/tokens/" + uuid.New().String())
+	rec := s.Client.DELETE("/api/projects/" + s.ProjectID + "/tokens/" + uuid.New().String())
 
 	s.Equal(http.StatusUnauthorized, rec.StatusCode)
 }
@@ -383,7 +383,7 @@ func (s *ApiTokenSuite) TestCreateToken_DuplicateNameNotAllowedAfterRevoke() {
 	// Create first token
 	tokenName := "Unique Name " + uuid.New().String()[:8]
 	createRec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   tokenName,
@@ -397,14 +397,14 @@ func (s *ApiTokenSuite) TestCreateToken_DuplicateNameNotAllowedAfterRevoke() {
 
 	// Revoke it
 	revokeRec := s.Client.DELETE(
-		"/api/v2/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
+		"/api/projects/"+s.ProjectID+"/tokens/"+createResponse.ID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, revokeRec.StatusCode)
 
 	// Try to create new token with same name - should fail (names must be globally unique in project)
 	rec := s.Client.POST(
-		"/api/v2/projects/"+s.ProjectID+"/tokens",
+		"/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   tokenName,

@@ -456,7 +456,7 @@ func (s *TemplatePacksTestSuite) TestDeleteAssignment_DoesNotAffectOtherProjects
 
 // createProjectViaAPI creates a project via API and returns its ID
 func (s *TemplatePacksTestSuite) createProjectViaAPI(name string) string {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":  name,
