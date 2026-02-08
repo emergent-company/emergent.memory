@@ -14,5 +14,6 @@ var Module = fx.Module("mcp",
 	fx.Provide(NewService),
 	fx.Provide(NewHandler),
 	fx.Provide(NewSSEHandler),
+	fx.Provide(NewStreamableHTTPHandler),
 	fx.Invoke(RegisterRoutes),
 )
