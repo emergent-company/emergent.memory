@@ -147,6 +147,29 @@ else
     echo "🌐 Server URL: http://localhost:$SERVER_PORT"
     echo "🔑 API Key: $API_KEY"
     echo ""
+    
+    # Get project ID for MCP configuration
+    PROJECT_ID=$(docker exec emergent-server emergent-cli projects list --format=json 2>/dev/null | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//g' || echo "<PROJECT_ID>")
+    
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  📡 MCP Configuration (Claude Desktop, Cursor)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Add to your MCP client config:"
+    echo ""
+    echo "{"
+    echo "  \"servers\": {"
+    echo "    \"emergent\": {"
+    echo "      \"type\": \"sse\","
+    echo "      \"url\": \"http://localhost:$SERVER_PORT/api/mcp/sse/$PROJECT_ID\","
+    echo "      \"headers\": {"
+    echo "        \"X-API-Key\": \"$API_KEY\""
+    echo "      }"
+    echo "    }"
+    echo "  }"
+    echo "}"
+    echo ""
+    
     echo "Quick Commands:"
     echo "  # List projects"
     echo "  docker exec emergent-server emergent-cli projects list"
@@ -178,6 +201,19 @@ Generated: $(date)
 
 Server URL: http://localhost:$SERVER_PORT
 API Key: $API_KEY
+
+MCP Configuration (Claude Desktop, Cursor):
+{
+  "servers": {
+    "emergent": {
+      "type": "sse",
+      "url": "http://localhost:$SERVER_PORT/api/mcp/sse/$PROJECT_ID",
+      "headers": {
+        "X-API-Key": "$API_KEY"
+      }
+    }
+  }
+}
 
 PostgreSQL:
   Host: localhost:15432
