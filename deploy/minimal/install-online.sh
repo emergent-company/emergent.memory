@@ -184,7 +184,27 @@ if [ "${CLIENT_ONLY:-}" = "true" ] || [ "${CLIENT_ONLY:-}" = "1" ]; then
         echo -e "${GREEN}${BOLD}  ✓ Emergent CLI Installed!${NC}"
         echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
-        echo "Run 'emergent login' to authenticate."
+        echo -e "${CYAN}Next Steps:${NC}"
+        echo ""
+        echo "1. Connect to an Emergent server:"
+        echo "   emergent login --server-url <SERVER_URL> --api-key <API_KEY>"
+        echo ""
+        echo "2. Configure MCP for your AI agent:"
+        echo ""
+        cat << 'CLIENTMCPEOF'
+{
+  "mcpServers": {
+    "emergent": {
+      "command": "/path/to/emergent",
+      "args": ["mcp"]
+    }
+  }
+}
+CLIENTMCPEOF
+        echo ""
+        echo "   Replace /path/to/emergent with: ${INSTALL_DIR}/bin/emergent"
+        echo ""
+        echo -e "${YELLOW}Note:${NC} Restart your terminal for 'emergent' to be in PATH."
         echo ""
         exit 0
     else
@@ -460,4 +480,55 @@ echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "Server URL: http://localhost:${SERVER_PORT}"
 echo "API Key: ${API_KEY}"
+echo ""
+echo -e "${CYAN}${BOLD}🔌 MCP Configuration${NC}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "To connect your AI agent to Emergent, add this configuration:"
+echo ""
+echo -e "${BOLD}For Claude Desktop:${NC}"
+echo "  File: ~/.config/claude/claude_desktop_config.json (macOS/Linux)"
+echo "  File: %APPDATA%\\Claude\\claude_desktop_config.json (Windows)"
+echo ""
+echo -e "${BOLD}For Cline (VS Code):${NC}"
+echo "  Settings → MCP Servers → Edit in settings.json"
+echo ""
+echo -e "${BOLD}Configuration (copy this JSON):${NC}"
+echo ""
+cat << MCPEOF
+{
+  "mcpServers": {
+    "emergent": {
+      "command": "${INSTALL_DIR}/bin/emergent",
+      "args": ["mcp"],
+      "env": {
+        "EMERGENT_SERVER_URL": "http://localhost:${SERVER_PORT}",
+        "EMERGENT_API_KEY": "${API_KEY}"
+      }
+    }
+  }
+}
+MCPEOF
+echo ""
+echo -e "${YELLOW}Note:${NC} Restart your AI agent (Claude Desktop/VS Code) after adding this config."
+echo ""
+echo -e "${CYAN}Alternative: Use CLI login for simpler config${NC}"
+echo ""
+echo "  1. Run login command (restart terminal first):"
+echo "     emergent login --server-url http://localhost:${SERVER_PORT} --api-key ${API_KEY}"
+echo ""
+echo "  2. Then use this simplified MCP config:"
+echo ""
+cat << 'SIMPLEEOF'
+{
+  "mcpServers": {
+    "emergent": {
+      "command": "emergent",
+      "args": ["mcp"]
+    }
+  }
+}
+SIMPLEEOF
+echo ""
+echo -e "${CYAN}📚 Documentation:${NC} https://github.com/Emergent-Comapny/emergent"
 echo ""
