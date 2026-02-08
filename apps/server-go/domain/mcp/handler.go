@@ -39,7 +39,7 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 	}
 }
 
-// HandleRPC handles POST /mcp/rpc - JSON-RPC 2.0 endpoint
+// HandleRPC handles POST /mcp/rpc - JSON-RPC 2.0 endpoint (legacy)
 func (h *Handler) HandleRPC(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
