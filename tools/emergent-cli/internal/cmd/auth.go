@@ -51,7 +51,7 @@ func fetchHealth(serverURL string) (*healthResponse, error) {
 // fetchProjects fetches the list of projects
 func fetchProjects(serverURL, apiKey string) ([]projectResponse, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", serverURL+"/api/projects", nil)
+	req, err := http.NewRequest("GET", serverURL+"/api/v2/projects", nil)
 	if err != nil {
 		return nil, err
 	}
