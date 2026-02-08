@@ -171,7 +171,11 @@ if [ "${CLIENT_ONLY:-}" = "true" ] || [ "${CLIENT_ONLY:-}" = "1" ]; then
     
     HOST_OS=$(detect_os)
     HOST_ARCH=$(detect_arch)
-    CLI_VERSION="${CLI_VERSION:-$(get_latest_cli_version)}"
+    
+    # Resolve "latest" to actual version tag
+    if [ "$CLI_VERSION" = "latest" ]; then
+        CLI_VERSION=$(get_latest_cli_version)
+    fi
     
     if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
         setup_path
@@ -433,7 +437,10 @@ echo ""
 echo -e "${CYAN}Installing Emergent CLI...${NC}"
 HOST_OS=$(detect_os)
 HOST_ARCH=$(detect_arch)
-CLI_VERSION="${CLI_VERSION:-$(get_latest_cli_version)}"
+
+if [ "$CLI_VERSION" = "latest" ]; then
+    CLI_VERSION=$(get_latest_cli_version)
+fi
 
 CLI_INSTALLED=false
 if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
