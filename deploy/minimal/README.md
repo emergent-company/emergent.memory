@@ -7,47 +7,47 @@ Single-user deployment with MCP access and secure Tailscale networking.
 **Copy and paste this into your terminal:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install-online.sh | bash
 ```
 
 That's it! The installer will:
 
-- ✅ Download Emergent
+- ✅ Pull pre-built Docker images
 - ✅ Generate secure passwords automatically
-- ✅ Build Docker images
 - ✅ Start all services
-- ✅ Verify installation
+- ✅ Install the CLI
+- ✅ Configure MCP
 
 **Installation takes ~2-3 minutes.**
 
 After installation:
 
 ```bash
-# Your API key and credentials are saved to:
-~/emergent-standalone/deploy/minimal/credentials.txt
-
 # Test the installation
-docker exec emergent-server emergent-cli projects list
+emergent projects list
+
+# Your credentials are in the CLI config
+cat ~/.emergent/config.yaml
 ```
 
 ## Stack Components
 
-- **Go Backend with CLI** - API server + emergent-cli binary (port 3002)
+- **Go Backend** - API server (port 3002)
+- **Emergent CLI** - Local management tool
 - **PostgreSQL** - Database with pgvector extension
 - **Kreuzberg** - Document extraction service (56+ file formats)
 - **MinIO** - S3-compatible object storage
-- **Tailscale** - Secure network access (optional)
 
 ### CLI Access
 
-The server container includes the `emergent-cli` binary for management:
+The CLI is installed locally at `~/.emergent/bin/emergent`:
 
 ```bash
 # List projects
-docker exec emergent-server emergent-cli projects list
+emergent projects list
 
-# Interactive shell
-docker exec -it emergent-server sh
+# Check status
+emergent status
 ```
 
 See [CLI_USAGE.md](./CLI_USAGE.md) for complete CLI documentation.
