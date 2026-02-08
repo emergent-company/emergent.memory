@@ -271,7 +271,7 @@ func TestPerformanceBenchmark(t *testing.T) {
 				client.WithProjectID(projectID),
 				client.WithQuery("limit", "10"),
 			}},
-			{"List Projects", "GET", "/api/v2/projects", nil, []client.Option{
+			{"List Projects", "GET", "/api/projects", nil, []client.Option{
 				client.WithAuth(tokens.Admin()),
 			}},
 		}

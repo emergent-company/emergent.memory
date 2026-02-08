@@ -66,7 +66,7 @@
       "requests_per_second": 4116.559425079335
     },
     {
-      "endpoint": "/api/v2/projects",
+      "endpoint": "/api/projects",
       "method": "GET",
       "total_requests": 500,
       "success_requests": 0,

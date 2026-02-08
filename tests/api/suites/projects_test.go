@@ -32,7 +32,7 @@ func (s *ProjectsTestSuite) SetupTest() {
 func (s *ProjectsTestSuite) TearDownTest() {
 	// Clean up projects first (due to FK constraints)
 	for _, id := range s.createdProjectIDs {
-		_, _ = s.Client.DELETE("/api/v2/projects/"+id, s.AdminAuth())
+		_, _ = s.Client.DELETE("/api/projects/"+id, s.AdminAuth())
 	}
 	// Clean up orgs
 	for _, id := range s.createdOrgIDs {
@@ -71,7 +71,7 @@ func (s *ProjectsTestSuite) createOrg(name string) (string, error) {
 // createProject creates a project via API and tracks for cleanup.
 func (s *ProjectsTestSuite) createProject(orgID, name string) (string, error) {
 	body := map[string]any{"name": name, "orgId": orgID}
-	resp, err := s.Client.POST("/api/v2/projects", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/projects", body, s.AdminAuth())
 	if err != nil {
 		return "", err
 	}
@@ -109,14 +109,14 @@ func (s *ProjectsTestSuite) getAdminUserID() string {
 // =============================================================================
 
 func (s *ProjectsTestSuite) TestListProjects_RequiresAuth() {
-	resp, err := s.Client.GET("/api/v2/projects")
+	resp, err := s.Client.GET("/api/projects")
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestListProjects_ReturnsUserProjects() {
 	// Admin user already has access to the default test project
-	resp, err := s.Client.GET("/api/v2/projects", s.AdminAuth())
+	resp, err := s.Client.GET("/api/projects", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -140,7 +140,7 @@ func (s *ProjectsTestSuite) TestListProjects_FilterByOrgId() {
 	s.Require().NoError(err)
 
 	// Filter by org1 should only return project1
-	resp, err := s.Client.GET("/api/v2/projects?orgId="+org1ID, s.AdminAuth())
+	resp, err := s.Client.GET("/api/projects?orgId="+org1ID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -162,7 +162,7 @@ func (s *ProjectsTestSuite) TestListProjects_WithLimit() {
 	}
 
 	// Request with limit=3
-	resp, err := s.Client.GET("/api/v2/projects?orgId="+orgID+"&limit=3", s.AdminAuth())
+	resp, err := s.Client.GET("/api/projects?orgId="+orgID+"&limit=3", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -177,20 +177,20 @@ func (s *ProjectsTestSuite) TestListProjects_WithLimit() {
 // =============================================================================
 
 func (s *ProjectsTestSuite) TestGetProject_RequiresAuth() {
-	resp, err := s.Client.GET("/api/v2/projects/" + testutil.DefaultTestProject.ID)
+	resp, err := s.Client.GET("/api/projects/" + testutil.DefaultTestProject.ID)
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestGetProject_InvalidUUID() {
-	resp, err := s.Client.GET("/api/v2/projects/invalid-uuid", s.AdminAuth())
+	resp, err := s.Client.GET("/api/projects/invalid-uuid", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestGetProject_NotFound() {
 	notFoundID := "00000000-0000-0000-0000-000000000999"
-	resp, err := s.Client.GET("/api/v2/projects/"+notFoundID, s.AdminAuth())
+	resp, err := s.Client.GET("/api/projects/"+notFoundID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -202,7 +202,7 @@ func (s *ProjectsTestSuite) TestGetProject_Success() {
 	projectID, err := s.createProject(orgID, "Get Test Project")
 	s.Require().NoError(err)
 
-	resp, err := s.Client.GET("/api/v2/projects/"+projectID, s.AdminAuth())
+	resp, err := s.Client.GET("/api/projects/"+projectID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -220,7 +220,7 @@ func (s *ProjectsTestSuite) TestGetProject_Success() {
 
 func (s *ProjectsTestSuite) TestCreateProject_RequiresAuth() {
 	body := map[string]any{"name": "Unauth Project", "orgId": uuid.New().String()}
-	resp, err := s.Client.POST("/api/v2/projects", body)
+	resp, err := s.Client.POST("/api/projects", body)
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
@@ -231,7 +231,7 @@ func (s *ProjectsTestSuite) TestCreateProject_Success() {
 	s.Require().NoError(err)
 
 	body := map[string]any{"name": "New Test Project", "orgId": orgID}
-	resp, err := s.Client.POST("/api/v2/projects", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/projects", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusCreated, resp.StatusCode)
 
@@ -254,14 +254,14 @@ func (s *ProjectsTestSuite) TestCreateProject_EmptyName() {
 	s.Require().NoError(err)
 
 	body := map[string]any{"name": "", "orgId": orgID}
-	resp, err := s.Client.POST("/api/v2/projects", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/projects", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestCreateProject_MissingOrgId() {
 	body := map[string]any{"name": "Missing Org Project"}
-	resp, err := s.Client.POST("/api/v2/projects", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/projects", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -269,7 +269,7 @@ func (s *ProjectsTestSuite) TestCreateProject_MissingOrgId() {
 func (s *ProjectsTestSuite) TestCreateProject_OrgNotFound() {
 	nonExistentOrgID := "00000000-0000-0000-0000-000000000999"
 	body := map[string]any{"name": "Orphan Project", "orgId": nonExistentOrgID}
-	resp, err := s.Client.POST("/api/v2/projects", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/projects", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -285,7 +285,7 @@ func (s *ProjectsTestSuite) TestCreateProject_DuplicateName() {
 
 	// Try to create second project with same name in same org
 	body := map[string]any{"name": "Duplicate Name", "orgId": orgID}
-	resp, err := s.Client.POST("/api/v2/projects", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/projects", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -296,7 +296,7 @@ func (s *ProjectsTestSuite) TestCreateProject_TrimsWhitespace() {
 	s.Require().NoError(err)
 
 	body := map[string]any{"name": "  Trimmed Name  ", "orgId": orgID}
-	resp, err := s.Client.POST("/api/v2/projects", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/projects", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusCreated, resp.StatusCode)
 
@@ -317,14 +317,14 @@ func (s *ProjectsTestSuite) TestCreateProject_TrimsWhitespace() {
 
 func (s *ProjectsTestSuite) TestUpdateProject_RequiresAuth() {
 	body := map[string]any{"name": "Updated Name"}
-	resp, err := s.Client.PATCH("/api/v2/projects/"+testutil.DefaultTestProject.ID, body)
+	resp, err := s.Client.PATCH("/api/projects/"+testutil.DefaultTestProject.ID, body)
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestUpdateProject_InvalidUUID() {
 	body := map[string]any{"name": "Updated Name"}
-	resp, err := s.Client.PATCH("/api/v2/projects/invalid-uuid", body, s.AdminAuth())
+	resp, err := s.Client.PATCH("/api/projects/invalid-uuid", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -332,7 +332,7 @@ func (s *ProjectsTestSuite) TestUpdateProject_InvalidUUID() {
 func (s *ProjectsTestSuite) TestUpdateProject_NotFound() {
 	notFoundID := "00000000-0000-0000-0000-000000000999"
 	body := map[string]any{"name": "Updated Name"}
-	resp, err := s.Client.PATCH("/api/v2/projects/"+notFoundID, body, s.AdminAuth())
+	resp, err := s.Client.PATCH("/api/projects/"+notFoundID, body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -345,7 +345,7 @@ func (s *ProjectsTestSuite) TestUpdateProject_Success() {
 	s.Require().NoError(err)
 
 	body := map[string]any{"name": "Updated Name"}
-	resp, err := s.Client.PATCH("/api/v2/projects/"+projectID, body, s.AdminAuth())
+	resp, err := s.Client.PATCH("/api/projects/"+projectID, body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -365,7 +365,7 @@ func (s *ProjectsTestSuite) TestUpdateProject_PartialUpdate() {
 
 	// Update only kb_purpose
 	body := map[string]any{"kb_purpose": "Test purpose"}
-	resp, err := s.Client.PATCH("/api/v2/projects/"+projectID, body, s.AdminAuth())
+	resp, err := s.Client.PATCH("/api/projects/"+projectID, body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -386,7 +386,7 @@ func (s *ProjectsTestSuite) TestUpdateProject_EmptyUpdate() {
 
 	// Empty update should still return OK
 	body := map[string]any{}
-	resp, err := s.Client.PATCH("/api/v2/projects/"+projectID, body, s.AdminAuth())
+	resp, err := s.Client.PATCH("/api/projects/"+projectID, body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -402,20 +402,20 @@ func (s *ProjectsTestSuite) TestUpdateProject_EmptyUpdate() {
 // =============================================================================
 
 func (s *ProjectsTestSuite) TestDeleteProject_RequiresAuth() {
-	resp, err := s.Client.DELETE("/api/v2/projects/" + testutil.DefaultTestProject.ID)
+	resp, err := s.Client.DELETE("/api/projects/" + testutil.DefaultTestProject.ID)
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestDeleteProject_InvalidUUID() {
-	resp, err := s.Client.DELETE("/api/v2/projects/invalid-uuid", s.AdminAuth())
+	resp, err := s.Client.DELETE("/api/projects/invalid-uuid", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestDeleteProject_NotFound() {
 	notFoundID := "00000000-0000-0000-0000-000000000999"
-	resp, err := s.Client.DELETE("/api/v2/projects/"+notFoundID, s.AdminAuth())
+	resp, err := s.Client.DELETE("/api/projects/"+notFoundID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -427,12 +427,12 @@ func (s *ProjectsTestSuite) TestDeleteProject_Success() {
 	projectID, err := s.createProject(orgID, "To Delete")
 	s.Require().NoError(err)
 
-	resp, err := s.Client.DELETE("/api/v2/projects/"+projectID, s.AdminAuth())
+	resp, err := s.Client.DELETE("/api/projects/"+projectID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	// Verify project is no longer accessible
-	getResp, err := s.Client.GET("/api/v2/projects/"+projectID, s.AdminAuth())
+	getResp, err := s.Client.GET("/api/projects/"+projectID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, getResp.StatusCode)
 
@@ -450,20 +450,20 @@ func (s *ProjectsTestSuite) TestDeleteProject_Success() {
 // =============================================================================
 
 func (s *ProjectsTestSuite) TestListMembers_RequiresAuth() {
-	resp, err := s.Client.GET("/api/v2/projects/" + testutil.DefaultTestProject.ID + "/members")
+	resp, err := s.Client.GET("/api/projects/" + testutil.DefaultTestProject.ID + "/members")
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestListMembers_InvalidUUID() {
-	resp, err := s.Client.GET("/api/v2/projects/invalid-uuid/members", s.AdminAuth())
+	resp, err := s.Client.GET("/api/projects/invalid-uuid/members", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestListMembers_ProjectNotFound() {
 	notFoundID := "00000000-0000-0000-0000-000000000999"
-	resp, err := s.Client.GET("/api/v2/projects/"+notFoundID+"/members", s.AdminAuth())
+	resp, err := s.Client.GET("/api/projects/"+notFoundID+"/members", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -475,7 +475,7 @@ func (s *ProjectsTestSuite) TestListMembers_Success() {
 	projectID, err := s.createProject(orgID, "Members Test Project")
 	s.Require().NoError(err)
 
-	resp, err := s.Client.GET("/api/v2/projects/"+projectID+"/members", s.AdminAuth())
+	resp, err := s.Client.GET("/api/projects/"+projectID+"/members", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -492,7 +492,7 @@ func (s *ProjectsTestSuite) TestListMembers_Success() {
 
 func (s *ProjectsTestSuite) TestRemoveMember_RequiresAuth() {
 	userID := uuid.New().String()
-	resp, err := s.Client.DELETE("/api/v2/projects/" + testutil.DefaultTestProject.ID + "/members/" + userID)
+	resp, err := s.Client.DELETE("/api/projects/" + testutil.DefaultTestProject.ID + "/members/" + userID)
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
@@ -500,7 +500,7 @@ func (s *ProjectsTestSuite) TestRemoveMember_RequiresAuth() {
 func (s *ProjectsTestSuite) TestRemoveMember_ProjectNotFound() {
 	notFoundID := "00000000-0000-0000-0000-000000000999"
 	userID := uuid.New().String()
-	resp, err := s.Client.DELETE("/api/v2/projects/"+notFoundID+"/members/"+userID, s.AdminAuth())
+	resp, err := s.Client.DELETE("/api/projects/"+notFoundID+"/members/"+userID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -514,7 +514,7 @@ func (s *ProjectsTestSuite) TestRemoveMember_MemberNotFound() {
 
 	// Try to remove a user who is not a member
 	nonMemberID := "99999999-9999-9999-9999-999999999999"
-	resp, err := s.Client.DELETE("/api/v2/projects/"+projectID+"/members/"+nonMemberID, s.AdminAuth())
+	resp, err := s.Client.DELETE("/api/projects/"+projectID+"/members/"+nonMemberID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -532,7 +532,7 @@ func (s *ProjectsTestSuite) TestRemoveMember_Success() {
 	s.Require().NoError(err)
 
 	// Remove the second admin
-	resp, err := s.Client.DELETE("/api/v2/projects/"+projectID+"/members/"+secondAdminID, s.AdminAuth())
+	resp, err := s.Client.DELETE("/api/projects/"+projectID+"/members/"+secondAdminID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 }
@@ -548,7 +548,7 @@ func (s *ProjectsTestSuite) TestRemoveMember_CannotRemoveLastAdmin() {
 	adminID := s.getAdminUserID()
 
 	// Try to remove the only admin - should fail
-	resp, err := s.Client.DELETE("/api/v2/projects/"+projectID+"/members/"+adminID, s.AdminAuth())
+	resp, err := s.Client.DELETE("/api/projects/"+projectID+"/members/"+adminID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusForbidden, resp.StatusCode)
 }

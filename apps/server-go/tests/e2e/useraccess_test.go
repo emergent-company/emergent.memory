@@ -42,7 +42,7 @@ func (s *UserAccessTestSuite) createOrgViaAPI(name string) string {
 
 // Helper to create a project via API and return its ID
 func (s *UserAccessTestSuite) createProjectViaAPI(orgID, name string) string {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "%s", "orgId": "%s"}`, name, orgID)),

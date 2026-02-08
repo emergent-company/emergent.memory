@@ -42,7 +42,7 @@ func (s *ProjectsTestSuite) createOrgViaAPI(name string) string {
 
 // Helper to create a project via API and return its ID
 func (s *ProjectsTestSuite) createProjectViaAPI(orgID, name string) string {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "%s", "orgId": "%s"}`, name, orgID)),
@@ -60,13 +60,13 @@ func (s *ProjectsTestSuite) createProjectViaAPI(orgID, name string) string {
 // =============================================================================
 
 func (s *ProjectsTestSuite) TestListProjects_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/projects")
+	resp := s.Client.GET("/api/projects")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestListProjects_ReturnsUserProjects() {
 	// BaseSuite already creates a project via API
-	resp := s.Client.GET("/api/v2/projects",
+	resp := s.Client.GET("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -95,7 +95,7 @@ func (s *ProjectsTestSuite) TestListProjects_FilterByOrgId() {
 	project1ID := s.createProjectViaAPI(org1ID, "Project in Org 1")
 
 	// Filter by the new org
-	resp := s.Client.GET("/api/v2/projects?orgId="+org1ID,
+	resp := s.Client.GET("/api/projects?orgId="+org1ID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -109,7 +109,7 @@ func (s *ProjectsTestSuite) TestListProjects_FilterByOrgId() {
 }
 
 func (s *ProjectsTestSuite) TestListProjects_InvalidOrgIdReturnsEmpty() {
-	resp := s.Client.GET("/api/v2/projects?orgId=invalid-uuid",
+	resp := s.Client.GET("/api/projects?orgId=invalid-uuid",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -128,7 +128,7 @@ func (s *ProjectsTestSuite) TestListProjects_WithLimit() {
 		s.createProjectViaAPI(orgID, fmt.Sprintf("Limit Test Project %d", i))
 	}
 
-	resp := s.Client.GET("/api/v2/projects?orgId="+orgID+"&limit=3",
+	resp := s.Client.GET("/api/projects?orgId="+orgID+"&limit=3",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -145,12 +145,12 @@ func (s *ProjectsTestSuite) TestListProjects_WithLimit() {
 // =============================================================================
 
 func (s *ProjectsTestSuite) TestGetProject_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/projects/some-id")
+	resp := s.Client.GET("/api/projects/some-id")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestGetProject_InvalidUUID() {
-	resp := s.Client.GET("/api/v2/projects/invalid-uuid",
+	resp := s.Client.GET("/api/projects/invalid-uuid",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -166,7 +166,7 @@ func (s *ProjectsTestSuite) TestGetProject_InvalidUUID() {
 }
 
 func (s *ProjectsTestSuite) TestGetProject_NotFound() {
-	resp := s.Client.GET("/api/v2/projects/00000000-0000-0000-0000-000000000000",
+	resp := s.Client.GET("/api/projects/00000000-0000-0000-0000-000000000000",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -175,7 +175,7 @@ func (s *ProjectsTestSuite) TestGetProject_NotFound() {
 
 func (s *ProjectsTestSuite) TestGetProject_Success() {
 	// Use the default project created by BaseSuite
-	resp := s.Client.GET("/api/v2/projects/"+s.ProjectID,
+	resp := s.Client.GET("/api/projects/"+s.ProjectID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -193,7 +193,7 @@ func (s *ProjectsTestSuite) TestGetProject_Success() {
 // =============================================================================
 
 func (s *ProjectsTestSuite) TestCreateProject_RequiresAuth() {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "New Project", "orgId": "%s"}`, s.OrgID)),
 	)
@@ -202,7 +202,7 @@ func (s *ProjectsTestSuite) TestCreateProject_RequiresAuth() {
 }
 
 func (s *ProjectsTestSuite) TestCreateProject_Success() {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "New Project", "orgId": "%s"}`, s.OrgID)),
@@ -218,7 +218,7 @@ func (s *ProjectsTestSuite) TestCreateProject_Success() {
 	s.Equal(s.OrgID, project["orgId"])
 
 	// Verify the project appears in list
-	listResp := s.Client.GET("/api/v2/projects",
+	listResp := s.Client.GET("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, listResp.StatusCode)
@@ -238,7 +238,7 @@ func (s *ProjectsTestSuite) TestCreateProject_Success() {
 }
 
 func (s *ProjectsTestSuite) TestCreateProject_TrimsWhitespace() {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "  Trimmed Name  ", "orgId": "%s"}`, s.OrgID)),
@@ -253,7 +253,7 @@ func (s *ProjectsTestSuite) TestCreateProject_TrimsWhitespace() {
 }
 
 func (s *ProjectsTestSuite) TestCreateProject_EmptyName() {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "", "orgId": "%s"}`, s.OrgID)),
@@ -271,7 +271,7 @@ func (s *ProjectsTestSuite) TestCreateProject_EmptyName() {
 }
 
 func (s *ProjectsTestSuite) TestCreateProject_MissingOrgId() {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "New Project"}`),
@@ -289,7 +289,7 @@ func (s *ProjectsTestSuite) TestCreateProject_MissingOrgId() {
 }
 
 func (s *ProjectsTestSuite) TestCreateProject_OrgNotFound() {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "New Project", "orgId": "00000000-0000-0000-0000-000000000000"}`),
@@ -308,7 +308,7 @@ func (s *ProjectsTestSuite) TestCreateProject_OrgNotFound() {
 
 func (s *ProjectsTestSuite) TestCreateProject_DuplicateName() {
 	// Create first project
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "Duplicate Name", "orgId": "%s"}`, s.OrgID)),
@@ -316,7 +316,7 @@ func (s *ProjectsTestSuite) TestCreateProject_DuplicateName() {
 	s.Equal(http.StatusCreated, resp.StatusCode)
 
 	// Try to create second project with same name in same org
-	resp = s.Client.POST("/api/v2/projects",
+	resp = s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "Duplicate Name", "orgId": "%s"}`, s.OrgID)),
@@ -334,7 +334,7 @@ func (s *ProjectsTestSuite) TestCreateProject_DuplicateName() {
 }
 
 func (s *ProjectsTestSuite) TestCreateProject_CreatorBecomesAdmin() {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "Admin Test Project", "orgId": "%s"}`, s.OrgID)),
@@ -348,7 +348,7 @@ func (s *ProjectsTestSuite) TestCreateProject_CreatorBecomesAdmin() {
 	projectID := project["id"].(string)
 
 	// Verify user can list members (proves they have admin access)
-	membersResp := s.Client.GET("/api/v2/projects/"+projectID+"/members",
+	membersResp := s.Client.GET("/api/projects/"+projectID+"/members",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, membersResp.StatusCode)
@@ -365,7 +365,7 @@ func (s *ProjectsTestSuite) TestCreateProject_CreatorBecomesAdmin() {
 // =============================================================================
 
 func (s *ProjectsTestSuite) TestUpdateProject_RequiresAuth() {
-	resp := s.Client.PATCH("/api/v2/projects/some-id",
+	resp := s.Client.PATCH("/api/projects/some-id",
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "Updated Name"}`),
 	)
@@ -374,7 +374,7 @@ func (s *ProjectsTestSuite) TestUpdateProject_RequiresAuth() {
 }
 
 func (s *ProjectsTestSuite) TestUpdateProject_InvalidUUID() {
-	resp := s.Client.PATCH("/api/v2/projects/invalid-uuid",
+	resp := s.Client.PATCH("/api/projects/invalid-uuid",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "Updated Name"}`),
@@ -384,7 +384,7 @@ func (s *ProjectsTestSuite) TestUpdateProject_InvalidUUID() {
 }
 
 func (s *ProjectsTestSuite) TestUpdateProject_NotFound() {
-	resp := s.Client.PATCH("/api/v2/projects/00000000-0000-0000-0000-000000000000",
+	resp := s.Client.PATCH("/api/projects/00000000-0000-0000-0000-000000000000",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "Updated Name"}`),
@@ -397,7 +397,7 @@ func (s *ProjectsTestSuite) TestUpdateProject_Success() {
 	// Create a project to update
 	projectID := s.createProjectViaAPI(s.OrgID, "Original Name")
 
-	resp := s.Client.PATCH("/api/v2/projects/"+projectID,
+	resp := s.Client.PATCH("/api/projects/"+projectID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "Updated Name"}`),
@@ -417,7 +417,7 @@ func (s *ProjectsTestSuite) TestUpdateProject_PartialUpdate() {
 	projectID := s.createProjectViaAPI(s.OrgID, "Original Name for Partial")
 
 	// Update only kb_purpose
-	resp := s.Client.PATCH("/api/v2/projects/"+projectID,
+	resp := s.Client.PATCH("/api/projects/"+projectID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"kb_purpose": "Test purpose"}`),
@@ -437,7 +437,7 @@ func (s *ProjectsTestSuite) TestUpdateProject_EmptyUpdate() {
 	projectID := s.createProjectViaAPI(s.OrgID, "Name for Empty Update")
 
 	// Empty update should return current project
-	resp := s.Client.PATCH("/api/v2/projects/"+projectID,
+	resp := s.Client.PATCH("/api/projects/"+projectID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{}`),
@@ -456,12 +456,12 @@ func (s *ProjectsTestSuite) TestUpdateProject_EmptyUpdate() {
 // =============================================================================
 
 func (s *ProjectsTestSuite) TestDeleteProject_RequiresAuth() {
-	resp := s.Client.DELETE("/api/v2/projects/some-id")
+	resp := s.Client.DELETE("/api/projects/some-id")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestDeleteProject_InvalidUUID() {
-	resp := s.Client.DELETE("/api/v2/projects/invalid-uuid",
+	resp := s.Client.DELETE("/api/projects/invalid-uuid",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -469,7 +469,7 @@ func (s *ProjectsTestSuite) TestDeleteProject_InvalidUUID() {
 }
 
 func (s *ProjectsTestSuite) TestDeleteProject_NotFound() {
-	resp := s.Client.DELETE("/api/v2/projects/00000000-0000-0000-0000-000000000000",
+	resp := s.Client.DELETE("/api/projects/00000000-0000-0000-0000-000000000000",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -480,7 +480,7 @@ func (s *ProjectsTestSuite) TestDeleteProject_Success() {
 	// Create a project to delete
 	projectID := s.createProjectViaAPI(s.OrgID, "To Delete")
 
-	resp := s.Client.DELETE("/api/v2/projects/"+projectID,
+	resp := s.Client.DELETE("/api/projects/"+projectID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -492,7 +492,7 @@ func (s *ProjectsTestSuite) TestDeleteProject_Success() {
 	s.Equal("deleted", body["status"])
 
 	// Verify project is soft-deleted (not visible via GET)
-	getResp := s.Client.GET("/api/v2/projects/"+projectID,
+	getResp := s.Client.GET("/api/projects/"+projectID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusNotFound, getResp.StatusCode)
@@ -503,12 +503,12 @@ func (s *ProjectsTestSuite) TestDeleteProject_Success() {
 // =============================================================================
 
 func (s *ProjectsTestSuite) TestListMembers_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/projects/some-id/members")
+	resp := s.Client.GET("/api/projects/some-id/members")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestListMembers_ProjectNotFound() {
-	resp := s.Client.GET("/api/v2/projects/00000000-0000-0000-0000-000000000000/members",
+	resp := s.Client.GET("/api/projects/00000000-0000-0000-0000-000000000000/members",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -517,7 +517,7 @@ func (s *ProjectsTestSuite) TestListMembers_ProjectNotFound() {
 
 func (s *ProjectsTestSuite) TestListMembers_Success() {
 	// Use the default project - creator should be a member
-	resp := s.Client.GET("/api/v2/projects/"+s.ProjectID+"/members",
+	resp := s.Client.GET("/api/projects/"+s.ProjectID+"/members",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -544,12 +544,12 @@ func (s *ProjectsTestSuite) TestListMembers_Success() {
 // =============================================================================
 
 func (s *ProjectsTestSuite) TestRemoveMember_RequiresAuth() {
-	resp := s.Client.DELETE("/api/v2/projects/some-id/members/some-user-id")
+	resp := s.Client.DELETE("/api/projects/some-id/members/some-user-id")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ProjectsTestSuite) TestRemoveMember_ProjectNotFound() {
-	resp := s.Client.DELETE("/api/v2/projects/00000000-0000-0000-0000-000000000000/members/00000000-0000-0000-0000-000000000001",
+	resp := s.Client.DELETE("/api/projects/00000000-0000-0000-0000-000000000000/members/00000000-0000-0000-0000-000000000001",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -561,7 +561,7 @@ func (s *ProjectsTestSuite) TestRemoveMember_MemberNotFound() {
 	projectID := s.createProjectViaAPI(s.OrgID, "Remove Member Test")
 
 	// Try to remove a user who is not a member
-	resp := s.Client.DELETE("/api/v2/projects/"+projectID+"/members/99999999-9999-9999-9999-999999999999",
+	resp := s.Client.DELETE("/api/projects/"+projectID+"/members/99999999-9999-9999-9999-999999999999",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -573,7 +573,7 @@ func (s *ProjectsTestSuite) TestRemoveMember_CannotRemoveLastAdmin() {
 	projectID := s.createProjectViaAPI(s.OrgID, "Last Admin Test")
 
 	// Get member list to find the user ID
-	membersResp := s.Client.GET("/api/v2/projects/"+projectID+"/members",
+	membersResp := s.Client.GET("/api/projects/"+projectID+"/members",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Require().Equal(http.StatusOK, membersResp.StatusCode)
@@ -585,7 +585,7 @@ func (s *ProjectsTestSuite) TestRemoveMember_CannotRemoveLastAdmin() {
 	userID := members[0]["id"].(string)
 
 	// Try to remove the only admin
-	resp := s.Client.DELETE("/api/v2/projects/"+projectID+"/members/"+userID,
+	resp := s.Client.DELETE("/api/projects/"+projectID+"/members/"+userID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 

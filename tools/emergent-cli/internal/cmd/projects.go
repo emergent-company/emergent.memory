@@ -43,6 +43,7 @@ var createProjectCmd = &cobra.Command{
 var (
 	projectName        string
 	projectDescription string
+	projectOrgID       string
 )
 
 type Project struct {
@@ -78,7 +79,7 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resp, err := c.Get("/api/v2/projects")
+	resp, err := c.Get("/api/projects")
 	if err != nil {
 		return fmt.Errorf("failed to make request: %w", err)
 	}
@@ -120,7 +121,7 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resp, err := c.Get("/api/v2/projects/" + projectID)
+	resp, err := c.Get("/api/projects/" + projectID)
 	if err != nil {
 		return fmt.Errorf("failed to make request: %w", err)
 	}
@@ -158,6 +159,11 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+type Organization struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 func runCreateProject(cmd *cobra.Command, args []string) error {
 	if projectName == "" {
 		return fmt.Errorf("project name is required. Use --name flag")
@@ -168,8 +174,21 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	orgID := projectOrgID
+	if orgID == "" {
+		orgs, err := fetchOrganizations(c)
+		if err != nil {
+			return fmt.Errorf("failed to fetch organizations: %w", err)
+		}
+		if len(orgs) == 0 {
+			return fmt.Errorf("no organizations found. Create an organization first or specify --org-id")
+		}
+		orgID = orgs[0].ID
+	}
+
 	payload := map[string]string{
-		"name": projectName,
+		"name":  projectName,
+		"orgId": orgID,
 	}
 	if projectDescription != "" {
 		payload["description"] = projectDescription
@@ -180,7 +199,7 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to encode request: %w", err)
 	}
 
-	resp, err := c.Post("/api/v2/projects", "application/json", bytes.NewReader(body))
+	resp, err := c.Post("/api/projects", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to make request: %w", err)
 	}
@@ -206,9 +225,30 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func fetchOrganizations(c *client.Client) ([]Organization, error) {
+	resp, err := c.Get("/api/orgs")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var orgs []Organization
+	if err := json.NewDecoder(resp.Body).Decode(&orgs); err != nil {
+		return nil, err
+	}
+
+	return orgs, nil
+}
+
 func init() {
 	createProjectCmd.Flags().StringVar(&projectName, "name", "", "Project name (required)")
 	createProjectCmd.Flags().StringVar(&projectDescription, "description", "", "Project description")
+	createProjectCmd.Flags().StringVar(&projectOrgID, "org-id", "", "Organization ID (auto-detected if not specified)")
 	createProjectCmd.MarkFlagRequired("name")
 
 	projectsCmd.AddCommand(listProjectsCmd)
