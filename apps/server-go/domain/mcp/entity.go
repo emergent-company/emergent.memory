@@ -184,3 +184,155 @@ type GetEntityEdgesResult struct {
 	Incoming []EdgeInfo `json:"incoming"`
 	Outgoing []EdgeInfo `json:"outgoing"`
 }
+
+// ============================================================================
+// Template Pack DTOs
+// ============================================================================
+
+// TemplatePack represents a template pack from the global registry
+type TemplatePack struct {
+	ID                      string         `json:"id"`
+	Name                    string         `json:"name"`
+	Version                 string         `json:"version"`
+	Description             string         `json:"description,omitempty"`
+	Author                  string         `json:"author,omitempty"`
+	Source                  string         `json:"source,omitempty"`
+	License                 string         `json:"license,omitempty"`
+	RepositoryURL           string         `json:"repository_url,omitempty"`
+	DocumentationURL        string         `json:"documentation_url,omitempty"`
+	ObjectTypeSchemas       map[string]any `json:"object_type_schemas"`
+	RelationshipTypeSchemas map[string]any `json:"relationship_type_schemas,omitempty"`
+	UIConfigs               map[string]any `json:"ui_configs,omitempty"`
+	ExtractionPrompts       map[string]any `json:"extraction_prompts,omitempty"`
+	SQLViews                []any          `json:"sql_views,omitempty"`
+	Checksum                string         `json:"checksum,omitempty"`
+	Draft                   bool           `json:"draft"`
+	PublishedAt             string         `json:"published_at"`
+	DeprecatedAt            string         `json:"deprecated_at,omitempty"`
+	CreatedAt               string         `json:"created_at"`
+	UpdatedAt               string         `json:"updated_at"`
+}
+
+// TemplatePackSummary represents a summary of a template pack (for listings)
+type TemplatePackSummary struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Version      string   `json:"version"`
+	Description  string   `json:"description,omitempty"`
+	Author       string   `json:"author,omitempty"`
+	Source       string   `json:"source,omitempty"`
+	ObjectTypes  []string `json:"object_types"`
+	TypeCount    int      `json:"type_count"`
+	PublishedAt  string   `json:"published_at"`
+	DeprecatedAt string   `json:"deprecated_at,omitempty"`
+}
+
+// ListTemplatePacksResult represents the result of list_template_packs tool
+type ListTemplatePacksResult struct {
+	Packs   []TemplatePackSummary `json:"packs"`
+	Total   int                   `json:"total"`
+	Page    int                   `json:"page"`
+	Limit   int                   `json:"limit"`
+	HasMore bool                  `json:"has_more"`
+}
+
+// GetTemplatePackResult represents the result of get_template_pack tool
+type GetTemplatePackResult struct {
+	Pack *TemplatePack `json:"pack"`
+}
+
+// ObjectTypeInfo represents info about an object type in a template
+type ObjectTypeInfo struct {
+	Type        string `json:"type"`
+	Description string `json:"description,omitempty"`
+	SampleCount int    `json:"sample_count"`
+}
+
+// AvailableTemplate represents a template available for a project
+type AvailableTemplate struct {
+	ID                string           `json:"id"`
+	Name              string           `json:"name"`
+	Version           string           `json:"version"`
+	Description       string           `json:"description,omitempty"`
+	Author            string           `json:"author,omitempty"`
+	Source            string           `json:"source,omitempty"`
+	ObjectTypes       []ObjectTypeInfo `json:"object_types"`
+	RelationshipTypes []string         `json:"relationship_types,omitempty"`
+	RelationshipCount int              `json:"relationship_count"`
+	Installed         bool             `json:"installed"`
+	Active            bool             `json:"active,omitempty"`
+	AssignmentID      string           `json:"assignment_id,omitempty"`
+	PublishedAt       string           `json:"published_at"`
+}
+
+// GetAvailableTemplatesResult represents the result of get_available_templates tool
+type GetAvailableTemplatesResult struct {
+	ProjectID string              `json:"project_id"`
+	Templates []AvailableTemplate `json:"templates"`
+	Total     int                 `json:"total"`
+}
+
+// InstalledTemplate represents an installed template pack
+type InstalledTemplate struct {
+	AssignmentID   string           `json:"assignment_id"`
+	TemplatePackID string           `json:"template_pack_id"`
+	Name           string           `json:"name"`
+	Version        string           `json:"version"`
+	Description    string           `json:"description,omitempty"`
+	ObjectTypes    []ObjectTypeInfo `json:"object_types"`
+	Active         bool             `json:"active"`
+	InstalledAt    string           `json:"installed_at"`
+	Customizations map[string]any   `json:"customizations,omitempty"`
+}
+
+// GetInstalledTemplatesResult represents the result of get_installed_templates tool
+type GetInstalledTemplatesResult struct {
+	ProjectID string              `json:"project_id"`
+	Templates []InstalledTemplate `json:"templates"`
+	Total     int                 `json:"total"`
+}
+
+// AssignTemplatePackResult represents the result of assign_template_pack tool
+type AssignTemplatePackResult struct {
+	Success        bool           `json:"success"`
+	AssignmentID   string         `json:"assignment_id"`
+	InstalledTypes []string       `json:"installed_types"`
+	DisabledTypes  []string       `json:"disabled_types,omitempty"`
+	Conflicts      []TypeConflict `json:"conflicts,omitempty"`
+}
+
+// TypeConflict represents a type installation conflict
+type TypeConflict struct {
+	Type       string `json:"type"`
+	Issue      string `json:"issue"`
+	Resolution string `json:"resolution"`
+}
+
+// UpdateTemplateAssignmentResult represents the result of update_template_assignment tool
+type UpdateTemplateAssignmentResult struct {
+	Success      bool   `json:"success"`
+	AssignmentID string `json:"assignment_id"`
+	Active       bool   `json:"active"`
+	Message      string `json:"message"`
+}
+
+// UninstallTemplatePackResult represents the result of uninstall_template_pack tool
+type UninstallTemplatePackResult struct {
+	Success      bool   `json:"success"`
+	AssignmentID string `json:"assignment_id"`
+	Message      string `json:"message"`
+}
+
+// CreateTemplatePackResult represents the result of create_template_pack tool
+type CreateTemplatePackResult struct {
+	Success bool          `json:"success"`
+	Pack    *TemplatePack `json:"pack"`
+	Message string        `json:"message"`
+}
+
+// DeleteTemplatePackResult represents the result of delete_template_pack tool
+type DeleteTemplatePackResult struct {
+	Success bool   `json:"success"`
+	PackID  string `json:"pack_id"`
+	Message string `json:"message"`
+}
