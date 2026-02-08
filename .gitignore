@@ -88,3 +88,8 @@ apps/server-nest/migrations/_archive_*/
 apps/server-go/server
 spec-server-dev-vertex-ai.json
 .gemini/
+
+# Built CLI binaries
+tools/emergent-cli/emergent-cli-*
+tools/emergent-cli/emergent-darwin-*
+tools/emergent-cli/emergent-linux-*
