@@ -90,16 +90,21 @@ EOF
 echo "✅ Configuration created"
 echo ""
 
-read -p "📋 Do you have a Google API key for embeddings? (y/N): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    read -p "🔑 Enter your Google API key: " GOOGLE_KEY
-    sed -i.bak "s|GOOGLE_API_KEY=.*|GOOGLE_API_KEY=$GOOGLE_KEY|" .env.local
-    rm -f .env.local.bak
-    echo "✅ Google API key configured"
+if [ -t 0 ]; then
+    read -p "📋 Do you have a Google API key for embeddings? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        read -p "🔑 Enter your Google API key: " GOOGLE_KEY
+        sed -i.bak "s|GOOGLE_API_KEY=.*|GOOGLE_API_KEY=$GOOGLE_KEY|" .env.local
+        rm -f .env.local.bak
+        echo "✅ Google API key configured"
+    else
+        echo "⚠️  Skipping Google API key (embeddings will be disabled)"
+        echo "   You can add it later by editing: $INSTALL_DIR/deploy/minimal/.env.local"
+    fi
 else
-    echo "⚠️  Skipping Google API key (embeddings will be disabled)"
-    echo "   You can add it later by editing: $INSTALL_DIR/deploy/minimal/.env.local"
+    echo "⚠️  Non-interactive mode: Skipping Google API key prompt"
+    echo "   Add it later by editing: $INSTALL_DIR/deploy/minimal/.env.local"
 fi
 
 echo ""
