@@ -9,7 +9,7 @@ import (
 // RegisterRoutes registers project routes
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// All project endpoints require authentication
-	g := e.Group("/api/projects")
+	g := e.Group("/api/v2/projects")
 	g.Use(authMiddleware.RequireAuth())
 
 	// List projects (user must be authenticated)
