@@ -5,6 +5,44 @@ Minimal ingestion server aligned with the spec:
 - Ingest a URL or uploaded file, extract text, chunk, embed with Google Gemini `text-embedding-004`.
 - Store in Postgres with pgvector and FTS.
 
+## Quick Installation
+
+### One-Line Install (Recommended)
+
+Install server + CLI in 2-3 minutes with pre-built images:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install-online.sh | bash
+```
+
+This installs:
+
+- PostgreSQL with pgvector
+- Kreuzberg (document extraction)
+- MinIO (S3 storage)
+- Emergent server + CLI
+
+**CLI Only** (no Docker required):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install-online.sh | CLIENT_ONLY=1 bash
+```
+
+### Homebrew
+
+```bash
+brew tap Emergent-Comapny/emergent
+brew install emergent-cli
+```
+
+### Self-Update
+
+```bash
+emergent upgrade
+```
+
+For detailed setup and configuration, see the guides below.
+
 ## Getting Started
 
 - **[Environment Setup Guide](docs/guides/ENVIRONMENT_SETUP.md)** - Comprehensive guide for local, dev, staging, and production environments
