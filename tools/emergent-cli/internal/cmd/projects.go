@@ -78,7 +78,7 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resp, err := c.Get("/api/projects")
+	resp, err := c.Get("/api/v2/projects")
 	if err != nil {
 		return fmt.Errorf("failed to make request: %w", err)
 	}
@@ -120,7 +120,7 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resp, err := c.Get("/api/projects/" + projectID)
+	resp, err := c.Get("/api/v2/projects/" + projectID)
 	if err != nil {
 		return fmt.Errorf("failed to make request: %w", err)
 	}
@@ -180,7 +180,7 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to encode request: %w", err)
 	}
 
-	resp, err := c.Post("/api/projects", "application/json", bytes.NewReader(body))
+	resp, err := c.Post("/api/v2/projects", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to make request: %w", err)
 	}
