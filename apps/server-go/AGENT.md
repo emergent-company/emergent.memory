@@ -617,7 +617,7 @@ See `migrations/README.md` for detailed workflow.
 | ------------------- | -------------------------------------------- | ----- |
 | Health              | `/health`, `/healthz`, `/ready`, `/debug`    | Pass  |
 | Organizations       | CRUD `/api/v2/orgs`                          | Pass  |
-| Projects            | CRUD `/api/v2/projects`                      | Pass  |
+| Projects            | CRUD `/api/projects`                      | Pass  |
 | Users               | Search `/api/v2/users`                       | Pass  |
 | User Profile        | Get/Update `/api/v2/user-profile`            | Pass  |
 | API Tokens          | CRUD `/api/v2/api-tokens`                    | Pass  |

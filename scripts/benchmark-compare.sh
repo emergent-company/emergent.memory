@@ -113,7 +113,7 @@ if [ "$GO_READY" = true ] && [ "$NESTJS_READY" = true ]; then
         echo "Endpoint                     | Go p95    | NestJS p95 | Winner"
         echo "-----------------------------|-----------|------------|--------"
         
-        for endpoint in "/health" "/healthz" "/ready" "/api/v2/documents" "/api/v2/projects"; do
+        for endpoint in "/health" "/healthz" "/ready" "/api/v2/documents" "/api/projects"; do
             go_p95=$(jq -r ".endpoints[] | select(.endpoint == \"$endpoint\") | .p95_ms" "$GO_FILE" 2>/dev/null || echo "N/A")
             nest_p95=$(jq -r ".endpoints[] | select(.endpoint == \"$endpoint\") | .p95_ms" "$NESTJS_FILE" 2>/dev/null || echo "N/A")
             

@@ -51,7 +51,7 @@ func (s *DocumentsTestSuite) createDocumentViaAPI(filename, content string) stri
 
 // createProjectViaAPI creates a project via API and returns its ID
 func (s *DocumentsTestSuite) createProjectViaAPI(name string) string {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "%s", "orgId": "%s"}`, name, s.OrgID)),

@@ -43,7 +43,7 @@ func (s *TasksTestSuite) createOrgViaAPI(name string) string {
 
 // createProjectViaAPI creates a project via API and returns its ID
 func (s *TasksTestSuite) createProjectViaAPI(name, orgID string) string {
-	resp := s.Client.POST("/api/v2/projects",
+	resp := s.Client.POST("/api/projects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":  name,

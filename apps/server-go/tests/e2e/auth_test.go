@@ -221,7 +221,7 @@ func (s *AuthTestSuite) TestHeaderExtraction() {
 
 func (s *AuthTestSuite) TestAPIToken_Valid() {
 	// Create API token via API
-	resp := s.Client.POST("/api/v2/projects/"+s.ProjectID+"/tokens",
+	resp := s.Client.POST("/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   "Test API Token",
@@ -261,7 +261,7 @@ func (s *AuthTestSuite) TestAPIToken_Expired() {
 
 func (s *AuthTestSuite) TestAPIToken_Deleted() {
 	// Create and then revoke an API token via API
-	resp := s.Client.POST("/api/v2/projects/"+s.ProjectID+"/tokens",
+	resp := s.Client.POST("/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   "Token to Revoke",
@@ -279,7 +279,7 @@ func (s *AuthTestSuite) TestAPIToken_Deleted() {
 	tokenID := tokenResult["id"].(string)
 
 	// Revoke the token via API
-	resp = s.Client.DELETE("/api/v2/projects/"+s.ProjectID+"/tokens/"+tokenID,
+	resp = s.Client.DELETE("/api/projects/"+s.ProjectID+"/tokens/"+tokenID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Require().Equal(http.StatusOK, resp.StatusCode, "Failed to revoke token: %s", resp.String())
@@ -407,7 +407,7 @@ func (s *AuthTestSuite) TestCachedIntrospection() {
 	// Since we can't directly manipulate the cache via API, we test indirectly:
 	// Making multiple requests with the same token should work consistently.
 	// Create a valid API token via API
-	resp := s.Client.POST("/api/v2/projects/"+s.ProjectID+"/tokens",
+	resp := s.Client.POST("/api/projects/"+s.ProjectID+"/tokens",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name":   "Cache Test Token",
