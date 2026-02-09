@@ -18,7 +18,7 @@ Complete guide to deploying and using Emergent in standalone mode with embedded 
 **Just copy and paste this:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
 ```
 
 Done! See [INSTALL.md](./INSTALL.md) for details.
@@ -182,7 +182,7 @@ docker logs emergent-server
 
 - **CLI Source**: `/root/emergent/tools/emergent-cli/`
 - **Server Source**: `/root/emergent/apps/server-go/`
-- **GitHub Issues**: https://github.com/Emergent-Comapny/emergent/issues
+- **GitHub Issues**: https://github.com/emergent-company/emergent/issues
 - **Main Docs**: `/root/emergent/docs/`
 
 ## Update History

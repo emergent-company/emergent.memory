@@ -14,15 +14,15 @@ Successfully optimized the Emergent standalone installer to be **fast and user-f
 
 ### 🎉 GHCR Package Now Public
 
-**Package**: `ghcr.io/emergent-comapny/emergent-server-with-cli:latest`
+**Package**: `ghcr.io/emergent-company/emergent-server-with-cli:latest`
 
 **Status**: ✅ **PUBLIC** - Accessible without authentication
 
 **Verification**:
 ```bash
-$ docker pull ghcr.io/emergent-comapny/emergent-server-with-cli:latest
-latest: Pulling from emergent-comapny/emergent-server-with-cli
-Status: Downloaded newer image for ghcr.io/emergent-comapny/emergent-server-with-cli:latest
+$ docker pull ghcr.io/emergent-company/emergent-server-with-cli:latest
+latest: Pulling from emergent-company/emergent-server-with-cli
+Status: Downloaded newer image for ghcr.io/emergent-company/emergent-server-with-cli:latest
 ```
 
 ---
@@ -47,7 +47,7 @@ Status: Downloaded newer image for ghcr.io/emergent-comapny/emergent-server-with
 - ❌ **REMOVED**: `docker build` (no compilation)
 - ✅ **ADDED**: Dynamic `docker-compose.yml` generation
 - ✅ **ADDED**: CLIENT_ONLY mode for CLI-only installs
-- ✅ **ADDED**: Pre-built image: `ghcr.io/emergent-comapny/emergent-server-with-cli:latest`
+- ✅ **ADDED**: Pre-built image: `ghcr.io/emergent-company/emergent-server-with-cli:latest`
 
 **Installation Time**:
 - **Before**: ~15-20 minutes (clone + build + start)
@@ -60,11 +60,11 @@ Status: Downloaded newer image for ghcr.io/emergent-comapny/emergent-server-with
 ### What We Learned
 
 **Org-Level Setting** (one-time):
-- Location: https://github.com/organizations/Emergent-Comapny/settings/packages
+- Location: https://github.com/organizations/emergent-company/settings/packages
 - Setting: "Members can change package visibility to public" ✅
 
 **Package-Level Setting** (per package):
-- Location: https://github.com/orgs/Emergent-Comapny/packages/container/package/emergent-server-with-cli
+- Location: https://github.com/orgs/emergent-company/packages/container/package/emergent-server-with-cli
 - Action: Package settings → Change visibility → Public ✅
 
 **Key Insight**: Both levels must be configured!
@@ -83,7 +83,7 @@ Status: Downloaded newer image for ghcr.io/emergent-comapny/emergent-server-with
 
 **Solution**: Manually triggered workflow from `main` branch:
 ```bash
-gh workflow run "Publish Minimal Deployment Images" --repo Emergent-Comapny/emergent --ref main
+gh workflow run "Publish Minimal Deployment Images" --repo emergent-company/emergent --ref main
 ```
 
 ---
@@ -92,7 +92,7 @@ gh workflow run "Publish Minimal Deployment Images" --repo Emergent-Comapny/emer
 
 ### 1. One-Line Full Install
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install-online.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install-online.sh | bash
 ```
 
 **Downloads**:
@@ -108,7 +108,7 @@ curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/depl
 
 ### 2. One-Line Client-Only Install
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install-online.sh | CLIENT_ONLY=1 bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install-online.sh | CLIENT_ONLY=1 bash
 ```
 
 **Installs**:
@@ -118,7 +118,7 @@ curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/depl
 
 ### 3. Homebrew Install
 ```bash
-brew tap Emergent-Comapny/emergent
+brew tap emergent-company/emergent
 brew install emergent-cli
 ```
 
@@ -194,7 +194,7 @@ Client-only installation currently fails to download CLI binary:
 1. **Publish Homebrew Tap**
    - Create public repo: `homebrew-emergent`
    - Copy formula: `deploy/homebrew/emergent-cli.rb`
-   - Users install via: `brew tap Emergent-Comapny/emergent && brew install emergent-cli`
+   - Users install via: `brew tap emergent-company/emergent && brew install emergent-cli`
 
 2. **Update Documentation**
    - Add installation methods to README.md

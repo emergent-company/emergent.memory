@@ -37,7 +37,7 @@ function getServerPort(): string {
 
 // Determine which server implementation to use
 function getServerImplementation(): 'nodejs' | 'go' {
-  const impl = getEnvVarWithDefault('SERVER_IMPLEMENTATION', 'nodejs');
+  const impl = getEnvVarWithDefault('SERVER_IMPLEMENTATION', 'go');
   if (impl !== 'nodejs' && impl !== 'go') {
     throw new Error(
       `Invalid SERVER_IMPLEMENTATION: ${impl}. Must be 'nodejs' or 'go'`

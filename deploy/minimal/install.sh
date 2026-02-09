@@ -45,7 +45,7 @@ if [ -d ".git" ]; then
 else
     echo "📦 Downloading Emergent..."
     if command -v git &> /dev/null; then
-        git clone --depth 1 --branch "$EMERGENT_VERSION" https://github.com/Emergent-Comapny/emergent.git .
+        git clone --depth 1 --branch "$EMERGENT_VERSION" https://github.com/emergent-company/emergent.git .
     else
         echo "❌ Git is not installed. Please install git first."
         exit 1

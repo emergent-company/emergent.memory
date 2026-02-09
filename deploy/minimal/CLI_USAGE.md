@@ -234,10 +234,10 @@ cd /root/emergent/deploy/minimal
 
 # Tag for registry
 docker tag emergent-server-with-cli:latest \
-  ghcr.io/Emergent-Comapny/emergent-server-with-cli:latest
+  ghcr.io/emergent-company/emergent-server-with-cli:latest
 
 # Push to registry
-docker push ghcr.io/Emergent-Comapny/emergent-server-with-cli:latest
+docker push ghcr.io/emergent-company/emergent-server-with-cli:latest
 ```
 
 ## Alternative: Separate CLI Container
@@ -245,7 +245,7 @@ docker push ghcr.io/Emergent-Comapny/emergent-server-with-cli:latest
 If you prefer a dedicated CLI container:
 
 ```dockerfile
-FROM ghcr.io/Emergent-Comapny/emergent-cli:latest
+FROM ghcr.io/emergent-company/emergent-cli:latest
 
 ENV EMERGENT_SERVER_URL=http://server:3002
 ENV EMERGENT_API_KEY=test-api-key-12345
@@ -308,6 +308,6 @@ echo "✅ Deployment complete"
 
 ## Support
 
-- GitHub Issues: https://github.com/Emergent-Comapny/emergent/issues
+- GitHub Issues: https://github.com/emergent-company/emergent/issues
 - Full CLI docs: `/root/emergent/tools/emergent-cli/README.md`
 - Server docs: `/root/emergent/deploy/minimal/DEPLOYMENT_REPORT.md`
