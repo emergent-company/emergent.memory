@@ -460,8 +460,7 @@ func (i *Installer) GetServerPort() int {
 	for _, line := range strings.Split(string(content), "\n") {
 		if strings.HasPrefix(line, "SERVER_PORT=") {
 			var port int
-			fmt.Sscanf(line, "SERVER_PORT=%d", &port)
-			if port > 0 {
+			if _, err := fmt.Sscanf(line, "SERVER_PORT=%d", &port); err == nil && port > 0 {
 				return port
 			}
 		}
