@@ -2,16 +2,15 @@
 #
 # Emergent CLI Install Script
 # ===========================
-# One-line install: curl -fsSL https://install.emergent.ai/cli | bash
+# One-line install: curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/tools/emergent-cli/install.sh | bash
 #
-# Automatically detects your OS and architecture, downloads the latest release,
-# and installs to /usr/local/bin (or ~/bin if not root)
+# Installs to ~/.emergent/bin/emergent
 
 set -euo pipefail
 
-SCRIPT_VERSION="0.3.0"
+SCRIPT_VERSION="0.4.0"
 VERSION="${VERSION:-latest}"
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.emergent/bin}"
 GITHUB_REPO="emergent-company/emergent"
 
 # Colors
@@ -192,13 +191,9 @@ download_and_install() {
     
     success "Extracted archive"
     
-    # Determine install directory (fallback to ~/bin if not root)
+    # Determine install directory
     local install_path="$INSTALL_DIR"
-    if [ ! -w "$INSTALL_DIR" ] && [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
-        warn "No write permission to /usr/local/bin, installing to ~/bin instead"
-        install_path="$HOME/bin"
-        mkdir -p "$install_path"
-    fi
+    mkdir -p "$install_path"
     
     log "Installing to ${install_path}..."
     
@@ -217,10 +212,10 @@ download_and_install() {
     fi
     
     # Move and make executable
-    mv "$binary_path" "${install_path}/${binary_name}"
-    chmod +x "${install_path}/${binary_name}"
+    mv "$binary_path" "${install_path}/emergent"
+    chmod +x "${install_path}/emergent"
     
-    success "Installed to ${install_path}/${binary_name}"
+    success "Installed to ${install_path}/emergent"
     
     # Check if install_path is in PATH
     if [[ ":$PATH:" != *":${install_path}:"* ]]; then
@@ -234,15 +229,14 @@ download_and_install() {
 verify_installation() {
     log "Verifying installation..."
     
-    if command -v emergent-cli &> /dev/null; then
+    local emergent_bin="$INSTALL_DIR/emergent"
+    if [ -x "$emergent_bin" ]; then
         success "Installation successful!"
         echo
-        emergent-cli version
+        "$emergent_bin" version
     else
-        warn "emergent-cli not found in PATH"
-        echo
-        echo "Try running: export PATH=\"${INSTALL_DIR}:\$PATH\""
-        echo "Or restart your terminal"
+        warn "emergent not found at $emergent_bin"
+        exit 1
     fi
 }
 
@@ -279,7 +273,7 @@ main() {
     echo "  export EMERGENT_API_KEY=your-api-key"
     echo
     echo "  # Test connection"
-    echo "  emergent-cli config show"
+    echo "  emergent config show"
     echo
     echo -e "${BOLD}Documentation:${NC}"
     echo "  https://github.com/${GITHUB_REPO}/tree/master/tools/emergent-cli"
