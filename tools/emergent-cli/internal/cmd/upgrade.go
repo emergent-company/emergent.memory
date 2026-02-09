@@ -11,20 +11,54 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-
 	"strings"
 
+	"github.com/emergent-company/emergent/tools/emergent-cli/internal/installer"
 	"github.com/spf13/cobra"
 )
+
+var upgradeFlags struct {
+	dir   string
+	force bool
+}
 
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
 	Short: "Upgrade the CLI to the latest version",
-	Long:  `Checks for the latest release on GitHub and upgrades the CLI binary if a newer version is available.`,
-	Run:   runUpgrade,
+	Long: `Checks for the latest release on GitHub and upgrades the CLI binary if a newer version is available.
+
+Use 'emergent upgrade server' to upgrade the standalone server installation.
+
+Examples:
+  emergent upgrade              # Upgrade CLI binary
+  emergent upgrade server       # Upgrade standalone server (pull latest images)`,
+	Run: runUpgrade,
+}
+
+var upgradeServerCmd = &cobra.Command{
+	Use:   "server",
+	Short: "Upgrade the standalone server installation",
+	Long: `Upgrades the Emergent standalone server installation.
+
+This will:
+  - Pull the latest Docker images
+  - Restart services with the new images
+  - Preserve all existing configuration and data
+
+Examples:
+  emergent upgrade server
+  emergent upgrade server --dir ~/.emergent`,
+	RunE: runUpgradeServer,
 }
 
 func init() {
+	homeDir, _ := os.UserHomeDir()
+	defaultDir := filepath.Join(homeDir, ".emergent")
+
+	upgradeServerCmd.Flags().StringVar(&upgradeFlags.dir, "dir", defaultDir, "Installation directory")
+	upgradeServerCmd.Flags().BoolVar(&upgradeFlags.force, "force", false, "Force upgrade without confirmation")
+
+	upgradeCmd.AddCommand(upgradeServerCmd)
 	rootCmd.AddCommand(upgradeCmd)
 }
 
@@ -36,6 +70,33 @@ type Release struct {
 type Asset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
+func runUpgradeServer(cmd *cobra.Command, args []string) error {
+	cfg := installer.Config{
+		InstallDir: upgradeFlags.dir,
+		Verbose:    true,
+	}
+
+	inst := installer.New(cfg)
+
+	if !inst.IsInstalled() {
+		return fmt.Errorf("no installation found at %s. Run 'emergent install' first", upgradeFlags.dir)
+	}
+
+	cfg.ServerPort = inst.GetServerPort()
+
+	if !upgradeFlags.force {
+		fmt.Print("Upgrade server installation? [y/N]: ")
+		var confirm string
+		_, _ = fmt.Scanln(&confirm)
+		if strings.ToLower(confirm) != "y" {
+			fmt.Println("Upgrade canceled.")
+			return nil
+		}
+	}
+
+	return inst.Upgrade()
 }
 
 func runUpgrade(cmd *cobra.Command, args []string) {
