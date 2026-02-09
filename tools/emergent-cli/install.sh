@@ -11,7 +11,7 @@ set -euo pipefail
 
 VERSION="${VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-GITHUB_REPO="eyedea-io/emergent"
+GITHUB_REPO="Emergent-Comapny/emergent"
 
 # Colors
 BOLD='\033[1m'
