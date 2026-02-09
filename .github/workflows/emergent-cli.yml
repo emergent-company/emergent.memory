@@ -429,6 +429,28 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download Linux release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-linux-*
+          path: tools/emergent-cli/artifacts
+          merge-multiple: true
+
+      - name: Extract binaries for Docker
+        working-directory: tools/emergent-cli
+        run: |
+          echo "=== Downloaded artifacts ==="
+          ls -la artifacts/
+
+          # Extract Linux amd64 binary
+          tar xzf artifacts/emergent-cli-linux-amd64.tar.gz -C .
+
+          # Extract Linux arm64 binary
+          tar xzf artifacts/emergent-cli-linux-arm64.tar.gz -C .
+
+          echo "=== Extracted binaries ==="
+          ls -la emergent-cli-linux-*
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -448,16 +470,16 @@ jobs:
           echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "owner_lc=$OWNER_LC" >> $GITHUB_OUTPUT
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image (amd64)
         uses: docker/build-push-action@v5
         with:
           context: tools/emergent-cli
-          file: tools/emergent-cli/Dockerfile
+          file: tools/emergent-cli/Dockerfile.prebuilt
           push: true
           tags: |
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:latest
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-amd64
           build-args: |
+            TARGETARCH=amd64
             VERSION=${{ steps.version.outputs.version }}
             GIT_COMMIT=${{ steps.version.outputs.commit }}
           labels: |
@@ -466,6 +488,36 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.title=Emergent CLI
             org.opencontainers.image.description=Command-line interface for Emergent Knowledge Base
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Build and push Docker image (arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context: tools/emergent-cli
+          file: tools/emergent-cli/Dockerfile.prebuilt
+          push: true
+          tags: |
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-arm64
+          build-args: |
+            TARGETARCH=arm64
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ steps.version.outputs.commit }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ steps.version.outputs.commit }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=Emergent CLI
+            org.opencontainers.image.description=Command-line interface for Emergent Knowledge Base
+          platforms: linux/arm64
+
+      - name: Create and push multi-arch manifest
+        run: |
+          # Create manifest list combining both architectures
+          docker buildx imagetools create -t ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }} \
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-amd64 \
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-arm64
+
+          # Also tag as latest
+          docker buildx imagetools create -t ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:latest \
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-amd64 \
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-arm64
