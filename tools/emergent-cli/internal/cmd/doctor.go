@@ -459,12 +459,101 @@ func attemptFix(r checkResult, installDir string) error {
 func fixDatabasePassword(installDir string) error {
 	fmt.Println("Fixing database password mismatch...")
 	fmt.Println()
+
+	dbPassword, err := getPostgresPasswordFromContainer()
+	if err != nil {
+		fmt.Printf("Could not recover password from container: %v\n", err)
+		fmt.Println()
+		return offerDestructiveFix(installDir)
+	}
+
+	fmt.Printf("Recovered password from PostgreSQL container.\n")
+	fmt.Println()
 	fmt.Println("This will:")
-	fmt.Println("  1. Stop all containers")
-	fmt.Println("  2. Remove the PostgreSQL data volume (DATA WILL BE LOST)")
-	fmt.Println("  3. Restart containers with the correct password")
+	fmt.Println("  1. Update .env.local with the correct password")
+	fmt.Println("  2. Restart the server container")
+	fmt.Println("  3. Preserve all existing data")
 	fmt.Println()
 	fmt.Print("Continue? [y/N]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(strings.ToLower(input))
+
+	if input != "y" && input != "yes" {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	fmt.Println()
+	fmt.Println("Updating configuration...")
+	if err := updateEnvPassword(installDir, dbPassword); err != nil {
+		return fmt.Errorf("failed to update config: %w", err)
+	}
+
+	fmt.Println("Restarting server...")
+	if err := restartServerOnly(installDir); err != nil {
+		return err
+	}
+
+	fmt.Println("Waiting for server...")
+	time.Sleep(10 * time.Second)
+
+	fmt.Println()
+	fmt.Println("Password synchronized. Run 'emergent doctor' to verify.")
+	return nil
+}
+
+func getPostgresPasswordFromContainer() (string, error) {
+	cmd := exec.Command("docker", "exec", "emergent-db", "printenv", "POSTGRES_PASSWORD")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func updateEnvPassword(installDir, newPassword string) error {
+	envPath := filepath.Join(installDir, "config", ".env.local")
+
+	content, err := os.ReadFile(envPath)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "POSTGRES_PASSWORD=") {
+			newLines = append(newLines, fmt.Sprintf("POSTGRES_PASSWORD=%s", newPassword))
+		} else {
+			newLines = append(newLines, line)
+		}
+	}
+
+	return os.WriteFile(envPath, []byte(strings.Join(newLines, "\n")), 0600)
+}
+
+func restartServerOnly(installDir string) error {
+	composePath := filepath.Join(installDir, "docker", "docker-compose.yml")
+	envPath := filepath.Join(installDir, "config", ".env.local")
+
+	cmd := exec.Command("docker", "compose", "-f", composePath, "--env-file", envPath, "restart", "server")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func offerDestructiveFix(installDir string) error {
+	fmt.Println("Cannot recover password. The database container may not be running.")
+	fmt.Println()
+	fmt.Println("Alternative: Reset database (DATA WILL BE LOST)")
+	fmt.Println("  1. Stop all containers")
+	fmt.Println("  2. Remove PostgreSQL volume")
+	fmt.Println("  3. Start fresh")
+	fmt.Println()
+	fmt.Print("Reset database? [y/N]: ")
 
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
