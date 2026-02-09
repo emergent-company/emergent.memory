@@ -55,8 +55,10 @@ func init() {
 	homeDir, _ := os.UserHomeDir()
 	defaultDir := filepath.Join(homeDir, ".emergent")
 
+	upgradeCmd.Flags().BoolVarP(&upgradeFlags.force, "force", "f", false, "Force upgrade even for dev versions")
+
 	upgradeServerCmd.Flags().StringVar(&upgradeFlags.dir, "dir", defaultDir, "Installation directory")
-	upgradeServerCmd.Flags().BoolVar(&upgradeFlags.force, "force", false, "Force upgrade without confirmation")
+	upgradeServerCmd.Flags().BoolVarP(&upgradeFlags.force, "force", "f", false, "Force upgrade without confirmation")
 
 	upgradeCmd.AddCommand(upgradeServerCmd)
 	rootCmd.AddCommand(upgradeCmd)
@@ -111,25 +113,35 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	latestVersion := strings.TrimPrefix(release.TagName, "cli-")
 	currentVersion := strings.TrimPrefix(Version, "cli-")
 
-	if Version == "dev" {
+	if Version == "dev" && !upgradeFlags.force {
 		fmt.Println("You are running a development version. Upgrade skipped.")
 		fmt.Printf("Latest release: %s\n", release.TagName)
+		fmt.Println("Use --force to upgrade anyway.")
 		return
 	}
 
-	if latestVersion == currentVersion {
+	if latestVersion == currentVersion && !upgradeFlags.force {
 		fmt.Printf("You are already using the latest version: %s\n", Version)
 		return
 	}
 
-	fmt.Printf("New version available: %s (Current: %s)\n", release.TagName, Version)
-	fmt.Print("Do you want to upgrade? [y/N]: ")
+	if Version == "dev" {
+		fmt.Printf("Forcing upgrade from dev version to %s\n", release.TagName)
+	} else if latestVersion == currentVersion {
+		fmt.Printf("Forcing reinstall of %s\n", release.TagName)
+	} else {
+		fmt.Printf("New version available: %s (Current: %s)\n", release.TagName, Version)
+	}
 
-	var confirm string
-	_, _ = fmt.Scanln(&confirm)
-	if strings.ToLower(confirm) != "y" {
-		fmt.Println("Upgrade canceled.")
-		return
+	if !upgradeFlags.force {
+		fmt.Print("Do you want to upgrade? [y/N]: ")
+
+		var confirm string
+		_, _ = fmt.Scanln(&confirm)
+		if strings.ToLower(confirm) != "y" {
+			fmt.Println("Upgrade canceled.")
+			return
+		}
 	}
 
 	assetURL, assetName, err := findAsset(release.Assets)
@@ -284,7 +296,10 @@ func extractTarGz(filepath string) ([]byte, error) {
 				baseName = parts[len(parts)-1]
 			}
 
-			if baseName == "emergent" || baseName == "emergent.exe" || baseName == "emergent-cli" {
+			// Match various binary naming patterns
+			if baseName == "emergent" || baseName == "emergent.exe" ||
+				baseName == "emergent-cli" || baseName == "emergent-cli.exe" ||
+				strings.HasPrefix(baseName, "emergent-cli-") {
 				return io.ReadAll(tr)
 			}
 		}
@@ -306,7 +321,9 @@ func extractZip(filepath string) ([]byte, error) {
 			baseName = parts[len(parts)-1]
 		}
 
-		if baseName == "emergent" || baseName == "emergent.exe" || baseName == "emergent-cli" || baseName == "emergent-cli.exe" {
+		if baseName == "emergent" || baseName == "emergent.exe" ||
+			baseName == "emergent-cli" || baseName == "emergent-cli.exe" ||
+			strings.HasPrefix(baseName, "emergent-cli-") {
 			rc, err := f.Open()
 			if err != nil {
 				return nil, err
