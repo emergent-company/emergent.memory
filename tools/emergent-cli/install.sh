@@ -24,11 +24,11 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 log() {
-    echo -e "${CYAN}▶${NC} $*"
+    echo -e "${CYAN}▶${NC} $*" >&2
 }
 
 success() {
-    echo -e "${GREEN}✓${NC} $*"
+    echo -e "${GREEN}✓${NC} $*" >&2
 }
 
 error() {
@@ -36,7 +36,7 @@ error() {
 }
 
 warn() {
-    echo -e "${YELLOW}⚠${NC} $*"
+    echo -e "${YELLOW}⚠${NC} $*" >&2
 }
 
 banner() {
@@ -151,13 +151,34 @@ download_and_install() {
     tmp_dir=$(mktemp -d)
     trap "rm -rf $tmp_dir" EXIT
     
-    if ! curl -fsSL "$download_url" -o "${tmp_dir}/${archive_name}.${extension}"; then
-        error "Failed to download release"
-        error "URL: $download_url"
-        exit 1
-    fi
+    # Retry logic for when releases aren't ready yet
+    local max_retries=5
+    local retry_interval=30
+    local attempt=1
+    local downloaded=false
     
-    success "Downloaded successfully"
+    while [ $attempt -le $max_retries ]; do
+        if curl -fsSL "$download_url" -o "${tmp_dir}/${archive_name}.${extension}" 2>/dev/null; then
+            downloaded=true
+            break
+        fi
+        
+        if [ $attempt -eq $max_retries ]; then
+            error "Failed to download after $max_retries attempts"
+            error "URL: $download_url"
+            error "The release may not be ready yet. Try again in a few minutes."
+            exit 1
+        fi
+        
+        warn "Download failed (attempt $attempt/$max_retries)"
+        warn "Release may still be building. Retrying in ${retry_interval}s..."
+        sleep $retry_interval
+        attempt=$((attempt + 1))
+    done
+    
+    if [ "$downloaded" = true ]; then
+        success "Downloaded successfully"
+    fi
     
     log "Extracting archive..."
     

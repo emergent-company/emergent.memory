@@ -65,7 +65,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	fmt.Print("Do you want to upgrade? [y/N]: ")
 
 	var confirm string
-	fmt.Scanln(&confirm)
+	_, _ = fmt.Scanln(&confirm)
 	if strings.ToLower(confirm) != "y" {
 		fmt.Println("Upgrade canceled.")
 		return
@@ -183,11 +183,11 @@ func installUpdate(url, filename string) error {
 	}
 
 	if err := os.Rename(newExecPath, currentExec); err != nil {
-		os.Rename(oldExecPath, currentExec)
+		_ = os.Rename(oldExecPath, currentExec)
 		return fmt.Errorf("failed to replace binary: %w", err)
 	}
 
-	os.Remove(oldExecPath)
+	_ = os.Remove(oldExecPath)
 
 	return nil
 }

@@ -112,20 +112,20 @@ func newConfigShowCmd() *cobra.Command {
 			table := tablewriter.NewWriter(os.Stdout)
 			table.Header("Setting", "Value")
 
-			table.Append("Server URL", cfg.ServerURL)
+			_ = table.Append("Server URL", cfg.ServerURL)
 
 			if cfg.APIKey != "" {
 				maskedKey := cfg.APIKey[:8] + "..." + cfg.APIKey[len(cfg.APIKey)-4:]
-				table.Append("API Key", maskedKey+" (configured)")
+				_ = table.Append("API Key", maskedKey+" (configured)")
 			} else {
-				table.Append("API Key", "(not set)")
+				_ = table.Append("API Key", "(not set)")
 			}
 
-			table.Append("Email", cfg.Email)
-			table.Append("Organization ID", cfg.OrgID)
-			table.Append("Project ID", cfg.ProjectID)
-			table.Append("Debug", fmt.Sprintf("%v", cfg.Debug))
-			table.Append("Config File", configPath)
+			_ = table.Append("Email", cfg.Email)
+			_ = table.Append("Organization ID", cfg.OrgID)
+			_ = table.Append("Project ID", cfg.ProjectID)
+			_ = table.Append("Debug", fmt.Sprintf("%v", cfg.Debug))
+			_ = table.Append("Config File", configPath)
 
 			return table.Render()
 		},
