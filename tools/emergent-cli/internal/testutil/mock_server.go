@@ -27,7 +27,7 @@ func WithJSONResponse(statusCode int, body interface{}) http.HandlerFunc {
 		w.WriteHeader(statusCode)
 
 		if body != nil {
-			json.NewEncoder(w).Encode(body)
+			_ = json.NewEncoder(w).Encode(body)
 		}
 	}
 }
