@@ -76,9 +76,9 @@ detect_arch() {
 get_latest_cli_version() {
     local version
     if command -v curl >/dev/null 2>&1; then
-        version=$(curl -fsSL "https://api.github.com/repos/${REPO_ORG}/${REPO_NAME}/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | grep "^cli-v" || echo "")
+        version=$(curl -fsSL "https://api.github.com/repos/${REPO_ORG}/${REPO_NAME}/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
     elif command -v wget >/dev/null 2>&1; then
-        version=$(wget -qO- "https://api.github.com/repos/${REPO_ORG}/${REPO_NAME}/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | grep "^cli-v" || echo "")
+        version=$(wget -qO- "https://api.github.com/repos/${REPO_ORG}/${REPO_NAME}/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
     fi
     echo "$version"
 }
@@ -224,6 +224,76 @@ if ! docker compose version >/dev/null 2>&1; then
     echo "Install: https://docs.docker.com/compose/install/"
     exit 1
 fi
+
+# Detect existing installation for upgrade mode
+UPGRADE_MODE=false
+if [ -f "${INSTALL_DIR}/docker/docker-compose.yml" ]; then
+    UPGRADE_MODE=true
+    echo -e "${CYAN}Existing installation detected at ${INSTALL_DIR}${NC}"
+    echo -e "${BOLD}Running in UPGRADE mode${NC}"
+    echo ""
+    
+    # Upgrade: Pull latest images
+    echo -e "${CYAN}Pulling latest Docker images...${NC}"
+    cd "${INSTALL_DIR}/docker"
+    docker compose --env-file "${INSTALL_DIR}/config/.env.local" pull
+    echo -e "${GREEN}✓${NC} Images updated"
+    
+    # Upgrade: Restart containers
+    echo -e "${CYAN}Restarting services...${NC}"
+    docker compose --env-file "${INSTALL_DIR}/config/.env.local" up -d
+    echo -e "${GREEN}✓${NC} Services restarted"
+    
+    # Wait for health
+    echo -e "${CYAN}Waiting for services to become healthy...${NC}"
+    sleep 5
+    MAX_WAIT=60
+    WAITED=0
+    while [ $WAITED -lt $MAX_WAIT ]; do
+        SERVER_PORT_VAL=$(grep "^SERVER_PORT=" "${INSTALL_DIR}/config/.env.local" 2>/dev/null | cut -d'=' -f2 || echo "3002")
+        SERVER_PORT_VAL="${SERVER_PORT_VAL:-3002}"
+        if curl -sf "http://localhost:${SERVER_PORT_VAL}/health" > /dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC} Server is healthy!"
+            break
+        fi
+        echo -n "."
+        sleep 3
+        WAITED=$((WAITED + 3))
+    done
+    echo ""
+    
+    # Upgrade: Update CLI binary
+    echo -e "${CYAN}Updating CLI binary...${NC}"
+    HOST_OS=$(detect_os)
+    HOST_ARCH=$(detect_arch)
+    
+    if [ "$CLI_VERSION" = "latest" ]; then
+        # Get latest v* tag (not cli-v* anymore - we use global versioning now)
+        CLI_VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO_ORG}/${REPO_NAME}/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
+    fi
+    
+    if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
+        echo -e "${GREEN}✓${NC} CLI updated to ${CLI_VERSION}"
+    else
+        echo -e "${YELLOW}⚠${NC} CLI update skipped (you can still use: docker exec emergent-server emergent <command>)"
+    fi
+    
+    echo ""
+    echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}${BOLD}  ✓ Emergent Upgrade Complete!${NC}"
+    echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${CYAN}Upgraded components:${NC}"
+    echo "  • Docker images (pulled latest)"
+    echo "  • Services (restarted)"
+    echo "  • CLI binary (${CLI_VERSION:-latest})"
+    echo ""
+    echo -e "${CYAN}Your existing configuration and data were preserved.${NC}"
+    echo ""
+    exit 0
+fi
+
+# Fresh install mode continues below...
 
 echo -e "${CYAN}Installing to: ${INSTALL_DIR}${NC}"
 mkdir -p "${INSTALL_DIR}/bin"
