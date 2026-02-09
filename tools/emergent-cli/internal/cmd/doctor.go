@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +17,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var doctorFlags struct {
+	fix bool
+}
+
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Check system health and configuration",
@@ -24,14 +30,24 @@ This command verifies:
 - Configuration file exists and is valid
 - Server connectivity
 - Authentication status
-- API functionality`,
+- API functionality
+- Docker container health (for standalone installations)
+
+Use --fix to automatically repair common issues.`,
 	RunE: runDoctor,
+}
+
+func init() {
+	doctorCmd.Flags().BoolVar(&doctorFlags.fix, "fix", false, "Attempt to automatically fix detected issues")
+	rootCmd.AddCommand(doctorCmd)
 }
 
 type checkResult struct {
 	name    string
 	status  string
 	message string
+	fixable bool
+	fixType string
 }
 
 func runDoctor(cmd *cobra.Command, args []string) error {
@@ -50,6 +66,15 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	cfg, _ := config.LoadWithEnv(configPath)
 
+	// Check if this is a standalone installation
+	homeDir, _ := os.UserHomeDir()
+	installDir := filepath.Join(homeDir, ".emergent")
+	isStandalone := isStandaloneInstallation(installDir)
+
+	if isStandalone {
+		results = append(results, checkDockerContainers(installDir))
+	}
+
 	if cfg != nil && cfg.ServerURL != "" {
 		results = append(results, checkServerConnectivity(cfg.ServerURL))
 		results = append(results, checkAuth(cfg, configPath))
@@ -63,6 +88,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	passed := 0
 	failed := 0
 	warned := 0
+	var failedResults []checkResult
 
 	for _, r := range results {
 		var icon string
@@ -73,6 +99,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		case "fail":
 			icon = "✗"
 			failed++
+			failedResults = append(failedResults, r)
 		case "warn":
 			icon = "⚠"
 			warned++
@@ -89,6 +116,22 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		fmt.Printf(", %d failed", failed)
 	}
 	fmt.Println()
+
+	// Offer to fix issues if --fix flag is set or prompt user
+	if failed > 0 && isStandalone {
+		for _, r := range failedResults {
+			if r.fixable && doctorFlags.fix {
+				fmt.Println()
+				if err := attemptFix(r, installDir); err != nil {
+					fmt.Printf("Fix failed: %v\n", err)
+				}
+			} else if r.fixable && !doctorFlags.fix {
+				fmt.Println()
+				fmt.Printf("Issue '%s' can be fixed automatically.\n", r.name)
+				fmt.Println("Run 'emergent doctor --fix' to attempt repair.")
+			}
+		}
+	}
 
 	if failed > 0 {
 		return fmt.Errorf("%d check(s) failed", failed)
@@ -327,6 +370,152 @@ func diagnose404Error(cfg *config.Config, responseBody string) string {
 	return strings.Join(hints, "\n       ")
 }
 
-func init() {
-	rootCmd.AddCommand(doctorCmd)
+func isStandaloneInstallation(installDir string) bool {
+	composePath := filepath.Join(installDir, "docker", "docker-compose.yml")
+	_, err := os.Stat(composePath)
+	return err == nil
+}
+
+func checkDockerContainers(installDir string) checkResult {
+	fmt.Print("Checking Docker containers... ")
+
+	serverLogs, err := getDockerLogs(installDir, "server", 50)
+	if err != nil {
+		fmt.Println("DOCKER ERROR")
+		return checkResult{
+			name:    "Docker Containers",
+			status:  "warn",
+			message: fmt.Sprintf("Could not check Docker: %v", err),
+		}
+	}
+
+	if strings.Contains(serverLogs, "password authentication failed") {
+		fmt.Println("DB AUTH FAILED")
+		return checkResult{
+			name:    "Docker Containers",
+			status:  "fail",
+			message: "Database password mismatch. The PostgreSQL container was initialized with a different password than configured.",
+			fixable: true,
+			fixType: "db_password_reset",
+		}
+	}
+
+	if strings.Contains(serverLogs, "connection refused") {
+		fmt.Println("DB CONNECTION FAILED")
+		return checkResult{
+			name:    "Docker Containers",
+			status:  "fail",
+			message: "Database connection refused. Containers may not be running.",
+			fixable: true,
+			fixType: "restart_containers",
+		}
+	}
+
+	if strings.Contains(serverLogs, "Server is ready") || strings.Contains(serverLogs, "Starting server") {
+		fmt.Println("OK")
+		return checkResult{
+			name:    "Docker Containers",
+			status:  "pass",
+			message: "Server container is running",
+		}
+	}
+
+	fmt.Println("UNKNOWN")
+	return checkResult{
+		name:    "Docker Containers",
+		status:  "warn",
+		message: "Could not determine server status. Check 'docker logs emergent-server'",
+	}
+}
+
+func getDockerLogs(installDir, service string, lines int) (string, error) {
+	composePath := filepath.Join(installDir, "docker", "docker-compose.yml")
+	envPath := filepath.Join(installDir, "config", ".env.local")
+
+	args := []string{
+		"compose", "-f", composePath, "--env-file", envPath,
+		"logs", "--tail", fmt.Sprintf("%d", lines), service,
+	}
+
+	cmd := exec.Command("docker", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
+
+func attemptFix(r checkResult, installDir string) error {
+	switch r.fixType {
+	case "db_password_reset":
+		return fixDatabasePassword(installDir)
+	case "restart_containers":
+		return restartContainers(installDir)
+	default:
+		return fmt.Errorf("unknown fix type: %s", r.fixType)
+	}
+}
+
+func fixDatabasePassword(installDir string) error {
+	fmt.Println("Fixing database password mismatch...")
+	fmt.Println()
+	fmt.Println("This will:")
+	fmt.Println("  1. Stop all containers")
+	fmt.Println("  2. Remove the PostgreSQL data volume (DATA WILL BE LOST)")
+	fmt.Println("  3. Restart containers with the correct password")
+	fmt.Println()
+	fmt.Print("Continue? [y/N]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(strings.ToLower(input))
+
+	if input != "y" && input != "yes" {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	fmt.Println()
+	fmt.Println("Stopping containers...")
+	if err := runDockerCompose(installDir, "down"); err != nil {
+		return err
+	}
+
+	fmt.Println("Removing PostgreSQL volume...")
+	volumeCmd := exec.Command("docker", "volume", "rm", "emergent_postgres_data")
+	volumeCmd.Run()
+
+	fmt.Println("Starting containers...")
+	if err := runDockerCompose(installDir, "up", "-d"); err != nil {
+		return err
+	}
+
+	fmt.Println("Waiting for services...")
+	time.Sleep(10 * time.Second)
+
+	fmt.Println()
+	fmt.Println("Database reset complete. Run 'emergent doctor' to verify.")
+	return nil
+}
+
+func restartContainers(installDir string) error {
+	fmt.Println("Restarting containers...")
+	if err := runDockerCompose(installDir, "up", "-d"); err != nil {
+		return err
+	}
+	fmt.Println("Containers restarted.")
+	return nil
+}
+
+func runDockerCompose(installDir string, args ...string) error {
+	composePath := filepath.Join(installDir, "docker", "docker-compose.yml")
+	envPath := filepath.Join(installDir, "config", ".env.local")
+
+	baseArgs := []string{"compose", "-f", composePath, "--env-file", envPath}
+	baseArgs = append(baseArgs, args...)
+
+	cmd := exec.Command("docker", baseArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
