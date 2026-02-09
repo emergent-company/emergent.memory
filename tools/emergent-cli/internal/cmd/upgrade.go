@@ -18,20 +18,28 @@ import (
 )
 
 var upgradeFlags struct {
-	dir   string
-	force bool
+	dir     string
+	force   bool
+	cliOnly bool
 }
 
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
-	Short: "Upgrade the CLI to the latest version",
-	Long: `Checks for the latest release on GitHub and upgrades the CLI binary if a newer version is available.
+	Short: "Upgrade Emergent (CLI and server)",
+	Long: `Upgrades Emergent to the latest version.
 
-Use 'emergent upgrade server' to upgrade the standalone server installation.
+For standalone installations (Docker-based):
+  - Upgrades the CLI binary
+  - Pulls the latest versioned Docker images
+  - Restarts services with updated images
+
+For CLI-only installations:
+  - Upgrades just the CLI binary
 
 Examples:
-  emergent upgrade              # Upgrade CLI binary
-  emergent upgrade server       # Upgrade standalone server (pull latest images)`,
+  emergent upgrade              # Upgrade everything
+  emergent upgrade --cli-only   # Upgrade CLI only (skip server)
+  emergent upgrade server       # Legacy: upgrade server only`,
 	Run: runUpgrade,
 }
 
@@ -56,6 +64,8 @@ func init() {
 	defaultDir := filepath.Join(homeDir, ".emergent")
 
 	upgradeCmd.Flags().BoolVarP(&upgradeFlags.force, "force", "f", false, "Force upgrade even for dev versions")
+	upgradeCmd.Flags().BoolVar(&upgradeFlags.cliOnly, "cli-only", false, "Only upgrade CLI, skip server")
+	upgradeCmd.Flags().StringVar(&upgradeFlags.dir, "dir", defaultDir, "Installation directory")
 
 	upgradeServerCmd.Flags().StringVar(&upgradeFlags.dir, "dir", defaultDir, "Installation directory")
 	upgradeServerCmd.Flags().BoolVarP(&upgradeFlags.force, "force", "f", false, "Force upgrade without confirmation")
@@ -115,6 +125,14 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	currentVersion := strings.TrimPrefix(Version, "cli-")
 	currentVersion = strings.TrimPrefix(currentVersion, "v")
 
+	// Check if server is installed
+	cfg := installer.Config{
+		InstallDir: upgradeFlags.dir,
+		Verbose:    true,
+	}
+	inst := installer.New(cfg)
+	serverInstalled := inst.IsInstalled()
+
 	if Version == "dev" && !upgradeFlags.force {
 		fmt.Println("You are running a development version. Upgrade skipped.")
 		fmt.Printf("Latest release: %s\n", release.TagName)
@@ -122,22 +140,41 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	if latestVersion == currentVersion && !upgradeFlags.force {
+	cliNeedsUpgrade := latestVersion != currentVersion || upgradeFlags.force
+
+	if !cliNeedsUpgrade && !serverInstalled {
 		fmt.Printf("You are already using the latest version: %s\n", Version)
 		return
 	}
 
-	if Version == "dev" {
-		fmt.Printf("Forcing upgrade from dev version to %s\n", release.TagName)
-	} else if latestVersion == currentVersion {
-		fmt.Printf("Forcing reinstall of %s\n", release.TagName)
+	// Show what will be upgraded
+	fmt.Println()
+	fmt.Printf("Current CLI version: %s\n", Version)
+	fmt.Printf("Latest version: %s\n", release.TagName)
+	if serverInstalled && !upgradeFlags.cliOnly {
+		fmt.Printf("Server installation: %s\n", upgradeFlags.dir)
+	}
+	fmt.Println()
+
+	if cliNeedsUpgrade {
+		if Version == "dev" {
+			fmt.Printf("Will upgrade CLI from dev version to %s\n", release.TagName)
+		} else if latestVersion == currentVersion {
+			fmt.Printf("Will reinstall CLI %s\n", release.TagName)
+		} else {
+			fmt.Printf("Will upgrade CLI: %s → %s\n", Version, release.TagName)
+		}
 	} else {
-		fmt.Printf("New version available: %s (Current: %s)\n", release.TagName, Version)
+		fmt.Println("CLI is up to date")
 	}
 
-	if !upgradeFlags.force {
-		fmt.Print("Do you want to upgrade? [y/N]: ")
+	if serverInstalled && !upgradeFlags.cliOnly {
+		fmt.Println("Will upgrade server: pull latest images and restart")
+	}
+	fmt.Println()
 
+	if !upgradeFlags.force {
+		fmt.Print("Proceed with upgrade? [y/N]: ")
 		var confirm string
 		_, _ = fmt.Scanln(&confirm)
 		if strings.ToLower(confirm) != "y" {
@@ -146,19 +183,35 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	assetURL, assetName, err := findAsset(release.Assets)
-	if err != nil {
-		fmt.Printf("Error finding compatible asset: %v\n", err)
-		os.Exit(1)
+	// Upgrade CLI
+	if cliNeedsUpgrade {
+		assetURL, assetName, err := findAsset(release.Assets)
+		if err != nil {
+			fmt.Printf("Error finding compatible asset: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Downloading %s...\n", assetName)
+		if err := installUpdate(assetURL, assetName); err != nil {
+			fmt.Printf("CLI upgrade failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✓ CLI upgraded to %s\n", release.TagName)
 	}
 
-	fmt.Printf("Downloading %s...\n", assetName)
-	if err := installUpdate(assetURL, assetName); err != nil {
-		fmt.Printf("Upgrade failed: %v\n", err)
-		os.Exit(1)
+	// Upgrade server if installed and not --cli-only
+	if serverInstalled && !upgradeFlags.cliOnly {
+		fmt.Println()
+		fmt.Println("Upgrading server...")
+		cfg.ServerPort = inst.GetServerPort()
+		if err := inst.Upgrade(); err != nil {
+			fmt.Printf("Server upgrade failed: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
-	fmt.Printf("Successfully upgraded to %s\n", release.TagName)
+	fmt.Println()
+	fmt.Println("✓ Upgrade complete!")
 }
 
 func getLatestRelease() (*Release, error) {
