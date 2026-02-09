@@ -140,7 +140,7 @@ cmd_rebuild() {
 }
 
 cmd_uninstall() {
-    UNINSTALL_URL="https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/uninstall.sh"
+    UNINSTALL_URL="https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/uninstall.sh"
     echo -e "${BLUE}Running uninstaller...${NC}"
     curl -fsSL "$UNINSTALL_URL" | bash
 }

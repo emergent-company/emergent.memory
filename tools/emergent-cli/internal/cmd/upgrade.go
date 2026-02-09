@@ -87,7 +87,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 }
 
 func getLatestRelease() (*Release, error) {
-	resp, err := http.Get("https://api.github.com/repos/Emergent-Comapny/emergent/releases/latest")
+	resp, err := http.Get("https://api.github.com/repos/emergent-company/emergent/releases/latest")
 	if err != nil {
 		return nil, err
 	}

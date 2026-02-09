@@ -7,7 +7,7 @@ Created a **completely automated installation** that requires just **one command
 ## The Installation Command
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
 ```
 
 ## What the Installer Does
@@ -200,7 +200,7 @@ Show success message
 
 ```bash
 # 1. Clone repo
-git clone https://github.com/Emergent-Comapny/emergent.git
+git clone https://github.com/emergent-company/emergent.git
 cd emergent/deploy/minimal
 
 # 2. Generate passwords manually
@@ -231,7 +231,7 @@ curl http://localhost:3002/health
 ### After (One-Command Installation)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
 
 # Press Enter at Google API key prompt if you don't have one
 # Wait 2-3 minutes
@@ -391,13 +391,13 @@ This installation works on:
 **Production URL** (when merged):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
 ```
 
 **Development URL** (current branch):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/[branch]/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/[branch]/deploy/minimal/install.sh | bash
 ```
 
 ## Summary

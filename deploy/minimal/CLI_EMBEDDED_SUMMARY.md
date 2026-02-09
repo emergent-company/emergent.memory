@@ -228,10 +228,10 @@ VERSION=1.2.3 ./build-server-with-cli.sh
 ```bash
 # Tag for registry
 docker tag emergent-server-with-cli:latest \
-  ghcr.io/Emergent-Comapny/emergent-server-with-cli:latest
+  ghcr.io/emergent-company/emergent-server-with-cli:latest
 
 # Push
-docker push ghcr.io/Emergent-Comapny/emergent-server-with-cli:latest
+docker push ghcr.io/emergent-company/emergent-server-with-cli:latest
 ```
 
 ## Deployment Integration

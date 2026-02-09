@@ -13,11 +13,11 @@ This directory contains the Homebrew Formula for the Emergent CLI.
 Once the tap repository is public, users can install the CLI using:
 
 ```bash
-brew tap Emergent-Comapny/emergent
+brew tap emergent-company/emergent
 brew install emergent-cli
 ```
 
-(Replace `Emergent-Comapny` with the actual owner of the `homebrew-emergent` repo).
+(Replace `emergent-company` with the actual owner of the `homebrew-emergent` repo).
 
 ## How to Update
 

@@ -12,7 +12,7 @@ set -euo pipefail
 SCRIPT_VERSION="0.3.0"
 VERSION="${VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-GITHUB_REPO="Emergent-Comapny/emergent"
+GITHUB_REPO="emergent-company/emergent"
 
 # Colors
 BOLD='\033[1m'
