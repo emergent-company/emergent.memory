@@ -111,7 +111,9 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	}
 
 	latestVersion := strings.TrimPrefix(release.TagName, "cli-")
+	latestVersion = strings.TrimPrefix(latestVersion, "v")
 	currentVersion := strings.TrimPrefix(Version, "cli-")
+	currentVersion = strings.TrimPrefix(currentVersion, "v")
 
 	if Version == "dev" && !upgradeFlags.force {
 		fmt.Println("You are running a development version. Upgrade skipped.")
