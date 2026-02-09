@@ -336,3 +336,61 @@ type DeleteTemplatePackResult struct {
 	PackID  string `json:"pack_id"`
 	Message string `json:"message"`
 }
+
+// ============================================================================
+// Entity CRUD DTOs
+// ============================================================================
+
+// CreateEntityResult represents the result of create_entity tool
+type CreateEntityResult struct {
+	Success bool           `json:"success"`
+	Entity  *CreatedEntity `json:"entity"`
+	Message string         `json:"message"`
+}
+
+// CreatedEntity represents a newly created entity
+type CreatedEntity struct {
+	ID          string         `json:"id"`
+	CanonicalID string         `json:"canonical_id"`
+	Type        string         `json:"type"`
+	Key         string         `json:"key,omitempty"`
+	Status      string         `json:"status,omitempty"`
+	Properties  map[string]any `json:"properties,omitempty"`
+	Labels      []string       `json:"labels,omitempty"`
+	Version     int            `json:"version"`
+	CreatedAt   string         `json:"created_at"`
+}
+
+// CreateRelationshipResult represents the result of create_relationship tool
+type CreateRelationshipResult struct {
+	Success      bool                 `json:"success"`
+	Relationship *CreatedRelationship `json:"relationship"`
+	Message      string               `json:"message"`
+}
+
+// CreatedRelationship represents a newly created relationship
+type CreatedRelationship struct {
+	ID          string         `json:"id"`
+	CanonicalID string         `json:"canonical_id"`
+	Type        string         `json:"type"`
+	SourceID    string         `json:"source_id"`
+	TargetID    string         `json:"target_id"`
+	Properties  map[string]any `json:"properties,omitempty"`
+	Weight      float64        `json:"weight,omitempty"`
+	Version     int            `json:"version"`
+	CreatedAt   string         `json:"created_at"`
+}
+
+// UpdateEntityResult represents the result of update_entity tool
+type UpdateEntityResult struct {
+	Success bool           `json:"success"`
+	Entity  *CreatedEntity `json:"entity"`
+	Message string         `json:"message"`
+}
+
+// DeleteEntityResult represents the result of delete_entity tool
+type DeleteEntityResult struct {
+	Success  bool   `json:"success"`
+	EntityID string `json:"entity_id"`
+	Message  string `json:"message"`
+}

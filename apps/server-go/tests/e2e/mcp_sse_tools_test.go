@@ -11,8 +11,9 @@ import (
 )
 
 // MCPSSEToolsSuite tests all MCP tools via the unified SSE endpoint.
-// This suite discovers and tests each of the 14 exposed MCP tools:
+// This suite discovers and tests each of the 18 exposed MCP tools:
 // - schema_version, list_entity_types, query_entities, search_entities, get_entity_edges
+// - create_entity, create_relationship, update_entity, delete_entity
 // - list_template_packs, get_template_pack, get_available_templates, get_installed_templates
 // - assign_template_pack, update_template_assignment, uninstall_template_pack
 // - create_template_pack, delete_template_pack
@@ -121,7 +122,7 @@ func (s *MCPSSEToolsSuite) parseToolResultText(body map[string]any) map[string]a
 // Test: Tool Discovery
 // =============================================================================
 
-func (s *MCPSSEToolsSuite) TestToolsList_DiscoverAll14Tools() {
+func (s *MCPSSEToolsSuite) TestToolsList_DiscoverAll18Tools() {
 	sessionID := s.initSession()
 
 	resp := s.Client.POST("/api/mcp",
@@ -150,8 +151,8 @@ func (s *MCPSSEToolsSuite) TestToolsList_DiscoverAll14Tools() {
 	tools, ok := result["tools"].([]any)
 	s.True(ok, "Expected tools array")
 
-	// Verify we have all 14 tools
-	s.GreaterOrEqual(len(tools), 14, "Expected at least 14 tools")
+	// Verify we have all 18 tools (14 original + 4 new CRUD tools)
+	s.GreaterOrEqual(len(tools), 18, "Expected at least 18 tools")
 
 	// Build tool name map
 	toolNames := make(map[string]bool)
