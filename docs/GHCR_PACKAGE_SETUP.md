@@ -12,7 +12,7 @@ Make the package public via GitHub UI (one-time action).
 
 1. **Navigate to Packages**
 
-   - Go to: https://github.com/Emergent-Comapny/emergent/packages
+   - Go to: https://github.com/emergent-company/emergent/packages
    - Or: Repository → Packages (right sidebar)
 
 2. **Find the Package**
@@ -33,7 +33,7 @@ Make the package public via GitHub UI (one-time action).
 
 5. **Verify**
    ```bash
-   docker pull ghcr.io/emergent-comapny/emergent-server-with-cli:latest
+   docker pull ghcr.io/emergent-company/emergent-server-with-cli:latest
    ```
    Should succeed without authentication.
 

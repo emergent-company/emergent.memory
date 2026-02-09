@@ -12,7 +12,7 @@ Minimal ingestion server aligned with the spec:
 Install server + CLI in 2-3 minutes with pre-built images:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install-online.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install-online.sh | bash
 ```
 
 This installs:
@@ -25,13 +25,13 @@ This installs:
 **CLI Only** (no Docker required):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install-online.sh | CLIENT_ONLY=1 bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install-online.sh | CLIENT_ONLY=1 bash
 ```
 
 ### Homebrew
 
 ```bash
-brew tap Emergent-Comapny/emergent
+brew tap emergent-company/emergent
 brew install emergent-cli
 ```
 

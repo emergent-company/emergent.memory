@@ -245,6 +245,9 @@ func checkAPI(cfg *config.Config) checkResult {
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	bodyStr := strings.TrimSpace(string(body))
+
 	if resp.StatusCode == http.StatusUnauthorized {
 		fmt.Println("UNAUTHORIZED")
 		return checkResult{
@@ -263,13 +266,23 @@ func checkAPI(cfg *config.Config) checkResult {
 		}
 	}
 
+	if resp.StatusCode == http.StatusNotFound {
+		fmt.Println("NOT FOUND")
+		// Provide detailed diagnostics for 404 errors
+		hint := diagnose404Error(cfg, bodyStr)
+		return checkResult{
+			name:    "API Access",
+			status:  "fail",
+			message: hint,
+		}
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
 		fmt.Println("ERROR")
 		return checkResult{
 			name:    "API Access",
 			status:  "fail",
-			message: fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)),
+			message: fmt.Sprintf("API returned %d: %s", resp.StatusCode, bodyStr),
 		}
 	}
 
@@ -279,6 +292,39 @@ func checkAPI(cfg *config.Config) checkResult {
 		status:  "pass",
 		message: "Successfully accessed API",
 	}
+}
+
+// diagnose404Error provides detailed diagnostics for 404 errors
+func diagnose404Error(cfg *config.Config, responseBody string) string {
+	var hints []string
+
+	// Check if the response looks like it's from the wrong server type
+	if strings.Contains(responseBody, `"statusCode":404`) {
+		hints = append(hints, "Server appears to be running NestJS instead of Go server")
+		hints = append(hints, "Solution: Ensure the Docker image is up-to-date (docker compose pull && docker compose up -d)")
+	} else if strings.Contains(responseBody, `"status":"error"`) {
+		hints = append(hints, "Server returned unexpected error format - may be running outdated version")
+		hints = append(hints, "Solution: Update your installation (run the install script again)")
+	}
+
+	// Check for common misconfigurations
+	if cfg.APIKey != "" {
+		hints = append(hints, fmt.Sprintf("API Key configured: %s...", cfg.APIKey[:min(8, len(cfg.APIKey))]))
+	}
+
+	// Check if standalone user might not exist
+	hints = append(hints, "Possible causes:")
+	hints = append(hints, "  1. Server is running an outdated Docker image")
+	hints = append(hints, "  2. Database migrations haven't run (standalone user not created)")
+	hints = append(hints, "  3. API key doesn't match server's STANDALONE_API_KEY")
+
+	hints = append(hints, "")
+	hints = append(hints, "Troubleshooting steps:")
+	hints = append(hints, "  1. Check server logs: docker logs emergent-server")
+	hints = append(hints, "  2. Verify API key matches: grep STANDALONE_API_KEY ~/.emergent/config/.env.local")
+	hints = append(hints, "  3. Update installation: curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install-online.sh | bash")
+
+	return strings.Join(hints, "\n       ")
 }
 
 func init() {

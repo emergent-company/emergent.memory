@@ -7,7 +7,7 @@ Single-user deployment with MCP access and secure Tailscale networking.
 **Copy and paste this into your terminal:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install-online.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install-online.sh | bash
 ```
 
 That's it! The installer will:

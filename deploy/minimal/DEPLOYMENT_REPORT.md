@@ -14,7 +14,7 @@ Successfully deployed a minimal standalone instance of Emergent knowledge manage
 
 | Component  | Image/Binary                                     | Port        | Status     |
 | ---------- | ------------------------------------------------ | ----------- | ---------- |
-| PostgreSQL | `ghcr.io/Emergent-Comapny/emergent-postgres:dev` | 15432       | ✅ Healthy |
+| PostgreSQL | `ghcr.io/emergent-company/emergent-postgres:dev` | 15432       | ✅ Healthy |
 | Kreuzberg  | `goldziher/kreuzberg:latest`                     | 18000       | ✅ Healthy |
 | MinIO      | `minio/minio:latest`                             | 19000/19001 | ✅ Healthy |
 | Go Server  | Local build from source                          | 3002        | ✅ Healthy |
@@ -81,7 +81,7 @@ Password: local-test-password
 
 **Discovery**:
 
-- Docker image `ghcr.io/Emergent-Comapny/emergent-server-go:dev` does not include standalone module
+- Docker image `ghcr.io/emergent-company/emergent-server-go:dev` does not include standalone module
 - No `module=standalone` logs in startup sequence
 - No standalone OnStart hook registered
 - Authentication always failed with "missing_token" error
