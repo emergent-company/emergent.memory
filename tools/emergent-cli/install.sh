@@ -264,6 +264,7 @@ main() {
     echo
 }
 
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# When piped (curl | bash), BASH_SOURCE[0] is empty, so default to running main
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]] || [[ -z "${BASH_SOURCE[0]:-}" ]]; then
     main "$@"
 fi
