@@ -9,7 +9,20 @@ BASE_URL="https://raw.githubusercontent.com/${REPO_ORG}/${REPO_NAME}/${REPO_BRAN
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.emergent}"
 SERVER_PORT="${SERVER_PORT:-3002}"
 IMAGE_ORG=$(echo "$REPO_ORG" | tr '[:upper:]' '[:lower:]')
-SERVER_IMAGE="ghcr.io/${IMAGE_ORG}/emergent-server-with-cli:latest"
+
+# Determine image tag from version (use version tag if available, otherwise latest)
+get_image_tag() {
+    local version="$1"
+    if [ -z "$version" ] || [ "$version" = "latest" ] || [ "$version" = "main" ]; then
+        echo "latest"
+    else
+        # Strip 'v' prefix if present for image tag (images use 0.3.8 not v0.3.8)
+        echo "${version#v}"
+    fi
+}
+
+# Will be set after determining CLI_VERSION
+SERVER_IMAGE_BASE="ghcr.io/${IMAGE_ORG}/emergent-server-with-cli"
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -233,18 +246,30 @@ if [ -f "${INSTALL_DIR}/docker/docker-compose.yml" ]; then
     echo -e "${BOLD}Running in UPGRADE mode${NC}"
     echo ""
     
-    # Upgrade: Pull latest images
-    echo -e "${CYAN}Pulling latest Docker images...${NC}"
+    CURRENT_VERSION=$(cat "${INSTALL_DIR}/version" 2>/dev/null || echo "unknown")
+    echo -e "${CYAN}Current version: ${CURRENT_VERSION}${NC}"
+    
+    echo -e "${CYAN}Determining latest version...${NC}"
+    if [ "$CLI_VERSION" = "latest" ]; then
+        CLI_VERSION=$(get_latest_cli_version)
+    fi
+    IMAGE_TAG=$(get_image_tag "$CLI_VERSION")
+    SERVER_IMAGE="${SERVER_IMAGE_BASE}:${IMAGE_TAG}"
+    echo -e "${GREEN}✓${NC} Target version: ${CLI_VERSION} (image tag: ${IMAGE_TAG})"
+    
+    echo -e "${CYAN}Updating docker-compose.yml with versioned image...${NC}"
+    sed -i.bak "s|image: ghcr.io/.*/emergent-server-with-cli:.*|image: ${SERVER_IMAGE}|g" "${INSTALL_DIR}/docker/docker-compose.yml"
+    rm -f "${INSTALL_DIR}/docker/docker-compose.yml.bak"
+    
+    echo -e "${CYAN}Pulling Docker images...${NC}"
     cd "${INSTALL_DIR}/docker"
     docker compose --env-file "${INSTALL_DIR}/config/.env.local" pull
     echo -e "${GREEN}✓${NC} Images updated"
     
-    # Upgrade: Restart containers
     echo -e "${CYAN}Restarting services...${NC}"
     docker compose --env-file "${INSTALL_DIR}/config/.env.local" up -d
     echo -e "${GREEN}✓${NC} Services restarted"
     
-    # Wait for health
     echo -e "${CYAN}Waiting for services to become healthy...${NC}"
     sleep 5
     MAX_WAIT=60
@@ -262,15 +287,9 @@ if [ -f "${INSTALL_DIR}/docker/docker-compose.yml" ]; then
     done
     echo ""
     
-    # Upgrade: Update CLI binary
     echo -e "${CYAN}Updating CLI binary...${NC}"
     HOST_OS=$(detect_os)
     HOST_ARCH=$(detect_arch)
-    
-    if [ "$CLI_VERSION" = "latest" ]; then
-        # Get latest v* tag (not cli-v* anymore - we use global versioning now)
-        CLI_VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO_ORG}/${REPO_NAME}/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
-    fi
     
     if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
         echo -e "${GREEN}✓${NC} CLI updated to ${CLI_VERSION}"
@@ -278,15 +297,17 @@ if [ -f "${INSTALL_DIR}/docker/docker-compose.yml" ]; then
         echo -e "${YELLOW}⚠${NC} CLI update skipped (you can still use: docker exec emergent-server emergent <command>)"
     fi
     
+    echo "${CLI_VERSION}" > "${INSTALL_DIR}/version"
+    
     echo ""
     echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}${BOLD}  ✓ Emergent Upgrade Complete!${NC}"
     echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo -e "${CYAN}Upgraded components:${NC}"
-    echo "  • Docker images (pulled latest)"
+    echo "  • Docker images (${IMAGE_TAG})"
     echo "  • Services (restarted)"
-    echo "  • CLI binary (${CLI_VERSION:-latest})"
+    echo "  • CLI binary (${CLI_VERSION})"
     echo ""
     echo -e "${CYAN}Your existing configuration and data were preserved.${NC}"
     echo ""
@@ -299,6 +320,14 @@ echo -e "${CYAN}Installing to: ${INSTALL_DIR}${NC}"
 mkdir -p "${INSTALL_DIR}/bin"
 mkdir -p "${INSTALL_DIR}/config"
 mkdir -p "${INSTALL_DIR}/docker"
+
+echo -e "${CYAN}Determining latest version...${NC}"
+if [ "$CLI_VERSION" = "latest" ]; then
+    CLI_VERSION=$(get_latest_cli_version)
+fi
+IMAGE_TAG=$(get_image_tag "$CLI_VERSION")
+SERVER_IMAGE="${SERVER_IMAGE_BASE}:${IMAGE_TAG}"
+echo -e "${GREEN}✓${NC} Version: ${CLI_VERSION:-latest} (image tag: ${IMAGE_TAG})"
 
 echo -e "${CYAN}Downloading helper scripts...${NC}"
 BIN_FILES=("emergent-ctl.sh:emergent-ctl" "emergent-auth.sh:emergent-auth")
@@ -542,6 +571,9 @@ EOF
     echo -e "${GREEN}✓${NC} CLI config created at ${INSTALL_DIR}/config.yaml"
     setup_path
 fi
+
+echo "${CLI_VERSION:-latest}" > "${INSTALL_DIR}/version"
+echo -e "${GREEN}✓${NC} Version recorded: ${CLI_VERSION:-latest}"
 
 echo ""
 echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
