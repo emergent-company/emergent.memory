@@ -115,7 +115,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go build \
-            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.Commit=${{ steps.version.outputs.commit }} -X main.BuildTime=${{ steps.version.outputs.build_time }}" \
+            -ldflags="-s -w -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
             -o dist/emergent-cli-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
             ./cmd
 
@@ -188,7 +188,7 @@ jobs:
           fi
 
           go build \
-            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.Commit=${{ steps.version.outputs.commit }} -X main.BuildTime=${{ steps.version.outputs.build_time }}" \
+            -ldflags="-s -w -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
             -o dist/emergent-cli-${{ matrix.goos }}-${{ matrix.goarch }}${EXT} \
             ./cmd
 
