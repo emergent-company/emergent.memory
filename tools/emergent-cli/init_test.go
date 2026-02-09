@@ -29,7 +29,7 @@ func TestProjectStructure(t *testing.T) {
 		"internal/auth",
 		"internal/client",
 		"internal/cmd",
-		"internal/output",
+		"internal/installer",
 	}
 
 	for _, dir := range requiredDirs {
