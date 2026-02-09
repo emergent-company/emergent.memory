@@ -312,6 +312,110 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Required: []string{"pack_id"},
 			},
 		},
+		{
+			Name:        "create_entity",
+			Description: "Create a new entity (graph object) in the project. The entity type should match a type defined in an installed template pack.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"type": {
+						Type:        "string",
+						Description: "Entity type (e.g., \"Person\", \"Company\")",
+					},
+					"properties": {
+						Type:        "object",
+						Description: "Entity properties as key-value pairs matching the type schema",
+					},
+					"key": {
+						Type:        "string",
+						Description: "Optional unique key/identifier for the entity",
+					},
+					"status": {
+						Type:        "string",
+						Description: "Optional status (e.g., \"draft\", \"published\")",
+					},
+					"labels": {
+						Type:        "array",
+						Description: "Optional labels/tags for the entity",
+					},
+				},
+				Required: []string{"type"},
+			},
+		},
+		{
+			Name:        "create_relationship",
+			Description: "Create a relationship between two entities. The relationship type should match a type defined in an installed template pack.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"type": {
+						Type:        "string",
+						Description: "Relationship type (e.g., \"WORKS_AT\", \"KNOWS\")",
+					},
+					"source_id": {
+						Type:        "string",
+						Description: "UUID of the source entity",
+					},
+					"target_id": {
+						Type:        "string",
+						Description: "UUID of the target entity",
+					},
+					"properties": {
+						Type:        "object",
+						Description: "Optional relationship properties",
+					},
+					"weight": {
+						Type:        "number",
+						Description: "Optional relationship weight (default: 1.0)",
+					},
+				},
+				Required: []string{"type", "source_id", "target_id"},
+			},
+		},
+		{
+			Name:        "update_entity",
+			Description: "Update an existing entity by creating a new version. Properties are merged with existing values (null removes a property).",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entity_id": {
+						Type:        "string",
+						Description: "UUID of the entity to update",
+					},
+					"properties": {
+						Type:        "object",
+						Description: "Properties to update (merged with existing, null removes)",
+					},
+					"status": {
+						Type:        "string",
+						Description: "Optional new status",
+					},
+					"labels": {
+						Type:        "array",
+						Description: "Optional labels to add",
+					},
+					"replace_labels": {
+						Type:        "boolean",
+						Description: "If true, replace all labels instead of merging (default: false)",
+					},
+				},
+				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:        "delete_entity",
+			Description: "Soft-delete an entity. The entity can be restored later.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entity_id": {
+						Type:        "string",
+						Description: "UUID of the entity to delete",
+					},
+				},
+				Required: []string{"entity_id"},
+			},
+		},
 	}
 }
 
@@ -346,6 +450,14 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeCreateTemplatePack(ctx, args)
 	case "delete_template_pack":
 		return s.executeDeleteTemplatePack(ctx, args)
+	case "create_entity":
+		return s.executeCreateEntity(ctx, projectID, args)
+	case "create_relationship":
+		return s.executeCreateRelationship(ctx, projectID, args)
+	case "update_entity":
+		return s.executeUpdateEntity(ctx, projectID, args)
+	case "delete_entity":
+		return s.executeDeleteEntity(ctx, projectID, args)
 	default:
 		return nil, fmt.Errorf("tool not found: %s", toolName)
 	}
@@ -1433,8 +1545,8 @@ func (s *Service) executeAssignTemplatePack(ctx context.Context, projectID strin
 		var existingTypes []existingTypeRow
 		err = tx.NewRaw(`
 			SELECT type_name FROM kb.project_object_type_registry 
-			WHERE project_id = ? AND type_name = ANY(?)
-		`, projectUUID, typesToInstall).Scan(ctx, &existingTypes)
+			WHERE project_id = ? AND type_name IN (?)
+		`, projectUUID, bun.In(typesToInstall)).Scan(ctx, &existingTypes)
 		if err != nil {
 			return err
 		}
@@ -1609,7 +1721,7 @@ func (s *Service) executeUninstallTemplatePack(ctx context.Context, projectID st
 		err = tx.NewRaw(`
 			SELECT COUNT(*) FROM kb.graph_objects go
 			JOIN kb.project_object_type_registry ptr ON go.type = ptr.type_name AND go.project_id = ptr.project_id
-			WHERE ptr.template_pack_id = ? AND go.project_id = ? AND go.deleted_at IS NULL
+			WHERE ptr.template_pack_id = ? AND go.project_id = ? AND go.deleted_at IS NULL AND go.supersedes_id IS NULL
 		`, templatePackID, projectUUID).Scan(ctx, &objectCount)
 		if err != nil {
 			return err
@@ -1789,6 +1901,255 @@ func (s *Service) executeDeleteTemplatePack(ctx context.Context, args map[string
 		Success: true,
 		PackID:  packID,
 		Message: fmt.Sprintf("Template pack \"%s\" deleted successfully", pack.Name),
+	}
+
+	return s.wrapResult(result)
+}
+
+func (s *Service) executeCreateEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	typeName, _ := args["type"].(string)
+	if typeName == "" {
+		return nil, fmt.Errorf("missing required parameter: type")
+	}
+
+	properties, _ := args["properties"].(map[string]any)
+
+	var key *string
+	if k, ok := args["key"].(string); ok && k != "" {
+		key = &k
+	}
+
+	var status *string
+	if st, ok := args["status"].(string); ok && st != "" {
+		status = &st
+	}
+
+	var labels []string
+	if l, ok := args["labels"].([]any); ok {
+		for _, v := range l {
+			if str, ok := v.(string); ok {
+				labels = append(labels, str)
+			}
+		}
+	}
+
+	req := &graph.CreateGraphObjectRequest{
+		Type:       typeName,
+		Key:        key,
+		Status:     status,
+		Properties: properties,
+		Labels:     labels,
+	}
+
+	result, err := s.graphService.Create(ctx, projectUUID, req, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create entity: %w", err)
+	}
+
+	var statusStr string
+	if result.Status != nil {
+		statusStr = *result.Status
+	}
+	var keyStr string
+	if result.Key != nil {
+		keyStr = *result.Key
+	}
+
+	entityResult := CreateEntityResult{
+		Success: true,
+		Entity: &CreatedEntity{
+			ID:          result.ID.String(),
+			CanonicalID: result.CanonicalID.String(),
+			Type:        result.Type,
+			Key:         keyStr,
+			Status:      statusStr,
+			Properties:  result.Properties,
+			Labels:      result.Labels,
+			Version:     result.Version,
+			CreatedAt:   result.CreatedAt.Format(time.RFC3339),
+		},
+		Message: fmt.Sprintf("Entity of type \"%s\" created successfully", typeName),
+	}
+
+	return s.wrapResult(entityResult)
+}
+
+func (s *Service) executeCreateRelationship(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	typeName, _ := args["type"].(string)
+	if typeName == "" {
+		return nil, fmt.Errorf("missing required parameter: type")
+	}
+
+	sourceIDStr, _ := args["source_id"].(string)
+	if sourceIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: source_id")
+	}
+	sourceID, err := uuid.Parse(sourceIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid source_id: %w", err)
+	}
+
+	targetIDStr, _ := args["target_id"].(string)
+	if targetIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: target_id")
+	}
+	targetID, err := uuid.Parse(targetIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid target_id: %w", err)
+	}
+
+	properties, _ := args["properties"].(map[string]any)
+
+	var weight *float32
+	if w, ok := args["weight"].(float64); ok {
+		wf := float32(w)
+		weight = &wf
+	}
+
+	req := &graph.CreateGraphRelationshipRequest{
+		Type:       typeName,
+		SrcID:      sourceID,
+		DstID:      targetID,
+		Properties: properties,
+		Weight:     weight,
+	}
+
+	result, err := s.graphService.CreateRelationship(ctx, projectUUID, req)
+	if err != nil {
+		return nil, fmt.Errorf("create relationship: %w", err)
+	}
+
+	var weightVal float64
+	if result.Weight != nil {
+		weightVal = float64(*result.Weight)
+	}
+
+	relResult := CreateRelationshipResult{
+		Success: true,
+		Relationship: &CreatedRelationship{
+			ID:          result.ID.String(),
+			CanonicalID: result.CanonicalID.String(),
+			Type:        result.Type,
+			SourceID:    result.SrcID.String(),
+			TargetID:    result.DstID.String(),
+			Properties:  result.Properties,
+			Weight:      weightVal,
+			Version:     result.Version,
+			CreatedAt:   result.CreatedAt.Format(time.RFC3339),
+		},
+		Message: fmt.Sprintf("Relationship \"%s\" created successfully", typeName),
+	}
+
+	return s.wrapResult(relResult)
+}
+
+func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	entityIDStr, _ := args["entity_id"].(string)
+	if entityIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: entity_id")
+	}
+	entityID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid entity_id: %w", err)
+	}
+
+	properties, _ := args["properties"].(map[string]any)
+
+	var status *string
+	if st, ok := args["status"].(string); ok && st != "" {
+		status = &st
+	}
+
+	var labels []string
+	if l, ok := args["labels"].([]any); ok {
+		for _, v := range l {
+			if str, ok := v.(string); ok {
+				labels = append(labels, str)
+			}
+		}
+	}
+
+	replaceLabels, _ := args["replace_labels"].(bool)
+
+	req := &graph.PatchGraphObjectRequest{
+		Properties:    properties,
+		Labels:        labels,
+		ReplaceLabels: replaceLabels,
+		Status:        status,
+	}
+
+	result, err := s.graphService.Patch(ctx, projectUUID, entityID, req, nil)
+	if err != nil {
+		return nil, fmt.Errorf("update entity: %w", err)
+	}
+
+	var statusStr string
+	if result.Status != nil {
+		statusStr = *result.Status
+	}
+	var keyStr string
+	if result.Key != nil {
+		keyStr = *result.Key
+	}
+
+	entityResult := UpdateEntityResult{
+		Success: true,
+		Entity: &CreatedEntity{
+			ID:          result.ID.String(),
+			CanonicalID: result.CanonicalID.String(),
+			Type:        result.Type,
+			Key:         keyStr,
+			Status:      statusStr,
+			Properties:  result.Properties,
+			Labels:      result.Labels,
+			Version:     result.Version,
+			CreatedAt:   result.CreatedAt.Format(time.RFC3339),
+		},
+		Message: "Entity updated successfully",
+	}
+
+	return s.wrapResult(entityResult)
+}
+
+func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	entityIDStr, _ := args["entity_id"].(string)
+	if entityIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: entity_id")
+	}
+	entityID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid entity_id: %w", err)
+	}
+
+	err = s.graphService.Delete(ctx, projectUUID, entityID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("delete entity: %w", err)
+	}
+
+	result := DeleteEntityResult{
+		Success:  true,
+		EntityID: entityIDStr,
+		Message:  "Entity deleted successfully",
 	}
 
 	return s.wrapResult(result)
