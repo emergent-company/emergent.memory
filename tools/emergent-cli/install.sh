@@ -81,6 +81,10 @@ main() {
     
     echo
     "${INSTALL_DIR}/emergent" version
+    
+    echo
+    log "Run 'emergent install' to set up a standalone server"
+    log "Run 'emergent upgrade --force' to update an existing installation"
 }
 
 main "$@"
