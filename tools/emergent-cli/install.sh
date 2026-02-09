@@ -9,6 +9,7 @@
 
 set -euo pipefail
 
+SCRIPT_VERSION="0.3.0"
 VERSION="${VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="Emergent-Comapny/emergent"
@@ -48,7 +49,7 @@ banner() {
                   |___/                             
 EOF
     echo -e "${NC}"
-    echo -e "${BOLD}Emergent CLI Installer${NC}"
+    echo -e "${BOLD}Emergent CLI Installer v${SCRIPT_VERSION}${NC}"
     echo
 }
 
