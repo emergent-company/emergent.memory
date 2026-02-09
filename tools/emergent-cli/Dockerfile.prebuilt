@@ -1,0 +1,32 @@
+# Optimized Dockerfile using pre-built binaries
+# This avoids slow QEMU emulation for ARM64 cross-compilation
+#
+# Usage: Build with --build-arg TARGETARCH to specify architecture
+# The binary must be copied into the build context before running
+
+ARG TARGETARCH=amd64
+
+FROM alpine:latest
+
+ARG TARGETARCH
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
+LABEL org.opencontainers.image.source="https://github.com/Emergent-Comapny/emergent"
+LABEL org.opencontainers.image.title="Emergent CLI"
+LABEL org.opencontainers.image.description="Command-line interface for Emergent Knowledge Base"
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+
+# Copy the pre-built binary for the target architecture
+# Binary naming: emergent-cli-linux-amd64 or emergent-cli-linux-arm64
+COPY emergent-cli-linux-${TARGETARCH} /usr/local/bin/emergent-cli
+
+RUN chmod +x /usr/local/bin/emergent-cli
+
+ENTRYPOINT ["emergent-cli"]
+CMD ["--help"]
