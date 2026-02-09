@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${GIT_COMMIT} -X main.BuildTime=${BUILD_TIME}" \
+    -ldflags="-s -w -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.Version=${VERSION} -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.Commit=${GIT_COMMIT} -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.BuildDate=${BUILD_TIME}" \
     -o emergent-cli \
     ./cmd
 
