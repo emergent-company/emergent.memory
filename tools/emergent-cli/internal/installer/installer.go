@@ -4,10 +4,13 @@ package installer
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -309,27 +312,38 @@ func (i *Installer) Upgrade() error {
 		return fmt.Errorf("no existing installation found at %s", i.config.InstallDir)
 	}
 
-	i.output.Info("Existing installation detected at %s", i.config.InstallDir)
-	i.output.Step("Running in UPGRADE mode")
+	i.output.Info("Upgrading server installation at %s", i.config.InstallDir)
 	fmt.Println()
+
+	latestVersion, err := i.getLatestVersion()
+	if err != nil {
+		i.output.Warn("Could not determine latest version: %v", err)
+		i.output.Info("Continuing with :latest tag")
+	} else {
+		currentVersion := i.GetInstalledVersion()
+		i.output.Info("Current version: %s", currentVersion)
+		i.output.Info("Target version: %s", latestVersion)
+		fmt.Println()
+
+		if err := i.updateDockerComposeImage(latestVersion); err != nil {
+			i.output.Warn("Could not update image tag: %v", err)
+		}
+	}
 
 	docker := NewDockerManager(i.config.InstallDir, i.output)
 
-	// Pull latest images
-	i.output.Step("Pulling latest Docker images...")
+	i.output.Step("Pulling Docker images...")
 	if err := docker.Pull(); err != nil {
 		return err
 	}
 	i.output.Success("Images updated")
 
-	// Restart containers
 	i.output.Step("Restarting services...")
 	if err := docker.Up(); err != nil {
 		return err
 	}
 	i.output.Success("Services restarted")
 
-	// Wait for health
 	i.output.Step("Waiting for services to become healthy...")
 	if err := docker.WaitForHealth(i.config.ServerPort, 60); err != nil {
 		i.output.Warn("Health check timeout - services may still be starting")
@@ -337,19 +351,74 @@ func (i *Installer) Upgrade() error {
 		i.output.Success("Server is healthy!")
 	}
 
+	if latestVersion != "" && latestVersion != "unknown" {
+		i.SaveInstalledVersion(latestVersion)
+	}
+
 	fmt.Println()
 	fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", colorGreen, colorBold, colorReset)
-	fmt.Printf("%s%s  ✓ Emergent Upgrade Complete!%s\n", colorGreen, colorBold, colorReset)
+	fmt.Printf("%s%s  ✓ Emergent Server Upgrade Complete!%s\n", colorGreen, colorBold, colorReset)
 	fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", colorGreen, colorBold, colorReset)
-	fmt.Println()
-	fmt.Printf("%sUpgraded components:%s\n", colorCyan, colorReset)
-	fmt.Println("  • Docker images (pulled latest)")
-	fmt.Println("  • Services (restarted)")
-	fmt.Println()
-	fmt.Printf("%sYour existing configuration and data were preserved.%s\n", colorCyan, colorReset)
 	fmt.Println()
 
 	return nil
+}
+
+func (i *Installer) getLatestVersion() (string, error) {
+	resp, err := http.Get("https://api.github.com/repos/emergent-company/emergent/releases/latest")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub API returned status: %d", resp.StatusCode)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", err
+	}
+
+	return release.TagName, nil
+}
+
+func (i *Installer) updateDockerComposeImage(version string) error {
+	composePath := filepath.Join(i.config.InstallDir, "docker", "docker-compose.yml")
+	content, err := os.ReadFile(composePath)
+	if err != nil {
+		return err
+	}
+
+	imageTag := strings.TrimPrefix(version, "v")
+
+	pattern := regexp.MustCompile(`(ghcr\.io/emergent-company/emergent-server-with-cli:)[^\s]+`)
+	newContent := pattern.ReplaceAllString(string(content), "${1}"+imageTag)
+
+	if string(content) != newContent {
+		if err := os.WriteFile(composePath, []byte(newContent), 0644); err != nil {
+			return err
+		}
+		i.output.Info("Updated image tag to %s", imageTag)
+	}
+
+	return nil
+}
+
+func (i *Installer) GetInstalledVersion() string {
+	versionPath := filepath.Join(i.config.InstallDir, "version")
+	content, err := os.ReadFile(versionPath)
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimSpace(string(content))
+}
+
+func (i *Installer) SaveInstalledVersion(version string) {
+	versionPath := filepath.Join(i.config.InstallDir, "version")
+	_ = os.WriteFile(versionPath, []byte(version+"\n"), 0644)
 }
 
 // Uninstall removes an Emergent installation
