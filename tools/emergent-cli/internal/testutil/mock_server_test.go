@@ -47,7 +47,7 @@ func TestMockServerHandlers(t *testing.T) {
 	customHandler := func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(201)
-		w.Write([]byte("custom response"))
+		_, _ = w.Write([]byte("custom response"))
 	}
 
 	handlers := map[string]http.HandlerFunc{
