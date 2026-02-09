@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ORG="Emergent-Comapny"
+REPO_ORG="emergent-company"
 REPO_NAME="emergent"
 REPO_BRANCH="${EMERGENT_VERSION:-main}"
 CLI_VERSION="${CLI_VERSION:-latest}"
@@ -600,5 +600,5 @@ cat << 'SIMPLEEOF'
 }
 SIMPLEEOF
 echo ""
-echo -e "${CYAN}📚 Documentation:${NC} https://github.com/Emergent-Comapny/emergent"
+echo -e "${CYAN}📚 Documentation:${NC} https://github.com/emergent-company/emergent"
 echo ""

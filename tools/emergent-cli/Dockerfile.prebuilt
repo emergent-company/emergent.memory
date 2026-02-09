@@ -14,7 +14,7 @@ ARG GIT_COMMIT=unknown
 
 LABEL org.opencontainers.image.version="${VERSION}"
 LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
-LABEL org.opencontainers.image.source="https://github.com/Emergent-Comapny/emergent"
+LABEL org.opencontainers.image.source="https://github.com/emergent-company/emergent"
 LABEL org.opencontainers.image.title="Emergent CLI"
 LABEL org.opencontainers.image.description="Command-line interface for Emergent Knowledge Base"
 

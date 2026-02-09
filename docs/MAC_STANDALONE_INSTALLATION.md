@@ -179,12 +179,12 @@ If you need to share a one-line installer with others (once the repo/images are 
 **Usage:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install-online.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install-online.sh | bash
 ```
 
 **Prerequisites for this to work publicly:**
 
-1. The repository `Emergent-Comapny/emergent` must be **public**.
+1. The repository `emergent-company/emergent` must be **public**.
 2. The Docker images (`ghcr.io/emergent-company/emergent-server-go:latest` etc.) must be **publicly accessible**.
 
 **To test this script locally (simulation):**

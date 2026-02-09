@@ -5,7 +5,7 @@
 Copy and paste this single command into your terminal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
 ```
 
 ## What Happens During Installation
@@ -119,31 +119,31 @@ docker exec emergent-server emergent-cli config show
 ### Custom Installation Directory
 
 ```bash
-INSTALL_DIR=/opt/emergent curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+INSTALL_DIR=/opt/emergent curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
 ```
 
 ### Custom Server Port
 
 ```bash
-SERVER_PORT=8080 curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+SERVER_PORT=8080 curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
 ```
 
 ### Provide Google API Key
 
 ```bash
-GOOGLE_API_KEY=your-key curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+GOOGLE_API_KEY=your-key curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
 ```
 
 ### Specific Version
 
 ```bash
-EMERGENT_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+EMERGENT_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
 ```
 
 ### Multiple Options
 
 ```bash
-INSTALL_DIR=/opt/emergent SERVER_PORT=8080 GOOGLE_API_KEY=your-key curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+INSTALL_DIR=/opt/emergent SERVER_PORT=8080 GOOGLE_API_KEY=your-key curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
 ```
 
 ## What Gets Installed
@@ -346,7 +346,7 @@ To expose to network, see [README.md](./README.md) Tailscale section.
 ## Support
 
 - **Documentation**: `~/emergent-standalone/deploy/minimal/INDEX.md`
-- **GitHub Issues**: https://github.com/Emergent-Comapny/emergent/issues
+- **GitHub Issues**: https://github.com/emergent-company/emergent/issues
 - **Verification**: `~/emergent-standalone/deploy/minimal/verify-install.sh`
 
 ---
@@ -354,7 +354,7 @@ To expose to network, see [README.md](./README.md) Tailscale section.
 **Installation URL**:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emergent-Comapny/emergent/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install.sh | bash
 ```
 
 **That's it! One command, ~3 minutes, ready to use.** 🚀
