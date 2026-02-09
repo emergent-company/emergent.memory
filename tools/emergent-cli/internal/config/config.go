@@ -88,12 +88,12 @@ func LoadWithEnv(path string) (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	v.BindEnv("server_url")
-	v.BindEnv("api_key")
-	v.BindEnv("email")
-	v.BindEnv("org_id")
-	v.BindEnv("project_id")
-	v.BindEnv("debug")
+	_ = v.BindEnv("server_url")
+	_ = v.BindEnv("api_key")
+	_ = v.BindEnv("email")
+	_ = v.BindEnv("org_id")
+	_ = v.BindEnv("project_id")
+	_ = v.BindEnv("debug")
 
 	_, err := os.Stat(path)
 	if err == nil {

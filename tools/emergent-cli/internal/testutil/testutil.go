@@ -103,11 +103,11 @@ func CaptureOutput() *OutputCapture {
 	capture.wg.Add(2)
 	go func() {
 		defer capture.wg.Done()
-		io.Copy(capture.stdoutBuf, capture.stdoutReader)
+		_, _ = io.Copy(capture.stdoutBuf, capture.stdoutReader)
 	}()
 	go func() {
 		defer capture.wg.Done()
-		io.Copy(capture.stderrBuf, capture.stderrReader)
+		_, _ = io.Copy(capture.stderrBuf, capture.stderrReader)
 	}()
 
 	return capture
