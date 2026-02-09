@@ -572,7 +572,7 @@ func offerDestructiveFix(installDir string) error {
 
 	fmt.Println("Removing PostgreSQL volume...")
 	volumeCmd := exec.Command("docker", "volume", "rm", "emergent_postgres_data")
-	volumeCmd.Run()
+	_ = volumeCmd.Run() // Ignore error - volume may not exist
 
 	fmt.Println("Starting containers...")
 	if err := runDockerCompose(installDir, "up", "-d"); err != nil {
