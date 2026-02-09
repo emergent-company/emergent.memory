@@ -27,7 +27,7 @@ func TestProjectStructure(t *testing.T) {
 		"internal/testutil",
 		"internal/config",
 		"internal/auth",
-		"internal/api",
+		"internal/client",
 		"internal/cmd",
 		"internal/output",
 	}
