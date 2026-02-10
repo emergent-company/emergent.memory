@@ -104,7 +104,7 @@ func (h *SSEHandler) HandleSSEConnect(c echo.Context) error {
 	)
 
 	// Send endpoint event (tells client where to POST messages)
-	messageEndpoint := fmt.Sprintf("/mcp/sse/%s/message?sessionId=%s", projectID, sessionID)
+	messageEndpoint := fmt.Sprintf("/api/mcp/sse/%s/message?sessionId=%s", projectID, sessionID)
 	h.sendSSEEvent(session, "endpoint", messageEndpoint)
 
 	// Keep connection alive with periodic pings
