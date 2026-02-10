@@ -97,6 +97,100 @@ func coerceToDate(value any) (string, error) {
 	}
 }
 
+type ValidationError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
+type ValidationResult struct {
+	Valid   bool              `json:"valid"`
+	Coerced map[string]any    `json:"coerced,omitempty"`
+	Errors  []ValidationError `json:"errors,omitempty"`
+}
+
+type PropertyValidator struct{}
+
+func NewPropertyValidator() *PropertyValidator {
+	return &PropertyValidator{}
+}
+
+func (v *PropertyValidator) ValidateProperties(
+	props map[string]any,
+	schema *agents.ObjectSchema,
+) *ValidationResult {
+	if schema == nil || len(schema.Properties) == 0 {
+		return &ValidationResult{
+			Valid:   true,
+			Coerced: props,
+			Errors:  []ValidationError{},
+		}
+	}
+
+	validated := make(map[string]any)
+	var errors []ValidationError
+
+	for key, value := range props {
+		propDef, hasDef := schema.Properties[key]
+		if !hasDef {
+			validated[key] = value
+			continue
+		}
+
+		if value == nil {
+			validated[key] = nil
+			continue
+		}
+
+		coerced, err := v.coerceValue(value, propDef.Type)
+		if err != nil {
+			errors = append(errors, ValidationError{
+				Field:   key,
+				Message: fmt.Sprintf("coercion failed: %v", err),
+			})
+		} else {
+			validated[key] = coerced
+		}
+	}
+
+	for _, required := range schema.Required {
+		if _, ok := validated[required]; !ok {
+			errors = append(errors, ValidationError{
+				Field:   required,
+				Message: "missing required field",
+			})
+		}
+	}
+
+	return &ValidationResult{
+		Valid:   len(errors) == 0,
+		Coerced: validated,
+		Errors:  errors,
+	}
+}
+
+func (v *PropertyValidator) coerceValue(value any, targetType string) (any, error) {
+	switch targetType {
+	case "number":
+		return coerceToNumber(value)
+	case "boolean":
+		return coerceToBoolean(value)
+	case "date":
+		return coerceToDate(value)
+	case "array":
+		if _, ok := value.([]any); !ok {
+			return nil, fmt.Errorf("expected array, got %T", value)
+		}
+		return value, nil
+	case "object":
+		if _, ok := value.(map[string]any); !ok {
+			return nil, fmt.Errorf("expected object, got %T", value)
+		}
+		return value, nil
+	default:
+		return value, nil
+	}
+}
+
 // ValidateAndCoerceProperties validates and coerces properties according to schema.
 // This is exported for use by migration tools.
 func ValidateAndCoerceProperties(
