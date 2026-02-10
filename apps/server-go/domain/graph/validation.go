@@ -97,6 +97,15 @@ func coerceToDate(value any) (string, error) {
 	}
 }
 
+// ValidateAndCoerceProperties validates and coerces properties according to schema.
+// This is exported for use by migration tools.
+func ValidateAndCoerceProperties(
+	props map[string]any,
+	schema agents.ObjectSchema,
+) (map[string]any, error) {
+	return validateProperties(props, schema)
+}
+
 func validateProperties(
 	props map[string]any,
 	schema agents.ObjectSchema,

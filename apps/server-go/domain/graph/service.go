@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +33,12 @@ type Service struct {
 	repo           *Repository
 	log            *slog.Logger
 	schemaProvider SchemaProvider
+
+	// Metrics
+	metricsMu          sync.RWMutex
+	validationSuccess  int64
+	validationErrors   int64
+	validationDuration time.Duration
 }
 
 // NewService creates a new graph service.
@@ -121,10 +128,15 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 				slog.String("project_id", projectID.String()),
 				slog.String("error", err.Error()))
 		} else if schema, ok := schemas.ObjectSchemas[req.Type]; ok {
+			start := time.Now()
 			validated, err := validateProperties(req.Properties, schema)
+			duration := time.Since(start)
+
 			if err != nil {
+				s.incrementValidationError(duration)
 				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
 			}
+			s.incrementValidationSuccess(duration)
 			validatedProps = validated
 		}
 	}
@@ -200,10 +212,15 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 				slog.String("project_id", projectID.String()),
 				slog.String("error", err.Error()))
 		} else if schema, ok := schemas.ObjectSchemas[current.Type]; ok {
+			start := time.Now()
 			validated, err := validateProperties(newProps, schema)
+			duration := time.Since(start)
+
 			if err != nil {
+				s.incrementValidationError(duration)
 				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
 			}
+			s.incrementValidationSuccess(duration)
 			newProps = validated
 		}
 	}
@@ -1996,4 +2013,34 @@ func sortMergeRelationshipSummaries(summaries []*BranchMergeRelationshipSummary)
 
 func intPtr(i int) *int {
 	return &i
+}
+
+func (s *Service) incrementValidationSuccess(duration time.Duration) {
+	s.metricsMu.Lock()
+	s.validationSuccess++
+	s.validationDuration += duration
+	s.metricsMu.Unlock()
+}
+
+func (s *Service) incrementValidationError(duration time.Duration) {
+	s.metricsMu.Lock()
+	s.validationErrors++
+	s.validationDuration += duration
+	s.metricsMu.Unlock()
+}
+
+func (s *Service) Metrics() ValidationMetrics {
+	s.metricsMu.RLock()
+	defer s.metricsMu.RUnlock()
+	return ValidationMetrics{
+		Success:       s.validationSuccess,
+		Errors:        s.validationErrors,
+		TotalDuration: s.validationDuration,
+	}
+}
+
+type ValidationMetrics struct {
+	Success       int64
+	Errors        int64
+	TotalDuration time.Duration
 }
