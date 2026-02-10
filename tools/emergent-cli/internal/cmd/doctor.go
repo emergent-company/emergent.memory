@@ -391,6 +391,18 @@ func checkDockerContainers(installDir string) checkResult {
 		}
 	}
 
+	installedVersion := getInstalledVersionFromFile(installDir)
+	containerVersion := getContainerVersion("emergent-server")
+
+	if installedVersion != "" && containerVersion != "" && installedVersion != containerVersion {
+		fmt.Println("VERSION MISMATCH")
+		return checkResult{
+			name:    "Docker Containers",
+			status:  "warn",
+			message: fmt.Sprintf("Version mismatch detected. Installed: %s, Container: %s. Run 'emergent upgrade' to update.", installedVersion, containerVersion),
+		}
+	}
+
 	if strings.Contains(serverLogs, "password authentication failed") {
 		fmt.Println("DB AUTH FAILED")
 		return checkResult{
@@ -678,7 +690,6 @@ func checkMCP(cfg *config.Config) checkResult {
 		}
 	}
 
-	// Parse response
 	var mcpResp struct {
 		JSONRPC string `json:"jsonrpc"`
 		ID      int    `json:"id"`
@@ -840,4 +851,33 @@ func checkMCP(cfg *config.Config) checkResult {
 		status:  "pass",
 		message: fmt.Sprintf("Connected (%s v%s) with %d tools", mcpResp.Result.ServerInfo.Name, mcpResp.Result.ServerInfo.Version, toolCount),
 	}
+}
+
+func getInstalledVersionFromFile(installDir string) string {
+	versionPath := filepath.Join(installDir, "version")
+	content, err := os.ReadFile(versionPath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(content))
+}
+
+func getContainerVersion(containerName string) string {
+	cmd := exec.Command("docker", "inspect", "--format", "{{.Config.Image}}", containerName)
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	imageFull := strings.TrimSpace(string(output))
+	parts := strings.Split(imageFull, ":")
+	if len(parts) < 2 {
+		return ""
+	}
+
+	version := parts[len(parts)-1]
+	if !strings.HasPrefix(version, "v") {
+		version = "v" + version
+	}
+	return version
 }
