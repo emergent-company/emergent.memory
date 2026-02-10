@@ -169,7 +169,8 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register graph routes
 	graphRepo := graph.NewRepository(db, log)
-	graphSvc := graph.NewService(graphRepo, log)
+	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
+	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider)
 	graphHandler := graph.NewHandler(graphSvc)
 	graph.RegisterRoutes(e, graphHandler, authMiddleware)
 
