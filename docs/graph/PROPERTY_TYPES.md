@@ -299,15 +299,59 @@ Return validated properties or error
 
 ## Performance Considerations
 
-- Schema loading is per-request (cached in future)
+### Schema Caching
+
+Schemas are cached in memory to reduce database queries:
+
+- **Cache duration**: 5 minutes (TTL)
+- **Cache scope**: Per project
+- **Thread safety**: sync.RWMutex for concurrent access
+- **Cache behavior**: Lazy eviction (checked on access)
+
+**Metrics tracking**:
+
+- Cache hits/misses
+- Database load success/errors
+- Validation success/errors
+- Validation duration
+
+View metrics via service interfaces (for monitoring integration).
+
+### Validation Performance
+
 - Validation overhead: ~1-2ms per entity
 - No impact if no template packs are active
 - Graceful degradation if schema service is slow
+- Metrics track validation timing for monitoring
+
+## Migration Tool
+
+A CLI tool is available to bulk validate and convert existing graph entities to typed properties:
+
+```bash
+# Preview changes (dry run)
+./bin/validate-properties -project <uuid>
+
+# Apply changes
+./bin/validate-properties -project <uuid> -dry-run=false
+
+# Process in batches
+./bin/validate-properties -project <uuid> -batch-size=50
+```
+
+**Features**:
+
+- Scans all graph objects in a project
+- Validates properties against schema
+- Shows preview of changes before applying
+- Batch processing for large datasets
+- Progress reporting
+- Error summary
+
+See CLI help for full usage: `./bin/validate-properties -h`
 
 ## Future Enhancements
 
-1. **Schema caching** - Cache loaded schemas per project
-2. **Custom validators** - Regex patterns, min/max, enums
-3. **Array item types** - Validate items in arrays
-4. **Nested object schemas** - Recursive validation
-5. **Migration tools** - Automated data migration scripts
+1. **Custom validators** - Regex patterns, min/max, enums
+2. **Array item types** - Validate items in arrays
+3. **Nested object schemas** - Recursive validation
