@@ -55,6 +55,9 @@ type GraphObject struct {
 	// Schema version for template pack
 	SchemaVersion *string `bun:"schema_version" json:"schema_version,omitempty"`
 
+	// Migration archive - preserves dropped fields from schema migrations
+	MigrationArchive []map[string]any `bun:"migration_archive,type:jsonb,default:'[]'" json:"migration_archive,omitempty"`
+
 	// External source fields - columns removed from schema in Phase 5, kept for API compatibility
 	ExternalSource    *string    `bun:"-" json:"external_source,omitempty"`
 	ExternalID        *string    `bun:"-" json:"external_id,omitempty"`
