@@ -1,6 +1,7 @@
 package documents
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -9,19 +10,26 @@ import (
 	"github.com/emergent/emergent-core/internal/storage"
 	"github.com/emergent/emergent-core/pkg/apperror"
 	"github.com/emergent/emergent-core/pkg/auth"
+	"github.com/emergent/emergent-core/pkg/logger"
 )
 
 // Handler handles document HTTP requests
 type Handler struct {
 	svc     *Service
 	storage *storage.Service
+	log     *slog.Logger
 }
 
 // NewHandler creates a new documents handler
-func NewHandler(svc *Service, storageSvc *storage.Service) *Handler {
+func NewHandler(
+	svc *Service,
+	storageSvc *storage.Service,
+	log *slog.Logger,
+) *Handler {
 	return &Handler{
 		svc:     svc,
 		storage: storageSvc,
+		log:     log.With(logger.Scope("documents.handler")),
 	}
 }
 
@@ -134,8 +142,8 @@ func (h *Handler) Create(c echo.Context) error {
 
 	doc, wasCreated, err := h.svc.Create(c.Request().Context(), CreateParams{
 		ProjectID: user.ProjectID,
-		Filename:  req.Filename,
-		Content:   req.Content,
+		Filename:  &req.Filename,
+		Content:   &req.Content,
 	})
 	if err != nil {
 		return err
@@ -384,6 +392,84 @@ func (h *Handler) Download(c echo.Context) error {
 		return apperror.ErrInternal.WithInternal(err)
 	}
 
-	// Redirect to signed URL
 	return c.Redirect(http.StatusTemporaryRedirect, signedURL)
+}
+
+func (h *Handler) Upload(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	if user.ProjectID == "" {
+		return apperror.ErrBadRequest.WithMessage("x-project-id header required")
+	}
+
+	if !h.storage.Enabled() {
+		return apperror.New(503, "storage_unavailable", "Storage service is not configured")
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("file required in multipart form")
+	}
+
+	maxSize := int64(100 * 1024 * 1024)
+	if file.Size > maxSize {
+		return apperror.New(413, "file_too_large", "File size exceeds 100MB limit")
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		return apperror.ErrInternal.WithMessage("failed to read uploaded file")
+	}
+	defer src.Close()
+
+	uploadResult, err := h.storage.UploadDocument(
+		c.Request().Context(),
+		src,
+		file.Size,
+		storage.DocumentUploadOptions{
+			ProjectID: user.ProjectID,
+			OrgID:     user.OrgID,
+			Filename:  file.Filename,
+			UploadOptions: storage.UploadOptions{
+				ContentType: file.Header.Get("Content-Type"),
+			},
+		},
+	)
+	if err != nil {
+		return apperror.ErrInternal.WithInternal(err).WithMessage("failed to upload file")
+	}
+
+	sourceType := "upload"
+	if st := c.FormValue("source_type"); st != "" {
+		sourceType = st
+	}
+
+	doc, wasCreated, err := h.svc.Create(c.Request().Context(), CreateParams{
+		ProjectID:     user.ProjectID,
+		Filename:      &file.Filename,
+		StorageKey:    &uploadResult.Key,
+		SourceType:    &sourceType,
+		MimeType:      &uploadResult.ContentType,
+		FileSizeBytes: &uploadResult.Size,
+	})
+	if err != nil {
+		return apperror.ErrInternal.WithInternal(err).WithMessage("failed to create document record")
+	}
+
+	response := map[string]any{
+		"document":    doc,
+		"was_created": wasCreated,
+		"message":     "Document uploaded successfully",
+	}
+
+	status := http.StatusCreated
+	if !wasCreated {
+		status = http.StatusOK
+		response["message"] = "Document already exists (deduplicated by content hash)"
+	}
+
+	return c.JSON(status, response)
 }
