@@ -328,7 +328,7 @@ func (h *StreamableHTTPHandler) handleGET(c echo.Context, protocolVersion string
 	}
 
 	// Keep connection alive with spec-compliant keepalive comments
-	ticker := time.NewTicker(4 * time.Minute)
+	ticker := time.NewTicker(4 * time.Hour)
 	defer ticker.Stop()
 
 	ctx := c.Request().Context()
