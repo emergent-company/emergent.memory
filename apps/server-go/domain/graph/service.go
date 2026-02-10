@@ -10,22 +10,36 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent/emergent-core/domain/extraction/agents"
 	"github.com/emergent/emergent-core/pkg/apperror"
 	"github.com/emergent/emergent-core/pkg/logger"
 	"github.com/emergent/emergent-core/pkg/mathutil"
 )
 
+// ExtractionSchemas contains object and relationship schemas.
+type ExtractionSchemas struct {
+	ObjectSchemas       map[string]agents.ObjectSchema
+	RelationshipSchemas map[string]agents.RelationshipSchema
+}
+
+// SchemaProvider provides access to template pack schemas for validation.
+type SchemaProvider interface {
+	GetProjectSchemas(ctx context.Context, projectID string) (*ExtractionSchemas, error)
+}
+
 // Service handles business logic for graph operations.
 type Service struct {
-	repo *Repository
-	log  *slog.Logger
+	repo           *Repository
+	log            *slog.Logger
+	schemaProvider SchemaProvider
 }
 
 // NewService creates a new graph service.
-func NewService(repo *Repository, log *slog.Logger) *Service {
+func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider) *Service {
 	return &Service{
-		repo: repo,
-		log:  log.With(logger.Scope("graph.svc")),
+		repo:           repo,
+		log:            log.With(logger.Scope("graph.svc")),
+		schemaProvider: schemaProvider,
 	}
 }
 
@@ -99,13 +113,29 @@ func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveH
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
 	actorType := "user"
 
+	validatedProps := req.Properties
+	if s.schemaProvider != nil {
+		schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if err != nil {
+			s.log.Warn("failed to load schemas, skipping validation",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", err.Error()))
+		} else if schema, ok := schemas.ObjectSchemas[req.Type]; ok {
+			validated, err := validateProperties(req.Properties, schema)
+			if err != nil {
+				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+			}
+			validatedProps = validated
+		}
+	}
+
 	obj := &GraphObject{
 		ProjectID:  projectID,
 		BranchID:   req.BranchID,
 		Type:       req.Type,
 		Key:        req.Key,
 		Status:     req.Status,
-		Properties: req.Properties,
+		Properties: validatedProps,
 		Labels:     req.Labels,
 		ActorType:  &actorType,
 		ActorID:    actorID,
@@ -159,6 +189,22 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 			delete(newProps, k) // null removes property
 		} else {
 			newProps[k] = v
+		}
+	}
+
+	// Validate merged properties
+	if s.schemaProvider != nil {
+		schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if err != nil {
+			s.log.Warn("failed to load schemas, skipping validation",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", err.Error()))
+		} else if schema, ok := schemas.ObjectSchemas[current.Type]; ok {
+			validated, err := validateProperties(newProps, schema)
+			if err != nil {
+				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+			}
+			newProps = validated
 		}
 	}
 
