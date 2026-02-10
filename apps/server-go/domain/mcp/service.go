@@ -3396,17 +3396,22 @@ func (s *Service) getExploreEntityTypePrompt(args map[string]any) (*PromptGetRes
 					Text: fmt.Sprintf(`I want to explore %s entities in the knowledge graph.
 
 Please help me:
-1. List recent %s entities using query_entities tool
+1. Search for %s entities using advanced search tools
 2. Show their key properties and metadata
 3. Identify common relationship patterns
 4. Suggest interesting entities to investigate further
 
-Use the following tools:
-- query_entities with type_name="%s"
-- get_entity_edges to see relationships
-- search_entities if I want to find specific ones
+Use the following tools (RECOMMENDED):
+- hybrid_search with types=["%s"] - BEST option (combines full-text + semantic + graph context)
+- semantic_search - Find conceptually similar entities
+- find_similar entity_id="{id}" - Discover entities similar to a reference entity
+- traverse_graph - Explore deep relationships (up to 5 hops)
 
-Let's start by showing me the most recent %s entities.`, entityType, entityType, entityType, entityType),
+Legacy alternatives (use only if hybrid_search is unavailable):
+- query_entities with type_name="%s"
+- search_entities for basic text search
+
+Let's start by using hybrid_search to find the most relevant %s entities.`, entityType, entityType, entityType, entityType, entityType),
 				},
 			},
 		},
@@ -3438,8 +3443,13 @@ Please guide me through:
 1. First, check available templates using get_available_templates
 2. Show me the template schema using get_template_pack%s
 3. Ask me for each required field one by one
-4. Once we have all the data, create the entity using create_entity
+4. Once we have all the data:
+   - For SINGLE entity: use create_entity
+   - For MULTIPLE entities (2+): use batch_create_entities (100x faster!)
 5. Confirm creation and suggest next steps (e.g., adding relationships)
+
+PERFORMANCE TIP: If creating multiple entities, use batch_create_entities instead of repeated create_entity calls.
+It can handle up to 100 entities in one request, which is dramatically faster.
 
 Let's start by checking what templates are available for %s entities.`, entityType, templateHint,
 						func() string {
@@ -3470,11 +3480,17 @@ func (s *Service) getAnalyzeRelationshipsPrompt(args map[string]any) (*PromptGet
 					Text: fmt.Sprintf(`I want to analyze the relationships for "%s".
 
 Please help me:
-1. First, find the entity using search_entities with query="%s"
-2. Get all its relationships using get_entity_edges
+1. First, find the entity using hybrid_search or search_entities with query="%s"
+2. Analyze relationships using OPTIMAL tools:
+   - traverse_graph - RECOMMENDED for deep multi-hop exploration (handles recursion automatically)
+   - get_entity_edges - For simple 1-hop neighborhood only
 3. Categorize relationships by type (incoming vs outgoing)
 4. Summarize the entity's position in the knowledge graph
-5. Suggest related entities I might want to explore
+5. Suggest related entities to explore using find_similar
+
+RECOMMENDED APPROACH:
+Use traverse_graph with max_depth=2 or 3 to get a complete picture of the entity's connections.
+This is far more efficient than manually calling get_entity_edges multiple times.
 
 Let's start by finding the entity.`, entityName, entityName),
 				},
@@ -3510,12 +3526,21 @@ Please help me create a structured research project with:
 3. Document placeholders for each phase
 4. Relationships connecting everything (PART_OF, REFERENCES)
 
-Workflow:
-1. Create the main Project entity using create_entity with type="Project"
-2. For each phase, create a Task entity
-3. Link tasks to project using create_relationship with type="PART_OF"
-4. Create Document placeholders for deliverables
-5. Link documents using create_relationship with type="REFERENCES"
+Workflow (OPTIMIZED):
+1. Gather all entity data first (Project + all Tasks + Documents)
+2. Use batch_create_entities to create ALL entities in ONE request (up to 100 entities)
+   - This is 100x faster than individual create_entity calls
+3. Gather all relationship data (PART_OF, REFERENCES)
+4. Use batch_create_relationships to create ALL relationships in ONE request
+5. Confirm creation and provide entity IDs for reference
+
+CRITICAL PERFORMANCE TIP:
+NEVER use individual create_entity or create_relationship calls in a loop!
+Always collect data first, then use batch_create_* tools.
+
+Example: For a project with 1 project entity + 4 tasks + 4 documents = 9 entities:
+- OLD WAY: 9 separate create_entity calls (~9 seconds)
+- NEW WAY: 1 batch_create_entities call (~0.09 seconds)
 
 Ask me about:
 - Research goal and objectives
@@ -3561,12 +3586,27 @@ Search parameters:
 - Relationship filter: %s
 
 Please:
-1. Find the starting entity using search_entities
-2. Get direct relationships using get_entity_edges%s
-3. If depth > 1, recursively explore connected entities
+1. Find the starting entity using hybrid_search or search_entities
+2. Use traverse_graph for COMPLETE multi-hop exploration:
+   - ONE call handles all depth levels automatically
+   - Supports filtering by relationship type
+   - Returns full graph structure
+   - Much more efficient than manual recursion
+3. Alternative (legacy): get_entity_edges%s (only for depth=1)
 4. Group results by relationship type
 5. Visualize the relationship graph structure
-6. Suggest interesting patterns or insights
+6. Suggest interesting patterns or insights using find_similar
+
+RECOMMENDED APPROACH:
+Use traverse_graph with these arguments:
+{
+  "start_entity_id": "uuid-from-search",
+  "max_depth": %d,
+  "direction": "both",  // or "outgoing"/"incoming"
+  "relationship_types": %s  // optional filter
+}
+
+This single call replaces manual recursive exploration and is dramatically more efficient.
 
 Let's begin by locating the entity.`, entityName, filterNote, depth,
 						func() string {
@@ -3580,6 +3620,13 @@ Let's begin by locating the entity.`, entityName, filterNote, depth,
 								return fmt.Sprintf(" (filter by type=%s)", relationshipType)
 							}
 							return ""
+						}(),
+						depth,
+						func() string {
+							if relationshipType != "" {
+								return fmt.Sprintf(`["%s"]`, relationshipType)
+							}
+							return "null"
 						}()),
 				},
 			},
