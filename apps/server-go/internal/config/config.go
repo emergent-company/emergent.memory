@@ -48,8 +48,8 @@ type Config struct {
 
 	// Server timeouts
 	ReadTimeout     time.Duration `env:"SERVER_READ_TIMEOUT" envDefault:"5s"`
-	WriteTimeout    time.Duration `env:"SERVER_WRITE_TIMEOUT" envDefault:"10s"`
-	IdleTimeout     time.Duration `env:"SERVER_IDLE_TIMEOUT" envDefault:"120s"`
+	WriteTimeout    time.Duration `env:"SERVER_WRITE_TIMEOUT" envDefault:"600s"` // 10 minutes for SSE
+	IdleTimeout     time.Duration `env:"SERVER_IDLE_TIMEOUT" envDefault:"600s"`  // 10 minutes for SSE
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"10s"`
 }
 

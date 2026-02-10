@@ -208,7 +208,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register MCP routes
 	mcpSvc := mcp.NewService(db, graphSvc, log)
 	mcpHandler := mcp.NewHandler(mcpSvc, log)
-	mcpSSEHandler := mcp.NewSSEHandler(mcpSvc, log)
+	mcpSSEHandler := mcp.NewSSEHandler(mcpSvc, mcpHandler, log)
 	mcpStreamableHandler := mcp.NewStreamableHTTPHandler(mcpSvc, log)
 	mcp.RegisterRoutes(e, mcpHandler, mcpSSEHandler, mcpStreamableHandler, authMiddleware)
 
