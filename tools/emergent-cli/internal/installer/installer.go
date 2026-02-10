@@ -394,7 +394,7 @@ func (i *Installer) updateDockerComposeImage(version string) error {
 
 	imageTag := strings.TrimPrefix(version, "v")
 
-	pattern := regexp.MustCompile(`(ghcr\.io/emergent-company/emergent-server-with-cli:)[^\s]+`)
+	pattern := regexp.MustCompile(`(ghcr\.io/emergent-company/emergent-server-go:)[^\s]+`)
 	newContent := pattern.ReplaceAllString(string(content), "${1}"+imageTag)
 
 	if string(content) != newContent {
