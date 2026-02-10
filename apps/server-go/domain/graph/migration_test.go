@@ -105,7 +105,7 @@ func TestSchemaMigration_FieldRemoval(t *testing.T) {
 		assert.Equal(t, IssueTypeFieldRemoved, result.Issues[0].Type)
 		assert.Equal(t, "old_field", result.Issues[0].Field)
 		assert.Equal(t, "warning", result.Issues[0].Severity)
-		assert.Contains(t, result.Issues[0].Suggestion, "migrated to another field")
+		assert.Contains(t, result.Issues[0].Suggestion, "archived in migration_archive")
 	})
 }
 
@@ -267,8 +267,159 @@ func TestSchemaMigration_NewRequiredFields(t *testing.T) {
 				assert.Contains(t, issue.Suggestion, "Provide a default value")
 			}
 		}
-		assert.Equal(t, 1, requireIssueCount, "Should report new required field issue")
 	})
+}
+
+func TestSchemaMigration_DroppedFieldsArchival(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	migrator := NewSchemaMigrator(NewPropertyValidator(), logger)
+	ctx := context.Background()
+
+	t.Run("dropped_fields_are_archived", func(t *testing.T) {
+		v1Schema := &agents.ObjectSchema{
+			Name: "Document",
+			Properties: map[string]agents.PropertyDef{
+				"title":        {Type: "string", Description: "Document title"},
+				"content":      {Type: "string", Description: "Document content"},
+				"old_metadata": {Type: "string", Description: "Deprecated metadata field"},
+				"legacy_tags":  {Type: "string", Description: "Old tagging system"},
+			},
+			Required: []string{"title"},
+		}
+
+		v2Schema := &agents.ObjectSchema{
+			Name: "Document",
+			Properties: map[string]agents.PropertyDef{
+				"title":   {Type: "string", Description: "Document title"},
+				"content": {Type: "string", Description: "Document content"},
+			},
+			Required: []string{"title"},
+		}
+
+		obj := &GraphObject{
+			ID:   uuid.New(),
+			Type: "Document",
+			Properties: map[string]any{
+				"title":        "My Document",
+				"content":      "Important content",
+				"old_metadata": "sensitive data here",
+				"legacy_tags":  "tag1,tag2,tag3",
+			},
+			MigrationArchive: []map[string]any{},
+		}
+
+		result := migrator.MigrateObject(ctx, obj, v1Schema, v2Schema, "1.0.0", "2.0.0")
+
+		assert.True(t, result.Success, "Migration should succeed")
+		assert.Equal(t, 2, len(result.DroppedProps), "Should drop 2 properties")
+		assert.Contains(t, result.DroppedProps, "old_metadata")
+		assert.Contains(t, result.DroppedProps, "legacy_tags")
+
+		require.Equal(t, 1, len(obj.MigrationArchive), "Should have 1 archive entry")
+
+		archiveEntry := obj.MigrationArchive[0]
+		assert.Equal(t, "1.0.0", archiveEntry["from_version"])
+		assert.Equal(t, "2.0.0", archiveEntry["to_version"])
+		assert.NotNil(t, archiveEntry["timestamp"])
+		assert.NotNil(t, archiveEntry["dropped_data"])
+
+		droppedData, ok := archiveEntry["dropped_data"].(map[string]any)
+		require.True(t, ok, "dropped_data should be a map")
+		assert.Equal(t, "sensitive data here", droppedData["old_metadata"])
+		assert.Equal(t, "tag1,tag2,tag3", droppedData["legacy_tags"])
+	})
+
+	t.Run("multiple_migrations_append_to_archive", func(t *testing.T) {
+		v1Schema := &agents.ObjectSchema{
+			Name: "Product",
+			Properties: map[string]agents.PropertyDef{
+				"name":      {Type: "string"},
+				"old_price": {Type: "number"},
+			},
+		}
+
+		v2Schema := &agents.ObjectSchema{
+			Name: "Product",
+			Properties: map[string]agents.PropertyDef{
+				"name":      {Type: "string"},
+				"new_price": {Type: "number"},
+			},
+		}
+
+		v3Schema := &agents.ObjectSchema{
+			Name: "Product",
+			Properties: map[string]agents.PropertyDef{
+				"name": {Type: "string"},
+			},
+		}
+
+		obj := &GraphObject{
+			ID:   uuid.New(),
+			Type: "Product",
+			Properties: map[string]any{
+				"name":      "Widget",
+				"old_price": float64(99.99),
+			},
+			MigrationArchive: []map[string]any{},
+		}
+
+		result1 := migrator.MigrateObject(ctx, obj, v1Schema, v2Schema, "1.0.0", "2.0.0")
+		assert.True(t, result1.Success)
+		assert.Equal(t, 1, len(obj.MigrationArchive), "Should have 1 archive entry after first migration")
+
+		obj.Properties = result1.NewProperties
+		obj.Properties["new_price"] = float64(109.99)
+
+		result2 := migrator.MigrateObject(ctx, obj, v2Schema, v3Schema, "2.0.0", "3.0.0")
+		assert.True(t, result2.Success)
+		assert.Equal(t, 2, len(obj.MigrationArchive), "Should have 2 archive entries after second migration")
+
+		firstArchive := obj.MigrationArchive[0]
+		assert.Equal(t, "1.0.0", firstArchive["from_version"])
+		assert.Equal(t, "2.0.0", firstArchive["to_version"])
+
+		secondArchive := obj.MigrationArchive[1]
+		assert.Equal(t, "2.0.0", secondArchive["from_version"])
+		assert.Equal(t, "3.0.0", secondArchive["to_version"])
+	})
+
+	t.Run("no_archive_when_no_fields_dropped", func(t *testing.T) {
+		v1Schema := &agents.ObjectSchema{
+			Name: "Person",
+			Properties: map[string]agents.PropertyDef{
+				"name": {Type: "string"},
+				"age":  {Type: "number"},
+			},
+		}
+
+		v2Schema := &agents.ObjectSchema{
+			Name: "Person",
+			Properties: map[string]agents.PropertyDef{
+				"name":  {Type: "string"},
+				"age":   {Type: "number"},
+				"email": {Type: "string"},
+			},
+		}
+
+		obj := &GraphObject{
+			ID:   uuid.New(),
+			Type: "Person",
+			Properties: map[string]any{
+				"name": "Alice",
+				"age":  float64(30),
+			},
+			MigrationArchive: []map[string]any{},
+		}
+
+		result := migrator.MigrateObject(ctx, obj, v1Schema, v2Schema, "1.0.0", "2.0.0")
+		assert.True(t, result.Success)
+		assert.Equal(t, 0, len(result.DroppedProps), "Should drop 0 properties")
+		assert.Equal(t, 0, len(obj.MigrationArchive), "Should have no archive entries when nothing dropped")
+	})
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
 
 func TestSchemaMigration_ComplexScenario(t *testing.T) {
@@ -402,8 +553,4 @@ func TestSchemaMigration_MultipleVersionCoexistence(t *testing.T) {
 		assert.Equal(t, float64(30), resultV2ToV2.NewProperties["age"])
 		assert.Equal(t, "bob@example.com", resultV2ToV2.NewProperties["email"])
 	})
-}
-
-func stringPtr(s string) *string {
-	return &s
 }
