@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
@@ -23,8 +25,9 @@ var Module = fx.Module("graph",
 // ProvideSchemaProvider creates a schema provider (exported for tests).
 func ProvideSchemaProvider(db bun.IDB, log *slog.Logger) SchemaProvider {
 	return &templatePackSchemaProviderAdapter{
-		db:  db,
-		log: log,
+		db:          db,
+		log:         log,
+		schemaCache: make(map[string]*cachedSchemas),
 	}
 }
 
@@ -36,9 +39,48 @@ func provideSchemaProvider(db bun.IDB, log *slog.Logger) SchemaProvider {
 type templatePackSchemaProviderAdapter struct {
 	db  bun.IDB
 	log *slog.Logger
+
+	cacheMu     sync.RWMutex
+	schemaCache map[string]*cachedSchemas
+
+	// Metrics
+	metricsMu     sync.RWMutex
+	cacheHits     int64
+	cacheMisses   int64
+	dbLoadSuccess int64
+	dbLoadErrors  int64
 }
 
+type cachedSchemas struct {
+	schemas *ExtractionSchemas
+	expiry  time.Time
+}
+
+const schemaCacheTTL = 5 * time.Minute
+
 func (p *templatePackSchemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID string) (*ExtractionSchemas, error) {
+	p.cacheMu.RLock()
+	if cached, ok := p.schemaCache[projectID]; ok && time.Now().Before(cached.expiry) {
+		schemas := cached.schemas
+		p.cacheMu.RUnlock()
+		p.incrementCacheHit()
+		p.log.Debug("schema cache hit", slog.String("project_id", projectID))
+		return schemas, nil
+	}
+	p.cacheMu.RUnlock()
+
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+
+	if cached, ok := p.schemaCache[projectID]; ok && time.Now().Before(cached.expiry) {
+		p.incrementCacheHit()
+		p.log.Debug("schema cache hit (double-check)", slog.String("project_id", projectID))
+		return cached.schemas, nil
+	}
+
+	p.incrementCacheMiss()
+	p.log.Debug("schema cache miss, loading from database", slog.String("project_id", projectID))
+
 	type GraphTemplatePack struct {
 		bun.BaseModel           `bun:"kb.graph_template_packs,alias:gtp"`
 		ID                      string  `bun:"id,pk,type:uuid"`
@@ -138,10 +180,65 @@ func (p *templatePackSchemaProviderAdapter) GetProjectSchemas(ctx context.Contex
 		}
 	}
 
-	return &ExtractionSchemas{
+	schemas := &ExtractionSchemas{
 		ObjectSchemas:       objectSchemas,
 		RelationshipSchemas: relationshipSchemas,
-	}, nil
+	}
+
+	p.schemaCache[projectID] = &cachedSchemas{
+		schemas: schemas,
+		expiry:  time.Now().Add(schemaCacheTTL),
+	}
+
+	p.incrementDBLoadSuccess()
+	p.log.Debug("schema cached",
+		slog.String("project_id", projectID),
+		slog.Int("object_types", len(objectSchemas)),
+		slog.Int("relationship_types", len(relationshipSchemas)))
+
+	return schemas, nil
+}
+
+func (p *templatePackSchemaProviderAdapter) incrementCacheHit() {
+	p.metricsMu.Lock()
+	p.cacheHits++
+	p.metricsMu.Unlock()
+}
+
+func (p *templatePackSchemaProviderAdapter) incrementCacheMiss() {
+	p.metricsMu.Lock()
+	p.cacheMisses++
+	p.metricsMu.Unlock()
+}
+
+func (p *templatePackSchemaProviderAdapter) incrementDBLoadSuccess() {
+	p.metricsMu.Lock()
+	p.dbLoadSuccess++
+	p.metricsMu.Unlock()
+}
+
+func (p *templatePackSchemaProviderAdapter) incrementDBLoadError() {
+	p.metricsMu.Lock()
+	p.dbLoadErrors++
+	p.metricsMu.Unlock()
+}
+
+func (p *templatePackSchemaProviderAdapter) Metrics() SchemaProviderMetrics {
+	p.metricsMu.RLock()
+	defer p.metricsMu.RUnlock()
+	return SchemaProviderMetrics{
+		CacheHits:     p.cacheHits,
+		CacheMisses:   p.cacheMisses,
+		DBLoadSuccess: p.dbLoadSuccess,
+		DBLoadErrors:  p.dbLoadErrors,
+	}
+}
+
+type SchemaProviderMetrics struct {
+	CacheHits     int64
+	CacheMisses   int64
+	DBLoadSuccess int64
+	DBLoadErrors  int64
 }
 
 type JSONMap map[string]any
