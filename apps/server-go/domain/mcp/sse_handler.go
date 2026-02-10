@@ -20,8 +20,9 @@ import (
 
 // SSEHandler handles MCP SSE transport
 type SSEHandler struct {
-	svc *Service
-	log *slog.Logger
+	svc     *Service
+	handler *Handler
+	log     *slog.Logger
 
 	// SSE sessions
 	sseSessions   map[string]*SSESession
@@ -40,9 +41,10 @@ type SSESession struct {
 }
 
 // NewSSEHandler creates a new SSE handler
-func NewSSEHandler(svc *Service, log *slog.Logger) *SSEHandler {
+func NewSSEHandler(svc *Service, handler *Handler, log *slog.Logger) *SSEHandler {
 	return &SSEHandler{
 		svc:         svc,
+		handler:     handler,
 		log:         log.With(logger.Scope("mcp.sse")),
 		sseSessions: make(map[string]*SSESession),
 	}
@@ -107,8 +109,8 @@ func (h *SSEHandler) HandleSSEConnect(c echo.Context) error {
 	messageEndpoint := fmt.Sprintf("/api/mcp/sse/%s/message?sessionId=%s", projectID, sessionID)
 	h.sendSSEEvent(session, "endpoint", messageEndpoint)
 
-	// Keep connection alive with periodic pings
-	ticker := time.NewTicker(30 * time.Second)
+	// Keep connection alive with periodic pings (every 4 minutes, well under 5 minute timeout)
+	ticker := time.NewTicker(4 * time.Minute)
 	defer ticker.Stop()
 
 	// Wait for disconnect
@@ -183,18 +185,7 @@ func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 
 // processRequest processes a JSON-RPC request for SSE transport
 func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID string, user *auth.AuthUser) *Response {
-	switch req.Method {
-	case "initialize":
-		return h.handleInitialize(req, projectID)
-	case "tools/list":
-		return h.handleToolsList(req)
-	case "tools/call":
-		return h.handleToolsCall(c, req, projectID, user)
-	case "notifications/initialized":
-		return NewSuccessResponse(req.ID, map[string]bool{"acknowledged": true})
-	default:
-		return NewErrorResponse(req.ID, ErrCodeMethodNotFound, "Method not found: "+req.Method, nil)
-	}
+	return h.handler.routeMethod(c, req, user)
 }
 
 // handleInitialize handles initialize for SSE transport
@@ -228,7 +219,9 @@ func (h *SSEHandler) handleInitialize(req *Request, projectID string) *Response 
 	result := InitializeResult{
 		ProtocolVersion: params.ProtocolVersion,
 		Capabilities: ServerCapabilities{
-			Tools: ToolsCapability{ListChanged: false},
+			Tools:     ToolsCapability{ListChanged: false},
+			Resources: ResourcesCapability{Subscribe: false, ListChanged: false},
+			Prompts:   PromptsCapability{ListChanged: false},
 		},
 		ServerInfo:     ServerInfo,
 		ProjectContext: map[string]string{"projectId": projectID},
