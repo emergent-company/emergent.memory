@@ -131,10 +131,9 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register documents routes
 	docsRepo := documents.NewRepository(db, log)
 	docsSvc := documents.NewService(docsRepo, log)
-	// Create storage service (will be disabled in tests since no env vars set)
 	storageCfg := storage.NewConfig()
 	storageSvc, _ := storage.NewService(storageCfg, log)
-	docsHandler := documents.NewHandler(docsSvc, storageSvc)
+	docsHandler := documents.NewHandler(docsSvc, storageSvc, log)
 	uploadHandler := documents.NewUploadHandler(docsSvc, storageSvc, nil, log)
 	documents.RegisterRoutes(e, docsHandler, uploadHandler, authMiddleware)
 
