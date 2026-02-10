@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -414,6 +415,127 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 				},
 				Required: []string{"entity_id"},
+			},
+		},
+	}
+}
+
+func (s *Service) GetResourceDefinitions() []ResourceDefinition {
+	return []ResourceDefinition{
+		{
+			URI:         "emergent://schema/entity-types",
+			Name:        "Entity Type Schema",
+			Description: "Complete catalog of all available entity types in the knowledge graph with their counts and relationship types",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "emergent://schema/relationships",
+			Name:        "Relationship Types Registry",
+			Description: "All valid relationship types, their constraints, and usage statistics",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "emergent://templates/catalog",
+			Name:        "Template Pack Catalog",
+			Description: "Available template packs with descriptions, object types, and metadata",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "emergent://project/{project_id}/metadata",
+			Name:        "Project Metadata",
+			Description: "Current project information including entity counts, active templates, and statistics",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "emergent://project/{project_id}/recent-entities",
+			Name:        "Recent Entities",
+			Description: "Recently created or modified entities for context (last 50)",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "emergent://project/{project_id}/templates",
+			Name:        "Installed Templates",
+			Description: "Templates currently installed and active in this project",
+			MimeType:    "application/json",
+		},
+	}
+}
+
+func (s *Service) GetPromptDefinitions() []PromptDefinition {
+	return []PromptDefinition{
+		{
+			Name:        "explore_entity_type",
+			Description: "Guide to exploring entities of a specific type with filtering and relationship analysis",
+			Arguments: []PromptArgument{
+				{
+					Name:        "entity_type",
+					Description: "The entity type to explore (e.g., 'Decision', 'Project', 'Document')",
+					Required:    true,
+				},
+			},
+		},
+		{
+			Name:        "create_from_template",
+			Description: "Step-by-step workflow for creating a new entity using a template pack",
+			Arguments: []PromptArgument{
+				{
+					Name:        "entity_type",
+					Description: "Type of entity to create",
+					Required:    true,
+				},
+				{
+					Name:        "template_pack",
+					Description: "Template pack to use (optional, will suggest if not provided)",
+					Required:    false,
+				},
+			},
+		},
+		{
+			Name:        "analyze_relationships",
+			Description: "Guide for discovering and analyzing entity relationships in the knowledge graph",
+			Arguments: []PromptArgument{
+				{
+					Name:        "entity_name",
+					Description: "Name or ID of the entity to analyze",
+					Required:    true,
+				},
+			},
+		},
+		{
+			Name:        "setup_research_project",
+			Description: "Complete workflow for setting up a research project with tasks, documents, and relationships",
+			Arguments: []PromptArgument{
+				{
+					Name:        "project_name",
+					Description: "Name of the research project",
+					Required:    true,
+				},
+				{
+					Name:        "methodology",
+					Description: "Research methodology (optional)",
+					Required:    false,
+				},
+			},
+		},
+		{
+			Name:        "find_related_entities",
+			Description: "Discover entities related to a given entity through various relationship types",
+			Arguments: []PromptArgument{
+				{
+					Name:        "entity_name",
+					Description: "Starting entity name or ID",
+					Required:    true,
+				},
+				{
+					Name:        "relationship_type",
+					Description: "Filter by specific relationship type (optional)",
+					Required:    false,
+				},
+				{
+					Name:        "depth",
+					Description: "How many hops to traverse (default: 1)",
+					Required:    false,
+				},
 			},
 		},
 	}
@@ -2153,4 +2275,437 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 	}
 
 	return s.wrapResult(result)
+}
+
+func (s *Service) ReadResource(ctx context.Context, projectID, uri string) (*ResourceReadResult, error) {
+	switch {
+	case uri == "emergent://schema/entity-types":
+		return s.readEntityTypesResource(ctx, projectID)
+	case uri == "emergent://schema/relationships":
+		return s.readRelationshipsResource(ctx, projectID)
+	case uri == "emergent://templates/catalog":
+		return s.readTemplatesCatalogResource(ctx)
+	case strings.HasPrefix(uri, "emergent://project/") && strings.Contains(uri, "/metadata"):
+		return s.readProjectMetadataResource(ctx, projectID)
+	case strings.HasPrefix(uri, "emergent://project/") && strings.Contains(uri, "/recent-entities"):
+		return s.readRecentEntitiesResource(ctx, projectID)
+	case strings.HasPrefix(uri, "emergent://project/") && strings.Contains(uri, "/templates"):
+		return s.readProjectTemplatesResource(ctx, projectID)
+	default:
+		return nil, fmt.Errorf("unknown resource URI: %s", uri)
+	}
+}
+
+func (s *Service) readEntityTypesResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	result, err := s.executeListEntityTypes(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	jsonData, err := json.Marshal(result.Content[0].Text)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      "emergent://schema/entity-types",
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+func (s *Service) readRelationshipsResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	var relationships []struct {
+		Type     string `bun:"relationship_type"`
+		FromType string `bun:"from_type"`
+		ToType   string `bun:"to_type"`
+		Count    int    `bun:"count"`
+	}
+
+	err = s.db.NewSelect().
+		Table("kb.graph_relationships", "r").
+		Column("r.relationship_type").
+		Column("r.from_type").
+		Column("r.to_type").
+		ColumnExpr("COUNT(*) as count").
+		Where("r.project_id = ?", projectUUID).
+		Where("r.deleted_at IS NULL").
+		Group("r.relationship_type", "r.from_type", "r.to_type").
+		Scan(ctx, &relationships)
+
+	if err != nil {
+		return nil, fmt.Errorf("query relationships: %w", err)
+	}
+
+	jsonData, err := json.Marshal(map[string]any{
+		"project_id":    projectID,
+		"relationships": relationships,
+		"total":         len(relationships),
+		"timestamp":     time.Now().Format(time.RFC3339),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      "emergent://schema/relationships",
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+func (s *Service) readTemplatesCatalogResource(ctx context.Context) (*ResourceReadResult, error) {
+	result, err := s.executeListTemplatePacks(ctx, map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+
+	jsonData, err := json.Marshal(result.Content[0].Text)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      "emergent://templates/catalog",
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+func (s *Service) readProjectMetadataResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	var entityCount, relationshipCount int
+
+	entityCount, err = s.db.NewSelect().
+		Table("kb.graph_objects").
+		Where("project_id = ?", projectUUID).
+		Where("deleted_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		entityCount = 0
+	}
+
+	relationshipCount, err = s.db.NewSelect().
+		Table("kb.graph_relationships").
+		Where("project_id = ?", projectUUID).
+		Where("deleted_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		relationshipCount = 0
+	}
+
+	jsonData, err := json.Marshal(map[string]any{
+		"project_id":         projectID,
+		"entity_count":       entityCount,
+		"relationship_count": relationshipCount,
+		"timestamp":          time.Now().Format(time.RFC3339),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      fmt.Sprintf("emergent://project/%s/metadata", projectID),
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+func (s *Service) readRecentEntitiesResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	result, err := s.executeQueryEntities(ctx, projectID, map[string]any{
+		"type_name":  "",
+		"limit":      50,
+		"offset":     0,
+		"sort_by":    "updated_at",
+		"sort_order": "desc",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	jsonData, err := json.Marshal(result.Content[0].Text)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      fmt.Sprintf("emergent://project/%s/recent-entities", projectID),
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+func (s *Service) readProjectTemplatesResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	result, err := s.executeGetInstalledTemplates(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	jsonData, err := json.Marshal(result.Content[0].Text)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      fmt.Sprintf("emergent://project/%s/templates", projectID),
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+func (s *Service) GetPrompt(ctx context.Context, projectID, name string, arguments map[string]any) (*PromptGetResult, error) {
+	switch name {
+	case "explore_entity_type":
+		return s.getExploreEntityTypePrompt(arguments)
+	case "create_from_template":
+		return s.getCreateFromTemplatePrompt(arguments)
+	case "analyze_relationships":
+		return s.getAnalyzeRelationshipsPrompt(arguments)
+	case "setup_research_project":
+		return s.getSetupResearchProjectPrompt(arguments)
+	case "find_related_entities":
+		return s.getFindRelatedEntitiesPrompt(arguments)
+	default:
+		return nil, fmt.Errorf("unknown prompt: %s", name)
+	}
+}
+
+func (s *Service) getExploreEntityTypePrompt(args map[string]any) (*PromptGetResult, error) {
+	entityType, _ := args["entity_type"].(string)
+	if entityType == "" {
+		return nil, fmt.Errorf("missing required argument: entity_type")
+	}
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Explore %s entities in the knowledge graph", entityType),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: fmt.Sprintf(`I want to explore %s entities in the knowledge graph.
+
+Please help me:
+1. List recent %s entities using query_entities tool
+2. Show their key properties and metadata
+3. Identify common relationship patterns
+4. Suggest interesting entities to investigate further
+
+Use the following tools:
+- query_entities with type_name="%s"
+- get_entity_edges to see relationships
+- search_entities if I want to find specific ones
+
+Let's start by showing me the most recent %s entities.`, entityType, entityType, entityType, entityType),
+				},
+			},
+		},
+	}, nil
+}
+
+func (s *Service) getCreateFromTemplatePrompt(args map[string]any) (*PromptGetResult, error) {
+	entityType, _ := args["entity_type"].(string)
+	if entityType == "" {
+		return nil, fmt.Errorf("missing required argument: entity_type")
+	}
+
+	templatePack, _ := args["template_pack"].(string)
+	templateHint := ""
+	if templatePack != "" {
+		templateHint = fmt.Sprintf(" using the '%s' template pack", templatePack)
+	}
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Create a new %s entity%s", entityType, templateHint),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: fmt.Sprintf(`I want to create a new %s entity%s.
+
+Please guide me through:
+1. First, check available templates using get_available_templates
+2. Show me the template schema using get_template_pack%s
+3. Ask me for each required field one by one
+4. Once we have all the data, create the entity using create_entity
+5. Confirm creation and suggest next steps (e.g., adding relationships)
+
+Let's start by checking what templates are available for %s entities.`, entityType, templateHint,
+						func() string {
+							if templatePack != "" {
+								return fmt.Sprintf(" with name='%s'", templatePack)
+							}
+							return ""
+						}(), entityType),
+				},
+			},
+		},
+	}, nil
+}
+
+func (s *Service) getAnalyzeRelationshipsPrompt(args map[string]any) (*PromptGetResult, error) {
+	entityName, _ := args["entity_name"].(string)
+	if entityName == "" {
+		return nil, fmt.Errorf("missing required argument: entity_name")
+	}
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Analyze relationships for entity: %s", entityName),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: fmt.Sprintf(`I want to analyze the relationships for "%s".
+
+Please help me:
+1. First, find the entity using search_entities with query="%s"
+2. Get all its relationships using get_entity_edges
+3. Categorize relationships by type (incoming vs outgoing)
+4. Summarize the entity's position in the knowledge graph
+5. Suggest related entities I might want to explore
+
+Let's start by finding the entity.`, entityName, entityName),
+				},
+			},
+		},
+	}, nil
+}
+
+func (s *Service) getSetupResearchProjectPrompt(args map[string]any) (*PromptGetResult, error) {
+	projectName, _ := args["project_name"].(string)
+	if projectName == "" {
+		return nil, fmt.Errorf("missing required argument: project_name")
+	}
+
+	methodology, _ := args["methodology"].(string)
+	methodologyNote := ""
+	if methodology != "" {
+		methodologyNote = fmt.Sprintf("\nResearch methodology: %s", methodology)
+	}
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Set up research project: %s", projectName),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: fmt.Sprintf(`I want to set up a complete research project called "%s".%s
+
+Please help me create a structured research project with:
+1. Main Project entity with research metadata
+2. Phase-based Task entities (Setup, Data Collection, Analysis, Report)
+3. Document placeholders for each phase
+4. Relationships connecting everything (PART_OF, REFERENCES)
+
+Workflow:
+1. Create the main Project entity using create_entity with type="Project"
+2. For each phase, create a Task entity
+3. Link tasks to project using create_relationship with type="PART_OF"
+4. Create Document placeholders for deliverables
+5. Link documents using create_relationship with type="REFERENCES"
+
+Ask me about:
+- Research goal and objectives
+- Timeline and milestones
+- Required resources
+- Success criteria
+
+Let's start by defining the project's research goal.`, projectName, methodologyNote),
+				},
+			},
+		},
+	}, nil
+}
+
+func (s *Service) getFindRelatedEntitiesPrompt(args map[string]any) (*PromptGetResult, error) {
+	entityName, _ := args["entity_name"].(string)
+	if entityName == "" {
+		return nil, fmt.Errorf("missing required argument: entity_name")
+	}
+
+	relationshipType, _ := args["relationship_type"].(string)
+	depth := 1
+	if depthFloat, ok := args["depth"].(float64); ok {
+		depth = int(depthFloat)
+	}
+
+	filterNote := ""
+	if relationshipType != "" {
+		filterNote = fmt.Sprintf(" (filtering by relationship type: %s)", relationshipType)
+	}
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Find entities related to: %s", entityName),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: fmt.Sprintf(`I want to discover all entities related to "%s"%s.
+
+Search parameters:
+- Depth: %d hop(s)
+- Relationship filter: %s
+
+Please:
+1. Find the starting entity using search_entities
+2. Get direct relationships using get_entity_edges%s
+3. If depth > 1, recursively explore connected entities
+4. Group results by relationship type
+5. Visualize the relationship graph structure
+6. Suggest interesting patterns or insights
+
+Let's begin by locating the entity.`, entityName, filterNote, depth,
+						func() string {
+							if relationshipType != "" {
+								return relationshipType
+							}
+							return "all types"
+						}(),
+						func() string {
+							if relationshipType != "" {
+								return fmt.Sprintf(" (filter by type=%s)", relationshipType)
+							}
+							return ""
+						}()),
+				},
+			},
+		},
+	}, nil
 }
