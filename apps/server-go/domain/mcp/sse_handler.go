@@ -109,8 +109,8 @@ func (h *SSEHandler) HandleSSEConnect(c echo.Context) error {
 	messageEndpoint := fmt.Sprintf("/api/mcp/sse/%s/message?sessionId=%s", projectID, sessionID)
 	h.sendSSEEvent(session, "endpoint", messageEndpoint)
 
-	// Keep connection alive with periodic pings (every 4 minutes, well under 5 minute timeout)
-	ticker := time.NewTicker(4 * time.Minute)
+	// Keep connection alive with periodic pings (every 4 hours, well under 8 hour timeout)
+	ticker := time.NewTicker(4 * time.Hour)
 	defer ticker.Stop()
 
 	// Wait for disconnect

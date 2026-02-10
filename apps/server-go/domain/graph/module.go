@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"sync"
@@ -106,15 +107,25 @@ func (p *templatePackSchemaProviderAdapter) GetProjectSchemas(ctx context.Contex
 		Where("ptp.active = true").
 		Scan(ctx)
 
-	if err != nil {
-		return &ExtractionSchemas{
-			ObjectSchemas:       make(map[string]agents.ObjectSchema),
-			RelationshipSchemas: make(map[string]agents.RelationshipSchema),
-		}, nil
-	}
-
 	objectSchemas := make(map[string]agents.ObjectSchema)
 	relationshipSchemas := make(map[string]agents.RelationshipSchema)
+
+	if err != nil && err != sql.ErrNoRows {
+		p.incrementDBLoadError()
+		p.log.Warn("error loading schemas from database",
+			slog.String("project_id", projectID),
+			slog.String("error", err.Error()))
+		// Still cache the empty result to avoid repeated DB queries
+		schemas := &ExtractionSchemas{
+			ObjectSchemas:       objectSchemas,
+			RelationshipSchemas: relationshipSchemas,
+		}
+		p.schemaCache[projectID] = &cachedSchemas{
+			schemas: schemas,
+			expiry:  time.Now().Add(schemaCacheTTL),
+		}
+		return schemas, nil
+	}
 
 	for _, assignment := range assignments {
 		if assignment.TemplatePack == nil {
