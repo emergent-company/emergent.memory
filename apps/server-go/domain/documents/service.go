@@ -52,29 +52,33 @@ func (s *Service) GetSourceTypes(ctx context.Context) ([]SourceTypeWithCount, er
 
 // CreateParams contains parameters for creating a document
 type CreateParams struct {
-	ProjectID string
-	Filename  string
-	Content   string
+	ProjectID     string
+	Filename      *string
+	Content       *string
+	StorageKey    *string
+	SourceType    *string
+	MimeType      *string
+	FileSizeBytes *int64
 }
 
 // Create creates a new document with content deduplication
 // If a document with the same content hash exists, returns the existing document
 func (s *Service) Create(ctx context.Context, params CreateParams) (*Document, bool, error) {
-	// Apply defaults
-	filename := strings.TrimSpace(params.Filename)
-	if filename == "" {
-		filename = "unnamed.txt"
+	filename := "unnamed.txt"
+	if params.Filename != nil {
+		trimmed := strings.TrimSpace(*params.Filename)
+		if trimmed != "" {
+			filename = trimmed
+		}
 	}
 
-	content := params.Content
-	if content == "" {
-		content = ""
+	content := ""
+	if params.Content != nil {
+		content = *params.Content
 	}
 
-	// Calculate content hash for deduplication
 	contentHash := computeContentHash(content)
 
-	// Check for existing document with same content hash (deduplication)
 	existingDoc, err := s.repo.GetByContentHash(ctx, params.ProjectID, contentHash)
 	if err != nil {
 		return nil, false, err
@@ -84,10 +88,9 @@ func (s *Service) Create(ctx context.Context, params CreateParams) (*Document, b
 			slog.String("projectId", params.ProjectID),
 			slog.String("existingId", existingDoc.ID),
 			slog.String("contentHash", contentHash))
-		return existingDoc, false, nil // Return existing doc, wasCreated=false
+		return existingDoc, false, nil
 	}
 
-	// Create new document
 	now := time.Now().UTC()
 	doc := &Document{
 		ID:          uuid.New().String(),
@@ -99,9 +102,21 @@ func (s *Service) Create(ctx context.Context, params CreateParams) (*Document, b
 		UpdatedAt:   now,
 	}
 
+	if params.StorageKey != nil {
+		doc.StorageKey = params.StorageKey
+	}
+	if params.SourceType != nil {
+		doc.SourceType = params.SourceType
+	}
+	if params.MimeType != nil {
+		doc.MimeType = params.MimeType
+	}
+	if params.FileSizeBytes != nil {
+		doc.FileSizeBytes = params.FileSizeBytes
+	}
+
 	err = s.repo.Create(ctx, doc)
 	if err != nil {
-		// Handle race condition: another request may have created the same document
 		if appErr, ok := err.(*apperror.Error); ok && appErr.Code == "duplicate" {
 			existingDoc, getErr := s.repo.GetByContentHash(ctx, params.ProjectID, contentHash)
 			if getErr == nil && existingDoc != nil {
@@ -116,7 +131,7 @@ func (s *Service) Create(ctx context.Context, params CreateParams) (*Document, b
 		slog.String("projectId", params.ProjectID),
 		slog.String("filename", filename))
 
-	return doc, true, nil // Return new doc, wasCreated=true
+	return doc, true, nil
 }
 
 // Delete deletes a document and all related entities
