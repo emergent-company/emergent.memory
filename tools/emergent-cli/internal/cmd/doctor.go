@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -79,6 +80,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		results = append(results, checkServerConnectivity(cfg.ServerURL))
 		results = append(results, checkAuth(cfg, configPath))
 		results = append(results, checkAPI(cfg))
+		results = append(results, checkMCP(cfg))
 	}
 
 	fmt.Println()
@@ -607,4 +609,235 @@ func runDockerCompose(installDir string, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func checkMCP(cfg *config.Config) checkResult {
+	fmt.Print("Checking MCP server... ")
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	initRequest := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "2025-11-25",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo": map[string]interface{}{
+				"name":    "emergent-cli-doctor",
+				"version": "1.0.0",
+			},
+		},
+	}
+
+	jsonData, err := json.Marshal(initRequest)
+	if err != nil {
+		fmt.Println("ERROR")
+		return checkResult{
+			name:    "MCP Server",
+			status:  "fail",
+			message: fmt.Sprintf("Failed to build request: %v", err),
+		}
+	}
+
+	mcpURL := strings.TrimSuffix(cfg.ServerURL, "/") + "/api/mcp/rpc"
+	req, err := http.NewRequest("POST", mcpURL, strings.NewReader(string(jsonData)))
+	if err != nil {
+		fmt.Println("FAILED")
+		return checkResult{
+			name:    "MCP Server",
+			status:  "fail",
+			message: fmt.Sprintf("Cannot create request: %v", err),
+		}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if cfg.APIKey != "" {
+		req.Header.Set("X-API-Key", cfg.APIKey)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		fmt.Println("UNREACHABLE")
+		return checkResult{
+			name:    "MCP Server",
+			status:  "fail",
+			message: fmt.Sprintf("Cannot reach MCP endpoint: %v", err),
+		}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Println("ERROR")
+		return checkResult{
+			name:    "MCP Server",
+			status:  "fail",
+			message: fmt.Sprintf("MCP returned %d: %s", resp.StatusCode, string(body)),
+		}
+	}
+
+	// Parse response
+	var mcpResp struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      int    `json:"id"`
+		Result  struct {
+			ProtocolVersion string `json:"protocolVersion"`
+			ServerInfo      struct {
+				Name    string `json:"name"`
+				Version string `json:"version"`
+			} `json:"serverInfo"`
+			Capabilities struct {
+				Tools struct{} `json:"tools,omitempty"`
+			} `json:"capabilities"`
+		} `json:"result"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
+	}
+
+	if err := json.Unmarshal(body, &mcpResp); err != nil {
+		fmt.Println("INVALID RESPONSE")
+		return checkResult{
+			name:    "MCP Server",
+			status:  "fail",
+			message: fmt.Sprintf("Invalid JSON-RPC response: %v", err),
+		}
+	}
+
+	if mcpResp.Error != nil {
+		fmt.Println("RPC ERROR")
+		return checkResult{
+			name:    "MCP Server",
+			status:  "fail",
+			message: fmt.Sprintf("MCP error (%d): %s", mcpResp.Error.Code, mcpResp.Error.Message),
+		}
+	}
+
+	toolsRequest := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+		"params":  map[string]interface{}{},
+	}
+
+	jsonData, _ = json.Marshal(toolsRequest)
+	req, _ = http.NewRequest("POST", mcpURL, strings.NewReader(string(jsonData)))
+	req.Header.Set("Content-Type", "application/json")
+	if cfg.APIKey != "" {
+		req.Header.Set("X-API-Key", cfg.APIKey)
+	}
+
+	resp, err = httpClient.Do(req)
+	if err != nil {
+		fmt.Println("OK (no tools)")
+		return checkResult{
+			name:    "MCP Server",
+			status:  "warn",
+			message: fmt.Sprintf("Connected but cannot list tools: %v", err),
+		}
+	}
+	defer resp.Body.Close()
+
+	body, _ = io.ReadAll(resp.Body)
+
+	var toolsResp struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      int    `json:"id"`
+		Result  struct {
+			Tools []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+			} `json:"tools"`
+		} `json:"result"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
+	}
+
+	if err := json.Unmarshal(body, &toolsResp); err != nil {
+		fmt.Println("OK (parse error)")
+		return checkResult{
+			name:    "MCP Server",
+			status:  "warn",
+			message: "Connected but cannot parse tools list",
+		}
+	}
+
+	if toolsResp.Error != nil {
+		fmt.Println("OK (tools error)")
+		return checkResult{
+			name:    "MCP Server",
+			status:  "warn",
+			message: fmt.Sprintf("Connected but tools/list failed: %s", toolsResp.Error.Message),
+		}
+	}
+
+	expectedTools := map[string]bool{
+		"schema_version":             true,
+		"list_entity_types":          true,
+		"query_entities":             true,
+		"search_entities":            true,
+		"get_entity_edges":           true,
+		"list_template_packs":        true,
+		"get_template_pack":          true,
+		"get_available_templates":    true,
+		"get_installed_templates":    true,
+		"assign_template_pack":       true,
+		"update_template_assignment": true,
+		"uninstall_template_pack":    true,
+		"create_template_pack":       true,
+		"delete_template_pack":       true,
+		"create_entity":              true,
+		"create_relationship":        true,
+		"update_entity":              true,
+		"delete_entity":              true,
+	}
+
+	actualTools := make(map[string]bool)
+	for _, tool := range toolsResp.Result.Tools {
+		actualTools[tool.Name] = true
+	}
+
+	missingTools := []string{}
+	for toolName := range expectedTools {
+		if !actualTools[toolName] {
+			missingTools = append(missingTools, toolName)
+		}
+	}
+
+	extraTools := []string{}
+	for toolName := range actualTools {
+		if !expectedTools[toolName] {
+			extraTools = append(extraTools, toolName)
+		}
+	}
+
+	toolCount := len(toolsResp.Result.Tools)
+
+	if len(missingTools) > 0 || len(extraTools) > 0 {
+		fmt.Println("MISMATCH")
+		msg := fmt.Sprintf("Connected with %d tools", toolCount)
+		if len(missingTools) > 0 {
+			msg += fmt.Sprintf(", missing %d expected tools: %v", len(missingTools), missingTools)
+		}
+		if len(extraTools) > 0 {
+			msg += fmt.Sprintf(", found %d unexpected tools: %v", len(extraTools), extraTools)
+		}
+		return checkResult{
+			name:    "MCP Server",
+			status:  "warn",
+			message: msg,
+		}
+	}
+
+	fmt.Println("OK")
+	return checkResult{
+		name:    "MCP Server",
+		status:  "pass",
+		message: fmt.Sprintf("Connected (%s v%s) with %d tools", mcpResp.Result.ServerInfo.Name, mcpResp.Result.ServerInfo.Version, toolCount),
+	}
 }
