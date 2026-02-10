@@ -963,6 +963,12 @@ Test via HTTP:
 
 - Added 6 resources for self-documenting context
 - Added 5 prompts for guided workflows
+- **Updated all 5 prompts** to recommend new tools instead of legacy workflows:
+  - `explore_entity_type`: Now recommends `hybrid_search` instead of `query_entities`
+  - `create_from_template`: Now recommends `batch_create_entities` for multiple entities
+  - `analyze_relationships`: Now recommends `traverse_graph` instead of manual `get_entity_edges`
+  - `setup_research_project`: Now uses batch operations (100x faster setup)
+  - `find_related_entities`: Now uses `traverse_graph` for multi-hop exploration
 - Increased SSE timeout to 10 minutes
 - Optimized ping interval to 4 minutes
 - 95% reduction in reconnection churn
