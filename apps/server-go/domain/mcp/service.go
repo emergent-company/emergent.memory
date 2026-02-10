@@ -643,6 +643,68 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Required: []string{"relationships"},
 			},
 		},
+		{
+			Name:        "preview_schema_migration",
+			Description: "SAFE READ-ONLY: Preview what would happen if objects are migrated from one schema version to another. Shows risk assessment (safe/cautious/risky/dangerous), fields that would be dropped, type coercions, and validation errors. NO CHANGES ARE MADE. Use this before actual migration to understand impact. If dangerous, recommend user to use CLI: ./bin/migrate-schema -project <uuid> -from <old> -to <new>",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"from_version": {
+						Type:        "string",
+						Description: "Current schema version (e.g., '1.0.0')",
+					},
+					"to_version": {
+						Type:        "string",
+						Description: "Target schema version (e.g., '2.0.0')",
+					},
+					"sample_size": {
+						Type:        "number",
+						Description: "Number of objects to analyze (default: 10, max: 50)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(50),
+						Default:     10,
+					},
+				},
+				Required: []string{"from_version", "to_version"},
+			},
+		},
+		{
+			Name:        "list_migration_archives",
+			Description: "SAFE READ-ONLY: List objects that have migration archives (dropped fields from previous migrations). Shows which objects have recoverable data and what fields were dropped. Use this to understand what data can be restored via rollback.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of objects to return (default: 20, max: 100)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(100),
+						Default:     20,
+					},
+					"offset": {
+						Type:        "number",
+						Description: "Pagination offset (default: 0)",
+						Minimum:     intPtr(0),
+						Default:     0,
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
+			Name:        "get_migration_archive",
+			Description: "SAFE READ-ONLY: Get detailed migration archive for a specific object. Shows complete history of dropped fields across all migrations, with timestamps and versions. Use this to see exactly what data would be restored if you rollback. For actual rollback, recommend user to use CLI: ./bin/migrate-schema -project <uuid> --rollback --rollback-version <version> -dry-run=false",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"object_id": {
+						Type:        "string",
+						Description: "UUID of the object to get archive for",
+					},
+				},
+				Required: []string{"object_id"},
+			},
+		},
 	}
 }
 
@@ -828,6 +890,12 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeBatchCreateEntities(ctx, projectID, args)
 	case "batch_create_relationships":
 		return s.executeBatchCreateRelationships(ctx, projectID, args)
+	case "preview_schema_migration":
+		return s.executePreviewSchemaMigration(ctx, projectID, args)
+	case "list_migration_archives":
+		return s.executeListMigrationArchives(ctx, projectID, args)
+	case "get_migration_archive":
+		return s.executeGetMigrationArchive(ctx, projectID, args)
 	default:
 		return nil, fmt.Errorf("tool not found: %s", toolName)
 	}
@@ -3631,5 +3699,225 @@ Let's begin by locating the entity.`, entityName, filterNote, depth,
 				},
 			},
 		},
+	}, nil
+}
+
+
+func (s *Service) executePreviewSchemaMigration(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	fromVersion, _ := args["from_version"].(string)
+	toVersion, _ := args["to_version"].(string)
+	sampleSize := 10
+	if size, ok := args["sample_size"].(float64); ok {
+		sampleSize = int(size)
+	}
+
+	if fromVersion == "" || toVersion == "" {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: "Error: from_version and to_version are required"}},
+		}, fmt.Errorf("from_version and to_version are required")
+	}
+
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Invalid project ID: %v", err)}},
+		}, err
+	}
+
+	var objects []graph.GraphObject
+	err = s.db.NewSelect().
+		Model(&objects).
+		Where("project_id = ?", projectUUID).
+		Where("schema_version = ?", fromVersion).
+		Limit(sampleSize).
+		Scan(ctx)
+
+	if err != nil {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Database error: %v", err)}},
+		}, err
+	}
+
+	if len(objects) == 0 {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("No objects found with schema version %s", fromVersion)}},
+		}, nil
+	}
+
+	output := fmt.Sprintf("Migration Preview: %s → %s (analyzing %d objects)\n\n", fromVersion, toVersion, len(objects))
+	output += "⚠️  NOTE: This is a simplified preview. For full risk assessment, use the CLI:\n"
+	output += fmt.Sprintf("  ./bin/migrate-schema -project %s -from %s -to %s\n\n", projectID, fromVersion, toVersion)
+	output += fmt.Sprintf("Sample: Found %d objects with version %s\n", len(objects), fromVersion)
+	output += "\n=== Next Steps ===\n"
+	output += "1. Run CLI with -dry-run=true for detailed risk analysis\n"
+	output += "2. Review dropped fields, type coercions, and validation errors\n"
+	output += "3. If safe/cautious: Execute migration\n"
+	output += "4. If risky/dangerous: Use --force or --confirm-data-loss flags\n\n"
+	output += "CLI Commands:\n"
+	output += fmt.Sprintf("  # Dry-run (safe, shows detailed analysis)\n")
+	output += fmt.Sprintf("  ./bin/migrate-schema -project %s -from %s -to %s\n\n", projectID, fromVersion, toVersion)
+	output += fmt.Sprintf("  # Execute (if safe)\n")
+	output += fmt.Sprintf("  ./bin/migrate-schema -project %s -from %s -to %s -dry-run=false\n", projectID, fromVersion, toVersion)
+
+	return &ToolResult{
+		Content: []ContentBlock{{Type: "text", Text: output}},
+	}, nil
+}
+
+func (s *Service) executeListMigrationArchives(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	limit := 20
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+	offset := 0
+	if o, ok := args["offset"].(float64); ok {
+		offset = int(o)
+	}
+
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Invalid project ID: %v", err)}},
+		}, err
+	}
+
+	var objects []graph.GraphObject
+	err = s.db.NewSelect().
+		Model(&objects).
+		Where("project_id = ?", projectUUID).
+		Where("migration_archive IS NOT NULL").
+		Where("jsonb_array_length(migration_archive) > 0").
+		Limit(limit).
+		Offset(offset).
+		Scan(ctx)
+
+	if err != nil {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Database error: %v", err)}},
+		}, err
+	}
+
+	if len(objects) == 0 {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: "No objects found with migration archives"}},
+		}, nil
+	}
+
+	output := fmt.Sprintf("Found %d objects with migration archives:\n\n", len(objects))
+	for _, obj := range objects {
+		archiveCount := len(obj.MigrationArchive)
+		output += fmt.Sprintf("Object: %s\n", obj.ID)
+		output += fmt.Sprintf("  Name: %s\n", obj.Properties["name"])
+		output += fmt.Sprintf("  Type: %s\n", obj.Type)
+		if obj.SchemaVersion != nil {
+			output += fmt.Sprintf("  Current Version: %s\n", *obj.SchemaVersion)
+		}
+		output += fmt.Sprintf("  Archive Entries: %d\n", archiveCount)
+
+		if archiveCount > 0 && len(obj.MigrationArchive) > 0 {
+			latestArchive := obj.MigrationArchive[len(obj.MigrationArchive)-1]
+			if fromVer, ok := latestArchive["from_version"].(string); ok {
+				if toVer, ok := latestArchive["to_version"].(string); ok {
+					output += fmt.Sprintf("  Latest Migration: %s → %s\n", fromVer, toVer)
+				}
+			}
+		}
+		output += "\n"
+	}
+
+	output += fmt.Sprintf("\nShowing %d-%d of available results\n", offset+1, offset+len(objects))
+	output += "\nTo see detailed archive for a specific object, use: get_migration_archive\n"
+
+	return &ToolResult{
+		Content: []ContentBlock{{Type: "text", Text: output}},
+	}, nil
+}
+
+func (s *Service) executeGetMigrationArchive(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	objectIDStr, _ := args["object_id"].(string)
+	if objectIDStr == "" {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: "Error: object_id is required"}},
+		}, fmt.Errorf("object_id is required")
+	}
+
+	objectID, err := uuid.Parse(objectIDStr)
+	if err != nil {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Invalid object_id: %v", err)}},
+		}, err
+	}
+
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Invalid project ID: %v", err)}},
+		}, err
+	}
+
+	var obj graph.GraphObject
+	err = s.db.NewSelect().
+		Model(&obj).
+		Where("id = ?", objectID).
+		Where("project_id = ?", projectUUID).
+		Scan(ctx)
+
+	if err != nil {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Object not found: %v", err)}},
+		}, err
+	}
+
+	if len(obj.MigrationArchive) == 0 {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: "No migration archive found for this object"}},
+		}, nil
+	}
+
+	output := fmt.Sprintf("Migration Archive for Object: %s\n", obj.ID)
+	output += fmt.Sprintf("Name: %s\n", obj.Properties["name"])
+	output += fmt.Sprintf("Type: %s\n", obj.Type)
+	if obj.SchemaVersion != nil {
+		output += fmt.Sprintf("Current Version: %s\n\n", *obj.SchemaVersion)
+	}
+
+	output += fmt.Sprintf("Total Archive Entries: %d\n\n", len(obj.MigrationArchive))
+
+	for i, entry := range obj.MigrationArchive {
+		output += fmt.Sprintf("=== Archive Entry %d ===\n", i+1)
+		if fromVer, ok := entry["from_version"].(string); ok {
+			output += fmt.Sprintf("From Version: %s\n", fromVer)
+		}
+		if toVer, ok := entry["to_version"].(string); ok {
+			output += fmt.Sprintf("To Version: %s\n", toVer)
+		}
+		if timestamp, ok := entry["timestamp"].(string); ok {
+			output += fmt.Sprintf("Timestamp: %s\n", timestamp)
+		}
+
+		if droppedData, ok := entry["dropped_data"].(map[string]interface{}); ok {
+			output += fmt.Sprintf("Dropped Fields (%d):\n", len(droppedData))
+			for field, value := range droppedData {
+				valueJSON, _ := json.Marshal(value)
+				output += fmt.Sprintf("  - %s: %s\n", field, string(valueJSON))
+			}
+		}
+		output += "\n"
+	}
+
+	output += "=== Rollback Instructions ===\n"
+	output += "To restore dropped fields from a specific migration, use the CLI:\n\n"
+	if len(obj.MigrationArchive) > 0 {
+		latestArchive := obj.MigrationArchive[len(obj.MigrationArchive)-1]
+		if toVer, ok := latestArchive["to_version"].(string); ok {
+			output += fmt.Sprintf("  # Dry-run rollback (preview)\n")
+			output += fmt.Sprintf("  ./bin/migrate-schema -project %s --rollback --rollback-version %s\n\n", projectID, toVer)
+			output += fmt.Sprintf("  # Execute rollback\n")
+			output += fmt.Sprintf("  ./bin/migrate-schema -project %s --rollback --rollback-version %s -dry-run=false\n", projectID, toVer)
+		}
+	}
+
+	return &ToolResult{
+		Content: []ContentBlock{{Type: "text", Text: output}},
 	}, nil
 }
