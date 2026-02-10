@@ -417,6 +417,232 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Required: []string{"entity_id"},
 			},
 		},
+		{
+			Name:        "restore_entity",
+			Description: "Restore a soft-deleted entity.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entity_id": {
+						Type:        "string",
+						Description: "UUID of the entity to restore",
+					},
+				},
+				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:        "hybrid_search",
+			Description: "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"query": {
+						Type:        "string",
+						Description: "Search query text",
+					},
+					"types": {
+						Type:        "array",
+						Description: "Optional entity type filters (e.g., [\"Decision\", \"Project\"])",
+					},
+					"labels": {
+						Type:        "array",
+						Description: "Optional label filters",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results (default: 20, max: 100)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(100),
+						Default:     20,
+					},
+				},
+				Required: []string{"query"},
+			},
+		},
+		{
+			Name:        "semantic_search",
+			Description: "Search entities by semantic meaning using vector embeddings. Finds conceptually similar entities even with different wording.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"query": {
+						Type:        "string",
+						Description: "Natural language query describing what you're looking for",
+					},
+					"types": {
+						Type:        "array",
+						Description: "Optional entity type filters",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results (default: 20, max: 50)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(50),
+						Default:     20,
+					},
+				},
+				Required: []string{"query"},
+			},
+		},
+		{
+			Name:        "find_similar",
+			Description: "Find entities similar to a given entity based on semantic similarity.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entity_id": {
+						Type:        "string",
+						Description: "UUID of the entity to find similar entities for",
+					},
+					"types": {
+						Type:        "array",
+						Description: "Optional entity type filters for results",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results (default: 10, max: 50)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(50),
+						Default:     10,
+					},
+				},
+				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:        "traverse_graph",
+			Description: "Multi-hop graph traversal starting from an entity. Discover non-obvious connections and relationships.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"start_entity_id": {
+						Type:        "string",
+						Description: "UUID of the starting entity",
+					},
+					"max_depth": {
+						Type:        "number",
+						Description: "Maximum traversal depth (default: 2, max: 5)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(5),
+						Default:     2,
+					},
+					"relationship_types": {
+						Type:        "array",
+						Description: "Optional filter by specific relationship types",
+					},
+					"direction": {
+						Type:        "string",
+						Description: "Traversal direction: outgoing, incoming, or both (default: both)",
+						Enum:        []string{"outgoing", "incoming", "both"},
+						Default:     "both",
+					},
+				},
+				Required: []string{"start_entity_id"},
+			},
+		},
+		{
+			Name:        "list_relationships",
+			Description: "Query relationships with optional filters. Returns paginated list of relationships in the knowledge graph.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"type": {
+						Type:        "string",
+						Description: "Optional filter by relationship type",
+					},
+					"source_id": {
+						Type:        "string",
+						Description: "Optional filter by source entity UUID",
+					},
+					"target_id": {
+						Type:        "string",
+						Description: "Optional filter by target entity UUID",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results (default: 50, max: 100)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(100),
+						Default:     50,
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
+			Name:        "update_relationship",
+			Description: "Update an existing relationship's properties or weight.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"relationship_id": {
+						Type:        "string",
+						Description: "UUID of the relationship to update",
+					},
+					"properties": {
+						Type:        "object",
+						Description: "Properties to update (merged with existing)",
+					},
+					"weight": {
+						Type:        "number",
+						Description: "Optional new weight for the relationship",
+					},
+				},
+				Required: []string{"relationship_id"},
+			},
+		},
+		{
+			Name:        "delete_relationship",
+			Description: "Soft-delete a relationship between two entities.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"relationship_id": {
+						Type:        "string",
+						Description: "UUID of the relationship to delete",
+					},
+				},
+				Required: []string{"relationship_id"},
+			},
+		},
+		{
+			Name:        "list_tags",
+			Description: "Get all unique tags/labels used in the project with counts.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		},
+		{
+			Name:        "batch_create_entities",
+			Description: "Create multiple entities in a single request. Much more efficient than individual creates.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entities": {
+						Type:        "array",
+						Description: "Array of entity specifications to create",
+					},
+				},
+				Required: []string{"entities"},
+			},
+		},
+		{
+			Name:        "batch_create_relationships",
+			Description: "Create multiple relationships in a single request. Efficient for building graph structures.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"relationships": {
+						Type:        "array",
+						Description: "Array of relationship specifications to create",
+					},
+				},
+				Required: []string{"relationships"},
+			},
+		},
 	}
 }
 
@@ -580,6 +806,28 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeUpdateEntity(ctx, projectID, args)
 	case "delete_entity":
 		return s.executeDeleteEntity(ctx, projectID, args)
+	case "restore_entity":
+		return s.executeRestoreEntity(ctx, projectID, args)
+	case "hybrid_search":
+		return s.executeHybridSearch(ctx, projectID, args)
+	case "semantic_search":
+		return s.executeSemanticSearch(ctx, projectID, args)
+	case "find_similar":
+		return s.executeFindSimilar(ctx, projectID, args)
+	case "traverse_graph":
+		return s.executeTraverseGraph(ctx, projectID, args)
+	case "list_relationships":
+		return s.executeListRelationships(ctx, projectID, args)
+	case "update_relationship":
+		return s.executeUpdateRelationship(ctx, projectID, args)
+	case "delete_relationship":
+		return s.executeDeleteRelationship(ctx, projectID, args)
+	case "list_tags":
+		return s.executeListTags(ctx, projectID)
+	case "batch_create_entities":
+		return s.executeBatchCreateEntities(ctx, projectID, args)
+	case "batch_create_relationships":
+		return s.executeBatchCreateRelationships(ctx, projectID, args)
 	default:
 		return nil, fmt.Errorf("tool not found: %s", toolName)
 	}
@@ -1050,8 +1298,637 @@ func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uu
 	}, nil
 }
 
-// getSchemaVersion computes or returns cached schema version
+// =============================================================================
+// NEW MCP Tool Execution Methods
+// =============================================================================
+
+// executeRestoreEntity restores a soft-deleted entity
+func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	entityIDStr, ok := args["entity_id"].(string)
+	if !ok || entityIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: entity_id")
+	}
+
+	entityID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid entity_id: %w", err)
+	}
+
+	result, err := s.graphService.Restore(ctx, projectUUID, entityID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("restore entity: %w", err)
+	}
+
+	return s.wrapResult(map[string]any{
+		"success": true,
+		"entity":  result,
+		"message": "Entity restored successfully",
+	})
+}
+
+// executeHybridSearch performs hybrid search (FTS + vector + graph context)
+func (s *Service) executeHybridSearch(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return nil, fmt.Errorf("missing required parameter: query")
+	}
+
+	limit := 20
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	var types []string
+	if t, ok := args["types"].([]any); ok {
+		for _, v := range t {
+			if str, ok := v.(string); ok {
+				types = append(types, str)
+			}
+		}
+	}
+
+	var labels []string
+	if l, ok := args["labels"].([]any); ok {
+		for _, v := range l {
+			if str, ok := v.(string); ok {
+				labels = append(labels, str)
+			}
+		}
+	}
+
+	req := &graph.HybridSearchRequest{
+		Query:  query,
+		Types:  types,
+		Labels: labels,
+		Limit:  limit,
+	}
+
+	results, err := s.graphService.HybridSearch(ctx, projectUUID, req, nil)
+	if err != nil {
+		return nil, fmt.Errorf("hybrid search: %w", err)
+	}
+
+	return s.wrapResult(results)
+}
+
+// executeSemanticSearch performs vector-based semantic search
+func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return nil, fmt.Errorf("missing required parameter: query")
+	}
+
+	limit := 20
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	var types []string
+	if t, ok := args["types"].([]any); ok {
+		for _, v := range t {
+			if str, ok := v.(string); ok {
+				types = append(types, str)
+			}
+		}
+	}
+
+	// Use hybrid search with query text (which will auto-generate embeddings)
+	req := &graph.HybridSearchRequest{
+		Query: query,
+		Types: types,
+		Limit: limit,
+		// Favor vector search heavily
+		LexicalWeight: float32Ptr(0.2),
+		VectorWeight:  float32Ptr(0.8),
+	}
+
+	results, err := s.graphService.HybridSearch(ctx, projectUUID, req, nil)
+	if err != nil {
+		return nil, fmt.Errorf("semantic search: %w", err)
+	}
+
+	return s.wrapResult(results)
+}
+
+// executeFindSimilar finds entities similar to a given entity
+func (s *Service) executeFindSimilar(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	entityIDStr, ok := args["entity_id"].(string)
+	if !ok || entityIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: entity_id")
+	}
+
+	entityID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid entity_id: %w", err)
+	}
+
+	limit := 10
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	var types []string
+	if t, ok := args["types"].([]any); ok {
+		for _, v := range t {
+			if str, ok := v.(string); ok {
+				types = append(types, str)
+			}
+		}
+	}
+
+	var typeFilter *string
+	if len(types) > 0 {
+		typeFilter = &types[0]
+	}
+
+	req := &graph.SimilarObjectsRequest{
+		Type:  typeFilter,
+		Limit: limit,
+	}
+
+	results, err := s.graphService.FindSimilarObjects(ctx, projectUUID, entityID, req)
+	if err != nil {
+		return nil, fmt.Errorf("find similar: %w", err)
+	}
+
+	return s.wrapResult(map[string]any{
+		"similar_entities": results,
+		"total":            len(results),
+	})
+}
+
+// executeTraverseGraph performs multi-hop graph traversal
+func (s *Service) executeTraverseGraph(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	startEntityIDStr, ok := args["start_entity_id"].(string)
+	if !ok || startEntityIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: start_entity_id")
+	}
+
+	startEntityID, err := uuid.Parse(startEntityIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid start_entity_id: %w", err)
+	}
+
+	maxDepth := 2
+	if d, ok := args["max_depth"].(float64); ok {
+		maxDepth = int(d)
+	}
+	if maxDepth < 1 {
+		maxDepth = 1
+	}
+	if maxDepth > 5 {
+		maxDepth = 5
+	}
+
+	direction := "both"
+	if d, ok := args["direction"].(string); ok {
+		direction = d
+	}
+
+	var relationshipTypes []string
+	if rt, ok := args["relationship_types"].([]any); ok {
+		for _, v := range rt {
+			if str, ok := v.(string); ok {
+				relationshipTypes = append(relationshipTypes, str)
+			}
+		}
+	}
+
+	req := &graph.TraverseGraphRequest{
+		RootIDs:           []uuid.UUID{startEntityID},
+		MaxDepth:          maxDepth,
+		Direction:         direction,
+		RelationshipTypes: relationshipTypes,
+	}
+
+	results, err := s.graphService.TraverseGraph(ctx, projectUUID, req)
+	if err != nil {
+		return nil, fmt.Errorf("traverse graph: %w", err)
+	}
+
+	return s.wrapResult(results)
+}
+
+// executeListRelationships lists relationships with optional filters
+func (s *Service) executeListRelationships(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	limit := 50
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	params := graph.RelationshipListParams{
+		ProjectID: projectUUID,
+		Limit:     limit + 1, // Fetch one extra to check hasMore
+	}
+
+	if t, ok := args["type"].(string); ok && t != "" {
+		params.Type = &t
+	}
+
+	if srcID, ok := args["source_id"].(string); ok && srcID != "" {
+		id, err := uuid.Parse(srcID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid source_id: %w", err)
+		}
+		params.SrcID = &id
+	}
+
+	if dstID, ok := args["target_id"].(string); ok && dstID != "" {
+		id, err := uuid.Parse(dstID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid target_id: %w", err)
+		}
+		params.DstID = &id
+	}
+
+	results, err := s.graphService.ListRelationships(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("list relationships: %w", err)
+	}
+
+	return s.wrapResult(results)
+}
+
+// executeUpdateRelationship updates a relationship
+func (s *Service) executeUpdateRelationship(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	relIDStr, ok := args["relationship_id"].(string)
+	if !ok || relIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: relationship_id")
+	}
+
+	relID, err := uuid.Parse(relIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid relationship_id: %w", err)
+	}
+
+	req := &graph.PatchGraphRelationshipRequest{}
+
+	if props, ok := args["properties"].(map[string]any); ok {
+		req.Properties = props
+	}
+
+	if weight, ok := args["weight"].(float64); ok {
+		w := float32(weight)
+		req.Weight = &w
+	}
+
+	result, err := s.graphService.PatchRelationship(ctx, projectUUID, relID, req)
+	if err != nil {
+		return nil, fmt.Errorf("update relationship: %w", err)
+	}
+
+	return s.wrapResult(map[string]any{
+		"success":      true,
+		"relationship": result,
+		"message":      "Relationship updated successfully",
+	})
+}
+
+// executeDeleteRelationship soft-deletes a relationship
+func (s *Service) executeDeleteRelationship(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	relIDStr, ok := args["relationship_id"].(string)
+	if !ok || relIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: relationship_id")
+	}
+
+	relID, err := uuid.Parse(relIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid relationship_id: %w", err)
+	}
+
+	result, err := s.graphService.DeleteRelationship(ctx, projectUUID, relID)
+	if err != nil {
+		return nil, fmt.Errorf("delete relationship: %w", err)
+	}
+
+	return s.wrapResult(map[string]any{
+		"success":      true,
+		"relationship": result,
+		"message":      "Relationship deleted successfully",
+	})
+}
+
+// executeListTags gets all unique tags in the project
+func (s *Service) executeListTags(ctx context.Context, projectID string) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	tags, err := s.graphService.GetTags(ctx, projectUUID)
+	if err != nil {
+		return nil, fmt.Errorf("list tags: %w", err)
+	}
+
+	return s.wrapResult(map[string]any{
+		"tags":  tags,
+		"total": len(tags),
+	})
+}
+
+// executeBatchCreateEntities creates multiple entities in one request
+func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	entitiesRaw, ok := args["entities"].([]any)
+	if !ok || len(entitiesRaw) == 0 {
+		return nil, fmt.Errorf("missing or empty entities array")
+	}
+
+	if len(entitiesRaw) > 100 {
+		return nil, fmt.Errorf("batch size exceeded: maximum 100 entities per request")
+	}
+
+	type batchResult struct {
+		Success bool                       `json:"success"`
+		Entity  *graph.GraphObjectResponse `json:"entity,omitempty"`
+		Error   string                     `json:"error,omitempty"`
+		Index   int                        `json:"index"`
+	}
+
+	results := make([]batchResult, 0, len(entitiesRaw))
+	successCount := 0
+	failedCount := 0
+
+	for i, entityRaw := range entitiesRaw {
+		entityMap, ok := entityRaw.(map[string]any)
+		if !ok {
+			results = append(results, batchResult{
+				Success: false,
+				Error:   "invalid entity specification",
+				Index:   i,
+			})
+			failedCount++
+			continue
+		}
+
+		typeName, _ := entityMap["type"].(string)
+		if typeName == "" {
+			results = append(results, batchResult{
+				Success: false,
+				Error:   "missing entity type",
+				Index:   i,
+			})
+			failedCount++
+			continue
+		}
+
+		var key *string
+		if k, ok := entityMap["key"].(string); ok && k != "" {
+			key = &k
+		}
+
+		var status *string
+		if st, ok := entityMap["status"].(string); ok && st != "" {
+			status = &st
+		}
+
+		properties, _ := entityMap["properties"].(map[string]any)
+		if properties == nil {
+			properties = make(map[string]any)
+		}
+
+		var labels []string
+		if l, ok := entityMap["labels"].([]any); ok {
+			for _, v := range l {
+				if str, ok := v.(string); ok {
+					labels = append(labels, str)
+				}
+			}
+		}
+
+		req := &graph.CreateGraphObjectRequest{
+			Type:       typeName,
+			Key:        key,
+			Status:     status,
+			Properties: properties,
+			Labels:     labels,
+		}
+
+		result, err := s.graphService.Create(ctx, projectUUID, req, nil)
+		if err != nil {
+			results = append(results, batchResult{
+				Success: false,
+				Error:   err.Error(),
+				Index:   i,
+			})
+			failedCount++
+			continue
+		}
+
+		results = append(results, batchResult{
+			Success: true,
+			Entity:  result,
+			Index:   i,
+		})
+		successCount++
+	}
+
+	return s.wrapResult(map[string]any{
+		"success": successCount,
+		"failed":  failedCount,
+		"total":   len(entitiesRaw),
+		"results": results,
+		"message": fmt.Sprintf("Batch create completed: %d succeeded, %d failed", successCount, failedCount),
+	})
+}
+
+// executeBatchCreateRelationships creates multiple relationships in one request
+func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	relationshipsRaw, ok := args["relationships"].([]any)
+	if !ok || len(relationshipsRaw) == 0 {
+		return nil, fmt.Errorf("missing or empty relationships array")
+	}
+
+	if len(relationshipsRaw) > 100 {
+		return nil, fmt.Errorf("batch size exceeded: maximum 100 relationships per request")
+	}
+
+	type batchResult struct {
+		Success      bool                             `json:"success"`
+		Relationship *graph.GraphRelationshipResponse `json:"relationship,omitempty"`
+		Error        string                           `json:"error,omitempty"`
+		Index        int                              `json:"index"`
+	}
+
+	results := make([]batchResult, 0, len(relationshipsRaw))
+	successCount := 0
+	failedCount := 0
+
+	for i, relRaw := range relationshipsRaw {
+		relMap, ok := relRaw.(map[string]any)
+		if !ok {
+			results = append(results, batchResult{
+				Success: false,
+				Error:   "invalid relationship specification",
+				Index:   i,
+			})
+			failedCount++
+			continue
+		}
+
+		relType, _ := relMap["type"].(string)
+		if relType == "" {
+			results = append(results, batchResult{
+				Success: false,
+				Error:   "missing relationship type",
+				Index:   i,
+			})
+			failedCount++
+			continue
+		}
+
+		srcIDStr, _ := relMap["source_id"].(string)
+		srcID, err := uuid.Parse(srcIDStr)
+		if err != nil {
+			results = append(results, batchResult{
+				Success: false,
+				Error:   "invalid source_id",
+				Index:   i,
+			})
+			failedCount++
+			continue
+		}
+
+		dstIDStr, _ := relMap["target_id"].(string)
+		dstID, err := uuid.Parse(dstIDStr)
+		if err != nil {
+			results = append(results, batchResult{
+				Success: false,
+				Error:   "invalid target_id",
+				Index:   i,
+			})
+			failedCount++
+			continue
+		}
+
+		properties, _ := relMap["properties"].(map[string]any)
+		if properties == nil {
+			properties = make(map[string]any)
+		}
+
+		var weight *float32
+		if w, ok := relMap["weight"].(float64); ok {
+			wf := float32(w)
+			weight = &wf
+		}
+
+		req := &graph.CreateGraphRelationshipRequest{
+			Type:       relType,
+			SrcID:      srcID,
+			DstID:      dstID,
+			Properties: properties,
+			Weight:     weight,
+		}
+
+		result, err := s.graphService.CreateRelationship(ctx, projectUUID, req)
+		if err != nil {
+			results = append(results, batchResult{
+				Success: false,
+				Error:   err.Error(),
+				Index:   i,
+			})
+			failedCount++
+			continue
+		}
+
+		results = append(results, batchResult{
+			Success:      true,
+			Relationship: result,
+			Index:        i,
+		})
+		successCount++
+	}
+
+	return s.wrapResult(map[string]any{
+		"success": successCount,
+		"failed":  failedCount,
+		"total":   len(relationshipsRaw),
+		"results": results,
+		"message": fmt.Sprintf("Batch create completed: %d succeeded, %d failed", successCount, failedCount),
+	})
+}
+
+// Helper to create a float32 pointer
+func float32Ptr(f float32) *float32 {
+	return &f
+}
+
+// getSchemaVersion computes a schema version hash
 func (s *Service) getSchemaVersion(ctx context.Context) (string, error) {
+	// Check cache first
 	s.cacheMu.RLock()
 	if s.cachedVersion != "" && time.Now().Before(s.cacheExpiry) {
 		version := s.cachedVersion
