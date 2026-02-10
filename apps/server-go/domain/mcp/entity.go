@@ -26,7 +26,9 @@ type InitializeResult struct {
 
 // ServerCapabilities describes what the server supports
 type ServerCapabilities struct {
-	Tools ToolsCapability `json:"tools"`
+	Tools     ToolsCapability     `json:"tools"`
+	Resources ResourcesCapability `json:"resources"`
+	Prompts   PromptsCapability   `json:"prompts"`
 }
 
 // ToolsCapability describes tool-related capabilities
@@ -34,9 +36,94 @@ type ToolsCapability struct {
 	ListChanged bool `json:"listChanged"`
 }
 
+// ResourcesCapability describes resource-related capabilities
+type ResourcesCapability struct {
+	Subscribe   bool `json:"subscribe"`
+	ListChanged bool `json:"listChanged"`
+}
+
+// PromptsCapability describes prompt-related capabilities
+type PromptsCapability struct {
+	ListChanged bool `json:"listChanged"`
+}
+
 // ToolsListResult represents the result of tools/list method
 type ToolsListResult struct {
 	Tools []ToolDefinition `json:"tools"`
+}
+
+// ResourcesListResult represents the result of resources/list method
+type ResourcesListResult struct {
+	Resources []ResourceDefinition `json:"resources"`
+}
+
+// ResourceDefinition describes an MCP resource
+type ResourceDefinition struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+// ResourceReadParams represents params for resources/read method
+type ResourceReadParams struct {
+	URI string `json:"uri"`
+}
+
+// ResourceContents represents the contents of a resource
+type ResourceContents struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Blob     string `json:"blob,omitempty"`
+}
+
+// ResourceReadResult represents the result of resources/read method
+type ResourceReadResult struct {
+	Contents []ResourceContents `json:"contents"`
+}
+
+// PromptsListResult represents the result of prompts/list method
+type PromptsListResult struct {
+	Prompts []PromptDefinition `json:"prompts"`
+}
+
+// PromptDefinition describes an MCP prompt template
+type PromptDefinition struct {
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Arguments   []PromptArgument `json:"arguments,omitempty"`
+}
+
+// PromptArgument describes a prompt template argument
+type PromptArgument struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+// PromptGetParams represents params for prompts/get method
+type PromptGetParams struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments,omitempty"`
+}
+
+// PromptMessage represents a message in a prompt result
+type PromptMessage struct {
+	Role    string        `json:"role"`
+	Content PromptContent `json:"content"`
+}
+
+// PromptContent represents the content of a prompt message
+type PromptContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// PromptGetResult represents the result of prompts/get method
+type PromptGetResult struct {
+	Description string          `json:"description,omitempty"`
+	Messages    []PromptMessage `json:"messages"`
 }
 
 // ToolDefinition describes an MCP tool

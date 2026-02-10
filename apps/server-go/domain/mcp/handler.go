@@ -106,6 +106,14 @@ func (h *Handler) routeMethod(c echo.Context, req *Request, user *auth.AuthUser)
 		return h.handleToolsList(c, req, user)
 	case "tools/call":
 		return h.handleToolsCall(c, req, user)
+	case "resources/list":
+		return h.handleResourcesList(c, req, user)
+	case "resources/read":
+		return h.handleResourcesRead(c, req, user)
+	case "prompts/list":
+		return h.handlePromptsList(c, req, user)
+	case "prompts/get":
+		return h.handlePromptsGet(c, req, user)
 	default:
 		return NewErrorResponse(
 			req.ID,
@@ -113,7 +121,7 @@ func (h *Handler) routeMethod(c echo.Context, req *Request, user *auth.AuthUser)
 			"Method not found: "+req.Method,
 			map[string]any{
 				"method":            req.Method,
-				"supported_methods": []string{"initialize", "tools/list", "tools/call"},
+				"supported_methods": []string{"initialize", "tools/list", "tools/call", "resources/list", "resources/read", "prompts/list", "prompts/get"},
 			},
 		)
 	}
@@ -171,7 +179,9 @@ func (h *Handler) handleInitialize(c echo.Context, req *Request, user *auth.Auth
 	result := InitializeResult{
 		ProtocolVersion: params.ProtocolVersion,
 		Capabilities: ServerCapabilities{
-			Tools: ToolsCapability{ListChanged: false},
+			Tools:     ToolsCapability{ListChanged: false},
+			Resources: ResourcesCapability{Subscribe: false, ListChanged: false},
+			Prompts:   PromptsCapability{ListChanged: false},
 		},
 		ServerInfo: ServerInfo,
 	}
@@ -294,4 +304,90 @@ func requiresProject(toolName string) bool {
 	default:
 		return false
 	}
+}
+
+func (h *Handler) handleResourcesList(c echo.Context, req *Request, user *auth.AuthUser) *Response {
+	resources := h.svc.GetResourceDefinitions()
+	result := ResourcesListResult{Resources: resources}
+
+	return NewSuccessResponse(req.ID, result)
+}
+
+func (h *Handler) handleResourcesRead(c echo.Context, req *Request, user *auth.AuthUser) *Response {
+	var params ResourceReadParams
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return NewErrorResponse(req.ID, ErrCodeInvalidParams,
+				"Invalid resources/read params", map[string]string{"error": err.Error()})
+		}
+	}
+
+	if params.URI == "" {
+		return NewErrorResponse(req.ID, ErrCodeInvalidParams,
+			"Missing required parameter: uri",
+			map[string]any{"required": []string{"uri"}},
+		)
+	}
+
+	projectID := user.ProjectID
+	if projectID == "" {
+		projectID = c.Request().Header.Get("X-Project-ID")
+	}
+
+	result, err := h.svc.ReadResource(c.Request().Context(), projectID, params.URI)
+	if err != nil {
+		h.log.Error("resource read failed",
+			slog.String("uri", params.URI),
+			logger.Error(err),
+		)
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Failed to read resource: "+err.Error(),
+			map[string]string{"uri": params.URI},
+		)
+	}
+
+	return NewSuccessResponse(req.ID, result)
+}
+
+func (h *Handler) handlePromptsList(c echo.Context, req *Request, user *auth.AuthUser) *Response {
+	prompts := h.svc.GetPromptDefinitions()
+	result := PromptsListResult{Prompts: prompts}
+
+	return NewSuccessResponse(req.ID, result)
+}
+
+func (h *Handler) handlePromptsGet(c echo.Context, req *Request, user *auth.AuthUser) *Response {
+	var params PromptGetParams
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return NewErrorResponse(req.ID, ErrCodeInvalidParams,
+				"Invalid prompts/get params", map[string]string{"error": err.Error()})
+		}
+	}
+
+	if params.Name == "" {
+		return NewErrorResponse(req.ID, ErrCodeInvalidParams,
+			"Missing required parameter: name",
+			map[string]any{"required": []string{"name"}},
+		)
+	}
+
+	projectID := user.ProjectID
+	if projectID == "" {
+		projectID = c.Request().Header.Get("X-Project-ID")
+	}
+
+	result, err := h.svc.GetPrompt(c.Request().Context(), projectID, params.Name, params.Arguments)
+	if err != nil {
+		h.log.Error("prompt get failed",
+			slog.String("name", params.Name),
+			logger.Error(err),
+		)
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Failed to get prompt: "+err.Error(),
+			map[string]string{"name": params.Name},
+		)
+	}
+
+	return NewSuccessResponse(req.ID, result)
 }
