@@ -1,6 +1,6 @@
 package installer
 
-const serverImage = "ghcr.io/emergent-company/emergent-server-with-cli:latest"
+const serverImage = "ghcr.io/emergent-company/emergent-server-go:latest"
 
 func GetDockerComposeTemplate() string {
 	return `services:
