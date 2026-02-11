@@ -1344,3 +1344,99 @@ func (h *Handler) MergeBranch(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, result)
 }
+
+// =============================================================================
+// Analytics Handlers
+// =============================================================================
+
+// GetMostAccessed returns the most frequently accessed graph objects.
+// @Summary      Get most accessed objects
+// @Description  Returns graph objects sorted by most recent access time for analytics
+// @Tags         graph
+// @Produce      json
+// @Param        limit query int false "Max results (default: 50, max: 200)"
+// @Param        min_access_count query int false "Minimum access count (not yet implemented, default: 1)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} MostAccessedResponse "Most accessed objects"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/analytics/most-accessed [get]
+// @Security     bearerAuth
+func (h *Handler) GetMostAccessed(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	limit := 50
+	if limitStr := c.QueryParam("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	minAccessCount := 1
+	if minStr := c.QueryParam("min_access_count"); minStr != "" {
+		if m, err := strconv.Atoi(minStr); err == nil && m > 0 {
+			minAccessCount = m
+		}
+	}
+
+	response, err := h.svc.GetMostAccessed(c.Request().Context(), projectID, limit, minAccessCount)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, response)
+}
+
+// GetUnused returns graph objects that haven't been accessed recently.
+// @Summary      Get unused objects
+// @Description  Returns graph objects that haven't been accessed in specified days for cleanup analytics
+// @Tags         graph
+// @Produce      json
+// @Param        limit query int false "Max results (default: 50, max: 200)"
+// @Param        days query int false "Days threshold for unused (default: 30)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} UnusedObjectsResponse "Unused objects"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/analytics/unused [get]
+// @Security     bearerAuth
+func (h *Handler) GetUnused(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	limit := 50
+	if limitStr := c.QueryParam("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	days := 30
+	if daysStr := c.QueryParam("days"); daysStr != "" {
+		if d, err := strconv.Atoi(daysStr); err == nil && d > 0 {
+			days = d
+		}
+	}
+
+	response, err := h.svc.GetUnused(c.Request().Context(), projectID, limit, days)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, response)
+}

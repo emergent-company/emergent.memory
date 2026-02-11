@@ -93,6 +93,34 @@ func (o *GraphObject) ToResponse() *GraphObjectResponse {
 	}
 }
 
+// AnalyticsObjectItem represents an object in analytics responses.
+type AnalyticsObjectItem struct {
+	ID              uuid.UUID      `json:"id"`
+	CanonicalID     uuid.UUID      `json:"canonical_id"`
+	Type            string         `json:"type"`
+	Key             *string        `json:"key,omitempty"`
+	Properties      map[string]any `json:"properties"`
+	Labels          []string       `json:"labels"`
+	LastAccessedAt  *time.Time     `json:"last_accessed_at,omitempty"`
+	AccessCount     *int64         `json:"access_count,omitempty"`
+	DaysSinceAccess *int           `json:"days_since_access,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+}
+
+// MostAccessedResponse is the response for most-accessed analytics.
+type MostAccessedResponse struct {
+	Items []AnalyticsObjectItem  `json:"items"`
+	Total int                    `json:"total"`
+	Meta  map[string]interface{} `json:"meta"`
+}
+
+// UnusedObjectsResponse is the response for unused objects analytics.
+type UnusedObjectsResponse struct {
+	Items []AnalyticsObjectItem  `json:"items"`
+	Total int                    `json:"total"`
+	Meta  map[string]interface{} `json:"meta"`
+}
+
 // SearchGraphObjectsRequest contains search/filter parameters.
 type SearchGraphObjectsRequest struct {
 	Type            *string    `query:"type"`   // NestJS uses single type, not array

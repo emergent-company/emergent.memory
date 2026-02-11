@@ -84,7 +84,7 @@ apps/server-go/
 │   ├── email/            # Email jobs + Mailgun
 │   ├── embeddingpolicies/ # Embedding policy configuration
 │   ├── extraction/       # Object extraction pipeline (ADK-Go)
-│   ├── graph/            # Graph objects + relationships + search
+│   ├── graph/            # Graph objects + relationships + search + analytics
 │   ├── health/           # Health check endpoints
 │   ├── mcp/              # Model Context Protocol endpoints
 │   ├── orgs/             # Organizations CRUD
@@ -617,7 +617,7 @@ See `migrations/README.md` for detailed workflow.
 | ------------------- | -------------------------------------------- | ----- |
 | Health              | `/health`, `/healthz`, `/ready`, `/debug`    | Pass  |
 | Organizations       | CRUD `/api/v2/orgs`                          | Pass  |
-| Projects            | CRUD `/api/projects`                      | Pass  |
+| Projects            | CRUD `/api/projects`                         | Pass  |
 | Users               | Search `/api/v2/users`                       | Pass  |
 | User Profile        | Get/Update `/api/v2/user-profile`            | Pass  |
 | API Tokens          | CRUD `/api/v2/api-tokens`                    | Pass  |
@@ -777,3 +777,117 @@ Log levels controlled by `LOG_LEVEL` env var.
 - [Migration spec](../../openspec/changes/port-server-to-golang/design.md)
 - [Retrospective](./RETROSPECTIVE.md)
 - [Benchmark Results](./BENCHMARK_RESULTS.md)
+
+## Graph Analytics API
+
+The graph module includes analytics endpoints for tracking object access patterns. These endpoints leverage the `last_accessed_at` column added in migration `00009_add_access_tracking.sql`.
+
+### Access Tracking
+
+Graph search operations automatically update `last_accessed_at` timestamps asynchronously (non-blocking) for all returned objects. This enables:
+
+- **Garbage collection** - Identify unused objects for cleanup
+- **Usage analytics** - "What's trending in our org?"
+- **Future ranking boost** - Social proof algorithm (frequency-based scoring)
+
+### Analytics Endpoints
+
+#### GET /api/graph/analytics/most-accessed
+
+Returns objects sorted by most recent access time.
+
+**Query Parameters:**
+
+- `limit` (int, optional) - Max results, default: 50, max: 200
+- `min_access_count` (int, optional) - Minimum access count filter (not yet implemented, default: 1)
+- `X-Project-ID` (header, required) - Project context
+
+**Response:**
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "canonical_id": "uuid",
+      "type": "Requirement",
+      "key": "REQ-001",
+      "properties": {...},
+      "labels": ["mvp", "backend"],
+      "last_accessed_at": "2025-02-11T08:30:00Z",
+      "created_at": "2025-01-15T10:00:00Z"
+    }
+  ],
+  "total": 42,
+  "meta": {
+    "limit": 50,
+    "minAccessCount": 1
+  }
+}
+```
+
+#### GET /api/graph/analytics/unused
+
+Returns objects not accessed within specified days threshold.
+
+**Query Parameters:**
+
+- `limit` (int, optional) - Max results, default: 50, max: 200
+- `days` (int, optional) - Days threshold for "unused", default: 30
+- `X-Project-ID` (header, required) - Project context
+
+**Response:**
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "canonical_id": "uuid",
+      "type": "Feature",
+      "properties": {...},
+      "labels": ["archived"],
+      "last_accessed_at": "2024-12-01T15:45:00Z",
+      "days_since_access": 72,
+      "created_at": "2024-11-20T09:00:00Z"
+    }
+  ],
+  "total": 15,
+  "meta": {
+    "limit": 50,
+    "daysThreshold": 30
+  }
+}
+```
+
+**Notes:**
+
+- Only returns HEAD versions (`supersedes_id IS NULL`)
+- Excludes soft-deleted objects
+- Objects with `last_accessed_at = NULL` are never accessed (included in unused results)
+- Timestamps updated via async goroutines (no search latency impact)
+
+### Implementation Details
+
+**Repository Methods:**
+
+- `UpdateAccessTimestamps(ctx, objectIDs []uuid.UUID)` - Batch UPDATE single query
+- `GetMostAccessed(ctx, projectID, limit, minAccessCount)` - ORDER BY last_accessed_at DESC
+- `GetUnused(ctx, projectID, limit, daysThreshold)` - WHERE last_accessed_at IS NULL OR < cutoff
+
+**Service Layer:**
+
+- `GetMostAccessed()` - Returns `MostAccessedResponse` with metadata
+- `GetUnused()` - Returns `UnusedObjectsResponse` with `days_since_access` calculated
+
+**Search Integration:**
+
+- `VectorSearch()` - Updates timestamps for pgvector results
+- `FTSSearch()` - Updates timestamps for full-text results
+- `executeGraphSearch()` - Updates timestamps for hybrid fused results
+
+**Performance:**
+
+- Index: `idx_graph_objects_last_accessed` (DESC, WHERE NOT NULL)
+- Single UPDATE per search (batch operation)
+- ~8 bytes per object (~8MB for 1M objects)

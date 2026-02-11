@@ -42,6 +42,11 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	branches := g.Group("/branches")
 	branches.POST("/:targetBranchId/merge", h.MergeBranch)
 
+	// Analytics routes
+	analytics := g.Group("/analytics")
+	analytics.GET("/most-accessed", h.GetMostAccessed)
+	analytics.GET("/unused", h.GetUnused)
+
 	// Relationship routes
 	relationships := g.Group("/relationships")
 	relationships.GET("/search", h.ListRelationships)
