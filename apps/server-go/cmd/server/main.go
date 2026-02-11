@@ -17,6 +17,7 @@ import (
 	"github.com/emergent/emergent-core/domain/datasource"
 	"github.com/emergent/emergent-core/domain/devtools"
 	"github.com/emergent/emergent-core/domain/discoveryjobs"
+	"github.com/emergent/emergent-core/domain/docs"
 	"github.com/emergent/emergent-core/domain/documents"
 	"github.com/emergent/emergent-core/domain/email"
 	"github.com/emergent/emergent-core/domain/embeddingpolicies"
@@ -133,5 +134,8 @@ func main() {
 
 		// Developer tools (coverage, docs) - only enabled in debug mode
 		devtools.Module,
+
+		// Documentation API (serves markdown files from docs/public)
+		docs.Module,
 	).Run()
 }
