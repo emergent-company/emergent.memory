@@ -1,3 +1,20 @@
+// Package main provides the entry point for the Emergent API server
+//
+// @title Emergent API
+// @version 0.4.9
+// @description Emergent Knowledge Base API - AI-powered knowledge management system
+// @contact.name Emergent Team
+// @contact.url https://emergent-company.ai
+// @contact.email support@emergent-company.ai
+// @license.name Proprietary
+// @host localhost:5300
+// @BasePath /
+// @schemes http https
+//
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description OAuth 2.0 access token (format: "Bearer <token>")
 package main
 
 import (
