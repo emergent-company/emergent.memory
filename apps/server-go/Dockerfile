@@ -35,6 +35,15 @@ RUN go mod download
 # Copy source code
 COPY apps/server-go/ ./
 
+# Install swag for OpenAPI spec generation
+RUN go install github.com/swaggo/swag/cmd/swag@latest
+
+# Remove symlink and create real directory for swagger docs
+RUN rm -f docs && mkdir -p docs/swagger
+
+# Generate OpenAPI/Swagger documentation
+RUN /go/bin/swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
+
 # Build the binary
 # CGO_ENABLED=0 for static binary (no libc dependency)
 # -ldflags="-s -w" strips debug info for smaller binary
@@ -54,6 +63,7 @@ RUN apk add --no-cache ca-certificates curl tzdata
 
 COPY --from=builder /server /server
 COPY apps/server-go/migrations/*.sql /migrations/
+COPY --from=builder /build/docs/swagger /docs/swagger
 
 RUN addgroup -g 65532 -S nonroot && \
     adduser -u 65532 -S nonroot -G nonroot
