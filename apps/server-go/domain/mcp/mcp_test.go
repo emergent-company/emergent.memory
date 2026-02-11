@@ -13,6 +13,7 @@ func TestExtractToken(t *testing.T) {
 	tests := []struct {
 		name       string
 		authHeader string
+		apiKey     string
 		expected   string
 	}{
 		{
@@ -65,15 +66,39 @@ func TestExtractToken(t *testing.T) {
 			authHeader: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
 			expected:   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
 		},
+		{
+			name:     "API key only",
+			apiKey:   "test-api-key-123",
+			expected: "test-api-key-123",
+		},
+		{
+			name:       "bearer token takes precedence over API key",
+			authHeader: "Bearer bearer-token",
+			apiKey:     "api-key-ignored",
+			expected:   "bearer-token",
+		},
+		{
+			name:     "API key with underscore and dot",
+			apiKey:   "test-key_123.abc",
+			expected: "test-key_123.abc",
+		},
+		{
+			name:       "invalid bearer falls back to API key",
+			authHeader: "bearer lowercase",
+			apiKey:     "fallback-key",
+			expected:   "fallback-key",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a test request with the authorization header
 			e := echo.New()
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
+			}
+			if tt.apiKey != "" {
+				req.Header.Set("X-API-Key", tt.apiKey)
 			}
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)

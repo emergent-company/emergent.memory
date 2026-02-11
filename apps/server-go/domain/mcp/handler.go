@@ -296,12 +296,17 @@ func (h *Handler) getSession(token string) *Session {
 	return h.sessions[token]
 }
 
-// extractToken extracts bearer token from request
+// extractToken extracts session identifier from request (Bearer token or X-API-Key).
 func extractToken(c echo.Context) string {
 	authHeader := c.Request().Header.Get("Authorization")
 	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
 		return authHeader[7:]
 	}
+
+	if apiKey := c.Request().Header.Get("X-API-Key"); apiKey != "" {
+		return apiKey
+	}
+
 	return ""
 }
 
