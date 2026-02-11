@@ -75,8 +75,9 @@ func init() {
 }
 
 type Release struct {
-	TagName string  `json:"tag_name"`
-	Assets  []Asset `json:"assets"`
+	TagName     string  `json:"tag_name"`
+	Assets      []Asset `json:"assets"`
+	ImagesReady bool
 }
 
 type Asset struct {
@@ -144,6 +145,21 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 
 	if !cliNeedsUpgrade && !serverInstalled {
 		fmt.Printf("You are already using the latest version: %s\n", Version)
+		return
+	}
+
+	if serverInstalled && !upgradeFlags.cliOnly && !release.ImagesReady {
+		fmt.Println()
+		fmt.Println("⚠️  Warning: Docker images for this release are still being built")
+		fmt.Printf("Latest release: %s\n", release.TagName)
+		fmt.Println()
+		fmt.Println("The CLI can be upgraded now, but server upgrade should wait until")
+		fmt.Println("Docker images are available (usually takes 5-10 minutes after release).")
+		fmt.Println()
+		fmt.Println("Options:")
+		fmt.Println("  1. Wait a few minutes and try again")
+		fmt.Println("  2. Upgrade CLI only now with: emergent upgrade --cli-only")
+		fmt.Println()
 		return
 	}
 
@@ -230,7 +246,18 @@ func getLatestRelease() (*Release, error) {
 		return nil, err
 	}
 
+	release.ImagesReady = checkImagesReady(release.Assets)
+
 	return &release, nil
+}
+
+func checkImagesReady(assets []Asset) bool {
+	for _, asset := range assets {
+		if asset.Name == "images-ready.txt" {
+			return true
+		}
+	}
+	return false
 }
 
 func findAsset(assets []Asset) (string, string, error) {
