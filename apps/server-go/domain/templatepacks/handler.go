@@ -20,7 +20,18 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // GetCompiledTypes handles GET /api/template-packs/projects/:projectId/compiled-types
-// Returns compiled object and relationship types for a project
+// @Summary      Get compiled types
+// @Description  Returns compiled object and relationship type definitions for a project based on installed template packs
+// @Tags         template-packs
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {object} CompiledTypesResponse "Compiled type definitions"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/template-packs/projects/{projectId}/compiled-types [get]
+// @Security     bearerAuth
 func (h *Handler) GetCompiledTypes(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -41,7 +52,18 @@ func (h *Handler) GetCompiledTypes(c echo.Context) error {
 }
 
 // GetAvailablePacks handles GET /api/template-packs/projects/:projectId/available
-// Returns template packs available for a project to install
+// @Summary      List available template packs
+// @Description  Returns template packs available for a project to install (not yet installed)
+// @Tags         template-packs
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {array} TemplatePackListItem "Available template packs"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/template-packs/projects/{projectId}/available [get]
+// @Security     bearerAuth
 func (h *Handler) GetAvailablePacks(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -62,7 +84,18 @@ func (h *Handler) GetAvailablePacks(c echo.Context) error {
 }
 
 // GetInstalledPacks handles GET /api/template-packs/projects/:projectId/installed
-// Returns template packs installed for a project
+// @Summary      List installed template packs
+// @Description  Returns template packs currently installed and assigned to a project
+// @Tags         template-packs
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {array} InstalledPackItem "Installed template packs"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/template-packs/projects/{projectId}/installed [get]
+// @Security     bearerAuth
 func (h *Handler) GetInstalledPacks(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -83,7 +116,19 @@ func (h *Handler) GetInstalledPacks(c echo.Context) error {
 }
 
 // AssignPack handles POST /api/template-packs/projects/:projectId/assign
-// Assigns a template pack to a project
+// @Summary      Assign template pack
+// @Description  Assigns a template pack to a project, making its types available for use
+// @Tags         template-packs
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body AssignPackRequest true "Assignment request"
+// @Success      201 {object} ProjectTemplatePack "Created assignment"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/template-packs/projects/{projectId}/assign [post]
+// @Security     bearerAuth
 func (h *Handler) AssignPack(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -113,7 +158,21 @@ func (h *Handler) AssignPack(c echo.Context) error {
 }
 
 // UpdateAssignment handles PATCH /api/template-packs/projects/:projectId/assignments/:assignmentId
-// Updates a pack assignment (e.g., active status)
+// @Summary      Update pack assignment
+// @Description  Updates a template pack assignment (e.g., toggle active status)
+// @Tags         template-packs
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        assignmentId path string true "Assignment ID (UUID)"
+// @Param        request body UpdateAssignmentRequest true "Update request"
+// @Success      200 {object} map[string]string "Update confirmation"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Assignment not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/template-packs/projects/{projectId}/assignments/{assignmentId} [patch]
+// @Security     bearerAuth
 func (h *Handler) UpdateAssignment(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -139,7 +198,20 @@ func (h *Handler) UpdateAssignment(c echo.Context) error {
 }
 
 // DeleteAssignment handles DELETE /api/template-packs/projects/:projectId/assignments/:assignmentId
-// Removes a pack assignment from a project
+// @Summary      Delete pack assignment
+// @Description  Removes a template pack assignment from a project
+// @Tags         template-packs
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        assignmentId path string true "Assignment ID (UUID)"
+// @Success      204 "No content"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Assignment not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/template-packs/projects/{projectId}/assignments/{assignmentId} [delete]
+// @Security     bearerAuth
 func (h *Handler) DeleteAssignment(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

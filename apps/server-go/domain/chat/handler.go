@@ -27,6 +27,19 @@ func NewHandler(svc *Service, llmClient *vertex.Client) *Handler {
 }
 
 // ListConversations handles GET /api/v2/chat/conversations
+// @Summary      List chat conversations
+// @Description  Returns all chat conversations for the current project with pagination support
+// @Tags         chat
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        limit query int false "Max results (1-100, default 50)" minimum(1) maximum(100)
+// @Param        offset query int false "Offset for pagination" minimum(0)
+// @Success      200 {object} ListConversationsResult "List of conversations"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v2/chat/conversations [get]
+// @Security     bearerAuth
 func (h *Handler) ListConversations(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -66,6 +79,19 @@ func (h *Handler) ListConversations(c echo.Context) error {
 }
 
 // GetConversation handles GET /api/v2/chat/:id
+// @Summary      Get conversation with messages
+// @Description  Returns a single conversation with all its messages
+// @Tags         chat
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Conversation ID (UUID)"
+// @Success      200 {object} ConversationWithMessages "Conversation with messages"
+// @Failure      400 {object} apperror.Error "Invalid conversation ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Conversation not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v2/chat/{id} [get]
+// @Security     bearerAuth
 func (h *Handler) GetConversation(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -91,6 +117,19 @@ func (h *Handler) GetConversation(c echo.Context) error {
 }
 
 // CreateConversation handles POST /api/v2/chat/conversations
+// @Summary      Create conversation
+// @Description  Creates a new chat conversation with an initial message
+// @Tags         chat
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        request body CreateConversationRequest true "Conversation creation request"
+// @Success      201 {object} Conversation "Conversation created"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v2/chat/conversations [post]
+// @Security     bearerAuth
 func (h *Handler) CreateConversation(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -121,6 +160,21 @@ func (h *Handler) CreateConversation(c echo.Context) error {
 }
 
 // UpdateConversation handles PATCH /api/v2/chat/:id
+// @Summary      Update conversation
+// @Description  Updates conversation properties (title, draft text)
+// @Tags         chat
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Conversation ID (UUID)"
+// @Param        request body UpdateConversationRequest true "Update request"
+// @Success      200 {object} Conversation "Updated conversation"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Conversation not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v2/chat/{id} [patch]
+// @Security     bearerAuth
 func (h *Handler) UpdateConversation(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -155,6 +209,19 @@ func (h *Handler) UpdateConversation(c echo.Context) error {
 }
 
 // DeleteConversation handles DELETE /api/v2/chat/:id
+// @Summary      Delete conversation
+// @Description  Permanently deletes a conversation and all its messages
+// @Tags         chat
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Conversation ID (UUID)"
+// @Success      200 {object} map[string]string "Deletion status"
+// @Failure      400 {object} apperror.Error "Invalid conversation ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Conversation not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v2/chat/{id} [delete]
+// @Security     bearerAuth
 func (h *Handler) DeleteConversation(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -178,6 +245,21 @@ func (h *Handler) DeleteConversation(c echo.Context) error {
 }
 
 // AddMessage handles POST /api/v2/chat/:id/messages
+// @Summary      Add message to conversation
+// @Description  Adds a new message to an existing conversation
+// @Tags         chat
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Conversation ID (UUID)"
+// @Param        request body AddMessageRequest true "Message content"
+// @Success      201 {object} Message "Message created"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Conversation not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v2/chat/{id}/messages [post]
+// @Security     bearerAuth
 func (h *Handler) AddMessage(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -284,6 +366,19 @@ func validateStreamRequest(req *StreamRequest) error {
 
 // StreamChat handles POST /api/v2/chat/stream
 // This is the SSE streaming endpoint for chat completions
+// @Summary      Stream chat completion
+// @Description  Streams AI chat responses using Server-Sent Events (SSE). Creates or continues a conversation with streaming token delivery.
+// @Tags         chat
+// @Accept       json
+// @Produce      text/event-stream
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        request body StreamRequest true "Stream request"
+// @Success      200 {string} string "SSE stream of tokens"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v2/chat/stream [post]
+// @Security     bearerAuth
 func (h *Handler) StreamChat(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

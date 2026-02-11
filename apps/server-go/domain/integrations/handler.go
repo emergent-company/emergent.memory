@@ -28,15 +28,33 @@ func NewHandler(repo *Repository, registry *IntegrationRegistry, encryption *enc
 	}
 }
 
-// ListAvailable handles GET /api/integrations/available
-// Returns all available integration types from the registry
+// ListAvailable returns all available integration types from the registry
+// @Summary      List available integrations
+// @Description  Get all available integration types that can be configured
+// @Tags         integrations
+// @Produce      json
+// @Success      200 {array} AvailableIntegrationDTO "Available integration types"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/integrations/available [get]
+// @Security     bearerAuth
 func (h *Handler) ListAvailable(c echo.Context) error {
 	integrations := h.registry.List()
 	return c.JSON(http.StatusOK, integrations)
 }
 
-// List handles GET /api/integrations
-// Returns integrations configured for the current project
+// List returns integrations configured for the current project
+// @Summary      List project integrations
+// @Description  Get all configured integrations for the current project with optional filtering
+// @Tags         integrations
+// @Produce      json
+// @Param        name query string false "Filter by integration name"
+// @Param        enabled query boolean false "Filter by enabled status"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {array} IntegrationDTO "Configured integrations"
+// @Failure      400 {object} apperror.Error "Missing project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/integrations [get]
+// @Security     bearerAuth
 func (h *Handler) List(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -72,8 +90,19 @@ func (h *Handler) List(c echo.Context) error {
 	return c.JSON(http.StatusOK, dtos)
 }
 
-// Get handles GET /api/integrations/:name
-// Returns a specific integration by name
+// Get returns a specific integration by name
+// @Summary      Get integration
+// @Description  Retrieve a specific integration configuration by name (includes decrypted settings with masked secrets)
+// @Tags         integrations
+// @Produce      json
+// @Param        name path string true "Integration name"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} IntegrationDTO "Integration details"
+// @Failure      400 {object} apperror.Error "Missing name or project ID"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/integrations/{name} [get]
+// @Security     bearerAuth
 func (h *Handler) Get(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -100,8 +129,19 @@ func (h *Handler) Get(c echo.Context) error {
 	return c.JSON(http.StatusOK, h.integrationToDTO(c.Request().Context(), integration))
 }
 
-// GetPublic handles GET /api/integrations/:name/public
-// Returns non-sensitive integration info
+// GetPublic returns non-sensitive integration info
+// @Summary      Get public integration info
+// @Description  Retrieve public (non-sensitive) integration information without decrypted settings
+// @Tags         integrations
+// @Produce      json
+// @Param        name path string true "Integration name"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} PublicIntegrationDTO "Public integration info"
+// @Failure      400 {object} apperror.Error "Missing name or project ID"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/integrations/{name}/public [get]
+// @Security     bearerAuth
 func (h *Handler) GetPublic(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -128,8 +168,19 @@ func (h *Handler) GetPublic(c echo.Context) error {
 	return c.JSON(http.StatusOK, integration.ToPublicDTO())
 }
 
-// Create handles POST /api/integrations
-// Creates a new integration
+// Create creates a new integration
+// @Summary      Create integration
+// @Description  Create a new integration configuration with encrypted settings
+// @Tags         integrations
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateIntegrationDTO true "Integration data (settings will be encrypted)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} IntegrationDTO "Created integration"
+// @Failure      400 {object} apperror.Error "Invalid request or integration already exists"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/integrations [post]
+// @Security     bearerAuth
 func (h *Handler) Create(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -201,8 +252,21 @@ func (h *Handler) Create(c echo.Context) error {
 	return c.JSON(http.StatusCreated, h.integrationToDTO(ctx, integration))
 }
 
-// Update handles PUT /api/integrations/:name
-// Updates an existing integration
+// Update updates an existing integration
+// @Summary      Update integration
+// @Description  Update an existing integration configuration (partial updates supported, settings will be re-encrypted if provided)
+// @Tags         integrations
+// @Accept       json
+// @Produce      json
+// @Param        name path string true "Integration name"
+// @Param        request body UpdateIntegrationDTO true "Update data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} IntegrationDTO "Updated integration"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/integrations/{name} [put]
+// @Security     bearerAuth
 func (h *Handler) Update(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -264,8 +328,19 @@ func (h *Handler) Update(c echo.Context) error {
 	return c.JSON(http.StatusOK, h.integrationToDTO(ctx, integration))
 }
 
-// Delete handles DELETE /api/integrations/:name
-// Deletes an integration
+// Delete deletes an integration
+// @Summary      Delete integration
+// @Description  Delete an integration configuration (permanent deletion)
+// @Tags         integrations
+// @Produce      json
+// @Param        name path string true "Integration name"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      204 "Integration deleted successfully"
+// @Failure      400 {object} apperror.Error "Missing name or project ID"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/integrations/{name} [delete]
+// @Security     bearerAuth
 func (h *Handler) Delete(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -291,8 +366,19 @@ func (h *Handler) Delete(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// TestConnection handles POST /api/integrations/:name/test
-// Tests the connection for an integration
+// TestConnection tests the connection for an integration
+// @Summary      Test integration connection
+// @Description  Test the connectivity and authentication for an integration (validates configured settings)
+// @Tags         integrations
+// @Produce      json
+// @Param        name path string true "Integration name"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} TestConnectionResponseDTO "Connection test result"
+// @Failure      400 {object} apperror.Error "Missing name or project ID"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/integrations/{name}/test [post]
+// @Security     bearerAuth
 func (h *Handler) TestConnection(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -333,8 +419,21 @@ func (h *Handler) TestConnection(c echo.Context) error {
 	})
 }
 
-// TriggerSync handles POST /api/integrations/:name/sync
-// Triggers a sync for an integration
+// TriggerSync triggers a sync for an integration
+// @Summary      Trigger integration sync
+// @Description  Manually trigger a synchronization job for an integration (integration must be enabled)
+// @Tags         integrations
+// @Accept       json
+// @Produce      json
+// @Param        name path string true "Integration name"
+// @Param        config body TriggerSyncConfigDTO false "Optional sync configuration"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} TriggerSyncResponseDTO "Sync job triggered"
+// @Failure      400 {object} apperror.Error "Integration disabled or invalid request"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/integrations/{name}/sync [post]
+// @Security     bearerAuth
 func (h *Handler) TriggerSync(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

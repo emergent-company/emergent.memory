@@ -79,6 +79,7 @@ func GetDockerComposeTemplate() string {
       /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-changeme};
       /usr/bin/mc mb myminio/documents --ignore-existing;
       /usr/bin/mc mb myminio/document-temp --ignore-existing;
+      /usr/bin/mc mb myminio/backups --ignore-existing;
       echo 'MinIO buckets initialized';
       exit 0;
       "

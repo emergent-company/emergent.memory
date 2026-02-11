@@ -34,6 +34,23 @@ func NewHandler(
 }
 
 // List handles GET /api/v2/documents
+// @Summary      List documents
+// @Description  List all documents for the project with optional filtering and pagination
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        limit query int false "Maximum number of results (1-500)" minimum(1) maximum(500)
+// @Param        cursor query string false "Pagination cursor (opaque, from previous response)"
+// @Param        sourceType query string false "Filter by source type"
+// @Param        integrationId query string false "Filter by integration ID"
+// @Param        rootOnly query bool false "Filter to root documents only (no parent)"
+// @Param        parentDocumentId query string false "Filter by parent document ID"
+// @Success      200 {object} ListResult
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Router       /api/v2/documents [get]
+// @Security     bearerAuth
 func (h *Handler) List(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -96,6 +113,19 @@ func (h *Handler) List(c echo.Context) error {
 }
 
 // GetByID handles GET /api/v2/documents/:id
+// @Summary      Get document by ID
+// @Description  Retrieve a single document by its ID
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Document ID"
+// @Success      200 {object} Document
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/v2/documents/{id} [get]
+// @Security     bearerAuth
 func (h *Handler) GetByID(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -120,6 +150,19 @@ func (h *Handler) GetByID(c echo.Context) error {
 }
 
 // Create handles POST /api/v2/documents
+// @Summary      Create document
+// @Description  Create a new document or return existing if content hash matches (deduplication)
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        request body CreateDocumentRequest true "Document data"
+// @Success      201 {object} Document "Document created"
+// @Success      200 {object} Document "Existing document returned (deduplicated)"
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Router       /api/v2/documents [post]
+// @Security     bearerAuth
 func (h *Handler) Create(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -159,6 +202,19 @@ func (h *Handler) Create(c echo.Context) error {
 }
 
 // Delete handles DELETE /api/v2/documents/:id
+// @Summary      Delete document
+// @Description  Delete a single document and all related entities (chunks, extraction jobs, graph objects)
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Document ID"
+// @Success      200 {object} DeleteResponse
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/v2/documents/{id} [delete]
+// @Security     bearerAuth
 func (h *Handler) Delete(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -183,6 +239,18 @@ func (h *Handler) Delete(c echo.Context) error {
 }
 
 // BulkDelete handles DELETE /api/v2/documents (with body)
+// @Summary      Bulk delete documents
+// @Description  Delete multiple documents and all related entities by ID list
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        request body BulkDeleteRequest true "Document IDs to delete"
+// @Success      200 {object} DeleteResponse
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Router       /api/v2/documents [delete]
+// @Security     bearerAuth
 func (h *Handler) BulkDelete(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -212,7 +280,15 @@ func (h *Handler) BulkDelete(c echo.Context) error {
 }
 
 // GetSourceTypes handles GET /api/documents/source-types
-// Returns a list of all available document source types
+// @Summary      Get source types
+// @Description  Returns a list of all available document source types with counts
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string][]SourceTypeWithCount
+// @Failure      401 {object} apperror.Error
+// @Router       /api/documents/source-types [get]
+// @Security     bearerAuth
 func (h *Handler) GetSourceTypes(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -257,6 +333,19 @@ func parsePositiveInt(s string, min, max int) (int, error) {
 }
 
 // GetContent handles GET /api/v2/documents/:id/content
+// @Summary      Get document content
+// @Description  Retrieve the text content of a document
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Document ID"
+// @Success      200 {object} ContentResponse
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/v2/documents/{id}/content [get]
+// @Security     bearerAuth
 func (h *Handler) GetContent(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -291,6 +380,19 @@ func (h *Handler) GetContent(c echo.Context) error {
 }
 
 // GetDeletionImpact handles GET /api/v2/documents/:id/deletion-impact
+// @Summary      Get deletion impact
+// @Description  Preview the impact of deleting a document (counts of related entities that will be deleted)
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Document ID"
+// @Success      200 {object} DeletionImpact
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/v2/documents/{id}/deletion-impact [get]
+// @Security     bearerAuth
 func (h *Handler) GetDeletionImpact(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -315,6 +417,18 @@ func (h *Handler) GetDeletionImpact(c echo.Context) error {
 }
 
 // BulkDeletionImpact handles POST /api/v2/documents/deletion-impact
+// @Summary      Get bulk deletion impact
+// @Description  Preview the impact of bulk deleting multiple documents
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        request body BulkDeletionImpactRequest true "Document IDs to analyze"
+// @Success      200 {object} BulkDeletionImpact
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Router       /api/v2/documents/deletion-impact [post]
+// @Security     bearerAuth
 func (h *Handler) BulkDeletionImpact(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -343,7 +457,20 @@ func (h *Handler) BulkDeletionImpact(c echo.Context) error {
 }
 
 // Download handles GET /api/v2/documents/:id/download
-// Returns a redirect to a signed URL for downloading the original file
+// @Summary      Download document
+// @Description  Returns a redirect to a signed URL for downloading the original file
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Document ID"
+// @Success      307 "Redirect to signed download URL"
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Failure      503 {object} apperror.Error "Storage service unavailable"
+// @Router       /api/v2/documents/{id}/download [get]
+// @Security     bearerAuth
 func (h *Handler) Download(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -395,6 +522,23 @@ func (h *Handler) Download(c echo.Context) error {
 	return c.Redirect(http.StatusTemporaryRedirect, signedURL)
 }
 
+// Upload handles POST /api/v2/documents/upload
+// @Summary      Upload document
+// @Description  Upload a file and create a document record (with automatic deduplication)
+// @Tags         documents
+// @Accept       multipart/form-data
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        file formData file true "File to upload (max 100MB)"
+// @Param        source_type formData string false "Source type (default: upload)"
+// @Success      201 {object} map[string]any "Document created"
+// @Success      200 {object} map[string]any "Existing document returned (deduplicated)"
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      413 {object} apperror.Error "File too large (>100MB)"
+// @Failure      503 {object} apperror.Error "Storage service unavailable"
+// @Router       /api/v2/documents/upload [post]
+// @Security     bearerAuth
 func (h *Handler) Upload(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

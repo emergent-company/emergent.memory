@@ -20,7 +20,16 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // GetOrgsAndProjects returns the user's access tree (organizations and projects with roles)
-// GET /user/orgs-and-projects
+// @Summary      Get user access tree
+// @Description  Returns all organizations and projects the user has access to with their respective roles
+// @Tags         user-access
+// @Accept       json
+// @Produce      json
+// @Success      200 {array} OrgWithProjects "Access tree"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /user/orgs-and-projects [get]
+// @Security     bearerAuth
 func (h *Handler) GetOrgsAndProjects(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

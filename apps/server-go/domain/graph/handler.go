@@ -58,7 +58,30 @@ func getUserID(c echo.Context) (*uuid.UUID, error) {
 }
 
 // ListObjects returns graph objects matching query parameters.
-// GET /api/v2/graph/objects/search
+// @Summary      List graph objects
+// @Description  Search and filter graph objects with pagination, type/label filtering, and relationship queries
+// @Tags         graph
+// @Produce      json
+// @Param        limit query int false "Max results (default: 20)"
+// @Param        cursor query string false "Pagination cursor"
+// @Param        type query string false "Object type filter (single)"
+// @Param        types query []string false "Object types filter (multiple)"
+// @Param        label query string false "Label filter (single)"
+// @Param        labels query []string false "Labels filter (multiple)"
+// @Param        status query string false "Object status filter"
+// @Param        key query string false "Object key filter"
+// @Param        order query string false "Sort order (asc/desc)"
+// @Param        related_to_id query string false "Filter objects related to this ID"
+// @Param        ids query string false "Comma-separated object IDs"
+// @Param        extraction_job_id query string false "Filter by extraction job"
+// @Param        branch_id query string false "Branch ID (use 'null' for main branch)"
+// @Param        include_deleted query boolean false "Include soft-deleted objects"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Paginated list with cursor"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/search [get]
+// @Security     bearerAuth
 func (h *Handler) ListObjects(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -169,10 +192,19 @@ func (h *Handler) ListObjects(c echo.Context) error {
 }
 
 // GetObject returns a single graph object by ID.
-// GET /api/v2/graph/objects/:id
-// Query params:
-//   - resolveHead: If true, returns the HEAD (latest) version when the ID refers to an
-//     older version in the version chain.
+// @Summary      Get graph object by ID
+// @Description  Retrieve a graph object. Use resolveHead=true to get the latest version when ID refers to an older version in the version chain.
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        resolveHead query boolean false "Return latest version if ID is old version"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphObject
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id} [get]
+// @Security     bearerAuth
 func (h *Handler) GetObject(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -202,7 +234,18 @@ func (h *Handler) GetObject(c echo.Context) error {
 }
 
 // CreateObject creates a new graph object.
-// POST /api/v2/graph/objects
+// @Summary      Create graph object
+// @Description  Create a new versioned graph object with properties, labels, and metadata
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateGraphObjectRequest true "Object data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} GraphObject
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects [post]
+// @Security     bearerAuth
 func (h *Handler) CreateObject(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -233,7 +276,20 @@ func (h *Handler) CreateObject(c echo.Context) error {
 }
 
 // PatchObject updates a graph object by creating a new version.
-// PATCH /api/v2/graph/objects/:id
+// @Summary      Update graph object
+// @Description  Update a graph object by creating a new version in the version chain
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        request body PatchGraphObjectRequest true "Update data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphObject
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id} [patch]
+// @Security     bearerAuth
 func (h *Handler) PatchObject(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -265,7 +321,18 @@ func (h *Handler) PatchObject(c echo.Context) error {
 }
 
 // DeleteObject soft-deletes a graph object.
-// DELETE /api/v2/graph/objects/:id
+// @Summary      Delete graph object
+// @Description  Soft-delete a graph object (sets deleted_at timestamp)
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]string "Deletion confirmation"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id} [delete]
+// @Security     bearerAuth
 func (h *Handler) DeleteObject(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -291,7 +358,18 @@ func (h *Handler) DeleteObject(c echo.Context) error {
 }
 
 // RestoreObject restores a soft-deleted graph object.
-// POST /api/v2/graph/objects/:id/restore
+// @Summary      Restore deleted graph object
+// @Description  Restore a soft-deleted graph object (clears deleted_at timestamp)
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphObject
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id}/restore [post]
+// @Security     bearerAuth
 func (h *Handler) RestoreObject(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -318,7 +396,18 @@ func (h *Handler) RestoreObject(c echo.Context) error {
 }
 
 // GetObjectHistory returns version history for a graph object.
-// GET /api/v2/graph/objects/:id/history
+// @Summary      Get object version history
+// @Description  Retrieve all versions of a graph object ordered by creation time
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {array} GraphObject "Version history"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id}/history [get]
+// @Security     bearerAuth
 func (h *Handler) GetObjectHistory(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -344,7 +433,17 @@ func (h *Handler) GetObjectHistory(c echo.Context) error {
 }
 
 // GetObjectEdges returns incoming and outgoing relationships for an object.
-// GET /api/v2/graph/objects/:id/edges
+// @Summary      Get object relationships (edges)
+// @Description  Retrieve all incoming and outgoing relationships for a graph object
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Edges with incoming/outgoing relationships"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id}/edges [get]
+// @Security     bearerAuth
 func (h *Handler) GetObjectEdges(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -374,7 +473,24 @@ func (h *Handler) GetObjectEdges(c echo.Context) error {
 // =============================================================================
 
 // ListRelationships returns relationships matching query parameters.
-// GET /api/v2/graph/relationships/search
+// @Summary      List graph relationships
+// @Description  Search and filter graph relationships with pagination and filtering by source/destination
+// @Tags         graph
+// @Produce      json
+// @Param        limit query int false "Max results (default: 20)"
+// @Param        cursor query string false "Pagination cursor"
+// @Param        type query string false "Relationship type filter"
+// @Param        src_id query string false "Source object ID filter"
+// @Param        dst_id query string false "Destination object ID filter"
+// @Param        order query string false "Sort order"
+// @Param        branch_id query string false "Branch ID filter"
+// @Param        include_deleted query boolean false "Include soft-deleted relationships"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Paginated list with cursor"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/search [get]
+// @Security     bearerAuth
 func (h *Handler) ListRelationships(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -444,7 +560,18 @@ func (h *Handler) ListRelationships(c echo.Context) error {
 }
 
 // GetRelationship returns a single relationship by ID.
-// GET /api/v2/graph/relationships/:id
+// @Summary      Get relationship by ID
+// @Description  Retrieve a single graph relationship
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Relationship ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphRelationship
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Relationship not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/{id} [get]
+// @Security     bearerAuth
 func (h *Handler) GetRelationship(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -470,7 +597,18 @@ func (h *Handler) GetRelationship(c echo.Context) error {
 }
 
 // CreateRelationship creates a new relationship.
-// POST /api/v2/graph/relationships
+// @Summary      Create graph relationship
+// @Description  Create a new relationship (edge) between two graph objects
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateGraphRelationshipRequest true "Relationship data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} GraphRelationship
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships [post]
+// @Security     bearerAuth
 func (h *Handler) CreateRelationship(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -506,7 +644,20 @@ func (h *Handler) CreateRelationship(c echo.Context) error {
 }
 
 // PatchRelationship updates a relationship by creating a new version.
-// PATCH /api/v2/graph/relationships/:id
+// @Summary      Update graph relationship
+// @Description  Update a relationship by creating a new version in the version chain
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Relationship ID (UUID)"
+// @Param        request body PatchGraphRelationshipRequest true "Update data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphRelationship
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      404 {object} apperror.Error "Relationship not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/{id} [patch]
+// @Security     bearerAuth
 func (h *Handler) PatchRelationship(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -537,7 +688,18 @@ func (h *Handler) PatchRelationship(c echo.Context) error {
 }
 
 // DeleteRelationship soft-deletes a relationship.
-// DELETE /api/v2/graph/relationships/:id
+// @Summary      Delete graph relationship
+// @Description  Soft-delete a relationship (sets deleted_at timestamp)
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Relationship ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Deletion confirmation"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Relationship not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/{id} [delete]
+// @Security     bearerAuth
 func (h *Handler) DeleteRelationship(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -563,7 +725,18 @@ func (h *Handler) DeleteRelationship(c echo.Context) error {
 }
 
 // RestoreRelationship restores a soft-deleted relationship.
-// POST /api/v2/graph/relationships/:id/restore
+// @Summary      Restore deleted relationship
+// @Description  Restore a soft-deleted relationship (clears deleted_at timestamp)
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Relationship ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} GraphRelationship
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Relationship not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/{id}/restore [post]
+// @Security     bearerAuth
 func (h *Handler) RestoreRelationship(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -589,7 +762,18 @@ func (h *Handler) RestoreRelationship(c echo.Context) error {
 }
 
 // GetRelationshipHistory returns version history for a relationship.
-// GET /api/v2/graph/relationships/:id/history
+// @Summary      Get relationship version history
+// @Description  Retrieve all versions of a relationship ordered by creation time
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Relationship ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {array} GraphRelationship "Version history"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Relationship not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/{id}/history [get]
+// @Security     bearerAuth
 func (h *Handler) GetRelationshipHistory(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -619,7 +803,23 @@ func (h *Handler) GetRelationshipHistory(c echo.Context) error {
 // =============================================================================
 
 // FTSSearch performs full-text search on graph objects.
-// GET /api/v2/graph/objects/fts
+// @Summary      Full-text search on objects
+// @Description  Search graph objects using PostgreSQL full-text search with filters
+// @Tags         graph
+// @Produce      json
+// @Param        q query string true "Search query (full-text)"
+// @Param        limit query int false "Max results (default: 20)"
+// @Param        types query []string false "Object types filter"
+// @Param        labels query []string false "Labels filter"
+// @Param        status query string false "Status filter"
+// @Param        branch_id query string false "Branch ID filter"
+// @Param        include_deleted query boolean false "Include soft-deleted objects"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Search results"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/fts [get]
+// @Security     bearerAuth
 func (h *Handler) FTSSearch(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -677,7 +877,18 @@ func (h *Handler) FTSSearch(c echo.Context) error {
 }
 
 // VectorSearch performs vector similarity search on graph objects.
-// POST /api/v2/graph/objects/vector-search
+// @Summary      Vector similarity search
+// @Description  Search graph objects using vector embeddings (768-dimensional)
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body VectorSearchRequest true "Search request with embedding vector"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Search results with similarity scores"
+// @Failure      400 {object} apperror.Error "Invalid request (missing vector)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/vector-search [post]
+// @Security     bearerAuth
 func (h *Handler) VectorSearch(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -707,9 +918,20 @@ func (h *Handler) VectorSearch(c echo.Context) error {
 }
 
 // HybridSearch performs combined lexical and vector search.
-// POST /api/v2/graph/search
-// Query params:
-//   - debug: If "true", includes timing and statistics in response (requires graph:search:debug scope)
+// @Summary      Hybrid search (text + vector)
+// @Description  Combined full-text and vector similarity search with optional debug mode (requires graph:search:debug scope)
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body HybridSearchRequest true "Search request with query and/or vector"
+// @Param        debug query boolean false "Include debug timing and statistics (requires scope)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Fused search results"
+// @Failure      400 {object} apperror.Error "Invalid request (missing query or vector)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Missing graph:search:debug scope"
+// @Router       /api/graph/search [post]
+// @Security     bearerAuth
 func (h *Handler) HybridSearch(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -764,7 +986,15 @@ func (h *Handler) HybridSearch(c echo.Context) error {
 // =============================================================================
 
 // GetTags returns all distinct tags (labels) used by objects in a project.
-// GET /api/v2/graph/objects/tags
+// @Summary      Get all object tags
+// @Description  Retrieve all distinct labels/tags used by graph objects in a project
+// @Tags         graph
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {array} string "List of unique tags"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/tags [get]
+// @Security     bearerAuth
 func (h *Handler) GetTags(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -785,7 +1015,18 @@ func (h *Handler) GetTags(c echo.Context) error {
 }
 
 // BulkUpdateStatus updates the status of multiple objects.
-// POST /api/v2/graph/objects/bulk-update-status
+// @Summary      Bulk update object statuses
+// @Description  Update the status field for multiple graph objects in a single request
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkUpdateStatusRequest true "Object IDs and new status"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Update results"
+// @Failure      400 {object} apperror.Error "Invalid request (missing IDs)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/bulk-update-status [post]
+// @Security     bearerAuth
 func (h *Handler) BulkUpdateStatus(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -820,7 +1061,18 @@ func (h *Handler) BulkUpdateStatus(c echo.Context) error {
 // =============================================================================
 
 // SearchWithNeighbors performs FTS search and optionally retrieves neighbors.
-// POST /api/v2/graph/search-with-neighbors
+// @Summary      Search with graph neighbors
+// @Description  Full-text search on objects with optional retrieval of connected neighbors
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body SearchWithNeighborsRequest true "Search query and neighbor options"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Search results with neighbors"
+// @Failure      400 {object} apperror.Error "Invalid request (missing query)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/search-with-neighbors [post]
+// @Security     bearerAuth
 func (h *Handler) SearchWithNeighbors(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -854,7 +1106,25 @@ func (h *Handler) SearchWithNeighbors(c echo.Context) error {
 // =============================================================================
 
 // GetSimilarObjects finds objects similar to a given object.
-// GET /api/v2/graph/objects/:id/similar
+// @Summary      Find similar objects
+// @Description  Find graph objects similar to a given object using vector similarity search
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        limit query int false "Max results"
+// @Param        maxDistance query number false "Maximum vector distance"
+// @Param        minScore query number false "Minimum similarity score"
+// @Param        type query string false "Filter by object type"
+// @Param        branchId query string false "Filter by branch ID"
+// @Param        keyPrefix query string false "Filter by key prefix"
+// @Param        labelsAll query []string false "Must have all labels"
+// @Param        labelsAny query []string false "Must have any label"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Similar objects with scores"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id}/similar [get]
+// @Security     bearerAuth
 func (h *Handler) GetSimilarObjects(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -931,7 +1201,18 @@ func (h *Handler) GetSimilarObjects(c echo.Context) error {
 // =============================================================================
 
 // ExpandGraph performs bounded BFS graph expansion.
-// POST /api/v2/graph/expand
+// @Summary      Expand graph from root nodes
+// @Description  Perform breadth-first expansion from root nodes with depth and node limits
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body GraphExpandRequest true "Root IDs and expansion options (max 50 roots)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Expanded graph with nodes and edges"
+// @Failure      400 {object} apperror.Error "Invalid request (missing root_ids or > 50 items)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/expand [post]
+// @Security     bearerAuth
 func (h *Handler) ExpandGraph(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -969,7 +1250,18 @@ func (h *Handler) ExpandGraph(c echo.Context) error {
 // =============================================================================
 
 // TraverseGraph performs bounded BFS graph traversal.
-// POST /api/v2/graph/traverse
+// @Summary      Traverse graph from root nodes
+// @Description  Perform breadth-first traversal from root nodes with depth and node limits
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body TraverseGraphRequest true "Root IDs and traversal options (max 50 roots)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Traversal results with visited nodes and paths"
+// @Failure      400 {object} apperror.Error "Invalid request (missing root_ids or > 50 items)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/traverse [post]
+// @Security     bearerAuth
 func (h *Handler) TraverseGraph(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -1007,7 +1299,19 @@ func (h *Handler) TraverseGraph(c echo.Context) error {
 // =============================================================================
 
 // MergeBranch performs dry-run or actual merge of a source branch into target branch.
-// POST /api/v2/graph/branches/:targetBranchId/merge
+// @Summary      Merge graph branches
+// @Description  Merge a source branch into a target branch (supports dry-run mode)
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        targetBranchId path string true "Target branch ID (UUID)"
+// @Param        request body BranchMergeRequest true "Source branch ID and merge options"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Merge result or dry-run preview"
+// @Failure      400 {object} apperror.Error "Invalid request (missing sourceBranchId)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/branches/{targetBranchId}/merge [post]
+// @Security     bearerAuth
 func (h *Handler) MergeBranch(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
