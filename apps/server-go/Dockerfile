@@ -47,26 +47,22 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -o /server \
     ./cmd/server
 
-# Runtime stage - using distroless for minimal attack surface
-FROM gcr.io/distroless/static-debian12:nonroot
+# Runtime stage - Alpine for minimal size + health check support
+FROM alpine:3.19
 
-# Copy timezone data for time.LoadLocation
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+RUN apk add --no-cache ca-certificates curl tzdata
 
-# Copy CA certificates for HTTPS
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
-# Copy the binary
 COPY --from=builder /server /server
-
-# Copy migrations (for Goose)
 COPY apps/server-go/migrations/*.sql /migrations/
 
-# Expose port
+RUN addgroup -g 65532 -S nonroot && \
+    adduser -u 65532 -S nonroot -G nonroot
+
 EXPOSE 3002
 
-# Run as non-root user (distroless nonroot has uid 65532)
 USER nonroot:nonroot
 
-# Start application
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3002/health || exit 1
+
 ENTRYPOINT ["/server"]
