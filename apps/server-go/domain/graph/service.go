@@ -50,6 +50,80 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 	}
 }
 
+// UpdateAccessTimestamps updates last_accessed_at for the given object IDs.
+func (s *Service) UpdateAccessTimestamps(ctx context.Context, objectIDs []uuid.UUID) error {
+	return s.repo.UpdateAccessTimestamps(ctx, objectIDs)
+}
+
+// GetMostAccessed returns the most frequently accessed graph objects for analytics.
+func (s *Service) GetMostAccessed(ctx context.Context, projectID uuid.UUID, limit int, minAccessCount int) (*MostAccessedResponse, error) {
+	objects, err := s.repo.GetMostAccessed(ctx, projectID, limit, minAccessCount)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AnalyticsObjectItem, len(objects))
+	for i, obj := range objects {
+		items[i] = AnalyticsObjectItem{
+			ID:             obj.ID,
+			CanonicalID:    obj.CanonicalID,
+			Type:           obj.Type,
+			Key:            obj.Key,
+			Properties:     obj.Properties,
+			Labels:         obj.Labels,
+			LastAccessedAt: obj.LastAccessedAt,
+			CreatedAt:      obj.CreatedAt,
+		}
+	}
+
+	return &MostAccessedResponse{
+		Items: items,
+		Total: len(items),
+		Meta: map[string]interface{}{
+			"limit":          limit,
+			"minAccessCount": minAccessCount,
+		},
+	}, nil
+}
+
+// GetUnused returns graph objects that haven't been accessed recently.
+func (s *Service) GetUnused(ctx context.Context, projectID uuid.UUID, limit int, daysThreshold int) (*UnusedObjectsResponse, error) {
+	objects, err := s.repo.GetUnused(ctx, projectID, limit, daysThreshold)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AnalyticsObjectItem, len(objects))
+	for i, obj := range objects {
+		var daysSinceAccess *int
+		if obj.LastAccessedAt != nil {
+			days := int(time.Since(*obj.LastAccessedAt).Hours() / 24)
+			daysSinceAccess = &days
+		}
+
+		items[i] = AnalyticsObjectItem{
+			ID:              obj.ID,
+			CanonicalID:     obj.CanonicalID,
+			Type:            obj.Type,
+			Key:             obj.Key,
+			Properties:      obj.Properties,
+			Labels:          obj.Labels,
+			LastAccessedAt:  obj.LastAccessedAt,
+			DaysSinceAccess: daysSinceAccess,
+			CreatedAt:       obj.CreatedAt,
+		}
+	}
+
+	return &UnusedObjectsResponse{
+		Items: items,
+		Total: len(items),
+		Meta: map[string]interface{}{
+			"limit":         limit,
+			"daysThreshold": daysThreshold,
+		},
+	}, nil
+}
+
 // List returns graph objects matching the given parameters.
 func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObjectsResponse, error) {
 	// Run count and list queries
@@ -858,12 +932,24 @@ func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSe
 	}
 
 	data := make([]*SearchResultItem, len(results))
+	objectIDs := make([]uuid.UUID, 0, len(results))
+
 	for i, r := range results {
 		data[i] = &SearchResultItem{
 			Object:       r.Object.ToResponse(),
 			Score:        r.Rank,
 			LexicalScore: &r.Rank,
 		}
+		objectIDs = append(objectIDs, r.Object.ID)
+	}
+
+	if len(objectIDs) > 0 {
+		go func() {
+			bgCtx := context.Background()
+			if err := s.repo.UpdateAccessTimestamps(bgCtx, objectIDs); err != nil {
+				s.log.Warn("failed to update access timestamps", logger.Error(err))
+			}
+		}()
 	}
 
 	return &SearchResponse{
@@ -906,9 +992,9 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 	}
 
 	data := make([]*SearchResultItem, len(results))
+	objectIDs := make([]uuid.UUID, 0, len(results))
+
 	for i, r := range results {
-		// Convert distance to similarity score (1 - distance for cosine)
-		// Cosine distance is in [0, 2], so similarity is in [-1, 1]
 		similarity := 1.0 - r.Distance
 		data[i] = &SearchResultItem{
 			Object:      r.Object.ToResponse(),
@@ -916,6 +1002,16 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 			VectorScore: &similarity,
 			VectorDist:  &r.Distance,
 		}
+		objectIDs = append(objectIDs, r.Object.ID)
+	}
+
+	if len(objectIDs) > 0 {
+		go func() {
+			bgCtx := context.Background()
+			if err := s.repo.UpdateAccessTimestamps(bgCtx, objectIDs); err != nil {
+				s.log.Warn("failed to update access timestamps", logger.Error(err))
+			}
+		}()
 	}
 
 	return &SearchResponse{
