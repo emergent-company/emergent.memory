@@ -25,7 +25,26 @@ func NewHandler(repo *Repository) *Handler {
 }
 
 // ListExtractionJobs handles GET /api/monitoring/extraction-jobs
-// Lists extraction jobs with filtering and pagination
+// @Summary      List extraction jobs
+// @Description  Lists extraction jobs with filtering and pagination support
+// @Tags         monitoring
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        status query string false "Filter by status" Enums(pending,running,completed,failed)
+// @Param        source_type query string false "Filter by source type"
+// @Param        date_from query string false "Filter from date (RFC3339)"
+// @Param        date_to query string false "Filter to date (RFC3339)"
+// @Param        limit query int false "Max results (1-100)" minimum(1) maximum(100) default(50)
+// @Param        offset query int false "Pagination offset" minimum(0) default(0)
+// @Param        sort_by query string false "Sort field"
+// @Param        sort_order query string false "Sort order" Enums(asc,desc)
+// @Success      200 {object} ExtractionJobListResponseDTO "List of jobs"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/monitoring/extraction-jobs [get]
+// @Security     bearerAuth
 func (h *Handler) ListExtractionJobs(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -98,7 +117,20 @@ func (h *Handler) ListExtractionJobs(c echo.Context) error {
 }
 
 // GetExtractionJobDetail handles GET /api/monitoring/extraction-jobs/:id
-// Gets full details for a specific extraction job
+// @Summary      Get extraction job details
+// @Description  Retrieves full details including logs, LLM calls, and metrics for a specific extraction job
+// @Tags         monitoring
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Job ID (UUID)"
+// @Success      200 {object} ExtractionJobDetailDTO "Job details"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Job not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/monitoring/extraction-jobs/{id} [get]
+// @Security     bearerAuth
 func (h *Handler) GetExtractionJobDetail(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -160,7 +192,23 @@ func (h *Handler) GetExtractionJobDetail(c echo.Context) error {
 }
 
 // GetExtractionJobLogs handles GET /api/monitoring/extraction-jobs/:id/logs
-// Gets system process logs for a specific extraction job
+// @Summary      Get job process logs
+// @Description  Retrieves system process logs for a specific extraction job with optional filtering by level
+// @Tags         monitoring
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Job ID (UUID)"
+// @Param        level query string false "Filter by log level" Enums(debug,info,warn,error)
+// @Param        limit query int false "Max results (1-500)" minimum(1) maximum(500) default(100)
+// @Param        offset query int false "Pagination offset" minimum(0) default(0)
+// @Success      200 {object} ProcessLogListDTO "Process logs"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Job not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/monitoring/extraction-jobs/{id}/logs [get]
+// @Security     bearerAuth
 func (h *Handler) GetExtractionJobLogs(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -220,7 +268,22 @@ func (h *Handler) GetExtractionJobLogs(c echo.Context) error {
 }
 
 // GetExtractionJobLLMCalls handles GET /api/monitoring/extraction-jobs/:id/llm-calls
-// Gets LLM API call logs for a specific extraction job
+// @Summary      Get job LLM calls
+// @Description  Retrieves LLM API call logs for a specific extraction job including tokens, cost, and duration
+// @Tags         monitoring
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Job ID (UUID)"
+// @Param        limit query int false "Max results (1-500)" minimum(1) maximum(500) default(50)
+// @Param        offset query int false "Pagination offset" minimum(0) default(0)
+// @Success      200 {object} LLMCallListDTO "LLM call logs"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Job not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/monitoring/extraction-jobs/{id}/llm-calls [get]
+// @Security     bearerAuth
 func (h *Handler) GetExtractionJobLLMCalls(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

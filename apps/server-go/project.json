@@ -7,10 +7,14 @@
     "build": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "bash -c 'export PATH=/usr/local/go/bin:$PATH && VERSION=$(git describe --tags --always 2>/dev/null || echo dev) && COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) && go build -ldflags=\"-X github.com/emergent/emergent-core/internal/version.Version=$VERSION -X github.com/emergent/emergent-core/internal/version.GitCommit=$COMMIT\" -o dist/server ./cmd/server'",
+        "commands": [
+          "bash -c 'export PATH=/root/go/bin:/usr/local/go/bin:$PATH && swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal'",
+          "bash -c 'export PATH=/usr/local/go/bin:$PATH && VERSION=$(git describe --tags --always 2>/dev/null || echo dev) && COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) && go build -ldflags=\"-X github.com/emergent/emergent-core/internal/version.Version=$VERSION -X github.com/emergent/emergent-core/internal/version.GitCommit=$COMMIT\" -o dist/server ./cmd/server'"
+        ],
+        "parallel": false,
         "cwd": "apps/server-go"
       },
-      "outputs": ["{projectRoot}/dist"]
+      "outputs": ["{projectRoot}/dist", "{projectRoot}/docs/swagger"]
     },
     "setup": {
       "executor": "nx:run-commands",
@@ -116,6 +120,28 @@
       "options": {
         "command": "docker build -f apps/server-go/Dockerfile -t emergent-server-go:latest .",
         "cwd": "."
+      }
+    },
+    "swagger": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -c 'export PATH=/root/go/bin:/usr/local/go/bin:$PATH && swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal'",
+        "cwd": "apps/server-go"
+      },
+      "outputs": ["{projectRoot}/docs/swagger"]
+    },
+    "swagger-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./scripts/check-swagger-annotations.sh",
+        "cwd": "apps/server-go"
+      }
+    },
+    "swagger-validate": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./scripts/check-swagger-annotations.sh --strict",
+        "cwd": "apps/server-go"
       }
     }
   },

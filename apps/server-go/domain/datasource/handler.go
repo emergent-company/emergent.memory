@@ -46,7 +46,15 @@ func NewHandler(
 // ------------------------------------------------------------------
 
 // ListProviders handles GET /api/data-source-integrations/providers
-// Returns all available data source providers
+// @Summary      List data source providers
+// @Description  Returns all available data source providers (ClickUp, IMAP, Gmail, Google Drive)
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Success      200 {array} ProviderDTO "List of available providers"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/data-source-integrations/providers [get]
+// @Security     bearerAuth
 func (h *Handler) ListProviders(c echo.Context) error {
 	providers := []ProviderDTO{
 		{
@@ -83,7 +91,18 @@ func (h *Handler) ListProviders(c echo.Context) error {
 }
 
 // GetProviderSchema handles GET /api/data-source-integrations/providers/:providerType/schema
-// Returns the configuration schema for a provider
+// @Summary      Get provider configuration schema
+// @Description  Returns the JSON schema for configuring a specific provider type
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        providerType path string true "Provider type" Enums(clickup,imap,gmail_oauth,google_drive)
+// @Success      200 {object} ProviderSchemaDTO "Provider configuration schema"
+// @Failure      400 {object} apperror.Error "Invalid provider type"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Provider not found"
+// @Router       /api/data-source-integrations/providers/{providerType}/schema [get]
+// @Security     bearerAuth
 func (h *Handler) GetProviderSchema(c echo.Context) error {
 	providerType := c.Param("providerType")
 	if providerType == "" {
@@ -191,7 +210,17 @@ func (h *Handler) GetProviderSchema(c echo.Context) error {
 }
 
 // TestConfig handles POST /api/data-source-integrations/test-config
-// Tests a provider configuration without creating an integration
+// @Summary      Test provider configuration
+// @Description  Tests a provider configuration without creating an integration
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        request body TestConfigDTO true "Provider type and config to test"
+// @Success      200 {object} TestConnectionResponseDTO "Test result"
+// @Failure      400 {object} apperror.Error "Invalid request or unknown provider"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/data-source-integrations/test-config [post]
+// @Security     bearerAuth
 func (h *Handler) TestConfig(c echo.Context) error {
 	var dto TestConfigDTO
 	if err := c.Bind(&dto); err != nil {
@@ -234,7 +263,21 @@ func (h *Handler) TestConfig(c echo.Context) error {
 // ------------------------------------------------------------------
 
 // List handles GET /api/data-source-integrations
-// Returns integrations for the current project
+// @Summary      List data source integrations
+// @Description  Returns all integrations for the current project with optional filtering
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        providerType query string false "Filter by provider type"
+// @Param        sourceType query string false "Filter by source type"
+// @Param        status query string false "Filter by status"
+// @Success      200 {array} DataSourceIntegrationDTO "List of integrations"
+// @Failure      400 {object} apperror.Error "X-Project-ID header required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations [get]
+// @Security     bearerAuth
 func (h *Handler) List(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -271,7 +314,18 @@ func (h *Handler) List(c echo.Context) error {
 }
 
 // GetSourceTypes handles GET /api/data-source-integrations/source-types
-// Returns source types with document counts
+// @Summary      Get source type document counts
+// @Description  Returns document counts grouped by source type for the current project
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {array} SourceTypeDTO "Source types with counts"
+// @Failure      400 {object} apperror.Error "X-Project-ID header required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations/source-types [get]
+// @Security     bearerAuth
 func (h *Handler) GetSourceTypes(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -291,7 +345,20 @@ func (h *Handler) GetSourceTypes(c echo.Context) error {
 }
 
 // Get handles GET /api/data-source-integrations/:id
-// Returns a specific integration by ID
+// @Summary      Get integration by ID
+// @Description  Returns a specific data source integration by ID
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Integration ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} DataSourceIntegrationDTO "Integration details"
+// @Failure      400 {object} apperror.Error "Invalid integration ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations/{id} [get]
+// @Security     bearerAuth
 func (h *Handler) Get(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -319,7 +386,19 @@ func (h *Handler) Get(c echo.Context) error {
 }
 
 // Create handles POST /api/data-source-integrations
-// Creates a new integration
+// @Summary      Create data source integration
+// @Description  Creates a new data source integration with encrypted configuration
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateDataSourceIntegrationDTO true "Integration data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} DataSourceIntegrationDTO "Created integration"
+// @Failure      400 {object} apperror.Error "Invalid request or validation error"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations [post]
+// @Security     bearerAuth
 func (h *Handler) Create(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -400,7 +479,21 @@ func (h *Handler) Create(c echo.Context) error {
 }
 
 // Update handles PATCH /api/data-source-integrations/:id
-// Updates an existing integration
+// @Summary      Update data source integration
+// @Description  Updates an existing integration (partial update with encrypted config)
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Integration ID (UUID)"
+// @Param        request body UpdateDataSourceIntegrationDTO true "Integration update data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} DataSourceIntegrationDTO "Updated integration"
+// @Failure      400 {object} apperror.Error "Invalid request or validation error"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations/{id} [patch]
+// @Security     bearerAuth
 func (h *Handler) Update(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -478,7 +571,20 @@ func (h *Handler) Update(c echo.Context) error {
 }
 
 // Delete handles DELETE /api/data-source-integrations/:id
-// Deletes an integration
+// @Summary      Delete data source integration
+// @Description  Deletes a data source integration by ID
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Integration ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      204 "Integration deleted successfully"
+// @Failure      400 {object} apperror.Error "Invalid integration ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations/{id} [delete]
+// @Security     bearerAuth
 func (h *Handler) Delete(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -509,7 +615,20 @@ func (h *Handler) Delete(c echo.Context) error {
 // ------------------------------------------------------------------
 
 // TestConnection handles POST /api/data-source-integrations/:id/test-connection
-// Tests the connection for an existing integration
+// @Summary      Test integration connection
+// @Description  Tests the connection for an existing integration using stored config
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Integration ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} TestConnectionResponseDTO "Connection test result"
+// @Failure      400 {object} apperror.Error "Invalid integration ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations/{id}/test-connection [post]
+// @Security     bearerAuth
 func (h *Handler) TestConnection(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -584,7 +703,21 @@ func (h *Handler) TestConnection(c echo.Context) error {
 // ------------------------------------------------------------------
 
 // TriggerSync handles POST /api/data-source-integrations/:id/sync
-// Triggers a sync for an integration
+// @Summary      Trigger data source sync
+// @Description  Triggers a sync job for an integration (manual or full sync)
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Integration ID (UUID)"
+// @Param        request body TriggerSyncDTO false "Sync options (configurationId, fullSync, options)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} TriggerSyncResponseDTO "Sync job created or already running"
+// @Failure      400 {object} apperror.Error "Invalid request or integration disabled"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations/{id}/sync [post]
+// @Security     bearerAuth
 func (h *Handler) TriggerSync(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -669,7 +802,21 @@ func (h *Handler) TriggerSync(c echo.Context) error {
 }
 
 // ListSyncJobs handles GET /api/data-source-integrations/:id/sync-jobs
-// Returns sync jobs for an integration
+// @Summary      List sync jobs for integration
+// @Description  Returns all sync jobs for a specific integration with optional status filter
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Integration ID (UUID)"
+// @Param        status query string false "Filter by job status"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} object{items=[]SyncJobDTO,total=int} "Sync jobs list with total count"
+// @Failure      400 {object} apperror.Error "Invalid integration ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations/{id}/sync-jobs [get]
+// @Security     bearerAuth
 func (h *Handler) ListSyncJobs(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -719,7 +866,20 @@ func (h *Handler) ListSyncJobs(c echo.Context) error {
 }
 
 // GetLatestSyncJob handles GET /api/data-source-integrations/:id/sync-jobs/latest
-// Returns the most recent sync job
+// @Summary      Get latest sync job
+// @Description  Returns the most recent sync job for an integration
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Integration ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} SyncJobDTO "Latest sync job (null if no jobs exist)"
+// @Failure      400 {object} apperror.Error "Invalid integration ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Integration not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations/{id}/sync-jobs/latest [get]
+// @Security     bearerAuth
 func (h *Handler) GetLatestSyncJob(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -759,7 +919,21 @@ func (h *Handler) GetLatestSyncJob(c echo.Context) error {
 }
 
 // GetSyncJob handles GET /api/data-source-integrations/:id/sync-jobs/:jobId
-// Returns a specific sync job
+// @Summary      Get sync job by ID
+// @Description  Returns a specific sync job by ID
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Integration ID (UUID)"
+// @Param        jobId path string true "Sync job ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} SyncJobDTO "Sync job details"
+// @Failure      400 {object} apperror.Error "Invalid integration ID or job ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Integration or sync job not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations/{id}/sync-jobs/{jobId} [get]
+// @Security     bearerAuth
 func (h *Handler) GetSyncJob(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -799,7 +973,21 @@ func (h *Handler) GetSyncJob(c echo.Context) error {
 }
 
 // CancelSyncJob handles POST /api/data-source-integrations/:id/sync-jobs/:jobId/cancel
-// Cancels a running sync job
+// @Summary      Cancel sync job
+// @Description  Cancels a running or pending sync job
+// @Tags         datasource
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Integration ID (UUID)"
+// @Param        jobId path string true "Sync job ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} object{success=bool,message=string} "Job cancelled successfully"
+// @Failure      400 {object} apperror.Error "Invalid ID or job cannot be cancelled"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Integration or sync job not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/data-source-integrations/{id}/sync-jobs/{jobId}/cancel [post]
+// @Security     bearerAuth
 func (h *Handler) CancelSyncJob(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

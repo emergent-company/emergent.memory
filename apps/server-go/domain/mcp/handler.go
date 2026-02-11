@@ -40,6 +40,17 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 }
 
 // HandleRPC handles POST /mcp/rpc - JSON-RPC 2.0 endpoint (legacy)
+// @Summary      Execute Model Context Protocol JSON-RPC 2.0 requests
+// @Description  Legacy JSON-RPC endpoint for Model Context Protocol. Supports initialize, tools/*, resources/*, and prompts/* methods. Use unified /api/mcp endpoint for SSE support (Spec 2025-11-25).
+// @Tags         mcp
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID (UUID)"
+// @Param        request body Request true "JSON-RPC 2.0 request (method: initialize, tools/list, tools/call, resources/list, resources/read, prompts/list, prompts/get)"
+// @Success      200 {object} Response "JSON-RPC 2.0 response (success or error)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/mcp/rpc [post]
+// @Security     bearerAuth
 func (h *Handler) HandleRPC(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

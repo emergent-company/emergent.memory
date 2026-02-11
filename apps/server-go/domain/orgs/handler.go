@@ -20,7 +20,15 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // List returns all organizations the authenticated user is a member of
-// GET /api/v2/orgs
+// @Summary      List user's organizations
+// @Description  Returns all organizations the authenticated user is a member of
+// @Tags         organizations
+// @Produce      json
+// @Success      200 {array} OrgDTO "List of organizations"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs [get]
+// @Security     bearerAuth
 func (h *Handler) List(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -36,7 +44,17 @@ func (h *Handler) List(c echo.Context) error {
 }
 
 // Get returns a single organization by ID
-// GET /api/v2/orgs/:id
+// @Summary      Get organization by ID
+// @Description  Returns a single organization by its unique identifier
+// @Tags         organizations
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Success      200 {object} Org "Organization details"
+// @Failure      400 {object} apperror.Error "Invalid organization ID"
+// @Failure      404 {object} apperror.Error "Organization not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id} [get]
+// @Security     bearerAuth
 func (h *Handler) Get(c echo.Context) error {
 	id := c.Param("id")
 
@@ -49,7 +67,18 @@ func (h *Handler) Get(c echo.Context) error {
 }
 
 // Create creates a new organization
-// POST /api/v2/orgs
+// @Summary      Create a new organization
+// @Description  Creates a new organization with the authenticated user as the initial member
+// @Tags         organizations
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateOrgRequest true "Organization creation request"
+// @Success      201 {object} Org "Organization created"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs [post]
+// @Security     bearerAuth
 func (h *Handler) Create(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -70,7 +99,17 @@ func (h *Handler) Create(c echo.Context) error {
 }
 
 // Delete deletes an organization by ID
-// DELETE /api/v2/orgs/:id
+// @Summary      Delete organization
+// @Description  Permanently deletes an organization by ID
+// @Tags         organizations
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Success      200 {object} map[string]string "Deletion status"
+// @Failure      400 {object} apperror.Error "Invalid organization ID"
+// @Failure      404 {object} apperror.Error "Organization not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id} [delete]
+// @Security     bearerAuth
 func (h *Handler) Delete(c echo.Context) error {
 	id := c.Param("id")
 

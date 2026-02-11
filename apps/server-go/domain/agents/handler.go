@@ -21,7 +21,18 @@ func NewHandler(repo *Repository) *Handler {
 }
 
 // ListAgents handles GET /api/admin/agents
-// Returns all agents for the current project
+// @Summary      List all agents
+// @Description  Returns all agents for the current project
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} APIResponse[[]AgentDTO] "List of agents"
+// @Failure      400 {object} apperror.Error "X-Project-ID header required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agents [get]
+// @Security     bearerAuth
 func (h *Handler) ListAgents(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -47,7 +58,20 @@ func (h *Handler) ListAgents(c echo.Context) error {
 }
 
 // GetAgent handles GET /api/admin/agents/:id
-// Returns an agent by ID
+// @Summary      Get agent by ID
+// @Description  Returns an agent by ID
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Agent ID (UUID)"
+// @Param        X-Project-ID header string false "Project ID (optional)"
+// @Success      200 {object} APIResponse[AgentDTO] "Agent details"
+// @Failure      400 {object} apperror.Error "Invalid agent ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Agent not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agents/{id} [get]
+// @Security     bearerAuth
 func (h *Handler) GetAgent(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -76,7 +100,21 @@ func (h *Handler) GetAgent(c echo.Context) error {
 }
 
 // GetAgentRuns handles GET /api/admin/agents/:id/runs
-// Returns recent runs for an agent
+// @Summary      Get agent run history
+// @Description  Returns recent runs for an agent
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Agent ID (UUID)"
+// @Param        limit query int false "Max results (default 10)" minimum(1) maximum(100) default(10)
+// @Param        X-Project-ID header string false "Project ID (optional)"
+// @Success      200 {object} APIResponse[[]AgentRunDTO] "List of agent runs"
+// @Failure      400 {object} apperror.Error "Invalid agent ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Agent not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agents/{id}/runs [get]
+// @Security     bearerAuth
 func (h *Handler) GetAgentRuns(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -124,7 +162,18 @@ func (h *Handler) GetAgentRuns(c echo.Context) error {
 }
 
 // CreateAgent handles POST /api/admin/agents
-// Creates a new agent
+// @Summary      Create a new agent
+// @Description  Creates a new agent with the specified configuration
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateAgentDTO true "Agent data"
+// @Success      201 {object} APIResponse[AgentDTO] "Created agent"
+// @Failure      400 {object} apperror.Error "Invalid request body or validation error"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agents [post]
+// @Security     bearerAuth
 func (h *Handler) CreateAgent(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -194,7 +243,21 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 }
 
 // UpdateAgent handles PATCH /api/admin/agents/:id
-// Updates an agent
+// @Summary      Update an agent
+// @Description  Updates an agent's configuration (partial update)
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Agent ID (UUID)"
+// @Param        request body UpdateAgentDTO true "Agent update data"
+// @Param        X-Project-ID header string false "Project ID (optional)"
+// @Success      200 {object} APIResponse[AgentDTO] "Updated agent"
+// @Failure      400 {object} apperror.Error "Invalid agent ID or request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Agent not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agents/{id} [patch]
+// @Security     bearerAuth
 func (h *Handler) UpdateAgent(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -264,7 +327,20 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 }
 
 // DeleteAgent handles DELETE /api/admin/agents/:id
-// Deletes an agent
+// @Summary      Delete an agent
+// @Description  Deletes an agent by ID
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Agent ID (UUID)"
+// @Param        X-Project-ID header string false "Project ID (optional)"
+// @Success      200 {object} APIResponse[any] "Agent deleted successfully"
+// @Failure      400 {object} apperror.Error "Invalid agent ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Agent not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agents/{id} [delete]
+// @Security     bearerAuth
 func (h *Handler) DeleteAgent(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -297,7 +373,20 @@ func (h *Handler) DeleteAgent(c echo.Context) error {
 }
 
 // TriggerAgent handles POST /api/admin/agents/:id/trigger
-// Triggers an immediate run of an agent
+// @Summary      Trigger agent execution
+// @Description  Triggers an immediate run of an agent (manual execution)
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Agent ID (UUID)"
+// @Param        X-Project-ID header string false "Project ID (optional)"
+// @Success      200 {object} TriggerResponseDTO "Agent triggered successfully"
+// @Failure      400 {object} apperror.Error "Invalid agent ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Agent not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agents/{id}/trigger [post]
+// @Security     bearerAuth
 func (h *Handler) TriggerAgent(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -340,7 +429,21 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 }
 
 // GetPendingEvents handles GET /api/admin/agents/:id/pending-events
-// Returns pending events (unprocessed graph objects) for a reaction agent
+// @Summary      Get pending events for reaction agent
+// @Description  Returns pending events (unprocessed graph objects) for a reaction agent
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Agent ID (UUID)"
+// @Param        limit query int false "Max results (1-100)" minimum(1) maximum(100) default(100)
+// @Param        X-Project-ID header string false "Project ID (optional)"
+// @Success      200 {object} APIResponse[PendingEventsResponseDTO] "Pending events"
+// @Failure      400 {object} apperror.Error "Invalid agent ID or not a reaction agent"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Agent not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agents/{id}/pending-events [get]
+// @Security     bearerAuth
 func (h *Handler) GetPendingEvents(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -402,7 +505,21 @@ func (h *Handler) GetPendingEvents(c echo.Context) error {
 }
 
 // BatchTrigger handles POST /api/admin/agents/:id/batch-trigger
-// Batch triggers a reaction agent for multiple objects
+// @Summary      Batch trigger reaction agent
+// @Description  Batch triggers a reaction agent for multiple graph objects (max 100)
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Agent ID (UUID)"
+// @Param        request body BatchTriggerDTO true "Batch trigger request (objectIds)"
+// @Param        X-Project-ID header string false "Project ID (optional)"
+// @Success      200 {object} APIResponse[BatchTriggerResponseDTO] "Batch trigger result (queued/skipped counts)"
+// @Failure      400 {object} apperror.Error "Invalid agent ID, not a reaction agent, or invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Agent not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agents/{id}/batch-trigger [post]
+// @Security     bearerAuth
 func (h *Handler) BatchTrigger(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

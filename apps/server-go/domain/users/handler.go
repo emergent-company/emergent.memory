@@ -20,7 +20,17 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // Search searches for users by email
-// GET /api/v2/users/search?email=<query>
+// @Summary      Search users by email
+// @Description  Searches for users by email query (partial match). Returns matching users excluding the authenticated user.
+// @Tags         users
+// @Produce      json
+// @Param        email query string true "Email query (partial match supported)"
+// @Success      200 {object} UserSearchResponse "Search results"
+// @Failure      400 {object} apperror.Error "Missing or invalid email query parameter"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v2/users/search [get]
+// @Security     bearerAuth
 func (h *Handler) Search(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
