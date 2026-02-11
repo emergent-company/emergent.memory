@@ -1,0 +1,82 @@
+{
+  "version": "1.0.0",
+  "generated_at": "2025-02-11T09:26:57Z",
+  "categories": [
+    {
+      "id": "guides",
+      "name": "Guides",
+      "description": "How-to guides and tutorials for using Emergent features",
+      "count": 2
+    },
+    {
+      "id": "tutorials",
+      "name": "Tutorials",
+      "description": "Step-by-step tutorials for common workflows",
+      "count": 0
+    },
+    {
+      "id": "examples",
+      "name": "Examples",
+      "description": "Example templates, configurations, and use cases",
+      "count": 0
+    },
+    {
+      "id": "api-reference",
+      "name": "API Reference",
+      "description": "Complete API documentation and MCP tool references",
+      "count": 1
+    }
+  ],
+  "documents": [
+    {
+      "id": "template-pack-creation",
+      "slug": "template-pack-creation",
+      "title": "Template Pack Creation Guide",
+      "category": "guides",
+      "path": "docs/public/guides/template-pack-creation.md",
+      "description": "Comprehensive guide for AI agents to create and manage template packs via MCP and REST API",
+      "tags": ["template-packs", "mcp", "api", "ai-agents"],
+      "lastUpdated": "2025-02-11",
+      "readTime": 15,
+      "related": ["mcp-quick-reference", "template-pack-examples"]
+    },
+    {
+      "id": "environment-setup",
+      "slug": "environment-setup",
+      "title": "Environment Setup Guide",
+      "category": "guides",
+      "path": "docs/public/guides/environment-setup.md",
+      "description": "Comprehensive guide for setting up Local, Dev, Staging, and Production environments",
+      "tags": [
+        "environment",
+        "setup",
+        "docker",
+        "development",
+        "production",
+        "deployment"
+      ],
+      "lastUpdated": "2025-02-11",
+      "readTime": 45,
+      "related": ["template-pack-creation"]
+    },
+    {
+      "id": "mcp-quick-reference",
+      "slug": "mcp-quick-reference",
+      "title": "MCP Dev Manager Quick Reference",
+      "category": "api-reference",
+      "path": "docs/public/api-reference/mcp-quick-reference.md",
+      "description": "Quick reference for MCP Dev Manager tools and common development tasks",
+      "tags": [
+        "mcp",
+        "dev-manager",
+        "testing",
+        "docker",
+        "scripts",
+        "automation"
+      ],
+      "lastUpdated": "2025-02-11",
+      "readTime": 10,
+      "related": ["template-pack-creation", "environment-setup"]
+    }
+  ]
+}
