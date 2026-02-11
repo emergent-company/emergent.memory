@@ -9,6 +9,7 @@ import (
 
 	"github.com/emergent/emergent-core/domain/agents"
 	"github.com/emergent/emergent-core/domain/apitoken"
+	"github.com/emergent/emergent-core/domain/backups"
 	"github.com/emergent/emergent-core/domain/branches"
 	"github.com/emergent/emergent-core/domain/chat"
 	"github.com/emergent/emergent-core/domain/chunking"
@@ -90,6 +91,7 @@ func main() {
 		// Domain modules
 		health.Module,
 		agents.Module,
+		backups.Module,
 		documents.Module,
 		chunking.Module,
 		chunks.Module,
