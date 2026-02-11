@@ -185,7 +185,42 @@ func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 
 // processRequest processes a JSON-RPC request for SSE transport
 func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID string, user *auth.AuthUser) *Response {
-	return h.handler.routeMethod(c, req, user)
+	sessionID := c.QueryParam("sessionId")
+
+	h.sseSessionsMu.RLock()
+	session, sessionExists := h.sseSessions[sessionID]
+	h.sseSessionsMu.RUnlock()
+
+	switch req.Method {
+	case "initialize":
+		if sessionExists {
+			h.sseSessionsMu.Lock()
+			session.Initialized = true
+			h.sseSessionsMu.Unlock()
+		}
+		return h.handleInitialize(req, projectID)
+
+	case "tools/list":
+		if !sessionExists || !session.Initialized {
+			return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
+				"Client must call initialize before tools/list",
+				map[string]string{"hint": "Call initialize method first to establish session"},
+			)
+		}
+		return h.handleToolsList(req)
+
+	case "tools/call":
+		if !sessionExists || !session.Initialized {
+			return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
+				"Client must call initialize before tools/call",
+				map[string]string{"hint": "Call initialize method first to establish session"},
+			)
+		}
+		return h.handleToolsCall(c, req, projectID, user)
+
+	default:
+		return h.handler.routeMethod(c, req, user)
+	}
 }
 
 // handleInitialize handles initialize for SSE transport
