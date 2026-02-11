@@ -19,7 +19,8 @@ import (
 )
 
 var doctorFlags struct {
-	fix bool
+	fix   bool
+	debug bool
 }
 
 var doctorCmd = &cobra.Command{
@@ -40,6 +41,7 @@ Use --fix to automatically repair common issues.`,
 
 func init() {
 	doctorCmd.Flags().BoolVar(&doctorFlags.fix, "fix", false, "Attempt to automatically fix detected issues")
+	doctorCmd.Flags().BoolVar(&doctorFlags.debug, "debug", false, "Show detailed debug information (copyable for bug reports)")
 	rootCmd.AddCommand(doctorCmd)
 }
 
@@ -63,14 +65,17 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		configPath = config.DiscoverPath("")
 	}
 
-	results = append(results, checkConfig(configPath))
-
-	cfg, _ := config.LoadWithEnv(configPath)
-
-	// Check if this is a standalone installation
 	homeDir, _ := os.UserHomeDir()
 	installDir := filepath.Join(homeDir, ".emergent")
 	isStandalone := isStandaloneInstallation(installDir)
+
+	if doctorFlags.debug {
+		printSystemInfo(installDir, isStandalone)
+	}
+
+	results = append(results, checkConfig(configPath))
+
+	cfg, _ := config.LoadWithEnv(configPath)
 
 	if isStandalone {
 		results = append(results, checkDockerContainers(installDir))
@@ -806,6 +811,20 @@ func checkMCP(cfg *config.Config) checkResult {
 		"create_relationship":        true,
 		"update_entity":              true,
 		"delete_entity":              true,
+		"hybrid_search":              true,
+		"semantic_search":            true,
+		"find_similar":               true,
+		"traverse_graph":             true,
+		"list_relationships":         true,
+		"update_relationship":        true,
+		"delete_relationship":        true,
+		"restore_entity":             true,
+		"batch_create_entities":      true,
+		"batch_create_relationships": true,
+		"list_tags":                  true,
+		"preview_schema_migration":   true,
+		"list_migration_archives":    true,
+		"get_migration_archive":      true,
 	}
 
 	actualTools := make(map[string]bool)
@@ -880,4 +899,31 @@ func getContainerVersion(containerName string) string {
 		version = "v" + version
 	}
 	return version
+}
+
+func printSystemInfo(installDir string, isStandalone bool) {
+	fmt.Println("System Information:")
+	fmt.Printf("  CLI Version:        %s\n", getInstalledVersionFromFile(installDir))
+	fmt.Printf("  OS/Arch:            %s/%s\n", "runtime.GOOS", "runtime.GOARCH")
+	fmt.Printf("  Installation:       ")
+	if isStandalone {
+		fmt.Printf("standalone (%s)\n", installDir)
+	} else {
+		fmt.Println("remote")
+	}
+	
+	if isStandalone {
+		fmt.Println("\nContainer Versions:")
+		containers := []string{"emergent-server", "emergent-db", "emergent-minio", "emergent-kreuzberg"}
+		for _, name := range containers {
+			version := getContainerVersion(name)
+			if version == "" {
+				version = "not running"
+			}
+			fmt.Printf("  %-20s %s\n", name+":", version)
+		}
+	}
+	
+	fmt.Println("\n" + strings.Repeat("=", 60))
+	fmt.Println()
 }
