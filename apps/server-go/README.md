@@ -11,9 +11,10 @@ This document provides comprehensive guidance for developing, deploying, and deb
 5. [Testing](#testing)
 6. [Database Migrations](#database-migrations)
 7. [Configuration](#configuration)
-8. [Debugging](#debugging)
-9. [Deployment](#deployment)
-10. [Troubleshooting](#troubleshooting)
+8. [API Documentation (Swagger/OpenAPI)](#api-documentation-swaggeropenapi)
+9. [Debugging](#debugging)
+10. [Deployment](#deployment)
+11. [Troubleshooting](#troubleshooting)
 
 ## Getting Started
 
@@ -307,6 +308,62 @@ The server loads environment variables from:
 1. `apps/server-go/.env`
 2. `apps/server-go/.env.local` (for secrets)
 3. System environment
+
+## API Documentation (Swagger/OpenAPI)
+
+The API is documented using Swagger/OpenAPI annotations in handler files. The specification is automatically generated during builds.
+
+### Quick Start
+
+**Add annotations to new endpoints:**
+
+```go
+// Create creates a new resource
+// @Summary      Create resource
+// @Tags         resources
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateRequest true "Resource data"
+// @Success      201 {object} Resource
+// @Failure      400 {object} apperror.Error
+// @Router       /api/resources [post]
+// @Security     bearerAuth
+func (h *Handler) Create(c echo.Context) error {
+```
+
+**Generate specification:**
+
+```bash
+cd apps/server-go
+/root/go/bin/swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
+```
+
+**Check coverage:**
+
+```bash
+bash ./scripts/check-swagger-annotations.sh
+```
+
+### Documentation
+
+- **[Quick Start Guide](docs/SWAGGER_QUICK_START.md)** - Copy-paste templates and 5-minute intro
+- **[Complete Guide](docs/SWAGGER_ANNOTATIONS.md)** - Comprehensive annotation reference and patterns
+
+### Generated Files
+
+- `docs/swagger/swagger.json` - OpenAPI 2.0 specification (JSON)
+- `docs/swagger/swagger.yaml` - OpenAPI 2.0 specification (YAML)
+- `docs/swagger/docs.go` - Go embeddings for serving spec
+
+### Automation
+
+The OpenAPI spec is automatically:
+
+- ✅ Generated on every build (`make build`, `nx run server-go:build`)
+- ✅ Validated by pre-commit hook (blocks commits with missing annotations)
+- ✅ Tracked by coverage script (reports annotation completeness)
+
+**Current coverage:** 7/31 handler files (22.6%)
 
 ## Debugging
 

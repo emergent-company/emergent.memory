@@ -21,8 +21,17 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // List returns all projects the authenticated user is a member of
-// GET /api/projects
-// Query params: limit (1-500, default 100), orgId (optional UUID filter)
+// @Summary      List user's projects
+// @Description  Returns all projects the authenticated user is a member of. Supports filtering by organization and pagination.
+// @Tags         projects
+// @Produce      json
+// @Param        limit query int false "Max results (1-500, default 100)" minimum(1) maximum(500)
+// @Param        orgId query string false "Filter by organization ID (UUID)"
+// @Success      200 {array} ProjectDTO "List of projects"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects [get]
+// @Security     bearerAuth
 func (h *Handler) List(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -52,7 +61,18 @@ func (h *Handler) List(c echo.Context) error {
 }
 
 // Get returns a single project by ID
-// GET /api/projects/:id
+// @Summary      Get project by ID
+// @Description  Returns a single project by its unique identifier
+// @Tags         projects
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Success      200 {object} Project "Project details"
+// @Failure      400 {object} apperror.Error "Invalid project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id} [get]
+// @Security     bearerAuth
 func (h *Handler) Get(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -70,7 +90,18 @@ func (h *Handler) Get(c echo.Context) error {
 }
 
 // Create creates a new project
-// POST /api/projects
+// @Summary      Create a new project
+// @Description  Creates a new project with the authenticated user as the initial member
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateProjectRequest true "Project creation request"
+// @Success      201 {object} Project "Project created"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects [post]
+// @Security     bearerAuth
 func (h *Handler) Create(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -91,7 +122,20 @@ func (h *Handler) Create(c echo.Context) error {
 }
 
 // Update updates a project
-// PATCH /api/projects/:id
+// @Summary      Update project
+// @Description  Updates an existing project's properties (name, KB purpose, chat template, auto-extraction settings)
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Param        request body UpdateProjectRequest true "Project update request"
+// @Success      200 {object} Project "Updated project"
+// @Failure      400 {object} apperror.Error "Invalid request body or project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id} [patch]
+// @Security     bearerAuth
 func (h *Handler) Update(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -114,7 +158,18 @@ func (h *Handler) Update(c echo.Context) error {
 }
 
 // Delete deletes a project by ID
-// DELETE /api/projects/:id
+// @Summary      Delete project
+// @Description  Permanently deletes a project and all associated data
+// @Tags         projects
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Success      200 {object} map[string]string "Deletion status"
+// @Failure      400 {object} apperror.Error "Invalid project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id} [delete]
+// @Security     bearerAuth
 func (h *Handler) Delete(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -131,7 +186,18 @@ func (h *Handler) Delete(c echo.Context) error {
 }
 
 // ListMembers returns all members of a project
-// GET /api/projects/:id/members
+// @Summary      List project members
+// @Description  Returns all users who are members of the specified project with their roles
+// @Tags         projects
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Success      200 {array} ProjectMemberDTO "List of project members"
+// @Failure      400 {object} apperror.Error "Invalid project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id}/members [get]
+// @Security     bearerAuth
 func (h *Handler) ListMembers(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -149,7 +215,19 @@ func (h *Handler) ListMembers(c echo.Context) error {
 }
 
 // RemoveMember removes a member from a project
-// DELETE /api/projects/:id/members/:userId
+// @Summary      Remove project member
+// @Description  Removes a user from the specified project
+// @Tags         projects
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Param        userId path string true "User ID to remove (UUID)"
+// @Success      200 {object} map[string]string "Removal status"
+// @Failure      400 {object} apperror.Error "Invalid project ID or user ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project or user not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id}/members/{userId} [delete]
+// @Security     bearerAuth
 func (h *Handler) RemoveMember(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

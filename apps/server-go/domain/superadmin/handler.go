@@ -44,7 +44,14 @@ func getBoolParam(c echo.Context, name string) *bool {
 }
 
 // GetMe handles GET /api/superadmin/me
-// Returns the current user's superadmin status
+// @Summary      Get current user's superadmin status
+// @Description  Returns whether the authenticated user has superadmin privileges. Returns null if not superadmin, otherwise returns {isSuperadmin: true}.
+// @Tags         superadmin
+// @Produce      json
+// @Success      200 {object} SuperadminMeResponse "Superadmin status (or null if not superadmin)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/superadmin/me [get]
+// @Security     bearerAuth
 func (h *Handler) GetMe(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -86,6 +93,19 @@ func (h *Handler) requireSuperadmin(c echo.Context) (string, error) {
 }
 
 // ListUsers handles GET /api/superadmin/users
+// @Summary      List all users (superadmin only)
+// @Description  Returns paginated list of all users with their org memberships and email addresses. Supports search filtering and org filtering.
+// @Tags         superadmin
+// @Produce      json
+// @Param        page query int false "Page number (default: 1)" minimum(1)
+// @Param        limit query int false "Results per page (default: 20, max: 100)" minimum(1) maximum(100)
+// @Param        search query string false "Search by name or email"
+// @Param        orgId query string false "Filter by organization ID (UUID)"
+// @Success      200 {object} ListUsersResponse "User list with pagination"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/users [get]
+// @Security     bearerAuth
 func (h *Handler) ListUsers(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -154,6 +174,18 @@ func (h *Handler) ListUsers(c echo.Context) error {
 }
 
 // DeleteUser handles DELETE /api/superadmin/users/:id
+// @Summary      Soft-delete a user (superadmin only)
+// @Description  Marks a user as deleted (soft delete). User data is retained but account is deactivated.
+// @Tags         superadmin
+// @Produce      json
+// @Param        id path string true "User ID (UUID)"
+// @Success      200 {object} SuccessResponse "User deleted successfully"
+// @Failure      400 {object} apperror.Error "Invalid user ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Failure      404 {object} apperror.Error "User not found"
+// @Router       /api/superadmin/users/{id} [delete]
+// @Security     bearerAuth
 func (h *Handler) DeleteUser(c echo.Context) error {
 	deletedBy, err := h.requireSuperadmin(c)
 	if err != nil {
@@ -185,6 +217,17 @@ func (h *Handler) DeleteUser(c echo.Context) error {
 }
 
 // ListOrganizations handles GET /api/superadmin/organizations
+// @Summary      List all organizations (superadmin only)
+// @Description  Returns paginated list of all organizations with member and project counts.
+// @Tags         superadmin
+// @Produce      json
+// @Param        page query int false "Page number (default: 1)" minimum(1)
+// @Param        limit query int false "Results per page (default: 20, max: 100)" minimum(1) maximum(100)
+// @Success      200 {object} ListOrganizationsResponse "Organization list with pagination"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/organizations [get]
+// @Security     bearerAuth
 func (h *Handler) ListOrganizations(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -216,6 +259,18 @@ func (h *Handler) ListOrganizations(c echo.Context) error {
 }
 
 // DeleteOrganization handles DELETE /api/superadmin/organizations/:id
+// @Summary      Soft-delete an organization (superadmin only)
+// @Description  Marks an organization as deleted (soft delete). Organization data is retained but org is deactivated.
+// @Tags         superadmin
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Success      200 {object} SuccessResponse "Organization deleted successfully"
+// @Failure      400 {object} apperror.Error "Invalid organization ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Failure      404 {object} apperror.Error "Organization not found"
+// @Router       /api/superadmin/organizations/{id} [delete]
+// @Security     bearerAuth
 func (h *Handler) DeleteOrganization(c echo.Context) error {
 	deletedBy, err := h.requireSuperadmin(c)
 	if err != nil {
@@ -247,6 +302,18 @@ func (h *Handler) DeleteOrganization(c echo.Context) error {
 }
 
 // ListProjects handles GET /api/superadmin/projects
+// @Summary      List all projects (superadmin only)
+// @Description  Returns paginated list of all projects with org information and document counts. Supports org filtering.
+// @Tags         superadmin
+// @Produce      json
+// @Param        page query int false "Page number (default: 1)" minimum(1)
+// @Param        limit query int false "Results per page (default: 20, max: 100)" minimum(1) maximum(100)
+// @Param        orgId query string false "Filter by organization ID (UUID)"
+// @Success      200 {object} ListProjectsResponse "Project list with pagination"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/projects [get]
+// @Security     bearerAuth
 func (h *Handler) ListProjects(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -280,6 +347,18 @@ func (h *Handler) ListProjects(c echo.Context) error {
 }
 
 // DeleteProject handles DELETE /api/superadmin/projects/:id
+// @Summary      Soft-delete a project (superadmin only)
+// @Description  Marks a project as deleted (soft delete). Project data is retained but project is deactivated.
+// @Tags         superadmin
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Success      200 {object} SuccessResponse "Project deleted successfully"
+// @Failure      400 {object} apperror.Error "Invalid project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Failure      404 {object} apperror.Error "Project not found"
+// @Router       /api/superadmin/projects/{id} [delete]
+// @Security     bearerAuth
 func (h *Handler) DeleteProject(c echo.Context) error {
 	deletedBy, err := h.requireSuperadmin(c)
 	if err != nil {
@@ -311,6 +390,21 @@ func (h *Handler) DeleteProject(c echo.Context) error {
 }
 
 // ListEmailJobs handles GET /api/superadmin/email-jobs
+// @Summary      List email job queue (superadmin only)
+// @Description  Returns paginated list of email jobs with status, delivery info, and error details. Supports filtering by status, recipient, and date range.
+// @Tags         superadmin
+// @Produce      json
+// @Param        page query int false "Page number (default: 1)" minimum(1)
+// @Param        limit query int false "Results per page (default: 20, max: 100)" minimum(1) maximum(100)
+// @Param        status query string false "Filter by status (pending, processing, sent, failed)"
+// @Param        recipient query string false "Filter by recipient email address"
+// @Param        fromDate query string false "Filter from date (ISO 8601)"
+// @Param        toDate query string false "Filter to date (ISO 8601)"
+// @Success      200 {object} ListEmailJobsResponse "Email job list with pagination"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/email-jobs [get]
+// @Security     bearerAuth
 func (h *Handler) ListEmailJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -355,6 +449,18 @@ func (h *Handler) ListEmailJobs(c echo.Context) error {
 }
 
 // GetEmailJobPreview handles GET /api/superadmin/email-jobs/:id/preview-json
+// @Summary      Preview email job template data (superadmin only)
+// @Description  Returns email job details including subject, recipient, and template data (full HTML rendering not implemented).
+// @Tags         superadmin
+// @Produce      json
+// @Param        id path string true "Email job ID (UUID)"
+// @Success      200 {object} EmailJobPreviewResponse "Email job preview data"
+// @Failure      400 {object} apperror.Error "Invalid job ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Failure      404 {object} apperror.Error "Email job not found"
+// @Router       /api/superadmin/email-jobs/{id}/preview-json [get]
+// @Security     bearerAuth
 func (h *Handler) GetEmailJobPreview(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -384,6 +490,21 @@ func (h *Handler) GetEmailJobPreview(c echo.Context) error {
 }
 
 // ListEmbeddingJobs handles GET /api/superadmin/embedding-jobs
+// @Summary      List embedding job queue (superadmin only)
+// @Description  Returns paginated list of embedding jobs (graph and chunk) with status, error details, and aggregate statistics. Supports filtering by status, project, and job type.
+// @Tags         superadmin
+// @Produce      json
+// @Param        page query int false "Page number (default: 1)" minimum(1)
+// @Param        limit query int false "Results per page (default: 20, max: 100)" minimum(1) maximum(100)
+// @Param        status query string false "Filter by status (pending, processing, completed, failed)"
+// @Param        hasError query boolean false "Filter jobs with errors"
+// @Param        projectId query string false "Filter by project ID (UUID)"
+// @Param        type query string false "Filter by job type (graph or chunk)"
+// @Success      200 {object} ListEmbeddingJobsResponse "Embedding job list with stats and pagination"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/embedding-jobs [get]
+// @Security     bearerAuth
 func (h *Handler) ListEmbeddingJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -429,6 +550,18 @@ func (h *Handler) ListEmbeddingJobs(c echo.Context) error {
 }
 
 // DeleteEmbeddingJobs handles POST /api/superadmin/embedding-jobs/delete
+// @Summary      Bulk delete embedding jobs (superadmin only)
+// @Description  Deletes multiple embedding jobs by ID. Supports both graph and chunk embedding jobs.
+// @Tags         superadmin
+// @Accept       json
+// @Produce      json
+// @Param        request body DeleteJobsRequest true "Job IDs to delete and optional job type (graph or chunk)"
+// @Success      200 {object} DeleteJobsResponse "Deletion summary"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/embedding-jobs/delete [post]
+// @Security     bearerAuth
 func (h *Handler) DeleteEmbeddingJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -464,6 +597,15 @@ func (h *Handler) DeleteEmbeddingJobs(c echo.Context) error {
 }
 
 // CleanupOrphanEmbeddingJobs handles POST /api/superadmin/embedding-jobs/cleanup-orphans
+// @Summary      Cleanup orphan embedding jobs (superadmin only)
+// @Description  Removes embedding jobs that reference deleted objects or chunks (orphaned jobs).
+// @Tags         superadmin
+// @Produce      json
+// @Success      200 {object} CleanupOrphansResponse "Cleanup summary"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/embedding-jobs/cleanup-orphans [post]
+// @Security     bearerAuth
 func (h *Handler) CleanupOrphanEmbeddingJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -482,6 +624,21 @@ func (h *Handler) CleanupOrphanEmbeddingJobs(c echo.Context) error {
 }
 
 // ListExtractionJobs handles GET /api/superadmin/extraction-jobs
+// @Summary      List extraction job queue (superadmin only)
+// @Description  Returns paginated list of object extraction jobs with status, error details, and aggregate statistics. Supports filtering by status, job type, project, and error state.
+// @Tags         superadmin
+// @Produce      json
+// @Param        page query int false "Page number (default: 1)" minimum(1)
+// @Param        limit query int false "Results per page (default: 20, max: 100)" minimum(1) maximum(100)
+// @Param        status query string false "Filter by status (pending, processing, completed, failed)"
+// @Param        jobType query string false "Filter by job type"
+// @Param        projectId query string false "Filter by project ID (UUID)"
+// @Param        hasError query boolean false "Filter jobs with errors"
+// @Success      200 {object} ListExtractionJobsResponse "Extraction job list with stats and pagination"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/extraction-jobs [get]
+// @Security     bearerAuth
 func (h *Handler) ListExtractionJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -511,6 +668,18 @@ func (h *Handler) ListExtractionJobs(c echo.Context) error {
 }
 
 // DeleteExtractionJobs handles POST /api/superadmin/extraction-jobs/delete
+// @Summary      Bulk delete extraction jobs (superadmin only)
+// @Description  Deletes multiple object extraction jobs by ID.
+// @Tags         superadmin
+// @Accept       json
+// @Produce      json
+// @Param        request body DeleteJobsRequest true "Job IDs to delete"
+// @Success      200 {object} DeleteJobsResponse "Deletion summary"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/extraction-jobs/delete [post]
+// @Security     bearerAuth
 func (h *Handler) DeleteExtractionJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -537,6 +706,18 @@ func (h *Handler) DeleteExtractionJobs(c echo.Context) error {
 }
 
 // CancelExtractionJobs handles POST /api/superadmin/extraction-jobs/cancel
+// @Summary      Bulk cancel extraction jobs (superadmin only)
+// @Description  Cancels multiple running/pending object extraction jobs by ID.
+// @Tags         superadmin
+// @Accept       json
+// @Produce      json
+// @Param        request body CancelJobsRequest true "Job IDs to cancel"
+// @Success      200 {object} CancelJobsResponse "Cancellation summary"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/extraction-jobs/cancel [post]
+// @Security     bearerAuth
 func (h *Handler) CancelExtractionJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -563,6 +744,20 @@ func (h *Handler) CancelExtractionJobs(c echo.Context) error {
 }
 
 // ListDocumentParsingJobs handles GET /api/superadmin/document-parsing-jobs
+// @Summary      List document parsing job queue (superadmin only)
+// @Description  Returns paginated list of document parsing jobs with status, error details, and aggregate statistics. Supports filtering by status, project, and error state.
+// @Tags         superadmin
+// @Produce      json
+// @Param        page query int false "Page number (default: 1)" minimum(1)
+// @Param        limit query int false "Results per page (default: 20, max: 100)" minimum(1) maximum(100)
+// @Param        status query string false "Filter by status (pending, processing, completed, failed)"
+// @Param        projectId query string false "Filter by project ID (UUID)"
+// @Param        hasError query boolean false "Filter jobs with errors"
+// @Success      200 {object} ListDocumentParsingJobsResponse "Document parsing job list with stats and pagination"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/document-parsing-jobs [get]
+// @Security     bearerAuth
 func (h *Handler) ListDocumentParsingJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -591,6 +786,18 @@ func (h *Handler) ListDocumentParsingJobs(c echo.Context) error {
 }
 
 // DeleteDocumentParsingJobs handles POST /api/superadmin/document-parsing-jobs/delete
+// @Summary      Bulk delete document parsing jobs (superadmin only)
+// @Description  Deletes multiple document parsing jobs by ID.
+// @Tags         superadmin
+// @Accept       json
+// @Produce      json
+// @Param        request body DeleteJobsRequest true "Job IDs to delete"
+// @Success      200 {object} DeleteJobsResponse "Deletion summary"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/document-parsing-jobs/delete [post]
+// @Security     bearerAuth
 func (h *Handler) DeleteDocumentParsingJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -617,6 +824,18 @@ func (h *Handler) DeleteDocumentParsingJobs(c echo.Context) error {
 }
 
 // RetryDocumentParsingJobs handles POST /api/superadmin/document-parsing-jobs/retry
+// @Summary      Bulk retry document parsing jobs (superadmin only)
+// @Description  Re-queues multiple failed/cancelled document parsing jobs for retry.
+// @Tags         superadmin
+// @Accept       json
+// @Produce      json
+// @Param        request body RetryJobsRequest true "Job IDs to retry"
+// @Success      200 {object} RetryJobsResponse "Retry summary"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/document-parsing-jobs/retry [post]
+// @Security     bearerAuth
 func (h *Handler) RetryDocumentParsingJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -643,6 +862,20 @@ func (h *Handler) RetryDocumentParsingJobs(c echo.Context) error {
 }
 
 // ListSyncJobs handles GET /api/superadmin/sync-jobs
+// @Summary      List data source sync job queue (superadmin only)
+// @Description  Returns paginated list of data source sync jobs with status, progress, error details, and aggregate statistics. Supports filtering by status, project, and error state.
+// @Tags         superadmin
+// @Produce      json
+// @Param        page query int false "Page number (default: 1)" minimum(1)
+// @Param        limit query int false "Results per page (default: 20, max: 100)" minimum(1) maximum(100)
+// @Param        status query string false "Filter by status (pending, running, completed, failed)"
+// @Param        projectId query string false "Filter by project ID (UUID)"
+// @Param        hasError query boolean false "Filter jobs with errors"
+// @Success      200 {object} ListSyncJobsResponse "Sync job list with stats and pagination"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/sync-jobs [get]
+// @Security     bearerAuth
 func (h *Handler) ListSyncJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -671,6 +904,18 @@ func (h *Handler) ListSyncJobs(c echo.Context) error {
 }
 
 // GetSyncJobLogs handles GET /api/superadmin/sync-jobs/:id/logs
+// @Summary      Get data source sync job logs (superadmin only)
+// @Description  Returns detailed logs and execution info for a specific data source sync job.
+// @Tags         superadmin
+// @Produce      json
+// @Param        id path string true "Sync job ID (UUID)"
+// @Success      200 {object} SyncJobLogsResponse "Sync job logs and metadata"
+// @Failure      400 {object} apperror.Error "Invalid job ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Failure      404 {object} apperror.Error "Sync job not found"
+// @Router       /api/superadmin/sync-jobs/{id}/logs [get]
+// @Security     bearerAuth
 func (h *Handler) GetSyncJobLogs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -701,6 +946,18 @@ func (h *Handler) GetSyncJobLogs(c echo.Context) error {
 }
 
 // DeleteSyncJobs handles POST /api/superadmin/sync-jobs/delete
+// @Summary      Bulk delete data source sync jobs (superadmin only)
+// @Description  Deletes multiple data source sync jobs by ID.
+// @Tags         superadmin
+// @Accept       json
+// @Produce      json
+// @Param        request body DeleteJobsRequest true "Job IDs to delete"
+// @Success      200 {object} DeleteJobsResponse "Deletion summary"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/sync-jobs/delete [post]
+// @Security     bearerAuth
 func (h *Handler) DeleteSyncJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err
@@ -727,6 +984,18 @@ func (h *Handler) DeleteSyncJobs(c echo.Context) error {
 }
 
 // CancelSyncJobs handles POST /api/superadmin/sync-jobs/cancel
+// @Summary      Bulk cancel data source sync jobs (superadmin only)
+// @Description  Cancels multiple running/pending data source sync jobs by ID.
+// @Tags         superadmin
+// @Accept       json
+// @Produce      json
+// @Param        request body CancelJobsRequest true "Job IDs to cancel"
+// @Success      200 {object} CancelJobsResponse "Cancellation summary"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/sync-jobs/cancel [post]
+// @Security     bearerAuth
 func (h *Handler) CancelSyncJobs(c echo.Context) error {
 	if _, err := h.requireSuperadmin(c); err != nil {
 		return err

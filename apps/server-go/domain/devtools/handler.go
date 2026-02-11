@@ -15,10 +15,10 @@ import (
 
 // Handler serves developer tools endpoints
 type Handler struct {
-	log          *slog.Logger
-	cfg          *config.Config
-	coverageDir  string
-	docsDir      string
+	log         *slog.Logger
+	cfg         *config.Config
+	coverageDir string
+	docsDir     string
 }
 
 // NewHandler creates a new devtools handler
@@ -38,6 +38,12 @@ func NewHandler(log *slog.Logger, cfg *config.Config) *Handler {
 }
 
 // ServeCoverage serves the coverage index page
+// @Summary      Serve test coverage report
+// @Description  Returns the HTML coverage report index page (or helpful message if not generated)
+// @Tags         devtools
+// @Produce      html
+// @Success      200 {string} string "Coverage report HTML"
+// @Router       /coverage [get]
 func (h *Handler) ServeCoverage(c echo.Context) error {
 	indexPath := filepath.Join(h.coverageDir, "index.html")
 
@@ -50,6 +56,16 @@ func (h *Handler) ServeCoverage(c echo.Context) error {
 }
 
 // ServeCoverageFiles serves coverage report files (CSS, JS, etc.)
+// @Summary      Serve coverage report assets
+// @Description  Serves static files for coverage report (CSS, JS, etc.) with directory traversal protection
+// @Tags         devtools
+// @Produce      octet-stream
+// @Param        filepath path string true "File path within coverage directory (use * for wildcard in actual route)"
+// @Success      200 {file} file "Coverage asset file"
+// @Failure      400 {string} string "Invalid path"
+// @Failure      403 {string} string "Access denied (directory traversal attempt)"
+// @Failure      404 {string} string "File not found"
+// @Router       /coverage/{filepath} [get]
 func (h *Handler) ServeCoverageFiles(c echo.Context) error {
 	// Get the requested file path
 	requestPath := c.Param("*")
@@ -119,14 +135,28 @@ func (h *Handler) serveCoverageNotFound(c echo.Context) error {
 }
 
 // ServeDocsIndex serves the Swagger UI index page
+// @Summary      Serve Swagger UI
+// @Description  Returns the Swagger UI HTML page for browsing API documentation
+// @Tags         devtools
+// @Produce      html
+// @Success      200 {string} string "Swagger UI HTML"
+// @Router       /docs [get]
 func (h *Handler) ServeDocsIndex(c echo.Context) error {
 	return h.serveSwaggerUI(c)
 }
 
 // ServeDocs serves Swagger UI assets
+// @Summary      Serve API documentation assets
+// @Description  Serves Swagger specification files (swagger.json, swagger.yaml)
+// @Tags         devtools
+// @Produce      json
+// @Param        filepath path string true "File path (swagger.json or swagger.yaml) - use * for wildcard in actual route"
+// @Success      200 {file} file "Swagger spec file"
+// @Failure      404 {string} string "File not found"
+// @Router       /docs/{filepath} [get]
 func (h *Handler) ServeDocs(c echo.Context) error {
 	requestPath := c.Param("*")
-	
+
 	// Serve index.html for empty path (shouldn't happen with new routes but keep as fallback)
 	if requestPath == "" || requestPath == "/" {
 		return h.serveSwaggerUI(c)
@@ -192,6 +222,12 @@ func (h *Handler) serveSwaggerUI(c echo.Context) error {
 }
 
 // ServeOpenAPISpec serves the OpenAPI JSON specification
+// @Summary      Serve OpenAPI specification
+// @Description  Returns the generated OpenAPI/Swagger JSON spec (or minimal spec if not generated)
+// @Tags         devtools
+// @Produce      json
+// @Success      200 {object} map[string]interface{} "OpenAPI 3.0 specification"
+// @Router       /openapi.json [get]
 func (h *Handler) ServeOpenAPISpec(c echo.Context) error {
 	// Try to serve generated spec from docs directory
 	specPath := filepath.Join(h.docsDir, "swagger.json")
