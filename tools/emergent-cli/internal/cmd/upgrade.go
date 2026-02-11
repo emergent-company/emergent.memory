@@ -135,8 +135,9 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	serverInstalled := inst.IsInstalled()
 
 	if Version == "dev" && !upgradeFlags.force {
+		displayLatest := strings.TrimPrefix(release.TagName, "v")
 		fmt.Println("You are running a development version. Upgrade skipped.")
-		fmt.Printf("Latest release: %s\n", release.TagName)
+		fmt.Printf("Latest release: %s\n", displayLatest)
 		fmt.Println("Use --force to upgrade anyway.")
 		return
 	}
@@ -144,14 +145,16 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	cliNeedsUpgrade := latestVersion != currentVersion || upgradeFlags.force
 
 	if !cliNeedsUpgrade && !serverInstalled {
-		fmt.Printf("You are already using the latest version: %s\n", Version)
+		displayCurrent := strings.TrimPrefix(Version, "v")
+		fmt.Printf("You are already using the latest version: %s\n", displayCurrent)
 		return
 	}
 
 	if serverInstalled && !upgradeFlags.cliOnly && !release.ImagesReady {
+		displayLatest := strings.TrimPrefix(release.TagName, "v")
 		fmt.Println()
 		fmt.Println("⚠️  Warning: Docker images for this release are still being built")
-		fmt.Printf("Latest release: %s\n", release.TagName)
+		fmt.Printf("Latest release: %s\n", displayLatest)
 		fmt.Println()
 		fmt.Println("The CLI can be upgraded now, but server upgrade should wait until")
 		fmt.Println("Docker images are available (usually takes 5-10 minutes after release).")
@@ -163,10 +166,12 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Show what will be upgraded
+	// Show what will be upgraded (normalize display - strip "v" prefix for consistency)
 	fmt.Println()
-	fmt.Printf("Current CLI version: %s\n", Version)
-	fmt.Printf("Latest version: %s\n", release.TagName)
+	displayCurrent := strings.TrimPrefix(Version, "v")
+	displayLatest := strings.TrimPrefix(release.TagName, "v")
+	fmt.Printf("Current CLI version: %s\n", displayCurrent)
+	fmt.Printf("Latest version: %s\n", displayLatest)
 	if serverInstalled && !upgradeFlags.cliOnly {
 		fmt.Printf("Server installation: %s\n", upgradeFlags.dir)
 	}
@@ -174,11 +179,11 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 
 	if cliNeedsUpgrade {
 		if Version == "dev" {
-			fmt.Printf("Will upgrade CLI from dev version to %s\n", release.TagName)
+			fmt.Printf("Will upgrade CLI from dev version to %s\n", displayLatest)
 		} else if latestVersion == currentVersion {
-			fmt.Printf("Will reinstall CLI %s\n", release.TagName)
+			fmt.Printf("Will reinstall CLI %s\n", displayLatest)
 		} else {
-			fmt.Printf("Will upgrade CLI: %s → %s\n", Version, release.TagName)
+			fmt.Printf("Will upgrade CLI: %s → %s\n", displayCurrent, displayLatest)
 		}
 	} else {
 		fmt.Println("CLI is up to date")
@@ -212,7 +217,8 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 			fmt.Printf("CLI upgrade failed: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("✓ CLI upgraded to %s\n", release.TagName)
+		displayLatest := strings.TrimPrefix(release.TagName, "v")
+		fmt.Printf("✓ CLI upgraded to %s\n", displayLatest)
 	}
 
 	// Upgrade server if installed and not --cli-only
