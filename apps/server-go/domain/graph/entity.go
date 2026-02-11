@@ -30,9 +30,10 @@ type GraphObject struct {
 	ContentHash   []byte         `bun:"content_hash,type:bytea" json:"-"`
 
 	// Timestamps
-	CreatedAt time.Time  `bun:"created_at,notnull,default:now()" json:"created_at"`
-	UpdatedAt time.Time  `bun:"updated_at,notnull,default:now()" json:"updated_at"`
-	DeletedAt *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
+	CreatedAt      time.Time  `bun:"created_at,notnull,default:now()" json:"created_at"`
+	UpdatedAt      time.Time  `bun:"updated_at,notnull,default:now()" json:"updated_at"`
+	DeletedAt      *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
+	LastAccessedAt *time.Time `bun:"last_accessed_at,type:timestamptz" json:"last_accessed_at,omitempty"`
 
 	// Full-text search vector (generated)
 	FTS *string `bun:"fts,type:tsvector" json:"-"`

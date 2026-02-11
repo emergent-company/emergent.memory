@@ -202,6 +202,8 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 
 	// Convert to unified search results
 	results := make([]*UnifiedSearchGraphResult, len(searchResp.Data))
+	graphObjectIDs := make([]uuid.UUID, 0, len(searchResp.Data))
+
 	for i, item := range searchResp.Data {
 		key := ""
 		if item.Object.Key != nil {
@@ -217,8 +219,19 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 			Rank:          i + 1,
 			LexicalScore:  item.LexicalScore,
 			VectorScore:   item.VectorScore,
-			Relationships: []UnifiedSearchRelationship{}, // Will be populated if expansion is enabled
+			Relationships: []UnifiedSearchRelationship{},
 		}
+		graphObjectIDs = append(graphObjectIDs, item.Object.ID)
+	}
+
+	// Track access asynchronously (don't block response)
+	if len(graphObjectIDs) > 0 {
+		go func() {
+			bgCtx := context.Background()
+			if err := s.graphService.UpdateAccessTimestamps(bgCtx, graphObjectIDs); err != nil {
+				s.log.Warn("failed to update access timestamps", logger.Error(err))
+			}
+		}()
 	}
 
 	// Return raw debug items if debug is enabled

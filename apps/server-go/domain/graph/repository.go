@@ -33,6 +33,92 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	}
 }
 
+// UpdateAccessTimestamps updates last_accessed_at for the given object IDs.
+// This is used to track when graph objects are accessed via search queries.
+func (r *Repository) UpdateAccessTimestamps(ctx context.Context, objectIDs []uuid.UUID) error {
+	if len(objectIDs) == 0 {
+		return nil
+	}
+
+	_, err := r.db.NewUpdate().
+		Model((*GraphObject)(nil)).
+		Set("last_accessed_at = ?", time.Now()).
+		Where("id IN (?)", bun.In(objectIDs)).
+		Exec(ctx)
+
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// GetMostAccessed returns the most frequently accessed graph objects.
+// minAccessCount filters objects that have been accessed at least N times (not implemented yet - always 1).
+// Only returns HEAD versions (supersedes_id IS NULL) that have been accessed.
+func (r *Repository) GetMostAccessed(ctx context.Context, projectID uuid.UUID, limit int, minAccessCount int) ([]*GraphObject, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	var objects []*GraphObject
+	err := r.db.NewSelect().
+		Model(&objects).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("last_accessed_at IS NOT NULL").
+		Where("deleted_at IS NULL").
+		Order("last_accessed_at DESC").
+		Limit(limit).
+		Scan(ctx)
+
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return objects, nil
+}
+
+// GetUnused returns graph objects that haven't been accessed in the specified number of days.
+// Only returns HEAD versions (supersedes_id IS NULL).
+// Objects with NULL last_accessed_at are considered never accessed (included if threshold allows).
+func (r *Repository) GetUnused(ctx context.Context, projectID uuid.UUID, limit int, daysThreshold int) ([]*GraphObject, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if daysThreshold <= 0 {
+		daysThreshold = 30
+	}
+
+	cutoffTime := time.Now().AddDate(0, 0, -daysThreshold)
+
+	var objects []*GraphObject
+	err := r.db.NewSelect().
+		Model(&objects).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL").
+		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.
+				WhereOr("last_accessed_at IS NULL").
+				WhereOr("last_accessed_at < ?", cutoffTime)
+		}).
+		Order("last_accessed_at ASC NULLS FIRST").
+		Limit(limit).
+		Scan(ctx)
+
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return objects, nil
+}
+
 // ListParams contains parameters for listing graph objects.
 type ListParams struct {
 	ProjectID       uuid.UUID
