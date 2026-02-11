@@ -20,7 +20,17 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // Get returns the current user's profile
-// GET /api/v2/user/profile
+// @Summary      Get user profile
+// @Description  Returns the authenticated user's profile information
+// @Tags         user-profile
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} ProfileDTO "User profile"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Profile not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v2/user/profile [get]
+// @Security     bearerAuth
 func (h *Handler) Get(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -36,7 +46,18 @@ func (h *Handler) Get(c echo.Context) error {
 }
 
 // Update updates the current user's profile
-// PUT /api/v2/user/profile
+// @Summary      Update user profile
+// @Description  Updates the authenticated user's profile information (name, phone, etc.)
+// @Tags         user-profile
+// @Accept       json
+// @Produce      json
+// @Param        request body UpdateProfileRequest true "Profile updates"
+// @Success      200 {object} ProfileDTO "Updated profile"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v2/user/profile [put]
+// @Security     bearerAuth
 func (h *Handler) Update(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

@@ -33,6 +33,20 @@ type CreateBackupRequestDTO struct {
 	RetentionDays  int  `json:"retentionDays"`
 }
 
+// ListBackups lists all backups for an organization
+// @Summary      List organization backups
+// @Description  Returns paginated list of backups for an organization with optional project filtering and cursor-based pagination
+// @Tags         backups
+// @Produce      json
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Param        project_id query string false "Filter by project ID"
+// @Param        limit query int false "Max results to return (1-100)" minimum(1) maximum(100)
+// @Param        cursor query string false "Pagination cursor from previous response"
+// @Success      200 {object} ListResult "Paginated backup list with next cursor"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v1/organizations/{orgId}/backups [get]
+// @Security     bearerAuth
 func (h *Handler) ListBackups(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -75,6 +89,20 @@ func (h *Handler) ListBackups(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+// CreateBackup creates a new project backup
+// @Summary      Create project backup
+// @Description  Initiates async backup creation for a project (includes documents, chunks, graph data, optionally deleted items and chat). Returns backup entity with status 'creating'. Poll GET /organizations/{orgId}/backups/{backupId} to track progress.
+// @Tags         backups
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body CreateBackupRequestDTO true "Backup configuration (includeDeleted, includeChat, retentionDays: 1-365)"
+// @Success      202 {object} Backup "Backup creation initiated (status: creating)"
+// @Failure      400 {object} apperror.Error "Invalid request or retention days out of range"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v1/projects/{projectId}/backups [post]
+// @Security     bearerAuth
 func (h *Handler) CreateBackup(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -129,6 +157,18 @@ func (h *Handler) CreateBackup(c echo.Context) error {
 	return c.JSON(http.StatusAccepted, backup)
 }
 
+// GetBackup retrieves a specific backup by ID
+// @Summary      Get backup details
+// @Description  Returns backup details including status, progress, size, statistics, and expiration info
+// @Tags         backups
+// @Produce      json
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Param        backupId path string true "Backup ID (UUID)"
+// @Success      200 {object} Backup "Backup details"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Backup not found"
+// @Router       /api/v1/organizations/{orgId}/backups/{backupId} [get]
+// @Security     bearerAuth
 func (h *Handler) GetBackup(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -150,6 +190,20 @@ func (h *Handler) GetBackup(c echo.Context) error {
 	return c.JSON(http.StatusOK, backup)
 }
 
+// DownloadBackup generates a signed download URL and redirects to it
+// @Summary      Download backup archive
+// @Description  Generates a pre-signed download URL (1 hour expiration) and redirects browser to download the backup ZIP file. Backup must have status 'ready'.
+// @Tags         backups
+// @Produce      application/zip
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Param        backupId path string true "Backup ID (UUID)"
+// @Success      302 "Redirect to pre-signed download URL"
+// @Failure      400 {object} apperror.Error "Backup not ready for download"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Backup not found"
+// @Failure      500 {object} apperror.Error "Failed to generate download URL"
+// @Router       /api/v1/organizations/{orgId}/backups/{backupId}/download [get]
+// @Security     bearerAuth
 func (h *Handler) DownloadBackup(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -191,6 +245,18 @@ func (h *Handler) DownloadBackup(c echo.Context) error {
 	return c.Redirect(http.StatusFound, url)
 }
 
+// DeleteBackup permanently deletes a backup
+// @Summary      Delete backup
+// @Description  Permanently deletes a backup and its associated storage files. Cannot be undone.
+// @Tags         backups
+// @Produce      json
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Param        backupId path string true "Backup ID (UUID)"
+// @Success      204 "Backup deleted successfully"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Failed to delete backup"
+// @Router       /api/v1/organizations/{orgId}/backups/{backupId} [delete]
+// @Security     bearerAuth
 func (h *Handler) DeleteBackup(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -211,12 +277,31 @@ func (h *Handler) DeleteBackup(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// RestoreBackup initiates a backup restore (not yet implemented)
+// @Summary      Restore project from backup
+// @Description  Initiates async restore of a project from backup archive (coming in next phase)
+// @Tags         backups
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      501 {object} map[string]interface{} "Not implemented - coming in next phase"
+// @Router       /api/v1/projects/{projectId}/restore [post]
+// @Security     bearerAuth
 func (h *Handler) RestoreBackup(c echo.Context) error {
 	return c.JSON(http.StatusNotImplemented, map[string]any{
 		"message": "restore functionality coming in next phase",
 	})
 }
 
+// GetRestoreStatus retrieves restore job status (not yet implemented)
+// @Summary      Get restore job status
+// @Description  Returns restore job progress and status (coming in next phase)
+// @Tags         backups
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        restoreId path string true "Restore job ID (UUID)"
+// @Success      501 {object} map[string]interface{} "Not implemented - coming in next phase"
+// @Router       /api/v1/projects/{projectId}/restores/{restoreId} [get]
+// @Security     bearerAuth
 func (h *Handler) GetRestoreStatus(c echo.Context) error {
 	return c.JSON(http.StatusNotImplemented, map[string]any{
 		"message": "restore functionality coming in next phase",

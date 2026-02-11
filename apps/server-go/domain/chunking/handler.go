@@ -22,6 +22,20 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // RecreateChunks handles POST /api/documents/:id/recreate-chunks
+// @Summary      Recreate document chunks
+// @Description  Deletes existing chunks for a document and regenerates them using the current chunking strategy
+// @Tags         chunking
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Document ID (UUID)"
+// @Success      200 {object} RecreateChunksResponse "Chunking result"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Document not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/documents/{id}/recreate-chunks [post]
+// @Security     bearerAuth
 func (h *Handler) RecreateChunks(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

@@ -21,7 +21,21 @@ func NewHandler(repo *Repository) *Handler {
 }
 
 // GetProjectTypes handles GET /api/type-registry/projects/:projectId
-// Returns all object types for a project
+// @Summary      List project types
+// @Description  Returns all object types registered for a project with optional filtering
+// @Tags         type-registry
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        enabled_only query boolean false "Filter enabled types only (default true)" default(true)
+// @Param        source query string false "Filter by source" Enums(template,custom,discovered,all)
+// @Param        search query string false "Search in type names"
+// @Success      200 {array} TypeRegistryEntryDTO "List of types"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/type-registry/projects/{projectId} [get]
+// @Security     bearerAuth
 func (h *Handler) GetProjectTypes(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -57,7 +71,20 @@ func (h *Handler) GetProjectTypes(c echo.Context) error {
 }
 
 // GetObjectType handles GET /api/type-registry/projects/:projectId/types/:typeName
-// Returns a specific object type definition with relationships
+// @Summary      Get object type
+// @Description  Returns a specific object type definition including incoming/outgoing relationships
+// @Tags         type-registry
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        typeName path string true "Object type name"
+// @Success      200 {object} TypeRegistryEntryDTO "Type definition"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Type not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/type-registry/projects/{projectId}/types/{typeName} [get]
+// @Security     bearerAuth
 func (h *Handler) GetObjectType(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -89,7 +116,18 @@ func (h *Handler) GetObjectType(c echo.Context) error {
 }
 
 // GetTypeStats handles GET /api/type-registry/projects/:projectId/stats
-// Returns statistics for a project's type registry
+// @Summary      Get type statistics
+// @Description  Returns statistics about a project's type registry including counts and object distribution
+// @Tags         type-registry
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {object} TypeRegistryStats "Type statistics"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/type-registry/projects/{projectId}/stats [get]
+// @Security     bearerAuth
 func (h *Handler) GetTypeStats(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

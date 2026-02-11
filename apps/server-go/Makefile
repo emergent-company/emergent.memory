@@ -1,4 +1,4 @@
-.PHONY: build run dev test clean deps tidy fmt lint swagger test-coverage test-coverage-html test-e2e test-e2e-coverage
+.PHONY: build run dev test clean deps tidy fmt lint swagger swagger-check swagger-validate test-coverage test-coverage-html test-e2e test-e2e-coverage
 
 # Build variables
 BINARY_NAME=server-go
@@ -30,8 +30,8 @@ fmt:
 lint:
 	golangci-lint run
 
-# Build the binary
-build:
+# Build the binary (includes swagger generation)
+build: swagger
 	go build $(GOFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
 
 # Run the server
@@ -98,6 +98,14 @@ swagger-fmt: swagger
 		jq . $(DOCS_DIR)/swagger.json > $(DOCS_DIR)/swagger.json.tmp && mv $(DOCS_DIR)/swagger.json.tmp $(DOCS_DIR)/swagger.json; \
 	fi
 
+# Check swagger annotation coverage (informational)
+swagger-check:
+	@./scripts/check-swagger-annotations.sh
+
+# Validate swagger annotation coverage (strict - fails if coverage < 95%)
+swagger-validate:
+	@./scripts/check-swagger-annotations.sh --strict
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
@@ -139,6 +147,8 @@ help:
 	@echo "Documentation:"
 	@echo "  swagger            - Generate OpenAPI/Swagger docs"
 	@echo "  swagger-fmt        - Generate and format swagger docs"
+	@echo "  swagger-check      - Check annotation coverage (informational)"
+	@echo "  swagger-validate   - Validate annotation coverage (fails if < 95%)"
 	@echo ""
 	@echo "Code Quality:"
 	@echo "  fmt                - Format code"

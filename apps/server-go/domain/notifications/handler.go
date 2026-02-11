@@ -20,6 +20,14 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // GetStats handles GET /api/notifications/stats
+// @Summary      Get notification statistics
+// @Description  Returns aggregated statistics for the current user's notifications (unread count, dismissed count, total count)
+// @Tags         notifications
+// @Produce      json
+// @Success      200 {object} NotificationStats "Notification statistics"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/notifications/stats [get]
+// @Security     bearerAuth
 func (h *Handler) GetStats(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -36,6 +44,14 @@ func (h *Handler) GetStats(c echo.Context) error {
 }
 
 // GetCounts handles GET /api/notifications/counts
+// @Summary      Get notification counts by tab
+// @Description  Returns notification counts grouped by tab (all, important, other, snoozed, cleared) for filtering purposes
+// @Tags         notifications
+// @Produce      json
+// @Success      200 {object} NotificationCountsResponse "Counts by notification tab"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/notifications/counts [get]
+// @Security     bearerAuth
 func (h *Handler) GetCounts(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -51,6 +67,18 @@ func (h *Handler) GetCounts(c echo.Context) error {
 }
 
 // List handles GET /api/notifications
+// @Summary      List notifications
+// @Description  Returns filtered list of notifications for the current user with optional tab, category, unread, and search filters
+// @Tags         notifications
+// @Produce      json
+// @Param        tab query string false "Tab filter (all, important, other, snoozed, cleared)" Enums(all, important, other, snoozed, cleared)
+// @Param        category query string false "Filter by notification category"
+// @Param        unread_only query boolean false "Show only unread notifications"
+// @Param        search query string false "Search notifications by title or message"
+// @Success      200 {object} NotificationListResponse "Filtered notification list"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/notifications [get]
+// @Security     bearerAuth
 func (h *Handler) List(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -79,6 +107,17 @@ func (h *Handler) List(c echo.Context) error {
 }
 
 // MarkRead handles PATCH /api/notifications/:id/read
+// @Summary      Mark notification as read
+// @Description  Marks a specific notification as read for the current user, updating read timestamp
+// @Tags         notifications
+// @Produce      json
+// @Param        id path string true "Notification ID (UUID)"
+// @Success      200 {object} map[string]string "Read confirmation"
+// @Failure      400 {object} apperror.Error "Missing notification id"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Notification not found"
+// @Router       /api/notifications/{id}/read [patch]
+// @Security     bearerAuth
 func (h *Handler) MarkRead(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -98,6 +137,17 @@ func (h *Handler) MarkRead(c echo.Context) error {
 }
 
 // Dismiss handles DELETE /api/notifications/:id/dismiss
+// @Summary      Dismiss notification
+// @Description  Dismisses a notification, hiding it from the notification list (marks as dismissed with timestamp)
+// @Tags         notifications
+// @Produce      json
+// @Param        id path string true "Notification ID (UUID)"
+// @Success      200 {object} map[string]string "Dismiss confirmation"
+// @Failure      400 {object} apperror.Error "Missing notification id"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Notification not found"
+// @Router       /api/notifications/{id}/dismiss [delete]
+// @Security     bearerAuth
 func (h *Handler) Dismiss(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -117,6 +167,14 @@ func (h *Handler) Dismiss(c echo.Context) error {
 }
 
 // MarkAllRead handles POST /api/notifications/mark-all-read
+// @Summary      Mark all notifications as read
+// @Description  Marks all unread notifications as read for the current user and returns the count of affected notifications
+// @Tags         notifications
+// @Produce      json
+// @Success      200 {object} map[string]interface{} "Confirmation with count of marked notifications"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/notifications/mark-all-read [post]
+// @Security     bearerAuth
 func (h *Handler) MarkAllRead(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

@@ -21,6 +21,20 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // StartDiscovery handles POST /discovery-jobs/projects/:projectId/start
+// @Summary      Start discovery job
+// @Description  Initiates a discovery job to analyze documents and extract graph object types and relationships
+// @Tags         discovery-jobs
+// @Accept       json
+// @Produce      json
+// @Param        X-Org-ID header string true "Organization ID"
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body StartDiscoveryRequest true "Discovery configuration"
+// @Success      200 {object} StartDiscoveryResponse "Discovery job started"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /discovery-jobs/projects/{projectId}/start [post]
+// @Security     bearerAuth
 func (h *Handler) StartDiscovery(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -61,6 +75,19 @@ func (h *Handler) StartDiscovery(c echo.Context) error {
 }
 
 // GetJobStatus handles GET /discovery-jobs/:jobId
+// @Summary      Get discovery job status
+// @Description  Retrieves the current status, progress, and results of a discovery job
+// @Tags         discovery-jobs
+// @Accept       json
+// @Produce      json
+// @Param        jobId path string true "Job ID (UUID)"
+// @Success      200 {object} JobStatusResponse "Job status details"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Job not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /discovery-jobs/{jobId} [get]
+// @Security     bearerAuth
 func (h *Handler) GetJobStatus(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -82,6 +109,18 @@ func (h *Handler) GetJobStatus(c echo.Context) error {
 }
 
 // ListJobs handles GET /discovery-jobs/projects/:projectId
+// @Summary      List discovery jobs
+// @Description  Returns all discovery jobs for a project
+// @Tags         discovery-jobs
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {array} JobListItem "List of jobs"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /discovery-jobs/projects/{projectId} [get]
+// @Security     bearerAuth
 func (h *Handler) ListJobs(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -103,6 +142,19 @@ func (h *Handler) ListJobs(c echo.Context) error {
 }
 
 // CancelJob handles DELETE /discovery-jobs/:jobId
+// @Summary      Cancel discovery job
+// @Description  Cancels a running discovery job
+// @Tags         discovery-jobs
+// @Accept       json
+// @Produce      json
+// @Param        jobId path string true "Job ID (UUID)"
+// @Success      200 {object} CancelJobResponse "Job cancelled"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Job not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /discovery-jobs/{jobId} [delete]
+// @Security     bearerAuth
 func (h *Handler) CancelJob(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -125,6 +177,22 @@ func (h *Handler) CancelJob(c echo.Context) error {
 }
 
 // FinalizeDiscovery handles POST /discovery-jobs/:jobId/finalize
+// @Summary      Finalize discovery job
+// @Description  Creates or extends a template pack from discovered types and relationships
+// @Tags         discovery-jobs
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        X-Org-ID header string true "Organization ID"
+// @Param        jobId path string true "Job ID (UUID)"
+// @Param        request body FinalizeDiscoveryRequest true "Finalization configuration"
+// @Success      200 {object} FinalizeDiscoveryResponse "Template pack created"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Job not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /discovery-jobs/{jobId}/finalize [post]
+// @Security     bearerAuth
 func (h *Handler) FinalizeDiscovery(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {

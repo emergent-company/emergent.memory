@@ -121,6 +121,16 @@ func (h *Handler) sendHeartbeats() {
 }
 
 // HandleStream handles GET /api/events/stream - SSE connection endpoint
+// @Summary      Subscribe to real-time events
+// @Description  Establish Server-Sent Events (SSE) connection to receive real-time entity updates for a project (documents, chunks, extraction jobs, graph objects, notifications). Connection requires projectId query parameter and sends periodic heartbeats.
+// @Tags         events
+// @Produce      text/event-stream
+// @Param        projectId query string true "Project ID to subscribe to"
+// @Success      200 {string} string "SSE stream (events: connected, entity.created, entity.updated, entity.deleted, entity.batch, heartbeat)"
+// @Failure      400 {object} apperror.Error "Missing projectId parameter"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/events/stream [get]
+// @Security     bearerAuth
 func (h *Handler) HandleStream(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -224,6 +234,14 @@ func (h *Handler) HandleStream(c echo.Context) error {
 }
 
 // HandleConnectionsCount handles GET /api/events/connections/count
+// @Summary      Get active SSE connection count
+// @Description  Returns the current number of active SSE connections to the events stream (for monitoring purposes)
+// @Tags         events
+// @Produce      json
+// @Success      200 {object} map[string]int "Active connection count"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/events/connections/count [get]
+// @Security     bearerAuth
 func (h *Handler) HandleConnectionsCount(c echo.Context) error {
 	h.connMu.RLock()
 	count := len(h.connections)
