@@ -38,8 +38,8 @@ COPY apps/server-go/ ./
 # Install swag for OpenAPI spec generation
 RUN go install github.com/swaggo/swag/cmd/swag@latest
 
-# Remove symlink and create real directory for swagger docs
-RUN rm -f docs && mkdir -p docs/swagger
+# Remove symlink/directory and create real directory for swagger docs
+RUN rm -rf docs && mkdir -p docs/swagger
 
 # Generate OpenAPI/Swagger documentation
 RUN /go/bin/swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
