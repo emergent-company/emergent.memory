@@ -1,4 +1,4 @@
-name: Emergent CLI
+name: Emergent CLI & Release
 
 on:
   push:
@@ -221,7 +221,7 @@ jobs:
           retention-days: 90
 
   release:
-    name: Create GitHub Release
+    name: Create Unified GitHub Release
     runs-on: ubuntu-latest
     needs: [build-cross]
     if: startsWith(github.ref, 'refs/tags/v')
@@ -255,7 +255,6 @@ jobs:
         run: |
           PREV_TAG=$(git tag --sort=-version:refname | grep "^v" | head -2 | tail -1 || echo "")
           if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "${{ github.ref_name }}" ]; then
-            # First release or no previous tag
             PREV_TAG=$(git rev-list --max-parents=0 HEAD | head -1)
           fi
           echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
@@ -265,19 +264,17 @@ jobs:
         id: commits
         run: |
           echo "commits<<EOF" >> $GITHUB_OUTPUT
-          git log ${{ steps.prev_tag.outputs.tag }}..${{ github.ref_name }} --pretty=format:"- %s (%h)" -- tools/emergent-cli/ >> $GITHUB_OUTPUT || echo "- Initial release" >> $GITHUB_OUTPUT
+          git log ${{ steps.prev_tag.outputs.tag }}..${{ github.ref_name }} --pretty=format:"- %s (%h)" >> $GITHUB_OUTPUT || echo "- Initial release" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Generate changelog with Copilot
+      - name: Generate changelog
         id: changelog
         uses: actions/github-script@v7
         with:
           script: |
             const commits = `${{ steps.commits.outputs.commits }}`;
-            const version = '${{ steps.version.outputs.version }}';
 
-            // Generate a structured changelog from commits
             const lines = commits.split('\n').filter(l => l.trim());
 
             let features = [];
@@ -297,127 +294,91 @@ jobs:
 
             let changelog = '';
             if (features.length > 0) {
-              changelog += '### ✨ Features\n' + features.join('\n') + '\n\n';
+              changelog += '### Features\n' + features.join('\n') + '\n\n';
             }
             if (fixes.length > 0) {
-              changelog += '### 🐛 Bug Fixes\n' + fixes.join('\n') + '\n\n';
+              changelog += '### Bug Fixes\n' + fixes.join('\n') + '\n\n';
             }
             if (other.length > 0) {
-              changelog += '### 📦 Other Changes\n' + other.join('\n') + '\n\n';
+              changelog += '### Other Changes\n' + other.join('\n') + '\n\n';
             }
 
             if (!changelog) {
-              changelog = '### 🚀 Initial Release\n\nFirst public release of the Emergent CLI.\n\n';
+              changelog = '### Initial Release\n\n';
             }
 
             core.setOutput('changelog', changelog);
 
-      - name: Generate release notes
-        id: notes
+      - name: Compute image owner
+        id: owner
+        run: echo "lc=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Generate unified release notes
         run: |
-          cat > release_notes.md << 'EOF'
-          # Emergent CLI ${{ steps.version.outputs.version }}
+          cat > release_notes.md << 'ENDOFNOTES'
+          ## What's Changed
 
           ${{ steps.changelog.outputs.changelog }}
 
-          ## Installation
+          ---
 
-          ### One-Line Install (Recommended)
+          ## Emergent CLI
+
+          ### One-Line Install
           ```bash
           curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/tools/emergent-cli/install.sh | bash
           ```
 
-          ### Linux (amd64)
-          ```bash
-          curl -L -o emergent-cli.tar.gz https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-linux-amd64.tar.gz
-          tar xzf emergent-cli.tar.gz
-          sudo mv emergent-cli-linux-amd64 /usr/local/bin/emergent
-          chmod +x /usr/local/bin/emergent
-          ```
+          ### Manual Install
 
-          ### Linux (arm64)
-          ```bash
-          curl -L -o emergent-cli.tar.gz https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-linux-arm64.tar.gz
-          tar xzf emergent-cli.tar.gz
-          sudo mv emergent-cli-linux-arm64 /usr/local/bin/emergent
-          chmod +x /usr/local/bin/emergent
-          ```
+          | OS | Architecture | Download |
+          |----|-------------|----------|
+          | Linux | amd64 | [emergent-cli-linux-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-linux-amd64.tar.gz) |
+          | Linux | arm64 | [emergent-cli-linux-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-linux-arm64.tar.gz) |
+          | Linux | arm | [emergent-cli-linux-arm.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-linux-arm.tar.gz) |
+          | macOS | Apple Silicon | [emergent-cli-darwin-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-darwin-arm64.tar.gz) |
+          | macOS | Intel | [emergent-cli-darwin-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-darwin-amd64.tar.gz) |
+          | Windows | amd64 | [emergent-cli-windows-amd64.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-windows-amd64.zip) |
+          | Windows | arm64 | [emergent-cli-windows-arm64.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-windows-arm64.zip) |
+          | FreeBSD | amd64 | [emergent-cli-freebsd-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-freebsd-amd64.tar.gz) |
 
-          ### macOS (Apple Silicon)
-          ```bash
-          curl -L -o emergent-cli.tar.gz https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-darwin-arm64.tar.gz
-          tar xzf emergent-cli.tar.gz
-          sudo mv emergent-cli-darwin-arm64 /usr/local/bin/emergent
-          chmod +x /usr/local/bin/emergent
-          ```
+          Verify downloads: `sha256sum -c checksums.txt`
 
-          ### macOS (Intel)
-          ```bash
-          curl -L -o emergent-cli.tar.gz https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-darwin-amd64.tar.gz
-          tar xzf emergent-cli.tar.gz
-          sudo mv emergent-cli-darwin-amd64 /usr/local/bin/emergent
-          chmod +x /usr/local/bin/emergent
-          ```
+          [CLI Documentation](https://github.com/${{ github.repository }}/blob/main/tools/emergent-cli/README.md)
 
-          ### Windows (PowerShell)
-          ```powershell
-          Invoke-WebRequest -Uri "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-windows-amd64.zip" -OutFile "emergent-cli.zip"
-          Expand-Archive -Path emergent-cli.zip -DestinationPath .
-          # Add emergent-cli-windows-amd64.exe to your PATH
-          ```
+          ---
 
-          ## Quick Start
-
-          ### Standalone Mode (Docker deployments)
-          ```bash
-          # Configure for local standalone server
-          export EMERGENT_SERVER_URL=http://localhost:3002
-          export EMERGENT_API_KEY=your-api-key-here
-
-          # Or create config file at ~/.emergent/config.yaml:
-          # server_url: http://localhost:3002
-          # api_key: your-api-key-here
-
-          # Test connection
-          emergent projects list
-          ```
-
-          ### OAuth Mode (Zitadel deployments)
-          ```bash
-          export EMERGENT_SERVER_URL=https://api.dev.emergent-company.ai
-          emergent auth login
-          emergent projects list
-          ```
-
-          ## Supported Platforms
-
-          | OS | Architecture | Binary |
-          |----|--------------|--------|
-          | Linux | amd64 | emergent-cli-linux-amd64.tar.gz |
-          | Linux | arm64 | emergent-cli-linux-arm64.tar.gz |
-          | Linux | arm | emergent-cli-linux-arm.tar.gz |
-          | macOS | arm64 (Apple Silicon) | emergent-cli-darwin-arm64.tar.gz |
-          | macOS | amd64 (Intel) | emergent-cli-darwin-amd64.tar.gz |
-          | Windows | amd64 | emergent-cli-windows-amd64.zip |
-          | Windows | arm64 | emergent-cli-windows-arm64.zip |
-          | FreeBSD | amd64 | emergent-cli-freebsd-amd64.tar.gz |
-
-          ## Documentation
-
-          - [CLI README](https://github.com/${{ github.repository }}/blob/main/tools/emergent-cli/README.md)
-          - [Standalone Mode Guide](https://github.com/${{ github.repository }}/blob/main/docs/EMERGENT_CLI_STANDALONE.md)
-
-          ## Verify Checksums
+          ## Go SDK
 
           ```bash
-          sha256sum -c checksums.txt
+          go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@${{ github.ref_name }}
           ```
-          EOF
+
+          ```go
+          import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
+          ```
+
+          [SDK Documentation](https://pkg.go.dev/github.com/emergent-company/emergent/apps/server-go/pkg/sdk@${{ github.ref_name }}) | [Examples](https://github.com/${{ github.repository }}/tree/main/apps/server-go/pkg/sdk/examples)
+
+          ---
+
+          ## Docker Image
+
+          ```bash
+          docker pull ghcr.io/${{ steps.owner.outputs.lc }}/emergent-server-with-cli:${{ steps.version.outputs.version }}
+          ```
+
+          Available platforms: `linux/amd64`, `linux/arm64`
+
+          Includes: Emergent API server, CLI, migration tooling, and Swagger docs.
+
+          [Deployment Guide](https://github.com/${{ github.repository }}/blob/main/deploy/minimal/README.md)
+          ENDOFNOTES
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          name: Emergent CLI ${{ steps.version.outputs.version }}
+          name: Emergent ${{ steps.version.outputs.version }}
           body_path: release_notes.md
           files: |
             release-artifacts/*
