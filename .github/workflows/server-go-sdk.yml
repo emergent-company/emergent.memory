@@ -106,6 +106,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Create SDK module tag
+        run: |
+          SDK_TAG="apps/server-go/pkg/sdk/${GITHUB_REF#refs/tags/}"
+          echo "Creating SDK module tag: $SDK_TAG"
+          git tag "$SDK_TAG"
+          git push origin "$SDK_TAG"
+
       - name: Extract version
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
@@ -184,12 +191,12 @@ jobs:
 
           ### Go Module
           ```bash
-          go get github.com/emergent/emergent-core/pkg/sdk@${{ github.ref_name }}
+          go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@${{ github.ref_name }}
           ```
 
           ### Import in your code
           ```go
-          import "github.com/emergent/emergent-core/pkg/sdk"
+          import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
           ```
 
           ## Quick Start
@@ -203,7 +210,7 @@ jobs:
               "fmt"
               "log"
 
-              "github.com/emergent/emergent-core/pkg/sdk"
+              "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
           )
 
           func main() {
@@ -244,7 +251,7 @@ jobs:
           ## Documentation
 
           - [SDK README](https://github.com/${{ github.repository }}/blob/main/apps/server-go/pkg/sdk/README.md)
-          - [API Documentation](https://pkg.go.dev/github.com/emergent/emergent-core/pkg/sdk@${{ github.ref_name }})
+          - [API Documentation](https://pkg.go.dev/github.com/emergent-company/emergent/apps/server-go/pkg/sdk@${{ github.ref_name }})
           - [Examples](https://github.com/${{ github.repository }}/tree/main/apps/server-go/pkg/sdk/examples)
 
           ## Service Clients
