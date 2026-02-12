@@ -40,7 +40,8 @@ RUN go mod download
 COPY apps/server-go/ ./
 
 # Generate swagger docs (runs on build platform, not target)
-RUN rm -rf docs/swagger && mkdir -p docs/swagger && \
+# Note: apps/server-go/docs may be a symlink on the host — remove it entirely first
+RUN rm -rf docs && mkdir -p docs/swagger && \
     /go/bin/swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
 
 # Cross-compile server binary for target platform
