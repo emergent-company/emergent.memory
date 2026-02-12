@@ -18,6 +18,22 @@ type Handler struct {
 	svc *Service
 }
 
+// splitCommaSeparated splits comma-separated query parameter values.
+// SDK clients typically send "labels=tag1,tag2" as a single comma-joined param,
+// but the server expects separate values. This normalizes both forms.
+func splitCommaSeparated(values []string) []string {
+	var result []string
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				result = append(result, trimmed)
+			}
+		}
+	}
+	return result
+}
+
 // NewHandler creates a new graph handler.
 func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
@@ -110,18 +126,18 @@ func (h *Handler) ListObjects(c echo.Context) error {
 		params.Cursor = &cursor
 	}
 
-	// Support both "type" (NestJS single) and "types" (array)
+	// Support both "type" (NestJS single) and "types" (array/comma-separated)
 	if singleType := c.QueryParam("type"); singleType != "" {
 		params.Type = &singleType
 	} else if types := c.QueryParams()["types"]; len(types) > 0 {
-		params.Types = types
+		params.Types = splitCommaSeparated(types)
 	}
 
-	// Support both "label" (NestJS single) and "labels" (array)
+	// Support both "label" (NestJS single) and "labels" (array/comma-separated)
 	if singleLabel := c.QueryParam("label"); singleLabel != "" {
 		params.Label = &singleLabel
 	} else if labels := c.QueryParams()["labels"]; len(labels) > 0 {
-		params.Labels = labels
+		params.Labels = splitCommaSeparated(labels)
 	}
 
 	if status := c.QueryParam("status"); status != "" {
@@ -169,6 +185,28 @@ func (h *Handler) ListObjects(c echo.Context) error {
 			return apperror.ErrBadRequest.WithMessage("invalid extraction_job_id")
 		}
 		params.ExtractionJobID = &id
+	}
+
+	// Parse property_filters (JSON-encoded array of PropertyFilter)
+	if pf := c.QueryParam("property_filters"); pf != "" {
+		var filters []PropertyFilter
+		if err := json.Unmarshal([]byte(pf), &filters); err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid property_filters: must be JSON array")
+		}
+		// Validate filters
+		validOps := map[string]bool{
+			"eq": true, "neq": true, "gt": true, "gte": true,
+			"lt": true, "lte": true, "contains": true, "exists": true, "in": true,
+		}
+		for _, f := range filters {
+			if f.Path == "" {
+				return apperror.ErrBadRequest.WithMessage("property_filters: path is required")
+			}
+			if !validOps[f.Op] {
+				return apperror.ErrBadRequest.WithMessage("property_filters: invalid operator '" + f.Op + "'")
+			}
+		}
+		params.PropertyFilters = filters
 	}
 
 	// Handle branch_id (NestJS allows "null" string for main branch)
@@ -851,12 +889,18 @@ func (h *Handler) FTSSearch(c echo.Context) error {
 		}
 	}
 
+	if offsetStr := c.QueryParam("offset"); offsetStr != "" {
+		if offset, err := strconv.Atoi(offsetStr); err == nil {
+			req.Offset = offset
+		}
+	}
+
 	if types := c.QueryParams()["types"]; len(types) > 0 {
-		req.Types = types
+		req.Types = splitCommaSeparated(types)
 	}
 
 	if labels := c.QueryParams()["labels"]; len(labels) > 0 {
-		req.Labels = labels
+		req.Labels = splitCommaSeparated(labels)
 	}
 
 	if status := c.QueryParam("status"); status != "" {
@@ -994,7 +1038,10 @@ func (h *Handler) HybridSearch(c echo.Context) error {
 // @Tags         graph
 // @Produce      json
 // @Param        X-Project-ID header string true "Project ID"
-// @Success      200 {array} string "List of unique tags"
+// @Param        type         query  string false "Filter to tags from objects of this type"
+// @Param        prefix       query  string false "Filter to tags starting with this prefix"
+// @Param        limit        query  int    false "Maximum number of tags to return"
+// @Success      200 {object} map[string][]string "List of unique tags"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Router       /api/graph/objects/tags [get]
 // @Security     bearerAuth
@@ -1009,12 +1056,27 @@ func (h *Handler) GetTags(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	tags, err := h.svc.GetTags(c.Request().Context(), projectID)
+	params := &GetDistinctTagsParams{}
+	if t := c.QueryParam("type"); t != "" {
+		params.ObjectType = t
+	}
+	if p := c.QueryParam("prefix"); p != "" {
+		params.Prefix = p
+	}
+	if l := c.QueryParam("limit"); l != "" {
+		limit, err := strconv.Atoi(l)
+		if err != nil || limit < 0 {
+			return apperror.ErrBadRequest.WithMessage("invalid limit parameter")
+		}
+		params.Limit = limit
+	}
+
+	tags, err := h.svc.GetTags(c.Request().Context(), projectID, params)
 	if err != nil {
 		return err
 	}
 
-	return c.JSON(http.StatusOK, tags)
+	return c.JSON(http.StatusOK, map[string][]string{"tags": tags})
 }
 
 // BulkUpdateStatus updates the status of multiple objects.
@@ -1184,11 +1246,11 @@ func (h *Handler) GetSimilarObjects(c echo.Context) error {
 	}
 
 	if labelsAll := c.QueryParams()["labelsAll"]; len(labelsAll) > 0 {
-		req.LabelsAll = labelsAll
+		req.LabelsAll = splitCommaSeparated(labelsAll)
 	}
 
 	if labelsAny := c.QueryParams()["labelsAny"]; len(labelsAny) > 0 {
-		req.LabelsAny = labelsAny
+		req.LabelsAny = splitCommaSeparated(labelsAny)
 	}
 
 	result, err := h.svc.FindSimilarObjects(c.Request().Context(), projectID, objectID, req)
@@ -1398,13 +1460,13 @@ func (h *Handler) GetMostAccessed(c echo.Context) error {
 	return c.JSON(http.StatusOK, response)
 }
 
-// GetUnused returns graph objects that haven't been accessed recently.
+// GetUnused retrieves objects that have not been accessed recently.
 // @Summary      Get unused objects
-// @Description  Returns graph objects that haven't been accessed in specified days for cleanup analytics
+// @Description  List graph objects that have not been accessed within a specified number of days
 // @Tags         graph
 // @Produce      json
-// @Param        limit query int false "Max results (default: 50, max: 200)"
-// @Param        days query int false "Days threshold for unused (default: 30)"
+// @Param        limit query int false "Max results (default 50)"
+// @Param        days query int false "Days idle threshold (default 30)"
 // @Param        X-Project-ID header string true "Project ID"
 // @Success      200 {object} UnusedObjectsResponse "Unused objects"
 // @Failure      400 {object} apperror.Error "Invalid parameters"
@@ -1442,4 +1504,97 @@ func (h *Handler) GetUnused(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, response)
+}
+
+// =============================================================================
+// Bulk Create Handlers
+// =============================================================================
+
+// BulkCreateObjects creates multiple graph objects in a single request.
+// @Summary      Bulk create objects
+// @Description  Create multiple graph objects in a single request with partial success semantics
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkCreateObjectsRequest true "Objects to create (max 100)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} BulkCreateObjectsResponse "Create results"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/bulk [post]
+// @Security     bearerAuth
+func (h *Handler) BulkCreateObjects(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req BulkCreateObjectsRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.Items) == 0 {
+		return apperror.ErrBadRequest.WithMessage("items is required and must not be empty")
+	}
+	if len(req.Items) > 100 {
+		return apperror.ErrBadRequest.WithMessage("items must not exceed 100")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkCreateObjects(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// BulkCreateRelationships creates multiple graph relationships in a single request.
+// @Summary      Bulk create relationships
+// @Description  Create multiple graph relationships in a single request with partial success semantics
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkCreateRelationshipsRequest true "Relationships to create (max 100)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} BulkCreateRelationshipsResponse "Create results"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/bulk [post]
+// @Security     bearerAuth
+func (h *Handler) BulkCreateRelationships(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req BulkCreateRelationshipsRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.Items) == 0 {
+		return apperror.ErrBadRequest.WithMessage("items is required and must not be empty")
+	}
+	if len(req.Items) > 100 {
+		return apperror.ErrBadRequest.WithMessage("items must not exceed 100")
+	}
+
+	result, err := h.svc.BulkCreateRelationships(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
 	sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
@@ -18,6 +19,7 @@ type Client struct {
 	http      *http.Client
 	base      string
 	auth      auth.Provider
+	mu        sync.RWMutex
 	orgID     string
 	projectID string
 }
@@ -108,6 +110,8 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 
 // SetContext sets the organization and project context.
 func (c *Client) SetContext(orgID, projectID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.orgID = orgID
 	c.projectID = projectID
 }
@@ -126,11 +130,15 @@ func (c *Client) prepareRequest(ctx context.Context, method, reqURL string, body
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
 
-	if c.orgID != "" {
-		req.Header.Set("X-Org-ID", c.orgID)
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+	if orgID != "" {
+		req.Header.Set("X-Org-ID", orgID)
 	}
-	if c.projectID != "" {
-		req.Header.Set("X-Project-ID", c.projectID)
+	if projectID != "" {
+		req.Header.Set("X-Project-ID", projectID)
 	}
 
 	return req, nil

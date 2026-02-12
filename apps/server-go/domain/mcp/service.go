@@ -1858,7 +1858,7 @@ func (s *Service) executeListTags(ctx context.Context, projectID string) (*ToolR
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
-	tags, err := s.graphService.GetTags(ctx, projectUUID)
+	tags, err := s.graphService.GetTags(ctx, projectUUID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("list tags: %w", err)
 	}

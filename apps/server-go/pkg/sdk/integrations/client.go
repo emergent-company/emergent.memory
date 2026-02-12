@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
@@ -19,6 +20,7 @@ type Client struct {
 	http      *http.Client
 	base      string
 	auth      auth.Provider
+	mu        sync.RWMutex
 	orgID     string
 	projectID string
 }
@@ -36,6 +38,8 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 
 // SetContext sets the organization and project context.
 func (c *Client) SetContext(orgID, projectID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.orgID = orgID
 	c.projectID = projectID
 }
@@ -122,12 +126,17 @@ type TriggerSyncConfig struct {
 // ListAvailable lists all available integration providers.
 // GET /api/integrations/available
 func (c *Client) ListAvailable(ctx context.Context) ([]AvailableIntegration, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/integrations/available", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -153,12 +162,17 @@ func (c *Client) ListAvailable(ctx context.Context) ([]AvailableIntegration, err
 // List lists all configured integrations for the current project.
 // GET /api/integrations
 func (c *Client) List(ctx context.Context) ([]Integration, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/integrations", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -184,12 +198,17 @@ func (c *Client) List(ctx context.Context) ([]Integration, error) {
 // Get gets a specific integration by name.
 // GET /api/integrations/:name
 func (c *Client) Get(ctx context.Context, name string) (*Integration, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/integrations/"+name, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -215,12 +234,17 @@ func (c *Client) Get(ctx context.Context, name string) (*Integration, error) {
 // GetPublic gets the public (non-sensitive) view of an integration.
 // GET /api/integrations/:name/public
 func (c *Client) GetPublic(ctx context.Context, name string) (*PublicIntegration, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/integrations/"+name+"/public", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -246,6 +270,11 @@ func (c *Client) GetPublic(ctx context.Context, name string) (*PublicIntegration
 // Create creates a new integration.
 // POST /api/integrations
 func (c *Client) Create(ctx context.Context, req *CreateIntegrationRequest) (*Integration, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -256,8 +285,8 @@ func (c *Client) Create(ctx context.Context, req *CreateIntegrationRequest) (*In
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -283,6 +312,11 @@ func (c *Client) Create(ctx context.Context, req *CreateIntegrationRequest) (*In
 // Update updates an existing integration (full replacement).
 // PUT /api/integrations/:name
 func (c *Client) Update(ctx context.Context, name string, req *UpdateIntegrationRequest) (*Integration, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -293,8 +327,8 @@ func (c *Client) Update(ctx context.Context, name string, req *UpdateIntegration
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -320,12 +354,17 @@ func (c *Client) Update(ctx context.Context, name string, req *UpdateIntegration
 // Delete deletes an integration.
 // DELETE /api/integrations/:name
 func (c *Client) Delete(ctx context.Context, name string) error {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.base+"/api/integrations/"+name, nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return fmt.Errorf("authenticate: %w", err)
@@ -349,12 +388,17 @@ func (c *Client) Delete(ctx context.Context, name string) error {
 // TestConnection tests the connection for an integration.
 // POST /api/integrations/:name/test
 func (c *Client) TestConnection(ctx context.Context, name string) (*TestConnectionResponse, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/integrations/"+name+"/test", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -380,6 +424,11 @@ func (c *Client) TestConnection(ctx context.Context, name string) (*TestConnecti
 // TriggerSync triggers a sync for an integration.
 // POST /api/integrations/:name/sync
 func (c *Client) TriggerSync(ctx context.Context, name string, config *TriggerSyncConfig) (*TriggerSyncResponse, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	var body io.Reader
 	if config != nil {
 		b, err := json.Marshal(config)
@@ -396,8 +445,8 @@ func (c *Client) TriggerSync(ctx context.Context, name string, config *TriggerSy
 	if config != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)

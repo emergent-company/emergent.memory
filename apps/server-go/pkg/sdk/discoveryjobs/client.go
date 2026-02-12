@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
@@ -19,6 +20,7 @@ type Client struct {
 	http      *http.Client
 	base      string
 	auth      auth.Provider
+	mu        sync.RWMutex
 	orgID     string
 	projectID string
 }
@@ -36,6 +38,8 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 
 // SetContext sets the organization and project context.
 func (c *Client) SetContext(orgID, projectID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.orgID = orgID
 	c.projectID = projectID
 }
@@ -132,6 +136,11 @@ type FinalizeDiscoveryResponse struct {
 // StartDiscovery starts a new schema discovery job.
 // POST /api/discovery-jobs
 func (c *Client) StartDiscovery(ctx context.Context, req *StartDiscoveryRequest) (*StartDiscoveryResponse, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -142,8 +151,8 @@ func (c *Client) StartDiscovery(ctx context.Context, req *StartDiscoveryRequest)
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -169,12 +178,17 @@ func (c *Client) StartDiscovery(ctx context.Context, req *StartDiscoveryRequest)
 // ListJobs lists all discovery jobs for the current project.
 // GET /api/discovery-jobs
 func (c *Client) ListJobs(ctx context.Context) ([]JobListItem, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/discovery-jobs", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -200,12 +214,17 @@ func (c *Client) ListJobs(ctx context.Context) ([]JobListItem, error) {
 // GetJobStatus gets the status of a specific discovery job.
 // GET /api/discovery-jobs/:id
 func (c *Client) GetJobStatus(ctx context.Context, jobID string) (*JobStatusResponse, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/discovery-jobs/"+jobID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -231,12 +250,17 @@ func (c *Client) GetJobStatus(ctx context.Context, jobID string) (*JobStatusResp
 // CancelJob cancels a running discovery job.
 // POST /api/discovery-jobs/:id/cancel
 func (c *Client) CancelJob(ctx context.Context, jobID string) (*CancelJobResponse, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/discovery-jobs/"+jobID+"/cancel", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -262,6 +286,11 @@ func (c *Client) CancelJob(ctx context.Context, jobID string) (*CancelJobRespons
 // FinalizeDiscovery finalizes a discovery job into a template pack.
 // POST /api/discovery-jobs/:id/finalize
 func (c *Client) FinalizeDiscovery(ctx context.Context, jobID string, req *FinalizeDiscoveryRequest) (*FinalizeDiscoveryResponse, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -272,8 +301,8 @@ func (c *Client) FinalizeDiscovery(ctx context.Context, jobID string, req *Final
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)

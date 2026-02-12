@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 
 	"github.com/emergent/emergent-core/domain/extraction/agents"
 	"github.com/emergent/emergent-core/pkg/apperror"
@@ -30,6 +31,13 @@ type SchemaProvider interface {
 	GetProjectSchemas(ctx context.Context, projectID string) (*ExtractionSchemas, error)
 }
 
+// InverseTypeProvider resolves inverse relationship types from template pack schemas.
+// For a given project and relationship type (e.g. "PARENT_OF"), it returns the inverse
+// type key (e.g. "CHILD_OF") if the template pack declares an inverseType field.
+type InverseTypeProvider interface {
+	GetInverseType(ctx context.Context, projectID string, relType string) (string, bool)
+}
+
 // EmbeddingService provides embedding generation for triplet text.
 type EmbeddingService interface {
 	EmbedQuery(ctx context.Context, query string) ([]float32, error)
@@ -37,10 +45,11 @@ type EmbeddingService interface {
 
 // Service handles business logic for graph operations.
 type Service struct {
-	repo           *Repository
-	log            *slog.Logger
-	schemaProvider SchemaProvider
-	embeddings     EmbeddingService
+	repo                *Repository
+	log                 *slog.Logger
+	schemaProvider      SchemaProvider
+	inverseTypeProvider InverseTypeProvider
+	embeddings          EmbeddingService
 
 	// Metrics
 	metricsMu          sync.RWMutex
@@ -50,12 +59,13 @@ type Service struct {
 }
 
 // NewService creates a new graph service.
-func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, embeddings EmbeddingService) *Service {
+func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService) *Service {
 	return &Service{
-		repo:           repo,
-		log:            log.With(logger.Scope("graph.svc")),
-		schemaProvider: schemaProvider,
-		embeddings:     embeddings,
+		repo:                repo,
+		log:                 log.With(logger.Scope("graph.svc")),
+		schemaProvider:      schemaProvider,
+		inverseTypeProvider: inverseTypeProvider,
+		embeddings:          embeddings,
 	}
 }
 
@@ -745,11 +755,19 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 			}
 		}
 
+		// Auto-create inverse relationship if template pack declares inverseType
+		var inverseResponse *GraphRelationshipResponse
+		if s.inverseTypeProvider != nil {
+			inverseResponse = s.maybeCreateInverse(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj, dstObj, req.Properties, req.Weight)
+		}
+
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
 
-		return rel.ToResponse(), nil
+		resp := rel.ToResponse()
+		resp.InverseRelationship = inverseResponse
+		return resp, nil
 	}
 
 	// Relationship exists - check if properties differ
@@ -838,6 +856,144 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	// Return the new version
 	newHead, _ := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, req.SrcID, req.DstID)
 	return newHead.ToResponse(), nil
+}
+
+// maybeCreateInverse checks if the template pack declares an inverseType for the given
+// relationship type, and if so, creates the inverse relationship (swapped src/dst) within
+// the same transaction. Returns the inverse response or nil if no inverse was created.
+// Errors are logged but do not fail the primary relationship creation.
+func (s *Service) maybeCreateInverse(
+	ctx context.Context,
+	tx bun.Tx,
+	projectID uuid.UUID,
+	branchID *uuid.UUID,
+	relType string,
+	srcObj, dstObj *GraphObject,
+	properties map[string]any,
+	weight *float32,
+) *GraphRelationshipResponse {
+	inverseType, ok := s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), relType)
+	if !ok || inverseType == "" {
+		return nil
+	}
+
+	s.log.Debug("creating inverse relationship",
+		slog.String("primary_type", relType),
+		slog.String("inverse_type", inverseType),
+		slog.String("src_id", dstObj.ID.String()),
+		slog.String("dst_id", srcObj.ID.String()))
+
+	// Guard: if the inverse type maps back to the original type, only create the inverse
+	// from the lexicographically smaller type to prevent infinite loops.
+	// e.g., PARENT_OF -> CHILD_OF -> PARENT_OF would be a loop.
+	reverseInverse, revOk := s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), inverseType)
+	if revOk && reverseInverse == relType {
+		// Both types point to each other. Only create inverse from the "first" type alphabetically.
+		if relType > inverseType {
+			s.log.Debug("skipping inverse creation: inverse type is primary side",
+				slog.String("rel_type", relType),
+				slog.String("inverse_type", inverseType))
+			return nil
+		}
+	}
+
+	// Acquire advisory lock for the inverse relationship identity (swapped endpoints)
+	if err := s.repo.AcquireRelationshipLock(ctx, tx, projectID, inverseType, dstObj.ID, srcObj.ID); err != nil {
+		s.log.Warn("failed to acquire lock for inverse relationship, skipping",
+			slog.String("inverse_type", inverseType),
+			slog.String("error", err.Error()))
+		return nil
+	}
+
+	// Check if inverse already exists
+	existingInverse, err := s.repo.GetRelationshipHead(ctx, projectID, branchID, inverseType, dstObj.ID, srcObj.ID)
+	if err != nil {
+		s.log.Warn("failed to check existing inverse relationship, skipping",
+			slog.String("inverse_type", inverseType),
+			slog.String("error", err.Error()))
+		return nil
+	}
+
+	if existingInverse != nil && existingInverse.DeletedAt == nil {
+		// Inverse already exists and is not deleted — return it as-is
+		s.log.Debug("inverse relationship already exists",
+			slog.String("inverse_id", existingInverse.ID.String()))
+		return existingInverse.ToResponse()
+	}
+
+	if existingInverse != nil && existingInverse.DeletedAt != nil {
+		// Was deleted — restore it by creating a new version
+		newVersion := &GraphRelationship{
+			Properties: properties,
+			Weight:     weight,
+			DeletedAt:  nil,
+		}
+		newVersion.ChangeSummary = computeChangeSummary(existingInverse.Properties, properties)
+
+		if err := s.repo.CreateRelationshipVersion(ctx, tx, existingInverse, newVersion); err != nil {
+			s.log.Warn("failed to restore inverse relationship, skipping",
+				slog.String("inverse_type", inverseType),
+				slog.String("error", err.Error()))
+			return nil
+		}
+
+		// Generate embedding for the restored inverse
+		inverseTripletText := generateTripletText(dstObj, srcObj, inverseType)
+		invEmbedding, invEmbedTimestamp, invEmbedErr := s.embedTripletText(ctx, inverseTripletText)
+		if invEmbedErr == nil && invEmbedding != nil {
+			_, _ = tx.NewRaw(`UPDATE kb.graph_relationships 
+				SET embedding = ?::vector, embedding_updated_at = ? 
+				WHERE id = ?`,
+				vectorToString(invEmbedding), invEmbedTimestamp, newVersion.ID).Exec(ctx)
+		}
+
+		return newVersion.ToResponse()
+	}
+
+	// Create brand new inverse relationship
+	inverseRel := &GraphRelationship{
+		ProjectID:  projectID,
+		BranchID:   branchID,
+		Type:       inverseType,
+		SrcID:      dstObj.ID, // swapped
+		DstID:      srcObj.ID, // swapped
+		Properties: properties,
+		Weight:     weight,
+	}
+	inverseRel.ChangeSummary = computeChangeSummary(nil, properties)
+
+	if err := s.repo.CreateRelationship(ctx, tx, inverseRel); err != nil {
+		s.log.Warn("failed to create inverse relationship, skipping",
+			slog.String("inverse_type", inverseType),
+			slog.String("error", err.Error()))
+		return nil
+	}
+
+	// Generate embedding for the inverse triplet
+	inverseTripletText := generateTripletText(dstObj, srcObj, inverseType)
+	invEmbedding, invEmbedTimestamp, invEmbedErr := s.embedTripletText(ctx, inverseTripletText)
+	if invEmbedErr != nil {
+		s.log.Warn("failed to generate embedding for inverse relationship, continuing without",
+			slog.String("relationship_id", inverseRel.ID.String()),
+			slog.String("error", invEmbedErr.Error()))
+	} else if invEmbedding != nil {
+		_, updateErr := tx.NewRaw(`UPDATE kb.graph_relationships 
+			SET embedding = ?::vector, embedding_updated_at = ? 
+			WHERE id = ?`,
+			vectorToString(invEmbedding), invEmbedTimestamp, inverseRel.ID).Exec(ctx)
+		if updateErr != nil {
+			s.log.Warn("failed to store embedding for inverse relationship, continuing without",
+				slog.String("relationship_id", inverseRel.ID.String()),
+				slog.String("error", updateErr.Error()))
+		}
+	}
+
+	s.log.Info("auto-created inverse relationship",
+		slog.String("primary_type", relType),
+		slog.String("inverse_type", inverseType),
+		slog.String("inverse_id", inverseRel.ID.String()))
+
+	return inverseRel.ToResponse()
 }
 
 // PatchRelationship updates a relationship by creating a new version.
@@ -1051,6 +1207,7 @@ func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSe
 		Status:         req.Status,
 		IncludeDeleted: req.IncludeDeleted,
 		Limit:          limit + 1, // Fetch one extra to determine hasMore
+		Offset:         req.Offset,
 	}
 
 	results, err := s.repo.FTSSearch(ctx, params)
@@ -1088,6 +1245,7 @@ func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSe
 		Data:    data,
 		Total:   len(data),
 		HasMore: hasMore,
+		Offset:  req.Offset,
 	}, nil
 }
 
@@ -1111,6 +1269,7 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 		IncludeDeleted: req.IncludeDeleted,
 		MaxDistance:    req.MaxDistance,
 		Limit:          limit + 1, // Fetch one extra to determine hasMore
+		Offset:         req.Offset,
 	}
 
 	results, err := s.repo.VectorSearch(ctx, params)
@@ -1150,6 +1309,7 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 		Data:    data,
 		Total:   len(data),
 		HasMore: hasMore,
+		Offset:  req.Offset,
 	}, nil
 }
 
@@ -1361,7 +1521,13 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 		return fusedResults[i].fusedScore > fusedResults[j].fusedScore
 	})
 
-	// Apply limit
+	// Apply offset and limit
+	offset := req.Offset
+	if offset > len(fusedResults) {
+		offset = len(fusedResults)
+	}
+	fusedResults = fusedResults[offset:]
+
 	hasMore := len(fusedResults) > limit
 	if hasMore {
 		fusedResults = fusedResults[:limit]
@@ -1386,6 +1552,7 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 		Data:    data,
 		Total:   len(data),
 		HasMore: hasMore,
+		Offset:  req.Offset,
 		Meta:    &SearchResponseMeta{ElapsedMs: totalMs},
 	}
 
@@ -1434,8 +1601,8 @@ func zScoreNormalize(score, mean, std float32) float32 {
 }
 
 // GetTags returns all distinct tags (labels) used by objects in a project.
-func (s *Service) GetTags(ctx context.Context, projectID uuid.UUID) ([]string, error) {
-	return s.repo.GetDistinctTags(ctx, projectID)
+func (s *Service) GetTags(ctx context.Context, projectID uuid.UUID, params *GetDistinctTagsParams) ([]string, error) {
+	return s.repo.GetDistinctTags(ctx, projectID, params)
 }
 
 // BulkUpdateStatus updates the status of multiple objects.
@@ -1487,6 +1654,77 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 	}, nil
 }
 
+// BulkCreateObjects creates multiple objects in a single batch.
+// Each object is created independently — failures do not roll back other successes.
+func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, req *BulkCreateObjectsRequest, actorID *uuid.UUID) (*BulkCreateObjectsResponse, error) {
+	results := make([]BulkCreateObjectResult, len(req.Items))
+	successCount := 0
+	failedCount := 0
+
+	for i, item := range req.Items {
+		itemCopy := item // avoid loop variable capture
+		resp, err := s.Create(ctx, projectID, &itemCopy, actorID)
+		if err != nil {
+			errMsg := err.Error()
+			results[i] = BulkCreateObjectResult{
+				Index:   i,
+				Success: false,
+				Error:   &errMsg,
+			}
+			failedCount++
+		} else {
+			results[i] = BulkCreateObjectResult{
+				Index:   i,
+				Success: true,
+				Object:  resp,
+			}
+			successCount++
+		}
+	}
+
+	return &BulkCreateObjectsResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
+// BulkCreateRelationships creates multiple relationships in a single batch.
+// Each relationship is created independently — failures do not roll back other successes.
+// Inverse relationships are auto-created per template pack inverseType declarations.
+func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UUID, req *BulkCreateRelationshipsRequest) (*BulkCreateRelationshipsResponse, error) {
+	results := make([]BulkCreateRelationshipResult, len(req.Items))
+	successCount := 0
+	failedCount := 0
+
+	for i, item := range req.Items {
+		itemCopy := item // avoid loop variable capture
+		resp, err := s.CreateRelationship(ctx, projectID, &itemCopy)
+		if err != nil {
+			errMsg := err.Error()
+			results[i] = BulkCreateRelationshipResult{
+				Index:   i,
+				Success: false,
+				Error:   &errMsg,
+			}
+			failedCount++
+		} else {
+			results[i] = BulkCreateRelationshipResult{
+				Index:        i,
+				Success:      true,
+				Relationship: resp,
+			}
+			successCount++
+		}
+	}
+
+	return &BulkCreateRelationshipsResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
 // =============================================================================
 // Search with Neighbors
 // =============================================================================
@@ -1532,9 +1770,12 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 	}
 
 	// Build primary results
-	primaryResults := make([]*GraphObjectResponse, len(ftsResults))
+	primaryResults := make([]*SearchWithNeighborsResultItem, len(ftsResults))
 	for i, r := range ftsResults {
-		primaryResults[i] = r.Object.ToResponse()
+		primaryResults[i] = &SearchWithNeighborsResultItem{
+			Object: r.Object.ToResponse(),
+			Score:  r.Rank,
+		}
 	}
 
 	response := &SearchWithNeighborsResponse{
@@ -1653,6 +1894,7 @@ func (s *Service) FindSimilarObjects(ctx context.Context, projectID, objectID uu
 	// Convert to response type
 	response := make([]*SimilarObjectResult, len(results))
 	for i, r := range results {
+		createdAt := r.CreatedAt
 		response[i] = &SimilarObjectResult{
 			ID:          r.ID,
 			CanonicalID: &r.CanonicalID,
@@ -1660,6 +1902,12 @@ func (s *Service) FindSimilarObjects(ctx context.Context, projectID, objectID uu
 			Distance:    r.Distance,
 			ProjectID:   &r.ProjectID,
 			BranchID:    r.BranchID,
+			Type:        r.Type,
+			Key:         r.Key,
+			Status:      r.Status,
+			Properties:  r.Properties,
+			Labels:      r.Labels,
+			CreatedAt:   &createdAt,
 		}
 	}
 

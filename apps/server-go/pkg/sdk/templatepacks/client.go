@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
@@ -20,6 +21,7 @@ type Client struct {
 	http      *http.Client
 	base      string
 	auth      auth.Provider
+	mu        sync.RWMutex
 	orgID     string
 	projectID string
 }
@@ -37,6 +39,8 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 
 // SetContext sets the organization and project context.
 func (c *Client) SetContext(orgID, projectID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.orgID = orgID
 	c.projectID = projectID
 }
@@ -70,6 +74,29 @@ type RelationshipTypeSchema struct {
 	PackName    string `json:"packName,omitempty"`
 }
 
+// TemplatePack is the full template pack representation returned from create/get endpoints.
+type TemplatePack struct {
+	ID                      string          `json:"id"`
+	Name                    string          `json:"name"`
+	Version                 string          `json:"version"`
+	Description             *string         `json:"description,omitempty"`
+	Author                  *string         `json:"author,omitempty"`
+	Source                  *string         `json:"source,omitempty"`
+	License                 *string         `json:"license,omitempty"`
+	RepositoryURL           *string         `json:"repositoryUrl,omitempty"`
+	DocumentationURL        *string         `json:"documentationUrl,omitempty"`
+	ObjectTypeSchemas       json.RawMessage `json:"objectTypeSchemas,omitempty"`
+	RelationshipTypeSchemas json.RawMessage `json:"relationshipTypeSchemas,omitempty"`
+	UIConfigs               json.RawMessage `json:"uiConfigs,omitempty"`
+	ExtractionPrompts       json.RawMessage `json:"extractionPrompts,omitempty"`
+	Checksum                *string         `json:"checksum,omitempty"`
+	Draft                   bool            `json:"draft"`
+	PublishedAt             *time.Time      `json:"publishedAt,omitempty"`
+	DeprecatedAt            *time.Time      `json:"deprecatedAt,omitempty"`
+	CreatedAt               time.Time       `json:"createdAt"`
+	UpdatedAt               time.Time       `json:"updatedAt"`
+}
+
 // TemplatePackListItem is a simplified template pack for listing.
 type TemplatePackListItem struct {
 	ID          string  `json:"id"`
@@ -77,6 +104,21 @@ type TemplatePackListItem struct {
 	Version     string  `json:"version"`
 	Description *string `json:"description,omitempty"`
 	Author      *string `json:"author,omitempty"`
+}
+
+// CreatePackRequest is the request to create a new template pack.
+type CreatePackRequest struct {
+	Name                    string          `json:"name"`
+	Version                 string          `json:"version"`
+	Description             *string         `json:"description,omitempty"`
+	Author                  *string         `json:"author,omitempty"`
+	License                 *string         `json:"license,omitempty"`
+	RepositoryURL           *string         `json:"repository_url,omitempty"`
+	DocumentationURL        *string         `json:"documentation_url,omitempty"`
+	ObjectTypeSchemas       json.RawMessage `json:"object_type_schemas"`
+	RelationshipTypeSchemas json.RawMessage `json:"relationship_type_schemas,omitempty"`
+	UIConfigs               json.RawMessage `json:"ui_configs,omitempty"`
+	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
 }
 
 // InstalledPackItem represents a template pack installed on a project.
@@ -128,12 +170,17 @@ func (c *Client) basePath(projectID string) string {
 // GetCompiledTypes returns compiled object and relationship type definitions for a project.
 // GET /api/template-packs/projects/:projectId/compiled-types
 func (c *Client) GetCompiledTypes(ctx context.Context, projectID string) (*CompiledTypesResponse, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	ctxProjectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.basePath(projectID)+"/compiled-types", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", ctxProjectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -159,12 +206,17 @@ func (c *Client) GetCompiledTypes(ctx context.Context, projectID string) (*Compi
 // GetAvailablePacks returns template packs available for a project to install.
 // GET /api/template-packs/projects/:projectId/available
 func (c *Client) GetAvailablePacks(ctx context.Context, projectID string) ([]TemplatePackListItem, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	ctxProjectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.basePath(projectID)+"/available", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", ctxProjectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -190,12 +242,17 @@ func (c *Client) GetAvailablePacks(ctx context.Context, projectID string) ([]Tem
 // GetInstalledPacks returns template packs currently installed on a project.
 // GET /api/template-packs/projects/:projectId/installed
 func (c *Client) GetInstalledPacks(ctx context.Context, projectID string) ([]InstalledPackItem, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	ctxProjectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.basePath(projectID)+"/installed", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", ctxProjectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -221,6 +278,11 @@ func (c *Client) GetInstalledPacks(ctx context.Context, projectID string) ([]Ins
 // AssignPack assigns a template pack to a project.
 // POST /api/template-packs/projects/:projectId/assign
 func (c *Client) AssignPack(ctx context.Context, projectID string, req *AssignPackRequest) (*ProjectTemplatePack, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	ctxProjectID := c.projectID
+	c.mu.RUnlock()
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -231,8 +293,8 @@ func (c *Client) AssignPack(ctx context.Context, projectID string, req *AssignPa
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", ctxProjectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -258,6 +320,11 @@ func (c *Client) AssignPack(ctx context.Context, projectID string, req *AssignPa
 // UpdateAssignment updates a template pack assignment (e.g., toggle active status).
 // PATCH /api/template-packs/projects/:projectId/assignments/:assignmentId
 func (c *Client) UpdateAssignment(ctx context.Context, projectID, assignmentID string, req *UpdateAssignmentRequest) (*UpdateAssignmentResponse, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	ctxProjectID := c.projectID
+	c.mu.RUnlock()
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -268,8 +335,8 @@ func (c *Client) UpdateAssignment(ctx context.Context, projectID, assignmentID s
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", ctxProjectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -295,12 +362,17 @@ func (c *Client) UpdateAssignment(ctx context.Context, projectID, assignmentID s
 // DeleteAssignment removes a template pack assignment from a project.
 // DELETE /api/template-packs/projects/:projectId/assignments/:assignmentId
 func (c *Client) DeleteAssignment(ctx context.Context, projectID, assignmentID string) error {
+	c.mu.RLock()
+	orgID := c.orgID
+	ctxProjectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.basePath(projectID)+"/assignments/"+assignmentID, nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", ctxProjectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return fmt.Errorf("authenticate: %w", err)
@@ -317,6 +389,124 @@ func (c *Client) DeleteAssignment(ctx context.Context, projectID, assignmentID s
 	}
 
 	// Drain response body
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// --- Global Template Pack CRUD ---
+
+// packPath returns the base path for global (non-project-scoped) template pack operations.
+func (c *Client) packPath() string {
+	return c.base + "/api/template-packs"
+}
+
+// CreatePack creates a new template pack.
+// POST /api/template-packs
+func (c *Client) CreatePack(ctx context.Context, req *CreatePackRequest) (*TemplatePack, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	ctxProjectID := c.projectID
+	c.mu.RUnlock()
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.packPath(), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", ctxProjectID)
+
+	if err := c.auth.Authenticate(httpReq); err != nil {
+		return nil, fmt.Errorf("authenticate: %w", err)
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result TemplatePack
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetPack retrieves a template pack by ID.
+// GET /api/template-packs/:packId
+func (c *Client) GetPack(ctx context.Context, packID string) (*TemplatePack, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	ctxProjectID := c.projectID
+	c.mu.RUnlock()
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.packPath()+"/"+packID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", ctxProjectID)
+
+	if err := c.auth.Authenticate(httpReq); err != nil {
+		return nil, fmt.Errorf("authenticate: %w", err)
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result TemplatePack
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &result, nil
+}
+
+// DeletePack deletes a template pack by ID. Fails if the pack is assigned to any projects.
+// DELETE /api/template-packs/:packId
+func (c *Client) DeletePack(ctx context.Context, packID string) error {
+	c.mu.RLock()
+	orgID := c.orgID
+	ctxProjectID := c.projectID
+	c.mu.RUnlock()
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.packPath()+"/"+packID, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", ctxProjectID)
+
+	if err := c.auth.Authenticate(httpReq); err != nil {
+		return fmt.Errorf("authenticate: %w", err)
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
