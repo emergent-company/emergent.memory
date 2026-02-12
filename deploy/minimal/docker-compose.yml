@@ -130,7 +130,7 @@ services:
 
   # Emergent Go Backend
   server:
-    image: ghcr.io/emergent-company/emergent-server-go:${VERSION:-latest}
+    image: ghcr.io/emergent-company/emergent-server-with-cli:${VERSION:-latest}
     pull_policy: always
     environment:
       # Standalone Mode Configuration
