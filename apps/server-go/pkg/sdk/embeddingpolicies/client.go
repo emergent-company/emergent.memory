@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
@@ -20,6 +21,7 @@ type Client struct {
 	http      *http.Client
 	base      string
 	auth      auth.Provider
+	mu        sync.RWMutex
 	orgID     string
 	projectID string
 }
@@ -37,6 +39,8 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 
 // SetContext sets the organization and project context.
 func (c *Client) SetContext(orgID, projectID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.orgID = orgID
 	c.projectID = projectID
 }
@@ -89,17 +93,22 @@ type UpdateEmbeddingPolicyRequest struct {
 // List lists all embedding policies for a project.
 // GET /api/graph/embedding-policies?project_id=...
 func (c *Client) List(ctx context.Context) ([]EmbeddingPolicy, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	u := c.base + "/api/graph/embedding-policies"
-	if c.projectID != "" {
-		u += "?project_id=" + url.QueryEscape(c.projectID)
+	if projectID != "" {
+		u += "?project_id=" + url.QueryEscape(projectID)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -125,17 +134,22 @@ func (c *Client) List(ctx context.Context) ([]EmbeddingPolicy, error) {
 // GetByID gets a specific embedding policy by ID.
 // GET /api/graph/embedding-policies/:id?project_id=...
 func (c *Client) GetByID(ctx context.Context, policyID string) (*EmbeddingPolicy, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	u := c.base + "/api/graph/embedding-policies/" + policyID
-	if c.projectID != "" {
-		u += "?project_id=" + url.QueryEscape(c.projectID)
+	if projectID != "" {
+		u += "?project_id=" + url.QueryEscape(projectID)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -161,6 +175,11 @@ func (c *Client) GetByID(ctx context.Context, policyID string) (*EmbeddingPolicy
 // Create creates a new embedding policy.
 // POST /api/graph/embedding-policies
 func (c *Client) Create(ctx context.Context, req *CreateEmbeddingPolicyRequest) (*EmbeddingPolicy, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -171,8 +190,8 @@ func (c *Client) Create(ctx context.Context, req *CreateEmbeddingPolicyRequest) 
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -198,9 +217,14 @@ func (c *Client) Create(ctx context.Context, req *CreateEmbeddingPolicyRequest) 
 // Update updates an existing embedding policy.
 // PUT /api/graph/embedding-policies/:id?project_id=...
 func (c *Client) Update(ctx context.Context, policyID string, req *UpdateEmbeddingPolicyRequest) (*EmbeddingPolicy, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	u := c.base + "/api/graph/embedding-policies/" + policyID
-	if c.projectID != "" {
-		u += "?project_id=" + url.QueryEscape(c.projectID)
+	if projectID != "" {
+		u += "?project_id=" + url.QueryEscape(projectID)
 	}
 
 	body, err := json.Marshal(req)
@@ -213,8 +237,8 @@ func (c *Client) Update(ctx context.Context, policyID string, req *UpdateEmbeddi
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
@@ -240,17 +264,22 @@ func (c *Client) Update(ctx context.Context, policyID string, req *UpdateEmbeddi
 // Delete deletes an embedding policy.
 // DELETE /api/graph/embedding-policies/:id?project_id=...
 func (c *Client) Delete(ctx context.Context, policyID string) error {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	u := c.base + "/api/graph/embedding-policies/" + policyID
-	if c.projectID != "" {
-		u += "?project_id=" + url.QueryEscape(c.projectID)
+	if projectID != "" {
+		u += "?project_id=" + url.QueryEscape(projectID)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return fmt.Errorf("authenticate: %w", err)

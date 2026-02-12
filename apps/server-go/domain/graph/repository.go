@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -132,10 +133,74 @@ type ListParams struct {
 	IncludeDeleted  bool
 	Limit           int
 	Cursor          *string
-	Order           string      // "asc" or "desc" (default: "desc")
-	RelatedToID     *uuid.UUID  // Filter by related object
-	IDs             []uuid.UUID // Filter by specific IDs
-	ExtractionJobID *uuid.UUID  // Filter by extraction job
+	Order           string           // "asc" or "desc" (default: "desc")
+	RelatedToID     *uuid.UUID       // Filter by related object
+	IDs             []uuid.UUID      // Filter by specific IDs
+	ExtractionJobID *uuid.UUID       // Filter by extraction job
+	PropertyFilters []PropertyFilter // JSONB property filters
+}
+
+// applyPropertyFilters applies JSONB property filters to a Bun select query.
+// Each PropertyFilter generates a WHERE clause against the properties JSONB column.
+// Supported operators: eq, neq, gt, gte, lt, lte, contains, exists, in
+func applyPropertyFilters(q *bun.SelectQuery, filters []PropertyFilter) *bun.SelectQuery {
+	for _, f := range filters {
+		// Convert dot-notation path to PostgreSQL JSONB accessor.
+		// "name"         → properties->>'name'
+		// "address.city" → properties->'address'->>'city'
+		segments := strings.Split(f.Path, ".")
+		if len(segments) == 0 {
+			continue
+		}
+
+		// Build the accessor: intermediate segments use -> (returns JSON), last uses ->> (returns text)
+		var textAccessor string // returns text via ->>
+		var jsonAccessor string // returns jsonb via ->
+		if len(segments) == 1 {
+			textAccessor = "properties->>'" + segments[0] + "'"
+			jsonAccessor = "properties->'" + segments[0] + "'"
+		} else {
+			// Build intermediate path with -> and final with ->>
+			var builder strings.Builder
+			builder.WriteString("properties")
+			for _, seg := range segments[:len(segments)-1] {
+				builder.WriteString("->'" + seg + "'")
+			}
+			jsonAccessor = builder.String() + "->'" + segments[len(segments)-1] + "'"
+			textAccessor = builder.String() + "->>'" + segments[len(segments)-1] + "'"
+		}
+
+		switch f.Op {
+		case "eq":
+			q = q.Where(textAccessor+" = ?", fmt.Sprintf("%v", f.Value))
+		case "neq":
+			q = q.Where("("+textAccessor+" IS NULL OR "+textAccessor+" != ?)", fmt.Sprintf("%v", f.Value))
+		case "gt":
+			q = q.Where("("+textAccessor+")::numeric > ?::numeric", f.Value)
+		case "gte":
+			q = q.Where("("+textAccessor+")::numeric >= ?::numeric", f.Value)
+		case "lt":
+			q = q.Where("("+textAccessor+")::numeric < ?::numeric", f.Value)
+		case "lte":
+			q = q.Where("("+textAccessor+")::numeric <= ?::numeric", f.Value)
+		case "contains":
+			// Text contains (ILIKE) for string values
+			q = q.Where(textAccessor+" ILIKE ?", "%"+fmt.Sprintf("%v", f.Value)+"%")
+		case "exists":
+			// Check if the key exists in the JSONB object
+			q = q.Where(jsonAccessor + " IS NOT NULL")
+		case "in":
+			// Value should be an array
+			if arr, ok := f.Value.([]interface{}); ok {
+				strVals := make([]string, 0, len(arr))
+				for _, v := range arr {
+					strVals = append(strVals, fmt.Sprintf("%v", v))
+				}
+				q = q.Where(textAccessor+" IN (?)", bun.In(strVals))
+			}
+		}
+	}
+	return q
 }
 
 // List returns graph objects matching the given parameters.
@@ -201,6 +266,11 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 
 	if !params.IncludeDeleted {
 		subq = subq.Where("deleted_at IS NULL")
+	}
+
+	// Apply JSONB property filters
+	if len(params.PropertyFilters) > 0 {
+		subq = applyPropertyFilters(subq, params.PropertyFilters)
 	}
 
 	// Pagination via cursor (created_at, id)
@@ -281,6 +351,11 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 
 	if !params.IncludeDeleted {
 		q = q.Where("deleted_at IS NULL")
+	}
+
+	// Apply JSONB property filters
+	if len(params.PropertyFilters) > 0 {
+		q = applyPropertyFilters(q, params.PropertyFilters)
 	}
 
 	count, err := q.Count(ctx)
@@ -953,6 +1028,7 @@ type FTSSearchParams struct {
 	Status         *string
 	IncludeDeleted bool
 	Limit          int
+	Offset         int
 }
 
 // FTSSearchResult represents a single FTS search result with score.
@@ -1001,11 +1077,12 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 		` + whereClause + `
 		ORDER BY rank DESC
 		LIMIT ?
+		OFFSET ?
 	`
 
-	// Prepend query param for ts_rank, append limit
+	// Prepend query param for ts_rank, append limit and offset
 	finalArgs := append([]any{params.Query}, args...)
-	finalArgs = append(finalArgs, params.Limit)
+	finalArgs = append(finalArgs, params.Limit, params.Offset)
 
 	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
 	if err != nil {
@@ -1051,6 +1128,7 @@ type VectorSearchParams struct {
 	IncludeDeleted bool
 	MaxDistance    *float32
 	Limit          int
+	Offset         int
 }
 
 // VectorSearchResult represents a single vector search result with distance.
@@ -1108,11 +1186,12 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 		` + whereClause + `
 		ORDER BY distance ASC
 		LIMIT ?
+		OFFSET ?
 	`
 
-	// Prepend vector param for distance calculation, append limit
+	// Prepend vector param for distance calculation, append limit and offset
 	finalArgs := append([]any{vectorStr}, args...)
-	finalArgs = append(finalArgs, params.Limit)
+	finalArgs = append(finalArgs, params.Limit, params.Offset)
 
 	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
 	if err != nil {
@@ -1182,17 +1261,48 @@ func formatTextArray(arr []string) string {
 	return buf.String()
 }
 
+// GetDistinctTagsParams holds optional filtering parameters for tag retrieval.
+type GetDistinctTagsParams struct {
+	ObjectType string // Filter tags to objects of this type
+	Prefix     string // Filter tags that start with this prefix
+	Limit      int    // Maximum number of tags to return (0 = no limit)
+}
+
 // GetDistinctTags returns all distinct tags (labels) used by objects in a project.
-func (r *Repository) GetDistinctTags(ctx context.Context, projectID uuid.UUID) ([]string, error) {
+func (r *Repository) GetDistinctTags(ctx context.Context, projectID uuid.UUID, params *GetDistinctTagsParams) ([]string, error) {
 	var tags []string
-	err := r.db.NewRaw(`
+
+	args := []interface{}{projectID}
+
+	query := `
 		SELECT DISTINCT unnest(labels) as tag
 		FROM kb.graph_objects
 		WHERE project_id = ?
 		  AND supersedes_id IS NULL
-		  AND deleted_at IS NULL
-		ORDER BY tag
-	`, projectID).Scan(ctx, &tags)
+		  AND deleted_at IS NULL`
+
+	if params != nil && params.ObjectType != "" {
+		query += `
+		  AND type = ?`
+		args = append(args, params.ObjectType)
+	}
+
+	// Wrap with a subquery to apply prefix filter and ordering
+	outerQuery := `SELECT tag FROM (` + query + `) AS t`
+
+	if params != nil && params.Prefix != "" {
+		outerQuery += ` WHERE tag ILIKE ?`
+		args = append(args, params.Prefix+"%")
+	}
+
+	outerQuery += ` ORDER BY tag`
+
+	if params != nil && params.Limit > 0 {
+		outerQuery += ` LIMIT ?`
+		args = append(args, params.Limit)
+	}
+
+	err := r.db.NewRaw(outerQuery, args...).Scan(ctx, &tags)
 	if err != nil {
 		r.log.Error("failed to get distinct tags", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -1254,6 +1364,12 @@ type SimilarSearchResult struct {
 	Distance    float32
 	ProjectID   uuid.UUID
 	BranchID    *uuid.UUID
+	Type        string
+	Key         *string
+	Status      string
+	Properties  map[string]any
+	Labels      []string
+	CreatedAt   time.Time
 }
 
 // FindSimilarObjects finds objects similar to a given object using stored embeddings.
@@ -1332,6 +1448,7 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 
 	query := `
 		SELECT id, canonical_id, version, project_id, branch_id,
+			type, key, status, properties, labels, created_at,
 			(embedding_v2 <=> ?::vector) AS distance
 		FROM kb.graph_objects
 		` + whereClause + `
@@ -1352,7 +1469,11 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 	var results []*SimilarSearchResult
 	for rows.Next() {
 		result := &SimilarSearchResult{}
-		err := rows.Scan(&result.ID, &result.CanonicalID, &result.Version, &result.ProjectID, &result.BranchID, &result.Distance)
+		err := rows.Scan(
+			&result.ID, &result.CanonicalID, &result.Version, &result.ProjectID, &result.BranchID,
+			&result.Type, &result.Key, &result.Status, &result.Properties, &result.Labels, &result.CreatedAt,
+			&result.Distance,
+		)
 		if err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}

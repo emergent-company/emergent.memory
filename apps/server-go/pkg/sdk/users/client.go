@@ -14,11 +14,9 @@ import (
 
 // Client provides access to the User Profile API.
 type Client struct {
-	http      *http.Client
-	base      string
-	auth      auth.Provider
-	orgID     string
-	projectID string
+	http *http.Client
+	base string
+	auth auth.Provider
 }
 
 // NewClient creates a new users client.
@@ -28,12 +26,6 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 		base: baseURL,
 		auth: authProvider,
 	}
-}
-
-// SetContext sets the organization and project context.
-func (c *Client) SetContext(orgID, projectID string) {
-	c.orgID = orgID
-	c.projectID = projectID
 }
 
 // UserProfile represents a user profile

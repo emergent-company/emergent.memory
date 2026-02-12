@@ -16,8 +16,18 @@ type GraphTemplatePack struct {
 	Version                 string          `bun:"version,notnull" json:"version"`
 	Description             *string         `bun:"description" json:"description,omitempty"`
 	Author                  *string         `bun:"author" json:"author,omitempty"`
+	Source                  *string         `bun:"source" json:"source,omitempty"`
+	License                 *string         `bun:"license" json:"license,omitempty"`
+	RepositoryURL           *string         `bun:"repository_url" json:"repositoryUrl,omitempty"`
+	DocumentationURL        *string         `bun:"documentation_url" json:"documentationUrl,omitempty"`
 	ObjectTypeSchemas       json.RawMessage `bun:"object_type_schemas,type:jsonb" json:"objectTypeSchemas,omitempty"`
 	RelationshipTypeSchemas json.RawMessage `bun:"relationship_type_schemas,type:jsonb" json:"relationshipTypeSchemas,omitempty"`
+	UIConfigs               json.RawMessage `bun:"ui_configs,type:jsonb" json:"uiConfigs,omitempty"`
+	ExtractionPrompts       json.RawMessage `bun:"extraction_prompts,type:jsonb" json:"extractionPrompts,omitempty"`
+	Checksum                *string         `bun:"checksum" json:"checksum,omitempty"`
+	Draft                   bool            `bun:"draft,notnull,default:false" json:"draft"`
+	PublishedAt             *time.Time      `bun:"published_at" json:"publishedAt,omitempty"`
+	DeprecatedAt            *time.Time      `bun:"deprecated_at" json:"deprecatedAt,omitempty"`
 	CreatedAt               time.Time       `bun:"created_at" json:"createdAt"`
 	UpdatedAt               time.Time       `bun:"updated_at" json:"updatedAt"`
 }
@@ -95,4 +105,29 @@ type AssignPackRequest struct {
 // UpdateAssignmentRequest is the request to update a pack assignment
 type UpdateAssignmentRequest struct {
 	Active *bool `json:"active"`
+}
+
+// CreatePackRequest is the request to create a new template pack
+type CreatePackRequest struct {
+	Name                    string          `json:"name"`
+	Version                 string          `json:"version"`
+	Description             *string         `json:"description,omitempty"`
+	Author                  *string         `json:"author,omitempty"`
+	License                 *string         `json:"license,omitempty"`
+	RepositoryURL           *string         `json:"repository_url,omitempty"`
+	DocumentationURL        *string         `json:"documentation_url,omitempty"`
+	ObjectTypeSchemas       json.RawMessage `json:"object_type_schemas"`
+	RelationshipTypeSchemas json.RawMessage `json:"relationship_type_schemas,omitempty"`
+	UIConfigs               json.RawMessage `json:"ui_configs,omitempty"`
+	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
+}
+
+// GetPackRequest is the request to get a template pack by ID
+type GetPackRequest struct {
+	ID string `json:"id"`
+}
+
+// DeletePackRequest is the request to delete a template pack
+type DeletePackRequest struct {
+	ID string `json:"id"`
 }
