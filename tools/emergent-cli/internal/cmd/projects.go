@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
@@ -46,15 +44,6 @@ var (
 	projectOrgID       string
 )
 
-type Project struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	KBPurpose   string `json:"kb_purpose,omitempty"`
-	CreatedAt   string `json:"created_at,omitempty"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
-}
-
 func getClient(cmd *cobra.Command) (*client.Client, error) {
 	configPath, _ := cmd.Flags().GetString("config")
 	if configPath == "" {
@@ -70,7 +59,7 @@ func getClient(cmd *cobra.Command) (*client.Client, error) {
 		return nil, fmt.Errorf("no server URL configured. Set EMERGENT_SERVER_URL or run: emergent config set-server <url>")
 	}
 
-	return client.New(cfg), nil
+	return client.New(cfg)
 }
 
 func runListProjects(cmd *cobra.Command, args []string) error {
@@ -79,33 +68,22 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resp, err := c.Get("/api/projects")
+	projectList, err := c.SDK.Projects.List(context.Background(), nil)
 	if err != nil {
-		return fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("failed to list projects: %w", err)
 	}
 
-	var projects []Project
-	if err := json.NewDecoder(resp.Body).Decode(&projects); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if len(projects) == 0 {
+	if len(projectList) == 0 {
 		fmt.Println("No projects found.")
 		return nil
 	}
 
-	fmt.Printf("Found %d project(s):\n\n", len(projects))
-	for i, p := range projects {
+	fmt.Printf("Found %d project(s):\n\n", len(projectList))
+	for i, p := range projectList {
 		fmt.Printf("%d. %s\n", i+1, p.Name)
 		fmt.Printf("   ID: %s\n", p.ID)
-		if p.Description != "" {
-			fmt.Printf("   Description: %s\n", p.Description)
+		if p.KBPurpose != nil && *p.KBPurpose != "" {
+			fmt.Printf("   KB Purpose: %s\n", *p.KBPurpose)
 		}
 		fmt.Println()
 	}
@@ -121,47 +99,19 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resp, err := c.Get("/api/projects/" + projectID)
+	project, err := c.SDK.Projects.Get(context.Background(), projectID)
 	if err != nil {
-		return fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("project not found: %s", projectID)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var project Project
-	if err := json.NewDecoder(resp.Body).Decode(&project); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
+		return fmt.Errorf("failed to get project: %w", err)
 	}
 
 	fmt.Printf("Project: %s\n", project.Name)
 	fmt.Printf("  ID:          %s\n", project.ID)
-	if project.Description != "" {
-		fmt.Printf("  Description: %s\n", project.Description)
-	}
-	if project.KBPurpose != "" {
-		fmt.Printf("  KB Purpose:  %s\n", project.KBPurpose)
-	}
-	if project.CreatedAt != "" {
-		fmt.Printf("  Created:     %s\n", project.CreatedAt)
-	}
-	if project.UpdatedAt != "" {
-		fmt.Printf("  Updated:     %s\n", project.UpdatedAt)
+	fmt.Printf("  Org ID:      %s\n", project.OrgID)
+	if project.KBPurpose != nil && *project.KBPurpose != "" {
+		fmt.Printf("  KB Purpose:  %s\n", *project.KBPurpose)
 	}
 
 	return nil
-}
-
-type Organization struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
 }
 
 func runCreateProject(cmd *cobra.Command, args []string) error {
@@ -176,7 +126,7 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 
 	orgID := projectOrgID
 	if orgID == "" {
-		orgs, err := fetchOrganizations(c)
+		orgs, err := c.SDK.Orgs.List(context.Background())
 		if err != nil {
 			return fmt.Errorf("failed to fetch organizations: %w", err)
 		}
@@ -186,63 +136,21 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 		orgID = orgs[0].ID
 	}
 
-	payload := map[string]string{
-		"name":  projectName,
-		"orgId": orgID,
-	}
-	if projectDescription != "" {
-		payload["description"] = projectDescription
+	req := &projects.CreateProjectRequest{
+		Name:  projectName,
+		OrgID: orgID,
 	}
 
-	body, err := json.Marshal(payload)
+	project, err := c.SDK.Projects.Create(context.Background(), req)
 	if err != nil {
-		return fmt.Errorf("failed to encode request: %w", err)
-	}
-
-	resp, err := c.Post("/api/projects", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var project Project
-	if err := json.NewDecoder(resp.Body).Decode(&project); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
+		return fmt.Errorf("failed to create project: %w", err)
 	}
 
 	fmt.Println("Project created successfully!")
 	fmt.Printf("  ID:   %s\n", project.ID)
 	fmt.Printf("  Name: %s\n", project.Name)
-	if project.Description != "" {
-		fmt.Printf("  Description: %s\n", project.Description)
-	}
 
 	return nil
-}
-
-func fetchOrganizations(c *client.Client) ([]Organization, error) {
-	resp, err := c.Get("/api/orgs")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var orgs []Organization
-	if err := json.NewDecoder(resp.Body).Decode(&orgs); err != nil {
-		return nil, err
-	}
-
-	return orgs, nil
 }
 
 func init() {

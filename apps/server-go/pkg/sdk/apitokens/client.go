@@ -9,8 +9,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/emergent/emergent-core/pkg/sdk/auth"
-	sdkerrors "github.com/emergent/emergent-core/pkg/sdk/errors"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
+	sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
 )
 
 // Client provides access to the API Tokens API.

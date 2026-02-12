@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -282,57 +283,23 @@ func checkAuth(cfg *config.Config, configPath string) checkResult {
 func checkAPI(cfg *config.Config) checkResult {
 	fmt.Print("Checking API access... ")
 
-	c := client.New(cfg)
+	c, err := client.New(cfg)
+	if err != nil {
+		fmt.Println("FAILED")
+		return checkResult{
+			name:    "API Access",
+			status:  "fail",
+			message: fmt.Sprintf("Failed to create client: %v", err),
+		}
+	}
 
-	resp, err := c.Get("/api/projects")
+	_, err = c.SDK.Projects.List(context.Background(), nil)
 	if err != nil {
 		fmt.Println("FAILED")
 		return checkResult{
 			name:    "API Access",
 			status:  "fail",
 			message: fmt.Sprintf("Request failed: %v", err),
-		}
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	bodyStr := strings.TrimSpace(string(body))
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		fmt.Println("UNAUTHORIZED")
-		return checkResult{
-			name:    "API Access",
-			status:  "fail",
-			message: "Authentication rejected. Check your API key or re-login",
-		}
-	}
-
-	if resp.StatusCode == http.StatusForbidden {
-		fmt.Println("FORBIDDEN")
-		return checkResult{
-			name:    "API Access",
-			status:  "warn",
-			message: "Access denied. You may not have permissions for this endpoint",
-		}
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		fmt.Println("NOT FOUND")
-		// Provide detailed diagnostics for 404 errors
-		hint := diagnose404Error(cfg, bodyStr)
-		return checkResult{
-			name:    "API Access",
-			status:  "fail",
-			message: hint,
-		}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Println("ERROR")
-		return checkResult{
-			name:    "API Access",
-			status:  "fail",
-			message: fmt.Sprintf("API returned %d: %s", resp.StatusCode, bodyStr),
 		}
 	}
 
@@ -911,7 +878,7 @@ func printSystemInfo(installDir string, isStandalone bool) {
 	} else {
 		fmt.Println("remote")
 	}
-	
+
 	if isStandalone {
 		fmt.Println("\nContainer Versions:")
 		containers := []string{"emergent-server", "emergent-db", "emergent-minio", "emergent-kreuzberg"}
@@ -923,7 +890,7 @@ func printSystemInfo(installDir string, isStandalone bool) {
 			fmt.Printf("  %-20s %s\n", name+":", version)
 		}
 	}
-	
+
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println()
 }
