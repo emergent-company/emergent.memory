@@ -34,12 +34,14 @@ ARG BUILD_TIME=unknown
 
 WORKDIR /build/cli
 
+# Copy SDK first (needed for go.mod replace directive resolution)
+COPY apps/server-go/pkg/sdk/ /apps/server-go/pkg/sdk/
+
 # Copy CLI source
 COPY tools/emergent-cli/go.mod tools/emergent-cli/go.sum ./
 RUN go mod download
 
 COPY tools/emergent-cli/ ./
-COPY apps/server-go/pkg/sdk/ ../../apps/server-go/pkg/sdk/
 
 # Build CLI binary
 RUN CGO_ENABLED=0 GOOS=linux go build \
