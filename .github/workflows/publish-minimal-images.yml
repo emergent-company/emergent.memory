@@ -17,7 +17,7 @@ jobs:
     name: Build and Push Server with CLI Image
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - name: Checkout
@@ -79,3 +79,28 @@ jobs:
 
       - name: Image digest
         run: echo ${{ steps.meta.outputs.digest }}
+
+      - name: Mark release as ready
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "Docker images built and pushed successfully for $TAG" > images-ready.txt
+          echo "Server image: ghcr.io/${{ github.repository_owner }}/emergent-server-with-cli:${TAG#v}" >> images-ready.txt
+          echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> images-ready.txt
+
+          # Wait for the release to exist (it's created by the emergent-cli workflow)
+          for i in $(seq 1 30); do
+            if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+              echo "Release $TAG found, uploading sentinel..."
+              gh release upload "$TAG" images-ready.txt --repo "${{ github.repository }}" --clobber
+              echo "✓ Release $TAG marked as ready"
+              exit 0
+            fi
+            echo "Waiting for release $TAG to be created... (attempt $i/30)"
+            sleep 10
+          done
+
+          echo "⚠️  Release $TAG not found after 5 minutes. Sentinel not uploaded."
+          exit 1
