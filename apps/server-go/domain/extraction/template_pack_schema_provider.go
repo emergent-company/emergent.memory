@@ -19,31 +19,31 @@ import (
 type GraphTemplatePack struct {
 	bun.BaseModel `bun:"kb.graph_template_packs,alias:gtp"`
 
-	ID                      string         `bun:"id,pk,type:uuid"`
-	Name                    string         `bun:"name,notnull"`
-	Version                 string         `bun:"version,notnull"`
-	ParentVersionID         *string        `bun:"parent_version_id,type:uuid"`
-	Draft                   bool           `bun:"draft,default:false"`
-	Description             *string        `bun:"description"`
-	Author                  *string        `bun:"author"`
-	License                 *string        `bun:"license"`
-	RepositoryURL           *string        `bun:"repository_url"`
-	DocumentationURL        *string        `bun:"documentation_url"`
-	Source                  *string        `bun:"source"` // manual, discovered, imported, system
-	DiscoveryJobID          *string        `bun:"discovery_job_id,type:uuid"`
-	PendingReview           bool           `bun:"pending_review,default:false"`
-	ObjectTypeSchemas       JSON           `bun:"object_type_schemas,type:jsonb,notnull"`
-	RelationshipTypeSchemas JSON           `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
-	UIConfigs               JSON           `bun:"ui_configs,type:jsonb,default:'{}'"`
-	ExtractionPrompts       JSON           `bun:"extraction_prompts,type:jsonb,default:'{}'"`
-	SQLViews                JSON           `bun:"sql_views,type:jsonb,default:'[]'"`
-	Signature               *string        `bun:"signature"`
-	Checksum                *string        `bun:"checksum"`
-	PublishedAt             time.Time      `bun:"published_at,default:now()"`
-	DeprecatedAt            *time.Time     `bun:"deprecated_at"`
-	SupersededBy            *string        `bun:"superseded_by"`
-	CreatedAt               time.Time      `bun:"created_at,default:now()"`
-	UpdatedAt               time.Time      `bun:"updated_at,default:now()"`
+	ID                      string     `bun:"id,pk,type:uuid"`
+	Name                    string     `bun:"name,notnull"`
+	Version                 string     `bun:"version,notnull"`
+	ParentVersionID         *string    `bun:"parent_version_id,type:uuid"`
+	Draft                   bool       `bun:"draft,default:false"`
+	Description             *string    `bun:"description"`
+	Author                  *string    `bun:"author"`
+	License                 *string    `bun:"license"`
+	RepositoryURL           *string    `bun:"repository_url"`
+	DocumentationURL        *string    `bun:"documentation_url"`
+	Source                  *string    `bun:"source"` // manual, discovered, imported, system
+	DiscoveryJobID          *string    `bun:"discovery_job_id,type:uuid"`
+	PendingReview           bool       `bun:"pending_review,default:false"`
+	ObjectTypeSchemas       JSON       `bun:"object_type_schemas,type:jsonb,notnull"`
+	RelationshipTypeSchemas JSON       `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
+	UIConfigs               JSON       `bun:"ui_configs,type:jsonb,default:'{}'"`
+	ExtractionPrompts       JSON       `bun:"extraction_prompts,type:jsonb,default:'{}'"`
+	SQLViews                JSON       `bun:"sql_views,type:jsonb,default:'[]'"`
+	Signature               *string    `bun:"signature"`
+	Checksum                *string    `bun:"checksum"`
+	PublishedAt             time.Time  `bun:"published_at,default:now()"`
+	DeprecatedAt            *time.Time `bun:"deprecated_at"`
+	SupersededBy            *string    `bun:"superseded_by"`
+	CreatedAt               time.Time  `bun:"created_at,default:now()"`
+	UpdatedAt               time.Time  `bun:"updated_at,default:now()"`
 }
 
 // ProjectTemplatePack represents a template pack installation for a project.
@@ -278,6 +278,11 @@ func parseObjectTypeSchemas(raw JSON) map[string]agents.ObjectSchema {
 }
 
 // parseRelationshipTypeSchemas converts JSON relationship_type_schemas to map of RelationshipSchema.
+// Handles multiple field naming conventions for source/target types:
+//   - source_types / target_types (snake_case)
+//   - sourceTypes / targetTypes (camelCase)
+//   - fromTypes / toTypes (alternative camelCase)
+//   - source / target (singular string)
 func parseRelationshipTypeSchemas(raw JSON) map[string]agents.RelationshipSchema {
 	schemas := make(map[string]agents.RelationshipSchema)
 	if raw == nil {
@@ -298,21 +303,11 @@ func parseRelationshipTypeSchemas(raw JSON) map[string]agents.RelationshipSchema
 			schema.Description = desc
 		}
 
-		if st, ok := schemaMap["source_types"].([]any); ok {
-			for _, t := range st {
-				if s, ok := t.(string); ok {
-					schema.SourceTypes = append(schema.SourceTypes, s)
-				}
-			}
-		}
+		// Parse source types from any supported field name
+		schema.SourceTypes = parseTypesField(schemaMap, "source_types", "sourceTypes", "fromTypes", "source")
 
-		if tt, ok := schemaMap["target_types"].([]any); ok {
-			for _, t := range tt {
-				if s, ok := t.(string); ok {
-					schema.TargetTypes = append(schema.TargetTypes, s)
-				}
-			}
-		}
+		// Parse target types from any supported field name
+		schema.TargetTypes = parseTypesField(schemaMap, "target_types", "targetTypes", "toTypes", "target")
 
 		if guidelines, ok := schemaMap["extraction_guidelines"].(string); ok {
 			schema.ExtractionGuidelines = guidelines
@@ -322,6 +317,34 @@ func parseRelationshipTypeSchemas(raw JSON) map[string]agents.RelationshipSchema
 	}
 
 	return schemas
+}
+
+// parseTypesField extracts a []string from a schema map, trying multiple field names.
+// Supports both array fields ([]any) and singular string fields.
+func parseTypesField(schemaMap map[string]any, keys ...string) []string {
+	for _, key := range keys {
+		val, ok := schemaMap[key]
+		if !ok {
+			continue
+		}
+		// Array of strings
+		if arr, ok := val.([]any); ok {
+			var result []string
+			for _, item := range arr {
+				if s, ok := item.(string); ok {
+					result = append(result, s)
+				}
+			}
+			if len(result) > 0 {
+				return result
+			}
+		}
+		// Singular string
+		if s, ok := val.(string); ok && s != "" {
+			return []string{s}
+		}
+	}
+	return nil
 }
 
 // applySchemaOverrides merges overrides into the base schema.

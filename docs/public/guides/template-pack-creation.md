@@ -180,8 +180,8 @@ Define how entities can be connected to each other.
     "authored_by": {
       "type": "object",
       "description": "Paper authored by Person",
-      "source": "ResearchPaper",
-      "target": "Person",
+      "sourceTypes": ["ResearchPaper"],
+      "targetTypes": ["Person"],
       "properties": {
         "role": {
           "type": "string",
@@ -197,8 +197,8 @@ Define how entities can be connected to each other.
     "cites": {
       "type": "object",
       "description": "Paper cites another paper",
-      "source": "ResearchPaper",
-      "target": "ResearchPaper",
+      "sourceTypes": ["ResearchPaper"],
+      "targetTypes": ["ResearchPaper"],
       "properties": {
         "context": {
           "type": "string",
@@ -212,12 +212,14 @@ Define how entities can be connected to each other.
 
 ### Fields
 
-| Field         | Required | Description                                  |
-| ------------- | -------- | -------------------------------------------- |
-| `source`      | Yes      | Entity type that originates the relationship |
-| `target`      | Yes      | Entity type that receives the relationship   |
-| `description` | No       | Human-readable description                   |
-| `properties`  | No       | JSON Schema for relationship metadata        |
+| Field         | Required | Description                                           |
+| ------------- | -------- | ----------------------------------------------------- |
+| `sourceTypes` | Yes      | Array of entity types that originate the relationship |
+| `targetTypes` | Yes      | Array of entity types that receive the relationship   |
+| `description` | No       | Human-readable description                            |
+| `properties`  | No       | JSON Schema for relationship metadata                 |
+
+> **Note:** The server also accepts `fromTypes`/`toTypes`, `source_types`/`target_types`, and singular `source`/`target` strings for backward compatibility, but `sourceTypes`/`targetTypes` is the canonical format.
 
 ---
 
@@ -349,8 +351,8 @@ Here's a complete template pack for a research project domain:
   },
   "relationship_type_schemas": {
     "authored_by": {
-      "source": "ResearchPaper",
-      "target": "Person",
+      "sourceTypes": ["ResearchPaper"],
+      "targetTypes": ["Person"],
       "properties": {
         "role": {
           "type": "string",
@@ -359,8 +361,8 @@ Here's a complete template pack for a research project domain:
       }
     },
     "cites": {
-      "source": "ResearchPaper",
-      "target": "ResearchPaper",
+      "sourceTypes": ["ResearchPaper"],
+      "targetTypes": ["ResearchPaper"],
       "properties": {
         "context": { "type": "string" }
       }
@@ -552,12 +554,12 @@ Think about how entities connect:
 {
   "relationship_type_schemas": {
     "part_of": {
-      "source": "Task",
-      "target": "Project"
+      "sourceTypes": ["Task"],
+      "targetTypes": ["Project"]
     },
     "depends_on": {
-      "source": "Task",
-      "target": "Task"
+      "sourceTypes": ["Task"],
+      "targetTypes": ["Task"]
     }
   }
 }

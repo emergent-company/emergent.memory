@@ -75,18 +75,16 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 		}
 
 		// Parse relationship type schemas
+		// Seeds store these as a JSON object (map of name → definition), but
+		// we also accept a JSON array for forward compat. Each definition may
+		// use different field names for source/target types:
+		//   sourceTypes / fromTypes / source / source_types  (and same for target)
 		if len(tp.RelationshipTypeSchemas) > 0 {
-			var relTypes []RelationshipTypeSchema
-			if err := json.Unmarshal(tp.RelationshipTypeSchemas, &relTypes); err != nil {
+			relTypes := parseRelationshipTypeSchemas(tp.RelationshipTypeSchemas, tp.ID, tp.Name)
+			if relTypes == nil {
 				r.log.Warn("failed to parse relationship type schemas",
-					slog.String("packId", tp.ID),
-					logger.Error(err))
+					slog.String("packId", tp.ID))
 			} else {
-				// Add pack info to each type
-				for i := range relTypes {
-					relTypes[i].PackID = tp.ID
-					relTypes[i].PackName = tp.Name
-				}
 				response.RelationshipTypes = append(response.RelationshipTypes, relTypes...)
 			}
 		}
@@ -218,6 +216,79 @@ func (r *Repository) AssignPack(ctx context.Context, projectID, userID string, r
 	}
 
 	return assignment, nil
+}
+
+// parseRelationshipTypeSchemas parses relationship_type_schemas JSON which may
+// be stored as either a JSON object (map of name → definition) or a JSON array.
+// It normalises the various source/target field naming conventions into the
+// canonical SourceType / TargetType (singular) compiled output.
+func parseRelationshipTypeSchemas(data json.RawMessage, packID, packName string) []RelationshipTypeSchema {
+	// Try JSON object format first (most common in seeds)
+	var objMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &objMap); err == nil && len(objMap) > 0 {
+		var result []RelationshipTypeSchema
+		for name, raw := range objMap {
+			var def relTypeRaw
+			if err := json.Unmarshal(raw, &def); err != nil {
+				continue
+			}
+			result = append(result, RelationshipTypeSchema{
+				Name:        name,
+				Label:       def.Label,
+				Description: def.Description,
+				SourceType:  firstNonEmpty(joinTypes(def.SourceTypes), joinTypes(def.FromTypes), joinTypes(def.SnakeSourceTypes), def.Source),
+				TargetType:  firstNonEmpty(joinTypes(def.TargetTypes), joinTypes(def.ToTypes), joinTypes(def.SnakeTargetTypes), def.Target),
+				PackID:      packID,
+				PackName:    packName,
+			})
+		}
+		return result
+	}
+
+	// Try JSON array format
+	var arr []RelationshipTypeSchema
+	if err := json.Unmarshal(data, &arr); err == nil {
+		for i := range arr {
+			arr[i].PackID = packID
+			arr[i].PackName = packName
+		}
+		return arr
+	}
+
+	return nil
+}
+
+// relTypeRaw captures all known field-name variants for relationship type schemas.
+type relTypeRaw struct {
+	Label            string   `json:"label"`
+	Description      string   `json:"description"`
+	SourceTypes      []string `json:"sourceTypes"`
+	TargetTypes      []string `json:"targetTypes"`
+	FromTypes        []string `json:"fromTypes"`
+	ToTypes          []string `json:"toTypes"`
+	Source           string   `json:"source"`
+	Target           string   `json:"target"`
+	SnakeSourceTypes []string `json:"source_types"`
+	SnakeTargetTypes []string `json:"target_types"`
+}
+
+// joinTypes returns the first element of a string slice, or empty string.
+// Compiled output uses singular SourceType/TargetType so we take the first.
+func joinTypes(types []string) string {
+	if len(types) > 0 {
+		return types[0]
+	}
+	return ""
+}
+
+// firstNonEmpty returns the first non-empty string argument.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // UpdateAssignment updates a pack assignment (e.g., active status)
