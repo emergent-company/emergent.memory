@@ -97,6 +97,24 @@ func runUpgradeServer(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no installation found at %s. Run 'emergent install' first", upgradeFlags.dir)
 	}
 
+	// Check if Docker images are ready before allowing server upgrade
+	release, err := getLatestRelease()
+	if err != nil {
+		return fmt.Errorf("error checking for updates: %w", err)
+	}
+
+	if !release.ImagesReady && !upgradeFlags.force {
+		displayLatest := strings.TrimPrefix(release.TagName, "v")
+		fmt.Println()
+		fmt.Println("⚠️  Docker images for this release are still being built")
+		fmt.Printf("Latest release: %s\n", displayLatest)
+		fmt.Println()
+		fmt.Println("Please wait a few minutes and try again.")
+		fmt.Println("Use --force to skip this check.")
+		fmt.Println()
+		return nil
+	}
+
 	cfg.ServerPort = inst.GetServerPort()
 
 	if !upgradeFlags.force {
