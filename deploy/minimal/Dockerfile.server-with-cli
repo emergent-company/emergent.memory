@@ -39,7 +39,7 @@ COPY tools/emergent-cli/go.mod tools/emergent-cli/go.sum ./
 RUN go mod download
 
 COPY tools/emergent-cli/ ./
-COPY apps/server-go/pkg/sdk/ ../apps/server-go/pkg/sdk/
+COPY apps/server-go/pkg/sdk/ ../../apps/server-go/pkg/sdk/
 
 # Build CLI binary
 RUN CGO_ENABLED=0 GOOS=linux go build \
