@@ -12,6 +12,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent/emergent-core/domain/extraction/agents"
+	"github.com/emergent/emergent-core/pkg/embeddings"
 )
 
 // Module provides graph domain dependencies.
@@ -21,8 +22,14 @@ var Module = fx.Module("graph",
 	fx.Provide(NewHandler),
 	fx.Provide(provideSchemaProvider),
 	fx.Provide(provideInverseTypeProvider),
+	fx.Provide(provideEmbeddingService),
 	fx.Invoke(RegisterRoutes),
 )
+
+// provideEmbeddingService bridges *embeddings.Service to the graph.EmbeddingService interface.
+func provideEmbeddingService(svc *embeddings.Service) EmbeddingService {
+	return svc
+}
 
 // ProvideSchemaProvider creates a schema provider (exported for tests).
 func ProvideSchemaProvider(db bun.IDB, log *slog.Logger) SchemaProvider {
