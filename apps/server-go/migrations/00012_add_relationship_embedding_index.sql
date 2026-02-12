@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose NO TRANSACTION
--- +goose StatementBegin
+
 -- Create ivfflat index for efficient cosine similarity search on relationship embeddings
 -- 
 -- Index Type: ivfflat (Inverted File with Flat Compression)
@@ -19,8 +19,6 @@
 -- - Allows reads/writes during index creation
 -- - Takes longer but doesn't block production traffic
 -- - Cannot run inside a transaction (hence NO TRANSACTION directive)
--- 
--- Verification queries included at bottom of file
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_graph_relationships_embedding_ivfflat
 ON kb.graph_relationships
@@ -64,10 +62,8 @@ COMMENT ON INDEX kb.idx_graph_relationships_embedding_ivfflat IS 'IVFFlat index 
 --   AND tablename = 'graph_relationships' 
 --   AND indexname = 'idx_graph_relationships_embedding_ivfflat';
 
--- +goose StatementEnd
-
 -- +goose Down
--- +goose StatementBegin
+-- +goose NO TRANSACTION
+
 -- Drop the index (also uses CONCURRENTLY to avoid locks)
 DROP INDEX CONCURRENTLY IF EXISTS kb.idx_graph_relationships_embedding_ivfflat;
--- +goose StatementEnd

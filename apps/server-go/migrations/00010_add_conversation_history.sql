@@ -6,12 +6,12 @@
 -- context_summary: Compressed summary of previous conversation turns
 -- Used to maintain conversation coherence while limiting token usage
 ALTER TABLE kb.chat_messages
-    ADD COLUMN context_summary TEXT,
-    ADD COLUMN retrieval_context JSONB;
+    ADD COLUMN IF NOT EXISTS context_summary TEXT,
+    ADD COLUMN IF NOT EXISTS retrieval_context JSONB;
 
 -- Create index for efficient history queries
 -- Queries typically fetch last N messages by conversation_id + created_at DESC
-CREATE INDEX idx_chat_messages_conversation_history
+CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_history
     ON kb.chat_messages(conversation_id, created_at DESC);
 
 COMMENT ON COLUMN kb.chat_messages.context_summary IS 'Compressed summary of previous conversation turns for maintaining context';
