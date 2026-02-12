@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 -- Create kb.backups table for project backup management
-CREATE TABLE kb.backups (
+CREATE TABLE IF NOT EXISTS kb.backups (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES kb.orgs(id) ON DELETE CASCADE,
     project_id UUID NOT NULL REFERENCES kb.projects(id) ON DELETE CASCADE,
@@ -46,12 +46,12 @@ CREATE TABLE kb.backups (
 );
 
 -- Indexes for common queries
-CREATE INDEX idx_backups_org_project ON kb.backups(organization_id, project_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_backups_status ON kb.backups(status) WHERE deleted_at IS NULL;
-CREATE INDEX idx_backups_expires ON kb.backups(expires_at) WHERE deleted_at IS NULL AND expires_at IS NOT NULL;
-CREATE INDEX idx_backups_created ON kb.backups(created_at DESC) WHERE deleted_at IS NULL;
-CREATE INDEX idx_backups_parent ON kb.backups(parent_backup_id) WHERE parent_backup_id IS NOT NULL;
-CREATE INDEX idx_backups_baseline ON kb.backups(baseline_backup_id) WHERE baseline_backup_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_backups_org_project ON kb.backups(organization_id, project_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_backups_status ON kb.backups(status) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_backups_expires ON kb.backups(expires_at) WHERE deleted_at IS NULL AND expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_backups_created ON kb.backups(created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_backups_parent ON kb.backups(parent_backup_id) WHERE parent_backup_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_backups_baseline ON kb.backups(baseline_backup_id) WHERE baseline_backup_id IS NOT NULL;
 
 -- Comment on table
 COMMENT ON TABLE kb.backups IS 'Stores metadata for project backups stored in MinIO';

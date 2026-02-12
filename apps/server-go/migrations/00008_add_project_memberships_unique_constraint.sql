@@ -1,7 +1,15 @@
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE kb.project_memberships
-ADD CONSTRAINT project_memberships_project_id_user_id_key UNIQUE (project_id, user_id);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'project_memberships_project_id_user_id_key'
+    ) THEN
+        ALTER TABLE kb.project_memberships
+        ADD CONSTRAINT project_memberships_project_id_user_id_key UNIQUE (project_id, user_id);
+    END IF;
+END $$;
 -- +goose StatementEnd
 
 -- +goose Down
