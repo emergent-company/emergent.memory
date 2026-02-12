@@ -104,7 +104,7 @@ export class GoHealthProxyController {
 
 ### Recommended Approach: Hybrid
 
-1. **Phase 0-1 (Dev):** Use Vite proxy split (`/api/v2/*` → Go)
+1. **Phase 0-1 (Dev):** Use Vite proxy split (`/api/*` → Go)
 2. **Phase 2+ (Staging/Prod):** Add Traefik rules progressively
 3. **Parallel:** Keep NestJS running as fallback
 
@@ -350,7 +350,7 @@ export function useGoApi() {
 1. Start Go server: `cd apps/server-go && air`
 2. Start NestJS server: `pnpm run workspace:start`
 3. Login to admin UI
-4. Call Go health endpoint: `GET /api/v2/health`
+4. Call Go health endpoint: `GET /api/health`
 5. Verify token validation works
 
 ---
@@ -411,8 +411,8 @@ Based on the analysis, here's the recommended migration order:
 
 ### Week 3 Checkpoint
 
-- [ ] `/api/v2/user/profile` works (GET)
-- [ ] `/api/v2/settings` works (GET/PUT)
+- [ ] `/api/user/profile` works (GET)
+- [ ] `/api/settings` works (GET/PUT)
 - [ ] Contract tests pass for migrated endpoints
 
 ---

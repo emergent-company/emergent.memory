@@ -58,7 +58,7 @@ func RegisterEndpoints(handler Handler, api huma.API, security []map[string][]st
     huma.Register(api, huma.Operation{
         OperationID: "list-documents",
         Method:      http.MethodGet,
-        Path:        "/api/v2/documents",
+        Path:        "/api/documents",
         Summary:     "List documents",
         Tags:        []string{"Documents"},
         Security:    security,

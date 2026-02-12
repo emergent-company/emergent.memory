@@ -30,17 +30,32 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/agents"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apidocs"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apitokens"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/branches"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/chat"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/chunking"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/chunks"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/datasources"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/discoveryjobs"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/embeddingpolicies"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/health"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/integrations"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/mcp"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/monitoring"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/notifications"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/orgs"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/search"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/superadmin"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/tasks"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/templatepacks"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/typeregistry"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/useractivity"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/users"
 )
 
@@ -52,18 +67,35 @@ type Client struct {
 	projectID string
 	http      *http.Client
 
-	// Service clients
-	Documents *documents.Client
-	Chunks    *chunks.Client
-	Search    *search.Client
-	Graph     *graph.Client
-	Chat      *chat.Client
-	Projects  *projects.Client
-	Orgs      *orgs.Client
-	Users     *users.Client
-	APITokens *apitokens.Client
-	Health    *health.Client
-	MCP       *mcp.Client
+	// Service clients — context-scoped (use org/project headers)
+	Documents       *documents.Client
+	Chunks          *chunks.Client
+	Search          *search.Client
+	Graph           *graph.Client
+	Chat            *chat.Client
+	Projects        *projects.Client
+	Orgs            *orgs.Client
+	Users           *users.Client
+	APITokens       *apitokens.Client
+	MCP             *mcp.Client
+	Branches        *branches.Client
+	UserActivity    *useractivity.Client
+	TypeRegistry    *typeregistry.Client
+	Notifications   *notifications.Client
+	Tasks           *tasks.Client
+	Monitoring      *monitoring.Client
+	Agents          *agents.Client
+	DataSources     *datasources.Client
+	DiscoveryJobs   *discoveryjobs.Client
+	EmbeddingPolicy *embeddingpolicies.Client
+	Integrations    *integrations.Client
+	TemplatePacks   *templatepacks.Client
+	Chunking        *chunking.Client
+
+	// Service clients — non-context (no org/project needed)
+	Health     *health.Client
+	Superadmin *superadmin.Client
+	APIDocs    *apidocs.Client
 }
 
 // Config holds configuration for the SDK client.
@@ -115,17 +147,7 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	// Initialize service clients
-	client.Documents = documents.NewClient(client.http, client.base, client.auth, client.orgID, client.projectID)
-	client.Chunks = chunks.NewClient(client.http, client.base, client.auth, client.orgID, client.projectID)
-	client.Search = search.NewClient(client.http, client.base, client.auth, client.orgID, client.projectID)
-	client.Graph = graph.NewClient(client.http, client.base, client.auth, client.orgID, client.projectID)
-	client.Chat = chat.NewClient(client.http, client.base, client.auth, client.orgID, client.projectID)
-	client.Projects = projects.NewClient(client.http, client.base, client.auth)
-	client.Orgs = orgs.NewClient(client.http, client.base, client.auth)
-	client.Users = users.NewClient(client.http, client.base, client.auth)
-	client.APITokens = apitokens.NewClient(client.http, client.base, client.auth)
-	client.Health = health.NewClient(client.http, client.base)
-	client.MCP = mcp.NewClient(client.http, client.base, client.auth)
+	initClients(client)
 
 	return client, nil
 }
@@ -176,7 +198,7 @@ func NewWithDeviceFlow(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("device flow failed: %w", err)
 	}
 
-	fmt.Println("✓ Authentication successful!")
+	fmt.Println("Authentication successful!")
 
 	// Create HTTP client
 	httpClient := &http.Client{
@@ -192,19 +214,42 @@ func NewWithDeviceFlow(cfg Config) (*Client, error) {
 	}
 
 	// Initialize service clients
-	client.Documents = documents.NewClient(client.http, client.base, client.auth, client.orgID, client.projectID)
-	client.Chunks = chunks.NewClient(client.http, client.base, client.auth, client.orgID, client.projectID)
-	client.Search = search.NewClient(client.http, client.base, client.auth, client.orgID, client.projectID)
-	client.Graph = graph.NewClient(client.http, client.base, client.auth, client.orgID, client.projectID)
-	client.Chat = chat.NewClient(client.http, client.base, client.auth, client.orgID, client.projectID)
-	client.Projects = projects.NewClient(client.http, client.base, client.auth)
-	client.Orgs = orgs.NewClient(client.http, client.base, client.auth)
-	client.Users = users.NewClient(client.http, client.base, client.auth)
-	client.APITokens = apitokens.NewClient(client.http, client.base, client.auth)
-	client.Health = health.NewClient(client.http, client.base)
-	client.MCP = mcp.NewClient(client.http, client.base, client.auth)
+	initClients(client)
 
 	return client, nil
+}
+
+// initClients initializes all service sub-clients on the given Client.
+func initClients(c *Client) {
+	// Context-scoped clients (org/project aware)
+	c.Documents = documents.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Chunks = chunks.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Search = search.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Graph = graph.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Chat = chat.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Projects = projects.NewClient(c.http, c.base, c.auth)
+	c.Orgs = orgs.NewClient(c.http, c.base, c.auth)
+	c.Users = users.NewClient(c.http, c.base, c.auth)
+	c.APITokens = apitokens.NewClient(c.http, c.base, c.auth)
+	c.MCP = mcp.NewClient(c.http, c.base, c.auth)
+	c.Branches = branches.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.UserActivity = useractivity.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.TypeRegistry = typeregistry.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Notifications = notifications.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Tasks = tasks.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Monitoring = monitoring.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Agents = agents.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.DataSources = datasources.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.DiscoveryJobs = discoveryjobs.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.EmbeddingPolicy = embeddingpolicies.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Integrations = integrations.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.TemplatePacks = templatepacks.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Chunking = chunking.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+
+	// Non-context clients
+	c.Health = health.NewClient(c.http, c.base)
+	c.Superadmin = superadmin.NewClient(c.http, c.base, c.auth)
+	c.APIDocs = apidocs.NewClient(c.http, c.base, c.auth)
 }
 
 // SetContext sets the default organization and project context for API calls.
@@ -212,7 +257,7 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.orgID = orgID
 	c.projectID = projectID
 
-	// Update all service clients
+	// Update all context-scoped service clients
 	c.Documents.SetContext(orgID, projectID)
 	c.Chunks.SetContext(orgID, projectID)
 	c.Search.SetContext(orgID, projectID)
@@ -223,6 +268,20 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.Users.SetContext(orgID, projectID)
 	c.APITokens.SetContext(orgID, projectID)
 	c.MCP.SetContext(orgID, projectID)
+	c.Branches.SetContext(orgID, projectID)
+	c.UserActivity.SetContext(orgID, projectID)
+	c.TypeRegistry.SetContext(orgID, projectID)
+	c.Notifications.SetContext(orgID, projectID)
+	c.Tasks.SetContext(orgID, projectID)
+	c.Monitoring.SetContext(orgID, projectID)
+	c.Agents.SetContext(orgID, projectID)
+	c.DataSources.SetContext(orgID, projectID)
+	c.DiscoveryJobs.SetContext(orgID, projectID)
+	c.EmbeddingPolicy.SetContext(orgID, projectID)
+	c.Integrations.SetContext(orgID, projectID)
+	c.TemplatePacks.SetContext(orgID, projectID)
+	c.Chunking.SetContext(orgID, projectID)
+	// Note: Health, Superadmin, APIDocs are non-context clients — no SetContext needed
 }
 
 // Do executes an HTTP request with authentication.

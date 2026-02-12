@@ -75,12 +75,12 @@ func (s *TemplatePacksTestSuite) assignPackToProjectViaDB(projectID, packID stri
 // =============================================================================
 
 func (s *TemplatePacksTestSuite) TestGetAvailablePacks_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/template-packs/projects/" + s.ProjectID + "/available")
+	resp := s.Client.GET("/api/template-packs/projects/" + s.ProjectID + "/available")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *TemplatePacksTestSuite) TestGetAvailablePacks_ReturnsEmptyArrayWhenNoPacks() {
-	resp := s.Client.GET("/api/v2/template-packs/projects/"+s.ProjectID+"/available",
+	resp := s.Client.GET("/api/template-packs/projects/"+s.ProjectID+"/available",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -98,7 +98,7 @@ func (s *TemplatePacksTestSuite) TestGetAvailablePacks_ReturnsPacks() {
 	s.createTemplatePackViaDB("Test Pack 1", "1.0.0", &desc)
 	s.createTemplatePackViaDB("Test Pack 2", "2.0.0", nil)
 
-	resp := s.Client.GET("/api/v2/template-packs/projects/"+s.ProjectID+"/available",
+	resp := s.Client.GET("/api/template-packs/projects/"+s.ProjectID+"/available",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -118,7 +118,7 @@ func (s *TemplatePacksTestSuite) TestGetAvailablePacks_ExcludesAlreadyInstalledP
 	// Assign pack2 to the project
 	s.assignPackToProjectViaDB(s.ProjectID, pack2ID, true)
 
-	resp := s.Client.GET("/api/v2/template-packs/projects/"+s.ProjectID+"/available",
+	resp := s.Client.GET("/api/template-packs/projects/"+s.ProjectID+"/available",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -145,12 +145,12 @@ func (s *TemplatePacksTestSuite) TestGetAvailablePacks_ExcludesAlreadyInstalledP
 // =============================================================================
 
 func (s *TemplatePacksTestSuite) TestGetInstalledPacks_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/template-packs/projects/" + s.ProjectID + "/installed")
+	resp := s.Client.GET("/api/template-packs/projects/" + s.ProjectID + "/installed")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *TemplatePacksTestSuite) TestGetInstalledPacks_ReturnsEmptyArrayWhenNoPacks() {
-	resp := s.Client.GET("/api/v2/template-packs/projects/"+s.ProjectID+"/installed",
+	resp := s.Client.GET("/api/template-packs/projects/"+s.ProjectID+"/installed",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -170,7 +170,7 @@ func (s *TemplatePacksTestSuite) TestGetInstalledPacks_ReturnsInstalledPacks() {
 	s.assignPackToProjectViaDB(s.ProjectID, pack1ID, true)
 	s.assignPackToProjectViaDB(s.ProjectID, pack2ID, true)
 
-	resp := s.Client.GET("/api/v2/template-packs/projects/"+s.ProjectID+"/installed",
+	resp := s.Client.GET("/api/template-packs/projects/"+s.ProjectID+"/installed",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -189,7 +189,7 @@ func (s *TemplatePacksTestSuite) TestGetInstalledPacks_IncludesInactivePacks() {
 	s.assignPackToProjectViaDB(s.ProjectID, pack1ID, true)
 	s.assignPackToProjectViaDB(s.ProjectID, pack2ID, false)
 
-	resp := s.Client.GET("/api/v2/template-packs/projects/"+s.ProjectID+"/installed",
+	resp := s.Client.GET("/api/template-packs/projects/"+s.ProjectID+"/installed",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -220,12 +220,12 @@ func (s *TemplatePacksTestSuite) TestGetInstalledPacks_IncludesInactivePacks() {
 // =============================================================================
 
 func (s *TemplatePacksTestSuite) TestGetCompiledTypes_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/template-packs/projects/" + s.ProjectID + "/compiled-types")
+	resp := s.Client.GET("/api/template-packs/projects/" + s.ProjectID + "/compiled-types")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *TemplatePacksTestSuite) TestGetCompiledTypes_ReturnsEmptyTypesWhenNoPacks() {
-	resp := s.Client.GET("/api/v2/template-packs/projects/"+s.ProjectID+"/compiled-types",
+	resp := s.Client.GET("/api/template-packs/projects/"+s.ProjectID+"/compiled-types",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -253,7 +253,7 @@ func (s *TemplatePacksTestSuite) TestGetCompiledTypes_ReturnsTypesFromInstalledP
 	// Install the pack
 	s.assignPackToProjectViaDB(s.ProjectID, packID, true)
 
-	resp := s.Client.GET("/api/v2/template-packs/projects/"+s.ProjectID+"/compiled-types",
+	resp := s.Client.GET("/api/template-packs/projects/"+s.ProjectID+"/compiled-types",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -281,7 +281,7 @@ func (s *TemplatePacksTestSuite) TestGetCompiledTypes_ExcludesInactivePacks() {
 	// Install the pack but set it to inactive
 	s.assignPackToProjectViaDB(s.ProjectID, packID, false)
 
-	resp := s.Client.GET("/api/v2/template-packs/projects/"+s.ProjectID+"/compiled-types",
+	resp := s.Client.GET("/api/template-packs/projects/"+s.ProjectID+"/compiled-types",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -304,14 +304,14 @@ func (s *TemplatePacksTestSuite) TestGetCompiledTypes_ExcludesInactivePacks() {
 // =============================================================================
 
 func (s *TemplatePacksTestSuite) TestAssignPack_RequiresAuth() {
-	resp := s.Client.POST("/api/v2/template-packs/projects/"+s.ProjectID+"/assign",
+	resp := s.Client.POST("/api/template-packs/projects/"+s.ProjectID+"/assign",
 		testutil.WithJSONBody(map[string]any{"template_pack_id": "some-id"}),
 	)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *TemplatePacksTestSuite) TestAssignPack_RequiresTemplatePackID() {
-	resp := s.Client.POST("/api/v2/template-packs/projects/"+s.ProjectID+"/assign",
+	resp := s.Client.POST("/api/template-packs/projects/"+s.ProjectID+"/assign",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{}),
 	)
@@ -323,7 +323,7 @@ func (s *TemplatePacksTestSuite) TestAssignPack_AssignsPackToProject() {
 	// Create a template pack
 	packID := s.createTemplatePackViaDB("Pack To Assign", "1.0.0", nil)
 
-	resp := s.Client.POST("/api/v2/template-packs/projects/"+s.ProjectID+"/assign",
+	resp := s.Client.POST("/api/template-packs/projects/"+s.ProjectID+"/assign",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"template_pack_id": packID,
@@ -342,7 +342,7 @@ func (s *TemplatePacksTestSuite) TestAssignPack_AssignsPackToProject() {
 }
 
 func (s *TemplatePacksTestSuite) TestAssignPack_ReturnsNotFoundForInvalidPackID() {
-	resp := s.Client.POST("/api/v2/template-packs/projects/"+s.ProjectID+"/assign",
+	resp := s.Client.POST("/api/template-packs/projects/"+s.ProjectID+"/assign",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"template_pack_id": "00000000-0000-0000-0000-000000000000",
@@ -357,12 +357,12 @@ func (s *TemplatePacksTestSuite) TestAssignPack_ReturnsNotFoundForInvalidPackID(
 // =============================================================================
 
 func (s *TemplatePacksTestSuite) TestUpdateAssignment_RequiresAuth() {
-	resp := s.Client.PATCH("/api/v2/template-packs/projects/" + s.ProjectID + "/assignments/some-id")
+	resp := s.Client.PATCH("/api/template-packs/projects/" + s.ProjectID + "/assignments/some-id")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *TemplatePacksTestSuite) TestUpdateAssignment_ReturnsNotFoundForInvalidAssignmentID() {
-	resp := s.Client.PATCH("/api/v2/template-packs/projects/"+s.ProjectID+"/assignments/00000000-0000-0000-0000-000000000000",
+	resp := s.Client.PATCH("/api/template-packs/projects/"+s.ProjectID+"/assignments/00000000-0000-0000-0000-000000000000",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{"active": false}),
 	)
@@ -376,7 +376,7 @@ func (s *TemplatePacksTestSuite) TestUpdateAssignment_TogglesActiveStatus() {
 	assignmentID := s.assignPackToProjectViaDB(s.ProjectID, packID, true)
 
 	// Deactivate the pack
-	resp := s.Client.PATCH("/api/v2/template-packs/projects/"+s.ProjectID+"/assignments/"+assignmentID,
+	resp := s.Client.PATCH("/api/template-packs/projects/"+s.ProjectID+"/assignments/"+assignmentID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{"active": false}),
 	)
@@ -400,12 +400,12 @@ func (s *TemplatePacksTestSuite) TestUpdateAssignment_TogglesActiveStatus() {
 // =============================================================================
 
 func (s *TemplatePacksTestSuite) TestDeleteAssignment_RequiresAuth() {
-	resp := s.Client.DELETE("/api/v2/template-packs/projects/" + s.ProjectID + "/assignments/some-id")
+	resp := s.Client.DELETE("/api/template-packs/projects/" + s.ProjectID + "/assignments/some-id")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *TemplatePacksTestSuite) TestDeleteAssignment_ReturnsNotFoundForInvalidAssignmentID() {
-	resp := s.Client.DELETE("/api/v2/template-packs/projects/"+s.ProjectID+"/assignments/00000000-0000-0000-0000-000000000000",
+	resp := s.Client.DELETE("/api/template-packs/projects/"+s.ProjectID+"/assignments/00000000-0000-0000-0000-000000000000",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -417,7 +417,7 @@ func (s *TemplatePacksTestSuite) TestDeleteAssignment_DeletesAssignment() {
 	packID := s.createTemplatePackViaDB("Delete Pack", "1.0.0", nil)
 	assignmentID := s.assignPackToProjectViaDB(s.ProjectID, packID, true)
 
-	resp := s.Client.DELETE("/api/v2/template-packs/projects/"+s.ProjectID+"/assignments/"+assignmentID,
+	resp := s.Client.DELETE("/api/template-packs/projects/"+s.ProjectID+"/assignments/"+assignmentID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -442,7 +442,7 @@ func (s *TemplatePacksTestSuite) TestDeleteAssignment_DoesNotAffectOtherProjects
 	assignment2ID := s.assignPackToProjectViaDB(otherProjectID, packID, true)
 
 	// Delete assignment from current project
-	resp := s.Client.DELETE("/api/v2/template-packs/projects/"+s.ProjectID+"/assignments/"+assignment1ID,
+	resp := s.Client.DELETE("/api/template-packs/projects/"+s.ProjectID+"/assignments/"+assignment1ID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusNoContent, resp.StatusCode)

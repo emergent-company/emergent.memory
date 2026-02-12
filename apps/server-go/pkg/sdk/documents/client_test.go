@@ -24,19 +24,17 @@ func TestDocumentsList(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		testutil.JSONResponse(t, w, map[string]interface{}{
-			"data": []map[string]interface{}{
+			"documents": []map[string]interface{}{
 				{
-					"id":           fixtureDocuments[0].ID,
-					"title":        fixtureDocuments[0].Title,
-					"source_type":  fixtureDocuments[0].SourceType,
-					"content_type": fixtureDocuments[0].ContentType,
-					"created_at":   fixtureDocuments[0].CreatedAt,
-					"updated_at":   fixtureDocuments[0].UpdatedAt,
+					"id":        fixtureDocuments[0].ID,
+					"filename":  fixtureDocuments[0].Filename,
+					"mimeType":  fixtureDocuments[0].MimeType,
+					"createdAt": fixtureDocuments[0].CreatedAt,
+					"updatedAt": fixtureDocuments[0].UpdatedAt,
 				},
 			},
-			"meta": map[string]string{
-				"next_cursor": "cursor_123",
-			},
+			"total":       1,
+			"next_cursor": "cursor_123",
 		})
 	})
 
@@ -52,16 +50,20 @@ func TestDocumentsList(t *testing.T) {
 		t.Fatalf("List() error = %v", err)
 	}
 
-	if len(result.Data) != 1 {
-		t.Errorf("expected 1 document, got %d", len(result.Data))
+	if len(result.Documents) != 1 {
+		t.Errorf("expected 1 document, got %d", len(result.Documents))
 	}
 
-	if result.Data[0].ID != fixtureDocuments[0].ID {
-		t.Errorf("expected document ID %s, got %s", fixtureDocuments[0].ID, result.Data[0].ID)
+	if result.Documents[0].ID != fixtureDocuments[0].ID {
+		t.Errorf("expected document ID %s, got %s", fixtureDocuments[0].ID, result.Documents[0].ID)
 	}
 
-	if result.Meta.NextCursor != "cursor_123" {
-		t.Errorf("expected next_cursor=cursor_123, got %s", result.Meta.NextCursor)
+	if result.NextCursor == nil || *result.NextCursor != "cursor_123" {
+		t.Errorf("expected next_cursor=cursor_123, got %v", result.NextCursor)
+	}
+
+	if result.Total != 1 {
+		t.Errorf("expected total=1, got %d", result.Total)
 	}
 }
 
@@ -82,7 +84,7 @@ func TestDocumentsListWithOptions(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data":[],"meta":{}}`))
+		w.Write([]byte(`{"documents":[],"total":0}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{
@@ -113,14 +115,11 @@ func TestDocumentsGet(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		testutil.JSONResponse(t, w, map[string]interface{}{
-			"data": map[string]interface{}{
-				"id":           fixtureDoc.ID,
-				"title":        fixtureDoc.Title,
-				"source_type":  fixtureDoc.SourceType,
-				"content_type": fixtureDoc.ContentType,
-				"created_at":   fixtureDoc.CreatedAt,
-				"updated_at":   fixtureDoc.UpdatedAt,
-			},
+			"id":        fixtureDoc.ID,
+			"filename":  fixtureDoc.Filename,
+			"mimeType":  fixtureDoc.MimeType,
+			"createdAt": fixtureDoc.CreatedAt,
+			"updatedAt": fixtureDoc.UpdatedAt,
 		})
 	})
 
@@ -140,8 +139,8 @@ func TestDocumentsGet(t *testing.T) {
 		t.Errorf("expected document ID %s, got %s", fixtureDoc.ID, result.ID)
 	}
 
-	if result.Title != fixtureDoc.Title {
-		t.Errorf("expected title %s, got %s", fixtureDoc.Title, result.Title)
+	if result.Filename == nil || *result.Filename != *fixtureDoc.Filename {
+		t.Errorf("expected filename %v, got %v", fixtureDoc.Filename, result.Filename)
 	}
 }
 
@@ -194,7 +193,7 @@ func TestDocumentsListEmpty(t *testing.T) {
 	mock.On("GET", "/api/documents", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data":[],"meta":{}}`))
+		w.Write([]byte(`{"documents":[],"total":0}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{
@@ -207,8 +206,8 @@ func TestDocumentsListEmpty(t *testing.T) {
 		t.Fatalf("List() error = %v", err)
 	}
 
-	if len(result.Data) != 0 {
-		t.Errorf("expected empty list, got %d documents", len(result.Data))
+	if len(result.Documents) != 0 {
+		t.Errorf("expected empty list, got %d documents", len(result.Documents))
 	}
 }
 
@@ -222,7 +221,7 @@ func TestDocumentsSetContext(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data":[],"meta":{}}`))
+		w.Write([]byte(`{"documents":[],"total":0}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{

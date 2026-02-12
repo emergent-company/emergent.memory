@@ -66,7 +66,7 @@ func (c *Client) Search(ctx context.Context, req *SearchRequest) (*SearchRespons
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/search", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/search/unified", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

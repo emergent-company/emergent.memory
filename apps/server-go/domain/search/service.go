@@ -73,9 +73,16 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 		rawDebug any
 		err      error
 	}
+	type relationshipResult struct {
+		results  []*RelationshipSearchResult
+		elapsed  time.Duration
+		rawDebug any
+		err      error
+	}
 
 	graphCh := make(chan graphResult, 1)
 	textCh := make(chan textResult, 1)
+	relationshipCh := make(chan relationshipResult, 1)
 
 	// Execute graph search
 	go func() {
@@ -99,15 +106,30 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 		textCh <- textResult{results: results, mode: mode, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
 	}()
 
-	// Wait for both searches
+	// Execute relationship search
+	go func() {
+		if resultTypes == ResultTypeText {
+			relationshipCh <- relationshipResult{results: nil, elapsed: 0}
+			return
+		}
+		start := time.Now()
+		results, rawDebug, err := s.executeRelationshipSearch(ctx, projectID, req)
+		relationshipCh <- relationshipResult{results: results, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
+	}()
+
+	// Wait for all searches
 	graphRes := <-graphCh
 	textRes := <-textCh
+	relationshipRes := <-relationshipCh
 
 	if graphRes.err != nil {
 		return nil, graphRes.err
 	}
 	if textRes.err != nil {
 		return nil, textRes.err
+	}
+	if relationshipRes.err != nil {
+		return nil, relationshipRes.err
 	}
 
 	// Expand relationships for graph results if enabled
@@ -121,26 +143,30 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 
 	// Fuse results
 	fusionStart := time.Now()
-	fusedResults := s.fuseResults(graphResults, textRes.results, fusionStrategy, req.Weights, limit)
+	fusedResults := s.fuseResults(graphResults, textRes.results, relationshipRes.results, fusionStrategy, req.Weights, limit)
 	fusionElapsed := time.Since(fusionStart)
 
 	// Count result types
 	graphCount := 0
 	textCount := 0
+	relationshipCount := 0
 	for _, r := range fusedResults {
 		if r.Type == ItemTypeGraph {
 			graphCount++
-		} else {
+		} else if r.Type == ItemTypeText {
 			textCount++
+		} else if r.Type == ItemTypeRelationship {
+			relationshipCount++
 		}
 	}
 
 	// Build metadata
 	metadata := UnifiedSearchMetadata{
-		TotalResults:     len(fusedResults),
-		GraphResultCount: graphCount,
-		TextResultCount:  textCount,
-		FusionStrategy:   fusionStrategy,
+		TotalResults:            len(fusedResults),
+		GraphResultCount:        graphCount,
+		TextResultCount:         textCount,
+		RelationshipResultCount: relationshipCount,
+		FusionStrategy:          fusionStrategy,
 		ExecutionTime: UnifiedSearchExecutionTime{
 			FusionMs: int(fusionElapsed.Milliseconds()),
 			TotalMs:  int(time.Since(startTime).Milliseconds()),
@@ -150,6 +176,9 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 	if resultTypes != ResultTypeText {
 		graphMs := int(graphRes.elapsed.Milliseconds())
 		metadata.ExecutionTime.GraphSearchMs = &graphMs
+
+		relationshipMs := int(relationshipRes.elapsed.Milliseconds())
+		metadata.ExecutionTime.RelationshipSearchMs = &relationshipMs
 	}
 	if resultTypes != ResultTypeGraph {
 		textMs := int(textRes.elapsed.Milliseconds())
@@ -163,7 +192,7 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 	// Build debug info if requested
 	var debug *UnifiedSearchDebug
 	if req.IncludeDebug {
-		debug = s.buildDebugInfo(graphRes.rawDebug, textRes.rawDebug, graphResults, textRes.results, fusionStrategy, req.Weights, len(fusedResults))
+		debug = s.buildDebugInfo(graphRes.rawDebug, textRes.rawDebug, relationshipRes.rawDebug, graphResults, textRes.results, relationshipRes.results, fusionStrategy, req.Weights, len(fusedResults))
 	}
 
 	return &UnifiedSearchResponse{
@@ -290,6 +319,41 @@ func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, re
 	return resp.Results, string(resp.Mode), rawDebug, nil
 }
 
+// executeRelationshipSearch runs relationship vector search
+func (s *Service) executeRelationshipSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest) ([]*RelationshipSearchResult, any, error) {
+	var vector []float32
+	if s.embeddings != nil {
+		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		if err != nil {
+			s.log.Warn("failed to generate query embedding for relationship search", logger.Error(err))
+			return nil, nil, nil
+		}
+		vector = vec
+	}
+
+	if len(vector) == 0 {
+		return nil, nil, nil
+	}
+
+	params := RelationshipSearchParams{
+		ProjectID: projectID,
+		Vector:    vector,
+		Limit:     req.Limit,
+	}
+
+	resp, err := s.repo.SearchRelationships(ctx, params)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var rawDebug any
+	if req.IncludeDebug {
+		rawDebug = resp.Results
+	}
+
+	return resp.Results, rawDebug, nil
+}
+
 // expandRelationships fetches relationships for graph results
 func (s *Service) expandRelationships(ctx context.Context, projectID uuid.UUID, results []*UnifiedSearchGraphResult, options *UnifiedSearchRelationshipOptions) []*UnifiedSearchGraphResult {
 	if options == nil || !options.Enabled || options.MaxDepth == 0 {
@@ -357,12 +421,12 @@ func (s *Service) expandRelationships(ctx context.Context, projectID uuid.UUID, 
 }
 
 // fuseResults combines graph and text results using the specified strategy
-func (s *Service) fuseResults(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, strategy UnifiedSearchFusionStrategy, weights *UnifiedSearchWeights, limit int) []UnifiedSearchResultItem {
+func (s *Service) fuseResults(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, strategy UnifiedSearchFusionStrategy, weights *UnifiedSearchWeights, limit int) []UnifiedSearchResultItem {
 	switch strategy {
 	case FusionStrategyWeighted:
-		return s.fuseWeighted(graphResults, textResults, weights, limit)
+		return s.fuseWeighted(graphResults, textResults, relationshipResults, weights, limit)
 	case FusionStrategyRRF:
-		return s.fuseRRF(graphResults, textResults, limit)
+		return s.fuseRRF(graphResults, textResults, relationshipResults, limit)
 	case FusionStrategyInterleave:
 		return s.fuseInterleave(graphResults, textResults, limit)
 	case FusionStrategyGraphFirst:
@@ -370,12 +434,12 @@ func (s *Service) fuseResults(graphResults []*UnifiedSearchGraphResult, textResu
 	case FusionStrategyTextFirst:
 		return s.fuseTextFirst(graphResults, textResults, limit)
 	default:
-		return s.fuseWeighted(graphResults, textResults, weights, limit)
+		return s.fuseWeighted(graphResults, textResults, relationshipResults, weights, limit)
 	}
 }
 
 // fuseWeighted combines results using weighted scores
-func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, weights *UnifiedSearchWeights, limit int) []UnifiedSearchResultItem {
+func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, weights *UnifiedSearchWeights, limit int) []UnifiedSearchResultItem {
 	graphWeight := float32(0.5)
 	textWeight := float32(0.5)
 	if weights != nil {
@@ -387,14 +451,12 @@ func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textRes
 		}
 	}
 
-	// Normalize weights
 	totalWeight := graphWeight + textWeight
 	if totalWeight > 0 {
 		graphWeight /= totalWeight
 		textWeight /= totalWeight
 	}
 
-	// Create scored items
 	type scoredItem struct {
 		item       UnifiedSearchResultItem
 		fusedScore float32
@@ -418,17 +480,22 @@ func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textRes
 		})
 	}
 
-	// Sort by fused score descending
+	for _, r := range relationshipResults {
+		item := s.relationshipResultToItem(r)
+		combined = append(combined, scoredItem{
+			item:       item,
+			fusedScore: r.Score * graphWeight,
+		})
+	}
+
 	sort.Slice(combined, func(i, j int) bool {
 		return combined[i].fusedScore > combined[j].fusedScore
 	})
 
-	// Apply limit
 	if len(combined) > limit {
 		combined = combined[:limit]
 	}
 
-	// Extract items with updated scores
 	results := make([]UnifiedSearchResultItem, len(combined))
 	for i, c := range combined {
 		c.item.Score = c.fusedScore
@@ -439,66 +506,60 @@ func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textRes
 }
 
 // fuseRRF combines results using Reciprocal Rank Fusion
-func (s *Service) fuseRRF(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, limit int) []UnifiedSearchResultItem {
-	const k = 60 // Standard RRF constant
+func (s *Service) fuseRRF(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, limit int) []UnifiedSearchResultItem {
+	const k = 60
 
-	scoreMap := make(map[string]struct {
-		item  UnifiedSearchResultItem
-		score float32
-	})
-
-	// Add graph results with RRF score
+	graphSet := rrfResultSet{results: make([]rrfResult, len(graphResults))}
 	for i, g := range graphResults {
-		rrfScore := float32(1.0) / float32(k+i+1)
-		item := s.graphResultToItem(g)
-		scoreMap[g.ObjectID] = struct {
-			item  UnifiedSearchResultItem
-			score float32
-		}{item: item, score: rrfScore}
+		graphSet.results[i] = rrfResult{id: g.ObjectID, rank: i}
 	}
 
-	// Add text results with RRF score (combine if overlapping)
+	textSet := rrfResultSet{results: make([]rrfResult, len(textResults))}
 	for i, t := range textResults {
-		rrfScore := float32(1.0) / float32(k+i+1)
-		id := t.ID.String()
+		textSet.results[i] = rrfResult{id: t.ID.String(), rank: i}
+	}
 
-		if existing, ok := scoreMap[id]; ok {
-			// Item appears in both - boost score
-			existing.score += rrfScore
-			scoreMap[id] = existing
-		} else {
+	relationshipSet := rrfResultSet{results: make([]rrfResult, len(relationshipResults))}
+	for i, r := range relationshipResults {
+		relationshipSet.results[i] = rrfResult{id: r.ID.String(), rank: i}
+	}
+
+	merged := reciprocalRankFusion([]rrfResultSet{graphSet, textSet, relationshipSet}, k)
+
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+
+	idToGraph := make(map[string]*UnifiedSearchGraphResult)
+	for _, g := range graphResults {
+		idToGraph[g.ObjectID] = g
+	}
+
+	idToText := make(map[string]*TextSearchResult)
+	for _, t := range textResults {
+		idToText[t.ID.String()] = t
+	}
+
+	idToRelationship := make(map[string]*RelationshipSearchResult)
+	for _, r := range relationshipResults {
+		idToRelationship[r.ID.String()] = r
+	}
+
+	results := make([]UnifiedSearchResultItem, len(merged))
+	for i, scoredID := range merged {
+		if g, ok := idToGraph[scoredID.id]; ok {
+			item := s.graphResultToItem(g)
+			item.Score = scoredID.score
+			results[i] = item
+		} else if t, ok := idToText[scoredID.id]; ok {
 			item := s.textResultToItem(t)
-			scoreMap[id] = struct {
-				item  UnifiedSearchResultItem
-				score float32
-			}{item: item, score: rrfScore}
+			item.Score = scoredID.score
+			results[i] = item
+		} else if r, ok := idToRelationship[scoredID.id]; ok {
+			item := s.relationshipResultToItem(r)
+			item.Score = scoredID.score
+			results[i] = item
 		}
-	}
-
-	// Convert to slice and sort
-	type entry struct {
-		id    string
-		item  UnifiedSearchResultItem
-		score float32
-	}
-	var entries []entry
-	for id, v := range scoreMap {
-		entries = append(entries, entry{id: id, item: v.item, score: v.score})
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].score > entries[j].score
-	})
-
-	// Apply limit and update scores
-	if len(entries) > limit {
-		entries = entries[:limit]
-	}
-
-	results := make([]UnifiedSearchResultItem, len(entries))
-	for i, e := range entries {
-		e.item.Score = e.score
-		results[i] = e.item
 	}
 
 	return results
@@ -612,12 +673,25 @@ func (s *Service) textResultToItem(t *TextSearchResult) UnifiedSearchResultItem 
 	}
 }
 
+// relationshipResultToItem converts a relationship result to a unified search result item
+func (s *Service) relationshipResultToItem(r *RelationshipSearchResult) UnifiedSearchResultItem {
+	return UnifiedSearchResultItem{
+		Type:             ItemTypeRelationship,
+		ID:               r.ID.String(),
+		Score:            r.Score,
+		RelationshipType: r.Type,
+		TripletText:      r.TripletText,
+		SourceID:         r.SrcID.String(),
+		TargetID:         r.DstID.String(),
+		Properties:       r.Properties,
+	}
+}
+
 // buildDebugInfo creates debug information for the search response
-func (s *Service) buildDebugInfo(graphDebug, textDebug any, graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, strategy UnifiedSearchFusionStrategy, weights *UnifiedSearchWeights, postFusionCount int) *UnifiedSearchDebug {
-	// Calculate score distribution
+func (s *Service) buildDebugInfo(graphDebug, textDebug, relationshipDebug any, graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, strategy UnifiedSearchFusionStrategy, weights *UnifiedSearchWeights, postFusionCount int) *UnifiedSearchDebug {
 	var scoreDistribution *UnifiedSearchScoreDistribution
 
-	if len(graphResults) > 0 || len(textResults) > 0 {
+	if len(graphResults) > 0 || len(textResults) > 0 || len(relationshipResults) > 0 {
 		scoreDistribution = &UnifiedSearchScoreDistribution{}
 
 		if len(graphResults) > 0 {
@@ -637,16 +711,25 @@ func (s *Service) buildDebugInfo(graphDebug, textDebug any, graphResults []*Unif
 			min, max, mean := calcScoreStats(textScores)
 			scoreDistribution.Text = &ScoreStats{Min: min, Max: max, Mean: mean}
 		}
+
+		if len(relationshipResults) > 0 {
+			relationshipScores := make([]float32, len(relationshipResults))
+			for i, r := range relationshipResults {
+				relationshipScores[i] = r.Score
+			}
+			min, max, mean := calcScoreStats(relationshipScores)
+			scoreDistribution.Relationship = &ScoreStats{Min: min, Max: max, Mean: mean}
+		}
 	}
 
-	// Build fusion details
 	fusionDetails := &UnifiedSearchFusionDetails{
 		Strategy:        strategy,
 		Weights:         weights,
 		PostFusionCount: postFusionCount,
 		PreFusionCounts: &PreFusionCounts{
-			Graph: len(graphResults),
-			Text:  len(textResults),
+			Graph:        len(graphResults),
+			Text:         len(textResults),
+			Relationship: len(relationshipResults),
 		},
 	}
 
@@ -680,4 +763,58 @@ func calcScoreStats(scores []float32) (min, max, mean float32) {
 
 	mean = sum / float32(len(scores))
 	return min, max, mean
+}
+
+// rrfResultSet represents a ranked result set for RRF merging.
+// Each result is identified by a unique ID and has an original rank (0-based).
+type rrfResultSet struct {
+	results []rrfResult
+}
+
+type rrfResult struct {
+	id   string
+	rank int
+}
+
+// reciprocalRankFusion merges 2 or more ranked result sets using RRF algorithm.
+// Returns merged IDs with their RRF scores in descending score order.
+// k=60 is the standard RRF constant (balances rank importance).
+func reciprocalRankFusion(resultSets []rrfResultSet, k int) []rrfScoredID {
+	if k <= 0 {
+		k = 60
+	}
+
+	scoreMap := make(map[string]float32)
+
+	for _, set := range resultSets {
+		for _, result := range set.results {
+			rrfScore := float32(1.0) / float32(k+result.rank+1)
+			scoreMap[result.id] += rrfScore
+		}
+	}
+
+	type entry struct {
+		id    string
+		score float32
+	}
+	var entries []entry
+	for id, score := range scoreMap {
+		entries = append(entries, entry{id: id, score: score})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].score > entries[j].score
+	})
+
+	merged := make([]rrfScoredID, len(entries))
+	for i, e := range entries {
+		merged[i] = rrfScoredID{id: e.id, score: e.score}
+	}
+
+	return merged
+}
+
+type rrfScoredID struct {
+	id    string
+	score float32
 }

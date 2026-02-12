@@ -27,7 +27,7 @@ func (s *ProjectsTestSuite) SetupSuite() {
 
 // Helper to create an org via API and return its ID
 func (s *ProjectsTestSuite) createOrgViaAPI(name string) string {
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "%s"}`, name)),

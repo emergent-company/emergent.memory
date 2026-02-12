@@ -60,11 +60,17 @@ _Focus: Solving the "Stale Facts" problem and improving relationship search._
 
 **Goal**: Search by relationship meaning ("founded by", "located in").
 
-- **Schema**: Add `embedding` (vector) to `kb.graph_relationships`.
+**Status**: **IMPLEMENTED** (February 2026) — See [Feature Documentation](../features/graph/triplet-embeddings.md)
+
+- **Schema**: Added `embedding vector(768)` and `embedding_updated_at` to `kb.graph_relationships`.
 - **Logic**:
   - Generate text: "Elon Musk [source] founded [rel] Tesla [target]".
-  - Embed and store.
-  - Update `SearchService` to query relationships alongside nodes.
+  - Embed synchronously via Vertex AI text-embedding-004 during relationship creation.
+  - Unified search (`POST /api/search/unified`) runs 3-way parallel search (graph + text + relationships).
+  - Results merged via Reciprocal Rank Fusion (RRF, k=60).
+  - Relationship triplet text injected into Chat RAG context.
+- **Index**: IVFFlat with `lists=100`, cosine similarity.
+- **Backfill**: `cmd/backfill-embeddings` script for existing relationships.
 - **Value**: 10-20% recall improvement for relationship-heavy queries.
 - **Effort**: ~1.5 hours.
 

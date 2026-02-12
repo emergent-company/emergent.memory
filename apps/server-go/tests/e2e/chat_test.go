@@ -32,7 +32,7 @@ func (s *ChatTestSuite) SetupSuite() {
 
 func (s *ChatTestSuite) TestListConversations_RequiresAuth() {
 	// Request without Authorization header should fail
-	resp := s.Client.GET("/api/v2/chat/conversations",
+	resp := s.Client.GET("/api/chat/conversations",
 		testutil.WithProjectID(s.ProjectID),
 	)
 
@@ -41,7 +41,7 @@ func (s *ChatTestSuite) TestListConversations_RequiresAuth() {
 
 func (s *ChatTestSuite) TestListConversations_RequiresChatUseScope() {
 	// User without chat:use scope should be forbidden
-	resp := s.Client.GET("/api/v2/chat/conversations",
+	resp := s.Client.GET("/api/chat/conversations",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -51,7 +51,7 @@ func (s *ChatTestSuite) TestListConversations_RequiresChatUseScope() {
 
 func (s *ChatTestSuite) TestListConversations_RequiresProjectID() {
 	// Request without X-Project-ID should fail
-	resp := s.Client.GET("/api/v2/chat/conversations",
+	resp := s.Client.GET("/api/chat/conversations",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -64,7 +64,7 @@ func (s *ChatTestSuite) TestListConversations_RequiresProjectID() {
 
 func (s *ChatTestSuite) TestListConversations_Empty() {
 	// List conversations when none exist
-	resp := s.Client.GET("/api/v2/chat/conversations",
+	resp := s.Client.GET("/api/chat/conversations",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -86,7 +86,7 @@ func (s *ChatTestSuite) TestListConversations_ReturnsConversations() {
 	conv := s.createTestConversation("Test Conversation", "Hello world")
 
 	// List conversations
-	resp := s.Client.GET("/api/v2/chat/conversations",
+	resp := s.Client.GET("/api/chat/conversations",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -113,7 +113,7 @@ func (s *ChatTestSuite) TestListConversations_Pagination() {
 	}
 
 	// List with limit
-	resp := s.Client.GET("/api/v2/chat/conversations?limit=3",
+	resp := s.Client.GET("/api/chat/conversations?limit=3",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -129,7 +129,7 @@ func (s *ChatTestSuite) TestListConversations_Pagination() {
 	s.Equal(float64(5), body["total"])
 
 	// Test offset
-	resp = s.Client.GET("/api/v2/chat/conversations?limit=3&offset=3",
+	resp = s.Client.GET("/api/chat/conversations?limit=3&offset=3",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -153,7 +153,7 @@ func (s *ChatTestSuite) TestCreateConversation_Success() {
 		"message": "Hello, this is my first message",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/conversations",
+	resp := s.Client.POST("/api/chat/conversations",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -184,7 +184,7 @@ func (s *ChatTestSuite) TestCreateConversation_RequiresTitle() {
 		"message": "Hello",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/conversations",
+	resp := s.Client.POST("/api/chat/conversations",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -198,7 +198,7 @@ func (s *ChatTestSuite) TestCreateConversation_RequiresMessage() {
 		"title": "Test",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/conversations",
+	resp := s.Client.POST("/api/chat/conversations",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -216,7 +216,7 @@ func (s *ChatTestSuite) TestCreateConversation_WithCanonicalID() {
 		"canonicalId": canonicalID,
 	}
 
-	resp := s.Client.POST("/api/v2/chat/conversations",
+	resp := s.Client.POST("/api/chat/conversations",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -240,7 +240,7 @@ func (s *ChatTestSuite) TestGetConversation_Success() {
 	conv := s.createTestConversation("Test Conversation", "Initial message")
 
 	// Get the conversation
-	resp := s.Client.GET("/api/v2/chat/"+conv["id"].(string),
+	resp := s.Client.GET("/api/chat/"+conv["id"].(string),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -260,7 +260,7 @@ func (s *ChatTestSuite) TestGetConversation_Success() {
 }
 
 func (s *ChatTestSuite) TestGetConversation_NotFound() {
-	resp := s.Client.GET("/api/v2/chat/00000000-0000-0000-0000-000000000999",
+	resp := s.Client.GET("/api/chat/00000000-0000-0000-0000-000000000999",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -269,7 +269,7 @@ func (s *ChatTestSuite) TestGetConversation_NotFound() {
 }
 
 func (s *ChatTestSuite) TestGetConversation_InvalidID() {
-	resp := s.Client.GET("/api/v2/chat/invalid-id",
+	resp := s.Client.GET("/api/chat/invalid-id",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -290,7 +290,7 @@ func (s *ChatTestSuite) TestUpdateConversation_Success() {
 		"title": "Updated Title",
 	}
 
-	resp := s.Client.PATCH("/api/v2/chat/"+conv["id"].(string),
+	resp := s.Client.PATCH("/api/chat/"+conv["id"].(string),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -314,7 +314,7 @@ func (s *ChatTestSuite) TestUpdateConversation_RequiresChatAdminScope() {
 	}
 
 	// User without chat:admin scope should be forbidden
-	resp := s.Client.PATCH("/api/v2/chat/"+conv["id"].(string),
+	resp := s.Client.PATCH("/api/chat/"+conv["id"].(string),
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -328,7 +328,7 @@ func (s *ChatTestSuite) TestUpdateConversation_NotFound() {
 		"title": "New Title",
 	}
 
-	resp := s.Client.PATCH("/api/v2/chat/00000000-0000-0000-0000-000000000999",
+	resp := s.Client.PATCH("/api/chat/00000000-0000-0000-0000-000000000999",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -346,7 +346,7 @@ func (s *ChatTestSuite) TestDeleteConversation_Success() {
 	conv := s.createTestConversation("To Delete", "Message")
 
 	// Delete the conversation
-	resp := s.Client.DELETE("/api/v2/chat/"+conv["id"].(string),
+	resp := s.Client.DELETE("/api/chat/"+conv["id"].(string),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -360,7 +360,7 @@ func (s *ChatTestSuite) TestDeleteConversation_Success() {
 	s.Equal("deleted", body["status"])
 
 	// Verify it's gone
-	resp = s.Client.GET("/api/v2/chat/"+conv["id"].(string),
+	resp = s.Client.GET("/api/chat/"+conv["id"].(string),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -372,7 +372,7 @@ func (s *ChatTestSuite) TestDeleteConversation_RequiresChatAdminScope() {
 	conv := s.createTestConversation("Test", "Message")
 
 	// User without chat:admin scope should be forbidden
-	resp := s.Client.DELETE("/api/v2/chat/"+conv["id"].(string),
+	resp := s.Client.DELETE("/api/chat/"+conv["id"].(string),
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -381,7 +381,7 @@ func (s *ChatTestSuite) TestDeleteConversation_RequiresChatAdminScope() {
 }
 
 func (s *ChatTestSuite) TestDeleteConversation_NotFound() {
-	resp := s.Client.DELETE("/api/v2/chat/00000000-0000-0000-0000-000000000999",
+	resp := s.Client.DELETE("/api/chat/00000000-0000-0000-0000-000000000999",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -403,7 +403,7 @@ func (s *ChatTestSuite) TestAddMessage_Success() {
 		"content": "Hello! How can I help you?",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/"+conv["id"].(string)+"/messages",
+	resp := s.Client.POST("/api/chat/"+conv["id"].(string)+"/messages",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -429,7 +429,7 @@ func (s *ChatTestSuite) TestAddMessage_RequiresValidRole() {
 		"content": "Test message",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/"+conv["id"].(string)+"/messages",
+	resp := s.Client.POST("/api/chat/"+conv["id"].(string)+"/messages",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -444,7 +444,7 @@ func (s *ChatTestSuite) TestAddMessage_ConversationNotFound() {
 		"content": "Test message",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/00000000-0000-0000-0000-000000000999/messages",
+	resp := s.Client.POST("/api/chat/00000000-0000-0000-0000-000000000999/messages",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -465,7 +465,7 @@ func (s *ChatTestSuite) TestProjectIsolation() {
 	conv := s.createTestConversation("Project 1 Chat", "Message")
 
 	// Try to access from project 2 - should not find it
-	resp := s.Client.GET("/api/v2/chat/"+conv["id"].(string),
+	resp := s.Client.GET("/api/chat/"+conv["id"].(string),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(project2ID),
 	)
@@ -473,7 +473,7 @@ func (s *ChatTestSuite) TestProjectIsolation() {
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 
 	// List in project 2 should be empty
-	resp = s.Client.GET("/api/v2/chat/conversations",
+	resp = s.Client.GET("/api/chat/conversations",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(project2ID),
 	)
@@ -497,7 +497,7 @@ func (s *ChatTestSuite) TestStreamChat_RequiresAuth() {
 		"message": "Hello",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
 	)
@@ -510,7 +510,7 @@ func (s *ChatTestSuite) TestStreamChat_RequiresChatUseScope() {
 		"message": "Hello",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -524,7 +524,7 @@ func (s *ChatTestSuite) TestStreamChat_RequiresProjectID() {
 		"message": "Hello",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(req),
 	)
@@ -535,7 +535,7 @@ func (s *ChatTestSuite) TestStreamChat_RequiresProjectID() {
 func (s *ChatTestSuite) TestStreamChat_RequiresMessage() {
 	req := map[string]any{}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -552,7 +552,7 @@ func (s *ChatTestSuite) TestStreamChat_CreatesNewConversation() {
 		"message": "Hello, this is my first message!",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -577,7 +577,7 @@ func (s *ChatTestSuite) TestStreamChat_CreatesNewConversation() {
 
 	// Verify conversation was created
 	convID := metaEvent["conversationId"].(string)
-	getResp := s.Client.GET("/api/v2/chat/"+convID,
+	getResp := s.Client.GET("/api/chat/"+convID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -608,7 +608,7 @@ func (s *ChatTestSuite) TestStreamChat_UsesExistingConversation() {
 		"conversationId": convID,
 	}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -627,7 +627,7 @@ func (s *ChatTestSuite) TestStreamChat_UsesExistingConversation() {
 	s.Equal(convID, metaEvent["conversationId"])
 
 	// Verify message was added
-	getResp := s.Client.GET("/api/v2/chat/"+convID,
+	getResp := s.Client.GET("/api/chat/"+convID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -652,7 +652,7 @@ func (s *ChatTestSuite) TestStreamChat_ConversationNotFound() {
 		"conversationId": "00000000-0000-0000-0000-000000000999",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -669,7 +669,7 @@ func (s *ChatTestSuite) TestStreamChat_InvalidConversationID() {
 		"conversationId": "not-a-uuid",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -686,7 +686,7 @@ func (s *ChatTestSuite) TestStreamChat_WithCanonicalID() {
 		"canonicalId": canonicalID,
 	}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -701,7 +701,7 @@ func (s *ChatTestSuite) TestStreamChat_WithCanonicalID() {
 	convID := events[0]["conversationId"].(string)
 
 	// Verify conversation has canonical ID
-	getResp := s.Client.GET("/api/v2/chat/"+convID,
+	getResp := s.Client.GET("/api/chat/"+convID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -723,7 +723,7 @@ func (s *ChatTestSuite) TestStreamChat_LLMNotConfigured() {
 		"message": "Hello",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -750,7 +750,7 @@ func (s *ChatTestSuite) TestStreamChat_TitleTruncation() {
 		"message": longMessage,
 	}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -762,7 +762,7 @@ func (s *ChatTestSuite) TestStreamChat_TitleTruncation() {
 	convID := events[0]["conversationId"].(string)
 
 	// Get the conversation and verify title
-	getResp := s.Client.GET("/api/v2/chat/"+convID,
+	getResp := s.Client.GET("/api/chat/"+convID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -790,7 +790,7 @@ func (s *ChatTestSuite) TestStreamChat_ProjectIsolation() {
 		"conversationId": convID,
 	}
 
-	resp := s.Client.POST("/api/v2/chat/stream",
+	resp := s.Client.POST("/api/chat/stream",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(project2ID),
 		testutil.WithJSONBody(req),
@@ -843,7 +843,7 @@ func (s *ChatTestSuite) createTestConversation(title, message string) map[string
 		"message": message,
 	}
 
-	resp := s.Client.POST("/api/v2/chat/conversations",
+	resp := s.Client.POST("/api/chat/conversations",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),

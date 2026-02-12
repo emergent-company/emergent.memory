@@ -87,10 +87,12 @@ type GraphRelationship struct {
 	SrcID uuid.UUID `bun:"src_id,type:uuid,notnull" json:"src_id"`
 	DstID uuid.UUID `bun:"dst_id,type:uuid,notnull" json:"dst_id"`
 
-	Properties    map[string]any `bun:"properties,type:jsonb,notnull,default:'{}'" json:"properties"`
+	Properties    map[string]any `bun:"properties,type:jsonb,notnull,default:'{}'\" json:"properties"`
 	Weight        *float32       `bun:"weight" json:"weight,omitempty"`
 	ChangeSummary map[string]any `bun:"change_summary,type:jsonb" json:"change_summary,omitempty"`
 	ContentHash   []byte         `bun:"content_hash,type:bytea" json:"-"`
+
+	EmbeddingUpdatedAt *time.Time `bun:"embedding_updated_at" json:"-"`
 
 	// Temporal validity
 	ValidFrom *time.Time `bun:"valid_from" json:"valid_from,omitempty"`

@@ -79,8 +79,8 @@ func (s *SecurityScopesTestSuite) TestScopeEnforcement() {
         scope    string
         want     int
     }{
-        {"docs read requires kb:read", "/api/v2/documents", "GET", "kb:read", 200},
-        {"docs read denied without scope", "/api/v2/documents", "GET", "", 403},
+        {"docs read requires kb:read", "/api/documents", "GET", "kb:read", 200},
+        {"docs read denied without scope", "/api/documents", "GET", "", 403},
         // ... more cases
     }
     for _, tt := range tests {

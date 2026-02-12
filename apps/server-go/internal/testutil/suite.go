@@ -27,7 +27,7 @@ import (
 //
 //	func (s *MySuite) TestSomething() {
 //	    // s.Client, s.ProjectID, s.OrgID are available
-//	    resp := s.Client.GET("/api/v2/something", testutil.WithAuth("e2e-test-user"))
+//	    resp := s.Client.GET("/api/something", testutil.WithAuth("e2e-test-user"))
 //	}
 type BaseSuite struct {
 	suite.Suite

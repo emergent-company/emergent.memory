@@ -101,7 +101,7 @@ func (h *Handler) List(c echo.Context) error {
 }
 
 // module.go
-e.GET("/api/v2/documents", h.List, authMiddleware)
+e.GET("/api/documents", h.List, authMiddleware)
 ```
 
 ### After (Huma)
@@ -135,7 +135,7 @@ func RegisterEndpoints(h *Handler, api huma.API, security []map[string][]string)
     huma.Register(api, huma.Operation{
         OperationID: "list-documents",
         Method:      http.MethodGet,
-        Path:        "/api/v2/documents",
+        Path:        "/api/documents",
         Summary:     "List documents in project",
         Tags:        []string{"Documents"},
         Security:    security,

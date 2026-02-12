@@ -28,7 +28,7 @@ func (s *InvitesTestSuite) SetupSuite() {
 
 // createOrgViaAPI creates an org via API and returns its ID
 func (s *InvitesTestSuite) createOrgViaAPI(name string) string {
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name": name,
@@ -70,7 +70,7 @@ func (s *InvitesTestSuite) createInviteViaAPI(email, orgID, projectID, role stri
 		body["projectId"] = projectID
 	}
 
-	resp := s.Client.POST("/api/v2/invites",
+	resp := s.Client.POST("/api/invites",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -88,14 +88,14 @@ func (s *InvitesTestSuite) createInviteViaAPI(email, orgID, projectID, role stri
 
 func (s *InvitesTestSuite) TestListPending_RequiresAuth() {
 	// Request without Authorization header should fail
-	resp := s.Client.GET("/api/v2/invites/pending")
+	resp := s.Client.GET("/api/invites/pending")
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *InvitesTestSuite) TestListPending_EmptyArrayWhenNoInvites() {
 	// User with no pending invites should get empty array
-	resp := s.Client.GET("/api/v2/invites/pending",
+	resp := s.Client.GET("/api/invites/pending",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -116,7 +116,7 @@ func (s *InvitesTestSuite) TestListPending_WithInvite() {
 	// Valid roles are: org_admin, project_admin, project_user
 	s.createInviteViaAPI(testutil.AdminUser.Email, orgID, "", "org_admin")
 
-	resp := s.Client.GET("/api/v2/invites/pending",
+	resp := s.Client.GET("/api/invites/pending",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -149,7 +149,7 @@ func (s *InvitesTestSuite) TestListPending_InviteStructure() {
 	// Valid roles are: org_admin, project_admin, project_user
 	s.createInviteViaAPI(testutil.AdminUser.Email, orgID, projectID, "project_user")
 
-	resp := s.Client.GET("/api/v2/invites/pending",
+	resp := s.Client.GET("/api/invites/pending",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -206,7 +206,7 @@ func (s *InvitesTestSuite) TestListPending_ExcludesAcceptedInvites() {
 	token := invite["token"].(string)
 
 	// Accept the invite via API
-	resp := s.Client.POST("/api/v2/invites/accept",
+	resp := s.Client.POST("/api/invites/accept",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"token": token,
@@ -215,7 +215,7 @@ func (s *InvitesTestSuite) TestListPending_ExcludesAcceptedInvites() {
 	s.Require().Equal(http.StatusOK, resp.StatusCode)
 
 	// List pending invites
-	resp = s.Client.GET("/api/v2/invites/pending",
+	resp = s.Client.GET("/api/invites/pending",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -247,7 +247,7 @@ func (s *InvitesTestSuite) TestListPending_MultipleInvites() {
 	s.createInviteViaAPI(testutil.AdminUser.Email, orgID1, "", "org_admin")
 	s.createInviteViaAPI(testutil.AdminUser.Email, orgID2, "", "org_admin")
 
-	resp := s.Client.GET("/api/v2/invites/pending",
+	resp := s.Client.GET("/api/invites/pending",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -276,7 +276,7 @@ func (s *InvitesTestSuite) TestListPending_UserWithNoEmailsReturnsEmpty() {
 	s.createInviteViaAPI("other@example.com", orgID, "", "org_admin")
 
 	// e2e-other-user should not see this invite since it's for a different email
-	resp := s.Client.GET("/api/v2/invites/pending",
+	resp := s.Client.GET("/api/invites/pending",
 		testutil.WithAuth("e2e-other-user"),
 	)
 

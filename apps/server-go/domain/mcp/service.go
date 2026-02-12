@@ -15,6 +15,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent/emergent-core/domain/graph"
+	"github.com/emergent/emergent-core/domain/search"
 	"github.com/emergent/emergent-core/internal/database"
 	"github.com/emergent/emergent-core/pkg/logger"
 )
@@ -23,6 +24,7 @@ import (
 type Service struct {
 	db           bun.IDB
 	graphService *graph.Service
+	searchSvc    *search.Service
 	log          *slog.Logger
 
 	// Schema version caching
@@ -32,10 +34,11 @@ type Service struct {
 }
 
 // NewService creates a new MCP service
-func NewService(db bun.IDB, graphService *graph.Service, log *slog.Logger) *Service {
+func NewService(db bun.IDB, graphService *graph.Service, searchSvc *search.Service, log *slog.Logger) *Service {
 	return &Service{
 		db:           db,
 		graphService: graphService,
+		searchSvc:    searchSvc,
 		log:          log.With(logger.Scope("mcp.svc")),
 	}
 }
@@ -1399,7 +1402,7 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 	})
 }
 
-// executeHybridSearch performs hybrid search (FTS + vector + graph context)
+// executeHybridSearch performs hybrid search (FTS + vector + graph context + relationship embeddings)
 func (s *Service) executeHybridSearch(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
@@ -1440,6 +1443,23 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 		}
 	}
 
+	if s.searchSvc != nil {
+		unifiedReq := &search.UnifiedSearchRequest{
+			Query: query,
+			Limit: limit,
+		}
+
+		res, err := s.searchSvc.Search(ctx, projectUUID, unifiedReq, nil)
+		if err != nil {
+			s.log.WarnContext(ctx, "unified search failed, falling back to graph search",
+				"error", err,
+				"project_id", projectID,
+			)
+		} else {
+			return s.wrapResult(s.mapUnifiedToSearchResponse(res, types, labels))
+		}
+	}
+
 	req := &graph.HybridSearchRequest{
 		Query:  query,
 		Types:  types,
@@ -1453,6 +1473,97 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 	}
 
 	return s.wrapResult(results)
+}
+
+// mapUnifiedToSearchResponse converts unified search results back to graph.SearchResponse
+// for backward compatibility with existing MCP consumers. Relationship results are included
+// as additional items with a synthetic object wrapper.
+func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, types, labels []string) *graph.SearchResponse {
+	var items []*graph.SearchResultItem
+
+	for _, r := range res.Results {
+		switch r.Type {
+		case search.ItemTypeGraph:
+			if len(types) > 0 && !containsStr(types, r.ObjectType) {
+				continue
+			}
+
+			canonicalID, _ := uuid.Parse(r.CanonicalID)
+			objectID, _ := uuid.Parse(r.ObjectID)
+
+			var key *string
+			if r.Key != "" {
+				k := r.Key
+				key = &k
+			}
+
+			items = append(items, &graph.SearchResultItem{
+				Object: &graph.GraphObjectResponse{
+					ID:          objectID,
+					CanonicalID: canonicalID,
+					Type:        r.ObjectType,
+					Key:         key,
+					Properties:  r.Fields,
+				},
+				Score: r.Score,
+			})
+
+		case search.ItemTypeText:
+			textID, _ := uuid.Parse(r.ID)
+			textType := "text_chunk"
+
+			props := map[string]any{
+				"snippet": r.Snippet,
+			}
+			if r.Source != nil {
+				props["source"] = *r.Source
+			}
+			if r.DocumentID != nil {
+				props["document_id"] = *r.DocumentID
+			}
+
+			items = append(items, &graph.SearchResultItem{
+				Object: &graph.GraphObjectResponse{
+					ID:         textID,
+					Type:       textType,
+					Properties: props,
+				},
+				Score: r.Score,
+			})
+		}
+	}
+
+	if len(labels) > 0 {
+		filtered := make([]*graph.SearchResultItem, 0, len(items))
+		for _, item := range items {
+			if item.Object.Type == "text_chunk" {
+				filtered = append(filtered, item)
+				continue
+			}
+			for _, objLabel := range item.Object.Labels {
+				if containsStr(labels, objLabel) {
+					filtered = append(filtered, item)
+					break
+				}
+			}
+		}
+		items = filtered
+	}
+
+	return &graph.SearchResponse{
+		Data:    items,
+		Total:   len(items),
+		HasMore: false,
+	}
+}
+
+func containsStr(slice []string, s string) bool {
+	for _, v := range slice {
+		if strings.EqualFold(v, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // executeSemanticSearch performs vector-based semantic search
@@ -3701,7 +3812,6 @@ Let's begin by locating the entity.`, entityName, filterNote, depth,
 		},
 	}, nil
 }
-
 
 func (s *Service) executePreviewSchemaMigration(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	fromVersion, _ := args["from_version"].(string)

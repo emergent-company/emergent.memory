@@ -30,14 +30,14 @@ func (s *UsersTestSuite) SetupSuite() {
 
 func (s *UsersTestSuite) TestSearchUsers_RequiresAuth() {
 	// Request without Authorization header should fail
-	resp := s.Client.GET("/api/v2/users/search?email=test")
+	resp := s.Client.GET("/api/users/search?email=test")
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *UsersTestSuite) TestSearchUsers_RequiresEmailParam() {
 	// Request without email parameter should fail
-	resp := s.Client.GET("/api/v2/users/search",
+	resp := s.Client.GET("/api/users/search",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -54,7 +54,7 @@ func (s *UsersTestSuite) TestSearchUsers_RequiresEmailParam() {
 
 func (s *UsersTestSuite) TestSearchUsers_MinLength() {
 	// Email query must be at least 2 characters
-	resp := s.Client.GET("/api/v2/users/search?email=a",
+	resp := s.Client.GET("/api/users/search?email=a",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -71,7 +71,7 @@ func (s *UsersTestSuite) TestSearchUsers_MinLength() {
 
 func (s *UsersTestSuite) TestSearchUsers_ReturnsMatches() {
 	// Search for users by partial email match
-	resp := s.Client.GET("/api/v2/users/search?email=user@test",
+	resp := s.Client.GET("/api/users/search?email=user@test",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -100,7 +100,7 @@ func (s *UsersTestSuite) TestSearchUsers_ReturnsMatches() {
 
 func (s *UsersTestSuite) TestSearchUsers_ExcludesCurrentUser() {
 	// Search for admin email - should not return the current user
-	resp := s.Client.GET("/api/v2/users/search?email=admin@test",
+	resp := s.Client.GET("/api/users/search?email=admin@test",
 		testutil.WithAuth("e2e-test-user"), // This maps to AdminUser
 	)
 
@@ -122,7 +122,7 @@ func (s *UsersTestSuite) TestSearchUsers_ExcludesCurrentUser() {
 
 func (s *UsersTestSuite) TestSearchUsers_NoMatches() {
 	// Search for non-existent email
-	resp := s.Client.GET("/api/v2/users/search?email=nonexistent@nowhere",
+	resp := s.Client.GET("/api/users/search?email=nonexistent@nowhere",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -139,7 +139,7 @@ func (s *UsersTestSuite) TestSearchUsers_NoMatches() {
 
 func (s *UsersTestSuite) TestSearchUsers_CaseInsensitive() {
 	// Search should be case insensitive
-	resp := s.Client.GET("/api/v2/users/search?email=USER@TEST",
+	resp := s.Client.GET("/api/users/search?email=USER@TEST",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -156,7 +156,7 @@ func (s *UsersTestSuite) TestSearchUsers_CaseInsensitive() {
 
 func (s *UsersTestSuite) TestSearchUsers_ResponseStructure() {
 	// Verify the response structure matches UserSearchResponse DTO
-	resp := s.Client.GET("/api/v2/users/search?email=user@test",
+	resp := s.Client.GET("/api/users/search?email=user@test",
 		testutil.WithAuth("e2e-test-user"),
 	)
 

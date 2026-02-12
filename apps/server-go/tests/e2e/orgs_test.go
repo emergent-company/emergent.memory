@@ -30,13 +30,13 @@ func (s *OrgsTestSuite) SetupSuite() {
 // =============================================================================
 
 func (s *OrgsTestSuite) TestListOrgs_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/orgs")
+	resp := s.Client.GET("/api/orgs")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestListOrgs_ReturnsUserOrgs() {
 	// BaseSuite already creates an org via API, user should see it
-	resp := s.Client.GET("/api/v2/orgs",
+	resp := s.Client.GET("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -61,7 +61,7 @@ func (s *OrgsTestSuite) TestListOrgs_ReturnsUserOrgs() {
 func (s *OrgsTestSuite) TestListOrgs_MultipleOrgs() {
 	// Create additional orgs via API
 	for i := 1; i <= 2; i++ {
-		resp := s.Client.POST("/api/v2/orgs",
+		resp := s.Client.POST("/api/orgs",
 			testutil.WithAuth("e2e-test-user"),
 			testutil.WithJSON(),
 			testutil.WithBody(fmt.Sprintf(`{"name": "Additional Org %d"}`, i)),
@@ -69,7 +69,7 @@ func (s *OrgsTestSuite) TestListOrgs_MultipleOrgs() {
 		s.Equal(http.StatusCreated, resp.StatusCode)
 	}
 
-	resp := s.Client.GET("/api/v2/orgs",
+	resp := s.Client.GET("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -86,12 +86,12 @@ func (s *OrgsTestSuite) TestListOrgs_MultipleOrgs() {
 // =============================================================================
 
 func (s *OrgsTestSuite) TestGetOrg_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/orgs/some-id")
+	resp := s.Client.GET("/api/orgs/some-id")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestGetOrg_NotFound() {
-	resp := s.Client.GET("/api/v2/orgs/00000000-0000-0000-0000-000000000000",
+	resp := s.Client.GET("/api/orgs/00000000-0000-0000-0000-000000000000",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -108,7 +108,7 @@ func (s *OrgsTestSuite) TestGetOrg_NotFound() {
 
 func (s *OrgsTestSuite) TestGetOrg_Success() {
 	// Use the default org created by BaseSuite
-	resp := s.Client.GET("/api/v2/orgs/"+s.OrgID,
+	resp := s.Client.GET("/api/orgs/"+s.OrgID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -126,7 +126,7 @@ func (s *OrgsTestSuite) TestGetOrg_Success() {
 // =============================================================================
 
 func (s *OrgsTestSuite) TestCreateOrg_RequiresAuth() {
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "New Org"}`),
 	)
@@ -135,7 +135,7 @@ func (s *OrgsTestSuite) TestCreateOrg_RequiresAuth() {
 }
 
 func (s *OrgsTestSuite) TestCreateOrg_Success() {
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "New Organization"}`),
@@ -150,7 +150,7 @@ func (s *OrgsTestSuite) TestCreateOrg_Success() {
 	s.Equal("New Organization", org["name"])
 
 	// Verify the org appears in list
-	listResp := s.Client.GET("/api/v2/orgs",
+	listResp := s.Client.GET("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, listResp.StatusCode)
@@ -171,7 +171,7 @@ func (s *OrgsTestSuite) TestCreateOrg_Success() {
 }
 
 func (s *OrgsTestSuite) TestCreateOrg_TrimsWhitespace() {
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "  Trimmed Name  "}`),
@@ -186,7 +186,7 @@ func (s *OrgsTestSuite) TestCreateOrg_TrimsWhitespace() {
 }
 
 func (s *OrgsTestSuite) TestCreateOrg_EmptyName() {
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": ""}`),
@@ -196,7 +196,7 @@ func (s *OrgsTestSuite) TestCreateOrg_EmptyName() {
 }
 
 func (s *OrgsTestSuite) TestCreateOrg_WhitespaceOnlyName() {
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "   "}`),
@@ -212,7 +212,7 @@ func (s *OrgsTestSuite) TestCreateOrg_NameTooLong() {
 		longName[i] = 'a'
 	}
 
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(fmt.Sprintf(`{"name": "%s"}`, string(longName))),
@@ -222,7 +222,7 @@ func (s *OrgsTestSuite) TestCreateOrg_NameTooLong() {
 }
 
 func (s *OrgsTestSuite) TestCreateOrg_InvalidJSON() {
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{invalid json`),
@@ -232,7 +232,7 @@ func (s *OrgsTestSuite) TestCreateOrg_InvalidJSON() {
 }
 
 func (s *OrgsTestSuite) TestCreateOrg_MissingName() {
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{}`),
@@ -243,7 +243,7 @@ func (s *OrgsTestSuite) TestCreateOrg_MissingName() {
 
 func (s *OrgsTestSuite) TestCreateOrg_CreatorBecomesAdmin() {
 	// Create org
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "Admin Test Org"}`),
@@ -256,13 +256,13 @@ func (s *OrgsTestSuite) TestCreateOrg_CreatorBecomesAdmin() {
 	s.NoError(err)
 
 	// Verify user can access org (proves they have membership)
-	getResp := s.Client.GET("/api/v2/orgs/"+org["id"].(string),
+	getResp := s.Client.GET("/api/orgs/"+org["id"].(string),
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, getResp.StatusCode)
 
 	// User should see this org in their list
-	listResp := s.Client.GET("/api/v2/orgs",
+	listResp := s.Client.GET("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, listResp.StatusCode)
@@ -286,12 +286,12 @@ func (s *OrgsTestSuite) TestCreateOrg_CreatorBecomesAdmin() {
 // =============================================================================
 
 func (s *OrgsTestSuite) TestDeleteOrg_RequiresAuth() {
-	resp := s.Client.DELETE("/api/v2/orgs/some-id")
+	resp := s.Client.DELETE("/api/orgs/some-id")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestDeleteOrg_NotFound() {
-	resp := s.Client.DELETE("/api/v2/orgs/00000000-0000-0000-0000-000000000000",
+	resp := s.Client.DELETE("/api/orgs/00000000-0000-0000-0000-000000000000",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -300,7 +300,7 @@ func (s *OrgsTestSuite) TestDeleteOrg_NotFound() {
 
 func (s *OrgsTestSuite) TestDeleteOrg_Success() {
 	// Create an org to delete
-	createResp := s.Client.POST("/api/v2/orgs",
+	createResp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"name": "To Delete"}`),
@@ -313,7 +313,7 @@ func (s *OrgsTestSuite) TestDeleteOrg_Success() {
 	orgID := org["id"].(string)
 
 	// Delete it
-	resp := s.Client.DELETE("/api/v2/orgs/"+orgID,
+	resp := s.Client.DELETE("/api/orgs/"+orgID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -325,7 +325,7 @@ func (s *OrgsTestSuite) TestDeleteOrg_Success() {
 	s.Equal("deleted", body["status"])
 
 	// Verify org is gone
-	getResp := s.Client.GET("/api/v2/orgs/"+orgID,
+	getResp := s.Client.GET("/api/orgs/"+orgID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusNotFound, getResp.StatusCode)

@@ -33,7 +33,7 @@ func NewHandler(
 	}
 }
 
-// List handles GET /api/v2/documents
+// List handles GET /api/documents
 // @Summary      List documents
 // @Description  List all documents for the project with optional filtering and pagination
 // @Tags         documents
@@ -49,7 +49,7 @@ func NewHandler(
 // @Success      200 {object} ListResult
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
-// @Router       /api/v2/documents [get]
+// @Router       /api/documents [get]
 // @Security     bearerAuth
 func (h *Handler) List(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -112,7 +112,7 @@ func (h *Handler) List(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
-// GetByID handles GET /api/v2/documents/:id
+// GetByID handles GET /api/documents/:id
 // @Summary      Get document by ID
 // @Description  Retrieve a single document by its ID
 // @Tags         documents
@@ -124,7 +124,7 @@ func (h *Handler) List(c echo.Context) error {
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
 // @Failure      404 {object} apperror.Error
-// @Router       /api/v2/documents/{id} [get]
+// @Router       /api/documents/{id} [get]
 // @Security     bearerAuth
 func (h *Handler) GetByID(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -149,7 +149,7 @@ func (h *Handler) GetByID(c echo.Context) error {
 	return c.JSON(http.StatusOK, doc)
 }
 
-// Create handles POST /api/v2/documents
+// Create handles POST /api/documents
 // @Summary      Create document
 // @Description  Create a new document or return existing if content hash matches (deduplication)
 // @Tags         documents
@@ -161,7 +161,7 @@ func (h *Handler) GetByID(c echo.Context) error {
 // @Success      200 {object} Document "Existing document returned (deduplicated)"
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
-// @Router       /api/v2/documents [post]
+// @Router       /api/documents [post]
 // @Security     bearerAuth
 func (h *Handler) Create(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -201,7 +201,7 @@ func (h *Handler) Create(c echo.Context) error {
 	return c.JSON(status, doc)
 }
 
-// Delete handles DELETE /api/v2/documents/:id
+// Delete handles DELETE /api/documents/:id
 // @Summary      Delete document
 // @Description  Delete a single document and all related entities (chunks, extraction jobs, graph objects)
 // @Tags         documents
@@ -213,7 +213,7 @@ func (h *Handler) Create(c echo.Context) error {
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
 // @Failure      404 {object} apperror.Error
-// @Router       /api/v2/documents/{id} [delete]
+// @Router       /api/documents/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) Delete(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -238,7 +238,7 @@ func (h *Handler) Delete(c echo.Context) error {
 	return c.JSON(http.StatusOK, response)
 }
 
-// BulkDelete handles DELETE /api/v2/documents (with body)
+// BulkDelete handles DELETE /api/documents (with body)
 // @Summary      Bulk delete documents
 // @Description  Delete multiple documents and all related entities by ID list
 // @Tags         documents
@@ -249,7 +249,7 @@ func (h *Handler) Delete(c echo.Context) error {
 // @Success      200 {object} DeleteResponse
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
-// @Router       /api/v2/documents [delete]
+// @Router       /api/documents [delete]
 // @Security     bearerAuth
 func (h *Handler) BulkDelete(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -332,7 +332,7 @@ func parsePositiveInt(s string, min, max int) (int, error) {
 	return n, nil
 }
 
-// GetContent handles GET /api/v2/documents/:id/content
+// GetContent handles GET /api/documents/:id/content
 // @Summary      Get document content
 // @Description  Retrieve the text content of a document
 // @Tags         documents
@@ -344,7 +344,7 @@ func parsePositiveInt(s string, min, max int) (int, error) {
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
 // @Failure      404 {object} apperror.Error
-// @Router       /api/v2/documents/{id}/content [get]
+// @Router       /api/documents/{id}/content [get]
 // @Security     bearerAuth
 func (h *Handler) GetContent(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -379,7 +379,7 @@ func (h *Handler) GetContent(c echo.Context) error {
 	return c.JSON(http.StatusOK, ContentResponse{Content: content})
 }
 
-// GetDeletionImpact handles GET /api/v2/documents/:id/deletion-impact
+// GetDeletionImpact handles GET /api/documents/:id/deletion-impact
 // @Summary      Get deletion impact
 // @Description  Preview the impact of deleting a document (counts of related entities that will be deleted)
 // @Tags         documents
@@ -391,7 +391,7 @@ func (h *Handler) GetContent(c echo.Context) error {
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
 // @Failure      404 {object} apperror.Error
-// @Router       /api/v2/documents/{id}/deletion-impact [get]
+// @Router       /api/documents/{id}/deletion-impact [get]
 // @Security     bearerAuth
 func (h *Handler) GetDeletionImpact(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -416,7 +416,7 @@ func (h *Handler) GetDeletionImpact(c echo.Context) error {
 	return c.JSON(http.StatusOK, impact)
 }
 
-// BulkDeletionImpact handles POST /api/v2/documents/deletion-impact
+// BulkDeletionImpact handles POST /api/documents/deletion-impact
 // @Summary      Get bulk deletion impact
 // @Description  Preview the impact of bulk deleting multiple documents
 // @Tags         documents
@@ -427,7 +427,7 @@ func (h *Handler) GetDeletionImpact(c echo.Context) error {
 // @Success      200 {object} BulkDeletionImpact
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
-// @Router       /api/v2/documents/deletion-impact [post]
+// @Router       /api/documents/deletion-impact [post]
 // @Security     bearerAuth
 func (h *Handler) BulkDeletionImpact(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -456,7 +456,7 @@ func (h *Handler) BulkDeletionImpact(c echo.Context) error {
 	return c.JSON(http.StatusOK, impact)
 }
 
-// Download handles GET /api/v2/documents/:id/download
+// Download handles GET /api/documents/:id/download
 // @Summary      Download document
 // @Description  Returns a redirect to a signed URL for downloading the original file
 // @Tags         documents
@@ -469,7 +469,7 @@ func (h *Handler) BulkDeletionImpact(c echo.Context) error {
 // @Failure      401 {object} apperror.Error
 // @Failure      404 {object} apperror.Error
 // @Failure      503 {object} apperror.Error "Storage service unavailable"
-// @Router       /api/v2/documents/{id}/download [get]
+// @Router       /api/documents/{id}/download [get]
 // @Security     bearerAuth
 func (h *Handler) Download(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -522,7 +522,7 @@ func (h *Handler) Download(c echo.Context) error {
 	return c.Redirect(http.StatusTemporaryRedirect, signedURL)
 }
 
-// Upload handles POST /api/v2/documents/upload
+// Upload handles POST /api/documents/upload
 // @Summary      Upload document
 // @Description  Upload a file and create a document record (with automatic deduplication)
 // @Tags         documents
@@ -537,7 +537,7 @@ func (h *Handler) Download(c echo.Context) error {
 // @Failure      401 {object} apperror.Error
 // @Failure      413 {object} apperror.Error "File too large (>100MB)"
 // @Failure      503 {object} apperror.Error "Storage service unavailable"
-// @Router       /api/v2/documents/upload [post]
+// @Router       /api/documents/upload [post]
 // @Security     bearerAuth
 func (h *Handler) Upload(c echo.Context) error {
 	user := auth.GetUser(c)

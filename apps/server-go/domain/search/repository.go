@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sort"
 
@@ -341,4 +342,115 @@ type hybridCandidate struct {
 	LexicalScore float32
 	VectorScore  float32
 	FusedScore   float32
+}
+
+// RelationshipSearchParams contains parameters for relationship vector search
+type RelationshipSearchParams struct {
+	ProjectID uuid.UUID
+	Vector    []float32 // Query embedding for semantic search
+	Limit     int       // Result limit (default: 50, max: 100)
+}
+
+// RelationshipSearchResult represents a single relationship search result
+type RelationshipSearchResult struct {
+	ID          uuid.UUID
+	SrcID       uuid.UUID
+	DstID       uuid.UUID
+	Type        string
+	TripletText string
+	Score       float32
+	Properties  map[string]any
+}
+
+// RelationshipSearchResponse contains relationship search results
+type RelationshipSearchResponse struct {
+	Results         []*RelationshipSearchResult
+	TotalCandidates int
+}
+
+// SearchRelationships performs vector similarity search on relationship embeddings.
+// Finds semantically similar relationships using triplet text embeddings (e.g., "Elon Musk founded Tesla").
+// Filters out relationships without embeddings (WHERE embedding IS NOT NULL).
+// Uses the ivfflat index for efficient approximate nearest neighbor search.
+func (r *Repository) SearchRelationships(ctx context.Context, params RelationshipSearchParams) (*RelationshipSearchResponse, error) {
+	if len(params.Vector) == 0 {
+		return nil, apperror.ErrBadRequest.WithMessage("vector required for relationship search")
+	}
+
+	limit := mathutil.ClampLimit(params.Limit, 50, 100)
+	vectorStr := pgutils.FormatVector(params.Vector)
+
+	// Cosine distance: lower is better, convert to similarity score (1 - distance)
+	// Joins with graph_objects to construct triplet text: "{source.name} {type} {target.name}"
+	query := `
+		SELECT 
+			r.id,
+			r.src_id,
+			r.dst_id,
+			r.type,
+			r.properties,
+			COALESCE(src.name, src.key, src.id::text) || ' ' || 
+				LOWER(REPLACE(r.type, '_', ' ')) || ' ' || 
+				COALESCE(dst.name, dst.key, dst.id::text) AS triplet_text,
+			(1 - (r.embedding <=> ?::vector)) AS score
+		FROM kb.graph_relationships r
+		JOIN kb.graph_objects src ON src.id = r.src_id
+		JOIN kb.graph_objects dst ON dst.id = r.dst_id
+		WHERE r.embedding IS NOT NULL
+		  AND r.deleted_at IS NULL
+		  AND src.project_id = ?
+		ORDER BY r.embedding <=> ?::vector
+		LIMIT ?
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, vectorStr, params.ProjectID, vectorStr, limit)
+	if err != nil {
+		r.log.Error("relationship vector search failed", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer rows.Close()
+
+	var results []*RelationshipSearchResult
+	for rows.Next() {
+		var row struct {
+			ID          uuid.UUID
+			SrcID       uuid.UUID
+			DstID       uuid.UUID
+			Type        string
+			Properties  []byte // JSONB
+			TripletText string
+			Score       float32
+		}
+		if err := rows.Scan(&row.ID, &row.SrcID, &row.DstID, &row.Type, &row.Properties, &row.TripletText, &row.Score); err != nil {
+			r.log.Error("relationship search row scan failed", logger.Error(err))
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		// Parse JSONB properties
+		var props map[string]any
+		if len(row.Properties) > 0 {
+			if err := json.Unmarshal(row.Properties, &props); err != nil {
+				r.log.Warn("failed to parse relationship properties", logger.Error(err), slog.String("relationship_id", row.ID.String()))
+			}
+		}
+
+		results = append(results, &RelationshipSearchResult{
+			ID:          row.ID,
+			SrcID:       row.SrcID,
+			DstID:       row.DstID,
+			Type:        row.Type,
+			TripletText: row.TripletText,
+			Score:       row.Score,
+			Properties:  props,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return &RelationshipSearchResponse{
+		Results:         results,
+		TotalCandidates: len(results),
+	}, nil
 }

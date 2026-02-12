@@ -3,9 +3,11 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,11 +30,17 @@ type SchemaProvider interface {
 	GetProjectSchemas(ctx context.Context, projectID string) (*ExtractionSchemas, error)
 }
 
+// EmbeddingService provides embedding generation for triplet text.
+type EmbeddingService interface {
+	EmbedQuery(ctx context.Context, query string) ([]float32, error)
+}
+
 // Service handles business logic for graph operations.
 type Service struct {
 	repo           *Repository
 	log            *slog.Logger
 	schemaProvider SchemaProvider
+	embeddings     EmbeddingService
 
 	// Metrics
 	metricsMu          sync.RWMutex
@@ -42,11 +50,12 @@ type Service struct {
 }
 
 // NewService creates a new graph service.
-func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider) *Service {
+func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, embeddings EmbeddingService) *Service {
 	return &Service{
 		repo:           repo,
 		log:            log.With(logger.Scope("graph.svc")),
 		schemaProvider: schemaProvider,
+		embeddings:     embeddings,
 	}
 }
 
@@ -532,6 +541,72 @@ func jsonEqual(a, b any) bool {
 // Relationship Operations
 // =============================================================================
 
+// humanizeRelationType converts a relation type to a human-readable format.
+// Example: WORKS_FOR -> "works for", FOUNDED_BY -> "founded by"
+func humanizeRelationType(relType string) string {
+	return strings.ToLower(strings.ReplaceAll(relType, "_", " "))
+}
+
+// getDisplayName extracts a display name from a graph object.
+// Tries properties["name"] first, falls back to Key if name is missing or empty.
+func getDisplayName(obj *GraphObject) string {
+	if obj.Properties != nil {
+		if name, ok := obj.Properties["name"].(string); ok && name != "" {
+			return name
+		}
+	}
+	if obj.Key != nil && *obj.Key != "" {
+		return *obj.Key
+	}
+	return obj.ID.String()
+}
+
+// generateTripletText creates natural language triplet from a relationship.
+// Format: "{source.name} {humanized_relation_type} {target.name}"
+// Example: "Elon Musk founded Tesla"
+func generateTripletText(source, target *GraphObject, relType string) string {
+	sourceName := getDisplayName(source)
+	targetName := getDisplayName(target)
+	humanizedType := humanizeRelationType(relType)
+	return fmt.Sprintf("%s %s %s", sourceName, humanizedType, targetName)
+}
+
+// embedTripletText generates an embedding vector for a relationship triplet.
+// Returns the embedding vector and timestamp, or nil if embeddings are disabled.
+func (s *Service) embedTripletText(ctx context.Context, tripletText string) ([]float32, *time.Time, error) {
+	if s.embeddings == nil {
+		return nil, nil, nil
+	}
+
+	embedding, err := s.embeddings.EmbedQuery(ctx, tripletText)
+	if err != nil {
+		return nil, nil, fmt.Errorf("embed triplet: %w", err)
+	}
+
+	if embedding == nil || len(embedding) == 0 {
+		return nil, nil, nil
+	}
+
+	now := time.Now()
+	return embedding, &now, nil
+}
+
+// vectorToString converts a float32 slice to a string representation for pgvector.
+func vectorToString(v []float32) string {
+	if len(v) == 0 {
+		return "[]"
+	}
+	result := "["
+	for i, val := range v {
+		if i > 0 {
+			result += ","
+		}
+		result += fmt.Sprintf("%f", val)
+	}
+	result += "]"
+	return result
+}
+
 // SearchRelationshipsResponse is the paginated response for relationship searches.
 type SearchRelationshipsResponse struct {
 	Data       []*GraphRelationshipResponse `json:"data"`
@@ -651,6 +726,25 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 			return nil, err
 		}
 
+		tripletText := generateTripletText(srcObj, dstObj, req.Type)
+		embedding, embeddingTimestamp, embedErr := s.embedTripletText(ctx, tripletText)
+		if embedErr != nil {
+			s.log.Warn("failed to generate embedding for relationship, continuing without embedding",
+				slog.String("relationship_id", rel.ID.String()),
+				slog.String("triplet", tripletText),
+				slog.String("error", embedErr.Error()))
+		} else if embedding != nil {
+			_, updateErr := tx.Tx.NewRaw(`UPDATE kb.graph_relationships 
+				SET embedding = ?::vector, embedding_updated_at = ? 
+				WHERE id = ?`,
+				vectorToString(embedding), embeddingTimestamp, rel.ID).Exec(ctx)
+			if updateErr != nil {
+				s.log.Warn("failed to store embedding for relationship, continuing without embedding",
+					slog.String("relationship_id", rel.ID.String()),
+					slog.String("error", updateErr.Error()))
+			}
+		}
+
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
@@ -670,6 +764,25 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 
 		if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, existing, newVersion); err != nil {
 			return nil, err
+		}
+
+		tripletText := generateTripletText(srcObj, dstObj, req.Type)
+		embedding, embeddingTimestamp, embedErr := s.embedTripletText(ctx, tripletText)
+		if embedErr != nil {
+			s.log.Warn("failed to generate embedding for relationship, continuing without embedding",
+				slog.String("relationship_id", newVersion.ID.String()),
+				slog.String("triplet", tripletText),
+				slog.String("error", embedErr.Error()))
+		} else if embedding != nil {
+			_, updateErr := tx.Tx.NewRaw(`UPDATE kb.graph_relationships 
+				SET embedding = ?::vector, embedding_updated_at = ? 
+				WHERE id = ?`,
+				vectorToString(embedding), embeddingTimestamp, newVersion.ID).Exec(ctx)
+			if updateErr != nil {
+				s.log.Warn("failed to store embedding for relationship, continuing without embedding",
+					slog.String("relationship_id", newVersion.ID.String()),
+					slog.String("error", updateErr.Error()))
+			}
 		}
 
 		if err := tx.Commit(); err != nil {
@@ -697,6 +810,25 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 
 	if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, existing, newVersion); err != nil {
 		return nil, err
+	}
+
+	tripletText := generateTripletText(srcObj, dstObj, req.Type)
+	embedding, embeddingTimestamp, embedErr := s.embedTripletText(ctx, tripletText)
+	if embedErr != nil {
+		s.log.Warn("failed to generate embedding for relationship, continuing without embedding",
+			slog.String("relationship_id", newVersion.ID.String()),
+			slog.String("triplet", tripletText),
+			slog.String("error", embedErr.Error()))
+	} else if embedding != nil {
+		_, updateErr := tx.Tx.NewRaw(`UPDATE kb.graph_relationships 
+			SET embedding = ?::vector, embedding_updated_at = ? 
+			WHERE id = ?`,
+			vectorToString(embedding), embeddingTimestamp, newVersion.ID).Exec(ctx)
+		if updateErr != nil {
+			s.log.Warn("failed to store embedding for relationship, continuing without embedding",
+				slog.String("relationship_id", newVersion.ID.String()),
+				slog.String("error", updateErr.Error()))
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

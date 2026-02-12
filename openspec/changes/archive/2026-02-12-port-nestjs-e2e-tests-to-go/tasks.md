@@ -44,7 +44,7 @@
 - [x] 2.3.5 Port `chat.basic-crud.e2e.spec.ts` → Covered in `chat_test.go`
 - [x] 2.3.6 Port `chat.project-required.e2e.spec.ts` → Covered in `chat_test.go` (RequiresProjectID)
 - [N/A] 2.3.7 Port `chat.mcp-integration.e2e.spec.ts` → N/A: Go server doesn't integrate MCP tools during chat streaming (no tool detection/execution SSE events)
-- [N/A] 2.3.8 Port `chat-sdk-search.e2e-spec.ts` → N/A: Go uses `/api/v2/chat/*` not `/api/chat-sdk/*`; conversation CRUD already covered in `chat_test.go`
+- [N/A] 2.3.8 Port `chat-sdk-search.e2e-spec.ts` → N/A: Go uses `/api/chat/*` not `/api/chat-sdk/*`; conversation CRUD already covered in `chat_test.go`
 
 ## 3. High Priority: Search Variant Tests
 
@@ -131,7 +131,7 @@
 ## 10. Low Priority: Embedding Tests
 
 - [x] 10.1 Port `embeddings.integrity.e2e.spec.ts` → Covered in `chunk_embedding_jobs_test.go` (TestEnqueue*\*, TestDequeue*\_, TestMarkCompleted\_\_)
-- [N/A] 10.2 Port `embeddings.disabled-fallbacks.e2e.spec.ts` → N/A: Tests /search endpoint fallback behavior when embeddings disabled; Go uses /api/v2/graph/search with different API; search fusion strategies already tested in search_test.go
+- [N/A] 10.2 Port `embeddings.disabled-fallbacks.e2e.spec.ts` → N/A: Tests /search endpoint fallback behavior when embeddings disabled; Go uses /api/graph/search with different API; search fusion strategies already tested in search_test.go
 
 ## 11. Low Priority: Infrastructure Tests
 

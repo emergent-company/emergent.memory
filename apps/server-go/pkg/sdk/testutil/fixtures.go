@@ -141,29 +141,36 @@ func FixtureProjectMember() *projects.ProjectMember {
 }
 
 // FixtureDocument returns a sample document for testing.
-func FixtureDocument() *documents.DocumentDTO {
-	return &documents.DocumentDTO{
-		ID:          "doc_test123",
-		Title:       "Test Document",
-		SourceType:  "upload",
-		SourceURL:   "https://example.com/doc.pdf",
-		ContentType: "application/pdf",
-		CreatedAt:   time.Now().Add(-24 * time.Hour),
-		UpdatedAt:   time.Now(),
+func FixtureDocument() *documents.Document {
+	filename := "Test Document"
+	sourceType := "upload"
+	sourceURL := "https://example.com/doc.pdf"
+	mimeType := "application/pdf"
+	return &documents.Document{
+		ID:         "doc_test123",
+		Filename:   &filename,
+		SourceType: &sourceType,
+		SourceURL:  &sourceURL,
+		MimeType:   &mimeType,
+		CreatedAt:  time.Now().Add(-24 * time.Hour),
+		UpdatedAt:  time.Now(),
 	}
 }
 
-// FixtureDocuments returns a list of sample documents.
-func FixtureDocuments() []documents.DocumentDTO {
-	return []documents.DocumentDTO{
+// FixtureDocuments returns a list of documents.Document for testing.
+func FixtureDocuments() []documents.Document {
+	filename2 := "Another Document"
+	sourceType2 := "url"
+	mimeType2 := "text/html"
+	return []documents.Document{
 		*FixtureDocument(),
 		{
-			ID:          "doc_test456",
-			Title:       "Another Document",
-			SourceType:  "url",
-			ContentType: "text/html",
-			CreatedAt:   time.Now().Add(-48 * time.Hour),
-			UpdatedAt:   time.Now().Add(-24 * time.Hour),
+			ID:         "doc_test456",
+			Filename:   &filename2,
+			SourceType: &sourceType2,
+			MimeType:   &mimeType2,
+			CreatedAt:  time.Now().Add(-48 * time.Hour),
+			UpdatedAt:  time.Now().Add(-24 * time.Hour),
 		},
 	}
 }
