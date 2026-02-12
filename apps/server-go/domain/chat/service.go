@@ -170,11 +170,31 @@ func (s *Service) AddMessage(ctx context.Context, projectID string, conversation
 		CreatedAt:      time.Now(),
 	}
 
+	history, err := s.repo.GetConversationHistory(ctx, conversationID, 5)
+	if err != nil {
+		s.log.Warn("failed to load conversation history", logger.Error(err))
+	} else if len(history) > 0 {
+		summary := s.buildContextSummary(history)
+		msg.ContextSummary = &summary
+	}
+
 	if err := s.repo.AddMessage(ctx, msg); err != nil {
 		return nil, err
 	}
 
 	return msg, nil
+}
+
+func (s *Service) buildContextSummary(history []Message) string {
+	if len(history) == 0 {
+		return ""
+	}
+
+	summary := "Previous conversation:\n"
+	for _, msg := range history {
+		summary += msg.Role + ": " + msg.Content + "\n"
+	}
+	return summary
 }
 
 // GetOrCreateConversation gets an existing conversation by canonical ID or creates a new one

@@ -41,4 +41,4 @@ require (
 	golang.org/x/text v0.28.0 // indirect
 )
 
-replace github.com/emergent/emergent-core/pkg/sdk => ../../apps/server-go/pkg/sdk
+replace github.com/emergent-company/emergent/apps/server-go/pkg/sdk => ../../apps/server-go/pkg/sdk
