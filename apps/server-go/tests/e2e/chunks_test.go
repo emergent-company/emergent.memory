@@ -32,7 +32,7 @@ func (s *ChunksTestSuite) SetupSuite() {
 // When running in-process, chunks are created via direct DB access since the API
 // doesn't automatically chunk documents (that's done by async workers)
 func (s *ChunksTestSuite) createDocumentViaAPI(content string) (string, []string) {
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -65,7 +65,7 @@ func (s *ChunksTestSuite) createDocumentViaAPI(content string) (string, []string
 		chunkIDs = append(chunkIDs, chunkID)
 	} else {
 		// In external mode, try to get chunks via API (they may have been created by workers)
-		chunkResp := s.Client.GET(fmt.Sprintf("/api/v2/chunks?documentId=%s", docID),
+		chunkResp := s.Client.GET(fmt.Sprintf("/api/chunks?documentId=%s", docID),
 			testutil.WithAuth("e2e-test-user"),
 			testutil.WithProjectID(s.ProjectID),
 		)
@@ -101,14 +101,14 @@ func (s *ChunksTestSuite) createProjectViaAPI(name string) string {
 // ============= List Tests =============
 
 func (s *ChunksTestSuite) TestListChunks_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/chunks",
+	resp := s.Client.GET("/api/chunks",
 		testutil.WithProjectID(s.ProjectID),
 	)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ChunksTestSuite) TestListChunks_RequiresProjectID() {
-	resp := s.Client.GET("/api/v2/chunks",
+	resp := s.Client.GET("/api/chunks",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	// RequireProjectID middleware returns 400 for missing header
@@ -117,7 +117,7 @@ func (s *ChunksTestSuite) TestListChunks_RequiresProjectID() {
 
 func (s *ChunksTestSuite) TestListChunks_RequiresChunksReadScope() {
 	// User without chunks:read scope should be forbidden
-	resp := s.Client.GET("/api/v2/chunks",
+	resp := s.Client.GET("/api/chunks",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -125,7 +125,7 @@ func (s *ChunksTestSuite) TestListChunks_RequiresChunksReadScope() {
 }
 
 func (s *ChunksTestSuite) TestListChunks_Empty() {
-	resp := s.Client.GET("/api/v2/chunks",
+	resp := s.Client.GET("/api/chunks",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -146,7 +146,7 @@ func (s *ChunksTestSuite) TestListChunks_ReturnsChunks() {
 	// Should have at least one chunk
 	s.Require().NotEmpty(chunkIDs, "Document should have created at least one chunk")
 
-	resp := s.Client.GET("/api/v2/chunks",
+	resp := s.Client.GET("/api/chunks",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -177,7 +177,7 @@ func (s *ChunksTestSuite) TestListChunks_FilterByDocumentID() {
 	doc2ID, _ := s.createDocumentViaAPI("Content for document two with different text.")
 
 	// Filter by doc1
-	resp := s.Client.GET(fmt.Sprintf("/api/v2/chunks?documentId=%s", doc1ID),
+	resp := s.Client.GET(fmt.Sprintf("/api/chunks?documentId=%s", doc1ID),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -193,7 +193,7 @@ func (s *ChunksTestSuite) TestListChunks_FilterByDocumentID() {
 	}
 
 	// Filter by doc2
-	resp = s.Client.GET(fmt.Sprintf("/api/v2/chunks?documentId=%s", doc2ID),
+	resp = s.Client.GET(fmt.Sprintf("/api/chunks?documentId=%s", doc2ID),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -209,7 +209,7 @@ func (s *ChunksTestSuite) TestListChunks_FilterByDocumentID() {
 }
 
 func (s *ChunksTestSuite) TestListChunks_InvalidDocumentID() {
-	resp := s.Client.GET("/api/v2/chunks?documentId=invalid-uuid",
+	resp := s.Client.GET("/api/chunks?documentId=invalid-uuid",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -224,7 +224,7 @@ func (s *ChunksTestSuite) TestListChunks_ProjectIsolation() {
 	otherProjectID := s.createProjectViaAPI("Other Project for Chunks")
 
 	// Create document in other project
-	otherDocResp := s.Client.POST("/api/v2/documents",
+	otherDocResp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(otherProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -235,7 +235,7 @@ func (s *ChunksTestSuite) TestListChunks_ProjectIsolation() {
 	s.Require().True(otherDocResp.StatusCode == http.StatusOK || otherDocResp.StatusCode == http.StatusCreated)
 
 	// Request with user's project should only see their chunk
-	resp := s.Client.GET("/api/v2/chunks",
+	resp := s.Client.GET("/api/chunks",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -254,12 +254,12 @@ func (s *ChunksTestSuite) TestListChunks_ProjectIsolation() {
 // ============= Delete Tests =============
 
 func (s *ChunksTestSuite) TestDeleteChunk_RequiresAuth() {
-	resp := s.Client.DELETE("/api/v2/chunks/" + uuid.NewString())
+	resp := s.Client.DELETE("/api/chunks/" + uuid.NewString())
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *ChunksTestSuite) TestDeleteChunk_RequiresProjectID() {
-	resp := s.Client.DELETE("/api/v2/chunks/"+uuid.NewString(),
+	resp := s.Client.DELETE("/api/chunks/"+uuid.NewString(),
 		testutil.WithAuth("e2e-test-user"),
 	)
 	// RequireProjectID middleware returns 400 for missing header
@@ -268,7 +268,7 @@ func (s *ChunksTestSuite) TestDeleteChunk_RequiresProjectID() {
 
 func (s *ChunksTestSuite) TestDeleteChunk_RequiresWriteScope() {
 	// read-only token has chunks:read but not chunks:write
-	resp := s.Client.DELETE("/api/v2/chunks/"+uuid.NewString(),
+	resp := s.Client.DELETE("/api/chunks/"+uuid.NewString(),
 		testutil.WithAuth("read-only"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -282,14 +282,14 @@ func (s *ChunksTestSuite) TestDeleteChunk_Success() {
 
 	chunkID := chunkIDs[0]
 
-	resp := s.Client.DELETE("/api/v2/chunks/"+chunkID,
+	resp := s.Client.DELETE("/api/chunks/"+chunkID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
 	s.Equal(http.StatusNoContent, resp.StatusCode)
 
 	// Verify deleted via API - listing by a non-existent chunk should return empty
-	verifyResp := s.Client.GET("/api/v2/chunks",
+	verifyResp := s.Client.GET("/api/chunks",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -306,7 +306,7 @@ func (s *ChunksTestSuite) TestDeleteChunk_Success() {
 }
 
 func (s *ChunksTestSuite) TestDeleteChunk_NotFound() {
-	resp := s.Client.DELETE("/api/v2/chunks/"+uuid.NewString(),
+	resp := s.Client.DELETE("/api/chunks/"+uuid.NewString(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -314,7 +314,7 @@ func (s *ChunksTestSuite) TestDeleteChunk_NotFound() {
 }
 
 func (s *ChunksTestSuite) TestDeleteChunk_InvalidUUID() {
-	resp := s.Client.DELETE("/api/v2/chunks/invalid-uuid",
+	resp := s.Client.DELETE("/api/chunks/invalid-uuid",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -326,7 +326,7 @@ func (s *ChunksTestSuite) TestDeleteChunk_ProjectIsolation() {
 	otherProjectID := s.createProjectViaAPI("Other Project for Delete Isolation")
 
 	// Create document in other project via API
-	otherDocResp := s.Client.POST("/api/v2/documents",
+	otherDocResp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(otherProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -354,7 +354,7 @@ func (s *ChunksTestSuite) TestDeleteChunk_ProjectIsolation() {
 		s.Require().NoError(err, "Failed to create test chunk in other project")
 	} else {
 		// In external mode, get chunks via API (they may have been created by workers)
-		otherChunksResp := s.Client.GET(fmt.Sprintf("/api/v2/chunks?documentId=%s", otherDocID),
+		otherChunksResp := s.Client.GET(fmt.Sprintf("/api/chunks?documentId=%s", otherDocID),
 			testutil.WithAuth("e2e-test-user"),
 			testutil.WithProjectID(otherProjectID),
 		)
@@ -369,14 +369,14 @@ func (s *ChunksTestSuite) TestDeleteChunk_ProjectIsolation() {
 	}
 
 	// Try to delete with user's project (different project) - should get 404
-	resp := s.Client.DELETE("/api/v2/chunks/"+otherChunkID,
+	resp := s.Client.DELETE("/api/chunks/"+otherChunkID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 
 	// Verify chunk still exists in other project
-	verifyResp := s.Client.GET(fmt.Sprintf("/api/v2/chunks?documentId=%s", otherDocID),
+	verifyResp := s.Client.GET(fmt.Sprintf("/api/chunks?documentId=%s", otherDocID),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(otherProjectID),
 	)
@@ -410,7 +410,7 @@ func (s *ChunksTestSuite) TestBulkDeleteChunks_Success() {
 		idsToDelete = idsToDelete[:2]
 	}
 
-	resp := s.Client.DELETE("/api/v2/chunks",
+	resp := s.Client.DELETE("/api/chunks",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -428,7 +428,7 @@ func (s *ChunksTestSuite) TestBulkDeleteChunks_Success() {
 }
 
 func (s *ChunksTestSuite) TestBulkDeleteChunks_EmptyArray() {
-	resp := s.Client.DELETE("/api/v2/chunks",
+	resp := s.Client.DELETE("/api/chunks",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -446,7 +446,7 @@ func (s *ChunksTestSuite) TestBulkDeleteChunks_PartialNotFound() {
 	chunkID := chunkIDs[0]
 	nonExistentID := uuid.NewString()
 
-	resp := s.Client.DELETE("/api/v2/chunks",
+	resp := s.Client.DELETE("/api/chunks",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -471,7 +471,7 @@ func (s *ChunksTestSuite) TestDeleteByDocument_Success() {
 	s.Require().NotEmpty(chunkIDs, "Should have at least one chunk")
 	initialChunkCount := len(chunkIDs)
 
-	resp := s.Client.DELETE("/api/v2/chunks/by-document/"+docID,
+	resp := s.Client.DELETE("/api/chunks/by-document/"+docID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -491,7 +491,7 @@ func (s *ChunksTestSuite) TestDeleteByDocument_NoChunks() {
 
 	// Delete all chunks first
 	if len(chunkIDs) > 0 {
-		s.Client.DELETE("/api/v2/chunks",
+		s.Client.DELETE("/api/chunks",
 			testutil.WithAuth("e2e-test-user"),
 			testutil.WithProjectID(s.ProjectID),
 			testutil.WithJSONBody(map[string]any{
@@ -501,7 +501,7 @@ func (s *ChunksTestSuite) TestDeleteByDocument_NoChunks() {
 	}
 
 	// Now try to delete by document when no chunks exist
-	resp := s.Client.DELETE("/api/v2/chunks/by-document/"+docID,
+	resp := s.Client.DELETE("/api/chunks/by-document/"+docID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -515,7 +515,7 @@ func (s *ChunksTestSuite) TestDeleteByDocument_NoChunks() {
 }
 
 func (s *ChunksTestSuite) TestDeleteByDocument_InvalidUUID() {
-	resp := s.Client.DELETE("/api/v2/chunks/by-document/invalid-uuid",
+	resp := s.Client.DELETE("/api/chunks/by-document/invalid-uuid",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -532,7 +532,7 @@ func (s *ChunksTestSuite) TestBulkDeleteByDocuments_Success() {
 	totalChunks := len(doc1ChunkIDs) + len(doc2ChunkIDs)
 	s.Require().GreaterOrEqual(totalChunks, 1, "Should have at least one chunk total")
 
-	resp := s.Client.DELETE("/api/v2/chunks/by-documents",
+	resp := s.Client.DELETE("/api/chunks/by-documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -550,7 +550,7 @@ func (s *ChunksTestSuite) TestBulkDeleteByDocuments_Success() {
 }
 
 func (s *ChunksTestSuite) TestBulkDeleteByDocuments_EmptyArray() {
-	resp := s.Client.DELETE("/api/v2/chunks/by-documents",
+	resp := s.Client.DELETE("/api/chunks/by-documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{

@@ -351,7 +351,7 @@ func TestFuseWeighted(t *testing.T) {
 
 	t.Run("equal weights", func(t *testing.T) {
 		weights := &UnifiedSearchWeights{GraphWeight: 0.5, TextWeight: 0.5}
-		results := svc.fuseWeighted(graphResults, textResults, weights, 10)
+		results := svc.fuseWeighted(graphResults, textResults, nil, weights, 10)
 
 		// All 4 results should be included, sorted by weighted score
 		assert.Len(t, results, 4)
@@ -367,7 +367,7 @@ func TestFuseWeighted(t *testing.T) {
 
 	t.Run("graph weighted higher", func(t *testing.T) {
 		weights := &UnifiedSearchWeights{GraphWeight: 0.8, TextWeight: 0.2}
-		results := svc.fuseWeighted(graphResults, textResults, weights, 10)
+		results := svc.fuseWeighted(graphResults, textResults, nil, weights, 10)
 
 		assert.Len(t, results, 4)
 		// First result should be g1 with higher weighted score
@@ -375,7 +375,7 @@ func TestFuseWeighted(t *testing.T) {
 	})
 
 	t.Run("nil weights uses defaults", func(t *testing.T) {
-		results := svc.fuseWeighted(graphResults, textResults, nil, 10)
+		results := svc.fuseWeighted(graphResults, textResults, nil, nil, 10)
 
 		assert.Len(t, results, 4)
 		// Should work with default 0.5/0.5 weights
@@ -383,7 +383,7 @@ func TestFuseWeighted(t *testing.T) {
 
 	t.Run("respects limit", func(t *testing.T) {
 		weights := &UnifiedSearchWeights{GraphWeight: 0.5, TextWeight: 0.5}
-		results := svc.fuseWeighted(graphResults, textResults, weights, 2)
+		results := svc.fuseWeighted(graphResults, textResults, nil, weights, 2)
 
 		assert.Len(t, results, 2)
 	})
@@ -403,7 +403,7 @@ func TestFuseRRF(t *testing.T) {
 	}
 
 	t.Run("basic RRF fusion", func(t *testing.T) {
-		results := svc.fuseRRF(graphResults, textResults, 10)
+		results := svc.fuseRRF(graphResults, textResults, nil, 10)
 
 		// All 4 results should be included
 		assert.Len(t, results, 4)
@@ -416,7 +416,7 @@ func TestFuseRRF(t *testing.T) {
 	})
 
 	t.Run("respects limit", func(t *testing.T) {
-		results := svc.fuseRRF(graphResults, textResults, 2)
+		results := svc.fuseRRF(graphResults, textResults, nil, 2)
 
 		assert.Len(t, results, 2)
 	})
@@ -435,7 +435,7 @@ func TestFuseRRF(t *testing.T) {
 			{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.6, Text: "unique text"},
 		}
 
-		results := svc.fuseRRF(graphWithOverlap, textWithOverlap, 10)
+		results := svc.fuseRRF(graphWithOverlap, textWithOverlap, nil, 10)
 
 		// Should have 3 unique items (1 overlapping + 2 unique)
 		assert.Len(t, results, 3)
@@ -472,14 +472,14 @@ func TestFuseResults_StrategyDispatch(t *testing.T) {
 
 	for _, strategy := range strategies {
 		t.Run(string(strategy), func(t *testing.T) {
-			results := svc.fuseResults(graphResults, textResults, strategy, nil, 10)
+			results := svc.fuseResults(graphResults, textResults, nil, strategy, nil, 10)
 			assert.NotNil(t, results)
 			assert.Len(t, results, 2)
 		})
 	}
 
 	t.Run("invalid strategy defaults to weighted", func(t *testing.T) {
-		results := svc.fuseResults(graphResults, textResults, "invalid", nil, 10)
+		results := svc.fuseResults(graphResults, textResults, nil, "invalid", nil, 10)
 		assert.NotNil(t, results)
 		assert.Len(t, results, 2)
 	})

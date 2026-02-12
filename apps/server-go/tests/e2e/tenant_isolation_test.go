@@ -112,7 +112,7 @@ func (s *TenantIsolationTestSuite) SetupTest() {
 
 func (s *TenantIsolationTestSuite) TestHeaderValidation_RejectsInvalidUUIDHeader() {
 	// Request with invalid UUID format in x-project-id header should fail
-	resp := s.client.POST("/api/v2/documents",
+	resp := s.client.POST("/api/documents",
 		testutil.WithAuth(s.authToken),
 		testutil.WithProjectID("not-a-uuid"),
 		testutil.WithJSONBody(map[string]any{
@@ -128,7 +128,7 @@ func (s *TenantIsolationTestSuite) TestHeaderValidation_RejectsInvalidUUIDHeader
 
 func (s *TenantIsolationTestSuite) TestHeaderValidation_RequiresProjectIDHeader() {
 	// Listing documents without x-project-id header should fail
-	resp := s.client.GET("/api/v2/documents",
+	resp := s.client.GET("/api/documents",
 		testutil.WithAuth(s.authToken),
 		// No project ID header
 	)
@@ -137,7 +137,7 @@ func (s *TenantIsolationTestSuite) TestHeaderValidation_RequiresProjectIDHeader(
 
 func (s *TenantIsolationTestSuite) TestHeaderValidation_RequiresProjectIDForChunks() {
 	// Listing chunks without x-project-id header should fail
-	resp := s.client.GET("/api/v2/chunks",
+	resp := s.client.GET("/api/chunks",
 		testutil.WithAuth(s.authToken),
 		// No project ID header
 	)
@@ -431,7 +431,7 @@ func (s *TenantIsolationTestSuite) TestIsolationMatrix() {
 		{
 			name:           "GET own document",
 			method:         "GET",
-			path:           fmt.Sprintf("/api/v2/documents/%s", doc1ID),
+			path:           fmt.Sprintf("/api/documents/%s", doc1ID),
 			projectID:      s.project1ID,
 			orgID:          s.org1ID,
 			expectedStatus: []int{http.StatusOK},
@@ -441,7 +441,7 @@ func (s *TenantIsolationTestSuite) TestIsolationMatrix() {
 		{
 			name:           "GET other project document",
 			method:         "GET",
-			path:           fmt.Sprintf("/api/v2/documents/%s", doc2ID),
+			path:           fmt.Sprintf("/api/documents/%s", doc2ID),
 			projectID:      s.project1ID, // Using project 1 context for project 2's doc
 			orgID:          s.org1ID,
 			expectedStatus: []int{http.StatusForbidden, http.StatusNotFound},
@@ -450,7 +450,7 @@ func (s *TenantIsolationTestSuite) TestIsolationMatrix() {
 		{
 			name:           "DELETE other project document",
 			method:         "DELETE",
-			path:           fmt.Sprintf("/api/v2/documents/%s", doc2ID),
+			path:           fmt.Sprintf("/api/documents/%s", doc2ID),
 			projectID:      s.project1ID, // Using project 1 context for project 2's doc
 			orgID:          s.org1ID,
 			expectedStatus: []int{http.StatusForbidden, http.StatusNotFound},
@@ -460,7 +460,7 @@ func (s *TenantIsolationTestSuite) TestIsolationMatrix() {
 		{
 			name:           "List documents with project context",
 			method:         "GET",
-			path:           "/api/v2/documents",
+			path:           "/api/documents",
 			projectID:      s.project1ID,
 			orgID:          s.org1ID,
 			expectedStatus: []int{http.StatusOK},
@@ -469,7 +469,7 @@ func (s *TenantIsolationTestSuite) TestIsolationMatrix() {
 		{
 			name:           "List chunks with project context",
 			method:         "GET",
-			path:           "/api/v2/chunks",
+			path:           "/api/chunks",
 			projectID:      s.project1ID,
 			orgID:          s.org1ID,
 			expectedStatus: []int{http.StatusOK},

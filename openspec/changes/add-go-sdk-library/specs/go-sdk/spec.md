@@ -34,7 +34,7 @@ The SDK SHALL provide dedicated service clients for each API domain, accessible 
 #### Scenario: Access documents service
 
 - **WHEN** user calls `client.Documents.List(ctx)`
-- **THEN** SDK makes authenticated GET request to `/api/v2/documents`
+- **THEN** SDK makes authenticated GET request to `/api/documents`
 - **AND** returns typed `[]Document` response
 - **AND** handles pagination automatically
 
@@ -162,7 +162,7 @@ The SDK SHALL provide comprehensive graph object and relationship management.
 #### Scenario: Create graph object
 
 - **WHEN** user calls `client.Graph.Objects.Create(ctx, object)`
-- **THEN** SDK creates object via POST to `/api/v2/graph/objects`
+- **THEN** SDK creates object via POST to `/api/graph/objects`
 - **AND** returns created object with generated ID
 - **AND** handles type schema validation
 

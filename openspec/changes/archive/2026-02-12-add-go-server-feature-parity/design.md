@@ -27,7 +27,7 @@ The Go server has replaced NestJS as the primary backend. During E2E test portin
 **Decision**: Use `multipart/form-data` with multiple `file` fields, return array of results.
 
 ```go
-// Request: POST /api/v2/documents/upload/batch
+// Request: POST /api/documents/upload/batch
 // Content-Type: multipart/form-data
 // file[0], file[1], file[2], ...
 

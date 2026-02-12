@@ -10,17 +10,14 @@ go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@latest
 
 ## Features
 
-- ✅ **Type-safe API client** for all Emergent endpoints
-- ✅ **Dual authentication** - API key (standalone) and OAuth (full deployment)
-- ✅ **Multi-tenancy support** - Organization and project context management
-- ✅ **Service clients** - Documents, Chunks, Search, Graph, Chat, Projects, Orgs, Users, API Tokens, Health, MCP
-- ✅ **Error handling** - Structured errors with predicates
-- ✅ **Streaming support** - SSE for chat responses
-- ✅ **OAuth device flow** - Interactive authentication with token refresh
-- ✅ **Management APIs** - Complete CRUD for Projects, Organizations, Users, API Tokens
-- ✅ **Working examples** - 4 ready-to-run example programs (see `examples/`)
-- ✅ **Comprehensive tests** - 43+ test cases with 37.6% coverage
-- ⏳ **Pagination iterators** - Auto-pagination for large result sets (coming soon)
+- **Type-safe API client** for all Emergent endpoints
+- **Dual authentication** - API key (standalone) and OAuth (full deployment)
+- **Multi-tenancy support** - Organization and project context management
+- **26 service clients** covering the full API surface
+- **Error handling** - Structured errors with predicates
+- **Streaming support** - SSE for chat responses
+- **OAuth device flow** - Interactive authentication with token refresh
+- **Working examples** - Ready-to-run example programs (see `examples/`)
 
 ## Quick Start
 
@@ -58,7 +55,7 @@ func main() {
         log.Fatal(err)
     }
 
-    for _, doc := range docs.Data {
+    for _, doc := range docs.Documents {
         fmt.Printf("Document: %s - %s\n", doc.ID, doc.Title)
     }
 }
@@ -83,6 +80,44 @@ client, err := sdk.NewWithDeviceFlow(sdk.Config{
 
 ## Service Clients
 
+All service clients are accessible as fields on the main `sdk.Client`:
+
+### Context-Scoped Clients (org/project aware)
+
+| Client          | Field                    | Description                                              |
+| --------------- | ------------------------ | -------------------------------------------------------- |
+| Documents       | `client.Documents`       | Document CRUD, upload, download, batch operations        |
+| Chunks          | `client.Chunks`          | Chunk listing, retrieval, search, deletion               |
+| Chunking        | `client.Chunking`        | Re-chunk documents with current strategy                 |
+| Search          | `client.Search`          | Unified search (lexical, semantic, hybrid)               |
+| Graph           | `client.Graph`           | Knowledge graph objects, relationships, branches, search |
+| Chat            | `client.Chat`            | Conversations CRUD, streaming chat                       |
+| Branches        | `client.Branches`        | Graph branch management                                  |
+| Projects        | `client.Projects`        | Project CRUD, members                                    |
+| Orgs            | `client.Orgs`            | Organization CRUD                                        |
+| Users           | `client.Users`           | User profile management                                  |
+| APITokens       | `client.APITokens`       | API token lifecycle                                      |
+| MCP             | `client.MCP`             | Model Context Protocol (JSON-RPC)                        |
+| UserActivity    | `client.UserActivity`    | User activity tracking                                   |
+| TypeRegistry    | `client.TypeRegistry`    | Project type definitions                                 |
+| Notifications   | `client.Notifications`   | Notification management                                  |
+| Tasks           | `client.Tasks`           | Background task tracking                                 |
+| Monitoring      | `client.Monitoring`      | Extraction job monitoring                                |
+| Agents          | `client.Agents`          | Background agent management (admin)                      |
+| DataSources     | `client.DataSources`     | Data source integrations, sync jobs                      |
+| DiscoveryJobs   | `client.DiscoveryJobs`   | Type discovery workflows                                 |
+| EmbeddingPolicy | `client.EmbeddingPolicy` | Embedding policy configuration                           |
+| Integrations    | `client.Integrations`    | Third-party integrations                                 |
+| TemplatePacks   | `client.TemplatePacks`   | Template pack assignment and types                       |
+
+### Non-Context Clients
+
+| Client     | Field               | Description                                     |
+| ---------- | ------------------- | ----------------------------------------------- |
+| Health     | `client.Health`     | Health checks, readiness, debug, metrics        |
+| Superadmin | `client.Superadmin` | Administrative operations (requires superadmin) |
+| APIDocs    | `client.APIDocs`    | Built-in API documentation                      |
+
 ### Documents
 
 ```go
@@ -93,44 +128,33 @@ docs, err := client.Documents.List(ctx, &documents.ListOptions{
 
 // Get a single document
 doc, err := client.Documents.Get(ctx, "doc_123")
-```
 
-### Chunks
+// Upload a file
+doc, err := client.Documents.Upload(ctx, "file.pdf", fileReader, fileSize)
 
-```go
-// List all chunks for a document
-chunks, err := client.Chunks.List(ctx, &chunks.ListOptions{
-    DocumentID: "doc_123",
-    Limit:      100,
-})
-```
-
-### Search
-
-```go
-// Perform a search query
-results, err := client.Search.Search(ctx, &search.SearchRequest{
-    Query:    "artificial intelligence",
-    Strategy: "hybrid", // lexical, semantic, or hybrid
-    Limit:    10,
-})
-
-for _, result := range results.Results {
-    fmt.Printf("Score: %.2f - %s\n", result.Score, result.Content)
-}
+// Download a document (returns signed URL)
+url, err := client.Documents.Download(ctx, "doc_123")
 ```
 
 ### Graph
 
 ```go
-// List graph objects
-objects, err := client.Graph.ListObjects(ctx)
+// Search graph objects
+objects, err := client.Graph.ListObjects(ctx, &graph.ListObjectsOptions{
+    Query: "machine learning",
+    Limit: 10,
+})
 
-// Get a specific object
-obj, err := client.Graph.GetObject(ctx, "obj_123")
+// Create an object
+obj, err := client.Graph.CreateObject(ctx, &graph.CreateObjectRequest{
+    Name: "Neural Networks",
+    Type: "Concept",
+})
 
-// List relationships
-relationships, err := client.Graph.ListRelationships(ctx)
+// Search relationships
+rels, err := client.Graph.ListRelationships(ctx, &graph.ListRelationshipsOptions{
+    ObjectID: "obj_123",
+})
 ```
 
 ### Chat
@@ -139,14 +163,10 @@ relationships, err := client.Graph.ListRelationships(ctx)
 // List conversations
 conversations, err := client.Chat.ListConversations(ctx)
 
-// Send a message (non-streaming)
-msg, err := client.Chat.SendMessage(ctx, "conv_123", &chat.SendMessageRequest{
-    Content: "What is machine learning?",
-})
-
-// Send a message with streaming
-stream, err := client.Chat.SendMessageStream(ctx, "conv_123", &chat.SendMessageRequest{
-    Content: "Explain neural networks",
+// Stream a chat response
+stream, err := client.Chat.StreamChat(ctx, &chat.StreamRequest{
+    ConversationID: "conv_123",
+    Message:        "What is machine learning?",
 })
 if err != nil {
     log.Fatal(err)
@@ -165,95 +185,6 @@ for event := range stream.Events() {
 }
 ```
 
-### Projects
-
-```go
-// List all projects
-projects, err := client.Projects.List(ctx, &projects.ListOptions{
-    Limit: 100,
-    OrgID: "org_123", // optional: filter by organization
-})
-
-// Get a specific project
-project, err := client.Projects.Get(ctx, "proj_456")
-
-// Create a new project
-newProject, err := client.Projects.Create(ctx, &projects.CreateProjectRequest{
-    Name:  "My New Project",
-    OrgID: "org_123",
-})
-
-// Update project settings
-updated, err := client.Projects.Update(ctx, "proj_456", &projects.UpdateProjectRequest{
-    Name:               &newName,
-    KBPurpose:          &purpose,
-    AutoExtractObjects: &autoExtract,
-})
-
-// Delete a project
-err = client.Projects.Delete(ctx, "proj_456")
-
-// List project members
-members, err := client.Projects.ListMembers(ctx, "proj_456")
-
-// Remove a member
-err = client.Projects.RemoveMember(ctx, "proj_456", "user_789")
-```
-
-### Organizations
-
-```go
-// List all organizations
-orgs, err := client.Orgs.List(ctx)
-
-// Get a specific organization
-org, err := client.Orgs.Get(ctx, "org_123")
-
-// Create a new organization
-newOrg, err := client.Orgs.Create(ctx, &orgs.CreateOrganizationRequest{
-    Name: "My Company",
-})
-
-// Delete an organization
-err = client.Orgs.Delete(ctx, "org_123")
-```
-
-### Users
-
-```go
-// Get current user's profile
-profile, err := client.Users.GetProfile(ctx)
-fmt.Printf("User: %s (%s)\n", *profile.DisplayName, profile.Email)
-
-// Update profile
-updatedProfile, err := client.Users.UpdateProfile(ctx, &users.UpdateProfileRequest{
-    FirstName:   &firstName,
-    LastName:    &lastName,
-    DisplayName: &displayName,
-    PhoneE164:   &phone,
-})
-```
-
-### API Tokens
-
-```go
-// Create a new API token
-token, err := client.APITokens.Create(ctx, "proj_456", &apitokens.CreateTokenRequest{
-    Name:   "Production Token",
-    Scopes: []string{"documents:read", "documents:write"},
-})
-fmt.Printf("Save this token: %s\n", token.Token) // Only shown once!
-
-// List all tokens for a project
-tokens, err := client.APITokens.List(ctx, "proj_456")
-
-// Get a specific token
-token, err := client.APITokens.Get(ctx, "proj_456", "token_id")
-
-// Revoke a token
-err = client.APITokens.Revoke(ctx, "proj_456", "token_id")
-```
-
 ### Health
 
 ```go
@@ -263,55 +194,19 @@ fmt.Printf("Status: %s (Uptime: %s)\n", health.Status, health.Uptime)
 
 // Check readiness (for load balancers)
 ready, err := client.Health.Ready(ctx)
-if ready {
-    fmt.Println("Service is ready")
-}
 
-// Liveness probe
-err = client.Health.Healthz(ctx)
-```
+// Debug info
+debug, err := client.Health.Debug(ctx)
 
-### MCP (Model Context Protocol)
-
-```go
-// Initialize MCP session
-err = client.MCP.Initialize(ctx)
-
-// List available tools
-tools, err := client.MCP.ListTools(ctx)
-
-// Call an MCP tool
-result, err := client.MCP.CallTool(ctx, "search_entities", map[string]interface{}{
-    "query": "machine learning",
-    "type_filter": []string{"Document"},
-})
-
-// List resources
-resources, err := client.MCP.ListResources(ctx)
-
-// Read a resource
-content, err := client.MCP.ReadResource(ctx, "emergent://schema/entity-types")
-
-// List prompts
-prompts, err := client.MCP.ListPrompts(ctx)
-
-// Get a prompt
-prompt, err := client.MCP.GetPrompt(ctx, "explore_entity_type", map[string]interface{}{
-    "entity_type": "Person",
-    "limit": 50,
-})
+// Job metrics
+metrics, err := client.Health.JobMetrics(ctx)
 ```
 
 ## Multi-Tenancy Context
 
-You can set default organization and project context on the client:
-
 ```go
 // Set context for all subsequent requests
 client.SetContext("org_789", "proj_012")
-
-// Or override per request (coming soon)
-docs, err := client.Documents.List(ctx, sdk.WithOrg("org_xyz"), sdk.WithProject("proj_abc"))
 ```
 
 ## Error Handling
@@ -331,39 +226,18 @@ if err != nil {
 }
 ```
 
-## Development Status
-
-This SDK has completed **Phases 1, 2, 3, and partial Phase 4**. Current status:
-
-- ✅ Core client infrastructure
-- ✅ API key authentication
-- ✅ OAuth device flow with token refresh
-- ✅ Documents service
-- ✅ Chunks service
-- ✅ Search service
-- ✅ Graph service (objects, relationships)
-- ✅ Chat service with SSE streaming
-- ✅ **Projects service** (CRUD, members management)
-- ✅ **Organizations service** (CRUD)
-- ✅ **Users service** (profile management)
-- ✅ **API Tokens service** (create, list, revoke)
-- ✅ **Health service** (health, readiness, liveness probes)
-- ✅ **MCP service** (Model Context Protocol JSON-RPC)
-- ✅ **Test coverage** - 43 test cases, 37.6% coverage (Phase 4)
-- ✅ **Working examples** - 4 example programs in `examples/` (Phase 4)
-- ⏳ CLI migration (Phase 5)
-
 ## Architecture
 
-The SDK uses a manual implementation approach (not code-generated) for better Go idioms, while leveraging the complete OpenAPI specification (195 endpoints, 17,289 lines) as the source of truth for API contracts.
+The SDK uses a manual implementation approach (not code-generated) for better Go idioms.
 
 **Design decisions:**
 
 - Separate service clients under main `Client` struct (inspired by AWS SDK)
 - `auth.Provider` interface for pluggable authentication
-- SDK-specific types matching OpenAPI schemas
+- SDK-specific types (no domain imports)
+- `string` for all IDs (not `uuid.UUID`)
 - Context propagation for all API calls
-- Iterator pattern for pagination (coming soon)
+- All URLs use `/api/` prefix
 
 ## Examples
 
@@ -374,32 +248,11 @@ See the `examples/` directory for complete working examples:
 - `examples/search/` - Search queries with different strategies
 - `examples/projects/` - Project CRUD operations
 
-Each example includes:
-
-- Full source code with comments
-- Usage instructions
-- Expected output
-- Error handling patterns
-
-**Run an example:**
-
 ```bash
 cd apps/server-go/pkg/sdk/examples/basic
 export EMERGENT_API_KEY="your_api_key"
 go run main.go
 ```
-
-See `examples/README.md` for detailed documentation.
-
-## Contributing
-
-This SDK is part of the [Emergent project](https://github.com/emergent-company/emergent).
-
-For implementation details, see:
-
-- [Proposal](../../openspec/changes/add-go-sdk-library/proposal.md)
-- [Design Document](../../openspec/changes/add-go-sdk-library/design.md)
-- [Task Checklist](../../openspec/changes/add-go-sdk-library/tasks.md)
 
 ## License
 

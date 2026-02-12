@@ -14,8 +14,8 @@ This proposal addresses the **actionable** gaps - features that can be implement
 
 ### Medium Priority (API Parity)
 
-- **Embedding policies API** - CRUD endpoints for `/api/v2/graph/embedding-policies`
-- **Branch CRUD API** - CRUD endpoints for `/api/v2/graph/branches`
+- **Embedding policies API** - CRUD endpoints for `/api/graph/embedding-policies`
+- **Branch CRUD API** - CRUD endpoints for `/api/graph/branches`
 - **Search debug mode** - Add `?debug=true` parameter to return timing/stats metadata
 
 ### Lower Priority (Admin Features)

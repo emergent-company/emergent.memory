@@ -22,7 +22,9 @@ func NewHandler(svc *Service) *Handler {
 
 // Search handles POST /search/unified
 // @Summary Unified search
-// @Description Search across graph objects and document chunks with configurable fusion strategies
+// @Description Search across graph objects, relationships, and document chunks with configurable fusion strategies
+// @Description Supports multiple result types: graph nodes, relationship edges (triplets), and text chunks
+// @Description Relationships are returned when embeddings are available and fusion strategy is RRF or weighted
 // @Tags search
 // @Accept json
 // @Produce json

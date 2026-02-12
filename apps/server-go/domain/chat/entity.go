@@ -88,8 +88,9 @@ type UpdateConversationRequest struct {
 
 // AddMessageRequest is the request body for adding a message
 type AddMessageRequest struct {
-	Role    string `json:"role" validate:"required,oneof=user assistant system"`
-	Content string `json:"content" validate:"required,max=100000"`
+	Role             string          `json:"role" validate:"required,oneof=user assistant system"`
+	Content          string          `json:"content" validate:"required,max=100000"`
+	RetrievalContext json.RawMessage `json:"retrievalContext,omitempty"`
 }
 
 // ConversationWithMessages is the response when getting a conversation with messages

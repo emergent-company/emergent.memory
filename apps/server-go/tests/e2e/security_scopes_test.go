@@ -84,7 +84,7 @@ func (s *SecurityScopesTestSuite) SetupTest() {
 
 func (s *SecurityScopesTestSuite) TestDocuments_RequiresAuth() {
 	// Request without Authorization header should fail
-	resp := s.client.GET("/api/v2/documents",
+	resp := s.client.GET("/api/documents",
 		testutil.WithProjectID(s.projectID),
 	)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
@@ -92,7 +92,7 @@ func (s *SecurityScopesTestSuite) TestDocuments_RequiresAuth() {
 
 func (s *SecurityScopesTestSuite) TestDocuments_DeniesNoScopeToken() {
 	// Token with no scopes should be forbidden
-	resp := s.client.GET("/api/v2/documents",
+	resp := s.client.GET("/api/documents",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.projectID),
 	)
@@ -102,7 +102,7 @@ func (s *SecurityScopesTestSuite) TestDocuments_DeniesNoScopeToken() {
 
 func (s *SecurityScopesTestSuite) TestDocuments_AllowsReadScope() {
 	// Token with documents:read scope should succeed
-	resp := s.client.GET("/api/v2/documents",
+	resp := s.client.GET("/api/documents",
 		testutil.WithAuth("with-scope"),
 		testutil.WithProjectID(s.projectID),
 	)
@@ -111,7 +111,7 @@ func (s *SecurityScopesTestSuite) TestDocuments_AllowsReadScope() {
 
 func (s *SecurityScopesTestSuite) TestDocuments_AllowsAllScopes() {
 	// Token with all scopes should succeed
-	resp := s.client.GET("/api/v2/documents",
+	resp := s.client.GET("/api/documents",
 		testutil.WithAuth("all-scopes"),
 		testutil.WithProjectID(s.projectID),
 	)
@@ -120,7 +120,7 @@ func (s *SecurityScopesTestSuite) TestDocuments_AllowsAllScopes() {
 
 func (s *SecurityScopesTestSuite) TestDocumentsCreate_DeniesReadOnlyToken() {
 	// Token without documents:write scope should be forbidden for POST
-	resp := s.client.POST("/api/v2/documents",
+	resp := s.client.POST("/api/documents",
 		testutil.WithAuth("read-only"),
 		testutil.WithProjectID(s.projectID),
 		testutil.WithJSONBody(map[string]any{
@@ -133,7 +133,7 @@ func (s *SecurityScopesTestSuite) TestDocumentsCreate_DeniesReadOnlyToken() {
 
 func (s *SecurityScopesTestSuite) TestDocumentsCreate_AllowsWriteScope() {
 	// Token with documents:write scope should succeed (or 400 for validation)
-	resp := s.client.POST("/api/v2/documents",
+	resp := s.client.POST("/api/documents",
 		testutil.WithAuth("with-scope"),
 		testutil.WithProjectID(s.projectID),
 		testutil.WithJSONBody(map[string]any{
@@ -150,14 +150,14 @@ func (s *SecurityScopesTestSuite) TestDocumentsCreate_AllowsWriteScope() {
 // =============================================================================
 
 func (s *SecurityScopesTestSuite) TestChat_RequiresAuth() {
-	resp := s.client.GET("/api/v2/chat/conversations",
+	resp := s.client.GET("/api/chat/conversations",
 		testutil.WithProjectID(s.projectID),
 	)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *SecurityScopesTestSuite) TestChat_DeniesNoScopeToken() {
-	resp := s.client.GET("/api/v2/chat/conversations",
+	resp := s.client.GET("/api/chat/conversations",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.projectID),
 	)
@@ -165,7 +165,7 @@ func (s *SecurityScopesTestSuite) TestChat_DeniesNoScopeToken() {
 }
 
 func (s *SecurityScopesTestSuite) TestChat_AllowsChatScope() {
-	resp := s.client.GET("/api/v2/chat/conversations",
+	resp := s.client.GET("/api/chat/conversations",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.projectID),
 	)
@@ -174,12 +174,12 @@ func (s *SecurityScopesTestSuite) TestChat_AllowsChatScope() {
 
 // =============================================================================
 // Test: Graph Endpoint Scope Enforcement
-// Note: Go server uses /api/v2/graph/objects/search for listing objects
+// Note: Go server uses /api/graph/objects/search for listing objects
 // Go server requires auth but not specific scopes for graph endpoints
 // =============================================================================
 
 func (s *SecurityScopesTestSuite) TestGraph_RequiresAuth() {
-	resp := s.client.GET("/api/v2/graph/objects/search",
+	resp := s.client.GET("/api/graph/objects/search",
 		testutil.WithProjectID(s.projectID),
 	)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
@@ -187,7 +187,7 @@ func (s *SecurityScopesTestSuite) TestGraph_RequiresAuth() {
 
 func (s *SecurityScopesTestSuite) TestGraph_AllowsAnyAuthenticatedUser() {
 	// Go server doesn't enforce scopes on graph endpoints, just requires auth
-	resp := s.client.GET("/api/v2/graph/objects/search",
+	resp := s.client.GET("/api/graph/objects/search",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.projectID),
 	)
@@ -196,7 +196,7 @@ func (s *SecurityScopesTestSuite) TestGraph_AllowsAnyAuthenticatedUser() {
 }
 
 func (s *SecurityScopesTestSuite) TestGraph_AllowsGraphReadScope() {
-	resp := s.client.GET("/api/v2/graph/objects/search",
+	resp := s.client.GET("/api/graph/objects/search",
 		testutil.WithAuth("graph-read"),
 		testutil.WithProjectID(s.projectID),
 	)
@@ -205,11 +205,11 @@ func (s *SecurityScopesTestSuite) TestGraph_AllowsGraphReadScope() {
 
 // =============================================================================
 // Test: Search Endpoint Scope Enforcement
-// Note: Go server uses /api/v2/search/unified for search
+// Note: Go server uses /api/search/unified for search
 // =============================================================================
 
 func (s *SecurityScopesTestSuite) TestSearch_RequiresAuth() {
-	resp := s.client.POST("/api/v2/search/unified",
+	resp := s.client.POST("/api/search/unified",
 		testutil.WithProjectID(s.projectID),
 		testutil.WithJSONBody(map[string]any{"query": "test"}),
 	)
@@ -217,7 +217,7 @@ func (s *SecurityScopesTestSuite) TestSearch_RequiresAuth() {
 }
 
 func (s *SecurityScopesTestSuite) TestSearch_DeniesNoScopeToken() {
-	resp := s.client.POST("/api/v2/search/unified",
+	resp := s.client.POST("/api/search/unified",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.projectID),
 		testutil.WithJSONBody(map[string]any{"query": "test"}),
@@ -226,7 +226,7 @@ func (s *SecurityScopesTestSuite) TestSearch_DeniesNoScopeToken() {
 }
 
 func (s *SecurityScopesTestSuite) TestSearch_AllowsSearchScope() {
-	resp := s.client.POST("/api/v2/search/unified",
+	resp := s.client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.projectID),
 		testutil.WithJSONBody(map[string]any{"query": "test"}),
@@ -240,14 +240,14 @@ func (s *SecurityScopesTestSuite) TestSearch_AllowsSearchScope() {
 // =============================================================================
 
 func (s *SecurityScopesTestSuite) TestChunks_RequiresAuth() {
-	resp := s.client.GET("/api/v2/chunks",
+	resp := s.client.GET("/api/chunks",
 		testutil.WithProjectID(s.projectID),
 	)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *SecurityScopesTestSuite) TestChunks_DeniesNoScopeToken() {
-	resp := s.client.GET("/api/v2/chunks",
+	resp := s.client.GET("/api/chunks",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.projectID),
 	)
@@ -255,7 +255,7 @@ func (s *SecurityScopesTestSuite) TestChunks_DeniesNoScopeToken() {
 }
 
 func (s *SecurityScopesTestSuite) TestChunks_AllowsReadScope() {
-	resp := s.client.GET("/api/v2/chunks",
+	resp := s.client.GET("/api/chunks",
 		testutil.WithAuth("read-only"),
 		testutil.WithProjectID(s.projectID),
 	)
@@ -294,13 +294,13 @@ func (s *SecurityScopesTestSuite) TestProjects_AllowsProjectReadScope() {
 // =============================================================================
 
 func (s *SecurityScopesTestSuite) TestOrgs_RequiresAuth() {
-	resp := s.client.GET("/api/v2/orgs")
+	resp := s.client.GET("/api/orgs")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *SecurityScopesTestSuite) TestOrgs_AllowsAnyAuthenticatedUser() {
 	// Go server doesn't enforce scopes on orgs endpoint
-	resp := s.client.GET("/api/v2/orgs",
+	resp := s.client.GET("/api/orgs",
 		testutil.WithAuth("no-scope"),
 	)
 	// Go server: 200 (no scope enforcement) or NestJS: 403 (scope required)
@@ -308,7 +308,7 @@ func (s *SecurityScopesTestSuite) TestOrgs_AllowsAnyAuthenticatedUser() {
 }
 
 func (s *SecurityScopesTestSuite) TestOrgs_AllowsOrgReadScope() {
-	resp := s.client.GET("/api/v2/orgs",
+	resp := s.client.GET("/api/orgs",
 		testutil.WithAuth("read-only"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
@@ -331,22 +331,22 @@ func (s *SecurityScopesTestSuite) TestScopeMatrix() {
 		body           map[string]any
 	}{
 		// Documents - Read (scope enforced on both servers)
-		{"docs GET with no-scope", "GET", "/api/v2/documents", "no-scope", http.StatusForbidden, nil},
-		{"docs GET with read-only", "GET", "/api/v2/documents", "read-only", http.StatusOK, nil},
-		{"docs GET with all-scopes", "GET", "/api/v2/documents", "all-scopes", http.StatusOK, nil},
+		{"docs GET with no-scope", "GET", "/api/documents", "no-scope", http.StatusForbidden, nil},
+		{"docs GET with read-only", "GET", "/api/documents", "read-only", http.StatusOK, nil},
+		{"docs GET with all-scopes", "GET", "/api/documents", "all-scopes", http.StatusOK, nil},
 
 		// Graph - Read (uses /search path in Go server, no scope enforcement)
 		// Go server doesn't require scopes for graph, just auth
-		{"graph GET with graph-read", "GET", "/api/v2/graph/objects/search", "graph-read", http.StatusOK, nil},
-		{"graph GET with all-scopes", "GET", "/api/v2/graph/objects/search", "all-scopes", http.StatusOK, nil},
+		{"graph GET with graph-read", "GET", "/api/graph/objects/search", "graph-read", http.StatusOK, nil},
+		{"graph GET with all-scopes", "GET", "/api/graph/objects/search", "all-scopes", http.StatusOK, nil},
 
 		// Chunks - Read (scope enforced on both servers)
-		{"chunks GET with no-scope", "GET", "/api/v2/chunks", "no-scope", http.StatusForbidden, nil},
-		{"chunks GET with read-only", "GET", "/api/v2/chunks", "read-only", http.StatusOK, nil},
+		{"chunks GET with no-scope", "GET", "/api/chunks", "no-scope", http.StatusForbidden, nil},
+		{"chunks GET with read-only", "GET", "/api/chunks", "read-only", http.StatusOK, nil},
 
 		// Chat - requires chat:use scope (scope enforced on both servers)
-		{"chat GET with no-scope", "GET", "/api/v2/chat/conversations", "no-scope", http.StatusForbidden, nil},
-		{"chat GET with e2e-test-user", "GET", "/api/v2/chat/conversations", "e2e-test-user", http.StatusOK, nil},
+		{"chat GET with no-scope", "GET", "/api/chat/conversations", "no-scope", http.StatusForbidden, nil},
+		{"chat GET with e2e-test-user", "GET", "/api/chat/conversations", "e2e-test-user", http.StatusOK, nil},
 	}
 
 	for _, tt := range tests {

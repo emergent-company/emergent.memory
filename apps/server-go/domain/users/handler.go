@@ -29,7 +29,7 @@ func NewHandler(svc *Service) *Handler {
 // @Failure      400 {object} apperror.Error "Missing or invalid email query parameter"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/users/search [get]
+// @Router       /api/users/search [get]
 // @Security     bearerAuth
 func (h *Handler) Search(c echo.Context) error {
 	user := auth.GetUser(c)

@@ -1,6 +1,6 @@
 ## 1. Batch File Upload ✅ COMPLETE (Already Implemented)
 
-- [x] 1.1 Add `POST /api/v2/documents/upload/batch` endpoint in `domain/documents/upload_handler.go`
+- [x] 1.1 Add `POST /api/documents/upload/batch` endpoint in `domain/documents/upload_handler.go`
 - [x] 1.2 Implement multipart form parsing for multiple files
 - [x] 1.3 Add batch upload validation (file count limits, total size limits)
 - [x] 1.4 Return array of created document IDs with individual success/failure status
@@ -14,11 +14,11 @@
 - [x] 2.3 Add store with CRUD operations
 - [x] 2.4 Add service layer with business logic
 - [x] 2.5 Add handler with endpoints:
-  - `GET /api/v2/graph/embedding-policies` - List policies
-  - `GET /api/v2/graph/embedding-policies/:id` - Get policy
-  - `POST /api/v2/graph/embedding-policies` - Create policy
-  - `PATCH /api/v2/graph/embedding-policies/:id` - Update policy
-  - `DELETE /api/v2/graph/embedding-policies/:id` - Delete policy
+  - `GET /api/graph/embedding-policies` - List policies
+  - `GET /api/graph/embedding-policies/:id` - Get policy
+  - `POST /api/graph/embedding-policies` - Create policy
+  - `PATCH /api/graph/embedding-policies/:id` - Update policy
+  - `DELETE /api/graph/embedding-policies/:id` - Delete policy
 - [x] 2.6 Register routes with auth middleware and `graph:read`/`graph:write` scopes
 - [x] 2.7 Add module to `cmd/server/main.go`
 - [x] 2.8 Create `embedding_policies_test.go` with E2E tests (24 tests passing)
@@ -30,11 +30,11 @@
 - [x] 3.3 Add store with CRUD operations
 - [x] 3.4 Add service layer with branch lifecycle logic
 - [x] 3.5 Add handler with endpoints:
-  - `GET /api/v2/graph/branches` - List branches
-  - `GET /api/v2/graph/branches/:id` - Get branch
-  - `POST /api/v2/graph/branches` - Create branch
-  - `PATCH /api/v2/graph/branches/:id` - Update branch
-  - `DELETE /api/v2/graph/branches/:id` - Delete branch
+  - `GET /api/graph/branches` - List branches
+  - `GET /api/graph/branches/:id` - Get branch
+  - `POST /api/graph/branches` - Create branch
+  - `PATCH /api/graph/branches/:id` - Update branch
+  - `DELETE /api/graph/branches/:id` - Delete branch
 - [x] 3.6 Register routes with auth middleware and `graph:read`/`graph:write` scopes
 - [x] 3.7 Add module to `cmd/server/main.go`
 - [x] 3.8 Create `branches_test.go` with E2E tests (32 tests passing)
@@ -45,7 +45,7 @@
 - [x] 4.2 When `debug=true`, collect timing metrics for each search phase
 - [x] 4.3 Return debug metadata in response (already implemented in search service)
 - [x] 4.4 Add debug mode to:
-  - `POST /api/v2/search/unified` (via `?debug=true` query param or `includeDebug` body field)
+  - `POST /api/search/unified` (via `?debug=true` query param or `includeDebug` body field)
   - Graph search already had debug support
 - [x] 4.5 Add E2E tests for debug parameter in `search_test.go`:
   - `TestUnifiedSearch_DebugModeRequiresScope`

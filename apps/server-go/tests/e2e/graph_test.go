@@ -25,7 +25,7 @@ func (s *GraphSuite) SetupSuite() {
 
 func (s *GraphSuite) TestCreateObject_Success() {
 	rec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -57,7 +57,7 @@ func (s *GraphSuite) TestCreateObject_Success() {
 
 func (s *GraphSuite) TestCreateObject_RequiresAuth() {
 	rec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
 			"type": "Requirement",
@@ -69,7 +69,7 @@ func (s *GraphSuite) TestCreateObject_RequiresAuth() {
 
 func (s *GraphSuite) TestCreateObject_RequiresProjectID() {
 	rec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"type": "Requirement",
@@ -81,7 +81,7 @@ func (s *GraphSuite) TestCreateObject_RequiresProjectID() {
 
 func (s *GraphSuite) TestCreateObject_MissingType() {
 	rec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -94,7 +94,7 @@ func (s *GraphSuite) TestCreateObject_MissingType() {
 
 func (s *GraphSuite) TestCreateObject_MinimalFields() {
 	rec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -118,7 +118,7 @@ func (s *GraphSuite) TestCreateObject_MinimalFields() {
 func (s *GraphSuite) TestGetObject_Success() {
 	// Create an object first
 	createRec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -134,7 +134,7 @@ func (s *GraphSuite) TestGetObject_Success() {
 
 	// Get the object
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/"+created.ID.String(),
+		"/api/graph/objects/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -152,7 +152,7 @@ func (s *GraphSuite) TestGetObject_Success() {
 
 func (s *GraphSuite) TestGetObject_NotFound() {
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/"+uuid.New().String(),
+		"/api/graph/objects/"+uuid.New().String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -164,7 +164,7 @@ func (s *GraphSuite) TestGetObject_NotFound() {
 
 func (s *GraphSuite) TestListObjects_Empty() {
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/search",
+		"/api/graph/objects/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -183,7 +183,7 @@ func (s *GraphSuite) TestListObjects_WithObjects() {
 	// Create some objects
 	for i := 0; i < 3; i++ {
 		rec := s.Client.POST(
-			"/api/v2/graph/objects",
+			"/api/graph/objects",
 			testutil.WithAuth("e2e-test-user"),
 			testutil.WithProjectID(s.ProjectID),
 			testutil.WithJSONBody(map[string]any{
@@ -194,7 +194,7 @@ func (s *GraphSuite) TestListObjects_WithObjects() {
 	}
 
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/search",
+		"/api/graph/objects/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -211,26 +211,26 @@ func (s *GraphSuite) TestListObjects_WithObjects() {
 func (s *GraphSuite) TestListObjects_FilterByType() {
 	// Create objects of different types
 	s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{"type": "Requirement"}),
 	)
 	s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{"type": "Decision"}),
 	)
 	s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{"type": "Requirement"}),
 	)
 
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/search?types=Requirement",
+		"/api/graph/objects/search?types=Requirement",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -251,7 +251,7 @@ func (s *GraphSuite) TestListObjects_Pagination_Limit() {
 	// Create 5 objects
 	for i := 0; i < 5; i++ {
 		rec := s.Client.POST(
-			"/api/v2/graph/objects",
+			"/api/graph/objects",
 			testutil.WithAuth("e2e-test-user"),
 			testutil.WithProjectID(s.ProjectID),
 			testutil.WithJSONBody(map[string]any{
@@ -266,7 +266,7 @@ func (s *GraphSuite) TestListObjects_Pagination_Limit() {
 
 	// Request with limit=2
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/search?limit=2",
+		"/api/graph/objects/search?limit=2",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -287,7 +287,7 @@ func (s *GraphSuite) TestListObjects_Pagination_Cursor() {
 	createdIDs := make([]uuid.UUID, 5)
 	for i := 0; i < 5; i++ {
 		rec := s.Client.POST(
-			"/api/v2/graph/objects",
+			"/api/graph/objects",
 			testutil.WithAuth("e2e-test-user"),
 			testutil.WithProjectID(s.ProjectID),
 			testutil.WithJSONBody(map[string]any{
@@ -307,7 +307,7 @@ func (s *GraphSuite) TestListObjects_Pagination_Cursor() {
 
 	// First page
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/search?limit=2",
+		"/api/graph/objects/search?limit=2",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -324,7 +324,7 @@ func (s *GraphSuite) TestListObjects_Pagination_Cursor() {
 
 	// Second page using cursor
 	rec = s.Client.GET(
-		"/api/v2/graph/objects/search?limit=2&cursor="+*page1.NextCursor,
+		"/api/graph/objects/search?limit=2&cursor="+*page1.NextCursor,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -340,7 +340,7 @@ func (s *GraphSuite) TestListObjects_Pagination_Cursor() {
 
 	// Third page
 	rec = s.Client.GET(
-		"/api/v2/graph/objects/search?limit=2&cursor="+*page2.NextCursor,
+		"/api/graph/objects/search?limit=2&cursor="+*page2.NextCursor,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -373,7 +373,7 @@ func (s *GraphSuite) TestListObjects_Pagination_Cursor() {
 
 func (s *GraphSuite) TestListObjects_InvalidCursor() {
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/search?cursor=invalid-cursor-format",
+		"/api/graph/objects/search?cursor=invalid-cursor-format",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -386,7 +386,7 @@ func (s *GraphSuite) TestListObjects_InvalidCursor() {
 func (s *GraphSuite) TestPatchObject_Success() {
 	// Create an object
 	createRec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -405,7 +405,7 @@ func (s *GraphSuite) TestPatchObject_Success() {
 
 	// Patch the object
 	rec := s.Client.PATCH(
-		"/api/v2/graph/objects/"+created.ID.String(),
+		"/api/graph/objects/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -433,7 +433,7 @@ func (s *GraphSuite) TestPatchObject_Success() {
 func (s *GraphSuite) TestPatchObject_MergesProperties() {
 	// Create an object with multiple properties
 	createRec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -453,7 +453,7 @@ func (s *GraphSuite) TestPatchObject_MergesProperties() {
 
 	// Patch only the title
 	rec := s.Client.PATCH(
-		"/api/v2/graph/objects/"+created.ID.String(),
+		"/api/graph/objects/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -480,7 +480,7 @@ func (s *GraphSuite) TestPatchObject_MergesProperties() {
 func (s *GraphSuite) TestDeleteObject_Success() {
 	// Create an object
 	createRec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -495,7 +495,7 @@ func (s *GraphSuite) TestDeleteObject_Success() {
 
 	// Delete the object
 	rec := s.Client.DELETE(
-		"/api/v2/graph/objects/"+created.ID.String(),
+		"/api/graph/objects/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -504,7 +504,7 @@ func (s *GraphSuite) TestDeleteObject_Success() {
 
 	// Object should not appear in list
 	listRec := s.Client.GET(
-		"/api/v2/graph/objects/search",
+		"/api/graph/objects/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -518,7 +518,7 @@ func (s *GraphSuite) TestDeleteObject_Success() {
 
 func (s *GraphSuite) TestDeleteObject_NotFound() {
 	rec := s.Client.DELETE(
-		"/api/v2/graph/objects/"+uuid.New().String(),
+		"/api/graph/objects/"+uuid.New().String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -531,7 +531,7 @@ func (s *GraphSuite) TestDeleteObject_NotFound() {
 func (s *GraphSuite) TestRestoreObject_Success() {
 	// Create and delete an object
 	createRec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -545,7 +545,7 @@ func (s *GraphSuite) TestRestoreObject_Success() {
 	s.Require().NoError(err)
 
 	deleteRec := s.Client.DELETE(
-		"/api/v2/graph/objects/"+created.ID.String(),
+		"/api/graph/objects/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -553,7 +553,7 @@ func (s *GraphSuite) TestRestoreObject_Success() {
 
 	// Get the deleted object to find its new ID (tombstone version)
 	listRec := s.Client.GET(
-		"/api/v2/graph/objects/search?include_deleted=true",
+		"/api/graph/objects/search?include_deleted=true",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -568,7 +568,7 @@ func (s *GraphSuite) TestRestoreObject_Success() {
 
 	// Restore the object
 	rec := s.Client.POST(
-		"/api/v2/graph/objects/"+deletedID.String()+"/restore",
+		"/api/graph/objects/"+deletedID.String()+"/restore",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -588,7 +588,7 @@ func (s *GraphSuite) TestRestoreObject_Success() {
 func (s *GraphSuite) TestGetObjectHistory_Success() {
 	// Create an object and update it
 	createRec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -604,7 +604,7 @@ func (s *GraphSuite) TestGetObjectHistory_Success() {
 
 	// Update the object
 	s.Client.PATCH(
-		"/api/v2/graph/objects/"+created.ID.String(),
+		"/api/graph/objects/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -614,7 +614,7 @@ func (s *GraphSuite) TestGetObjectHistory_Success() {
 
 	// Get history
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/"+created.ID.String()+"/history",
+		"/api/graph/objects/"+created.ID.String()+"/history",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -636,7 +636,7 @@ func (s *GraphSuite) TestGetObjectHistory_Success() {
 func (s *GraphSuite) TestGetObjectEdges_Empty() {
 	// Create an object
 	createRec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -651,7 +651,7 @@ func (s *GraphSuite) TestGetObjectEdges_Empty() {
 
 	// Get edges
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/"+created.ID.String()+"/edges",
+		"/api/graph/objects/"+created.ID.String()+"/edges",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -671,7 +671,7 @@ func (s *GraphSuite) TestGetObjectEdges_Empty() {
 // Helper to create a graph object and return its ID
 func (s *GraphSuite) createObject(objType string) uuid.UUID {
 	rec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -694,7 +694,7 @@ func (s *GraphSuite) TestCreateRelationship_Success() {
 
 	// Create a relationship between them
 	rec := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -730,7 +730,7 @@ func (s *GraphSuite) TestCreateRelationship_RequiresAuth() {
 	dstID := s.createObject("Decision")
 
 	rec := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
 			"type":   "DEPENDS_ON",
@@ -747,7 +747,7 @@ func (s *GraphSuite) TestCreateRelationship_MissingType() {
 	dstID := s.createObject("Decision")
 
 	rec := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -763,7 +763,7 @@ func (s *GraphSuite) TestCreateRelationship_SelfLoopNotAllowed() {
 	objID := s.createObject("Requirement")
 
 	rec := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -780,7 +780,7 @@ func (s *GraphSuite) TestCreateRelationship_EndpointNotFound() {
 	srcID := s.createObject("Requirement")
 
 	rec := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -808,7 +808,7 @@ func (s *GraphSuite) TestCreateRelationship_Idempotent() {
 	// First creation
 	s.T().Log("Creating first relationship...")
 	rec1 := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -831,7 +831,7 @@ func (s *GraphSuite) TestCreateRelationship_Idempotent() {
 	// Second creation with same properties
 	s.T().Log("Creating second relationship (should be idempotent)...")
 	rec2 := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -861,7 +861,7 @@ func (s *GraphSuite) TestGetRelationship_Success() {
 
 	// Create a relationship
 	createRec := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -878,7 +878,7 @@ func (s *GraphSuite) TestGetRelationship_Success() {
 
 	// Get the relationship
 	rec := s.Client.GET(
-		"/api/v2/graph/relationships/"+created.ID.String(),
+		"/api/graph/relationships/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -897,7 +897,7 @@ func (s *GraphSuite) TestGetRelationship_Success() {
 
 func (s *GraphSuite) TestGetRelationship_NotFound() {
 	rec := s.Client.GET(
-		"/api/v2/graph/relationships/"+uuid.New().String(),
+		"/api/graph/relationships/"+uuid.New().String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -907,7 +907,7 @@ func (s *GraphSuite) TestGetRelationship_NotFound() {
 
 func (s *GraphSuite) TestListRelationships_Empty() {
 	rec := s.Client.GET(
-		"/api/v2/graph/relationships/search",
+		"/api/graph/relationships/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -929,7 +929,7 @@ func (s *GraphSuite) TestListRelationships_FilterByType() {
 
 	// Create relationships of different types
 	s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -939,7 +939,7 @@ func (s *GraphSuite) TestListRelationships_FilterByType() {
 		}),
 	)
 	s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -951,7 +951,7 @@ func (s *GraphSuite) TestListRelationships_FilterByType() {
 
 	// Filter by type
 	rec := s.Client.GET(
-		"/api/v2/graph/relationships/search?type=DEPENDS_ON",
+		"/api/graph/relationships/search?type=DEPENDS_ON",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -973,7 +973,7 @@ func (s *GraphSuite) TestListRelationships_FilterBySrcID() {
 
 	// Create relationships from different sources
 	s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -983,7 +983,7 @@ func (s *GraphSuite) TestListRelationships_FilterBySrcID() {
 		}),
 	)
 	s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -995,7 +995,7 @@ func (s *GraphSuite) TestListRelationships_FilterBySrcID() {
 
 	// Filter by src_id
 	rec := s.Client.GET(
-		"/api/v2/graph/relationships/search?src_id="+src1ID.String(),
+		"/api/graph/relationships/search?src_id="+src1ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -1016,7 +1016,7 @@ func (s *GraphSuite) TestPatchRelationship_Success() {
 
 	// Create a relationship
 	createRec := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1036,7 +1036,7 @@ func (s *GraphSuite) TestPatchRelationship_Success() {
 
 	// Patch the relationship
 	rec := s.Client.PATCH(
-		"/api/v2/graph/relationships/"+created.ID.String(),
+		"/api/graph/relationships/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1068,7 +1068,7 @@ func (s *GraphSuite) TestPatchRelationship_MergesProperties() {
 
 	// Create a relationship with multiple properties
 	createRec := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1089,7 +1089,7 @@ func (s *GraphSuite) TestPatchRelationship_MergesProperties() {
 
 	// Patch only the reason
 	rec := s.Client.PATCH(
-		"/api/v2/graph/relationships/"+created.ID.String(),
+		"/api/graph/relationships/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1116,7 +1116,7 @@ func (s *GraphSuite) TestDeleteRelationship_Success() {
 
 	// Create a relationship
 	createRec := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1133,7 +1133,7 @@ func (s *GraphSuite) TestDeleteRelationship_Success() {
 
 	// Delete the relationship
 	rec := s.Client.DELETE(
-		"/api/v2/graph/relationships/"+created.ID.String(),
+		"/api/graph/relationships/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -1149,7 +1149,7 @@ func (s *GraphSuite) TestDeleteRelationship_Success() {
 
 	// Relationship should not appear in list
 	listRec := s.Client.GET(
-		"/api/v2/graph/relationships/search",
+		"/api/graph/relationships/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -1167,7 +1167,7 @@ func (s *GraphSuite) TestRestoreRelationship_Success() {
 
 	// Create and delete a relationship
 	createRec := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1184,7 +1184,7 @@ func (s *GraphSuite) TestRestoreRelationship_Success() {
 
 	// Delete
 	deleteRec := s.Client.DELETE(
-		"/api/v2/graph/relationships/"+created.ID.String(),
+		"/api/graph/relationships/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -1196,7 +1196,7 @@ func (s *GraphSuite) TestRestoreRelationship_Success() {
 
 	// Restore
 	rec := s.Client.POST(
-		"/api/v2/graph/relationships/"+deleted.ID.String()+"/restore",
+		"/api/graph/relationships/"+deleted.ID.String()+"/restore",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -1217,7 +1217,7 @@ func (s *GraphSuite) TestGetRelationshipHistory_Success() {
 
 	// Create a relationship and update it
 	createRec := s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1237,7 +1237,7 @@ func (s *GraphSuite) TestGetRelationshipHistory_Success() {
 
 	// Update to create version 2
 	s.Client.PATCH(
-		"/api/v2/graph/relationships/"+created.ID.String(),
+		"/api/graph/relationships/"+created.ID.String(),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1249,7 +1249,7 @@ func (s *GraphSuite) TestGetRelationshipHistory_Success() {
 
 	// Get history
 	rec := s.Client.GET(
-		"/api/v2/graph/relationships/"+created.ID.String()+"/history",
+		"/api/graph/relationships/"+created.ID.String()+"/history",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -1272,7 +1272,7 @@ func (s *GraphSuite) TestGetObjectEdges_WithRelationships() {
 
 	// Create a relationship
 	s.Client.POST(
-		"/api/v2/graph/relationships",
+		"/api/graph/relationships",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1284,7 +1284,7 @@ func (s *GraphSuite) TestGetObjectEdges_WithRelationships() {
 
 	// Get edges for source object
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/"+srcID.String()+"/edges",
+		"/api/graph/objects/"+srcID.String()+"/edges",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -1301,7 +1301,7 @@ func (s *GraphSuite) TestGetObjectEdges_WithRelationships() {
 
 	// Get edges for destination object
 	rec = s.Client.GET(
-		"/api/v2/graph/objects/"+dstID.String()+"/edges",
+		"/api/graph/objects/"+dstID.String()+"/edges",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -1320,7 +1320,7 @@ func (s *GraphSuite) TestGetObjectEdges_WithRelationships() {
 
 func (s *GraphSuite) TestFTSSearch_RequiresAuth() {
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/fts?q=test",
+		"/api/graph/objects/fts?q=test",
 		testutil.WithProjectID(s.ProjectID),
 	)
 
@@ -1329,7 +1329,7 @@ func (s *GraphSuite) TestFTSSearch_RequiresAuth() {
 
 func (s *GraphSuite) TestFTSSearch_RequiresQuery() {
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/fts",
+		"/api/graph/objects/fts",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -1340,7 +1340,7 @@ func (s *GraphSuite) TestFTSSearch_RequiresQuery() {
 func (s *GraphSuite) TestFTSSearch_EmptyResults() {
 	// Search with no objects in DB
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/fts?q=nonexistent",
+		"/api/graph/objects/fts?q=nonexistent",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -1359,7 +1359,7 @@ func (s *GraphSuite) TestFTSSearch_EmptyResults() {
 func (s *GraphSuite) TestFTSSearch_WithFilters() {
 	// Create some objects (FTS index is populated by DB trigger)
 	s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1370,7 +1370,7 @@ func (s *GraphSuite) TestFTSSearch_WithFilters() {
 
 	// Search with type filter
 	rec := s.Client.GET(
-		"/api/v2/graph/objects/fts?q=test&types=Requirement",
+		"/api/graph/objects/fts?q=test&types=Requirement",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -1388,7 +1388,7 @@ func (s *GraphSuite) TestFTSSearch_WithFilters() {
 
 func (s *GraphSuite) TestVectorSearch_RequiresAuth() {
 	rec := s.Client.POST(
-		"/api/v2/graph/objects/vector-search",
+		"/api/graph/objects/vector-search",
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
 			"vector": []float32{0.1, 0.2, 0.3},
@@ -1400,7 +1400,7 @@ func (s *GraphSuite) TestVectorSearch_RequiresAuth() {
 
 func (s *GraphSuite) TestVectorSearch_RequiresVector() {
 	rec := s.Client.POST(
-		"/api/v2/graph/objects/vector-search",
+		"/api/graph/objects/vector-search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{}),
@@ -1417,7 +1417,7 @@ func (s *GraphSuite) TestVectorSearch_EmptyResults() {
 	}
 
 	rec := s.Client.POST(
-		"/api/v2/graph/objects/vector-search",
+		"/api/graph/objects/vector-search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1445,7 +1445,7 @@ func (s *GraphSuite) TestVectorSearch_WithFilters() {
 	}
 
 	rec := s.Client.POST(
-		"/api/v2/graph/objects/vector-search",
+		"/api/graph/objects/vector-search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1468,7 +1468,7 @@ func (s *GraphSuite) TestVectorSearch_WithFilters() {
 
 func (s *GraphSuite) TestHybridSearch_RequiresAuth() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
 			"query": "test",
@@ -1480,7 +1480,7 @@ func (s *GraphSuite) TestHybridSearch_RequiresAuth() {
 
 func (s *GraphSuite) TestHybridSearch_RequiresQueryOrVector() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{}),
@@ -1491,7 +1491,7 @@ func (s *GraphSuite) TestHybridSearch_RequiresQueryOrVector() {
 
 func (s *GraphSuite) TestHybridSearch_QueryOnly() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1517,7 +1517,7 @@ func (s *GraphSuite) TestHybridSearch_VectorOnly() {
 	}
 
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1542,7 +1542,7 @@ func (s *GraphSuite) TestHybridSearch_QueryAndVector() {
 	}
 
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -1564,7 +1564,7 @@ func (s *GraphSuite) TestHybridSearch_QueryAndVector() {
 
 func (s *GraphSuite) TestHybridSearch_WithFilters() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{

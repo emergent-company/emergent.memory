@@ -438,7 +438,7 @@ func (s *MyFeatureSuite) TestCreateResource_Success() {
     body := map[string]any{"name": "Test Resource"}
 
     // Act
-    rec := s.server.POST("/api/v2/my-resource",
+    rec := s.server.POST("/api/my-resource",
         testutil.WithAuth(s.token),
         testutil.WithProjectID(s.projectID),
         testutil.WithBody(body),
@@ -450,7 +450,7 @@ func (s *MyFeatureSuite) TestCreateResource_Success() {
 }
 
 func (s *MyFeatureSuite) TestCreateResource_RequiresAuth() {
-    rec := s.server.POST("/api/v2/my-resource")  // No auth
+    rec := s.server.POST("/api/my-resource")  // No auth
     s.Equal(http.StatusUnauthorized, rec.Code)
 }
 
@@ -459,7 +459,7 @@ func (s *MyFeatureSuite) TestCreateResource_RequiresScope() {
         WithScopes("chat:use").  // Wrong scope
         Build()
 
-    rec := s.server.POST("/api/v2/my-resource",
+    rec := s.server.POST("/api/my-resource",
         testutil.WithAuth(token),
         testutil.WithProjectID(s.projectID),
     )
@@ -491,13 +491,13 @@ token := testutil.NewTestTokenBuilder().
     Build()
 
 // Request helpers
-rec := server.GET("/api/v2/documents",
+rec := server.GET("/api/documents",
     testutil.WithAuth(token),
     testutil.WithProjectID(projectID),
     testutil.WithQuery("limit", "10"),
 )
 
-rec := server.POST("/api/v2/documents",
+rec := server.POST("/api/documents",
     testutil.WithAuth(token),
     testutil.WithProjectID(projectID),
     testutil.WithBody(map[string]any{"title": "Test"}),
@@ -510,7 +510,7 @@ rec := server.POST("/api/v2/documents",
 
 ```go
 func (s *MySuite) TestEndpoint_RequiresAuth() {
-    rec := s.server.GET("/api/v2/resource")
+    rec := s.server.GET("/api/resource")
     s.Equal(http.StatusUnauthorized, rec.Code)
     s.Contains(rec.Body.String(), "unauthorized")
 }
@@ -519,7 +519,7 @@ func (s *MySuite) TestEndpoint_RequiresScope() {
     token := testutil.NewTestTokenBuilder().
         WithScopes("wrong:scope").
         Build()
-    rec := s.server.GET("/api/v2/resource",
+    rec := s.server.GET("/api/resource",
         testutil.WithAuth(token),
         testutil.WithProjectID(s.projectID),
     )
@@ -527,7 +527,7 @@ func (s *MySuite) TestEndpoint_RequiresScope() {
 }
 
 func (s *MySuite) TestEndpoint_RequiresProjectID() {
-    rec := s.server.GET("/api/v2/resource",
+    rec := s.server.GET("/api/resource",
         testutil.WithAuth(s.token),
         // Missing WithProjectID
     )
@@ -542,7 +542,7 @@ func (s *MySuite) TestEndpoint_RequiresProjectID() {
 func (s *ChatSuite) TestStreamChat_Success() {
     body := map[string]any{"query": "Hello"}
 
-    rec := s.server.POST("/api/v2/chat/stream",
+    rec := s.server.POST("/api/chat/stream",
         testutil.WithAuth(s.token),
         testutil.WithProjectID(s.projectID),
         testutil.WithBody(body),

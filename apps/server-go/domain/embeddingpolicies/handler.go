@@ -19,7 +19,7 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-// List handles GET /api/v2/graph/embedding-policies
+// List handles GET /api/graph/embedding-policies
 // @Summary      List embedding policies
 // @Description  Returns embedding policies for a project with optional filtering by object type
 // @Tags         embedding-policies
@@ -30,7 +30,7 @@ func NewHandler(svc *Service) *Handler {
 // @Success      200 {array} Response "List of policies"
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/graph/embedding-policies [get]
+// @Router       /api/graph/embedding-policies [get]
 // @Security     bearerAuth
 func (h *Handler) List(c echo.Context) error {
 	// Get project_id from query param (required for this endpoint)
@@ -53,7 +53,7 @@ func (h *Handler) List(c echo.Context) error {
 	return c.JSON(http.StatusOK, ToResponseList(policies))
 }
 
-// GetByID handles GET /api/v2/graph/embedding-policies/:id
+// GetByID handles GET /api/graph/embedding-policies/:id
 // @Summary      Get embedding policy
 // @Description  Retrieves a specific embedding policy by ID
 // @Tags         embedding-policies
@@ -65,7 +65,7 @@ func (h *Handler) List(c echo.Context) error {
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      404 {object} apperror.Error "Policy not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/graph/embedding-policies/{id} [get]
+// @Router       /api/graph/embedding-policies/{id} [get]
 // @Security     bearerAuth
 func (h *Handler) GetByID(c echo.Context) error {
 	// Get project_id from query param (required for this endpoint)
@@ -87,7 +87,7 @@ func (h *Handler) GetByID(c echo.Context) error {
 	return c.JSON(http.StatusOK, ToResponse(policy))
 }
 
-// Create handles POST /api/v2/graph/embedding-policies
+// Create handles POST /api/graph/embedding-policies
 // @Summary      Create embedding policy
 // @Description  Creates a new embedding policy for controlling vector embedding generation
 // @Tags         embedding-policies
@@ -98,7 +98,7 @@ func (h *Handler) GetByID(c echo.Context) error {
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/graph/embedding-policies [post]
+// @Router       /api/graph/embedding-policies [post]
 // @Security     bearerAuth
 func (h *Handler) Create(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -127,7 +127,7 @@ func (h *Handler) Create(c echo.Context) error {
 	return c.JSON(http.StatusCreated, ToResponse(policy))
 }
 
-// Update handles PATCH /api/v2/graph/embedding-policies/:id
+// Update handles PATCH /api/graph/embedding-policies/:id
 // @Summary      Update embedding policy
 // @Description  Updates an existing embedding policy's configuration
 // @Tags         embedding-policies
@@ -140,7 +140,7 @@ func (h *Handler) Create(c echo.Context) error {
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      404 {object} apperror.Error "Policy not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/graph/embedding-policies/{id} [patch]
+// @Router       /api/graph/embedding-policies/{id} [patch]
 // @Security     bearerAuth
 func (h *Handler) Update(c echo.Context) error {
 	// Get project_id from query param (required for this endpoint)
@@ -167,7 +167,7 @@ func (h *Handler) Update(c echo.Context) error {
 	return c.JSON(http.StatusOK, ToResponse(policy))
 }
 
-// Delete handles DELETE /api/v2/graph/embedding-policies/:id
+// Delete handles DELETE /api/graph/embedding-policies/:id
 // @Summary      Delete embedding policy
 // @Description  Deletes an embedding policy by ID
 // @Tags         embedding-policies
@@ -179,7 +179,7 @@ func (h *Handler) Update(c echo.Context) error {
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      404 {object} apperror.Error "Policy not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/graph/embedding-policies/{id} [delete]
+// @Router       /api/graph/embedding-policies/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) Delete(c echo.Context) error {
 	// Get project_id from query param (required for this endpoint)

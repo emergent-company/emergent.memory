@@ -37,7 +37,7 @@ func (s *GraphSearchSuite) createTestObject(objType, key string, properties map[
 	}
 
 	rec := s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -60,7 +60,7 @@ func (s *GraphSearchSuite) TestHybridSearch_BasicQuery() {
 	})
 
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -80,7 +80,7 @@ func (s *GraphSearchSuite) TestHybridSearch_BasicQuery() {
 
 func (s *GraphSearchSuite) TestHybridSearch_RequiresAuth() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
 			"query": "test",
@@ -92,7 +92,7 @@ func (s *GraphSearchSuite) TestHybridSearch_RequiresAuth() {
 
 func (s *GraphSearchSuite) TestHybridSearch_RequiresProjectID() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"query": "test",
@@ -104,7 +104,7 @@ func (s *GraphSearchSuite) TestHybridSearch_RequiresProjectID() {
 
 func (s *GraphSearchSuite) TestHybridSearch_RequiresQueryOrVector() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{}),
@@ -131,7 +131,7 @@ func (s *GraphSearchSuite) TestHybridSearch_DebugModeViaBodyField() {
 
 	// e2e-test-user has graph:search:debug scope
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -169,7 +169,7 @@ func (s *GraphSearchSuite) TestHybridSearch_DebugModeViaQueryParam() {
 
 	// e2e-test-user has graph:search:debug scope
 	rec := s.Client.POST(
-		"/api/v2/graph/search?debug=true",
+		"/api/graph/search?debug=true",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -193,7 +193,7 @@ func (s *GraphSearchSuite) TestHybridSearch_DebugModeRequiresScope() {
 	// User without graph:search:debug scope should be forbidden
 	// 'graph-read' user has graph:read and graph:search:read but NOT graph:search:debug
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("graph-read"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -216,7 +216,7 @@ func (s *GraphSearchSuite) TestHybridSearch_DebugModeRequiresScope() {
 func (s *GraphSearchSuite) TestHybridSearch_DebugModeRequiresScopeViaQueryParam() {
 	// User without graph:search:debug scope should be forbidden even with query param
 	rec := s.Client.POST(
-		"/api/v2/graph/search?debug=true",
+		"/api/graph/search?debug=true",
 		testutil.WithAuth("graph-read"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -235,7 +235,7 @@ func (s *GraphSearchSuite) TestHybridSearch_NoDebugWithoutFlag() {
 
 	// Request without debug flag should not include debug info
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -266,7 +266,7 @@ func (s *GraphSearchSuite) TestHybridSearch_WithLimit() {
 	}
 
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -291,7 +291,7 @@ func (s *GraphSearchSuite) TestHybridSearch_WithWeights() {
 	})
 
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -312,7 +312,7 @@ func (s *GraphSearchSuite) TestHybridSearch_WithWeights() {
 
 func (s *GraphSearchSuite) TestHybridSearch_WithBranchID() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -329,7 +329,7 @@ func (s *GraphSearchSuite) TestHybridSearch_WithTypes() {
 	s.createTestObject("TypeB", "tb-001", map[string]any{"title": "Type B"})
 
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -355,7 +355,7 @@ func (s *GraphSearchSuite) TestHybridSearch_WithLabels() {
 
 	// Add labels by creating with status that we can filter
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -370,7 +370,7 @@ func (s *GraphSearchSuite) TestHybridSearch_WithLabels() {
 func (s *GraphSearchSuite) TestHybridSearch_WithStatus() {
 	// Create objects with different statuses
 	s.Client.POST(
-		"/api/v2/graph/objects",
+		"/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -381,7 +381,7 @@ func (s *GraphSearchSuite) TestHybridSearch_WithStatus() {
 	)
 
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -397,7 +397,7 @@ func (s *GraphSearchSuite) TestHybridSearch_WithStatus() {
 
 func (s *GraphSearchSuite) TestHybridSearch_EmptyResults() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -418,7 +418,7 @@ func (s *GraphSearchSuite) TestHybridSearch_EmptyResults() {
 
 func (s *GraphSearchSuite) TestHybridSearch_EmptyResultsWithDebug() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
