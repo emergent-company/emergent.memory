@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/emergent/emergent-core/pkg/sdk"
-	"github.com/emergent/emergent-core/pkg/sdk/apitokens"
-	"github.com/emergent/emergent-core/pkg/sdk/testutil"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apitokens"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/testutil"
 )
 
 func TestAPITokensCreate(t *testing.T) {

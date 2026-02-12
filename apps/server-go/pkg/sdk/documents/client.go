@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/emergent/emergent-core/pkg/sdk/auth"
-	sdkerrors "github.com/emergent/emergent-core/pkg/sdk/errors"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
+	sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
 )
 
 // Client provides access to the Documents API.
@@ -57,13 +57,38 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 	}
 }
 
-// SetContext sets the organization and project context.
+// SetContext sets the organization and project context for all subsequent API calls.
+// This allows you to set default org and project IDs that will be included in request headers.
+//
+// Example:
+//
+//	client.Documents.SetContext("org_123", "proj_456")
+//	docs, err := client.Documents.List(ctx, nil) // Uses org_123 and proj_456
 func (c *Client) SetContext(orgID, projectID string) {
 	c.orgID = orgID
 	c.projectID = projectID
 }
 
-// List retrieves a list of documents.
+// List retrieves a paginated list of documents.
+// Use ListOptions to control pagination and filtering.
+//
+// Example:
+//
+//	docs, err := client.Documents.List(ctx, &documents.ListOptions{
+//	    Limit: 50,
+//	})
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	for _, doc := range docs.Data {
+//	    fmt.Printf("%s: %s\n", doc.ID, doc.Title)
+//	}
+//
+// For pagination, use the NextCursor from the response:
+//
+//	nextPage, err := client.Documents.List(ctx, &documents.ListOptions{
+//	    Cursor: docs.Meta.NextCursor,
+//	})
 func (c *Client) List(ctx context.Context, opts *ListOptions) (*ListResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents", nil)
 	if err != nil {
@@ -116,7 +141,20 @@ func (c *Client) List(ctx context.Context, opts *ListOptions) (*ListResponse, er
 	return &result, nil
 }
 
-// Get retrieves a single document by ID.
+// Get retrieves a single document by its ID.
+// Returns an error if the document is not found or inaccessible.
+//
+// Example:
+//
+//	doc, err := client.Documents.Get(ctx, "doc_abc123")
+//	if err != nil {
+//	    if sdkerrors.IsNotFound(err) {
+//	        log.Println("Document not found")
+//	    } else {
+//	        log.Fatal(err)
+//	    }
+//	}
+//	fmt.Printf("Document: %s\n", doc.Title)
 func (c *Client) Get(ctx context.Context, id string) (*DocumentDTO, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents/"+id, nil)
 	if err != nil {

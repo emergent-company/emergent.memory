@@ -5,7 +5,7 @@ Official Go client library for the Emergent API.
 ## Installation
 
 ```bash
-go get github.com/emergent/emergent-core/pkg/sdk
+go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@v0.4.12
 ```
 
 ## Features
@@ -34,7 +34,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/emergent/emergent-core/pkg/sdk"
+    "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
 )
 
 func main() {

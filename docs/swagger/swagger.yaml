@@ -1504,6 +1504,32 @@ definitions:
           type: string
         type: array
     type: object
+  domain_graph.AnalyticsObjectItem:
+    properties:
+      access_count:
+        type: integer
+      canonical_id:
+        type: string
+      created_at:
+        type: string
+      days_since_access:
+        type: integer
+      id:
+        type: string
+      key:
+        type: string
+      labels:
+        items:
+          type: string
+        type: array
+      last_accessed_at:
+        type: string
+      properties:
+        additionalProperties: {}
+        type: object
+      type:
+        type: string
+    type: object
   domain_graph.BranchMergeRequest:
     properties:
       execute:
@@ -1697,6 +1723,8 @@ definitions:
         items:
           type: string
         type: array
+      last_accessed_at:
+        type: string
       migration_archive:
         description: Migration archive - preserves dropped fields from schema migrations
         items:
@@ -1816,6 +1844,18 @@ definitions:
         type: number
     required:
     - query
+    type: object
+  domain_graph.MostAccessedResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/domain_graph.AnalyticsObjectItem'
+        type: array
+      meta:
+        additionalProperties: true
+        type: object
+      total:
+        type: integer
     type: object
   domain_graph.PatchGraphObjectRequest:
     properties:
@@ -1958,6 +1998,18 @@ definitions:
         $ref: '#/definitions/domain_graph.TemporalFilter'
     required:
     - root_ids
+    type: object
+  domain_graph.UnusedObjectsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/domain_graph.AnalyticsObjectItem'
+        type: array
+      meta:
+        additionalProperties: true
+        type: object
+      total:
+        type: integer
     type: object
   domain_graph.VectorSearchRequest:
     properties:
@@ -5084,6 +5136,81 @@ paths:
       summary: Subscribe to real-time events
       tags:
       - events
+  /api/graph/analytics/most-accessed:
+    get:
+      description: Returns graph objects sorted by most recent access time for analytics
+      parameters:
+      - description: 'Max results (default: 50, max: 200)'
+        in: query
+        name: limit
+        type: integer
+      - description: 'Minimum access count (not yet implemented, default: 1)'
+        in: query
+        name: min_access_count
+        type: integer
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Most accessed objects
+          schema:
+            $ref: '#/definitions/domain_graph.MostAccessedResponse'
+        "400":
+          description: Invalid parameters
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get most accessed objects
+      tags:
+      - graph
+  /api/graph/analytics/unused:
+    get:
+      description: Returns graph objects that haven't been accessed in specified days
+        for cleanup analytics
+      parameters:
+      - description: 'Max results (default: 50, max: 200)'
+        in: query
+        name: limit
+        type: integer
+      - description: 'Days threshold for unused (default: 30)'
+        in: query
+        name: days
+        type: integer
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Unused objects
+          schema:
+            $ref: '#/definitions/domain_graph.UnusedObjectsResponse'
+        "400":
+          description: Invalid parameters
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get unused objects
+      tags:
+      - graph
   /api/graph/branches/{targetBranchId}/merge:
     post:
       consumes:

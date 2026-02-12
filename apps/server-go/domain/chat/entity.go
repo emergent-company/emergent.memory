@@ -45,6 +45,9 @@ type Message struct {
 	Citations      json.RawMessage `bun:"citations,type:jsonb" json:"citations,omitempty"`
 	CreatedAt      time.Time       `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 
+	ContextSummary   *string         `bun:"context_summary" json:"contextSummary,omitempty"`
+	RetrievalContext json.RawMessage `bun:"retrieval_context,type:jsonb" json:"retrievalContext,omitempty"`
+
 	// Relation
 	Conversation *Conversation `bun:"rel:belongs-to,join:conversation_id=id" json:"-"`
 }

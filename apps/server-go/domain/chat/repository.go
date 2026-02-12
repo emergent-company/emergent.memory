@@ -280,3 +280,32 @@ func (r *Repository) CreateConversationWithMessage(ctx context.Context, conv *Co
 		return nil
 	})
 }
+
+// GetConversationHistory retrieves the last N messages for a conversation
+func (r *Repository) GetConversationHistory(ctx context.Context, conversationID uuid.UUID, limit int) ([]Message, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	messages := []Message{}
+	err := r.db.NewSelect().
+		Model(&messages).
+		Where("conversation_id = ?", conversationID).
+		Order("created_at DESC").
+		Limit(limit).
+		Scan(ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("get conversation history: %w", err)
+	}
+
+	// Reverse to chronological order (oldest first)
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	return messages, nil
+}

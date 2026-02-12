@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/emergent/emergent-core/pkg/sdk"
-	"github.com/emergent/emergent-core/pkg/sdk/search"
-	"github.com/emergent/emergent-core/pkg/sdk/testutil"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/search"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/testutil"
 )
 
 func TestSearchHybrid(t *testing.T) {

@@ -1920,6 +1920,122 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/graph/analytics/most-accessed": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns graph objects sorted by most recent access time for analytics",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Get most accessed objects",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Max results (default: 50, max: 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Minimum access count (not yet implemented, default: 1)",
+                        "name": "min_access_count",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Most accessed objects",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.MostAccessedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid parameters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/graph/analytics/unused": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns graph objects that haven't been accessed in specified days for cleanup analytics",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Get unused objects",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Max results (default: 50, max: 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Days threshold for unused (default: 30)",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Unused objects",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.UnusedObjectsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid parameters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/graph/branches/{targetBranchId}/merge": {
             "post": {
                 "security": [
@@ -14066,6 +14182,45 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_graph.AnalyticsObjectItem": {
+            "type": "object",
+            "properties": {
+                "access_count": {
+                    "type": "integer"
+                },
+                "canonical_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "days_since_access": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "last_accessed_at": {
+                    "type": "string"
+                },
+                "properties": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_graph.BranchMergeRequest": {
             "type": "object",
             "required": [
@@ -14343,6 +14498,9 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "last_accessed_at": {
+                    "type": "string"
+                },
                 "migration_archive": {
                     "description": "Migration archive - preserves dropped fields from schema migrations",
                     "type": "array",
@@ -14518,6 +14676,24 @@ const docTemplate = `{
                 },
                 "vectorWeight": {
                     "type": "number"
+                }
+            }
+        },
+        "domain_graph.MostAccessedResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.AnalyticsObjectItem"
+                    }
+                },
+                "meta": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },
@@ -14721,6 +14897,24 @@ const docTemplate = `{
                 },
                 "temporalFilter": {
                     "$ref": "#/definitions/domain_graph.TemporalFilter"
+                }
+            }
+        },
+        "domain_graph.UnusedObjectsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.AnalyticsObjectItem"
+                    }
+                },
+                "meta": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },

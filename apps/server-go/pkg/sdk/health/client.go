@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
-	sdkerrors "github.com/emergent/emergent-core/pkg/sdk/errors"
+	sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
 )
 
 // Client provides access to the Health API.
