@@ -1,58 +1,104 @@
-# Emergent Server with CLI
-# This image includes both the Go server and emergent-cli binary
-# Useful for standalone deployments where users want CLI access inside the container
+# Emergent Server with CLI — Consolidated Image
+# Includes: Go server, swagger docs, migration binary, CLI binary
+# Build context: REPOSITORY ROOT (.)
+#
+# Optimizations:
+#   - Cross-compilation (GOARCH) instead of QEMU emulation for arm64
+#   - Swag installed before source copy for Docker layer caching
+#   - Go build cache mounts for faster incremental builds
+#   - Pinned swag version for deterministic builds
+#   - Parallel builder stages for server + CLI
 
-# Build stage - Server + Migration binary
-FROM golang:1.24-alpine AS server-builder
-
-WORKDIR /build/server
-
-# Copy server source
-COPY apps/server-go/go.mod apps/server-go/go.sum ./
-RUN go mod download
-
-COPY apps/server-go/ ./
-
-# Build server binary
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w" \
-    -o emergent-server \
-    ./cmd/server
-
-# Build migration binary
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w" \
-    -o emergent-migrate \
-    ./cmd/migrate
-
-# Build stage - CLI
-FROM golang:1.24-alpine AS cli-builder
-
+# ── Global build args ──────────────────────────────────────────────
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
+# ── Stage 1: Server + Migration + Swagger ──────────────────────────
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS server-builder
+
+ARG TARGETPLATFORM
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION
+ARG GIT_COMMIT
+ARG BUILD_TIME
+
+# Install build dependencies (git needed for swag)
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /build/server
+
+# Install swag BEFORE source copy — cached until base image or version changes
+RUN go install github.com/swaggo/swag/cmd/swag@v1.16.4
+
+# Copy go.mod/go.sum first for dependency caching
+COPY apps/server-go/go.mod apps/server-go/go.sum ./
+RUN go mod download
+
+# Copy source code (cache invalidation point for source changes)
+COPY apps/server-go/ ./
+
+# Generate swagger docs (runs on build platform, not target)
+RUN rm -rf docs/swagger && mkdir -p docs/swagger && \
+    /go/bin/swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
+
+# Cross-compile server binary for target platform
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w \
+      -X github.com/emergent/emergent-core/internal/version.Version=${VERSION} \
+      -X github.com/emergent/emergent-core/internal/version.GitCommit=${GIT_COMMIT} \
+      -X github.com/emergent/emergent-core/internal/version.BuildTime=${BUILD_TIME}" \
+    -o /out/emergent-server \
+    ./cmd/server
+
+# Cross-compile migration binary
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w" \
+    -o /out/emergent-migrate \
+    ./cmd/migrate
+
+# ── Stage 2: CLI ───────────────────────────────────────────────────
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS cli-builder
+
+ARG TARGETPLATFORM
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION
+ARG GIT_COMMIT
+ARG BUILD_TIME
+
 WORKDIR /build/cli
 
-# Copy SDK first (needed for go.mod replace directive resolution)
+# Copy SDK first (needed for go.mod replace directive)
 COPY apps/server-go/pkg/sdk/ /apps/server-go/pkg/sdk/
 
-# Copy CLI source
+# Copy go.mod/go.sum for dependency caching
 COPY tools/emergent-cli/go.mod tools/emergent-cli/go.sum ./
 RUN go mod download
 
+# Copy CLI source
 COPY tools/emergent-cli/ ./
 
-# Build CLI binary
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${GIT_COMMIT} -X main.BuildTime=${BUILD_TIME}" \
-    -o emergent-cli \
+# Cross-compile CLI binary
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w \
+      -X main.Version=${VERSION} \
+      -X main.Commit=${GIT_COMMIT} \
+      -X main.BuildTime=${BUILD_TIME}" \
+    -o /out/emergent-cli \
     ./cmd
 
-# Runtime stage
-FROM alpine:latest
+# ── Stage 3: Runtime ──────────────────────────────────────────────
+FROM alpine:3.21
 
-# Install required runtime dependencies
+# Install runtime dependencies
 RUN apk --no-cache add \
     ca-certificates \
     curl \
@@ -63,30 +109,29 @@ RUN apk --no-cache add \
 
 WORKDIR /app
 
-# Copy server binary from server builder
-COPY --from=server-builder /build/server/emergent-server /usr/local/bin/
+# Copy binaries from builders
+COPY --from=server-builder /out/emergent-server /usr/local/bin/
+COPY --from=server-builder /out/emergent-migrate /usr/local/bin/
+COPY --from=cli-builder /out/emergent-cli /usr/local/bin/
 
-# Copy migration binary from server builder
-COPY --from=server-builder /build/server/emergent-migrate /usr/local/bin/
+# Copy swagger docs (server looks for ./docs/swagger relative to WORKDIR)
+COPY --from=server-builder /build/server/docs/swagger /app/docs/swagger
 
-# Copy CLI binary from CLI builder
-COPY --from=cli-builder /build/cli/emergent-cli /usr/local/bin/
+# Copy migrations
+COPY apps/server-go/migrations/*.sql /app/migrations/
 
-# Copy migrations (needed for server startup)
-COPY apps/server-go/migrations /app/migrations
-
-# Copy entrypoint script
+# Copy entrypoint and CLI wrapper
 COPY deploy/minimal/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# Copy CLI wrapper script (auto-configures env vars)
 COPY deploy/minimal/emergent-cli-wrapper.sh /usr/local/bin/emergent
 RUN chmod +x /usr/local/bin/emergent
 
 # Create directory for CLI config
 RUN mkdir -p /root/.emergent
 
-# Default to running the entrypoint (runs migrations then server)
+EXPOSE 3002
+
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Health check
