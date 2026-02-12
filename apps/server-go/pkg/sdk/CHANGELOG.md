@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.12] - 2026-02-11
+
+### Fixed
+
+- **Module path** - Corrected from `github.com/emergent/emergent-core/pkg/sdk` to `github.com/emergent-company/emergent/apps/server-go/pkg/sdk`
+  - This fixes `go get` resolution to match the actual GitHub repository structure
+  - All internal imports updated to use correct path
+  - Installation instructions updated with proper module path
+
+### Release Notes
+
+This is the **first public release** of the Emergent Go SDK. The SDK is production-ready with:
+
+- ✅ **11 service clients** - Documents, Chunks, Search, Graph, Chat, Projects, Orgs, Users, API Tokens, Health, MCP
+- ✅ **Dual authentication** - API key (standalone) and OAuth device flow (full deployment)
+- ✅ **43 test cases** - 37.6% coverage across all services
+- ✅ **4 working examples** - Ready-to-run example programs in `examples/` directory
+- ✅ **Complete documentation** - README, examples, and inline code documentation
+
+**Installation:**
+
+```bash
+go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@v0.4.12
+```
+
+**Breaking Changes:** None (first release)
+
 ### Added (Phase 4 - In Progress)
 
 **Test Infrastructure:**

@@ -13,9 +13,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/emergent/emergent-core/pkg/sdk"
-	"github.com/emergent/emergent-core/pkg/sdk/chunks"
-	"github.com/emergent/emergent-core/pkg/sdk/documents"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/chunks"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
 )
 
 func main() {

@@ -9,7 +9,7 @@ import (
 // RegisterRoutes registers chat routes with the Echo router
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Base group for chat - all routes require authentication and project ID
-	g := e.Group("/api/chat")
+	g := e.Group("/api/v2/chat")
 	g.Use(authMiddleware.RequireAuth())
 	g.Use(authMiddleware.RequireProjectID())
 

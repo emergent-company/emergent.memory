@@ -2,6 +2,7 @@ go 1.24.12
 
 use (
 	./apps/server-go
+	./apps/server-go/pkg/sdk
 	./apps/website
 	./tests/api
 	./tools/emergent-cli

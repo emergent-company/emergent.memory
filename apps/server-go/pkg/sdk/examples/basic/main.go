@@ -13,7 +13,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/emergent/emergent-core/pkg/sdk"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
 )
 
 func main() {
