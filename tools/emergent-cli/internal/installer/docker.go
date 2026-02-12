@@ -63,10 +63,12 @@ func (d *DockerManager) Down(removeVolumes bool) error {
 }
 
 func (d *DockerManager) RemoveVolumes() error {
+	// Volume names are prefixed with the Docker Compose project name,
+	// which defaults to the directory name ("docker" from ~/.emergent/docker/).
 	volumes := []string{
-		"emergent_postgres_data",
-		"emergent_minio_data",
-		"emergent_cli_config",
+		"docker_postgres_data",
+		"docker_minio_data",
+		"docker_emergent_cli_config",
 	}
 
 	var lastErr error
