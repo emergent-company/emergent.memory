@@ -249,7 +249,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 	if params.Label != nil {
 		subq = subq.Where("? = ANY(labels)", *params.Label)
 	} else if len(params.Labels) > 0 {
-		subq = subq.Where("labels && ?::text[]", bun.In(params.Labels))
+		subq = subq.Where("labels && ?::text[]", formatTextArray(params.Labels))
 	}
 
 	if params.Status != nil {
@@ -334,7 +334,7 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 	if params.Label != nil {
 		q = q.Where("? = ANY(labels)", *params.Label)
 	} else if len(params.Labels) > 0 {
-		q = q.Where("labels && ?::text[]", bun.In(params.Labels))
+		q = q.Where("labels && ?::text[]", formatTextArray(params.Labels))
 	}
 
 	if params.Status != nil {
