@@ -4,13 +4,10 @@ package installer
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -306,8 +303,16 @@ func (i *Installer) Install() error {
 	return nil
 }
 
-// Upgrade performs an upgrade of an existing installation
-func (i *Installer) Upgrade() error {
+// Upgrade performs an upgrade of an existing installation.
+// The version parameter should be the target version tag (e.g., "v0.7.3").
+// If empty, falls back to "latest".
+//
+// On every upgrade, the docker-compose.yml and init.sql are fully regenerated
+// from the embedded templates. This ensures upgrades always pick up new services,
+// env vars, config changes, and corrected image names — regardless of what the
+// user's existing compose file looks like. The .env.local (user secrets) is
+// never touched.
+func (i *Installer) Upgrade(version string) error {
 	if !i.IsInstalled() {
 		return fmt.Errorf("no existing installation found at %s", i.config.InstallDir)
 	}
@@ -315,25 +320,53 @@ func (i *Installer) Upgrade() error {
 	i.output.Info("Upgrading server installation at %s", i.config.InstallDir)
 	fmt.Println()
 
-	latestVersion, err := i.getLatestVersion()
-	if err != nil {
-		i.output.Warn("Could not determine latest version: %v", err)
-		i.output.Info("Continuing with :latest tag")
-	} else {
-		currentVersion := i.GetInstalledVersion()
-		i.output.Info("Current version: %s", currentVersion)
-		i.output.Info("Target version: %s", latestVersion)
-		fmt.Println()
+	currentVersion := i.GetInstalledVersion()
+	i.output.Info("Current version: %s", currentVersion)
 
-		if err := i.updateDockerComposeImage(latestVersion); err != nil {
-			i.output.Warn("Could not update image tag: %v", err)
-		}
+	// Determine image tag
+	imageTag := "latest"
+	if version != "" && version != "unknown" {
+		imageTag = strings.TrimPrefix(version, "v")
+		i.output.Info("Target version: %s", version)
+	} else {
+		i.output.Warn("Version not specified, using :latest tag")
+	}
+	fmt.Println()
+
+	// Back up and regenerate docker-compose.yml from the embedded template.
+	// This is the core of the hardened upgrade: we always write the latest template
+	// rather than trying to regex-patch the old file. This guarantees new services,
+	// env vars, image names, and config are always correct.
+	composePath := filepath.Join(i.config.InstallDir, "docker", "docker-compose.yml")
+	backupPath := composePath + ".bak"
+	if err := copyFile(composePath, backupPath); err != nil {
+		i.output.Warn("Could not backup docker-compose.yml: %v", err)
+	} else {
+		i.output.Info("Backed up docker-compose.yml to docker-compose.yml.bak")
+	}
+
+	composeContent := GetDockerComposeTemplateWithVersion(imageTag)
+	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
+		return fmt.Errorf("failed to write docker-compose.yml: %w", err)
+	}
+	i.output.Success("Regenerated docker-compose.yml with image tag %s", imageTag)
+
+	// Regenerate init.sql — only affects new database instances, but keeps it
+	// in sync with the current version's requirements.
+	initPath := filepath.Join(i.config.InstallDir, "docker", "init.sql")
+	if err := os.WriteFile(initPath, []byte(GetInitSQLTemplate()), 0644); err != nil {
+		i.output.Warn("Could not update init.sql: %v", err)
 	}
 
 	docker := NewDockerManager(i.config.InstallDir, i.output)
 
 	i.output.Step("Pulling Docker images...")
 	if err := docker.Pull(); err != nil {
+		// Restore backup on pull failure so the user isn't left with a compose
+		// file referencing an image that doesn't exist
+		if restoreErr := copyFile(backupPath, composePath); restoreErr == nil {
+			i.output.Warn("Restored docker-compose.yml from backup after pull failure")
+		}
 		return err
 	}
 	i.output.Success("Images updated")
@@ -351,8 +384,8 @@ func (i *Installer) Upgrade() error {
 		i.output.Success("Server is healthy!")
 	}
 
-	if latestVersion != "" && latestVersion != "unknown" {
-		i.SaveInstalledVersion(latestVersion)
+	if version != "" && version != "unknown" {
+		i.SaveInstalledVersion(version)
 	}
 
 	fmt.Println()
@@ -364,49 +397,13 @@ func (i *Installer) Upgrade() error {
 	return nil
 }
 
-func (i *Installer) getLatestVersion() (string, error) {
-	resp, err := http.Get("https://api.github.com/repos/emergent-company/emergent/releases/latest")
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GitHub API returned status: %d", resp.StatusCode)
-	}
-
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", err
-	}
-
-	return release.TagName, nil
-}
-
-func (i *Installer) updateDockerComposeImage(version string) error {
-	composePath := filepath.Join(i.config.InstallDir, "docker", "docker-compose.yml")
-	content, err := os.ReadFile(composePath)
+// copyFile copies src to dst, preserving content. Used for backup/restore.
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-
-	imageTag := strings.TrimPrefix(version, "v")
-
-	// Match both old (emergent-server-go) and new (emergent-server-with-cli) image names
-	// and update to the current image name
-	pattern := regexp.MustCompile(`ghcr\.io/emergent-company/emergent-server-(go|with-cli):[^\s]+`)
-	newContent := pattern.ReplaceAllString(string(content), "ghcr.io/emergent-company/emergent-server-with-cli:"+imageTag)
-
-	if string(content) != newContent {
-		if err := os.WriteFile(composePath, []byte(newContent), 0644); err != nil {
-			return err
-		}
-		i.output.Info("Updated image tag to %s", imageTag)
-	}
-
-	return nil
+	return os.WriteFile(dst, data, 0644)
 }
 
 func (i *Installer) GetInstalledVersion() string {
@@ -431,9 +428,9 @@ func (i *Installer) Uninstall(keepData bool) error {
 
 	docker := NewDockerManager(i.config.InstallDir, i.output)
 
-	// Stop services
+	// Stop services — pass !keepData to remove volumes via docker compose down -v
 	i.output.Step("Stopping services...")
-	if err := docker.Down(keepData); err != nil {
+	if err := docker.Down(!keepData); err != nil {
 		i.output.Warn("Failed to stop services: %v", err)
 	} else {
 		i.output.Success("Services stopped")
@@ -464,7 +461,7 @@ func (i *Installer) Uninstall(keepData bool) error {
 
 	if keepData {
 		fmt.Printf("%sNote:%s Docker volumes were preserved. To remove them manually:\n", colorYellow, colorReset)
-		fmt.Println("  docker volume rm emergent_postgres_data emergent_minio_data emergent_cli_config")
+		fmt.Println("  docker volume rm docker_postgres_data docker_minio_data docker_emergent_cli_config")
 	}
 
 	return nil

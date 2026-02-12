@@ -69,10 +69,26 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Scanln(&confirm)
 		if confirm == "y" || confirm == "Y" {
 			cfg.ServerPort = inst.GetServerPort()
-			return inst.Upgrade()
+			// Fetch the latest release version for the upgrade
+			release, err := getLatestRelease()
+			if err != nil {
+				fmt.Printf("Warning: could not determine latest version: %v\n", err)
+				return inst.Upgrade("")
+			}
+			return inst.Upgrade(release.TagName)
 		}
 		return nil
 	}
 
-	return inst.Install()
+	if err := inst.Install(); err != nil {
+		return err
+	}
+
+	// Record the installed version so future upgrades know the baseline.
+	// Version is the build-time variable set via ldflags.
+	if Version != "dev" && Version != "" {
+		inst.SaveInstalledVersion(Version)
+	}
+
+	return nil
 }

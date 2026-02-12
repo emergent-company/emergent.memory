@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -127,7 +128,7 @@ func runUpgradeServer(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	return inst.Upgrade()
+	return inst.Upgrade(release.TagName)
 }
 
 func runUpgrade(cmd *cobra.Command, args []string) {
@@ -237,14 +238,39 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		}
 		displayLatest := strings.TrimPrefix(release.TagName, "v")
 		fmt.Printf("✓ CLI upgraded to %s\n", displayLatest)
+
+		// If server also needs upgrading, re-exec the new binary so it runs
+		// with the updated code (the current process still has old code in memory)
+		if serverInstalled && !upgradeFlags.cliOnly {
+			fmt.Println()
+			fmt.Println("Upgrading server with new CLI...")
+			newBinary, err := os.Executable()
+			if err != nil {
+				fmt.Printf("Server upgrade failed: %v\n", err)
+				os.Exit(1)
+			}
+			newBinary, _ = filepath.EvalSymlinks(newBinary)
+			reexecArgs := []string{"upgrade", "server", "--dir", upgradeFlags.dir, "--force"}
+			execCmd := exec.Command(newBinary, reexecArgs...)
+			execCmd.Stdout = os.Stdout
+			execCmd.Stderr = os.Stderr
+			execCmd.Stdin = os.Stdin
+			if err := execCmd.Run(); err != nil {
+				fmt.Printf("Server upgrade failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println()
+			fmt.Println("✓ Upgrade complete!")
+			return
+		}
 	}
 
-	// Upgrade server if installed and not --cli-only
+	// Upgrade server if installed and not --cli-only (CLI was already up to date)
 	if serverInstalled && !upgradeFlags.cliOnly {
 		fmt.Println()
 		fmt.Println("Upgrading server...")
 		cfg.ServerPort = inst.GetServerPort()
-		if err := inst.Upgrade(); err != nil {
+		if err := inst.Upgrade(release.TagName); err != nil {
 			fmt.Printf("Server upgrade failed: %v\n", err)
 			os.Exit(1)
 		}

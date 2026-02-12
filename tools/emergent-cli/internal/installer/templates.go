@@ -1,8 +1,34 @@
 package installer
 
-const serverImage = "ghcr.io/emergent-company/emergent-server-with-cli:latest"
+import (
+	"fmt"
+	"strings"
+)
 
+const (
+	// ServerImageRepo is the Docker image repository for the Emergent server
+	ServerImageRepo = "ghcr.io/emergent-company/emergent-server-with-cli"
+)
+
+// GetDockerComposeTemplate returns the docker-compose template with :latest tag.
+// Used for fresh installs.
 func GetDockerComposeTemplate() string {
+	return GetDockerComposeTemplateWithVersion("latest")
+}
+
+// GetDockerComposeTemplateWithVersion returns the docker-compose template with a specific
+// image version tag. This is the primary way compose files are generated — both for fresh
+// installs (tag="latest") and for upgrades (tag="0.7.3" etc).
+//
+// By always regenerating from the template, we ensure upgrades pick up:
+//   - New services added to the template
+//   - New environment variables
+//   - Changed healthchecks, resource limits, volume mounts
+//   - Corrected image names/repos
+func GetDockerComposeTemplateWithVersion(version string) string {
+	imageTag := strings.TrimPrefix(version, "v")
+	serverImage := fmt.Sprintf("%s:%s", ServerImageRepo, imageTag)
+
 	return `services:
   db:
     image: pgvector/pgvector:pg16
