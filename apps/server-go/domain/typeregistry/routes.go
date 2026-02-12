@@ -20,4 +20,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Get stats for project's type registry
 	g.GET("/projects/:projectId/stats", h.GetTypeStats)
+
+	// Register a custom type for a project
+	g.POST("/projects/:projectId/types", h.CreateType)
+
+	// Update a registered type
+	g.PUT("/projects/:projectId/types/:typeName", h.UpdateType)
+
+	// Delete a registered type
+	g.DELETE("/projects/:projectId/types/:typeName", h.DeleteType)
 }

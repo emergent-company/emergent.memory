@@ -28,6 +28,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/agents"
@@ -63,6 +64,7 @@ import (
 type Client struct {
 	auth      auth.Provider
 	base      string
+	mu        sync.RWMutex
 	orgID     string
 	projectID string
 	http      *http.Client
@@ -100,10 +102,11 @@ type Client struct {
 
 // Config holds configuration for the SDK client.
 type Config struct {
-	ServerURL string
-	Auth      AuthConfig
-	OrgID     string // Optional: default organization ID
-	ProjectID string // Optional: default project ID
+	ServerURL  string
+	Auth       AuthConfig
+	OrgID      string       // Optional: default organization ID
+	ProjectID  string       // Optional: default project ID
+	HTTPClient *http.Client // Optional: custom HTTP client (defaults to 30s timeout)
 }
 
 // AuthConfig holds authentication configuration.
@@ -134,8 +137,11 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("invalid auth mode: %s (must be 'apikey' or 'oauth')", cfg.Auth.Mode)
 	}
 
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Timeout: 30 * time.Second,
+		}
 	}
 
 	client := &Client{
@@ -201,8 +207,11 @@ func NewWithDeviceFlow(cfg Config) (*Client, error) {
 	fmt.Println("Authentication successful!")
 
 	// Create HTTP client
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Timeout: 30 * time.Second,
+		}
 	}
 
 	client := &Client{
@@ -253,9 +262,12 @@ func initClients(c *Client) {
 }
 
 // SetContext sets the default organization and project context for API calls.
+// It is safe to call concurrently with API methods.
 func (c *Client) SetContext(orgID, projectID string) {
+	c.mu.Lock()
 	c.orgID = orgID
 	c.projectID = projectID
+	c.mu.Unlock()
 
 	// Update all context-scoped service clients
 	c.Documents.SetContext(orgID, projectID)
@@ -263,11 +275,7 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.Search.SetContext(orgID, projectID)
 	c.Graph.SetContext(orgID, projectID)
 	c.Chat.SetContext(orgID, projectID)
-	c.Projects.SetContext(orgID, projectID)
-	c.Orgs.SetContext(orgID, projectID)
-	c.Users.SetContext(orgID, projectID)
-	c.APITokens.SetContext(orgID, projectID)
-	c.MCP.SetContext(orgID, projectID)
+	c.MCP.SetContext(projectID)
 	c.Branches.SetContext(orgID, projectID)
 	c.UserActivity.SetContext(orgID, projectID)
 	c.TypeRegistry.SetContext(orgID, projectID)
@@ -282,6 +290,7 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.TemplatePacks.SetContext(orgID, projectID)
 	c.Chunking.SetContext(orgID, projectID)
 	// Note: Health, Superadmin, APIDocs are non-context clients — no SetContext needed
+	// Note: Projects, Orgs, Users, APITokens don't use org/project context in requests
 }
 
 // Do executes an HTTP request with authentication.
@@ -292,11 +301,16 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 	}
 
 	// Add context headers if set
-	if c.orgID != "" {
-		req.Header.Set("X-Org-ID", c.orgID)
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
+	if orgID != "" {
+		req.Header.Set("X-Org-ID", orgID)
 	}
-	if c.projectID != "" {
-		req.Header.Set("X-Project-ID", c.projectID)
+	if projectID != "" {
+		req.Header.Set("X-Project-ID", projectID)
 	}
 
 	// Execute request

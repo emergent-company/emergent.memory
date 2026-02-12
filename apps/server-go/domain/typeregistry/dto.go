@@ -31,6 +31,7 @@ type RelationshipTypeInfo struct {
 	Type         string   `json:"type"`
 	Label        *string  `json:"label,omitempty"`
 	InverseLabel *string  `json:"inverse_label,omitempty"`
+	InverseType  *string  `json:"inverse_type,omitempty"` // When set, creating this relationship auto-creates the inverse
 	Description  *string  `json:"description,omitempty"`
 	TargetTypes  []string `json:"target_types,omitempty"` // For outgoing: types this relationship can connect to
 	SourceTypes  []string `json:"source_types,omitempty"` // For incoming: types this relationship can come from
@@ -116,6 +117,7 @@ func (r *TypeRegistryRowDTO) ToDTO() TypeRegistryEntryDTO {
 type RelationshipSchema struct {
 	Label        string   `json:"label,omitempty"`
 	InverseLabel string   `json:"inverseLabel,omitempty"`
+	InverseType  string   `json:"inverseType,omitempty"` // When set, auto-creates inverse relationship (e.g. PARENT_OF -> CHILD_OF)
 	Description  string   `json:"description,omitempty"`
 	FromTypes    []string `json:"fromTypes,omitempty"`
 	SourceTypes  []string `json:"sourceTypes,omitempty"` // alternative key
@@ -137,4 +139,23 @@ func (rs *RelationshipSchema) GetTargetTypes() []string {
 		return rs.ToTypes
 	}
 	return rs.TargetTypes
+}
+
+// CreateTypeRequest is the request to register a custom object type for a project
+type CreateTypeRequest struct {
+	TypeName         string          `json:"type_name"`
+	Description      *string         `json:"description,omitempty"`
+	JSONSchema       json.RawMessage `json:"json_schema"`
+	UIConfig         json.RawMessage `json:"ui_config,omitempty"`
+	ExtractionConfig json.RawMessage `json:"extraction_config,omitempty"`
+	Enabled          *bool           `json:"enabled,omitempty"` // defaults to true
+}
+
+// UpdateTypeRequest is the request to update a registered type
+type UpdateTypeRequest struct {
+	Description      *string         `json:"description,omitempty"`
+	JSONSchema       json.RawMessage `json:"json_schema,omitempty"`
+	UIConfig         json.RawMessage `json:"ui_config,omitempty"`
+	ExtractionConfig json.RawMessage `json:"extraction_config,omitempty"`
+	Enabled          *bool           `json:"enabled,omitempty"`
 }

@@ -20,6 +20,7 @@ var Module = fx.Module("graph",
 	fx.Provide(NewService),
 	fx.Provide(NewHandler),
 	fx.Provide(provideSchemaProvider),
+	fx.Provide(provideInverseTypeProvider),
 	fx.Invoke(RegisterRoutes),
 )
 
@@ -277,4 +278,124 @@ func (j *JSONMap) Scan(value any) error {
 	default:
 		return nil
 	}
+}
+
+// =============================================================================
+// Inverse Type Provider
+// =============================================================================
+
+// ProvideInverseTypeProvider creates an inverse type provider (exported for tests).
+func ProvideInverseTypeProvider(db bun.IDB, log *slog.Logger) InverseTypeProvider {
+	return &inverseTypeProviderAdapter{
+		db:    db,
+		log:   log,
+		cache: make(map[string]*cachedInverseMap),
+	}
+}
+
+func provideInverseTypeProvider(db bun.IDB, log *slog.Logger) InverseTypeProvider {
+	return ProvideInverseTypeProvider(db, log)
+}
+
+// inverseTypeProviderAdapter loads inverseType mappings from template pack JSONB.
+type inverseTypeProviderAdapter struct {
+	db  bun.IDB
+	log *slog.Logger
+
+	cacheMu sync.RWMutex
+	cache   map[string]*cachedInverseMap
+}
+
+type cachedInverseMap struct {
+	// inverseMap: relType -> inverseType (e.g. "PARENT_OF" -> "CHILD_OF")
+	inverseMap map[string]string
+	expiry     time.Time
+}
+
+const inverseMapCacheTTL = 5 * time.Minute
+
+func (p *inverseTypeProviderAdapter) GetInverseType(ctx context.Context, projectID string, relType string) (string, bool) {
+	inverseMap := p.getOrLoadInverseMap(ctx, projectID)
+	if inverseMap == nil {
+		return "", false
+	}
+	inverse, ok := inverseMap[relType]
+	return inverse, ok
+}
+
+func (p *inverseTypeProviderAdapter) getOrLoadInverseMap(ctx context.Context, projectID string) map[string]string {
+	p.cacheMu.RLock()
+	if cached, ok := p.cache[projectID]; ok && time.Now().Before(cached.expiry) {
+		m := cached.inverseMap
+		p.cacheMu.RUnlock()
+		return m
+	}
+	p.cacheMu.RUnlock()
+
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if cached, ok := p.cache[projectID]; ok && time.Now().Before(cached.expiry) {
+		return cached.inverseMap
+	}
+
+	// Load from DB: get relationship_type_schemas from all active template packs for this project
+	query := `
+		SELECT tp.relationship_type_schemas
+		FROM kb.project_template_packs ptp
+		JOIN kb.graph_template_packs tp ON ptp.template_pack_id = tp.id
+		WHERE ptp.project_id = ? AND ptp.active = true
+		AND tp.relationship_type_schemas IS NOT NULL
+	`
+
+	var results []struct {
+		RelationshipTypeSchemas json.RawMessage `bun:"relationship_type_schemas"`
+	}
+	_, err := p.db.NewRaw(query, projectID).Exec(ctx, &results)
+	if err != nil {
+		p.log.Warn("failed to load inverse type mappings",
+			slog.String("project_id", projectID),
+			slog.String("error", err.Error()))
+		// Cache empty map to avoid repeated failures
+		p.cache[projectID] = &cachedInverseMap{
+			inverseMap: make(map[string]string),
+			expiry:     time.Now().Add(inverseMapCacheTTL),
+		}
+		return nil
+	}
+
+	inverseMap := make(map[string]string)
+	for _, row := range results {
+		if row.RelationshipTypeSchemas == nil {
+			continue
+		}
+
+		var schemas map[string]struct {
+			InverseType string `json:"inverseType"`
+		}
+		if err := json.Unmarshal(row.RelationshipTypeSchemas, &schemas); err != nil {
+			p.log.Warn("failed to parse relationship type schemas",
+				slog.String("project_id", projectID),
+				slog.String("error", err.Error()))
+			continue
+		}
+
+		for relType, schema := range schemas {
+			if schema.InverseType != "" {
+				inverseMap[relType] = schema.InverseType
+			}
+		}
+	}
+
+	p.cache[projectID] = &cachedInverseMap{
+		inverseMap: inverseMap,
+		expiry:     time.Now().Add(inverseMapCacheTTL),
+	}
+
+	p.log.Debug("inverse type map cached",
+		slog.String("project_id", projectID),
+		slog.Int("mappings", len(inverseMap)))
+
+	return inverseMap
 }

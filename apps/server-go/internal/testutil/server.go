@@ -171,7 +171,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	graphRepo := graph.NewRepository(db, log)
 	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
 	embeddingsSvc := embeddings.NewNoopService(log)
-	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, embeddingsSvc)
+	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, graph.ProvideInverseTypeProvider(db, log), embeddingsSvc)
 	graphHandler := graph.NewHandler(graphSvc)
 	graph.RegisterRoutes(e, graphHandler, authMiddleware)
 

@@ -12,6 +12,11 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g := e.Group("/api/template-packs")
 	g.Use(authMiddleware.RequireAuth())
 
+	// Global template pack CRUD (not project-scoped)
+	g.POST("", h.CreatePack)
+	g.GET("/:packId", h.GetPack)
+	g.DELETE("/:packId", h.DeletePack)
+
 	// Project-scoped template pack routes
 	projects := g.Group("/projects/:projectId")
 
