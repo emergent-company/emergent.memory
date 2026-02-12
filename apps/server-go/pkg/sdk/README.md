@@ -5,7 +5,7 @@ Official Go client library for the Emergent API.
 ## Installation
 
 ```bash
-go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@v0.4.12
+go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@latest
 ```
 
 ## Features
