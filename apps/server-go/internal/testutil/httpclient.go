@@ -308,7 +308,7 @@ func (c *HTTPClient) GetDocument(docID, projectID, orgID, authToken string) (*HT
 
 // DeleteDocument deletes a document by ID
 func (c *HTTPClient) DeleteDocument(docID, projectID, orgID, authToken string) (*HTTPResponse, error) {
-	resp := c.DELETE(fmt.Sprintf("/api/v2/documents/%s", docID),
+	resp := c.DELETE(fmt.Sprintf("/api/documents/%s", docID),
 		WithAuth(authToken),
 		WithProjectID(projectID),
 		WithOrgID(orgID),
@@ -318,7 +318,7 @@ func (c *HTTPClient) DeleteDocument(docID, projectID, orgID, authToken string) (
 
 // ListChunks lists chunks and returns the response
 func (c *HTTPClient) ListChunks(projectID, orgID, authToken string, queryParams map[string]string) (*ChunksListResponse, error) {
-	path := "/api/v2/chunks"
+	path := "/api/chunks"
 	if len(queryParams) > 0 {
 		params := make([]string, 0, len(queryParams))
 		for k, v := range queryParams {

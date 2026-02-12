@@ -62,8 +62,9 @@ type UnifiedSearchRequest struct {
 type UnifiedSearchItemType string
 
 const (
-	ItemTypeGraph UnifiedSearchItemType = "graph"
-	ItemTypeText  UnifiedSearchItemType = "text"
+	ItemTypeGraph        UnifiedSearchItemType = "graph"
+	ItemTypeText         UnifiedSearchItemType = "text"
+	ItemTypeRelationship UnifiedSearchItemType = "relationship"
 )
 
 // UnifiedSearchRelationship contains relationship info for graph results
@@ -129,12 +130,20 @@ type UnifiedSearchResultItem struct {
 	Source     *string `json:"source,omitempty"`
 	Mode       *string `json:"mode,omitempty"`
 	DocumentID *string `json:"document_id,omitempty"`
+
+	// Relationship-specific fields
+	RelationshipType string         `json:"relationship_type,omitempty"`
+	TripletText      string         `json:"triplet_text,omitempty"`
+	SourceID         string         `json:"source_id,omitempty"`
+	TargetID         string         `json:"target_id,omitempty"`
+	Properties       map[string]any `json:"properties,omitempty"`
 }
 
 // UnifiedSearchExecutionTime contains timing breakdown for the search
 type UnifiedSearchExecutionTime struct {
 	GraphSearchMs           *int `json:"graphSearchMs,omitempty"`
 	TextSearchMs            *int `json:"textSearchMs,omitempty"`
+	RelationshipSearchMs    *int `json:"relationshipSearchMs,omitempty"`
 	RelationshipExpansionMs *int `json:"relationshipExpansionMs,omitempty"`
 	FusionMs                int  `json:"fusionMs"`
 	TotalMs                 int  `json:"totalMs"`
@@ -142,17 +151,19 @@ type UnifiedSearchExecutionTime struct {
 
 // UnifiedSearchMetadata contains response metadata
 type UnifiedSearchMetadata struct {
-	TotalResults     int                         `json:"totalResults"`
-	GraphResultCount int                         `json:"graphResultCount"`
-	TextResultCount  int                         `json:"textResultCount"`
-	FusionStrategy   UnifiedSearchFusionStrategy `json:"fusionStrategy"`
-	ExecutionTime    UnifiedSearchExecutionTime  `json:"executionTime"`
+	TotalResults            int                         `json:"totalResults"`
+	GraphResultCount        int                         `json:"graphResultCount"`
+	TextResultCount         int                         `json:"textResultCount"`
+	RelationshipResultCount int                         `json:"relationshipResultCount"`
+	FusionStrategy          UnifiedSearchFusionStrategy `json:"fusionStrategy"`
+	ExecutionTime           UnifiedSearchExecutionTime  `json:"executionTime"`
 }
 
 // UnifiedSearchScoreDistribution contains score statistics for debug info
 type UnifiedSearchScoreDistribution struct {
-	Graph *ScoreStats `json:"graph,omitempty"`
-	Text  *ScoreStats `json:"text,omitempty"`
+	Graph        *ScoreStats `json:"graph,omitempty"`
+	Text         *ScoreStats `json:"text,omitempty"`
+	Relationship *ScoreStats `json:"relationship,omitempty"`
 }
 
 // ScoreStats contains min/max/mean statistics
@@ -172,8 +183,9 @@ type UnifiedSearchFusionDetails struct {
 
 // PreFusionCounts contains counts before fusion
 type PreFusionCounts struct {
-	Graph int `json:"graph"`
-	Text  int `json:"text"`
+	Graph        int `json:"graph"`
+	Text         int `json:"text"`
+	Relationship int `json:"relationship"`
 }
 
 // UnifiedSearchDebug contains debug information

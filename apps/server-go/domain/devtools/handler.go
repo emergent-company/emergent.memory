@@ -195,7 +195,7 @@ func (h *Handler) serveSwaggerUI(c echo.Context) error {
     <script src="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-standalone-preset.js"></script>
     <script>
         window.onload = function() {
-            // Determine the base path from current URL (handles /docs and /api/v2/docs)
+            // Determine the base path from current URL (handles /docs and /api/docs)
             const basePath = window.location.pathname.replace(/\/docs\/?$/, '');
             const specUrl = basePath ? basePath + '/openapi.json' : '/openapi.json';
             

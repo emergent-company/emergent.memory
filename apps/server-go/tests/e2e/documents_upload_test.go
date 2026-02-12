@@ -84,7 +84,7 @@ func (s *DocumentsUploadTestSuite) TestUpload_RequiresAuth() {
 	form.AddFile("file", "test.txt", []byte("test content"))
 	form.Close()
 
-	resp := s.client.POST("/api/v2/documents/upload",
+	resp := s.client.POST("/api/documents/upload",
 		testutil.WithProjectID(s.dummyProjectID),
 		testutil.WithMultipartForm(form),
 	)
@@ -98,7 +98,7 @@ func (s *DocumentsUploadTestSuite) TestUpload_RequiresDocumentsWriteScope() {
 	form.Close()
 
 	// User without documents:write scope should be forbidden
-	resp := s.client.POST("/api/v2/documents/upload",
+	resp := s.client.POST("/api/documents/upload",
 		testutil.WithAuth("read-only"),
 		testutil.WithProjectID(s.dummyProjectID),
 		testutil.WithMultipartForm(form),
@@ -121,7 +121,7 @@ func (s *DocumentsUploadTestSuite) TestUpload_RequiresProjectID() {
 	form.Close()
 
 	// Request without X-Project-ID should fail
-	resp := s.client.POST("/api/v2/documents/upload",
+	resp := s.client.POST("/api/documents/upload",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithMultipartForm(form),
 	)
@@ -153,7 +153,7 @@ func (s *DocumentsUploadTestSuite) TestUpload_RejectsWhenFileIsMissing() {
 	form.AddField("someField", "someValue")
 	form.Close()
 
-	resp := s.client.POST("/api/v2/documents/upload",
+	resp := s.client.POST("/api/documents/upload",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.dummyProjectID),
 		testutil.WithMultipartForm(form),
@@ -180,7 +180,7 @@ func (s *DocumentsUploadTestSuite) TestBatchUpload_RequiresAuth() {
 	form.AddFile("files", "test2.txt", []byte("test content 2"))
 	form.Close()
 
-	resp := s.client.POST("/api/v2/documents/upload/batch",
+	resp := s.client.POST("/api/documents/upload/batch",
 		testutil.WithProjectID(s.dummyProjectID),
 		testutil.WithMultipartForm(form),
 	)
@@ -194,7 +194,7 @@ func (s *DocumentsUploadTestSuite) TestBatchUpload_RequiresProjectID() {
 	form.Close()
 
 	// Request without X-Project-ID should fail
-	resp := s.client.POST("/api/v2/documents/upload/batch",
+	resp := s.client.POST("/api/documents/upload/batch",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithMultipartForm(form),
 	)
@@ -216,7 +216,7 @@ func (s *DocumentsUploadTestSuite) TestBatchUpload_RequiresDocumentsWriteScope()
 	form.Close()
 
 	// User without documents:write scope should be forbidden
-	resp := s.client.POST("/api/v2/documents/upload/batch",
+	resp := s.client.POST("/api/documents/upload/batch",
 		testutil.WithAuth("read-only"),
 		testutil.WithProjectID(s.dummyProjectID),
 		testutil.WithMultipartForm(form),
@@ -249,7 +249,7 @@ func (s *DocumentsUploadTestSuite) TestBatchUpload_RejectsWhenNoFilesProvided() 
 	form.AddField("someField", "someValue")
 	form.Close()
 
-	resp := s.client.POST("/api/v2/documents/upload/batch",
+	resp := s.client.POST("/api/documents/upload/batch",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.dummyProjectID),
 		testutil.WithMultipartForm(form),

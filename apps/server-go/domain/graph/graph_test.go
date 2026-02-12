@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -865,4 +866,277 @@ func TestGraphRelationship_ToResponse_DoesNotExposeInternalFields(t *testing.T) 
 	assert.NotNil(t, resp)
 	assert.Equal(t, rel.ID, resp.ID)
 	// The response type doesn't have ContentHash, ValidFrom, ValidTo, SrcObject, DstObject
+}
+
+// =============================================================================
+// Triplet Text Generation Tests
+// =============================================================================
+
+func TestHumanizeRelationType(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"WORKS_FOR", "works for"},
+		{"FOUNDED_BY", "founded by"},
+		{"REPORTS_TO", "reports to"},
+		{"located_in", "located in"},
+		{"HAS", "has"},
+		{"", ""},
+		{"WORKS__FOR", "works  for"},
+		{"MULTI_WORD_RELATION_TYPE", "multi word relation type"},
+		{"ÜBER_RELATION", "über relation"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := humanizeRelationType(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestGetDisplayName(t *testing.T) {
+	validKey := "object-key-123"
+	emptyKey := ""
+	validName := "Elon Musk"
+	emptyName := ""
+
+	tests := []struct {
+		name     string
+		obj      *GraphObject
+		expected string
+	}{
+		{
+			name: "name property exists",
+			obj: &GraphObject{
+				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
+				Properties: map[string]any{"name": validName},
+				Key:        &validKey,
+			},
+			expected: validName,
+		},
+		{
+			name: "name property empty, fallback to key",
+			obj: &GraphObject{
+				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440001"),
+				Properties: map[string]any{"name": emptyName},
+				Key:        &validKey,
+			},
+			expected: validKey,
+		},
+		{
+			name: "name property missing, fallback to key",
+			obj: &GraphObject{
+				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440002"),
+				Properties: map[string]any{"other": "value"},
+				Key:        &validKey,
+			},
+			expected: validKey,
+		},
+		{
+			name: "properties nil, fallback to key",
+			obj: &GraphObject{
+				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440003"),
+				Properties: nil,
+				Key:        &validKey,
+			},
+			expected: validKey,
+		},
+		{
+			name: "key empty, fallback to ID",
+			obj: &GraphObject{
+				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440004"),
+				Properties: map[string]any{},
+				Key:        &emptyKey,
+			},
+			expected: "550e8400-e29b-41d4-a716-446655440004",
+		},
+		{
+			name: "key nil, fallback to ID",
+			obj: &GraphObject{
+				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440005"),
+				Properties: map[string]any{},
+				Key:        nil,
+			},
+			expected: "550e8400-e29b-41d4-a716-446655440005",
+		},
+		{
+			name: "name property wrong type, fallback to key",
+			obj: &GraphObject{
+				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440006"),
+				Properties: map[string]any{"name": 123},
+				Key:        &validKey,
+			},
+			expected: validKey,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getDisplayName(tt.obj)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestGenerateTripletText(t *testing.T) {
+	sourceKey := "source-123"
+	targetKey := "target-456"
+
+	tests := []struct {
+		name     string
+		source   *GraphObject
+		target   *GraphObject
+		relType  string
+		expected string
+	}{
+		{
+			name: "both objects have name properties",
+			source: &GraphObject{
+				ID:         uuid.New(),
+				Properties: map[string]any{"name": "Elon Musk"},
+				Key:        &sourceKey,
+			},
+			target: &GraphObject{
+				ID:         uuid.New(),
+				Properties: map[string]any{"name": "Tesla"},
+				Key:        &targetKey,
+			},
+			relType:  "FOUNDED_BY",
+			expected: "Elon Musk founded by Tesla",
+		},
+		{
+			name: "source has name, target uses key",
+			source: &GraphObject{
+				ID:         uuid.New(),
+				Properties: map[string]any{"name": "Alice"},
+				Key:        &sourceKey,
+			},
+			target: &GraphObject{
+				ID:         uuid.New(),
+				Properties: map[string]any{},
+				Key:        &targetKey,
+			},
+			relType:  "WORKS_FOR",
+			expected: "Alice works for target-456",
+		},
+		{
+			name: "both objects use keys",
+			source: &GraphObject{
+				ID:         uuid.New(),
+				Properties: map[string]any{},
+				Key:        &sourceKey,
+			},
+			target: &GraphObject{
+				ID:         uuid.New(),
+				Properties: map[string]any{},
+				Key:        &targetKey,
+			},
+			relType:  "REPORTS_TO",
+			expected: "source-123 reports to target-456",
+		},
+		{
+			name: "multi-word relation type",
+			source: &GraphObject{
+				ID:         uuid.New(),
+				Properties: map[string]any{"name": "Company A"},
+			},
+			target: &GraphObject{
+				ID:         uuid.New(),
+				Properties: map[string]any{"name": "San Francisco"},
+			},
+			relType:  "LOCATED_IN",
+			expected: "Company A located in San Francisco",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := generateTripletText(tt.source, tt.target, tt.relType)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+type mockEmbeddingService struct {
+	embedding []float32
+	err       error
+	callCount int
+}
+
+func (m *mockEmbeddingService) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+	m.callCount++
+	return m.embedding, m.err
+}
+
+func TestEmbedTripletText(t *testing.T) {
+	tests := []struct {
+		name            string
+		embeddings      EmbeddingService
+		tripletText     string
+		expectEmbedding bool
+		expectError     bool
+	}{
+		{
+			name:            "successful embedding generation",
+			embeddings:      &mockEmbeddingService{embedding: make([]float32, 768)},
+			tripletText:     "Elon Musk founded Tesla",
+			expectEmbedding: true,
+			expectError:     false,
+		},
+		{
+			name:            "embeddings disabled (nil service)",
+			embeddings:      nil,
+			tripletText:     "Alice works for Acme Corp",
+			expectEmbedding: false,
+			expectError:     false,
+		},
+		{
+			name:            "embedding service returns nil",
+			embeddings:      &mockEmbeddingService{embedding: nil},
+			tripletText:     "Bob reports to Charlie",
+			expectEmbedding: false,
+			expectError:     false,
+		},
+		{
+			name:            "embedding service returns empty slice",
+			embeddings:      &mockEmbeddingService{embedding: []float32{}},
+			tripletText:     "Company A located in City B",
+			expectEmbedding: false,
+			expectError:     false,
+		},
+		{
+			name:            "embedding service returns error",
+			embeddings:      &mockEmbeddingService{err: assert.AnError},
+			tripletText:     "Product belongs to Category",
+			expectEmbedding: false,
+			expectError:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &Service{embeddings: tt.embeddings}
+
+			embedding, timestamp, err := svc.embedTripletText(context.Background(), tt.tripletText)
+
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Nil(t, embedding)
+				assert.Nil(t, timestamp)
+			} else {
+				require.NoError(t, err)
+				if tt.expectEmbedding {
+					assert.NotNil(t, embedding)
+					assert.NotNil(t, timestamp)
+					assert.Len(t, embedding, 768)
+					assert.WithinDuration(t, time.Now(), *timestamp, 1*time.Second)
+				} else {
+					assert.Nil(t, embedding)
+					assert.Nil(t, timestamp)
+				}
+			}
+		})
+	}
 }

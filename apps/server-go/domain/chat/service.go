@@ -164,10 +164,11 @@ func (s *Service) AddMessage(ctx context.Context, projectID string, conversation
 	}
 
 	msg := &Message{
-		ConversationID: conversationID,
-		Role:           req.Role,
-		Content:        req.Content,
-		CreatedAt:      time.Now(),
+		ConversationID:   conversationID,
+		Role:             req.Role,
+		Content:          req.Content,
+		RetrievalContext: req.RetrievalContext,
+		CreatedAt:        time.Now(),
 	}
 
 	history, err := s.repo.GetConversationHistory(ctx, conversationID, 5)

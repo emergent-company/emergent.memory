@@ -45,52 +45,67 @@ func main() {
 	ctx := context.Background()
 
 	fmt.Println("=== Listing Documents ===")
-	docs, err := client.Documents.List(ctx, &documents.ListOptions{
+	result, err := client.Documents.List(ctx, &documents.ListOptions{
 		Limit: 10,
 	})
 	if err != nil {
 		log.Fatalf("Failed to list documents: %v", err)
 	}
 
-	fmt.Printf("Found %d documents\n\n", len(docs.Data))
+	fmt.Printf("Found %d documents (total: %d)\n\n", len(result.Documents), result.Total)
 
-	if len(docs.Data) == 0 {
+	if len(result.Documents) == 0 {
 		fmt.Println("No documents found. Upload some documents first!")
 		return
 	}
 
-	for _, doc := range docs.Data {
-		fmt.Printf("- %s (ID: %s)\n", doc.Title, doc.ID)
-		fmt.Printf("  Type: %s, Source: %s\n", doc.ContentType, doc.SourceType)
+	for _, doc := range result.Documents {
+		name := doc.ID
+		if doc.Filename != nil {
+			name = *doc.Filename
+		}
+		fmt.Printf("- %s (ID: %s)\n", name, doc.ID)
+		if doc.MimeType != nil {
+			fmt.Printf("  Type: %s\n", *doc.MimeType)
+		}
 		fmt.Printf("  Created: %s\n\n", doc.CreatedAt.Format("2006-01-02 15:04:05"))
 	}
 
-	firstDoc := docs.Data[0]
+	firstDoc := result.Documents[0]
 
-	fmt.Printf("=== Document Details: %s ===\n", firstDoc.Title)
+	firstDocName := firstDoc.ID
+	if firstDoc.Filename != nil {
+		firstDocName = *firstDoc.Filename
+	}
+	fmt.Printf("=== Document Details: %s ===\n", firstDocName)
 	fullDoc, err := client.Documents.Get(ctx, firstDoc.ID)
 	if err != nil {
 		log.Fatalf("Failed to get document: %v", err)
 	}
 
-	fmt.Printf("Title: %s\n", fullDoc.Title)
-	fmt.Printf("Source URL: %s\n", fullDoc.SourceURL)
-	fmt.Printf("Content Type: %s\n", fullDoc.ContentType)
+	if fullDoc.Filename != nil {
+		fmt.Printf("Filename: %s\n", *fullDoc.Filename)
+	}
+	if fullDoc.SourceURL != nil {
+		fmt.Printf("Source URL: %s\n", *fullDoc.SourceURL)
+	}
+	if fullDoc.MimeType != nil {
+		fmt.Printf("MIME Type: %s\n", *fullDoc.MimeType)
+	}
 
 	fmt.Println("\n=== Listing Chunks ===")
 	docChunks, err := client.Chunks.List(ctx, &chunks.ListOptions{
 		DocumentID: firstDoc.ID,
-		Limit:      5,
 	})
 	if err != nil {
 		log.Fatalf("Failed to list chunks: %v", err)
 	}
 
-	fmt.Printf("Found %d chunks for this document\n\n", len(docChunks.Data))
+	fmt.Printf("Found %d chunks for this document (total: %d)\n\n", len(docChunks.Data), docChunks.TotalCount)
 
 	for i, chunk := range docChunks.Data {
-		fmt.Printf("%d. Position: %d\n", i+1, chunk.Position)
-		fmt.Printf("   Preview: %s\n\n", truncate(chunk.Content, 80))
+		fmt.Printf("%d. Index: %d, Size: %d chars\n", i+1, chunk.Index, chunk.Size)
+		fmt.Printf("   Preview: %s\n\n", truncate(chunk.Text, 80))
 	}
 }
 

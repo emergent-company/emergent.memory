@@ -57,7 +57,7 @@ type UpdateProfileRequest struct {
 
 // GetProfile retrieves the authenticated user's profile.
 func (c *Client) GetProfile(ctx context.Context) (*UserProfile, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/v2/user/profile", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/user/profile", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -95,7 +95,7 @@ func (c *Client) UpdateProfile(ctx context.Context, req *UpdateProfileRequest) (
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "PUT", c.base+"/api/v2/user/profile", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "PUT", c.base+"/api/user/profile", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

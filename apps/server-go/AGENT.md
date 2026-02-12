@@ -235,7 +235,7 @@ func (h *Handler) GetDocument(c echo.Context) error {
 ```go
 // domain/documents/routes.go
 func RegisterRoutes(e *echo.Echo, h *Handler, authMw *auth.Middleware) {
-    g := e.Group("/api/v2/documents")
+    g := e.Group("/api/documents")
     g.Use(authMw.RequireAuth())
     g.Use(authMw.RequireScopes("documents:read"))
     g.Use(authMw.RequireProjectID())
@@ -492,7 +492,7 @@ func (suite *MySuite) TestExample() {
         Build()
 
     // Make request
-    rec := suite.server.GET("/api/v2/documents",
+    rec := suite.server.GET("/api/documents",
         testutil.WithAuth(token),
         testutil.WithProjectID(suite.projectID),
     )
@@ -616,19 +616,19 @@ See `migrations/README.md` for detailed workflow.
 | Domain              | Endpoints                                    | Tests |
 | ------------------- | -------------------------------------------- | ----- |
 | Health              | `/health`, `/healthz`, `/ready`, `/debug`    | Pass  |
-| Organizations       | CRUD `/api/v2/orgs`                          | Pass  |
+| Organizations       | CRUD `/api/orgs`                          | Pass  |
 | Projects            | CRUD `/api/projects`                         | Pass  |
-| Users               | Search `/api/v2/users`                       | Pass  |
-| User Profile        | Get/Update `/api/v2/user-profile`            | Pass  |
-| API Tokens          | CRUD `/api/v2/api-tokens`                    | Pass  |
-| Documents           | CRUD + upload `/api/v2/documents`            | Pass  |
-| Chunks              | List/Get `/api/v2/chunks`                    | Pass  |
-| Graph Objects       | CRUD + versioning `/api/v2/graph/objects`    | Pass  |
-| Graph Relationships | CRUD `/api/v2/graph/relationships`           | Pass  |
-| Graph Search        | FTS + vector + hybrid `/api/v2/graph/search` | Pass  |
-| Unified Search      | `/api/v2/search` (with `?debug=true`)        | Pass  |
-| Chat                | CRUD + SSE streaming `/api/v2/chat`          | Pass  |
-| MCP                 | Tools `/api/v2/mcp`                          | Pass  |
+| Users               | Search `/api/users`                       | Pass  |
+| User Profile        | Get/Update `/api/user-profile`            | Pass  |
+| API Tokens          | CRUD `/api/api-tokens`                    | Pass  |
+| Documents           | CRUD + upload `/api/documents`            | Pass  |
+| Chunks              | List/Get `/api/chunks`                    | Pass  |
+| Graph Objects       | CRUD + versioning `/api/graph/objects`    | Pass  |
+| Graph Relationships | CRUD `/api/graph/relationships`           | Pass  |
+| Graph Search        | FTS + vector + hybrid `/api/graph/search` | Pass  |
+| Unified Search      | `/api/search` (with `?debug=true`)        | Pass  |
+| Chat                | CRUD + SSE streaming `/api/chat`          | Pass  |
+| MCP                 | Tools `/api/mcp`                          | Pass  |
 | Extraction          | Background workers                           | Pass  |
 | Email               | Background workers                           | Pass  |
 | Data Sources        | ClickUp sync                                 | Pass  |
@@ -685,10 +685,10 @@ The unified search endpoint supports a debug mode that returns timing metrics an
 
 ```bash
 # Via query parameter
-POST /api/v2/search/unified?debug=true
+POST /api/search/unified?debug=true
 
 # Via request body
-POST /api/v2/search/unified
+POST /api/search/unified
 {
   "query": "search term",
   "includeDebug": true

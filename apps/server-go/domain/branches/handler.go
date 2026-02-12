@@ -20,7 +20,7 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-// List handles GET /api/v2/graph/branches
+// List handles GET /api/graph/branches
 // @Summary      List branches
 // @Description  Returns all branches, optionally filtered by project
 // @Tags         branches
@@ -31,7 +31,7 @@ func NewHandler(svc *Service) *Handler {
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/graph/branches [get]
+// @Router       /api/graph/branches [get]
 // @Security     bearerAuth
 func (h *Handler) List(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -57,7 +57,7 @@ func (h *Handler) List(c echo.Context) error {
 	return c.JSON(http.StatusOK, branches)
 }
 
-// GetByID handles GET /api/v2/graph/branches/:id
+// GetByID handles GET /api/graph/branches/:id
 // @Summary      Get branch
 // @Description  Retrieves a specific branch by ID
 // @Tags         branches
@@ -69,7 +69,7 @@ func (h *Handler) List(c echo.Context) error {
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Branch not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/graph/branches/{id} [get]
+// @Router       /api/graph/branches/{id} [get]
 // @Security     bearerAuth
 func (h *Handler) GetByID(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -95,7 +95,7 @@ func (h *Handler) GetByID(c echo.Context) error {
 	return c.JSON(http.StatusOK, branch)
 }
 
-// Create handles POST /api/v2/graph/branches
+// Create handles POST /api/graph/branches
 // @Summary      Create branch
 // @Description  Creates a new branch for graph versioning and isolation
 // @Tags         branches
@@ -106,7 +106,7 @@ func (h *Handler) GetByID(c echo.Context) error {
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/graph/branches [post]
+// @Router       /api/graph/branches [post]
 // @Security     bearerAuth
 func (h *Handler) Create(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -141,7 +141,7 @@ func (h *Handler) Create(c echo.Context) error {
 	return c.JSON(http.StatusCreated, branch)
 }
 
-// Update handles PATCH /api/v2/graph/branches/:id
+// Update handles PATCH /api/graph/branches/:id
 // @Summary      Update branch
 // @Description  Updates a branch's name or metadata
 // @Tags         branches
@@ -154,7 +154,7 @@ func (h *Handler) Create(c echo.Context) error {
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Branch not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/graph/branches/{id} [patch]
+// @Router       /api/graph/branches/{id} [patch]
 // @Security     bearerAuth
 func (h *Handler) Update(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -185,7 +185,7 @@ func (h *Handler) Update(c echo.Context) error {
 	return c.JSON(http.StatusOK, branch)
 }
 
-// Delete handles DELETE /api/v2/graph/branches/:id
+// Delete handles DELETE /api/graph/branches/:id
 // @Summary      Delete branch
 // @Description  Deletes a branch by ID
 // @Tags         branches
@@ -197,7 +197,7 @@ func (h *Handler) Update(c echo.Context) error {
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Branch not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/graph/branches/{id} [delete]
+// @Router       /api/graph/branches/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) Delete(c echo.Context) error {
 	user := auth.GetUser(c)

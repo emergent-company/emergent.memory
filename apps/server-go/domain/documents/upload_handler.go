@@ -65,7 +65,7 @@ func NewUploadHandler(svc *Service, storageSvc *storage.Service, parsingJobsServ
 	}
 }
 
-// Upload handles POST /api/v2/documents/upload (multipart file upload)
+// Upload handles POST /api/documents/upload (multipart file upload)
 func (h *UploadHandler) Upload(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -180,7 +180,7 @@ func (h *UploadHandler) Upload(c echo.Context) error {
 	return c.JSON(status, response)
 }
 
-// UploadBatch handles POST /api/v2/documents/upload/batch (batch multipart file upload)
+// UploadBatch handles POST /api/documents/upload/batch (batch multipart file upload)
 // Max 100 files per batch, each max 10MB. Files are processed concurrently.
 func (h *UploadHandler) UploadBatch(c echo.Context) error {
 	user := auth.GetUser(c)

@@ -33,7 +33,7 @@ func (s *DocumentsTestSuite) createDocumentViaAPI(filename, content string) stri
 		"content":  content,
 	}
 
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -70,7 +70,7 @@ func (s *DocumentsTestSuite) createProjectViaAPI(name string) string {
 
 func (s *DocumentsTestSuite) TestListDocuments_RequiresAuth() {
 	// Request without Authorization header should fail
-	resp := s.Client.GET("/api/v2/documents",
+	resp := s.Client.GET("/api/documents",
 		testutil.WithProjectID(s.ProjectID),
 	)
 
@@ -79,7 +79,7 @@ func (s *DocumentsTestSuite) TestListDocuments_RequiresAuth() {
 
 func (s *DocumentsTestSuite) TestListDocuments_RequiresDocumentsReadScope() {
 	// User without documents:read scope should be forbidden
-	resp := s.Client.GET("/api/v2/documents",
+	resp := s.Client.GET("/api/documents",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -97,7 +97,7 @@ func (s *DocumentsTestSuite) TestListDocuments_RequiresDocumentsReadScope() {
 
 func (s *DocumentsTestSuite) TestListDocuments_RequiresProjectID() {
 	// Request without X-Project-ID should fail
-	resp := s.Client.GET("/api/v2/documents",
+	resp := s.Client.GET("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -118,7 +118,7 @@ func (s *DocumentsTestSuite) TestListDocuments_RequiresProjectID() {
 
 func (s *DocumentsTestSuite) TestListDocuments_Empty() {
 	// List documents when none exist
-	resp := s.Client.GET("/api/v2/documents",
+	resp := s.Client.GET("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -141,7 +141,7 @@ func (s *DocumentsTestSuite) TestListDocuments_ReturnsDocuments() {
 	doc2ID := s.createDocumentViaAPI("Test Document 2.pdf", "Content for document 2")
 
 	// List documents
-	resp := s.Client.GET("/api/v2/documents",
+	resp := s.Client.GET("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -180,7 +180,7 @@ func (s *DocumentsTestSuite) TestListDocuments_ProjectIsolation() {
 	doc1ID := s.createDocumentViaAPI("Doc in Default Project.txt", "Content for default project")
 
 	// Create document in other project
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(otherProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -191,7 +191,7 @@ func (s *DocumentsTestSuite) TestListDocuments_ProjectIsolation() {
 	s.Require().True(resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated)
 
 	// List documents in default project - should only see doc1
-	resp = s.Client.GET("/api/v2/documents",
+	resp = s.Client.GET("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -223,14 +223,14 @@ func (s *DocumentsTestSuite) TestListDocuments_ProjectIsolation() {
 // =============================================================================
 
 func (s *DocumentsTestSuite) TestListDocuments_FilterBySourceType() {
-	// Note: The POST /api/v2/documents endpoint doesn't support setting sourceType,
+	// Note: The POST /api/documents endpoint doesn't support setting sourceType,
 	// so we test with default sourceType (upload) documents created via API.
 	// Create documents via API (they default to sourceType=upload)
 	s.createDocumentViaAPI("Upload Doc 1.txt", "Content for upload doc 1 - filter test")
 	s.createDocumentViaAPI("Upload Doc 2.txt", "Content for upload doc 2 - filter test")
 
 	// Filter by sourceType=upload - should find our documents
-	resp := s.Client.GET("/api/v2/documents?sourceType=upload",
+	resp := s.Client.GET("/api/documents?sourceType=upload",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -253,14 +253,14 @@ func (s *DocumentsTestSuite) TestListDocuments_FilterByIntegrationId() {
 }
 
 func (s *DocumentsTestSuite) TestListDocuments_FilterRootOnly() {
-	// Note: The POST /api/v2/documents endpoint doesn't support setting parentDocumentId,
+	// Note: The POST /api/documents endpoint doesn't support setting parentDocumentId,
 	// so we skip this test for API-only mode. Parent/child relationships require
 	// data source integrations or direct DB setup.
 	s.T().Skip("Test requires parent/child document relationships which cannot be created via API")
 }
 
 func (s *DocumentsTestSuite) TestListDocuments_FilterByParentDocumentId() {
-	// Note: The POST /api/v2/documents endpoint doesn't support setting parentDocumentId,
+	// Note: The POST /api/documents endpoint doesn't support setting parentDocumentId,
 	// so we skip this test for API-only mode. Parent/child relationships require
 	// data source integrations or direct DB setup.
 	s.T().Skip("Test requires parent/child document relationships which cannot be created via API")
@@ -280,7 +280,7 @@ func (s *DocumentsTestSuite) TestListDocuments_Limit() {
 	}
 
 	// Request with limit=2
-	resp := s.Client.GET("/api/v2/documents?limit=2",
+	resp := s.Client.GET("/api/documents?limit=2",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -313,7 +313,7 @@ func (s *DocumentsTestSuite) TestListDocuments_CursorPagination() {
 	}
 
 	// First page
-	resp := s.Client.GET("/api/v2/documents?limit=2",
+	resp := s.Client.GET("/api/documents?limit=2",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -340,7 +340,7 @@ func (s *DocumentsTestSuite) TestListDocuments_CursorPagination() {
 	s.NotEmpty(nextCursor)
 
 	// Second page using cursor
-	resp = s.Client.GET("/api/v2/documents?limit=2&cursor="+nextCursor,
+	resp = s.Client.GET("/api/documents?limit=2&cursor="+nextCursor,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -387,7 +387,7 @@ func (s *DocumentsTestSuite) TestListDocuments_CursorPaginationStress() {
 	maxPages := (totalDocs / pageLimit) + 10 // safety limit (account for existing docs)
 
 	for {
-		url := fmt.Sprintf("/api/v2/documents?limit=%d", pageLimit)
+		url := fmt.Sprintf("/api/documents?limit=%d", pageLimit)
 		if cursor != "" {
 			url += "&cursor=" + cursor
 		}
@@ -445,7 +445,7 @@ func (s *DocumentsTestSuite) TestListDocuments_CursorPaginationStress() {
 
 func (s *DocumentsTestSuite) TestListDocuments_InvalidLimit() {
 	// Request with limit > 500
-	resp := s.Client.GET("/api/v2/documents?limit=1000",
+	resp := s.Client.GET("/api/documents?limit=1000",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -463,7 +463,7 @@ func (s *DocumentsTestSuite) TestListDocuments_InvalidLimit() {
 
 func (s *DocumentsTestSuite) TestListDocuments_InvalidCursor() {
 	// Request with invalid cursor
-	resp := s.Client.GET("/api/v2/documents?cursor=not-valid-base64!!!",
+	resp := s.Client.GET("/api/documents?cursor=not-valid-base64!!!",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -490,7 +490,7 @@ func (s *DocumentsTestSuite) TestGetDocument_Success() {
 		"content":  "Hello, World! Get test content.",
 	}
 
-	createResp := s.Client.POST("/api/v2/documents",
+	createResp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -503,7 +503,7 @@ func (s *DocumentsTestSuite) TestGetDocument_Success() {
 	docID := createdDoc["id"].(string)
 
 	// Get the document
-	resp := s.Client.GET("/api/v2/documents/"+docID,
+	resp := s.Client.GET("/api/documents/"+docID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -519,7 +519,7 @@ func (s *DocumentsTestSuite) TestGetDocument_Success() {
 }
 
 func (s *DocumentsTestSuite) TestGetDocument_NotFound() {
-	resp := s.Client.GET("/api/v2/documents/00000000-0000-0000-0000-000000000999",
+	resp := s.Client.GET("/api/documents/00000000-0000-0000-0000-000000000999",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -540,7 +540,7 @@ func (s *DocumentsTestSuite) TestGetDocument_NotFoundInOtherProject() {
 	otherProjectID := s.createProjectViaAPI("Other Project for Get Test")
 
 	// Create document in other project
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(otherProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -556,7 +556,7 @@ func (s *DocumentsTestSuite) TestGetDocument_NotFoundInOtherProject() {
 	docID := createdDoc["id"].(string)
 
 	// Try to get document using different project ID - should return 404
-	resp = s.Client.GET("/api/v2/documents/"+docID,
+	resp = s.Client.GET("/api/documents/"+docID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -565,7 +565,7 @@ func (s *DocumentsTestSuite) TestGetDocument_NotFoundInOtherProject() {
 }
 
 func (s *DocumentsTestSuite) TestGetDocument_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/documents/00000000-0000-0000-0000-000000000001",
+	resp := s.Client.GET("/api/documents/00000000-0000-0000-0000-000000000001",
 		testutil.WithProjectID(s.ProjectID),
 	)
 
@@ -573,7 +573,7 @@ func (s *DocumentsTestSuite) TestGetDocument_RequiresAuth() {
 }
 
 func (s *DocumentsTestSuite) TestGetDocument_RequiresProjectID() {
-	resp := s.Client.GET("/api/v2/documents/00000000-0000-0000-0000-000000000001",
+	resp := s.Client.GET("/api/documents/00000000-0000-0000-0000-000000000001",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -581,7 +581,7 @@ func (s *DocumentsTestSuite) TestGetDocument_RequiresProjectID() {
 }
 
 func (s *DocumentsTestSuite) TestGetDocument_RequiresDocumentsReadScope() {
-	resp := s.Client.GET("/api/v2/documents/00000000-0000-0000-0000-000000000001",
+	resp := s.Client.GET("/api/documents/00000000-0000-0000-0000-000000000001",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -599,7 +599,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_Success() {
 		"content":  "Hello, World!",
 	}
 
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -624,7 +624,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_DefaultFilename() {
 		"content": "Some content",
 	}
 
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -645,7 +645,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_EmptyContent() {
 		"content":  "",
 	}
 
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -667,7 +667,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_Deduplication() {
 		"content":  "Same content for deduplication test",
 	}
 
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -686,7 +686,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_Deduplication() {
 		"content":  "Same content for deduplication test",
 	}
 
-	resp = s.Client.POST("/api/v2/documents",
+	resp = s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body2),
@@ -716,7 +716,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_FilenameTooLong() {
 		"content":  "Some content",
 	}
 
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -739,7 +739,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_RequiresAuth() {
 		"content":  "Content",
 	}
 
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
 	)
@@ -753,7 +753,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_RequiresWriteScope() {
 		"content":  "Content",
 	}
 
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("read-only"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -768,7 +768,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_RequiresProjectID() {
 		"content":  "Content",
 	}
 
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -784,7 +784,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_Success() {
 	// Create a document via API to delete
 	docID := s.createDocumentViaAPI("To Be Deleted.txt", "Content to be deleted - unique "+fmt.Sprintf("%d", time.Now().UnixNano()))
 
-	resp := s.Client.DELETE("/api/v2/documents/"+docID,
+	resp := s.Client.DELETE("/api/documents/"+docID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -799,7 +799,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_Success() {
 	s.NotNil(respBody["summary"])
 
 	// Verify document is actually deleted
-	getResp := s.Client.GET("/api/v2/documents/"+docID,
+	getResp := s.Client.GET("/api/documents/"+docID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -807,7 +807,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_Success() {
 }
 
 func (s *DocumentsTestSuite) TestDeleteDocument_NotFound() {
-	resp := s.Client.DELETE("/api/v2/documents/00000000-0000-0000-0000-000000000999",
+	resp := s.Client.DELETE("/api/documents/00000000-0000-0000-0000-000000000999",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -816,7 +816,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_NotFound() {
 }
 
 func (s *DocumentsTestSuite) TestDeleteDocument_InvalidUUID() {
-	resp := s.Client.DELETE("/api/v2/documents/not-a-uuid",
+	resp := s.Client.DELETE("/api/documents/not-a-uuid",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -833,7 +833,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_InvalidUUID() {
 }
 
 func (s *DocumentsTestSuite) TestDeleteDocument_RequiresAuth() {
-	resp := s.Client.DELETE("/api/v2/documents/00000000-0000-0000-0000-000000000001",
+	resp := s.Client.DELETE("/api/documents/00000000-0000-0000-0000-000000000001",
 		testutil.WithProjectID(s.ProjectID),
 	)
 
@@ -841,7 +841,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_RequiresAuth() {
 }
 
 func (s *DocumentsTestSuite) TestDeleteDocument_RequiresDeleteScope() {
-	resp := s.Client.DELETE("/api/v2/documents/00000000-0000-0000-0000-000000000001",
+	resp := s.Client.DELETE("/api/documents/00000000-0000-0000-0000-000000000001",
 		testutil.WithAuth("read-only"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -850,7 +850,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_RequiresDeleteScope() {
 }
 
 func (s *DocumentsTestSuite) TestDeleteDocument_RequiresProjectID() {
-	resp := s.Client.DELETE("/api/v2/documents/00000000-0000-0000-0000-000000000001",
+	resp := s.Client.DELETE("/api/documents/00000000-0000-0000-0000-000000000001",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -861,7 +861,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_ProjectIsolation() {
 	// Create document in other project via API
 	otherProjectID := s.createProjectViaAPI("Other Project for Delete Test")
 
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(otherProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -877,7 +877,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_ProjectIsolation() {
 	docID := createdDoc["id"].(string)
 
 	// Try to delete from different project - should return 404
-	resp = s.Client.DELETE("/api/v2/documents/"+docID,
+	resp = s.Client.DELETE("/api/documents/"+docID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -899,7 +899,7 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_Success() {
 		"ids": []string{doc1ID, doc2ID},
 	}
 
-	resp := s.Client.DELETE("/api/v2/documents",
+	resp := s.Client.DELETE("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -915,13 +915,13 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_Success() {
 	s.Equal(float64(2), respBody["deleted"])
 
 	// Verify documents are deleted, but doc3 remains
-	getResp := s.Client.GET("/api/v2/documents/"+doc1ID,
+	getResp := s.Client.GET("/api/documents/"+doc1ID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
 	s.Equal(http.StatusNotFound, getResp.StatusCode)
 
-	getResp = s.Client.GET("/api/v2/documents/"+doc3ID,
+	getResp = s.Client.GET("/api/documents/"+doc3ID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -937,7 +937,7 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_PartialNotFound() {
 		"ids": []string{doc1ID, "00000000-0000-0000-0000-000000000999"},
 	}
 
-	resp := s.Client.DELETE("/api/v2/documents",
+	resp := s.Client.DELETE("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -963,7 +963,7 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_EmptyArray() {
 		"ids": []string{},
 	}
 
-	resp := s.Client.DELETE("/api/v2/documents",
+	resp := s.Client.DELETE("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -985,7 +985,7 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_InvalidUUID() {
 		"ids": []string{"not-a-uuid", "also-not-valid"},
 	}
 
-	resp := s.Client.DELETE("/api/v2/documents",
+	resp := s.Client.DELETE("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -999,7 +999,7 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_RequiresAuth() {
 		"ids": []string{"00000000-0000-0000-0000-000000000001"},
 	}
 
-	resp := s.Client.DELETE("/api/v2/documents",
+	resp := s.Client.DELETE("/api/documents",
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
 	)
@@ -1012,7 +1012,7 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_RequiresDeleteScope() {
 		"ids": []string{"00000000-0000-0000-0000-000000000001"},
 	}
 
-	resp := s.Client.DELETE("/api/v2/documents",
+	resp := s.Client.DELETE("/api/documents",
 		testutil.WithAuth("read-only"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),

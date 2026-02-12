@@ -80,12 +80,12 @@ func (s *NotificationsTestSuite) createSnoozedNotificationViaDB(userID, title, m
 // =============================================================================
 
 func (s *NotificationsTestSuite) TestGetStats_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/notifications/stats")
+	resp := s.Client.GET("/api/notifications/stats")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *NotificationsTestSuite) TestGetStats_ReturnsZeroStats() {
-	resp := s.Client.GET("/api/v2/notifications/stats",
+	resp := s.Client.GET("/api/notifications/stats",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -108,7 +108,7 @@ func (s *NotificationsTestSuite) TestGetStats_ReturnsCorrectStats() {
 	// Create dismissed notification
 	s.createDismissedNotificationViaDB(s.testUserID(), "Dismissed 1", "Message 3")
 
-	resp := s.Client.GET("/api/v2/notifications/stats",
+	resp := s.Client.GET("/api/notifications/stats",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -128,7 +128,7 @@ func (s *NotificationsTestSuite) TestGetStats_ReturnsCorrectStats() {
 // =============================================================================
 
 func (s *NotificationsTestSuite) TestGetCounts_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/notifications/counts")
+	resp := s.Client.GET("/api/notifications/counts")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
@@ -142,7 +142,7 @@ func (s *NotificationsTestSuite) TestGetCounts_ReturnsCountsByTab() {
 	// Create cleared notification
 	s.createDismissedNotificationViaDB(s.testUserID(), "Cleared 1", "Message 4")
 
-	resp := s.Client.GET("/api/v2/notifications/counts",
+	resp := s.Client.GET("/api/notifications/counts",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -165,12 +165,12 @@ func (s *NotificationsTestSuite) TestGetCounts_ReturnsCountsByTab() {
 // =============================================================================
 
 func (s *NotificationsTestSuite) TestList_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/notifications")
+	resp := s.Client.GET("/api/notifications")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *NotificationsTestSuite) TestList_ReturnsEmptyArrayWhenNoNotifications() {
-	resp := s.Client.GET("/api/v2/notifications",
+	resp := s.Client.GET("/api/notifications",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -191,7 +191,7 @@ func (s *NotificationsTestSuite) TestList_ReturnsNotifications() {
 	s.createNotificationViaDB(s.testUserID(), "Test Notification 1", "Message 1", "other", false)
 	s.createNotificationViaDB(s.testUserID(), "Test Notification 2", "Message 2", "other", false)
 
-	resp := s.Client.GET("/api/v2/notifications",
+	resp := s.Client.GET("/api/notifications",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -210,7 +210,7 @@ func (s *NotificationsTestSuite) TestList_FiltersByTab_Important() {
 	s.createNotificationViaDB(s.testUserID(), "Important Tab Test", "Message", "important", false)
 	s.createNotificationViaDB(s.testUserID(), "Other Tab Test", "Message", "other", false)
 
-	resp := s.Client.GET("/api/v2/notifications?tab=important",
+	resp := s.Client.GET("/api/notifications?tab=important",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -231,7 +231,7 @@ func (s *NotificationsTestSuite) TestList_FiltersByTab_Cleared() {
 	// Create cleared notification
 	s.createDismissedNotificationViaDB(s.testUserID(), "Cleared Tab Test", "Message")
 
-	resp := s.Client.GET("/api/v2/notifications?tab=cleared",
+	resp := s.Client.GET("/api/notifications?tab=cleared",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -255,7 +255,7 @@ func (s *NotificationsTestSuite) TestList_FiltersByUnreadOnly() {
 	s.createNotificationViaDB(s.testUserID(), "Unread Notification", "Message", "other", false)
 	s.createNotificationViaDB(s.testUserID(), "Read Notification", "Message", "other", true)
 
-	resp := s.Client.GET("/api/v2/notifications?unread_only=true",
+	resp := s.Client.GET("/api/notifications?unread_only=true",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -277,7 +277,7 @@ func (s *NotificationsTestSuite) TestList_FiltersBySearch() {
 	s.createNotificationViaDB(s.testUserID(), "Important Alert XYZ123", "Message", "other", false)
 	s.createNotificationViaDB(s.testUserID(), "Regular Update", "Message", "other", false)
 
-	resp := s.Client.GET("/api/v2/notifications?search=XYZ123",
+	resp := s.Client.GET("/api/notifications?search=XYZ123",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -307,12 +307,12 @@ func (s *NotificationsTestSuite) TestList_FiltersBySearch() {
 // =============================================================================
 
 func (s *NotificationsTestSuite) TestMarkRead_RequiresAuth() {
-	resp := s.Client.PATCH("/api/v2/notifications/some-id/read")
+	resp := s.Client.PATCH("/api/notifications/some-id/read")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *NotificationsTestSuite) TestMarkRead_ReturnsNotFoundForInvalidID() {
-	resp := s.Client.PATCH("/api/v2/notifications/00000000-0000-0000-0000-000000000000/read",
+	resp := s.Client.PATCH("/api/notifications/00000000-0000-0000-0000-000000000000/read",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -323,7 +323,7 @@ func (s *NotificationsTestSuite) TestMarkRead_MarksNotificationAsRead() {
 	// Create unread notification
 	notificationID := s.createNotificationViaDB(s.testUserID(), "Mark Read Test", "Message", "other", false)
 
-	resp := s.Client.PATCH("/api/v2/notifications/"+notificationID+"/read",
+	resp := s.Client.PATCH("/api/notifications/"+notificationID+"/read",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -354,7 +354,7 @@ func (s *NotificationsTestSuite) TestMarkRead_DoesNotAffectOtherUsersNotificatio
 	otherNotificationID := s.createNotificationViaDB(differentUserID, "Other User Notification", "Message", "other", false)
 
 	// Try to mark it as read as the test user
-	resp := s.Client.PATCH("/api/v2/notifications/"+otherNotificationID+"/read",
+	resp := s.Client.PATCH("/api/notifications/"+otherNotificationID+"/read",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -373,12 +373,12 @@ func (s *NotificationsTestSuite) TestMarkRead_DoesNotAffectOtherUsersNotificatio
 // =============================================================================
 
 func (s *NotificationsTestSuite) TestDismiss_RequiresAuth() {
-	resp := s.Client.DELETE("/api/v2/notifications/some-id/dismiss")
+	resp := s.Client.DELETE("/api/notifications/some-id/dismiss")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *NotificationsTestSuite) TestDismiss_ReturnsNotFoundForInvalidID() {
-	resp := s.Client.DELETE("/api/v2/notifications/00000000-0000-0000-0000-000000000000/dismiss",
+	resp := s.Client.DELETE("/api/notifications/00000000-0000-0000-0000-000000000000/dismiss",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -389,7 +389,7 @@ func (s *NotificationsTestSuite) TestDismiss_DismissesNotification() {
 	// Create notification
 	notificationID := s.createNotificationViaDB(s.testUserID(), "Dismiss Test", "Message", "other", false)
 
-	resp := s.Client.DELETE("/api/v2/notifications/"+notificationID+"/dismiss",
+	resp := s.Client.DELETE("/api/notifications/"+notificationID+"/dismiss",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -418,7 +418,7 @@ func (s *NotificationsTestSuite) TestDismiss_DismissesNotification() {
 // =============================================================================
 
 func (s *NotificationsTestSuite) TestMarkAllRead_RequiresAuth() {
-	resp := s.Client.POST("/api/v2/notifications/mark-all-read")
+	resp := s.Client.POST("/api/notifications/mark-all-read")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
@@ -427,7 +427,7 @@ func (s *NotificationsTestSuite) TestMarkAllRead_ReturnsZeroWhenNoUnread() {
 	s.createNotificationViaDB(s.testUserID(), "Already Read 1", "Message", "other", true)
 	s.createNotificationViaDB(s.testUserID(), "Already Read 2", "Message", "other", true)
 
-	resp := s.Client.POST("/api/v2/notifications/mark-all-read",
+	resp := s.Client.POST("/api/notifications/mark-all-read",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -446,7 +446,7 @@ func (s *NotificationsTestSuite) TestMarkAllRead_MarksAllUnreadAsRead() {
 	n2 := s.createNotificationViaDB(s.testUserID(), "Unread Mark All 2", "Message", "other", false)
 	n3 := s.createNotificationViaDB(s.testUserID(), "Unread Mark All 3", "Message", "other", false)
 
-	resp := s.Client.POST("/api/v2/notifications/mark-all-read",
+	resp := s.Client.POST("/api/notifications/mark-all-read",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -480,7 +480,7 @@ func (s *NotificationsTestSuite) TestMarkAllRead_DoesNotAffectClearedNotificatio
 	// Create regular unread notification
 	s.createNotificationViaDB(s.testUserID(), "Regular Unread", "Message", "other", false)
 
-	resp := s.Client.POST("/api/v2/notifications/mark-all-read",
+	resp := s.Client.POST("/api/notifications/mark-all-read",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
