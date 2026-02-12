@@ -29,7 +29,7 @@ func (s *GraphAnalyticsSuite) SetupTest() {
 func (s *GraphAnalyticsSuite) CreateTestObjects() {
 	for i := 0; i < 5; i++ {
 		rec := s.Client.POST(
-			"/api/v2/graph/objects",
+			"/api/graph/objects",
 			testutil.WithAuth("e2e-test-user"),
 			testutil.WithProjectID(s.ProjectID),
 			testutil.WithJSONBody(map[string]any{
@@ -45,7 +45,7 @@ func (s *GraphAnalyticsSuite) CreateTestObjects() {
 
 func (s *GraphAnalyticsSuite) TestGetMostAccessed_Success() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -58,7 +58,7 @@ func (s *GraphAnalyticsSuite) TestGetMostAccessed_Success() {
 	time.Sleep(100 * time.Millisecond)
 
 	rec = s.Client.GET(
-		"/api/v2/graph/analytics/most-accessed",
+		"/api/graph/analytics/most-accessed",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -84,7 +84,7 @@ func (s *GraphAnalyticsSuite) TestGetMostAccessed_Success() {
 
 func (s *GraphAnalyticsSuite) TestGetMostAccessed_WithLimit() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -97,7 +97,7 @@ func (s *GraphAnalyticsSuite) TestGetMostAccessed_WithLimit() {
 	time.Sleep(100 * time.Millisecond)
 
 	rec = s.Client.GET(
-		"/api/v2/graph/analytics/most-accessed?limit=2",
+		"/api/graph/analytics/most-accessed?limit=2",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -114,7 +114,7 @@ func (s *GraphAnalyticsSuite) TestGetMostAccessed_WithLimit() {
 
 func (s *GraphAnalyticsSuite) TestGetMostAccessed_RequiresAuth() {
 	rec := s.Client.GET(
-		"/api/v2/graph/analytics/most-accessed",
+		"/api/graph/analytics/most-accessed",
 		testutil.WithProjectID(s.ProjectID),
 	)
 
@@ -123,7 +123,7 @@ func (s *GraphAnalyticsSuite) TestGetMostAccessed_RequiresAuth() {
 
 func (s *GraphAnalyticsSuite) TestGetMostAccessed_RequiresProjectID() {
 	rec := s.Client.GET(
-		"/api/v2/graph/analytics/most-accessed",
+		"/api/graph/analytics/most-accessed",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -132,7 +132,7 @@ func (s *GraphAnalyticsSuite) TestGetMostAccessed_RequiresProjectID() {
 
 func (s *GraphAnalyticsSuite) TestGetUnused_Success() {
 	rec := s.Client.GET(
-		"/api/v2/graph/analytics/unused",
+		"/api/graph/analytics/unused",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -159,7 +159,7 @@ func (s *GraphAnalyticsSuite) TestGetUnused_Success() {
 
 func (s *GraphAnalyticsSuite) TestGetUnused_WithDaysThreshold() {
 	rec := s.Client.GET(
-		"/api/v2/graph/analytics/unused?days=7",
+		"/api/graph/analytics/unused?days=7",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -175,7 +175,7 @@ func (s *GraphAnalyticsSuite) TestGetUnused_WithDaysThreshold() {
 
 func (s *GraphAnalyticsSuite) TestGetUnused_ExcludesRecentlyAccessed() {
 	rec := s.Client.POST(
-		"/api/v2/graph/search",
+		"/api/graph/search",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -188,7 +188,7 @@ func (s *GraphAnalyticsSuite) TestGetUnused_ExcludesRecentlyAccessed() {
 	time.Sleep(100 * time.Millisecond)
 
 	rec = s.Client.GET(
-		"/api/v2/graph/analytics/unused?days=1",
+		"/api/graph/analytics/unused?days=1",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -209,7 +209,7 @@ func (s *GraphAnalyticsSuite) TestGetUnused_ExcludesRecentlyAccessed() {
 
 func (s *GraphAnalyticsSuite) TestGetUnused_RequiresAuth() {
 	rec := s.Client.GET(
-		"/api/v2/graph/analytics/unused",
+		"/api/graph/analytics/unused",
 		testutil.WithProjectID(s.ProjectID),
 	)
 
@@ -218,7 +218,7 @@ func (s *GraphAnalyticsSuite) TestGetUnused_RequiresAuth() {
 
 func (s *GraphAnalyticsSuite) TestGetUnused_RequiresProjectID() {
 	rec := s.Client.GET(
-		"/api/v2/graph/analytics/unused",
+		"/api/graph/analytics/unused",
 		testutil.WithAuth("e2e-test-user"),
 	)
 

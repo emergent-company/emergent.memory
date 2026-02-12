@@ -32,7 +32,7 @@ func (s *ChatConversationHistorySuite) TestMultiTurnConversation_BuildsContextSu
 	s.addMessage(conv["id"].(string), "assistant", "I don't have access to weather data.")
 	s.addMessage(conv["id"].(string), "user", "Can you summarize our conversation?")
 
-	resp := s.Client.GET("/api/v2/chat/"+conv["id"].(string),
+	resp := s.Client.GET("/api/chat/"+conv["id"].(string),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -67,7 +67,7 @@ func (s *ChatConversationHistorySuite) TestConversationHistory_Limit() {
 
 	s.addMessage(conv["id"].(string), "user", "Message 11")
 
-	resp := s.Client.GET("/api/v2/chat/"+conv["id"].(string),
+	resp := s.Client.GET("/api/chat/"+conv["id"].(string),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -98,7 +98,7 @@ func (s *ChatConversationHistorySuite) TestConversationHistory_Limit() {
 func (s *ChatConversationHistorySuite) TestConversationHistory_EmptyForFirstMessage() {
 	conv := s.createTestConversation("First Message Test", "Hello")
 
-	resp := s.Client.GET("/api/v2/chat/"+conv["id"].(string),
+	resp := s.Client.GET("/api/chat/"+conv["id"].(string),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -127,7 +127,7 @@ func (s *ChatConversationHistorySuite) TestConversationHistory_ProjectIsolation(
 		"content": "Another message",
 	}
 
-	resp := s.Client.POST("/api/v2/chat/"+conv["id"].(string)+"/messages",
+	resp := s.Client.POST("/api/chat/"+conv["id"].(string)+"/messages",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(project2ID),
 		testutil.WithJSONBody(req),
@@ -141,7 +141,7 @@ func (s *ChatConversationHistorySuite) TestConversationHistory_ChronologicalOrde
 	s.addMessage(conv["id"].(string), "assistant", "Message 2")
 	s.addMessage(conv["id"].(string), "user", "Message 3")
 
-	resp := s.Client.GET("/api/v2/chat/"+conv["id"].(string),
+	resp := s.Client.GET("/api/chat/"+conv["id"].(string),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)
@@ -173,7 +173,7 @@ func (s *ChatConversationHistorySuite) createTestConversation(title, message str
 		"message": message,
 	}
 
-	resp := s.Client.POST("/api/v2/chat/conversations",
+	resp := s.Client.POST("/api/chat/conversations",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),
@@ -194,7 +194,7 @@ func (s *ChatConversationHistorySuite) addMessage(conversationID, role, content 
 		"content": content,
 	}
 
-	resp := s.Client.POST("/api/v2/chat/"+conversationID+"/messages",
+	resp := s.Client.POST("/api/chat/"+conversationID+"/messages",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(req),

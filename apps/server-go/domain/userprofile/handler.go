@@ -29,7 +29,7 @@ func NewHandler(svc *Service) *Handler {
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Profile not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/user/profile [get]
+// @Router       /api/user/profile [get]
 // @Security     bearerAuth
 func (h *Handler) Get(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -56,7 +56,7 @@ func (h *Handler) Get(c echo.Context) error {
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/user/profile [put]
+// @Router       /api/user/profile [put]
 // @Security     bearerAuth
 func (h *Handler) Update(c echo.Context) error {
 	user := auth.GetUser(c)

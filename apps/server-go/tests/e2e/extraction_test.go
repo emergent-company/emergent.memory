@@ -143,7 +143,7 @@ Sarah Johnson is the CEO of Acme Corporation and has been with the company since
 		len(discoveredTypes), len(createdObjects))
 
 	// Verify graph objects were created
-	graphResp := s.Client.GET("/api/v2/graph/objects",
+	graphResp := s.Client.GET("/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 	)

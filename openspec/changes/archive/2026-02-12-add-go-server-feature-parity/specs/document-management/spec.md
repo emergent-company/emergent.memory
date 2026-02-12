@@ -2,7 +2,7 @@
 
 ### Requirement: Batch Document Upload
 
-The system SHALL support uploading multiple documents in a single request via `POST /api/v2/documents/upload/batch`.
+The system SHALL support uploading multiple documents in a single request via `POST /api/documents/upload/batch`.
 
 #### Scenario: Successful batch upload
 

@@ -27,7 +27,7 @@ func (s *TasksTestSuite) SetupSuite() {
 
 // createOrgViaAPI creates an org via API and returns its ID
 func (s *TasksTestSuite) createOrgViaAPI(name string) string {
-	resp := s.Client.POST("/api/v2/orgs",
+	resp := s.Client.POST("/api/orgs",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"name": name,
@@ -79,12 +79,12 @@ func (s *TasksTestSuite) createTaskViaDB(projectID, title, taskType, status stri
 // =============================================================================
 
 func (s *TasksTestSuite) TestList_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/tasks")
+	resp := s.Client.GET("/api/tasks")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *TasksTestSuite) TestList_RequiresProjectID() {
-	resp := s.Client.GET("/api/v2/tasks",
+	resp := s.Client.GET("/api/tasks",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -101,7 +101,7 @@ func (s *TasksTestSuite) TestList_AcceptsProjectIDHeader() {
 	orgID := s.createOrgViaAPI("Task List Test Org")
 	projectID := s.createProjectViaAPI("Task List Test Project", orgID)
 
-	resp := s.Client.GET("/api/v2/tasks",
+	resp := s.Client.GET("/api/tasks",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -114,7 +114,7 @@ func (s *TasksTestSuite) TestList_AcceptsProjectIDQueryParam() {
 	orgID := s.createOrgViaAPI("Task List Query Org")
 	projectID := s.createProjectViaAPI("Task List Query Project", orgID)
 
-	resp := s.Client.GET("/api/v2/tasks?project_id="+projectID,
+	resp := s.Client.GET("/api/tasks?project_id="+projectID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -126,7 +126,7 @@ func (s *TasksTestSuite) TestList_ReturnsEmptyArrayWhenNoTasks() {
 	orgID := s.createOrgViaAPI("Empty Tasks Org")
 	projectID := s.createProjectViaAPI("Empty Tasks Project", orgID)
 
-	resp := s.Client.GET("/api/v2/tasks",
+	resp := s.Client.GET("/api/tasks",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -152,7 +152,7 @@ func (s *TasksTestSuite) TestList_ReturnsTasks() {
 	taskID := s.createTaskViaDB(projectID, "Test Task", "review", "pending")
 	s.Require().NotEmpty(taskID)
 
-	resp := s.Client.GET("/api/v2/tasks",
+	resp := s.Client.GET("/api/tasks",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -192,7 +192,7 @@ func (s *TasksTestSuite) TestList_FiltersByStatus() {
 	s.createTaskViaDB(projectID, "Accepted Task", "review", "accepted")
 
 	// Filter by pending status
-	resp := s.Client.GET("/api/v2/tasks?status=pending",
+	resp := s.Client.GET("/api/tasks?status=pending",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -220,7 +220,7 @@ func (s *TasksTestSuite) TestList_FiltersByType() {
 	s.createTaskViaDB(projectID, "Approval Task", "approval", "pending")
 
 	// Filter by review type
-	resp := s.Client.GET("/api/v2/tasks?type=review",
+	resp := s.Client.GET("/api/tasks?type=review",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -249,7 +249,7 @@ func (s *TasksTestSuite) TestList_SupportsPagination() {
 	}
 
 	// Request with limit
-	resp := s.Client.GET("/api/v2/tasks?limit=2",
+	resp := s.Client.GET("/api/tasks?limit=2",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -270,12 +270,12 @@ func (s *TasksTestSuite) TestList_SupportsPagination() {
 // =============================================================================
 
 func (s *TasksTestSuite) TestGetCounts_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/tasks/counts")
+	resp := s.Client.GET("/api/tasks/counts")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *TasksTestSuite) TestGetCounts_RequiresProjectID() {
-	resp := s.Client.GET("/api/v2/tasks/counts",
+	resp := s.Client.GET("/api/tasks/counts",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -287,7 +287,7 @@ func (s *TasksTestSuite) TestGetCounts_ReturnsZeroCounts() {
 	orgID := s.createOrgViaAPI("Counts Zero Org")
 	projectID := s.createProjectViaAPI("Counts Zero Project", orgID)
 
-	resp := s.Client.GET("/api/v2/tasks/counts",
+	resp := s.Client.GET("/api/tasks/counts",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -314,7 +314,7 @@ func (s *TasksTestSuite) TestGetCounts_ReturnsCorrectCounts() {
 	s.createTaskViaDB(projectID, "Pending 2", "review", "pending")
 	s.createTaskViaDB(projectID, "Accepted 1", "review", "accepted")
 
-	resp := s.Client.GET("/api/v2/tasks/counts",
+	resp := s.Client.GET("/api/tasks/counts",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -334,7 +334,7 @@ func (s *TasksTestSuite) TestGetCounts_ReturnsCorrectCounts() {
 // =============================================================================
 
 func (s *TasksTestSuite) TestListAll_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/tasks/all")
+	resp := s.Client.GET("/api/tasks/all")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
@@ -348,7 +348,7 @@ func (s *TasksTestSuite) TestListAll_ReturnsTasksAcrossProjects() {
 	s.createTaskViaDB(projectID1, "Task in Project 1", "review", "pending")
 	s.createTaskViaDB(projectID2, "Task in Project 2", "review", "pending")
 
-	resp := s.Client.GET("/api/v2/tasks/all",
+	resp := s.Client.GET("/api/tasks/all",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -375,7 +375,7 @@ func (s *TasksTestSuite) TestListAll_ReturnsTasksAcrossProjects() {
 // =============================================================================
 
 func (s *TasksTestSuite) TestGetAllCounts_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/tasks/all/counts")
+	resp := s.Client.GET("/api/tasks/all/counts")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
@@ -389,7 +389,7 @@ func (s *TasksTestSuite) TestGetAllCounts_ReturnsCountsAcrossProjects() {
 	s.createTaskViaDB(projectID1, "Pending in Project 1", "review", "pending")
 	s.createTaskViaDB(projectID2, "Pending in Project 2", "review", "pending")
 
-	resp := s.Client.GET("/api/v2/tasks/all/counts",
+	resp := s.Client.GET("/api/tasks/all/counts",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -408,12 +408,12 @@ func (s *TasksTestSuite) TestGetAllCounts_ReturnsCountsAcrossProjects() {
 // =============================================================================
 
 func (s *TasksTestSuite) TestGetByID_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/tasks/some-id")
+	resp := s.Client.GET("/api/tasks/some-id")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *TasksTestSuite) TestGetByID_RequiresProjectID() {
-	resp := s.Client.GET("/api/v2/tasks/some-id",
+	resp := s.Client.GET("/api/tasks/some-id",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -424,7 +424,7 @@ func (s *TasksTestSuite) TestGetByID_ReturnsNotFoundForInvalidID() {
 	orgID := s.createOrgViaAPI("GetByID NotFound Org")
 	projectID := s.createProjectViaAPI("GetByID NotFound Project", orgID)
 
-	resp := s.Client.GET("/api/v2/tasks/00000000-0000-0000-0000-000000000000",
+	resp := s.Client.GET("/api/tasks/00000000-0000-0000-0000-000000000000",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -438,7 +438,7 @@ func (s *TasksTestSuite) TestGetByID_ReturnsTask() {
 	projectID := s.createProjectViaAPI("GetByID Test Project", orgID)
 	taskID := s.createTaskViaDB(projectID, "Get By ID Task", "review", "pending")
 
-	resp := s.Client.GET("/api/v2/tasks/"+taskID,
+	resp := s.Client.GET("/api/tasks/"+taskID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -461,7 +461,7 @@ func (s *TasksTestSuite) TestGetByID_ReturnsTask() {
 // =============================================================================
 
 func (s *TasksTestSuite) TestResolve_RequiresAuth() {
-	resp := s.Client.POST("/api/v2/tasks/some-id/resolve",
+	resp := s.Client.POST("/api/tasks/some-id/resolve",
 		testutil.WithJSONBody(map[string]any{
 			"resolution": "accepted",
 		}),
@@ -470,7 +470,7 @@ func (s *TasksTestSuite) TestResolve_RequiresAuth() {
 }
 
 func (s *TasksTestSuite) TestResolve_RequiresProjectID() {
-	resp := s.Client.POST("/api/v2/tasks/some-id/resolve",
+	resp := s.Client.POST("/api/tasks/some-id/resolve",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"resolution": "accepted",
@@ -485,7 +485,7 @@ func (s *TasksTestSuite) TestResolve_RequiresValidResolution() {
 	projectID := s.createProjectViaAPI("Resolve Invalid Project", orgID)
 	taskID := s.createTaskViaDB(projectID, "Resolve Invalid Task", "review", "pending")
 
-	resp := s.Client.POST("/api/v2/tasks/"+taskID+"/resolve",
+	resp := s.Client.POST("/api/tasks/"+taskID+"/resolve",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 		testutil.WithJSONBody(map[string]any{
@@ -501,7 +501,7 @@ func (s *TasksTestSuite) TestResolve_AcceptsTask() {
 	projectID := s.createProjectViaAPI("Resolve Accept Project", orgID)
 	taskID := s.createTaskViaDB(projectID, "Accept Task", "review", "pending")
 
-	resp := s.Client.POST("/api/v2/tasks/"+taskID+"/resolve",
+	resp := s.Client.POST("/api/tasks/"+taskID+"/resolve",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 		testutil.WithJSONBody(map[string]any{
@@ -512,7 +512,7 @@ func (s *TasksTestSuite) TestResolve_AcceptsTask() {
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	// Verify the task was updated
-	getResp := s.Client.GET("/api/v2/tasks/"+taskID,
+	getResp := s.Client.GET("/api/tasks/"+taskID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -530,7 +530,7 @@ func (s *TasksTestSuite) TestResolve_RejectsTask() {
 	projectID := s.createProjectViaAPI("Resolve Reject Project", orgID)
 	taskID := s.createTaskViaDB(projectID, "Reject Task", "review", "pending")
 
-	resp := s.Client.POST("/api/v2/tasks/"+taskID+"/resolve",
+	resp := s.Client.POST("/api/tasks/"+taskID+"/resolve",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 		testutil.WithJSONBody(map[string]any{
@@ -542,7 +542,7 @@ func (s *TasksTestSuite) TestResolve_RejectsTask() {
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	// Verify the task was updated
-	getResp := s.Client.GET("/api/v2/tasks/"+taskID,
+	getResp := s.Client.GET("/api/tasks/"+taskID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -561,7 +561,7 @@ func (s *TasksTestSuite) TestResolve_CannotResolveAlreadyResolved() {
 	projectID := s.createProjectViaAPI("Resolve Already Project", orgID)
 	taskID := s.createTaskViaDB(projectID, "Already Resolved Task", "review", "accepted")
 
-	resp := s.Client.POST("/api/v2/tasks/"+taskID+"/resolve",
+	resp := s.Client.POST("/api/tasks/"+taskID+"/resolve",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 		testutil.WithJSONBody(map[string]any{
@@ -577,12 +577,12 @@ func (s *TasksTestSuite) TestResolve_CannotResolveAlreadyResolved() {
 // =============================================================================
 
 func (s *TasksTestSuite) TestCancel_RequiresAuth() {
-	resp := s.Client.POST("/api/v2/tasks/some-id/cancel")
+	resp := s.Client.POST("/api/tasks/some-id/cancel")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *TasksTestSuite) TestCancel_RequiresProjectID() {
-	resp := s.Client.POST("/api/v2/tasks/some-id/cancel",
+	resp := s.Client.POST("/api/tasks/some-id/cancel",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -594,7 +594,7 @@ func (s *TasksTestSuite) TestCancel_CancelsTask() {
 	projectID := s.createProjectViaAPI("Cancel Test Project", orgID)
 	taskID := s.createTaskViaDB(projectID, "Cancel Task", "review", "pending")
 
-	resp := s.Client.POST("/api/v2/tasks/"+taskID+"/cancel",
+	resp := s.Client.POST("/api/tasks/"+taskID+"/cancel",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -602,7 +602,7 @@ func (s *TasksTestSuite) TestCancel_CancelsTask() {
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	// Verify the task was cancelled
-	getResp := s.Client.GET("/api/v2/tasks/"+taskID,
+	getResp := s.Client.GET("/api/tasks/"+taskID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)
@@ -620,7 +620,7 @@ func (s *TasksTestSuite) TestCancel_CannotCancelAlreadyResolved() {
 	projectID := s.createProjectViaAPI("Cancel Already Project", orgID)
 	taskID := s.createTaskViaDB(projectID, "Already Accepted Task", "review", "accepted")
 
-	resp := s.Client.POST("/api/v2/tasks/"+taskID+"/cancel",
+	resp := s.Client.POST("/api/tasks/"+taskID+"/cancel",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(projectID),
 	)

@@ -38,7 +38,7 @@ func (s *SearchTestSuite) createDocumentViaAPI(filename, content string) string 
 		"content":  content,
 	}
 
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -64,7 +64,7 @@ func (s *SearchTestSuite) createTestGraphObject(objType string, key string, prop
 		body["key"] = key
 	}
 
-	resp := s.Client.POST("/api/v2/graph/objects",
+	resp := s.Client.POST("/api/graph/objects",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(body),
@@ -85,7 +85,7 @@ func (s *SearchTestSuite) createTestGraphObject(objType string, key string, prop
 
 func (s *SearchTestSuite) TestUnifiedSearch_RequiresAuth() {
 	// Request without Authorization header should fail
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
 			"query": "test query",
@@ -97,7 +97,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_RequiresAuth() {
 
 func (s *SearchTestSuite) TestUnifiedSearch_RequiresSearchReadScope() {
 	// User without search:read scope should be forbidden
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -118,7 +118,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_RequiresSearchReadScope() {
 
 func (s *SearchTestSuite) TestUnifiedSearch_RequiresProjectID() {
 	// Request without X-Project-ID should fail
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]any{
 			"query": "test query",
@@ -134,7 +134,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_RequiresProjectID() {
 
 func (s *SearchTestSuite) TestUnifiedSearch_RequiresQuery() {
 	// Request without query should fail
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{}),
@@ -158,7 +158,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_QueryTooLong() {
 		longQuery[i] = 'a'
 	}
 
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -175,7 +175,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_QueryTooLong() {
 
 func (s *SearchTestSuite) TestUnifiedSearch_EmptyResults() {
 	// Search with no data in DB should return empty results
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -208,7 +208,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ResultTypesGraph() {
 	s.createDocumentViaAPI(fmt.Sprintf("test-%d.txt", time.Now().UnixNano()), "Some text content about other things")
 
 	// Search with graph-only results
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -238,7 +238,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ResultTypesText() {
 	s.createDocumentViaAPI(fmt.Sprintf("john-doc-%d.txt", time.Now().UnixNano()), "John Doe is mentioned in this text")
 
 	// Search with text-only results
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -265,7 +265,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ResultTypesText() {
 // =============================================================================
 
 func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyWeighted() {
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -284,7 +284,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyWeighted() {
 }
 
 func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyRRF() {
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -303,7 +303,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyRRF() {
 }
 
 func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyInterleave() {
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -322,7 +322,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyInterleave() {
 }
 
 func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyGraphFirst() {
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -341,7 +341,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyGraphFirst() {
 }
 
 func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyTextFirst() {
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -364,7 +364,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyTextFirst() {
 // =============================================================================
 
 func (s *SearchTestSuite) TestUnifiedSearch_CustomWeights() {
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -399,7 +399,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_WithLimit() {
 	}
 
 	// Search with limit
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -424,7 +424,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_WithLimit() {
 
 func (s *SearchTestSuite) TestUnifiedSearch_DebugModeRequiresScope() {
 	// User without search:debug scope requesting debug mode should be forbidden
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -447,7 +447,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_DebugModeRequiresScope() {
 
 func (s *SearchTestSuite) TestUnifiedSearch_DebugModeRequiresScopeViaQueryParam() {
 	// User without search:debug scope should be forbidden even with query param
-	resp := s.Client.POST("/api/v2/search/unified?debug=true",
+	resp := s.Client.POST("/api/search/unified?debug=true",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -460,7 +460,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_DebugModeRequiresScopeViaQueryParam(
 
 func (s *SearchTestSuite) TestUnifiedSearch_DebugModeViaBodyField() {
 	// e2e-test-user has search:debug scope (via GetAllScopes)
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -481,7 +481,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_DebugModeViaBodyField() {
 
 func (s *SearchTestSuite) TestUnifiedSearch_DebugModeViaQueryParam() {
 	// e2e-test-user has search:debug scope
-	resp := s.Client.POST("/api/v2/search/unified?debug=true",
+	resp := s.Client.POST("/api/search/unified?debug=true",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -501,7 +501,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_DebugModeViaQueryParam() {
 
 func (s *SearchTestSuite) TestUnifiedSearch_NoDebugWithoutFlag() {
 	// Request without debug flag should not include debug info
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -524,7 +524,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_NoDebugWithoutFlag() {
 // =============================================================================
 
 func (s *SearchTestSuite) TestUnifiedSearch_IncludesExecutionTime() {
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -555,7 +555,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ReturnsGraphResults() {
 	})
 
 	// Search for content
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -581,7 +581,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ReturnsTextResults() {
 	s.createDocumentViaAPI(fmt.Sprintf("auth-doc-%d.txt", time.Now().UnixNano()), "This document discusses authentication requirements")
 
 	// Search for content
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -609,7 +609,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ReturnsBothResults() {
 	s.createDocumentViaAPI(fmt.Sprintf("security-doc-%d.txt", time.Now().UnixNano()), "This document covers security requirements")
 
 	// Search for content with both result types
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{
@@ -634,7 +634,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ReturnsBothResults() {
 
 func (s *SearchTestSuite) TestUnifiedSearch_DefaultFusionStrategy() {
 	// Search without specifying fusion strategy
-	resp := s.Client.POST("/api/v2/search/unified",
+	resp := s.Client.POST("/api/search/unified",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID(s.ProjectID),
 		testutil.WithJSONBody(map[string]any{

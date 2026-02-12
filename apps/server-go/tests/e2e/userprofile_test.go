@@ -31,14 +31,14 @@ func (s *UserProfileTestSuite) SetupSuite() {
 
 func (s *UserProfileTestSuite) TestGetProfile_RequiresAuth() {
 	// Request without Authorization header should fail
-	resp := s.Client.GET("/api/v2/user/profile")
+	resp := s.Client.GET("/api/user/profile")
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *UserProfileTestSuite) TestGetProfile_Success() {
 	// e2e-test-user maps to AdminUser
-	resp := s.Client.GET("/api/v2/user/profile",
+	resp := s.Client.GET("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -57,7 +57,7 @@ func (s *UserProfileTestSuite) TestGetProfile_Success() {
 }
 
 func (s *UserProfileTestSuite) TestGetProfile_ResponseStructure() {
-	resp := s.Client.GET("/api/v2/user/profile",
+	resp := s.Client.GET("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -84,7 +84,7 @@ func (s *UserProfileTestSuite) TestGetProfile_ResponseStructure() {
 
 func (s *UserProfileTestSuite) TestUpdateProfile_RequiresAuth() {
 	// Request without Authorization header should fail
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithJSON(),
 		testutil.WithBody(`{"firstName": "Updated"}`),
 	)
@@ -93,7 +93,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_RequiresAuth() {
 }
 
 func (s *UserProfileTestSuite) TestUpdateProfile_UpdateFirstName() {
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"firstName": "UpdatedFirst"}`),
@@ -108,7 +108,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_UpdateFirstName() {
 	s.Equal("UpdatedFirst", profile["firstName"])
 
 	// Verify the change persists
-	getResp := s.Client.GET("/api/v2/user/profile",
+	getResp := s.Client.GET("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, getResp.StatusCode)
@@ -120,7 +120,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_UpdateFirstName() {
 }
 
 func (s *UserProfileTestSuite) TestUpdateProfile_UpdateLastName() {
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"lastName": "UpdatedLast"}`),
@@ -136,7 +136,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_UpdateLastName() {
 }
 
 func (s *UserProfileTestSuite) TestUpdateProfile_UpdateDisplayName() {
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"displayName": "Test Display Name"}`),
@@ -152,7 +152,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_UpdateDisplayName() {
 }
 
 func (s *UserProfileTestSuite) TestUpdateProfile_UpdatePhoneE164() {
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"phoneE164": "+15551234567"}`),
@@ -168,7 +168,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_UpdatePhoneE164() {
 }
 
 func (s *UserProfileTestSuite) TestUpdateProfile_UpdateMultipleFields() {
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"firstName": "NewFirst", "lastName": "NewLast", "displayName": "New Display"}`),
@@ -187,7 +187,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_UpdateMultipleFields() {
 
 func (s *UserProfileTestSuite) TestUpdateProfile_RequiresAtLeastOneField() {
 	// Empty body should fail
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{}`),
@@ -206,7 +206,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_RequiresAtLeastOneField() {
 
 func (s *UserProfileTestSuite) TestUpdateProfile_FirstNameTooLong() {
 	longName := strings.Repeat("a", 101)
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"firstName": "`+longName+`"}`),
@@ -225,7 +225,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_FirstNameTooLong() {
 
 func (s *UserProfileTestSuite) TestUpdateProfile_LastNameTooLong() {
 	longName := strings.Repeat("b", 101)
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"lastName": "`+longName+`"}`),
@@ -244,7 +244,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_LastNameTooLong() {
 
 func (s *UserProfileTestSuite) TestUpdateProfile_DisplayNameTooLong() {
 	longName := strings.Repeat("c", 201)
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"displayName": "`+longName+`"}`),
@@ -263,7 +263,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_DisplayNameTooLong() {
 
 func (s *UserProfileTestSuite) TestUpdateProfile_PhoneTooLong() {
 	longPhone := strings.Repeat("1", 21)
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"phoneE164": "`+longPhone+`"}`),
@@ -281,7 +281,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_PhoneTooLong() {
 }
 
 func (s *UserProfileTestSuite) TestUpdateProfile_InvalidJSON() {
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{invalid json`),
@@ -292,7 +292,7 @@ func (s *UserProfileTestSuite) TestUpdateProfile_InvalidJSON() {
 
 func (s *UserProfileTestSuite) TestUpdateProfile_EmptyFirstName() {
 	// Setting firstName to empty string is allowed (updates to empty)
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"firstName": ""}`),
@@ -304,14 +304,14 @@ func (s *UserProfileTestSuite) TestUpdateProfile_EmptyFirstName() {
 
 func (s *UserProfileTestSuite) TestUpdateProfile_NullFieldsIgnored() {
 	// First update to set a displayName
-	s.Client.PUT("/api/v2/user/profile",
+	s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"displayName": "Keep This"}`),
 	)
 
 	// Update firstName only - displayName should remain unchanged
-	resp := s.Client.PUT("/api/v2/user/profile",
+	resp := s.Client.PUT("/api/user/profile",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
 		testutil.WithBody(`{"firstName": "NewFirst"}`),

@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -9,9 +11,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent/emergent-core/domain/search"
 	"github.com/emergent/emergent-core/pkg/apperror"
 	"github.com/emergent/emergent-core/pkg/auth"
 	"github.com/emergent/emergent-core/pkg/llm/vertex"
+	"github.com/emergent/emergent-core/pkg/logger"
 	"github.com/emergent/emergent-core/pkg/sse"
 )
 
@@ -19,14 +23,21 @@ import (
 type Handler struct {
 	svc       *Service
 	llmClient *vertex.Client
+	searchSvc *search.Service
+	log       *slog.Logger
 }
 
 // NewHandler creates a new chat handler
-func NewHandler(svc *Service, llmClient *vertex.Client) *Handler {
-	return &Handler{svc: svc, llmClient: llmClient}
+func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, log *slog.Logger) *Handler {
+	return &Handler{
+		svc:       svc,
+		llmClient: llmClient,
+		searchSvc: searchSvc,
+		log:       log.With(logger.Scope("chat.handler")),
+	}
 }
 
-// ListConversations handles GET /api/v2/chat/conversations
+// ListConversations handles GET /api/chat/conversations
 // @Summary      List chat conversations
 // @Description  Returns all chat conversations for the current project with pagination support
 // @Tags         chat
@@ -38,7 +49,7 @@ func NewHandler(svc *Service, llmClient *vertex.Client) *Handler {
 // @Failure      400 {object} apperror.Error "Invalid parameters"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/chat/conversations [get]
+// @Router       /api/chat/conversations [get]
 // @Security     bearerAuth
 func (h *Handler) ListConversations(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -78,7 +89,7 @@ func (h *Handler) ListConversations(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
-// GetConversation handles GET /api/v2/chat/:id
+// GetConversation handles GET /api/chat/:id
 // @Summary      Get conversation with messages
 // @Description  Returns a single conversation with all its messages
 // @Tags         chat
@@ -90,7 +101,7 @@ func (h *Handler) ListConversations(c echo.Context) error {
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Conversation not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/chat/{id} [get]
+// @Router       /api/chat/{id} [get]
 // @Security     bearerAuth
 func (h *Handler) GetConversation(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -116,7 +127,7 @@ func (h *Handler) GetConversation(c echo.Context) error {
 	return c.JSON(http.StatusOK, conv)
 }
 
-// CreateConversation handles POST /api/v2/chat/conversations
+// CreateConversation handles POST /api/chat/conversations
 // @Summary      Create conversation
 // @Description  Creates a new chat conversation with an initial message
 // @Tags         chat
@@ -128,7 +139,7 @@ func (h *Handler) GetConversation(c echo.Context) error {
 // @Failure      400 {object} apperror.Error "Invalid request body"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/chat/conversations [post]
+// @Router       /api/chat/conversations [post]
 // @Security     bearerAuth
 func (h *Handler) CreateConversation(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -159,7 +170,7 @@ func (h *Handler) CreateConversation(c echo.Context) error {
 	return c.JSON(http.StatusCreated, conv)
 }
 
-// UpdateConversation handles PATCH /api/v2/chat/:id
+// UpdateConversation handles PATCH /api/chat/:id
 // @Summary      Update conversation
 // @Description  Updates conversation properties (title, draft text)
 // @Tags         chat
@@ -173,7 +184,7 @@ func (h *Handler) CreateConversation(c echo.Context) error {
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Conversation not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/chat/{id} [patch]
+// @Router       /api/chat/{id} [patch]
 // @Security     bearerAuth
 func (h *Handler) UpdateConversation(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -208,7 +219,7 @@ func (h *Handler) UpdateConversation(c echo.Context) error {
 	return c.JSON(http.StatusOK, conv)
 }
 
-// DeleteConversation handles DELETE /api/v2/chat/:id
+// DeleteConversation handles DELETE /api/chat/:id
 // @Summary      Delete conversation
 // @Description  Permanently deletes a conversation and all its messages
 // @Tags         chat
@@ -220,7 +231,7 @@ func (h *Handler) UpdateConversation(c echo.Context) error {
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Conversation not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/chat/{id} [delete]
+// @Router       /api/chat/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) DeleteConversation(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -244,7 +255,7 @@ func (h *Handler) DeleteConversation(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-// AddMessage handles POST /api/v2/chat/:id/messages
+// AddMessage handles POST /api/chat/:id/messages
 // @Summary      Add message to conversation
 // @Description  Adds a new message to an existing conversation
 // @Tags         chat
@@ -258,7 +269,7 @@ func (h *Handler) DeleteConversation(c echo.Context) error {
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Conversation not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/chat/{id}/messages [post]
+// @Router       /api/chat/{id}/messages [post]
 // @Security     bearerAuth
 func (h *Handler) AddMessage(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -364,7 +375,7 @@ func validateStreamRequest(req *StreamRequest) error {
 	return nil
 }
 
-// StreamChat handles POST /api/v2/chat/stream
+// StreamChat handles POST /api/chat/stream
 // This is the SSE streaming endpoint for chat completions
 // @Summary      Stream chat completion
 // @Description  Streams AI chat responses using Server-Sent Events (SSE). Creates or continues a conversation with streaming token delivery.
@@ -377,7 +388,7 @@ func validateStreamRequest(req *StreamRequest) error {
 // @Failure      400 {object} apperror.Error "Invalid request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v2/chat/stream [post]
+// @Router       /api/chat/stream [post]
 // @Security     bearerAuth
 func (h *Handler) StreamChat(c echo.Context) error {
 	user := auth.GetUser(c)
@@ -478,10 +489,40 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		return nil
 	}
 
+	// RAG: search knowledge graph for context (non-blocking — failure doesn't prevent chat)
+	var searchResults *search.UnifiedSearchResponse
+	if h.searchSvc != nil {
+		projectUUID, parseErr := uuid.Parse(user.ProjectID)
+		if parseErr == nil {
+			res, searchErr := h.searchSvc.Search(ctx, projectUUID, &search.UnifiedSearchRequest{
+				Query: message,
+				Limit: 10,
+			}, nil)
+			if searchErr != nil {
+				h.log.Warn("RAG search failed, continuing without context",
+					slog.String("error", searchErr.Error()),
+				)
+			} else {
+				searchResults = res
+			}
+		}
+	}
+
 	// Build prompt
 	systemPrompt := os.Getenv("CHAT_SYSTEM_PROMPT")
 	if systemPrompt == "" {
 		systemPrompt = "You are a helpful assistant specialized in knowledge graphs and data schemas. Answer questions clearly using markdown formatting."
+	}
+
+	var retrievalCtx json.RawMessage
+	if searchResults != nil && len(searchResults.Results) > 0 {
+		contextStr := h.formatSearchContext(searchResults.Results)
+		if contextStr != "" {
+			systemPrompt += "\n\n## Relevant Knowledge\nUse the following information to help answer the user's question:\n" + contextStr
+		}
+		if raw, err := json.Marshal(searchResults.Results); err == nil {
+			retrievalCtx = raw
+		}
 	}
 
 	// Stream tokens from LLM
@@ -502,8 +543,9 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		go func() {
 			// Use a background context since the request context may be cancelled
 			_, _ = h.svc.AddMessage(ctx, user.ProjectID, convID, AddMessageRequest{
-				Role:    RoleAssistant,
-				Content: fullResponse.String(),
+				Role:             RoleAssistant,
+				Content:          fullResponse.String(),
+				RetrievalContext: retrievalCtx,
 			})
 		}()
 	}
@@ -513,4 +555,74 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	sseWriter.Close()
 
 	return nil
+}
+
+func (h *Handler) formatSearchContext(results []search.UnifiedSearchResultItem) string {
+	if len(results) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for i, item := range results {
+		switch item.Type {
+		case search.ItemTypeGraph:
+			b.WriteString("- **")
+			b.WriteString(item.ObjectType)
+			b.WriteString("**: ")
+			b.WriteString(item.Key)
+			if len(item.Fields) > 0 {
+				b.WriteString(" — ")
+				fieldIdx := 0
+				for k, v := range item.Fields {
+					if fieldIdx > 0 {
+						b.WriteString(", ")
+					}
+					b.WriteString(k)
+					b.WriteString("=")
+					b.WriteString(formatFieldValue(v))
+					fieldIdx++
+					if fieldIdx >= 5 {
+						break
+					}
+				}
+			}
+		case search.ItemTypeRelationship:
+			b.WriteString("- ")
+			b.WriteString(item.TripletText)
+		case search.ItemTypeText:
+			snippet := item.Snippet
+			if len(snippet) > 300 {
+				snippet = snippet[:300] + "…"
+			}
+			b.WriteString("- ")
+			b.WriteString(snippet)
+		}
+		if i < len(results)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+func formatFieldValue(v any) string {
+	if v == nil {
+		return "null"
+	}
+	switch val := v.(type) {
+	case string:
+		if len(val) > 100 {
+			return val[:100] + "…"
+		}
+		return val
+	default:
+		raw, err := json.Marshal(val)
+		if err != nil {
+			return "?"
+		}
+		s := string(raw)
+		if len(s) > 100 {
+			return s[:100] + "…"
+		}
+		return s
+	}
 }

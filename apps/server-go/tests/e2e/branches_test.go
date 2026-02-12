@@ -77,7 +77,7 @@ func (s *BranchesTestSuite) uniqueName(prefix string) string {
 // =============================================================================
 
 func (s *BranchesTestSuite) TestList_RequiresAuth() {
-	resp := s.client.GET("/api/v2/graph/branches")
+	resp := s.client.GET("/api/graph/branches")
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
@@ -85,7 +85,7 @@ func (s *BranchesTestSuite) TestList_RequiresAuth() {
 func (s *BranchesTestSuite) TestList_RequiresGraphReadScope() {
 	// User without graph:read scope should be forbidden
 	// "with-scope" has documents:read, documents:write, project:read but NOT graph:read
-	resp := s.client.GET("/api/v2/graph/branches",
+	resp := s.client.GET("/api/graph/branches",
 		testutil.WithAuth("with-scope"),
 	)
 
@@ -94,7 +94,7 @@ func (s *BranchesTestSuite) TestList_RequiresGraphReadScope() {
 
 func (s *BranchesTestSuite) TestList_AllowsOptionalProjectID() {
 	// List without project_id should work
-	resp := s.client.GET("/api/v2/graph/branches",
+	resp := s.client.GET("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -108,7 +108,7 @@ func (s *BranchesTestSuite) TestList_AllowsOptionalProjectID() {
 }
 
 func (s *BranchesTestSuite) TestList_FiltersByProjectID() {
-	resp := s.client.GET("/api/v2/graph/branches?project_id="+s.dummyProjectID,
+	resp := s.client.GET("/api/graph/branches?project_id="+s.dummyProjectID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -121,7 +121,7 @@ func (s *BranchesTestSuite) TestList_FiltersByProjectID() {
 }
 
 func (s *BranchesTestSuite) TestList_RejectsInvalidProjectID() {
-	resp := s.client.GET("/api/v2/graph/branches?project_id=not-a-uuid",
+	resp := s.client.GET("/api/graph/branches?project_id=not-a-uuid",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -134,14 +134,14 @@ func (s *BranchesTestSuite) TestList_RejectsInvalidProjectID() {
 
 func (s *BranchesTestSuite) TestGetByID_RequiresAuth() {
 	branchID := "00000000-0000-0000-0000-000000000001"
-	resp := s.client.GET("/api/v2/graph/branches/" + branchID)
+	resp := s.client.GET("/api/graph/branches/" + branchID)
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *BranchesTestSuite) TestGetByID_RequiresGraphReadScope() {
 	branchID := "00000000-0000-0000-0000-000000000001"
-	resp := s.client.GET("/api/v2/graph/branches/"+branchID,
+	resp := s.client.GET("/api/graph/branches/"+branchID,
 		testutil.WithAuth("with-scope"),
 	)
 
@@ -150,7 +150,7 @@ func (s *BranchesTestSuite) TestGetByID_RequiresGraphReadScope() {
 
 func (s *BranchesTestSuite) TestGetByID_Returns404ForNonExistent() {
 	branchID := "00000000-0000-0000-0000-000000000099"
-	resp := s.client.GET("/api/v2/graph/branches/"+branchID,
+	resp := s.client.GET("/api/graph/branches/"+branchID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -158,7 +158,7 @@ func (s *BranchesTestSuite) TestGetByID_Returns404ForNonExistent() {
 }
 
 func (s *BranchesTestSuite) TestGetByID_RejectsInvalidUUID() {
-	resp := s.client.GET("/api/v2/graph/branches/not-a-uuid",
+	resp := s.client.GET("/api/graph/branches/not-a-uuid",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -174,7 +174,7 @@ func (s *BranchesTestSuite) TestCreate_RequiresAuth() {
 		"name": "test-branch",
 	}
 
-	resp := s.client.POST("/api/v2/graph/branches",
+	resp := s.client.POST("/api/graph/branches",
 		testutil.WithJSONBody(body),
 	)
 
@@ -187,7 +187,7 @@ func (s *BranchesTestSuite) TestCreate_RequiresGraphWriteScope() {
 	}
 
 	// read-only user has graph:read but NOT graph:write
-	resp := s.client.POST("/api/v2/graph/branches",
+	resp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("read-only"),
 		testutil.WithJSONBody(body),
 	)
@@ -200,7 +200,7 @@ func (s *BranchesTestSuite) TestCreate_RequiresName() {
 		"project_id": s.dummyProjectID,
 	}
 
-	resp := s.client.POST("/api/v2/graph/branches",
+	resp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -221,7 +221,7 @@ func (s *BranchesTestSuite) TestCreate_RejectsEmptyName() {
 		"name": "",
 	}
 
-	resp := s.client.POST("/api/v2/graph/branches",
+	resp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -235,7 +235,7 @@ func (s *BranchesTestSuite) TestCreate_RejectsInvalidProjectID() {
 		"project_id": "not-a-uuid",
 	}
 
-	resp := s.client.POST("/api/v2/graph/branches",
+	resp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -249,7 +249,7 @@ func (s *BranchesTestSuite) TestCreate_RejectsInvalidParentBranchID() {
 		"parent_branch_id": "not-a-uuid",
 	}
 
-	resp := s.client.POST("/api/v2/graph/branches",
+	resp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -263,7 +263,7 @@ func (s *BranchesTestSuite) TestCreate_SuccessWithNameOnly() {
 		"name": name,
 	}
 
-	resp := s.client.POST("/api/v2/graph/branches",
+	resp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -288,7 +288,7 @@ func (s *BranchesTestSuite) TestCreate_SuccessWithProjectID() {
 		"name": name,
 	}
 
-	resp := s.client.POST("/api/v2/graph/branches",
+	resp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -312,14 +312,14 @@ func (s *BranchesTestSuite) TestCreate_RejectsDuplicateNameSameProject() {
 	}
 
 	// Create first branch
-	resp1 := s.client.POST("/api/v2/graph/branches",
+	resp1 := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
 	s.Equal(http.StatusCreated, resp1.StatusCode)
 
 	// Try to create second branch with same name and null project
-	resp2 := s.client.POST("/api/v2/graph/branches",
+	resp2 := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -336,7 +336,7 @@ func (s *BranchesTestSuite) TestUpdate_RequiresAuth() {
 		"name": "updated-name",
 	}
 
-	resp := s.client.PATCH("/api/v2/graph/branches/"+branchID,
+	resp := s.client.PATCH("/api/graph/branches/"+branchID,
 		testutil.WithJSONBody(body),
 	)
 
@@ -349,7 +349,7 @@ func (s *BranchesTestSuite) TestUpdate_RequiresGraphWriteScope() {
 		"name": "updated-name",
 	}
 
-	resp := s.client.PATCH("/api/v2/graph/branches/"+branchID,
+	resp := s.client.PATCH("/api/graph/branches/"+branchID,
 		testutil.WithAuth("read-only"),
 		testutil.WithJSONBody(body),
 	)
@@ -363,7 +363,7 @@ func (s *BranchesTestSuite) TestUpdate_Returns404ForNonExistent() {
 		"name": "updated-name",
 	}
 
-	resp := s.client.PATCH("/api/v2/graph/branches/"+branchID,
+	resp := s.client.PATCH("/api/graph/branches/"+branchID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -376,7 +376,7 @@ func (s *BranchesTestSuite) TestUpdate_RejectsInvalidUUID() {
 		"name": "updated-name",
 	}
 
-	resp := s.client.PATCH("/api/v2/graph/branches/not-a-uuid",
+	resp := s.client.PATCH("/api/graph/branches/not-a-uuid",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -389,7 +389,7 @@ func (s *BranchesTestSuite) TestUpdate_RejectsEmptyName() {
 	createBody := map[string]any{
 		"name": s.uniqueName("branch-to-update"),
 	}
-	createResp := s.client.POST("/api/v2/graph/branches",
+	createResp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(createBody),
 	)
@@ -404,7 +404,7 @@ func (s *BranchesTestSuite) TestUpdate_RejectsEmptyName() {
 	updateBody := map[string]any{
 		"name": "",
 	}
-	resp := s.client.PATCH("/api/v2/graph/branches/"+branchID,
+	resp := s.client.PATCH("/api/graph/branches/"+branchID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(updateBody),
 	)
@@ -418,7 +418,7 @@ func (s *BranchesTestSuite) TestUpdate_Success() {
 	createBody := map[string]any{
 		"name": originalName,
 	}
-	createResp := s.client.POST("/api/v2/graph/branches",
+	createResp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(createBody),
 	)
@@ -434,7 +434,7 @@ func (s *BranchesTestSuite) TestUpdate_Success() {
 	updateBody := map[string]any{
 		"name": updatedName,
 	}
-	resp := s.client.PATCH("/api/v2/graph/branches/"+branchID,
+	resp := s.client.PATCH("/api/graph/branches/"+branchID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(updateBody),
 	)
@@ -454,14 +454,14 @@ func (s *BranchesTestSuite) TestUpdate_Success() {
 
 func (s *BranchesTestSuite) TestDelete_RequiresAuth() {
 	branchID := "00000000-0000-0000-0000-000000000001"
-	resp := s.client.DELETE("/api/v2/graph/branches/" + branchID)
+	resp := s.client.DELETE("/api/graph/branches/" + branchID)
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *BranchesTestSuite) TestDelete_RequiresGraphWriteScope() {
 	branchID := "00000000-0000-0000-0000-000000000001"
-	resp := s.client.DELETE("/api/v2/graph/branches/"+branchID,
+	resp := s.client.DELETE("/api/graph/branches/"+branchID,
 		testutil.WithAuth("read-only"),
 	)
 
@@ -470,7 +470,7 @@ func (s *BranchesTestSuite) TestDelete_RequiresGraphWriteScope() {
 
 func (s *BranchesTestSuite) TestDelete_Returns404ForNonExistent() {
 	branchID := "00000000-0000-0000-0000-000000000099"
-	resp := s.client.DELETE("/api/v2/graph/branches/"+branchID,
+	resp := s.client.DELETE("/api/graph/branches/"+branchID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -478,7 +478,7 @@ func (s *BranchesTestSuite) TestDelete_Returns404ForNonExistent() {
 }
 
 func (s *BranchesTestSuite) TestDelete_RejectsInvalidUUID() {
-	resp := s.client.DELETE("/api/v2/graph/branches/not-a-uuid",
+	resp := s.client.DELETE("/api/graph/branches/not-a-uuid",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -490,7 +490,7 @@ func (s *BranchesTestSuite) TestDelete_Success() {
 	createBody := map[string]any{
 		"name": s.uniqueName("branch-to-delete"),
 	}
-	createResp := s.client.POST("/api/v2/graph/branches",
+	createResp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(createBody),
 	)
@@ -502,14 +502,14 @@ func (s *BranchesTestSuite) TestDelete_Success() {
 	branchID := created["id"].(string)
 
 	// Delete the branch
-	resp := s.client.DELETE("/api/v2/graph/branches/"+branchID,
+	resp := s.client.DELETE("/api/graph/branches/"+branchID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
 	s.Equal(http.StatusNoContent, resp.StatusCode)
 
 	// Verify it's deleted
-	getResp := s.client.GET("/api/v2/graph/branches/"+branchID,
+	getResp := s.client.GET("/api/graph/branches/"+branchID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusNotFound, getResp.StatusCode)
@@ -525,7 +525,7 @@ func (s *BranchesTestSuite) TestCRUD_FullLifecycle() {
 	createBody := map[string]any{
 		"name": branchName,
 	}
-	createResp := s.client.POST("/api/v2/graph/branches",
+	createResp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(createBody),
 	)
@@ -539,7 +539,7 @@ func (s *BranchesTestSuite) TestCRUD_FullLifecycle() {
 	s.Equal(branchName, created["name"])
 
 	// 2. Read the branch
-	getResp := s.client.GET("/api/v2/graph/branches/"+branchID,
+	getResp := s.client.GET("/api/graph/branches/"+branchID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, getResp.StatusCode)
@@ -551,7 +551,7 @@ func (s *BranchesTestSuite) TestCRUD_FullLifecycle() {
 	s.Equal(branchName, fetched["name"])
 
 	// 3. List and find the branch (list all, no project filter)
-	listResp := s.client.GET("/api/v2/graph/branches",
+	listResp := s.client.GET("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, listResp.StatusCode)
@@ -574,7 +574,7 @@ func (s *BranchesTestSuite) TestCRUD_FullLifecycle() {
 	updateBody := map[string]any{
 		"name": updatedName,
 	}
-	updateResp := s.client.PATCH("/api/v2/graph/branches/"+branchID,
+	updateResp := s.client.PATCH("/api/graph/branches/"+branchID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(updateBody),
 	)
@@ -586,13 +586,13 @@ func (s *BranchesTestSuite) TestCRUD_FullLifecycle() {
 	s.Equal(updatedName, updated["name"])
 
 	// 5. Delete the branch
-	deleteResp := s.client.DELETE("/api/v2/graph/branches/"+branchID,
+	deleteResp := s.client.DELETE("/api/graph/branches/"+branchID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusNoContent, deleteResp.StatusCode)
 
 	// 6. Verify deletion
-	verifyResp := s.client.GET("/api/v2/graph/branches/"+branchID,
+	verifyResp := s.client.GET("/api/graph/branches/"+branchID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusNotFound, verifyResp.StatusCode)
@@ -607,7 +607,7 @@ func (s *BranchesTestSuite) TestCreate_WithParentBranch() {
 	parentBody := map[string]any{
 		"name": s.uniqueName("parent-branch"),
 	}
-	parentResp := s.client.POST("/api/v2/graph/branches",
+	parentResp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(parentBody),
 	)
@@ -623,7 +623,7 @@ func (s *BranchesTestSuite) TestCreate_WithParentBranch() {
 		"name":             s.uniqueName("child-branch"),
 		"parent_branch_id": parentID,
 	}
-	childResp := s.client.POST("/api/v2/graph/branches",
+	childResp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(childBody),
 	)
@@ -644,7 +644,7 @@ func (s *BranchesTestSuite) TestCreate_RejectsNonExistentParentBranch() {
 		"parent_branch_id": nonExistentID,
 	}
 
-	resp := s.client.POST("/api/v2/graph/branches",
+	resp := s.client.POST("/api/graph/branches",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)

@@ -70,7 +70,7 @@ func (s *EmbeddingPoliciesTestSuite) SetupTest() {
 // =============================================================================
 
 func (s *EmbeddingPoliciesTestSuite) TestList_RequiresAuth() {
-	resp := s.client.GET("/api/v2/graph/embedding-policies?project_id=" + s.dummyProjectID)
+	resp := s.client.GET("/api/graph/embedding-policies?project_id=" + s.dummyProjectID)
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
@@ -78,7 +78,7 @@ func (s *EmbeddingPoliciesTestSuite) TestList_RequiresAuth() {
 func (s *EmbeddingPoliciesTestSuite) TestList_RequiresGraphReadScope() {
 	// User without graph:read scope should be forbidden
 	// "with-scope" has documents:read, documents:write, project:read but NOT graph:read
-	resp := s.client.GET("/api/v2/graph/embedding-policies?project_id="+s.dummyProjectID,
+	resp := s.client.GET("/api/graph/embedding-policies?project_id="+s.dummyProjectID,
 		testutil.WithAuth("with-scope"),
 	)
 
@@ -86,7 +86,7 @@ func (s *EmbeddingPoliciesTestSuite) TestList_RequiresGraphReadScope() {
 }
 
 func (s *EmbeddingPoliciesTestSuite) TestList_RequiresProjectID() {
-	resp := s.client.GET("/api/v2/graph/embedding-policies",
+	resp := s.client.GET("/api/graph/embedding-policies",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -102,7 +102,7 @@ func (s *EmbeddingPoliciesTestSuite) TestList_RequiresProjectID() {
 }
 
 func (s *EmbeddingPoliciesTestSuite) TestList_ReturnsEmptyArrayForNewProject() {
-	resp := s.client.GET("/api/v2/graph/embedding-policies?project_id="+s.dummyProjectID,
+	resp := s.client.GET("/api/graph/embedding-policies?project_id="+s.dummyProjectID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -124,7 +124,7 @@ func (s *EmbeddingPoliciesTestSuite) TestCreate_RequiresAuth() {
 		"objectType": "TestType",
 	}
 
-	resp := s.client.POST("/api/v2/graph/embedding-policies",
+	resp := s.client.POST("/api/graph/embedding-policies",
 		testutil.WithJSONBody(body),
 	)
 
@@ -138,7 +138,7 @@ func (s *EmbeddingPoliciesTestSuite) TestCreate_RequiresGraphWriteScope() {
 	}
 
 	// User without graph:write scope should be forbidden
-	resp := s.client.POST("/api/v2/graph/embedding-policies",
+	resp := s.client.POST("/api/graph/embedding-policies",
 		testutil.WithAuth("read-only"),
 		testutil.WithJSONBody(body),
 	)
@@ -151,7 +151,7 @@ func (s *EmbeddingPoliciesTestSuite) TestCreate_RequiresProjectID() {
 		"objectType": "TestType",
 	}
 
-	resp := s.client.POST("/api/v2/graph/embedding-policies",
+	resp := s.client.POST("/api/graph/embedding-policies",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -172,7 +172,7 @@ func (s *EmbeddingPoliciesTestSuite) TestCreate_RequiresObjectType() {
 		"projectId": s.dummyProjectID,
 	}
 
-	resp := s.client.POST("/api/v2/graph/embedding-policies",
+	resp := s.client.POST("/api/graph/embedding-policies",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -194,7 +194,7 @@ func (s *EmbeddingPoliciesTestSuite) TestCreate_RejectsInvalidProjectID() {
 		"objectType": "TestType",
 	}
 
-	resp := s.client.POST("/api/v2/graph/embedding-policies",
+	resp := s.client.POST("/api/graph/embedding-policies",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -209,7 +209,7 @@ func (s *EmbeddingPoliciesTestSuite) TestCreate_RejectsNegativeMaxPropertySize()
 		"maxPropertySize": -1,
 	}
 
-	resp := s.client.POST("/api/v2/graph/embedding-policies",
+	resp := s.client.POST("/api/graph/embedding-policies",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -231,14 +231,14 @@ func (s *EmbeddingPoliciesTestSuite) TestCreate_RejectsNegativeMaxPropertySize()
 
 func (s *EmbeddingPoliciesTestSuite) TestGetByID_RequiresAuth() {
 	policyID := "00000000-0000-0000-0000-000000000001"
-	resp := s.client.GET("/api/v2/graph/embedding-policies/" + policyID + "?project_id=" + s.dummyProjectID)
+	resp := s.client.GET("/api/graph/embedding-policies/" + policyID + "?project_id=" + s.dummyProjectID)
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *EmbeddingPoliciesTestSuite) TestGetByID_RequiresProjectID() {
 	policyID := "00000000-0000-0000-0000-000000000001"
-	resp := s.client.GET("/api/v2/graph/embedding-policies/"+policyID,
+	resp := s.client.GET("/api/graph/embedding-policies/"+policyID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -247,7 +247,7 @@ func (s *EmbeddingPoliciesTestSuite) TestGetByID_RequiresProjectID() {
 
 func (s *EmbeddingPoliciesTestSuite) TestGetByID_Returns404ForNonExistent() {
 	policyID := "00000000-0000-0000-0000-000000000099"
-	resp := s.client.GET("/api/v2/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
+	resp := s.client.GET("/api/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -255,7 +255,7 @@ func (s *EmbeddingPoliciesTestSuite) TestGetByID_Returns404ForNonExistent() {
 }
 
 func (s *EmbeddingPoliciesTestSuite) TestGetByID_RejectsInvalidUUID() {
-	resp := s.client.GET("/api/v2/graph/embedding-policies/not-a-uuid?project_id="+s.dummyProjectID,
+	resp := s.client.GET("/api/graph/embedding-policies/not-a-uuid?project_id="+s.dummyProjectID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -272,7 +272,7 @@ func (s *EmbeddingPoliciesTestSuite) TestUpdate_RequiresAuth() {
 		"enabled": false,
 	}
 
-	resp := s.client.PATCH("/api/v2/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
+	resp := s.client.PATCH("/api/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
 		testutil.WithJSONBody(body),
 	)
 
@@ -285,7 +285,7 @@ func (s *EmbeddingPoliciesTestSuite) TestUpdate_RequiresGraphWriteScope() {
 		"enabled": false,
 	}
 
-	resp := s.client.PATCH("/api/v2/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
+	resp := s.client.PATCH("/api/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
 		testutil.WithAuth("read-only"),
 		testutil.WithJSONBody(body),
 	)
@@ -299,7 +299,7 @@ func (s *EmbeddingPoliciesTestSuite) TestUpdate_RequiresProjectID() {
 		"enabled": false,
 	}
 
-	resp := s.client.PATCH("/api/v2/graph/embedding-policies/"+policyID,
+	resp := s.client.PATCH("/api/graph/embedding-policies/"+policyID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -313,7 +313,7 @@ func (s *EmbeddingPoliciesTestSuite) TestUpdate_Returns404ForNonExistent() {
 		"enabled": false,
 	}
 
-	resp := s.client.PATCH("/api/v2/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
+	resp := s.client.PATCH("/api/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -327,7 +327,7 @@ func (s *EmbeddingPoliciesTestSuite) TestUpdate_RejectsInvalidMaxPropertySize() 
 		"maxPropertySize": 0,
 	}
 
-	resp := s.client.PATCH("/api/v2/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
+	resp := s.client.PATCH("/api/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(body),
 	)
@@ -341,14 +341,14 @@ func (s *EmbeddingPoliciesTestSuite) TestUpdate_RejectsInvalidMaxPropertySize() 
 
 func (s *EmbeddingPoliciesTestSuite) TestDelete_RequiresAuth() {
 	policyID := "00000000-0000-0000-0000-000000000001"
-	resp := s.client.DELETE("/api/v2/graph/embedding-policies/" + policyID + "?project_id=" + s.dummyProjectID)
+	resp := s.client.DELETE("/api/graph/embedding-policies/" + policyID + "?project_id=" + s.dummyProjectID)
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *EmbeddingPoliciesTestSuite) TestDelete_RequiresGraphWriteScope() {
 	policyID := "00000000-0000-0000-0000-000000000001"
-	resp := s.client.DELETE("/api/v2/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
+	resp := s.client.DELETE("/api/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
 		testutil.WithAuth("read-only"),
 	)
 
@@ -357,7 +357,7 @@ func (s *EmbeddingPoliciesTestSuite) TestDelete_RequiresGraphWriteScope() {
 
 func (s *EmbeddingPoliciesTestSuite) TestDelete_RequiresProjectID() {
 	policyID := "00000000-0000-0000-0000-000000000001"
-	resp := s.client.DELETE("/api/v2/graph/embedding-policies/"+policyID,
+	resp := s.client.DELETE("/api/graph/embedding-policies/"+policyID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -366,7 +366,7 @@ func (s *EmbeddingPoliciesTestSuite) TestDelete_RequiresProjectID() {
 
 func (s *EmbeddingPoliciesTestSuite) TestDelete_Returns404ForNonExistent() {
 	policyID := "00000000-0000-0000-0000-000000000099"
-	resp := s.client.DELETE("/api/v2/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
+	resp := s.client.DELETE("/api/graph/embedding-policies/"+policyID+"?project_id="+s.dummyProjectID,
 		testutil.WithAuth("e2e-test-user"),
 	)
 

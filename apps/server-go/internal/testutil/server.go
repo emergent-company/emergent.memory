@@ -89,7 +89,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	e.GET("/debug", healthHandler.Debug)
 
 	// Register protected test routes for auth testing
-	protected := e.Group("/api/v2/test")
+	protected := e.Group("/api/test")
 	protected.Use(authMiddleware.RequireAuth())
 
 	// Simple endpoint that returns user info (for testing auth)
@@ -109,7 +109,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	})
 
 	// Endpoint requiring specific scopes
-	scopedGroup := e.Group("/api/v2/test/scoped")
+	scopedGroup := e.Group("/api/test/scoped")
 	scopedGroup.Use(authMiddleware.RequireAuth())
 	scopedGroup.Use(authMiddleware.RequireScopes("documents:read"))
 	scopedGroup.GET("", func(c echo.Context) error {
@@ -117,7 +117,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	})
 
 	// Endpoint requiring project ID
-	projectGroup := e.Group("/api/v2/test/project")
+	projectGroup := e.Group("/api/test/project")
 	projectGroup.Use(authMiddleware.RequireAuth())
 	projectGroup.Use(authMiddleware.RequireProjectID())
 	projectGroup.GET("", func(c echo.Context) error {
@@ -170,7 +170,8 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register graph routes
 	graphRepo := graph.NewRepository(db, log)
 	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
-	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider)
+	embeddingsSvc := embeddings.NewNoopService(log)
+	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, embeddingsSvc)
 	graphHandler := graph.NewHandler(graphSvc)
 	graph.RegisterRoutes(e, graphHandler, authMiddleware)
 
@@ -194,7 +195,6 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register search routes
 	searchRepo := search.NewRepository(db, log)
-	embeddingsSvc := embeddings.NewNoopService(log) // Use noop service for tests
 	searchSvc := search.NewService(searchRepo, graphSvc, embeddingsSvc, log)
 	searchHandler := search.NewHandler(searchSvc)
 	search.RegisterRoutes(e, searchHandler, authMiddleware)
@@ -202,11 +202,11 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register chat routes
 	chatRepo := chat.NewRepository(db, log)
 	chatSvc := chat.NewService(chatRepo, log)
-	chatHandler := chat.NewHandler(chatSvc, nil) // nil LLM client for tests
+	chatHandler := chat.NewHandler(chatSvc, nil, searchSvc, log) // nil LLM client for tests
 	chat.RegisterRoutes(e, chatHandler, authMiddleware)
 
 	// Register MCP routes
-	mcpSvc := mcp.NewService(db, graphSvc, log)
+	mcpSvc := mcp.NewService(db, graphSvc, searchSvc, log)
 	mcpHandler := mcp.NewHandler(mcpSvc, log)
 	mcpSSEHandler := mcp.NewSSEHandler(mcpSvc, mcpHandler, log)
 	mcpStreamableHandler := mcp.NewStreamableHTTPHandler(mcpSvc, log)

@@ -15,7 +15,7 @@ func TestUsersGetProfile(t *testing.T) {
 	defer mock.Close()
 
 	fixtureProfile := testutil.FixtureUserProfile()
-	mock.OnJSON("GET", "/api/v2/user/profile", http.StatusOK, fixtureProfile)
+	mock.OnJSON("GET", "/api/user/profile", http.StatusOK, fixtureProfile)
 
 	client, err := sdk.New(sdk.Config{
 		ServerURL: mock.URL,
@@ -49,7 +49,7 @@ func TestUsersUpdateProfile(t *testing.T) {
 	updatedFirstName := "Updated"
 	fixtureProfile.FirstName = &updatedFirstName
 
-	mock.OnJSON("PUT", "/api/v2/user/profile", http.StatusOK, fixtureProfile)
+	mock.OnJSON("PUT", "/api/user/profile", http.StatusOK, fixtureProfile)
 
 	client, _ := sdk.New(sdk.Config{
 		ServerURL: mock.URL,

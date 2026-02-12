@@ -7,7 +7,7 @@ This document specifies the REST API endpoint for the Emergent CLI to upload doc
 ## Endpoint
 
 ```
-POST /api/v2/documents/upload
+POST /api/documents/upload
 ```
 
 ## Authentication
@@ -36,7 +36,7 @@ Requires valid API token in `X-API-Key` header and project scope in `X-Project-I
 ### Example Request (cURL)
 
 ```bash
-curl -X POST http://localhost:3002/api/v2/documents/upload \
+curl -X POST http://localhost:3002/api/documents/upload \
   -H "X-API-Key: your-api-key" \
   -H "X-Project-ID: project-uuid-here" \
   -F "file=@/path/to/document.pdf" \
@@ -71,7 +71,7 @@ writer.WriteField("metadata", `{"source":"cli"}`)
 
 writer.Close()
 
-req, err := http.NewRequest("POST", baseURL+"/api/v2/documents/upload", body)
+req, err := http.NewRequest("POST", baseURL+"/api/documents/upload", body)
 req.Header.Set("Content-Type", writer.FormDataContentType())
 req.Header.Set("X-API-Key", apiKey)
 req.Header.Set("X-Project-ID", projectID)
@@ -308,20 +308,20 @@ go test ./tests/e2e -run TestDocumentUpload -v
 
 ```bash
 # Test successful upload
-curl -X POST http://localhost:3002/api/v2/documents/upload \
+curl -X POST http://localhost:3002/api/documents/upload \
   -H "X-API-Key: test-key" \
   -H "X-Project-ID: test-project-uuid" \
   -F "file=@test.pdf"
 
 # Test with extraction
-curl -X POST http://localhost:3002/api/v2/documents/upload \
+curl -X POST http://localhost:3002/api/documents/upload \
   -H "X-API-Key: test-key" \
   -H "X-Project-ID: test-project-uuid" \
   -F "file=@test.pdf" \
   -F "extract=true"
 
 # Test deduplication (upload same file twice)
-curl -X POST http://localhost:3002/api/v2/documents/upload \
+curl -X POST http://localhost:3002/api/documents/upload \
   -H "X-API-Key: test-key" \
   -H "X-Project-ID: test-project-uuid" \
   -F "file=@test.pdf"
@@ -376,15 +376,15 @@ curl -X POST http://localhost:3002/api/v2/documents/upload \
 
 ```bash
 # Request upload session
-POST /api/v2/documents/upload/init
+POST /api/documents/upload/init
 Response: {"upload_id": "session-uuid", "chunk_size": 5242880}
 
 # Upload chunks
-PUT /api/v2/documents/upload/chunk
+PUT /api/documents/upload/chunk
 Headers: X-Upload-ID, X-Chunk-Number, X-Total-Chunks
 
 # Finalize upload
-POST /api/v2/documents/upload/complete
+POST /api/documents/upload/complete
 Body: {"upload_id": "session-uuid", "extract": true}
 ```
 

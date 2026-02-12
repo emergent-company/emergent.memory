@@ -74,7 +74,7 @@ func (s *UserActivityTestSuite) createActivityWithNameViaDB(resourceType, resour
 // === Record Activity Tests ===
 
 func (s *UserActivityTestSuite) TestRecord_RequiresAuth() {
-	resp := s.Client.POST(fmt.Sprintf("/api/v2/user-activity/record?project_id=%s", s.ProjectID),
+	resp := s.Client.POST(fmt.Sprintf("/api/user-activity/record?project_id=%s", s.ProjectID),
 		testutil.WithJSONBody(map[string]string{
 			"resourceType": "document",
 			"resourceId":   uuid.New().String(),
@@ -85,7 +85,7 @@ func (s *UserActivityTestSuite) TestRecord_RequiresAuth() {
 }
 
 func (s *UserActivityTestSuite) TestRecord_RequiresProjectID() {
-	resp := s.Client.POST("/api/v2/user-activity/record",
+	resp := s.Client.POST("/api/user-activity/record",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]string{
 			"resourceType": "document",
@@ -98,7 +98,7 @@ func (s *UserActivityTestSuite) TestRecord_RequiresProjectID() {
 
 func (s *UserActivityTestSuite) TestRecord_RequiresFields() {
 	// Missing resourceType
-	resp := s.Client.POST(fmt.Sprintf("/api/v2/user-activity/record?project_id=%s", s.ProjectID),
+	resp := s.Client.POST(fmt.Sprintf("/api/user-activity/record?project_id=%s", s.ProjectID),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]string{
 			"resourceId": uuid.New().String(),
@@ -108,7 +108,7 @@ func (s *UserActivityTestSuite) TestRecord_RequiresFields() {
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 
 	// Missing resourceId
-	resp = s.Client.POST(fmt.Sprintf("/api/v2/user-activity/record?project_id=%s", s.ProjectID),
+	resp = s.Client.POST(fmt.Sprintf("/api/user-activity/record?project_id=%s", s.ProjectID),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]string{
 			"resourceType": "document",
@@ -118,7 +118,7 @@ func (s *UserActivityTestSuite) TestRecord_RequiresFields() {
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 
 	// Missing actionType
-	resp = s.Client.POST(fmt.Sprintf("/api/v2/user-activity/record?project_id=%s", s.ProjectID),
+	resp = s.Client.POST(fmt.Sprintf("/api/user-activity/record?project_id=%s", s.ProjectID),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]string{
 			"resourceType": "document",
@@ -129,7 +129,7 @@ func (s *UserActivityTestSuite) TestRecord_RequiresFields() {
 }
 
 func (s *UserActivityTestSuite) TestRecord_ValidatesResourceID() {
-	resp := s.Client.POST(fmt.Sprintf("/api/v2/user-activity/record?project_id=%s", s.ProjectID),
+	resp := s.Client.POST(fmt.Sprintf("/api/user-activity/record?project_id=%s", s.ProjectID),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]string{
 			"resourceType": "document",
@@ -141,7 +141,7 @@ func (s *UserActivityTestSuite) TestRecord_ValidatesResourceID() {
 }
 
 func (s *UserActivityTestSuite) TestRecord_ValidatesProjectID() {
-	resp := s.Client.POST("/api/v2/user-activity/record?project_id=invalid-uuid",
+	resp := s.Client.POST("/api/user-activity/record?project_id=invalid-uuid",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]string{
 			"resourceType": "document",
@@ -154,7 +154,7 @@ func (s *UserActivityTestSuite) TestRecord_ValidatesProjectID() {
 
 func (s *UserActivityTestSuite) TestRecord_RecordsActivity() {
 	resourceID := uuid.New().String()
-	resp := s.Client.POST(fmt.Sprintf("/api/v2/user-activity/record?project_id=%s", s.ProjectID),
+	resp := s.Client.POST(fmt.Sprintf("/api/user-activity/record?project_id=%s", s.ProjectID),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]string{
 			"resourceType": "document",
@@ -170,7 +170,7 @@ func (s *UserActivityTestSuite) TestRecord_RecordsActivity() {
 	s.Equal("recorded", result["status"])
 
 	// Verify it was recorded by fetching recent items
-	getResp := s.Client.GET("/api/v2/user-activity/recent",
+	getResp := s.Client.GET("/api/user-activity/recent",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, getResp.StatusCode)
@@ -198,7 +198,7 @@ func (s *UserActivityTestSuite) TestRecord_WithOptionalFields() {
 	resourceName := "Test Document"
 	resourceSubtype := "pdf"
 
-	resp := s.Client.POST(fmt.Sprintf("/api/v2/user-activity/record?project_id=%s", s.ProjectID),
+	resp := s.Client.POST(fmt.Sprintf("/api/user-activity/record?project_id=%s", s.ProjectID),
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSONBody(map[string]string{
 			"resourceType":    "document",
@@ -211,7 +211,7 @@ func (s *UserActivityTestSuite) TestRecord_WithOptionalFields() {
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	// Verify optional fields were stored
-	getResp := s.Client.GET("/api/v2/user-activity/recent",
+	getResp := s.Client.GET("/api/user-activity/recent",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, getResp.StatusCode)
@@ -238,7 +238,7 @@ func (s *UserActivityTestSuite) TestRecord_WithOptionalFields() {
 // === GetRecent Tests ===
 
 func (s *UserActivityTestSuite) TestGetRecent_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/user-activity/recent")
+	resp := s.Client.GET("/api/user-activity/recent")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
@@ -250,7 +250,7 @@ func (s *UserActivityTestSuite) TestGetRecent_ReturnsEmptyArrayWhenNoActivity() 
 		Exec(s.Ctx)
 	s.Require().NoError(err)
 
-	resp := s.Client.GET("/api/v2/user-activity/recent",
+	resp := s.Client.GET("/api/user-activity/recent",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
@@ -276,7 +276,7 @@ func (s *UserActivityTestSuite) TestGetRecent_ReturnsActivityItems() {
 	s.createActivityViaDB("document", resourceID1, "viewed")
 	s.createActivityViaDB("object", resourceID2, "edited")
 
-	resp := s.Client.GET("/api/v2/user-activity/recent",
+	resp := s.Client.GET("/api/user-activity/recent",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
@@ -300,7 +300,7 @@ func (s *UserActivityTestSuite) TestGetRecent_RespectsLimit() {
 		s.createActivityViaDB("document", uuid.New().String(), "viewed")
 	}
 
-	resp := s.Client.GET("/api/v2/user-activity/recent?limit=2",
+	resp := s.Client.GET("/api/user-activity/recent?limit=2",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
@@ -314,7 +314,7 @@ func (s *UserActivityTestSuite) TestGetRecent_RespectsLimit() {
 // === GetRecentByType Tests ===
 
 func (s *UserActivityTestSuite) TestGetRecentByType_RequiresAuth() {
-	resp := s.Client.GET("/api/v2/user-activity/recent/document")
+	resp := s.Client.GET("/api/user-activity/recent/document")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
@@ -326,7 +326,7 @@ func (s *UserActivityTestSuite) TestGetRecentByType_ReturnsEmptyArrayWhenNoMatch
 		Exec(s.Ctx)
 	s.Require().NoError(err)
 
-	resp := s.Client.GET("/api/v2/user-activity/recent/document",
+	resp := s.Client.GET("/api/user-activity/recent/document",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
@@ -354,7 +354,7 @@ func (s *UserActivityTestSuite) TestGetRecentByType_FiltersCorrectly() {
 	s.createActivityViaDB("document", uuid.New().String(), "edited")
 
 	// Get only document activity
-	resp := s.Client.GET("/api/v2/user-activity/recent/document",
+	resp := s.Client.GET("/api/user-activity/recent/document",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
@@ -382,7 +382,7 @@ func (s *UserActivityTestSuite) TestGetRecentByType_RespectsLimit() {
 		s.createActivityViaDB("document", uuid.New().String(), "viewed")
 	}
 
-	resp := s.Client.GET("/api/v2/user-activity/recent/document?limit=3",
+	resp := s.Client.GET("/api/user-activity/recent/document?limit=3",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
@@ -396,7 +396,7 @@ func (s *UserActivityTestSuite) TestGetRecentByType_RespectsLimit() {
 // === DeleteAll Tests ===
 
 func (s *UserActivityTestSuite) TestDeleteAll_RequiresAuth() {
-	resp := s.Client.DELETE("/api/v2/user-activity/recent")
+	resp := s.Client.DELETE("/api/user-activity/recent")
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
@@ -406,7 +406,7 @@ func (s *UserActivityTestSuite) TestDeleteAll_DeletesAllActivity() {
 	s.createActivityViaDB("object", uuid.New().String(), "edited")
 
 	// Verify items exist
-	getResp := s.Client.GET("/api/v2/user-activity/recent",
+	getResp := s.Client.GET("/api/user-activity/recent",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, getResp.StatusCode)
@@ -415,7 +415,7 @@ func (s *UserActivityTestSuite) TestDeleteAll_DeletesAllActivity() {
 	s.GreaterOrEqual(len(result.Data), 2)
 
 	// Delete all
-	resp := s.Client.DELETE("/api/v2/user-activity/recent",
+	resp := s.Client.DELETE("/api/user-activity/recent",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
@@ -426,7 +426,7 @@ func (s *UserActivityTestSuite) TestDeleteAll_DeletesAllActivity() {
 	s.Equal("deleted", deleteResult["status"])
 
 	// Verify all deleted
-	getResp = s.Client.GET("/api/v2/user-activity/recent",
+	getResp = s.Client.GET("/api/user-activity/recent",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, getResp.StatusCode)
@@ -442,7 +442,7 @@ func (s *UserActivityTestSuite) TestDeleteAll_SucceedsWhenNoActivity() {
 		Exec(s.Ctx)
 	s.Require().NoError(err)
 
-	resp := s.Client.DELETE("/api/v2/user-activity/recent",
+	resp := s.Client.DELETE("/api/user-activity/recent",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
@@ -451,12 +451,12 @@ func (s *UserActivityTestSuite) TestDeleteAll_SucceedsWhenNoActivity() {
 // === DeleteByResource Tests ===
 
 func (s *UserActivityTestSuite) TestDeleteByResource_RequiresAuth() {
-	resp := s.Client.DELETE("/api/v2/user-activity/recent/document/" + uuid.New().String())
+	resp := s.Client.DELETE("/api/user-activity/recent/document/" + uuid.New().String())
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *UserActivityTestSuite) TestDeleteByResource_ValidatesResourceID() {
-	resp := s.Client.DELETE("/api/v2/user-activity/recent/document/not-a-uuid",
+	resp := s.Client.DELETE("/api/user-activity/recent/document/not-a-uuid",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
@@ -477,13 +477,13 @@ func (s *UserActivityTestSuite) TestDeleteByResource_DeletesSpecificResource() {
 	s.createActivityViaDB("document", resourceToKeep, "viewed")
 
 	// Delete specific resource
-	resp := s.Client.DELETE(fmt.Sprintf("/api/v2/user-activity/recent/document/%s", resourceToDelete),
+	resp := s.Client.DELETE(fmt.Sprintf("/api/user-activity/recent/document/%s", resourceToDelete),
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	// Verify only the specific resource was deleted
-	getResp := s.Client.GET("/api/v2/user-activity/recent",
+	getResp := s.Client.GET("/api/user-activity/recent",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, getResp.StatusCode)
@@ -496,7 +496,7 @@ func (s *UserActivityTestSuite) TestDeleteByResource_DeletesSpecificResource() {
 }
 
 func (s *UserActivityTestSuite) TestDeleteByResource_SucceedsWhenResourceNotFound() {
-	resp := s.Client.DELETE(fmt.Sprintf("/api/v2/user-activity/recent/document/%s", uuid.New().String()),
+	resp := s.Client.DELETE(fmt.Sprintf("/api/user-activity/recent/document/%s", uuid.New().String()),
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
@@ -516,13 +516,13 @@ func (s *UserActivityTestSuite) TestDeleteByResource_OnlyDeletesMatchingType() {
 	s.createActivityViaDB("object", sharedResourceID, "viewed")
 
 	// Delete document type
-	resp := s.Client.DELETE(fmt.Sprintf("/api/v2/user-activity/recent/document/%s", sharedResourceID),
+	resp := s.Client.DELETE(fmt.Sprintf("/api/user-activity/recent/document/%s", sharedResourceID),
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	// Verify only document type was deleted, object type remains
-	getResp := s.Client.GET("/api/v2/user-activity/recent",
+	getResp := s.Client.GET("/api/user-activity/recent",
 		testutil.WithAuth("e2e-test-user"),
 	)
 	s.Equal(http.StatusOK, getResp.StatusCode)

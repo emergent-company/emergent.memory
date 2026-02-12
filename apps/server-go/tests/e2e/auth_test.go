@@ -31,7 +31,7 @@ func (s *AuthTestSuite) SetupSuite() {
 
 func (s *AuthTestSuite) TestMissingAuth() {
 	// Request without Authorization header should fail
-	resp := s.Client.GET("/api/v2/test/me")
+	resp := s.Client.GET("/api/test/me")
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 
@@ -51,7 +51,7 @@ func (s *AuthTestSuite) TestMissingAuth() {
 
 func (s *AuthTestSuite) TestE2ETokenPattern() {
 	// e2e-test-user maps to the AdminUser fixture (test-admin-user)
-	resp := s.Client.GET("/api/v2/test/me", testutil.WithAuth("e2e-test-user"))
+	resp := s.Client.GET("/api/test/me", testutil.WithAuth("e2e-test-user"))
 
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -71,7 +71,7 @@ func (s *AuthTestSuite) TestE2ETokenPattern() {
 
 func (s *AuthTestSuite) TestWithScopeToken() {
 	// "with-scope" token should have specific scopes
-	resp := s.Client.GET("/api/v2/test/me", testutil.WithAuth("with-scope"))
+	resp := s.Client.GET("/api/test/me", testutil.WithAuth("with-scope"))
 
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -95,7 +95,7 @@ func (s *AuthTestSuite) TestWithScopeToken() {
 
 func (s *AuthTestSuite) TestNoScopeToken() {
 	// "no-scope" token should work but have no scopes
-	resp := s.Client.GET("/api/v2/test/me", testutil.WithAuth("no-scope"))
+	resp := s.Client.GET("/api/test/me", testutil.WithAuth("no-scope"))
 
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -113,7 +113,7 @@ func (s *AuthTestSuite) TestNoScopeToken() {
 
 func (s *AuthTestSuite) TestAllScopesToken() {
 	// "all-scopes" token should have all available scopes
-	resp := s.Client.GET("/api/v2/test/me", testutil.WithAuth("all-scopes"))
+	resp := s.Client.GET("/api/test/me", testutil.WithAuth("all-scopes"))
 
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -136,7 +136,7 @@ func (s *AuthTestSuite) TestAllScopesToken() {
 
 func (s *AuthTestSuite) TestScopeRequired_HasScope() {
 	// User with documents:read scope should access /scoped endpoint
-	resp := s.Client.GET("/api/v2/test/scoped", testutil.WithAuth("with-scope"))
+	resp := s.Client.GET("/api/test/scoped", testutil.WithAuth("with-scope"))
 
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -148,7 +148,7 @@ func (s *AuthTestSuite) TestScopeRequired_HasScope() {
 
 func (s *AuthTestSuite) TestScopeRequired_MissingScope() {
 	// User without documents:read scope should be forbidden
-	resp := s.Client.GET("/api/v2/test/scoped", testutil.WithAuth("no-scope"))
+	resp := s.Client.GET("/api/test/scoped", testutil.WithAuth("no-scope"))
 
 	s.Equal(http.StatusForbidden, resp.StatusCode)
 
@@ -175,7 +175,7 @@ func (s *AuthTestSuite) TestScopeRequired_MissingScope() {
 
 func (s *AuthTestSuite) TestProjectIDRequired_HasProjectID() {
 	// Request with X-Project-ID should work
-	resp := s.Client.GET("/api/v2/test/project",
+	resp := s.Client.GET("/api/test/project",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID("test-project-123"),
 	)
@@ -190,7 +190,7 @@ func (s *AuthTestSuite) TestProjectIDRequired_HasProjectID() {
 
 func (s *AuthTestSuite) TestProjectIDRequired_MissingProjectID() {
 	// Request without X-Project-ID should fail with 400
-	resp := s.Client.GET("/api/v2/test/project",
+	resp := s.Client.GET("/api/test/project",
 		testutil.WithAuth("e2e-test-user"),
 	)
 
@@ -199,7 +199,7 @@ func (s *AuthTestSuite) TestProjectIDRequired_MissingProjectID() {
 
 func (s *AuthTestSuite) TestHeaderExtraction() {
 	// Both X-Project-ID and X-Org-ID should be extracted
-	resp := s.Client.GET("/api/v2/test/me",
+	resp := s.Client.GET("/api/test/me",
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithProjectID("project-123"),
 		testutil.WithOrgID("org-456"),
@@ -239,7 +239,7 @@ func (s *AuthTestSuite) TestAPIToken_Valid() {
 	s.Require().True(len(token) > 0, "Token should be returned")
 
 	// Use the API token
-	resp = s.Client.GET("/api/v2/test/me", testutil.WithAuth(token))
+	resp = s.Client.GET("/api/test/me", testutil.WithAuth(token))
 
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -285,14 +285,14 @@ func (s *AuthTestSuite) TestAPIToken_Deleted() {
 	s.Require().Equal(http.StatusOK, resp.StatusCode, "Failed to revoke token: %s", resp.String())
 
 	// Use the revoked token - should fail with 401
-	resp = s.Client.GET("/api/v2/test/me", testutil.WithAuth(token))
+	resp = s.Client.GET("/api/test/me", testutil.WithAuth(token))
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *AuthTestSuite) TestAPIToken_Invalid() {
 	// Use a token that doesn't exist
-	resp := s.Client.GET("/api/v2/test/me", testutil.WithAuth("emt_nonexistent_token"))
+	resp := s.Client.GET("/api/test/me", testutil.WithAuth("emt_nonexistent_token"))
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
@@ -303,21 +303,21 @@ func (s *AuthTestSuite) TestAPIToken_Invalid() {
 
 func (s *AuthTestSuite) TestInvalidAuthHeader_NoBearer() {
 	// Auth header without "Bearer " prefix
-	resp := s.Client.GET("/api/v2/test/me", testutil.WithRawAuth("invalid-token"))
+	resp := s.Client.GET("/api/test/me", testutil.WithRawAuth("invalid-token"))
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *AuthTestSuite) TestInvalidAuthHeader_EmptyBearer() {
 	// Auth header with empty token after Bearer
-	resp := s.Client.GET("/api/v2/test/me", testutil.WithRawAuth("Bearer "))
+	resp := s.Client.GET("/api/test/me", testutil.WithRawAuth("Bearer "))
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *AuthTestSuite) TestInvalidToken() {
 	// Random invalid token (not matching any pattern)
-	resp := s.Client.GET("/api/v2/test/me", testutil.WithAuth("random-invalid-token"))
+	resp := s.Client.GET("/api/test/me", testutil.WithAuth("random-invalid-token"))
 
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
@@ -329,7 +329,7 @@ func (s *AuthTestSuite) TestInvalidToken() {
 func (s *AuthTestSuite) TestTokenFromQueryParam() {
 	// Token can be passed via ?token= query parameter (for SSE endpoints)
 	// e2e-query-token maps to test-admin-user
-	resp := s.Client.GET("/api/v2/test/me?token=e2e-query-token")
+	resp := s.Client.GET("/api/test/me?token=e2e-query-token")
 
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -350,7 +350,7 @@ func (s *AuthTestSuite) TestTokenFromQueryParam() {
 
 func (s *AuthTestSuite) TestDocuments_MissingAuth_Returns401() {
 	// Request without Authorization header should fail with 401
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithProjectID("test-project-id"),
 		testutil.WithJSONBody(map[string]any{
 			"filename": "test.txt",
@@ -362,7 +362,7 @@ func (s *AuthTestSuite) TestDocuments_MissingAuth_Returns401() {
 
 func (s *AuthTestSuite) TestDocuments_MalformedToken_Returns401() {
 	// Request with malformed token should fail with 401
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithRawAuth("Bearer !!!broken!!!"),
 		testutil.WithProjectID("test-project-id"),
 		testutil.WithJSONBody(map[string]any{
@@ -375,7 +375,7 @@ func (s *AuthTestSuite) TestDocuments_MalformedToken_Returns401() {
 
 func (s *AuthTestSuite) TestDocuments_NoScopeToken_Returns403() {
 	// Request with no-scope token should fail with 403 (scope enforcement)
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("no-scope"),
 		testutil.WithProjectID("test-project-id"),
 		testutil.WithJSONBody(map[string]any{
@@ -388,7 +388,7 @@ func (s *AuthTestSuite) TestDocuments_NoScopeToken_Returns403() {
 
 func (s *AuthTestSuite) TestDocuments_MissingProjectHeader_Returns400() {
 	// Request without X-Project-ID should fail with 400
-	resp := s.Client.POST("/api/v2/documents",
+	resp := s.Client.POST("/api/documents",
 		testutil.WithAuth("all-scopes"),
 		testutil.WithJSONBody(map[string]any{
 			"filename": "test.txt",
@@ -426,7 +426,7 @@ func (s *AuthTestSuite) TestCachedIntrospection() {
 	// Make multiple requests with the same token - should all succeed
 	// This tests that caching doesn't break repeated requests
 	for i := 0; i < 3; i++ {
-		resp = s.Client.GET("/api/v2/test/me", testutil.WithAuth(token))
+		resp = s.Client.GET("/api/test/me", testutil.WithAuth(token))
 		s.Equal(http.StatusOK, resp.StatusCode, "Request %d should succeed", i+1)
 
 		var body map[string]any

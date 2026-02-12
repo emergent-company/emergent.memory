@@ -3,6 +3,8 @@ package chat
 import (
 	"strings"
 	"testing"
+
+	"github.com/emergent/emergent-core/domain/search"
 )
 
 func TestValidateCreateConversationRequest(t *testing.T) {
@@ -326,6 +328,136 @@ func TestValidateStreamRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFormatSearchContext(t *testing.T) {
+	h := &Handler{} // formatSearchContext doesn't use any handler fields
+
+	t.Run("empty results returns empty string", func(t *testing.T) {
+		result := h.formatSearchContext(nil)
+		if result != "" {
+			t.Errorf("expected empty string, got %q", result)
+		}
+		result = h.formatSearchContext([]search.UnifiedSearchResultItem{})
+		if result != "" {
+			t.Errorf("expected empty string for empty slice, got %q", result)
+		}
+	})
+
+	t.Run("relationship item formatted as triplet text", func(t *testing.T) {
+		items := []search.UnifiedSearchResultItem{
+			{
+				Type:        search.ItemTypeRelationship,
+				TripletText: "Elon Musk founded Tesla",
+				Score:       0.95,
+			},
+		}
+		result := h.formatSearchContext(items)
+		expected := "- Elon Musk founded Tesla"
+		if result != expected {
+			t.Errorf("got %q, want %q", result, expected)
+		}
+	})
+
+	t.Run("multiple relationships each on own line", func(t *testing.T) {
+		items := []search.UnifiedSearchResultItem{
+			{
+				Type:        search.ItemTypeRelationship,
+				TripletText: "Elon Musk founded Tesla",
+			},
+			{
+				Type:        search.ItemTypeRelationship,
+				TripletText: "Tesla manufactures Model 3",
+			},
+		}
+		result := h.formatSearchContext(items)
+		if !strings.Contains(result, "- Elon Musk founded Tesla") {
+			t.Error("missing first relationship triplet text")
+		}
+		if !strings.Contains(result, "- Tesla manufactures Model 3") {
+			t.Error("missing second relationship triplet text")
+		}
+		lines := strings.Split(result, "\n")
+		if len(lines) != 2 {
+			t.Errorf("expected 2 lines, got %d: %q", len(lines), result)
+		}
+	})
+
+	t.Run("mixed results: graph, relationship, and text", func(t *testing.T) {
+		items := []search.UnifiedSearchResultItem{
+			{
+				Type:       search.ItemTypeGraph,
+				ObjectType: "Person",
+				Key:        "Elon Musk",
+				Fields:     map[string]any{"role": "CEO"},
+			},
+			{
+				Type:        search.ItemTypeRelationship,
+				TripletText: "Elon Musk founded SpaceX",
+			},
+			{
+				Type:    search.ItemTypeText,
+				Snippet: "SpaceX was founded in 2002.",
+			},
+		}
+		result := h.formatSearchContext(items)
+		lines := strings.Split(result, "\n")
+		if len(lines) != 3 {
+			t.Errorf("expected 3 lines, got %d: %q", len(lines), result)
+		}
+
+		// Graph line should have bold object type and key
+		if !strings.Contains(lines[0], "**Person**") {
+			t.Errorf("graph line missing bold ObjectType: %q", lines[0])
+		}
+		if !strings.Contains(lines[0], "Elon Musk") {
+			t.Errorf("graph line missing key: %q", lines[0])
+		}
+		if !strings.Contains(lines[0], "role=CEO") {
+			t.Errorf("graph line missing field: %q", lines[0])
+		}
+
+		// Relationship line should be just the triplet text
+		if lines[1] != "- Elon Musk founded SpaceX" {
+			t.Errorf("relationship line = %q, want %q", lines[1], "- Elon Musk founded SpaceX")
+		}
+
+		// Text line should contain snippet
+		if !strings.Contains(lines[2], "SpaceX was founded in 2002.") {
+			t.Errorf("text line missing snippet: %q", lines[2])
+		}
+	})
+
+	t.Run("text snippet truncated at 300 chars", func(t *testing.T) {
+		longSnippet := strings.Repeat("x", 400)
+		items := []search.UnifiedSearchResultItem{
+			{
+				Type:    search.ItemTypeText,
+				Snippet: longSnippet,
+			},
+		}
+		result := h.formatSearchContext(items)
+		// Should be "- " + 300 chars + "…"
+		if len(result) > 310 {
+			t.Errorf("text snippet not truncated, len=%d", len(result))
+		}
+		if !strings.HasSuffix(result, "…") {
+			t.Error("truncated snippet should end with ellipsis")
+		}
+	})
+
+	t.Run("relationship with empty triplet text", func(t *testing.T) {
+		items := []search.UnifiedSearchResultItem{
+			{
+				Type:        search.ItemTypeRelationship,
+				TripletText: "",
+			},
+		}
+		result := h.formatSearchContext(items)
+		if result != "- " {
+			t.Errorf("expected %q, got %q", "- ", result)
+		}
+	})
 }
 
 // Helper function
