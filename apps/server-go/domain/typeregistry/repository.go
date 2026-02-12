@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/uptrace/bun"
 )
@@ -215,6 +216,9 @@ func (r *Repository) getRelationshipsForType(ctx context.Context, projectID, typ
 				if schema.Description != "" {
 					info.Description = &schema.Description
 				}
+				if schema.InverseType != "" {
+					info.InverseType = &schema.InverseType
+				}
 				outgoing = append(outgoing, info)
 			}
 
@@ -286,4 +290,156 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// CreateType registers a new custom object type for a project
+func (r *Repository) CreateType(ctx context.Context, projectID, userID string, req *CreateTypeRequest) (*ProjectObjectTypeRegistry, error) {
+	// Validate project exists
+	var project Project
+	err := r.db.NewSelect().
+		Model(&project).
+		Where("id = ?", projectID).
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("project not found: %s", projectID)
+	}
+
+	// Check if type already exists for this project
+	exists, err := r.db.NewSelect().
+		Model((*ProjectObjectTypeRegistry)(nil)).
+		Where("project_id = ?", projectID).
+		Where("type_name = ?", req.TypeName).
+		Exists(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check type existence: %w", err)
+	}
+	if exists {
+		return nil, fmt.Errorf("type already exists: %s", req.TypeName)
+	}
+
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	now := time.Now()
+	entry := &ProjectObjectTypeRegistry{
+		ProjectID:        projectID,
+		TypeName:         req.TypeName,
+		Source:           "custom",
+		SchemaVersion:    1,
+		JSONSchema:       req.JSONSchema,
+		UIConfig:         req.UIConfig,
+		ExtractionConfig: req.ExtractionConfig,
+		Enabled:          enabled,
+		Description:      req.Description,
+		CreatedBy:        &userID,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	_, err = r.db.NewInsert().Model(entry).Returning("id, created_at, updated_at").Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create type: %w", err)
+	}
+
+	return entry, nil
+}
+
+// UpdateType updates an existing type in the project type registry
+func (r *Repository) UpdateType(ctx context.Context, projectID, typeName string, req *UpdateTypeRequest) (*ProjectObjectTypeRegistry, error) {
+	// Validate project exists
+	var project Project
+	err := r.db.NewSelect().
+		Model(&project).
+		Where("id = ?", projectID).
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("project not found: %s", projectID)
+	}
+
+	q := r.db.NewUpdate().
+		Model((*ProjectObjectTypeRegistry)(nil)).
+		Where("project_id = ?", projectID).
+		Where("type_name = ?", typeName).
+		Set("updated_at = ?", time.Now())
+
+	hasUpdates := false
+
+	if req.Description != nil {
+		q = q.Set("description = ?", *req.Description)
+		hasUpdates = true
+	}
+	if len(req.JSONSchema) > 0 {
+		q = q.Set("json_schema = ?", string(req.JSONSchema))
+		q = q.Set("schema_version = schema_version + 1")
+		hasUpdates = true
+	}
+	if len(req.UIConfig) > 0 {
+		q = q.Set("ui_config = ?", string(req.UIConfig))
+		hasUpdates = true
+	}
+	if len(req.ExtractionConfig) > 0 {
+		q = q.Set("extraction_config = ?", string(req.ExtractionConfig))
+		hasUpdates = true
+	}
+	if req.Enabled != nil {
+		q = q.Set("enabled = ?", *req.Enabled)
+		hasUpdates = true
+	}
+
+	if !hasUpdates {
+		return nil, fmt.Errorf("no update fields provided")
+	}
+
+	result, err := q.Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update type: %w", err)
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return nil, fmt.Errorf("type not found: %s", typeName)
+	}
+
+	// Fetch and return the updated entry
+	var entry ProjectObjectTypeRegistry
+	err = r.db.NewSelect().
+		Model(&entry).
+		Where("project_id = ?", projectID).
+		Where("type_name = ?", typeName).
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch updated type: %w", err)
+	}
+
+	return &entry, nil
+}
+
+// DeleteType removes a type from the project type registry
+func (r *Repository) DeleteType(ctx context.Context, projectID, typeName string) error {
+	// Validate project exists
+	var project Project
+	err := r.db.NewSelect().
+		Model(&project).
+		Where("id = ?", projectID).
+		Scan(ctx)
+	if err != nil {
+		return fmt.Errorf("project not found: %s", projectID)
+	}
+
+	result, err := r.db.NewDelete().
+		Model((*ProjectObjectTypeRegistry)(nil)).
+		Where("project_id = ?", projectID).
+		Where("type_name = ?", typeName).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to delete type: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("type not found: %s", typeName)
+	}
+
+	return nil
 }

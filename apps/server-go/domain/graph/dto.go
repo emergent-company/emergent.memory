@@ -123,20 +123,30 @@ type UnusedObjectsResponse struct {
 
 // SearchGraphObjectsRequest contains search/filter parameters.
 type SearchGraphObjectsRequest struct {
-	Type            *string    `query:"type"`   // NestJS uses single type, not array
-	Types           []string   `query:"types"`  // Go also supports array for flexibility
-	Label           *string    `query:"label"`  // NestJS uses single label, not array
-	Labels          []string   `query:"labels"` // Go also supports array for flexibility
-	Status          *string    `query:"status"`
-	Key             *string    `query:"key"`
-	BranchID        *uuid.UUID `query:"branch_id"`
-	IncludeDeleted  bool       `query:"include_deleted"`
-	Limit           int        `query:"limit"`
-	Cursor          *string    `query:"cursor"`
-	Order           *string    `query:"order"`             // "asc" or "desc"
-	RelatedToID     *string    `query:"related_to_id"`     // Filter by related object
-	IDs             []string   `query:"ids"`               // Comma-separated list
-	ExtractionJobID *string    `query:"extraction_job_id"` // Filter by extraction job
+	Type            *string          `query:"type"`   // NestJS uses single type, not array
+	Types           []string         `query:"types"`  // Go also supports array for flexibility
+	Label           *string          `query:"label"`  // NestJS uses single label, not array
+	Labels          []string         `query:"labels"` // Go also supports array for flexibility
+	Status          *string          `query:"status"`
+	Key             *string          `query:"key"`
+	BranchID        *uuid.UUID       `query:"branch_id"`
+	IncludeDeleted  bool             `query:"include_deleted"`
+	Limit           int              `query:"limit"`
+	Cursor          *string          `query:"cursor"`
+	Order           *string          `query:"order"`             // "asc" or "desc"
+	RelatedToID     *string          `query:"related_to_id"`     // Filter by related object
+	IDs             []string         `query:"ids"`               // Comma-separated list
+	ExtractionJobID *string          `query:"extraction_job_id"` // Filter by extraction job
+	PropertyFilters []PropertyFilter `query:"-"`                 // Parsed from property_filters JSON param
+}
+
+// PropertyFilter defines a filter condition on the JSONB properties column.
+// Passed as JSON-encoded array in the "property_filters" query parameter.
+// Example: [{"path":"name","op":"eq","value":"Alice"},{"path":"age","op":"gte","value":21}]
+type PropertyFilter struct {
+	Path  string `json:"path"`            // Property path (dot-notation for nested, e.g. "address.city")
+	Op    string `json:"op"`              // Operator: eq, neq, gt, gte, lt, lte, contains, exists, in
+	Value any    `json:"value,omitempty"` // Filter value (omitted for "exists" operator)
 }
 
 // SearchGraphObjectsResponse is the paginated search response.
@@ -179,6 +189,9 @@ type GraphRelationshipResponse struct {
 	DeletedAt     *time.Time     `json:"deleted_at,omitempty"`
 	ChangeSummary map[string]any `json:"change_summary,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
+	// InverseRelationship is populated when an inverse relationship was auto-created
+	// based on the template pack's inverseType declaration.
+	InverseRelationship *GraphRelationshipResponse `json:"inverse_relationship,omitempty"`
 }
 
 // ToResponse converts a GraphRelationship entity to API response.
@@ -233,6 +246,50 @@ type BulkUpdateStatusResult struct {
 }
 
 // =============================================================================
+// Bulk Create DTOs
+// =============================================================================
+
+// BulkCreateObjectsRequest is the request for bulk object creation.
+type BulkCreateObjectsRequest struct {
+	Items []CreateGraphObjectRequest `json:"items" validate:"required,min=1,max=100"`
+}
+
+// BulkCreateObjectsResponse is the response for bulk object creation.
+type BulkCreateObjectsResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkCreateObjectResult `json:"results"`
+}
+
+// BulkCreateObjectResult is the result for a single object in bulk creation.
+type BulkCreateObjectResult struct {
+	Index   int                  `json:"index"`
+	Success bool                 `json:"success"`
+	Object  *GraphObjectResponse `json:"object,omitempty"`
+	Error   *string              `json:"error,omitempty"`
+}
+
+// BulkCreateRelationshipsRequest is the request for bulk relationship creation.
+type BulkCreateRelationshipsRequest struct {
+	Items []CreateGraphRelationshipRequest `json:"items" validate:"required,min=1,max=100"`
+}
+
+// BulkCreateRelationshipsResponse is the response for bulk relationship creation.
+type BulkCreateRelationshipsResponse struct {
+	Success int                            `json:"success"`
+	Failed  int                            `json:"failed"`
+	Results []BulkCreateRelationshipResult `json:"results"`
+}
+
+// BulkCreateRelationshipResult is the result for a single relationship in bulk creation.
+type BulkCreateRelationshipResult struct {
+	Index        int                        `json:"index"`
+	Success      bool                       `json:"success"`
+	Relationship *GraphRelationshipResponse `json:"relationship,omitempty"`
+	Error        *string                    `json:"error,omitempty"`
+}
+
+// =============================================================================
 // Search DTOs
 // =============================================================================
 
@@ -245,6 +302,7 @@ type FTSSearchRequest struct {
 	BranchID       *uuid.UUID `query:"branch_id"`
 	IncludeDeleted bool       `query:"include_deleted"`
 	Limit          int        `query:"limit"`
+	Offset         int        `query:"offset"`
 }
 
 // VectorSearchRequest is the request for vector similarity search.
@@ -257,6 +315,7 @@ type VectorSearchRequest struct {
 	IncludeDeleted bool       `json:"includeDeleted,omitempty"`
 	MaxDistance    *float32   `json:"maxDistance,omitempty"`
 	Limit          int        `json:"limit,omitempty"`
+	Offset         int        `json:"offset,omitempty"`
 }
 
 // HybridSearchRequest is the request for hybrid (FTS + vector) search.
@@ -271,6 +330,7 @@ type HybridSearchRequest struct {
 	LexicalWeight  *float32   `json:"lexicalWeight,omitempty"`
 	VectorWeight   *float32   `json:"vectorWeight,omitempty"`
 	Limit          int        `json:"limit,omitempty"`
+	Offset         int        `json:"offset,omitempty"`
 	IncludeDebug   bool       `json:"includeDebug,omitempty"` // Can also use ?debug=true query param
 }
 
@@ -288,6 +348,7 @@ type SearchResponse struct {
 	Data    []*SearchResultItem `json:"data"`
 	Total   int                 `json:"total"`
 	HasMore bool                `json:"hasMore"`
+	Offset  int                 `json:"offset"`
 	Meta    *SearchResponseMeta `json:"meta,omitempty"`
 }
 
@@ -338,8 +399,14 @@ type SearchWithNeighborsRequest struct {
 
 // SearchWithNeighborsResponse is the response for search with neighbors endpoint.
 type SearchWithNeighborsResponse struct {
-	PrimaryResults []*GraphObjectResponse            `json:"primaryResults"`
+	PrimaryResults []*SearchWithNeighborsResultItem  `json:"primaryResults"`
 	Neighbors      map[string][]*GraphObjectResponse `json:"neighbors,omitempty"`
+}
+
+// SearchWithNeighborsResultItem wraps a primary result with its search score.
+type SearchWithNeighborsResultItem struct {
+	Object *GraphObjectResponse `json:"object"`
+	Score  float32              `json:"score"`
 }
 
 // =============================================================================
@@ -360,12 +427,18 @@ type SimilarObjectsRequest struct {
 
 // SimilarObjectResult represents a single similar object with distance.
 type SimilarObjectResult struct {
-	ID          uuid.UUID  `json:"id"`
-	CanonicalID *uuid.UUID `json:"canonical_id,omitempty"`
-	Version     *int       `json:"version,omitempty"`
-	Distance    float32    `json:"distance"`
-	ProjectID   *uuid.UUID `json:"project_id,omitempty"`
-	BranchID    *uuid.UUID `json:"branch_id,omitempty"`
+	ID          uuid.UUID      `json:"id"`
+	CanonicalID *uuid.UUID     `json:"canonical_id,omitempty"`
+	Version     *int           `json:"version,omitempty"`
+	Distance    float32        `json:"distance"`
+	ProjectID   *uuid.UUID     `json:"project_id,omitempty"`
+	BranchID    *uuid.UUID     `json:"branch_id,omitempty"`
+	Type        string         `json:"type"`
+	Key         *string        `json:"key,omitempty"`
+	Status      string         `json:"status"`
+	Properties  map[string]any `json:"properties,omitempty"`
+	Labels      []string       `json:"labels,omitempty"`
+	CreatedAt   *time.Time     `json:"created_at,omitempty"`
 }
 
 // =============================================================================

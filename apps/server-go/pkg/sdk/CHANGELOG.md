@@ -5,7 +5,39 @@ All notable changes to the Emergent Go SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-02-12
+
+### Added
+
+**Capability Gaps (Server + SDK):**
+
+- **Template Pack Creation** (Gap #1) — Full CRUD for template packs via `TemplatePacks` client
+- **Type Schema Registration** (Gap #10) — Register and retrieve type schemas via `TypeRegistry` client
+- **Property-level Filtering** (Gap #2) — JSONB `PropertyFilter` with 9 operators (eq, neq, gt, gte, lt, lte, contains, startsWith, exists) for `ListObjects`
+- **Inverse Relationship Auto-creation** (Gap #5) — `InverseType` field on relationships; server auto-creates inverse when set (with advisory locks and cached type provider)
+- **Bulk Object/Relationship Creation** (Gap #3) — `BulkCreateObjects` and `BulkCreateRelationships` methods (max 100 items, partial-success semantics)
+
+**SDK Enhancements:**
+
+- **ListTags filtering** — `ListTagsOptions` with `Type`, `Prefix`, `Limit` fields for filtered tag retrieval
+- **Custom HTTP client** — `Config.HTTPClient` field allows providing a custom `*http.Client` (defaults to 30s timeout)
+
+### Fixed
+
+- **ListTags response wrapping** — Server now returns `{"tags": [...]}` instead of bare array, matching SDK expectations
+- **Labels/types comma-split** — Server correctly splits comma-joined query params (`labels=a,b`) into individual values for ListObjects, FTSSearch, and GetSimilarObjects
+- **FindSimilar sparse results** — `SimilarObjectResult` now includes Type, Key, Status, Properties, Labels, and CreatedAt (was returning only IDs and distance)
+- **Search pagination offset** — Added `Offset` support to FTS, Vector, and Hybrid search; Hybrid applies offset after score fusion (not to sub-queries)
+- **SearchWithNeighbors score loss** — `PrimaryResults` now returns `SearchWithNeighborsResultItem` with both Object and Score (was dropping relevance scores)
+- **ListTags no filtering** — Added `type`, `prefix`, `limit` query params to server endpoint; SDK `ListTags` now accepts `*ListTagsOptions`
+- **SetContext() race condition** — Added `sync.RWMutex` to parent Client and all 19 sub-clients; `SetContext` writes and `prepareRequest`/`setHeaders` reads are now thread-safe
+- **Dead sub-client SetContext methods** — Removed unused `orgID`/`projectID` fields and `SetContext` from `projects`, `orgs`, `users`, `apitokens` clients; removed dead `orgID` from `mcp` client
+
+### Changed
+
+- `ListTags` SDK method signature changed from `ListTags(ctx)` to `ListTags(ctx, *ListTagsOptions)` — pass `nil` for previous behavior
+- `SearchWithNeighborsResponse.PrimaryResults` type changed from `[]*GraphObjectResponse` to `[]*SearchWithNeighborsResultItem`
+- `MCP.SetContext` signature changed from `SetContext(orgID, projectID string)` to `SetContext(projectID string)` (orgID was never used)
 
 ## [0.4.12] - 2026-02-11
 

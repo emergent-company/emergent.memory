@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
@@ -23,6 +24,7 @@ type Client struct {
 	http      *http.Client
 	base      string
 	auth      auth.Provider
+	mu        sync.RWMutex
 	orgID     string
 	projectID string
 }
@@ -40,6 +42,8 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 
 // SetContext sets the organization and project context.
 func (c *Client) SetContext(orgID, projectID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.orgID = orgID
 	c.projectID = projectID
 }
@@ -97,6 +101,9 @@ type GraphRelationship struct {
 	DeletedAt     *time.Time     `json:"deleted_at,omitempty"`
 	ChangeSummary map[string]any `json:"change_summary,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
+	// InverseRelationship is populated when an inverse relationship was auto-created
+	// based on the template pack's inverseType declaration.
+	InverseRelationship *GraphRelationship `json:"inverse_relationship,omitempty"`
 }
 
 // =============================================================================
@@ -137,6 +144,14 @@ type ListObjectsOptions struct {
 	RelatedToID     string
 	IDs             []string
 	ExtractionJobID string
+	PropertyFilters []PropertyFilter // JSONB property filters (JSON-encoded in query param)
+}
+
+// PropertyFilter defines a filter condition on the JSONB properties column.
+type PropertyFilter struct {
+	Path  string `json:"path"`            // Property path (dot-notation for nested, e.g. "address.city")
+	Op    string `json:"op"`              // Operator: eq, neq, gt, gte, lt, lte, contains, exists, in
+	Value any    `json:"value,omitempty"` // Filter value (omitted for "exists" operator)
 }
 
 // FTSSearchOptions holds query parameters for full-text search.
@@ -148,6 +163,7 @@ type FTSSearchOptions struct {
 	BranchID       string
 	IncludeDeleted bool
 	Limit          int
+	Offset         int
 }
 
 // VectorSearchRequest is the request body for vector similarity search.
@@ -160,6 +176,7 @@ type VectorSearchRequest struct {
 	IncludeDeleted bool      `json:"includeDeleted,omitempty"`
 	MaxDistance    *float32  `json:"maxDistance,omitempty"`
 	Limit          int       `json:"limit,omitempty"`
+	Offset         int       `json:"offset,omitempty"`
 }
 
 // FindSimilarOptions holds query parameters for finding similar objects.
@@ -192,6 +209,7 @@ type HybridSearchRequest struct {
 	LexicalWeight  *float32  `json:"lexicalWeight,omitempty"`
 	VectorWeight   *float32  `json:"vectorWeight,omitempty"`
 	Limit          int       `json:"limit,omitempty"`
+	Offset         int       `json:"offset,omitempty"`
 	IncludeDebug   bool      `json:"includeDebug,omitempty"`
 }
 
@@ -357,6 +375,7 @@ type SearchResponse struct {
 	Data    []*SearchResultItem `json:"data"`
 	Total   int                 `json:"total"`
 	HasMore bool                `json:"hasMore"`
+	Offset  int                 `json:"offset"`
 	Meta    *SearchResponseMeta `json:"meta,omitempty"`
 }
 
@@ -402,12 +421,18 @@ type GetObjectEdgesResponse struct {
 
 // SimilarObjectResult represents a single similar object with distance.
 type SimilarObjectResult struct {
-	ID          string  `json:"id"`
-	CanonicalID *string `json:"canonical_id,omitempty"`
-	Version     *int    `json:"version,omitempty"`
-	Distance    float32 `json:"distance"`
-	ProjectID   *string `json:"project_id,omitempty"`
-	BranchID    *string `json:"branch_id,omitempty"`
+	ID          string         `json:"id"`
+	CanonicalID *string        `json:"canonical_id,omitempty"`
+	Version     *int           `json:"version,omitempty"`
+	Distance    float32        `json:"distance"`
+	ProjectID   *string        `json:"project_id,omitempty"`
+	BranchID    *string        `json:"branch_id,omitempty"`
+	Type        string         `json:"type"`
+	Key         *string        `json:"key,omitempty"`
+	Status      string         `json:"status"`
+	Properties  map[string]any `json:"properties,omitempty"`
+	Labels      []string       `json:"labels,omitempty"`
+	CreatedAt   *string        `json:"created_at,omitempty"`
 }
 
 // BulkUpdateStatusResponse is the response for bulk status updates.
@@ -424,10 +449,56 @@ type BulkUpdateStatusResult struct {
 	Error   *string `json:"error,omitempty"`
 }
 
+// BulkCreateObjectsRequest is the request for bulk object creation.
+type BulkCreateObjectsRequest struct {
+	Items []CreateObjectRequest `json:"items"`
+}
+
+// BulkCreateObjectsResponse is the response for bulk object creation.
+type BulkCreateObjectsResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkCreateObjectResult `json:"results"`
+}
+
+// BulkCreateObjectResult is the result for a single object in bulk creation.
+type BulkCreateObjectResult struct {
+	Index   int          `json:"index"`
+	Success bool         `json:"success"`
+	Object  *GraphObject `json:"object,omitempty"`
+	Error   *string      `json:"error,omitempty"`
+}
+
+// BulkCreateRelationshipsRequest is the request for bulk relationship creation.
+type BulkCreateRelationshipsRequest struct {
+	Items []CreateRelationshipRequest `json:"items"`
+}
+
+// BulkCreateRelationshipsResponse is the response for bulk relationship creation.
+type BulkCreateRelationshipsResponse struct {
+	Success int                            `json:"success"`
+	Failed  int                            `json:"failed"`
+	Results []BulkCreateRelationshipResult `json:"results"`
+}
+
+// BulkCreateRelationshipResult is the result for a single relationship in bulk creation.
+type BulkCreateRelationshipResult struct {
+	Index        int                `json:"index"`
+	Success      bool               `json:"success"`
+	Relationship *GraphRelationship `json:"relationship,omitempty"`
+	Error        *string            `json:"error,omitempty"`
+}
+
 // SearchWithNeighborsResponse is the response for search with neighbors.
 type SearchWithNeighborsResponse struct {
-	PrimaryResults []*GraphObject            `json:"primaryResults"`
-	Neighbors      map[string][]*GraphObject `json:"neighbors,omitempty"`
+	PrimaryResults []*SearchWithNeighborsResultItem `json:"primaryResults"`
+	Neighbors      map[string][]*GraphObject        `json:"neighbors,omitempty"`
+}
+
+// SearchWithNeighborsResultItem wraps a primary result with its search score.
+type SearchWithNeighborsResultItem struct {
+	Object *GraphObject `json:"object"`
+	Score  float32      `json:"score"`
 }
 
 // GraphExpandResponse is the response for graph expand.
@@ -624,11 +695,16 @@ func (c *Client) prepareRequest(ctx context.Context, method, reqURL string, body
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
 
-	if c.orgID != "" {
-		req.Header.Set("X-Org-ID", c.orgID)
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
+	if orgID != "" {
+		req.Header.Set("X-Org-ID", orgID)
 	}
-	if c.projectID != "" {
-		req.Header.Set("X-Project-ID", c.projectID)
+	if projectID != "" {
+		req.Header.Set("X-Project-ID", projectID)
 	}
 
 	return req, nil
@@ -841,6 +917,12 @@ func (c *Client) ListObjects(ctx context.Context, opts *ListObjectsOptions) (*Se
 		if opts.ExtractionJobID != "" {
 			q.Set("extraction_job_id", opts.ExtractionJobID)
 		}
+		if len(opts.PropertyFilters) > 0 {
+			pfJSON, err := json.Marshal(opts.PropertyFilters)
+			if err == nil {
+				q.Set("property_filters", string(pfJSON))
+			}
+		}
 	}
 	u.RawQuery = q.Encode()
 
@@ -881,6 +963,9 @@ func (c *Client) FTSSearch(ctx context.Context, opts *FTSSearchOptions) (*Search
 		if opts.Limit > 0 {
 			q.Set("limit", fmt.Sprintf("%d", opts.Limit))
 		}
+		if opts.Offset > 0 {
+			q.Set("offset", fmt.Sprintf("%d", opts.Offset))
+		}
 	}
 	u.RawQuery = q.Encode()
 
@@ -900,12 +985,39 @@ func (c *Client) VectorSearch(ctx context.Context, req *VectorSearchRequest) (*S
 	return &result, nil
 }
 
+// ListTagsOptions specifies optional filters for listing tags.
+type ListTagsOptions struct {
+	Type   string // Filter to tags from objects of this type
+	Prefix string // Filter to tags starting with this prefix
+	Limit  int    // Maximum number of tags to return (0 = no limit)
+}
+
 // ListTags retrieves all tags used across graph objects.
-func (c *Client) ListTags(ctx context.Context) ([]string, error) {
+// Pass nil for opts to retrieve all tags without filtering.
+func (c *Client) ListTags(ctx context.Context, opts *ListTagsOptions) ([]string, error) {
+	u, err := url.Parse(c.base + "/api/graph/objects/tags")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	if opts != nil {
+		q := u.Query()
+		if opts.Type != "" {
+			q.Set("type", opts.Type)
+		}
+		if opts.Prefix != "" {
+			q.Set("prefix", opts.Prefix)
+		}
+		if opts.Limit > 0 {
+			q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+		}
+		u.RawQuery = q.Encode()
+	}
+
 	var result struct {
 		Tags []string `json:"tags"`
 	}
-	if err := c.getJSON(ctx, c.base+"/api/graph/objects/tags", &result); err != nil {
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
 		return nil, err
 	}
 	return result.Tags, nil
@@ -958,6 +1070,17 @@ func (c *Client) FindSimilar(ctx context.Context, id string, opts *FindSimilarOp
 func (c *Client) BulkUpdateStatus(ctx context.Context, req *BulkUpdateStatusRequest) (*BulkUpdateStatusResponse, error) {
 	var result BulkUpdateStatusResponse
 	if err := c.postJSON(ctx, c.base+"/api/graph/objects/bulk-update-status", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// BulkCreateObjects creates multiple graph objects in a single request.
+// Each item is processed independently — failures don't roll back other successes.
+// Maximum 100 items per request.
+func (c *Client) BulkCreateObjects(ctx context.Context, req *BulkCreateObjectsRequest) (*BulkCreateObjectsResponse, error) {
+	var result BulkCreateObjectsResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/bulk", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1100,6 +1223,17 @@ func (c *Client) GetUnused(ctx context.Context, opts *UnusedOptions) (*UnusedObj
 func (c *Client) CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) (*GraphRelationship, error) {
 	var result GraphRelationship
 	if err := c.postJSON(ctx, c.base+"/api/graph/relationships", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// BulkCreateRelationships creates multiple graph relationships in a single request.
+// Each item is processed independently — failures don't roll back other successes.
+// Maximum 100 items per request.
+func (c *Client) BulkCreateRelationships(ctx context.Context, req *BulkCreateRelationshipsRequest) (*BulkCreateRelationshipsResponse, error) {
+	var result BulkCreateRelationshipsResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/relationships/bulk", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

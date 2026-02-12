@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
 	sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
@@ -17,6 +18,7 @@ type Client struct {
 	http      *http.Client
 	base      string
 	auth      auth.Provider
+	mu        sync.RWMutex
 	orgID     string
 	projectID string
 }
@@ -34,6 +36,8 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 
 // SetContext sets the organization and project context.
 func (c *Client) SetContext(orgID, projectID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.orgID = orgID
 	c.projectID = projectID
 }
@@ -60,12 +64,17 @@ type RecreateChunksSummary struct {
 // using the current chunking strategy.
 // POST /api/documents/:id/recreate-chunks
 func (c *Client) RecreateChunks(ctx context.Context, documentID string) (*RecreateChunksResponse, error) {
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/documents/"+documentID+"/recreate-chunks", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", c.orgID)
-	httpReq.Header.Set("X-Project-ID", c.projectID)
+	httpReq.Header.Set("X-Org-ID", orgID)
+	httpReq.Header.Set("X-Project-ID", projectID)
 
 	if err := c.auth.Authenticate(httpReq); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)

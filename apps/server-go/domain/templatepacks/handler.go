@@ -230,3 +230,110 @@ func (h *Handler) DeleteAssignment(c echo.Context) error {
 
 	return c.NoContent(http.StatusNoContent)
 }
+
+// CreatePack handles POST /api/template-packs
+// @Summary      Create template pack
+// @Description  Creates a new template pack in the global registry with object type schemas, relationship schemas, and optional UI/extraction configs
+// @Tags         template-packs
+// @Accept       json
+// @Produce      json
+// @Param        request body CreatePackRequest true "Template pack definition"
+// @Success      201 {object} GraphTemplatePack "Created template pack"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/template-packs [post]
+// @Security     bearerAuth
+func (h *Handler) CreatePack(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	var req CreatePackRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Name == "" {
+		return apperror.ErrBadRequest.WithMessage("name is required")
+	}
+	if req.Version == "" {
+		return apperror.ErrBadRequest.WithMessage("version is required")
+	}
+	if len(req.ObjectTypeSchemas) == 0 {
+		return apperror.ErrBadRequest.WithMessage("object_type_schemas is required")
+	}
+
+	pack, err := h.svc.CreatePack(c.Request().Context(), &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, pack)
+}
+
+// GetPack handles GET /api/template-packs/:packId
+// @Summary      Get template pack
+// @Description  Returns a template pack by ID including all schemas and configs
+// @Tags         template-packs
+// @Accept       json
+// @Produce      json
+// @Param        packId path string true "Template Pack ID (UUID)"
+// @Success      200 {object} GraphTemplatePack "Template pack"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Template pack not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/template-packs/{packId} [get]
+// @Security     bearerAuth
+func (h *Handler) GetPack(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	packID := c.Param("packId")
+	if packID == "" {
+		return apperror.ErrBadRequest.WithMessage("packId is required")
+	}
+
+	pack, err := h.svc.GetPack(c.Request().Context(), packID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, pack)
+}
+
+// DeletePack handles DELETE /api/template-packs/:packId
+// @Summary      Delete template pack
+// @Description  Deletes a template pack from the global registry. Fails if the pack is assigned to any projects.
+// @Tags         template-packs
+// @Accept       json
+// @Produce      json
+// @Param        packId path string true "Template Pack ID (UUID)"
+// @Success      204 "No content"
+// @Failure      400 {object} apperror.Error "Bad request (e.g., pack is assigned to projects)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Template pack not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/template-packs/{packId} [delete]
+// @Security     bearerAuth
+func (h *Handler) DeletePack(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	packID := c.Param("packId")
+	if packID == "" {
+		return apperror.ErrBadRequest.WithMessage("packId is required")
+	}
+
+	if err := h.svc.DeletePack(c.Request().Context(), packID); err != nil {
+		return err
+	}
+
+	return c.NoContent(http.StatusNoContent)
+}

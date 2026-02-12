@@ -36,9 +36,9 @@ func (s *Service) GetInstalledPacks(ctx context.Context, projectID string) ([]In
 	return s.repo.GetInstalledPacks(ctx, projectID)
 }
 
-// AssignPack assigns a template pack to a project
+// AssignPack assigns a template pack to a project and registers its types
 func (s *Service) AssignPack(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*ProjectTemplatePack, error) {
-	return s.repo.AssignPack(ctx, projectID, userID, req)
+	return s.repo.AssignPackWithTypes(ctx, projectID, userID, req)
 }
 
 // UpdateAssignment updates a pack assignment
@@ -49,4 +49,19 @@ func (s *Service) UpdateAssignment(ctx context.Context, projectID, assignmentID 
 // DeleteAssignment removes a pack assignment from a project
 func (s *Service) DeleteAssignment(ctx context.Context, projectID, assignmentID string) error {
 	return s.repo.DeleteAssignment(ctx, projectID, assignmentID)
+}
+
+// CreatePack creates a new template pack in the global registry
+func (s *Service) CreatePack(ctx context.Context, req *CreatePackRequest) (*GraphTemplatePack, error) {
+	return s.repo.CreatePack(ctx, req)
+}
+
+// GetPack returns a template pack by ID
+func (s *Service) GetPack(ctx context.Context, packID string) (*GraphTemplatePack, error) {
+	return s.repo.GetPack(ctx, packID)
+}
+
+// DeletePack deletes a template pack from the global registry
+func (s *Service) DeletePack(ctx context.Context, packID string) error {
+	return s.repo.DeletePack(ctx, packID)
 }

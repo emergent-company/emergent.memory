@@ -2,11 +2,14 @@
 package typeregistry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
@@ -18,6 +21,7 @@ type Client struct {
 	http      *http.Client
 	base      string
 	auth      auth.Provider
+	mu        sync.RWMutex
 	orgID     string
 	projectID string
 }
@@ -35,6 +39,8 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 
 // SetContext sets the organization and project context.
 func (c *Client) SetContext(orgID, projectID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.orgID = orgID
 	c.projectID = projectID
 }
@@ -88,16 +94,39 @@ type ListTypesOptions struct {
 	Search      string // Search in type names
 }
 
+// CreateTypeRequest is the request to register a custom object type for a project.
+type CreateTypeRequest struct {
+	TypeName         string          `json:"type_name"`
+	Description      *string         `json:"description,omitempty"`
+	JSONSchema       json.RawMessage `json:"json_schema"`
+	UIConfig         json.RawMessage `json:"ui_config,omitempty"`
+	ExtractionConfig json.RawMessage `json:"extraction_config,omitempty"`
+	Enabled          *bool           `json:"enabled,omitempty"` // defaults to true
+}
+
+// UpdateTypeRequest is the request to update a registered type.
+type UpdateTypeRequest struct {
+	Description      *string         `json:"description,omitempty"`
+	JSONSchema       json.RawMessage `json:"json_schema,omitempty"`
+	UIConfig         json.RawMessage `json:"ui_config,omitempty"`
+	ExtractionConfig json.RawMessage `json:"extraction_config,omitempty"`
+	Enabled          *bool           `json:"enabled,omitempty"`
+}
+
 // setHeaders adds auth and context headers to the request.
 func (c *Client) setHeaders(req *http.Request) error {
 	if err := c.auth.Authenticate(req); err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
-	if c.orgID != "" {
-		req.Header.Set("X-Org-ID", c.orgID)
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+	if orgID != "" {
+		req.Header.Set("X-Org-ID", orgID)
 	}
-	if c.projectID != "" {
-		req.Header.Set("X-Project-ID", c.projectID)
+	if projectID != "" {
+		req.Header.Set("X-Project-ID", projectID)
 	}
 	return nil
 }
@@ -206,4 +235,102 @@ func (c *Client) GetTypeStats(ctx context.Context, projectID string) (*TypeRegis
 	}
 
 	return &stats, nil
+}
+
+// CreateType registers a new custom object type for a project.
+// POST /api/type-registry/projects/:projectId/types
+func (c *Client) CreateType(ctx context.Context, projectID string, req *CreateTypeRequest) (*TypeRegistryEntry, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/type-registry/projects/"+projectID+"/types", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.setHeaders(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var entry TypeRegistryEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &entry, nil
+}
+
+// UpdateType updates an existing type in the project type registry.
+// PUT /api/type-registry/projects/:projectId/types/:typeName
+func (c *Client) UpdateType(ctx context.Context, projectID, typeName string, req *UpdateTypeRequest) (*TypeRegistryEntry, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "PUT", c.base+"/api/type-registry/projects/"+projectID+"/types/"+typeName, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.setHeaders(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var entry TypeRegistryEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &entry, nil
+}
+
+// DeleteType removes a type from the project type registry.
+// DELETE /api/type-registry/projects/:projectId/types/:typeName
+func (c *Client) DeleteType(ctx context.Context, projectID, typeName string) error {
+	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/type-registry/projects/"+projectID+"/types/"+typeName, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(httpReq); err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
 }

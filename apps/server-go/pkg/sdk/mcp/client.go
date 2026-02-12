@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
 	sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
@@ -17,7 +18,7 @@ type Client struct {
 	http      *http.Client
 	base      string
 	auth      auth.Provider
-	orgID     string
+	mu        sync.RWMutex
 	projectID string
 }
 
@@ -30,9 +31,10 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 	}
 }
 
-// SetContext sets the organization and project context.
-func (c *Client) SetContext(orgID, projectID string) {
-	c.orgID = orgID
+// SetContext sets the project context for MCP requests.
+func (c *Client) SetContext(projectID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.projectID = projectID
 }
 
@@ -86,8 +88,12 @@ func (c *Client) CallMethod(ctx context.Context, method string, params interface
 	}
 
 	// Add project context
-	if c.projectID != "" {
-		httpReq.Header.Set("X-Project-ID", c.projectID)
+	c.mu.RLock()
+	projectID := c.projectID
+	c.mu.RUnlock()
+
+	if projectID != "" {
+		httpReq.Header.Set("X-Project-ID", projectID)
 	}
 
 	// Execute request

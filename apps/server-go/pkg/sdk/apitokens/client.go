@@ -15,11 +15,9 @@ import (
 
 // Client provides access to the API Tokens API.
 type Client struct {
-	http      *http.Client
-	base      string
-	auth      auth.Provider
-	orgID     string
-	projectID string
+	http *http.Client
+	base string
+	auth auth.Provider
 }
 
 // NewClient creates a new API tokens client.
@@ -29,12 +27,6 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 		base: baseURL,
 		auth: authProvider,
 	}
-}
-
-// SetContext sets the organization and project context.
-func (c *Client) SetContext(orgID, projectID string) {
-	c.orgID = orgID
-	c.projectID = projectID
 }
 
 // APIToken represents an API token (without the full token value)
