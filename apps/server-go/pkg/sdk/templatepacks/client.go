@@ -160,225 +160,37 @@ type UpdateAssignmentResponse struct {
 	Status string `json:"status"`
 }
 
-// --- Methods ---
+// --- Internal helpers ---
 
-// basePath returns the base path for template pack API calls with a project ID.
-func (c *Client) basePath(projectID string) string {
-	return c.base + "/api/template-packs/projects/" + projectID
-}
-
-// GetCompiledTypes returns compiled object and relationship type definitions for a project.
-// GET /api/template-packs/projects/:projectId/compiled-types
-func (c *Client) GetCompiledTypes(ctx context.Context, projectID string) (*CompiledTypesResponse, error) {
-	c.mu.RLock()
-	orgID := c.orgID
-	ctxProjectID := c.projectID
-	c.mu.RUnlock()
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.basePath(projectID)+"/compiled-types", nil)
+// prepareRequest creates an HTTP request with auth and context headers set.
+func (c *Client) prepareRequest(ctx context.Context, method, reqURL string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("X-Org-ID", orgID)
-	httpReq.Header.Set("X-Project-ID", ctxProjectID)
 
-	if err := c.auth.Authenticate(httpReq); err != nil {
+	if err := c.auth.Authenticate(req); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
 	}
 
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return nil, sdkerrors.ParseErrorResponse(resp)
-	}
-
-	var result CompiledTypesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	return &result, nil
-}
-
-// GetAvailablePacks returns template packs available for a project to install.
-// GET /api/template-packs/projects/:projectId/available
-func (c *Client) GetAvailablePacks(ctx context.Context, projectID string) ([]TemplatePackListItem, error) {
 	c.mu.RLock()
 	orgID := c.orgID
-	ctxProjectID := c.projectID
+	projectID := c.projectID
 	c.mu.RUnlock()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.basePath(projectID)+"/available", nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+	if orgID != "" {
+		req.Header.Set("X-Org-ID", orgID)
 	}
-	httpReq.Header.Set("X-Org-ID", orgID)
-	httpReq.Header.Set("X-Project-ID", ctxProjectID)
-
-	if err := c.auth.Authenticate(httpReq); err != nil {
-		return nil, fmt.Errorf("authenticate: %w", err)
+	if projectID != "" {
+		req.Header.Set("X-Project-ID", projectID)
 	}
 
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return nil, sdkerrors.ParseErrorResponse(resp)
-	}
-
-	var result []TemplatePackListItem
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	return result, nil
+	return req, nil
 }
 
-// GetInstalledPacks returns template packs currently installed on a project.
-// GET /api/template-packs/projects/:projectId/installed
-func (c *Client) GetInstalledPacks(ctx context.Context, projectID string) ([]InstalledPackItem, error) {
-	c.mu.RLock()
-	orgID := c.orgID
-	ctxProjectID := c.projectID
-	c.mu.RUnlock()
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.basePath(projectID)+"/installed", nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("X-Org-ID", orgID)
-	httpReq.Header.Set("X-Project-ID", ctxProjectID)
-
-	if err := c.auth.Authenticate(httpReq); err != nil {
-		return nil, fmt.Errorf("authenticate: %w", err)
-	}
-
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return nil, sdkerrors.ParseErrorResponse(resp)
-	}
-
-	var result []InstalledPackItem
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	return result, nil
-}
-
-// AssignPack assigns a template pack to a project.
-// POST /api/template-packs/projects/:projectId/assign
-func (c *Client) AssignPack(ctx context.Context, projectID string, req *AssignPackRequest) (*ProjectTemplatePack, error) {
-	c.mu.RLock()
-	orgID := c.orgID
-	ctxProjectID := c.projectID
-	c.mu.RUnlock()
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.basePath(projectID)+"/assign", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Org-ID", orgID)
-	httpReq.Header.Set("X-Project-ID", ctxProjectID)
-
-	if err := c.auth.Authenticate(httpReq); err != nil {
-		return nil, fmt.Errorf("authenticate: %w", err)
-	}
-
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return nil, sdkerrors.ParseErrorResponse(resp)
-	}
-
-	var result ProjectTemplatePack
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	return &result, nil
-}
-
-// UpdateAssignment updates a template pack assignment (e.g., toggle active status).
-// PATCH /api/template-packs/projects/:projectId/assignments/:assignmentId
-func (c *Client) UpdateAssignment(ctx context.Context, projectID, assignmentID string, req *UpdateAssignmentRequest) (*UpdateAssignmentResponse, error) {
-	c.mu.RLock()
-	orgID := c.orgID
-	ctxProjectID := c.projectID
-	c.mu.RUnlock()
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.basePath(projectID)+"/assignments/"+assignmentID, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Org-ID", orgID)
-	httpReq.Header.Set("X-Project-ID", ctxProjectID)
-
-	if err := c.auth.Authenticate(httpReq); err != nil {
-		return nil, fmt.Errorf("authenticate: %w", err)
-	}
-
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return nil, sdkerrors.ParseErrorResponse(resp)
-	}
-
-	var result UpdateAssignmentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	return &result, nil
-}
-
-// DeleteAssignment removes a template pack assignment from a project.
-// DELETE /api/template-packs/projects/:projectId/assignments/:assignmentId
-func (c *Client) DeleteAssignment(ctx context.Context, projectID, assignmentID string) error {
-	c.mu.RLock()
-	orgID := c.orgID
-	ctxProjectID := c.projectID
-	c.mu.RUnlock()
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.basePath(projectID)+"/assignments/"+assignmentID, nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("X-Org-ID", orgID)
-	httpReq.Header.Set("X-Project-ID", ctxProjectID)
-
-	if err := c.auth.Authenticate(httpReq); err != nil {
-		return fmt.Errorf("authenticate: %w", err)
-	}
-
-	resp, err := c.http.Do(httpReq)
+// doJSON executes a request, checks for errors, and decodes JSON response.
+func (c *Client) doJSON(req *http.Request, result any) error {
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("do request: %w", err)
 	}
@@ -388,56 +200,145 @@ func (c *Client) DeleteAssignment(ctx context.Context, projectID, assignmentID s
 		return sdkerrors.ParseErrorResponse(resp)
 	}
 
-	// Drain response body
-	_, _ = io.Copy(io.Discard, resp.Body)
+	if result != nil {
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
+	} else {
+		_, _ = io.Copy(io.Discard, resp.Body)
+	}
+
 	return nil
 }
 
-// --- Global Template Pack CRUD ---
+// getJSON performs a GET request and decodes the JSON response.
+func (c *Client) getJSON(ctx context.Context, reqURL string, result any) error {
+	req, err := c.prepareRequest(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return err
+	}
+	return c.doJSON(req, result)
+}
+
+// postJSON performs a POST request with JSON body and decodes the response.
+func (c *Client) postJSON(ctx context.Context, reqURL string, reqBody any, result any) error {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := c.prepareRequest(ctx, http.MethodPost, reqURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.doJSON(req, result)
+}
+
+// patchJSON performs a PATCH request with JSON body and decodes the response.
+func (c *Client) patchJSON(ctx context.Context, reqURL string, reqBody any, result any) error {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := c.prepareRequest(ctx, http.MethodPatch, reqURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.doJSON(req, result)
+}
+
+// doDelete performs a DELETE request.
+func (c *Client) doDelete(ctx context.Context, reqURL string) error {
+	req, err := c.prepareRequest(ctx, http.MethodDelete, reqURL, nil)
+	if err != nil {
+		return err
+	}
+	return c.doJSON(req, nil)
+}
+
+// projectPath returns the base path for project-scoped template pack API calls.
+// Uses the stored projectID from SetContext().
+func (c *Client) projectPath() string {
+	c.mu.RLock()
+	pid := c.projectID
+	c.mu.RUnlock()
+	return c.base + "/api/template-packs/projects/" + pid
+}
 
 // packPath returns the base path for global (non-project-scoped) template pack operations.
 func (c *Client) packPath() string {
 	return c.base + "/api/template-packs"
 }
 
+// --- Project-scoped methods ---
+
+// GetCompiledTypes returns compiled object and relationship type definitions for the current project.
+// GET /api/template-packs/projects/:projectId/compiled-types
+func (c *Client) GetCompiledTypes(ctx context.Context) (*CompiledTypesResponse, error) {
+	var result CompiledTypesResponse
+	if err := c.getJSON(ctx, c.projectPath()+"/compiled-types", &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetAvailablePacks returns template packs available for the current project to install.
+// GET /api/template-packs/projects/:projectId/available
+func (c *Client) GetAvailablePacks(ctx context.Context) ([]TemplatePackListItem, error) {
+	var result []TemplatePackListItem
+	if err := c.getJSON(ctx, c.projectPath()+"/available", &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetInstalledPacks returns template packs currently installed on the current project.
+// GET /api/template-packs/projects/:projectId/installed
+func (c *Client) GetInstalledPacks(ctx context.Context) ([]InstalledPackItem, error) {
+	var result []InstalledPackItem
+	if err := c.getJSON(ctx, c.projectPath()+"/installed", &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// AssignPack assigns a template pack to the current project.
+// POST /api/template-packs/projects/:projectId/assign
+func (c *Client) AssignPack(ctx context.Context, req *AssignPackRequest) (*ProjectTemplatePack, error) {
+	var result ProjectTemplatePack
+	if err := c.postJSON(ctx, c.projectPath()+"/assign", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateAssignment updates a template pack assignment (e.g., toggle active status).
+// PATCH /api/template-packs/projects/:projectId/assignments/:assignmentId
+func (c *Client) UpdateAssignment(ctx context.Context, assignmentID string, req *UpdateAssignmentRequest) (*UpdateAssignmentResponse, error) {
+	var result UpdateAssignmentResponse
+	if err := c.patchJSON(ctx, c.projectPath()+"/assignments/"+assignmentID, req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteAssignment removes a template pack assignment from the current project.
+// DELETE /api/template-packs/projects/:projectId/assignments/:assignmentId
+func (c *Client) DeleteAssignment(ctx context.Context, assignmentID string) error {
+	return c.doDelete(ctx, c.projectPath()+"/assignments/"+assignmentID)
+}
+
+// --- Global Template Pack CRUD ---
+
 // CreatePack creates a new template pack.
 // POST /api/template-packs
 func (c *Client) CreatePack(ctx context.Context, req *CreatePackRequest) (*TemplatePack, error) {
-	c.mu.RLock()
-	orgID := c.orgID
-	ctxProjectID := c.projectID
-	c.mu.RUnlock()
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.packPath(), bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Org-ID", orgID)
-	httpReq.Header.Set("X-Project-ID", ctxProjectID)
-
-	if err := c.auth.Authenticate(httpReq); err != nil {
-		return nil, fmt.Errorf("authenticate: %w", err)
-	}
-
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return nil, sdkerrors.ParseErrorResponse(resp)
-	}
-
 	var result TemplatePack
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+	if err := c.postJSON(ctx, c.packPath(), req, &result); err != nil {
+		return nil, err
 	}
 	return &result, nil
 }
@@ -445,35 +346,9 @@ func (c *Client) CreatePack(ctx context.Context, req *CreatePackRequest) (*Templ
 // GetPack retrieves a template pack by ID.
 // GET /api/template-packs/:packId
 func (c *Client) GetPack(ctx context.Context, packID string) (*TemplatePack, error) {
-	c.mu.RLock()
-	orgID := c.orgID
-	ctxProjectID := c.projectID
-	c.mu.RUnlock()
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.packPath()+"/"+packID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("X-Org-ID", orgID)
-	httpReq.Header.Set("X-Project-ID", ctxProjectID)
-
-	if err := c.auth.Authenticate(httpReq); err != nil {
-		return nil, fmt.Errorf("authenticate: %w", err)
-	}
-
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return nil, sdkerrors.ParseErrorResponse(resp)
-	}
-
 	var result TemplatePack
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+	if err := c.getJSON(ctx, c.packPath()+"/"+packID, &result); err != nil {
+		return nil, err
 	}
 	return &result, nil
 }
@@ -481,32 +356,5 @@ func (c *Client) GetPack(ctx context.Context, packID string) (*TemplatePack, err
 // DeletePack deletes a template pack by ID. Fails if the pack is assigned to any projects.
 // DELETE /api/template-packs/:packId
 func (c *Client) DeletePack(ctx context.Context, packID string) error {
-	c.mu.RLock()
-	orgID := c.orgID
-	ctxProjectID := c.projectID
-	c.mu.RUnlock()
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.packPath()+"/"+packID, nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("X-Org-ID", orgID)
-	httpReq.Header.Set("X-Project-ID", ctxProjectID)
-
-	if err := c.auth.Authenticate(httpReq); err != nil {
-		return fmt.Errorf("authenticate: %w", err)
-	}
-
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return sdkerrors.ParseErrorResponse(resp)
-	}
-
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return nil
+	return c.doDelete(ctx, c.packPath()+"/"+packID)
 }
