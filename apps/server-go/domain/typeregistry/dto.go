@@ -113,32 +113,59 @@ func (r *TypeRegistryRowDTO) ToDTO() TypeRegistryEntryDTO {
 	}
 }
 
-// RelationshipSchema represents a relationship type schema from template pack JSON
+// RelationshipSchema represents a relationship type schema from template pack JSON.
+// Supports multiple field naming conventions for source/target types:
+//   - sourceTypes / targetTypes (camelCase arrays)
+//   - fromTypes / toTypes (alternative camelCase arrays)
+//   - source_types / target_types (snake_case arrays)
+//   - source / target (singular strings)
 type RelationshipSchema struct {
-	Label        string   `json:"label,omitempty"`
-	InverseLabel string   `json:"inverseLabel,omitempty"`
-	InverseType  string   `json:"inverseType,omitempty"` // When set, auto-creates inverse relationship (e.g. PARENT_OF -> CHILD_OF)
-	Description  string   `json:"description,omitempty"`
-	FromTypes    []string `json:"fromTypes,omitempty"`
-	SourceTypes  []string `json:"sourceTypes,omitempty"` // alternative key
-	ToTypes      []string `json:"toTypes,omitempty"`
-	TargetTypes  []string `json:"targetTypes,omitempty"` // alternative key
+	Label            string   `json:"label,omitempty"`
+	InverseLabel     string   `json:"inverseLabel,omitempty"`
+	InverseType      string   `json:"inverseType,omitempty"` // When set, auto-creates inverse relationship (e.g. PARENT_OF -> CHILD_OF)
+	Description      string   `json:"description,omitempty"`
+	FromTypes        []string `json:"fromTypes,omitempty"`
+	SourceTypes      []string `json:"sourceTypes,omitempty"`
+	ToTypes          []string `json:"toTypes,omitempty"`
+	TargetTypes      []string `json:"targetTypes,omitempty"`
+	SnakeSourceTypes []string `json:"source_types,omitempty"`
+	SnakeTargetTypes []string `json:"target_types,omitempty"`
+	Source           string   `json:"source,omitempty"`
+	Target           string   `json:"target,omitempty"`
 }
 
-// GetSourceTypes returns source types from either fromTypes or sourceTypes field
+// GetSourceTypes returns source types from any supported field name.
 func (rs *RelationshipSchema) GetSourceTypes() []string {
+	if len(rs.SourceTypes) > 0 {
+		return rs.SourceTypes
+	}
 	if len(rs.FromTypes) > 0 {
 		return rs.FromTypes
 	}
-	return rs.SourceTypes
+	if len(rs.SnakeSourceTypes) > 0 {
+		return rs.SnakeSourceTypes
+	}
+	if rs.Source != "" {
+		return []string{rs.Source}
+	}
+	return nil
 }
 
-// GetTargetTypes returns target types from either toTypes or targetTypes field
+// GetTargetTypes returns target types from any supported field name.
 func (rs *RelationshipSchema) GetTargetTypes() []string {
+	if len(rs.TargetTypes) > 0 {
+		return rs.TargetTypes
+	}
 	if len(rs.ToTypes) > 0 {
 		return rs.ToTypes
 	}
-	return rs.TargetTypes
+	if len(rs.SnakeTargetTypes) > 0 {
+		return rs.SnakeTargetTypes
+	}
+	if rs.Target != "" {
+		return []string{rs.Target}
+	}
+	return nil
 }
 
 // CreateTypeRequest is the request to register a custom object type for a project
