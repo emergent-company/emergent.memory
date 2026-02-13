@@ -122,22 +122,21 @@ install_cli() {
         return 1
     fi
     
-    cd "$tmp_dir"
     if [ "$ext" = "zip" ]; then
-        unzip -q "emergent-cli.${ext}" 2>/dev/null || { rm -rf "$tmp_dir"; return 1; }
+        unzip -q "${tmp_dir}/emergent-cli.${ext}" -d "$tmp_dir" 2>/dev/null || { rm -rf "$tmp_dir"; return 1; }
     else
-        tar xzf "emergent-cli.${ext}" 2>/dev/null || { rm -rf "$tmp_dir"; return 1; }
+        tar xzf "${tmp_dir}/emergent-cli.${ext}" -C "$tmp_dir" 2>/dev/null || { rm -rf "$tmp_dir"; return 1; }
     fi
     
     local binary_name="emergent-cli-${os}-${arch}"
     [ "$os" = "windows" ] && binary_name="${binary_name}.exe"
     
-    if [ -f "$binary_name" ]; then
-        mv "$binary_name" "${INSTALL_DIR}/bin/emergent"
+    if [ -f "${tmp_dir}/${binary_name}" ]; then
+        mv "${tmp_dir}/${binary_name}" "${INSTALL_DIR}/bin/emergent"
         chmod +x "${INSTALL_DIR}/bin/emergent"
         echo -e "${GREEN}✓${NC} CLI installed to ${INSTALL_DIR}/bin/emergent"
     else
-        echo -e "${YELLOW}⚠${NC} CLI binary not found in archive"
+        echo -e "${YELLOW}⚠${NC} CLI binary not found in archive (expected ${binary_name})"
         rm -rf "$tmp_dir"
         return 1
     fi
@@ -508,7 +507,7 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:3002/health']
+      test: ['CMD', 'curl', '-sf', 'http://localhost:3002/health']
       interval: 30s
       timeout: 10s
       retries: 3
@@ -561,14 +560,17 @@ if [ "$CLI_VERSION" = "latest" ]; then
     CLI_VERSION=$(get_latest_cli_version)
 fi
 
-CLI_INSTALLED=false
-if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
-    CLI_INSTALLED=true
-    cat > "${INSTALL_DIR}/config.yaml" <<EOF
+# Always create CLI config (API key is known regardless of CLI binary install)
+cat > "${INSTALL_DIR}/config.yaml" <<EOF
 server_url: http://localhost:${SERVER_PORT}
 api_key: ${API_KEY}
 EOF
-    echo -e "${GREEN}✓${NC} CLI config created at ${INSTALL_DIR}/config.yaml"
+chmod 600 "${INSTALL_DIR}/config.yaml"
+echo -e "${GREEN}✓${NC} CLI config created at ${INSTALL_DIR}/config.yaml"
+
+CLI_INSTALLED=false
+if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
+    CLI_INSTALLED=true
     setup_path
 fi
 
