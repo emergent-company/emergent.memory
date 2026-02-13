@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -74,9 +75,13 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		printSystemInfo(installDir, isStandalone)
 	}
 
-	results = append(results, checkConfig(configPath))
-
+	// For standalone installs without config.yaml, synthesize config from .env.local
 	cfg, _ := config.LoadWithEnv(configPath)
+	if isStandalone {
+		cfg = enrichConfigFromEnvLocal(cfg, installDir)
+	}
+
+	results = append(results, checkConfigStandalone(configPath, isStandalone, cfg))
 
 	if isStandalone {
 		results = append(results, checkGoogleAPIKey(installDir))
@@ -149,42 +154,116 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func checkConfig(configPath string) checkResult {
+// enrichConfigFromEnvLocal reads .env.local from a standalone installation and
+// fills in missing config values (server URL, API key).
+func enrichConfigFromEnvLocal(cfg *config.Config, installDir string) *config.Config {
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+
+	envPath := filepath.Join(installDir, "config", ".env.local")
+	content, err := os.ReadFile(envPath)
+	if err != nil {
+		return cfg
+	}
+
+	envVars := parseEnvFile(string(content))
+
+	if cfg.APIKey == "" {
+		if key, ok := envVars["STANDALONE_API_KEY"]; ok && key != "" {
+			cfg.APIKey = key
+		}
+	}
+
+	if cfg.ServerURL == "" || cfg.ServerURL == "http://localhost:3002" {
+		port := "3002"
+		if p, ok := envVars["SERVER_PORT"]; ok && p != "" {
+			port = p
+		}
+		cfg.ServerURL = fmt.Sprintf("http://localhost:%s", port)
+	}
+
+	return cfg
+}
+
+// parseEnvFile parses a .env file into a map of key=value pairs.
+func parseEnvFile(content string) map[string]string {
+	result := make(map[string]string)
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if idx := strings.Index(line, "="); idx > 0 {
+			key := strings.TrimSpace(line[:idx])
+			value := strings.TrimSpace(line[idx+1:])
+			result[key] = value
+		}
+	}
+	return result
+}
+
+// checkConfigStandalone checks configuration, understanding that standalone
+// installs may not have config.yaml but can derive config from .env.local.
+func checkConfigStandalone(configPath string, isStandalone bool, cfg *config.Config) checkResult {
 	fmt.Print("Checking configuration... ")
 
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		fmt.Println("NOT FOUND")
+	// If config.yaml exists, validate it normally
+	if _, err := os.Stat(configPath); err == nil {
+		fileCfg, err := config.LoadWithEnv(configPath)
+		if err != nil {
+			fmt.Println("ERROR")
+			return checkResult{
+				name:    "Configuration",
+				status:  "fail",
+				message: fmt.Sprintf("Failed to load config: %v", err),
+			}
+		}
+
+		if fileCfg.ServerURL == "" {
+			fmt.Println("INCOMPLETE")
+			return checkResult{
+				name:    "Configuration",
+				status:  "fail",
+				message: "Server URL not configured",
+			}
+		}
+
+		fmt.Println("OK")
 		return checkResult{
 			name:    "Configuration",
-			status:  "fail",
-			message: fmt.Sprintf("Config file not found at %s", configPath),
+			status:  "pass",
+			message: fmt.Sprintf("Loaded from %s", configPath),
 		}
 	}
 
-	cfg, err := config.LoadWithEnv(configPath)
-	if err != nil {
-		fmt.Println("ERROR")
+	// config.yaml doesn't exist — check if standalone can fill in
+	if isStandalone && cfg != nil && cfg.ServerURL != "" && cfg.APIKey != "" {
+		fmt.Println("OK (standalone)")
 		return checkResult{
 			name:    "Configuration",
-			status:  "fail",
-			message: fmt.Sprintf("Failed to load config: %v", err),
+			status:  "pass",
+			message: fmt.Sprintf("No config.yaml (using .env.local: server=%s)", cfg.ServerURL),
 		}
 	}
 
-	if cfg.ServerURL == "" {
-		fmt.Println("INCOMPLETE")
-		return checkResult{
-			name:    "Configuration",
-			status:  "fail",
-			message: "Server URL not configured",
-		}
+	// Neither config.yaml nor usable standalone config
+	fmt.Println("NOT FOUND")
+	msg := fmt.Sprintf("Config file not found at %s", configPath)
+	if isStandalone {
+		msg += "\n         To fix: run 'emergent install' to generate config.yaml"
+		msg += "\n         Or create it manually:"
+		msg += fmt.Sprintf("\n           echo 'server_url: http://localhost:3002' > %s", configPath)
+		msg += fmt.Sprintf("\n           echo 'api_key: <your-api-key>' >> %s", configPath)
+	} else {
+		msg += "\n         To fix: create the config file with your server URL:"
+		msg += fmt.Sprintf("\n           mkdir -p %s", filepath.Dir(configPath))
+		msg += fmt.Sprintf("\n           echo 'server_url: https://your-server.example.com' > %s", configPath)
 	}
-
-	fmt.Println("OK")
 	return checkResult{
 		name:    "Configuration",
-		status:  "pass",
-		message: fmt.Sprintf("Loaded from %s", configPath),
+		status:  "fail",
+		message: msg,
 	}
 }
 
@@ -361,13 +440,26 @@ func isStandaloneInstallation(installDir string) bool {
 func checkDockerContainers(installDir string) checkResult {
 	fmt.Print("Checking Docker containers... ")
 
+	// First check if docker is available in PATH
+	if _, err := exec.LookPath("docker"); err != nil {
+		fmt.Println("NOT FOUND")
+		return checkResult{
+			name:   "Docker Containers",
+			status: "warn",
+			message: "Docker not found in PATH.\n" +
+				"         If Docker Desktop is installed, ensure it's running and CLI tools are enabled.\n" +
+				"         On macOS: open Docker Desktop, go to Settings > Advanced > enable system PATH.\n" +
+				"         Or add manually: export PATH=\"/usr/local/bin:$PATH\"",
+		}
+	}
+
 	serverLogs, err := getDockerLogs(installDir, "server", 50)
 	if err != nil {
 		fmt.Println("DOCKER ERROR")
 		return checkResult{
 			name:    "Docker Containers",
 			status:  "warn",
-			message: fmt.Sprintf("Could not check Docker: %v", err),
+			message: fmt.Sprintf("Could not check Docker: %v\n         Are Docker containers running? Try: docker compose -f %s/docker/docker-compose.yml ps", err, installDir),
 		}
 	}
 
@@ -879,7 +971,7 @@ func getContainerVersion(containerName string) string {
 func printSystemInfo(installDir string, isStandalone bool) {
 	fmt.Println("System Information:")
 	fmt.Printf("  CLI Version:        %s\n", getInstalledVersionFromFile(installDir))
-	fmt.Printf("  OS/Arch:            %s/%s\n", "runtime.GOOS", "runtime.GOARCH")
+	fmt.Printf("  OS/Arch:            %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Printf("  Installation:       ")
 	if isStandalone {
 		fmt.Printf("standalone (%s)\n", installDir)

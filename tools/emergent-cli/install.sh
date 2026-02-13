@@ -91,43 +91,48 @@ setup_path() {
     local path_line="export PATH=\"\$HOME/.emergent/bin:\$PATH\""
     local added_to=""
     
-    # Add to .bashrc if it exists
+    # Helper: try to append PATH config to a file
+    # Returns 0 on success, 1 on failure (e.g., symlink to read-only location)
+    try_append() {
+        local file="$1"
+        if [ -f "$file" ] && grep -q "\.emergent/bin" "$file" 2>/dev/null; then
+            return 0  # Already configured
+        fi
+        # Try writing; handle read-only symlinks (e.g., Mackup -> iCloud)
+        if { echo "" >> "$file" && echo "# Emergent CLI" >> "$file" && echo "$path_line" >> "$file"; } 2>/dev/null; then
+            return 0
+        fi
+        return 1
+    }
+    
+    # Zsh: try .zshrc first, fall back to .zshenv (not managed by Mackup, sourced by all zsh sessions)
+    if command -v zsh &>/dev/null; then
+        if [ -f "$HOME/.zshrc" ]; then
+            if grep -q "\.emergent/bin" "$HOME/.zshrc" 2>/dev/null; then
+                added_to="${added_to} ~/.zshrc"
+            elif try_append "$HOME/.zshrc"; then
+                added_to="${added_to} ~/.zshrc"
+            elif try_append "$HOME/.zshenv"; then
+                added_to="${added_to} ~/.zshenv"
+            fi
+        elif try_append "$HOME/.zshenv"; then
+            added_to="${added_to} ~/.zshenv"
+        fi
+    fi
+    
+    # Bash: try .bashrc first, fall back to .bash_profile, then .profile
     if [ -f "$HOME/.bashrc" ]; then
-        if ! grep -q "\.emergent/bin" "$HOME/.bashrc" 2>/dev/null; then
-            echo "" >> "$HOME/.bashrc"
-            echo "# Emergent CLI" >> "$HOME/.bashrc"
-            echo "$path_line" >> "$HOME/.bashrc"
+        if grep -q "\.emergent/bin" "$HOME/.bashrc" 2>/dev/null; then
             added_to="${added_to} ~/.bashrc"
+        elif try_append "$HOME/.bashrc"; then
+            added_to="${added_to} ~/.bashrc"
+        elif try_append "$HOME/.bash_profile"; then
+            added_to="${added_to} ~/.bash_profile"
         fi
-    fi
-    
-    # Add to .zshrc if it exists
-    if [ -f "$HOME/.zshrc" ]; then
-        if ! grep -q "\.emergent/bin" "$HOME/.zshrc" 2>/dev/null; then
-            echo "" >> "$HOME/.zshrc"
-            echo "# Emergent CLI" >> "$HOME/.zshrc"
-            echo "$path_line" >> "$HOME/.zshrc"
-            added_to="${added_to} ~/.zshrc"
-        fi
-    fi
-    
-    # If neither exists, try .bash_profile or .profile
-    if [ -z "$added_to" ]; then
-        if [ -f "$HOME/.bash_profile" ]; then
-            if ! grep -q "\.emergent/bin" "$HOME/.bash_profile" 2>/dev/null; then
-                echo "" >> "$HOME/.bash_profile"
-                echo "# Emergent CLI" >> "$HOME/.bash_profile"
-                echo "$path_line" >> "$HOME/.bash_profile"
-                added_to=" ~/.bash_profile"
-            fi
-        elif [ -f "$HOME/.profile" ]; then
-            if ! grep -q "\.emergent/bin" "$HOME/.profile" 2>/dev/null; then
-                echo "" >> "$HOME/.profile"
-                echo "# Emergent CLI" >> "$HOME/.profile"
-                echo "$path_line" >> "$HOME/.profile"
-                added_to=" ~/.profile"
-            fi
-        fi
+    elif try_append "$HOME/.bash_profile"; then
+        added_to="${added_to} ~/.bash_profile"
+    elif try_append "$HOME/.profile"; then
+        added_to="${added_to} ~/.profile"
     fi
     
     if [ -n "$added_to" ]; then
@@ -137,7 +142,9 @@ setup_path() {
         success "PATH already configured"
     else
         echo
-        echo "Add to PATH manually: $path_line"
+        echo "  Could not update shell config (files may be read-only symlinks)."
+        echo "  Add to PATH manually: $path_line"
+        echo "  Recommended: add the line above to ~/.zshenv or ~/.bash_profile"
     fi
 }
 
