@@ -644,7 +644,9 @@ CREATE TABLE kb.graph_relationships (
     canonical_id uuid NOT NULL,
     supersedes_id uuid,
     version integer DEFAULT 1 NOT NULL,
-    branch_id uuid
+    branch_id uuid,
+    embedding vector(768),
+    embedding_updated_at timestamp with time zone
 );
 ALTER TABLE ONLY kb.graph_relationships FORCE ROW LEVEL SECURITY;
 CREATE TABLE kb.graph_template_packs (
