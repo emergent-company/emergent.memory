@@ -146,32 +146,104 @@ install_cli() {
 }
 
 setup_path() {
-    local shell_rc=""
     local path_line="export PATH=\"\$HOME/.emergent/bin:\$PATH\""
+    local added_to=""
     
-    if [ -f "$HOME/.zshrc" ]; then shell_rc="$HOME/.zshrc"
-    elif [ -f "$HOME/.bashrc" ]; then shell_rc="$HOME/.bashrc"
-    elif [ -f "$HOME/.bash_profile" ]; then shell_rc="$HOME/.bash_profile"
-    elif [ -f "$HOME/.profile" ]; then shell_rc="$HOME/.profile"
+    # Add to .bashrc if it exists
+    if [ -f "$HOME/.bashrc" ]; then
+        if ! grep -q "\.emergent/bin" "$HOME/.bashrc" 2>/dev/null; then
+            echo "" >> "$HOME/.bashrc"
+            echo "# Emergent CLI" >> "$HOME/.bashrc"
+            echo "$path_line" >> "$HOME/.bashrc"
+            added_to="${added_to} ~/.bashrc"
+        fi
     fi
     
-    if [ -z "$shell_rc" ]; then
+    # Add to .zshrc if it exists
+    if [ -f "$HOME/.zshrc" ]; then
+        if ! grep -q "\.emergent/bin" "$HOME/.zshrc" 2>/dev/null; then
+            echo "" >> "$HOME/.zshrc"
+            echo "# Emergent CLI" >> "$HOME/.zshrc"
+            echo "$path_line" >> "$HOME/.zshrc"
+            added_to="${added_to} ~/.zshrc"
+        fi
+    fi
+    
+    # If neither exists, try .bash_profile or .profile
+    if [ -z "$added_to" ]; then
+        if [ -f "$HOME/.bash_profile" ]; then
+            if ! grep -q "\.emergent/bin" "$HOME/.bash_profile" 2>/dev/null; then
+                echo "" >> "$HOME/.bash_profile"
+                echo "# Emergent CLI" >> "$HOME/.bash_profile"
+                echo "$path_line" >> "$HOME/.bash_profile"
+                added_to=" ~/.bash_profile"
+            fi
+        elif [ -f "$HOME/.profile" ]; then
+            if ! grep -q "\.emergent/bin" "$HOME/.profile" 2>/dev/null; then
+                echo "" >> "$HOME/.profile"
+                echo "# Emergent CLI" >> "$HOME/.profile"
+                echo "$path_line" >> "$HOME/.profile"
+                added_to=" ~/.profile"
+            fi
+        fi
+    fi
+    
+    if [ -n "$added_to" ]; then
+        echo -e "${GREEN}✓${NC} Added to PATH in:${added_to}"
+        echo "  Restart your terminal or run 'source <config-file>' to activate"
+    elif echo "$PATH" | grep -q "\.emergent/bin"; then
+        echo -e "${GREEN}✓${NC} PATH already configured"
+    else
         echo -e "${YELLOW}⚠${NC} Could not detect shell config file"
         echo "  Add this to your shell config manually: $path_line"
         return 1
     fi
     
-    if grep -q "\.emergent/bin" "$shell_rc" 2>/dev/null; then
-        echo -e "${GREEN}✓${NC} PATH already configured in $shell_rc"
-        return 0
-    fi
-    
-    echo "" >> "$shell_rc"
-    echo "# Emergent CLI" >> "$shell_rc"
-    echo "$path_line" >> "$shell_rc"
-    echo -e "${GREEN}✓${NC} Added to PATH in $shell_rc"
-    echo "  Run 'source $shell_rc' or restart your shell to activate"
     return 0
+}
+
+prompt_google_api_key() {
+    echo ""
+    echo -e "${CYAN}${BOLD}Google API Key Setup (optional)${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "A Google API key enables AI-powered features including:"
+    echo "  - Semantic search with text embeddings"
+    echo "  - AI-powered document analysis"
+    echo "  - Intelligent entity extraction"
+    echo ""
+    echo "To get a Google API key:"
+    echo "  1. Go to https://aistudio.google.com/apikey"
+    echo "  2. Click 'Create API Key'"
+    echo "  3. Copy the generated key"
+    echo ""
+    echo -n "Enter your Google API key (press Enter to skip): "
+    read -r google_api_key
+    
+    if [ -n "$google_api_key" ]; then
+        # Update the .env.local file with the Google API key
+        if [ -f "${INSTALL_DIR}/config/.env.local" ]; then
+            if grep -q "^GOOGLE_API_KEY=" "${INSTALL_DIR}/config/.env.local" 2>/dev/null; then
+                sed -i.bak "s|^GOOGLE_API_KEY=.*|GOOGLE_API_KEY=${google_api_key}|" "${INSTALL_DIR}/config/.env.local"
+                rm -f "${INSTALL_DIR}/config/.env.local.bak"
+            else
+                echo "GOOGLE_API_KEY=${google_api_key}" >> "${INSTALL_DIR}/config/.env.local"
+            fi
+            echo -e "${GREEN}✓${NC} Google API key saved to configuration"
+            
+            # Restart server container if it's running to pick up the key
+            if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "emergent-server"; then
+                echo -e "${CYAN}Restarting server to apply Google API key...${NC}"
+                cd "${INSTALL_DIR}/docker"
+                docker compose --env-file "${INSTALL_DIR}/config/.env.local" restart server 2>/dev/null || true
+                echo -e "${GREEN}✓${NC} Server restarted with Google API key"
+            fi
+        fi
+    else
+        echo -e "${YELLOW}⚠${NC} Skipped. You can set it later:"
+        echo "  emergent config set google_api_key YOUR_KEY"
+        echo "  Or re-run: emergent install --google-api-key YOUR_KEY"
+    fi
 }
 
 if [ "${CLIENT_ONLY:-}" = "true" ] || [ "${CLIENT_ONLY:-}" = "1" ]; then
@@ -217,6 +289,8 @@ CLIENTMCPEOF
         echo "   Replace /path/to/emergent with: ${INSTALL_DIR}/bin/emergent"
         echo ""
         echo -e "${YELLOW}Note:${NC} Restart your terminal for 'emergent' to be in PATH."
+        echo ""
+        prompt_google_api_key
         echo ""
         exit 0
     else
@@ -635,4 +709,8 @@ cat << 'SIMPLEEOF'
 SIMPLEEOF
 echo ""
 echo -e "${CYAN}📚 Documentation:${NC} https://github.com/emergent-company/emergent"
+echo ""
+
+# Prompt for Google API key
+prompt_google_api_key
 echo ""
