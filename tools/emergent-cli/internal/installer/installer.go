@@ -2,6 +2,7 @@
 package installer
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -274,6 +275,10 @@ func (i *Installer) Install() error {
 	if i.config.SkipStart {
 		i.output.Info("Skipping service start (--skip-start)")
 		i.printCompletionMessage(apiKey, false)
+		// Prompt for Google API key if not provided via flag
+		if i.config.GoogleAPIKey == "" {
+			i.PromptGoogleAPIKey()
+		}
 		return nil
 	}
 
@@ -300,6 +305,12 @@ func (i *Installer) Install() error {
 	}
 
 	i.printCompletionMessage(apiKey, true)
+
+	// Prompt for Google API key if not provided via flag
+	if i.config.GoogleAPIKey == "" {
+		i.PromptGoogleAPIKey()
+	}
+
 	return nil
 }
 
@@ -465,6 +476,63 @@ func (i *Installer) Uninstall(keepData bool) error {
 	}
 
 	return nil
+}
+
+// PromptGoogleAPIKey interactively asks the user for a Google API key and saves it
+func (i *Installer) PromptGoogleAPIKey() {
+	fmt.Println()
+	fmt.Printf("%s%sGoogle API Key Setup (optional)%s\n", colorCyan, colorBold, colorReset)
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println()
+	fmt.Println("A Google API key enables AI-powered features including:")
+	fmt.Println("  - Semantic search with text embeddings")
+	fmt.Println("  - AI-powered document analysis")
+	fmt.Println("  - Intelligent entity extraction")
+	fmt.Println()
+	fmt.Println("To get a Google API key:")
+	fmt.Println("  1. Go to https://aistudio.google.com/apikey")
+	fmt.Println("  2. Click 'Create API Key'")
+	fmt.Println("  3. Copy the generated key")
+	fmt.Println()
+	fmt.Print("Enter your Google API key (press Enter to skip): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+
+	if input == "" {
+		fmt.Println()
+		i.output.Warn("Skipped. You can set it later with: emergent config set google_api_key YOUR_KEY")
+		return
+	}
+
+	// Update the .env.local file
+	envPath := i.GetEnvPath()
+	content, err := os.ReadFile(envPath)
+	if err != nil {
+		i.output.Warn("Could not read config file: %v", err)
+		return
+	}
+
+	lines := strings.Split(string(content), "\n")
+	found := false
+	for idx, line := range lines {
+		if strings.HasPrefix(line, "GOOGLE_API_KEY=") {
+			lines[idx] = "GOOGLE_API_KEY=" + input
+			found = true
+			break
+		}
+	}
+	if !found {
+		lines = append(lines, "GOOGLE_API_KEY="+input)
+	}
+
+	if err := os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0600); err != nil {
+		i.output.Warn("Could not save Google API key: %v", err)
+		return
+	}
+
+	i.output.Success("Google API key saved to configuration")
 }
 
 func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool) {
