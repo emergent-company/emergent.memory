@@ -453,15 +453,8 @@ func checkDockerContainers(installDir string) checkResult {
 		}
 	}
 
-	serverLogs, err := getDockerLogs(installDir, "server", 50)
-	if err != nil {
-		fmt.Println("DOCKER ERROR")
-		return checkResult{
-			name:    "Docker Containers",
-			status:  "warn",
-			message: fmt.Sprintf("Could not check Docker: %v\n         Are Docker containers running? Try: docker compose -f %s/docker/docker-compose.yml ps", err, installDir),
-		}
-	}
+	// Check if containers are actually running via docker compose ps
+	running, stopped := getContainerStatus(installDir)
 
 	installedVersion := getInstalledVersionFromFile(installDir)
 	containerVersion := getContainerVersion("emergent-server")
@@ -472,6 +465,33 @@ func checkDockerContainers(installDir string) checkResult {
 			name:    "Docker Containers",
 			status:  "warn",
 			message: fmt.Sprintf("Version mismatch detected. Installed: %s, Container: %s. Run 'emergent upgrade' to update.", installedVersion, containerVersion),
+		}
+	}
+
+	// If server container is running, that's a pass — check logs only for diagnostics
+	if contains(running, "server") {
+		fmt.Println("OK")
+		msg := fmt.Sprintf("Server container is running (%d/%d containers up)", len(running), len(running)+len(stopped))
+		if len(stopped) > 0 {
+			msg += fmt.Sprintf("\n         Stopped: %s", strings.Join(stopped, ", "))
+		}
+		return checkResult{
+			name:    "Docker Containers",
+			status:  "pass",
+			message: msg,
+		}
+	}
+
+	// Server not running — inspect logs for diagnostics
+	serverLogs, err := getDockerLogs(installDir, "server", 50)
+	if err != nil {
+		fmt.Println("NOT RUNNING")
+		return checkResult{
+			name:    "Docker Containers",
+			status:  "fail",
+			message: "Server container is not running.\n         To start: emergent ctl restart",
+			fixable: true,
+			fixType: "restart_containers",
 		}
 	}
 
@@ -491,26 +511,19 @@ func checkDockerContainers(installDir string) checkResult {
 		return checkResult{
 			name:    "Docker Containers",
 			status:  "fail",
-			message: "Database connection refused. Containers may not be running.",
+			message: "Database connection refused. Containers may not be running.\n         To start: emergent ctl restart",
 			fixable: true,
 			fixType: "restart_containers",
 		}
 	}
 
-	if strings.Contains(serverLogs, "Server is ready") || strings.Contains(serverLogs, "Starting server") {
-		fmt.Println("OK")
-		return checkResult{
-			name:    "Docker Containers",
-			status:  "pass",
-			message: "Server container is running",
-		}
-	}
-
-	fmt.Println("UNKNOWN")
+	fmt.Println("NOT RUNNING")
 	return checkResult{
 		name:    "Docker Containers",
-		status:  "warn",
-		message: "Could not determine server status. Check 'docker logs emergent-server'",
+		status:  "fail",
+		message: "Server container is not running.\n         To start: emergent ctl restart\n         Check logs: docker logs emergent-server",
+		fixable: true,
+		fixType: "restart_containers",
 	}
 }
 
@@ -529,6 +542,46 @@ func getDockerLogs(installDir, service string, lines int) (string, error) {
 		return "", err
 	}
 	return string(output), nil
+}
+
+// getContainerStatus uses docker compose ps to get running and stopped service names.
+func getContainerStatus(installDir string) (running []string, stopped []string) {
+	composePath := filepath.Join(installDir, "docker", "docker-compose.yml")
+	envPath := filepath.Join(installDir, "config", ".env.local")
+
+	cmd := exec.Command("docker", "compose", "-f", composePath, "--env-file", envPath,
+		"ps", "--format", "{{.Service}}\t{{.State}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, nil
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		service := parts[0]
+		state := strings.ToLower(parts[1])
+		if state == "running" {
+			running = append(running, service)
+		} else {
+			stopped = append(stopped, fmt.Sprintf("%s (%s)", service, state))
+		}
+	}
+	return running, stopped
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
 
 func attemptFix(r checkResult, installDir string) error {
