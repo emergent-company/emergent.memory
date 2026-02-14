@@ -212,7 +212,7 @@ func TestFuseInterleave(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			results := svc.fuseInterleave(graphResults, textResults, tt.limit)
+			results := svc.fuseInterleave(graphResults, textResults, nil, tt.limit)
 
 			assert.Len(t, results, len(tt.expectedOrder))
 			for i, expectedType := range tt.expectedOrder {
@@ -225,7 +225,7 @@ func TestFuseInterleave(t *testing.T) {
 	// This covers the second break after text result (line 516-517)
 	t.Run("limit reached after text result", func(t *testing.T) {
 		// Limit=2: adds graph(1), checks limit(1<2), adds text(2), checks limit(2>=2) -> break
-		results := svc.fuseInterleave(graphResults, textResults, 2)
+		results := svc.fuseInterleave(graphResults, textResults, nil, 2)
 		assert.Len(t, results, 2)
 		assert.Equal(t, ItemTypeGraph, results[0].Type)
 		assert.Equal(t, ItemTypeText, results[1].Type)
@@ -234,7 +234,7 @@ func TestFuseInterleave(t *testing.T) {
 	// Test case: limit reached after adding a graph result (odd limit)
 	t.Run("limit reached after graph result", func(t *testing.T) {
 		// Limit=1: adds graph(1), checks limit(1>=1) -> break
-		results := svc.fuseInterleave(graphResults, textResults, 1)
+		results := svc.fuseInterleave(graphResults, textResults, nil, 1)
 		assert.Len(t, results, 1)
 		assert.Equal(t, ItemTypeGraph, results[0].Type)
 	})
@@ -254,7 +254,7 @@ func TestFuseGraphFirst(t *testing.T) {
 	}
 
 	t.Run("graph first with limit exceeding total", func(t *testing.T) {
-		results := svc.fuseGraphFirst(graphResults, textResults, 10)
+		results := svc.fuseGraphFirst(graphResults, textResults, nil, 10)
 
 		assert.Len(t, results, 4)
 		assert.Equal(t, ItemTypeGraph, results[0].Type)
@@ -264,7 +264,7 @@ func TestFuseGraphFirst(t *testing.T) {
 	})
 
 	t.Run("graph first with small limit", func(t *testing.T) {
-		results := svc.fuseGraphFirst(graphResults, textResults, 3)
+		results := svc.fuseGraphFirst(graphResults, textResults, nil, 3)
 
 		assert.Len(t, results, 3)
 		assert.Equal(t, ItemTypeGraph, results[0].Type)
@@ -280,7 +280,7 @@ func TestFuseGraphFirst(t *testing.T) {
 			{ObjectID: "g3", Score: 0.7},
 			{ObjectID: "g4", Score: 0.6},
 		}
-		results := svc.fuseGraphFirst(manyGraphResults, textResults, 2)
+		results := svc.fuseGraphFirst(manyGraphResults, textResults, nil, 2)
 
 		assert.Len(t, results, 2)
 		assert.Equal(t, ItemTypeGraph, results[0].Type)
@@ -302,7 +302,7 @@ func TestFuseTextFirst(t *testing.T) {
 	}
 
 	t.Run("text first with limit exceeding total", func(t *testing.T) {
-		results := svc.fuseTextFirst(graphResults, textResults, 10)
+		results := svc.fuseTextFirst(graphResults, textResults, nil, 10)
 
 		assert.Len(t, results, 4)
 		assert.Equal(t, ItemTypeText, results[0].Type)
@@ -312,7 +312,7 @@ func TestFuseTextFirst(t *testing.T) {
 	})
 
 	t.Run("text first with small limit", func(t *testing.T) {
-		results := svc.fuseTextFirst(graphResults, textResults, 3)
+		results := svc.fuseTextFirst(graphResults, textResults, nil, 3)
 
 		assert.Len(t, results, 3)
 		assert.Equal(t, ItemTypeText, results[0].Type)
@@ -328,7 +328,7 @@ func TestFuseTextFirst(t *testing.T) {
 			{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.7, Text: "text3"},
 			{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.6, Text: "text4"},
 		}
-		results := svc.fuseTextFirst(graphResults, manyTextResults, 2)
+		results := svc.fuseTextFirst(graphResults, manyTextResults, nil, 2)
 
 		assert.Len(t, results, 2)
 		assert.Equal(t, ItemTypeText, results[0].Type)
@@ -492,7 +492,7 @@ func TestFuseInterleave_EmptyInputs(t *testing.T) {
 		textResults := []*TextSearchResult{
 			{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.8, Text: "text1"},
 		}
-		results := svc.fuseInterleave(nil, textResults, 10)
+		results := svc.fuseInterleave(nil, textResults, nil, 10)
 		assert.Len(t, results, 1)
 		assert.Equal(t, ItemTypeText, results[0].Type)
 	})
@@ -501,13 +501,13 @@ func TestFuseInterleave_EmptyInputs(t *testing.T) {
 		graphResults := []*UnifiedSearchGraphResult{
 			{ObjectID: "g1", Score: 0.9},
 		}
-		results := svc.fuseInterleave(graphResults, nil, 10)
+		results := svc.fuseInterleave(graphResults, nil, nil, 10)
 		assert.Len(t, results, 1)
 		assert.Equal(t, ItemTypeGraph, results[0].Type)
 	})
 
 	t.Run("both empty", func(t *testing.T) {
-		results := svc.fuseInterleave(nil, nil, 10)
+		results := svc.fuseInterleave(nil, nil, nil, 10)
 		assert.Len(t, results, 0)
 	})
 }
@@ -520,7 +520,7 @@ func TestFuseGraphFirst_EmptyInputs(t *testing.T) {
 			{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.8, Text: "text1"},
 			{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.6, Text: "text2"},
 		}
-		results := svc.fuseGraphFirst(nil, textResults, 10)
+		results := svc.fuseGraphFirst(nil, textResults, nil, 10)
 		assert.Len(t, results, 2)
 		assert.Equal(t, ItemTypeText, results[0].Type)
 		assert.Equal(t, ItemTypeText, results[1].Type)
@@ -531,14 +531,14 @@ func TestFuseGraphFirst_EmptyInputs(t *testing.T) {
 			{ObjectID: "g1", Score: 0.9},
 			{ObjectID: "g2", Score: 0.8},
 		}
-		results := svc.fuseGraphFirst(graphResults, nil, 10)
+		results := svc.fuseGraphFirst(graphResults, nil, nil, 10)
 		assert.Len(t, results, 2)
 		assert.Equal(t, ItemTypeGraph, results[0].Type)
 		assert.Equal(t, ItemTypeGraph, results[1].Type)
 	})
 
 	t.Run("both empty", func(t *testing.T) {
-		results := svc.fuseGraphFirst(nil, nil, 10)
+		results := svc.fuseGraphFirst(nil, nil, nil, 10)
 		assert.Len(t, results, 0)
 	})
 }
@@ -551,7 +551,7 @@ func TestFuseTextFirst_EmptyInputs(t *testing.T) {
 			{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.8, Text: "text1"},
 			{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.6, Text: "text2"},
 		}
-		results := svc.fuseTextFirst(nil, textResults, 10)
+		results := svc.fuseTextFirst(nil, textResults, nil, 10)
 		assert.Len(t, results, 2)
 		assert.Equal(t, ItemTypeText, results[0].Type)
 		assert.Equal(t, ItemTypeText, results[1].Type)
@@ -562,16 +562,393 @@ func TestFuseTextFirst_EmptyInputs(t *testing.T) {
 			{ObjectID: "g1", Score: 0.9},
 			{ObjectID: "g2", Score: 0.8},
 		}
-		results := svc.fuseTextFirst(graphResults, nil, 10)
+		results := svc.fuseTextFirst(graphResults, nil, nil, 10)
 		assert.Len(t, results, 2)
 		assert.Equal(t, ItemTypeGraph, results[0].Type)
 		assert.Equal(t, ItemTypeGraph, results[1].Type)
 	})
 
 	t.Run("both empty", func(t *testing.T) {
-		results := svc.fuseTextFirst(nil, nil, 10)
+		results := svc.fuseTextFirst(nil, nil, nil, 10)
 		assert.Len(t, results, 0)
 	})
+}
+
+// =============================================================================
+// Relationship Results in Fusion Strategies
+// =============================================================================
+
+// Helper to create test relationship results
+func makeRelationshipResults(count int) []*RelationshipSearchResult {
+	results := make([]*RelationshipSearchResult, count)
+	for i := 0; i < count; i++ {
+		results[i] = &RelationshipSearchResult{
+			ID:          uuid.New(),
+			SrcID:       uuid.New(),
+			DstID:       uuid.New(),
+			Type:        "RELATED_TO",
+			TripletText: "Entity A related to Entity B",
+			Score:       float32(0.9) - float32(i)*0.1,
+		}
+	}
+	return results
+}
+
+func TestFuseInterleave_WithRelationships(t *testing.T) {
+	svc := newTestService()
+
+	graphResults := []*UnifiedSearchGraphResult{
+		{ObjectID: "g1", Score: 0.9},
+		{ObjectID: "g2", Score: 0.8},
+	}
+	textResults := []*TextSearchResult{
+		{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.85, Text: "text1"},
+		{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.75, Text: "text2"},
+	}
+	relResults := makeRelationshipResults(2)
+
+	t.Run("three-way round-robin", func(t *testing.T) {
+		results := svc.fuseInterleave(graphResults, textResults, relResults, 10)
+
+		// Expected order: graph, text, rel, graph, text, rel
+		assert.Len(t, results, 6)
+		assert.Equal(t, ItemTypeGraph, results[0].Type)
+		assert.Equal(t, ItemTypeText, results[1].Type)
+		assert.Equal(t, ItemTypeRelationship, results[2].Type)
+		assert.Equal(t, ItemTypeGraph, results[3].Type)
+		assert.Equal(t, ItemTypeText, results[4].Type)
+		assert.Equal(t, ItemTypeRelationship, results[5].Type)
+	})
+
+	t.Run("limit truncates mid-round", func(t *testing.T) {
+		results := svc.fuseInterleave(graphResults, textResults, relResults, 4)
+
+		assert.Len(t, results, 4)
+		assert.Equal(t, ItemTypeGraph, results[0].Type)
+		assert.Equal(t, ItemTypeText, results[1].Type)
+		assert.Equal(t, ItemTypeRelationship, results[2].Type)
+		assert.Equal(t, ItemTypeGraph, results[3].Type)
+	})
+
+	t.Run("only relationship results", func(t *testing.T) {
+		results := svc.fuseInterleave(nil, nil, relResults, 10)
+
+		assert.Len(t, results, 2)
+		assert.Equal(t, ItemTypeRelationship, results[0].Type)
+		assert.Equal(t, ItemTypeRelationship, results[1].Type)
+	})
+
+	t.Run("relationship results with fields populated", func(t *testing.T) {
+		results := svc.fuseInterleave(nil, nil, relResults, 1)
+
+		assert.Len(t, results, 1)
+		assert.Equal(t, ItemTypeRelationship, results[0].Type)
+		assert.Equal(t, "RELATED_TO", results[0].RelationshipType)
+		assert.Equal(t, "Entity A related to Entity B", results[0].TripletText)
+		assert.NotEmpty(t, results[0].SourceID)
+		assert.NotEmpty(t, results[0].TargetID)
+	})
+}
+
+func TestFuseGraphFirst_WithRelationships(t *testing.T) {
+	svc := newTestService()
+
+	graphResults := []*UnifiedSearchGraphResult{
+		{ObjectID: "g1", Score: 0.9},
+	}
+	textResults := []*TextSearchResult{
+		{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.85, Text: "text1"},
+	}
+	relResults := makeRelationshipResults(1)
+
+	t.Run("order is graph then relationship then text", func(t *testing.T) {
+		results := svc.fuseGraphFirst(graphResults, textResults, relResults, 10)
+
+		assert.Len(t, results, 3)
+		assert.Equal(t, ItemTypeGraph, results[0].Type)
+		assert.Equal(t, ItemTypeRelationship, results[1].Type)
+		assert.Equal(t, ItemTypeText, results[2].Type)
+	})
+
+	t.Run("limit reached in relationship section", func(t *testing.T) {
+		moreRels := makeRelationshipResults(3)
+		results := svc.fuseGraphFirst(graphResults, textResults, moreRels, 3)
+
+		assert.Len(t, results, 3)
+		assert.Equal(t, ItemTypeGraph, results[0].Type)
+		assert.Equal(t, ItemTypeRelationship, results[1].Type)
+		assert.Equal(t, ItemTypeRelationship, results[2].Type)
+	})
+
+	t.Run("only relationship results", func(t *testing.T) {
+		results := svc.fuseGraphFirst(nil, nil, relResults, 10)
+
+		assert.Len(t, results, 1)
+		assert.Equal(t, ItemTypeRelationship, results[0].Type)
+	})
+}
+
+func TestFuseTextFirst_WithRelationships(t *testing.T) {
+	svc := newTestService()
+
+	graphResults := []*UnifiedSearchGraphResult{
+		{ObjectID: "g1", Score: 0.9},
+	}
+	textResults := []*TextSearchResult{
+		{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.85, Text: "text1"},
+	}
+	relResults := makeRelationshipResults(1)
+
+	t.Run("order is text then relationship then graph", func(t *testing.T) {
+		results := svc.fuseTextFirst(graphResults, textResults, relResults, 10)
+
+		assert.Len(t, results, 3)
+		assert.Equal(t, ItemTypeText, results[0].Type)
+		assert.Equal(t, ItemTypeRelationship, results[1].Type)
+		assert.Equal(t, ItemTypeGraph, results[2].Type)
+	})
+
+	t.Run("limit reached in relationship section", func(t *testing.T) {
+		moreRels := makeRelationshipResults(3)
+		results := svc.fuseTextFirst(graphResults, textResults, moreRels, 3)
+
+		assert.Len(t, results, 3)
+		assert.Equal(t, ItemTypeText, results[0].Type)
+		assert.Equal(t, ItemTypeRelationship, results[1].Type)
+		assert.Equal(t, ItemTypeRelationship, results[2].Type)
+	})
+
+	t.Run("only relationship results", func(t *testing.T) {
+		results := svc.fuseTextFirst(nil, nil, relResults, 10)
+
+		assert.Len(t, results, 1)
+		assert.Equal(t, ItemTypeRelationship, results[0].Type)
+	})
+}
+
+func TestFuseWeighted_WithRelationships(t *testing.T) {
+	svc := newTestService()
+
+	graphResults := []*UnifiedSearchGraphResult{
+		{ObjectID: "g1", Score: 0.9},
+	}
+	textResults := []*TextSearchResult{
+		{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.8, Text: "text1"},
+	}
+	relResults := makeRelationshipResults(1) // Score: 0.9
+
+	t.Run("relationships included with default weights", func(t *testing.T) {
+		weights := &UnifiedSearchWeights{GraphWeight: 0.5, TextWeight: 0.5}
+		results := svc.fuseWeighted(graphResults, textResults, relResults, weights, 10)
+
+		assert.Len(t, results, 3)
+		// Relationship items should be present
+		hasRel := false
+		for _, r := range results {
+			if r.Type == ItemTypeRelationship {
+				hasRel = true
+				break
+			}
+		}
+		assert.True(t, hasRel, "weighted fusion should include relationship results")
+	})
+
+	t.Run("relationships appear in output with nil weights", func(t *testing.T) {
+		results := svc.fuseWeighted(graphResults, textResults, relResults, nil, 10)
+
+		assert.Len(t, results, 3)
+		types := map[UnifiedSearchItemType]bool{}
+		for _, r := range results {
+			types[r.Type] = true
+		}
+		assert.True(t, types[ItemTypeRelationship])
+		assert.True(t, types[ItemTypeGraph])
+		assert.True(t, types[ItemTypeText])
+	})
+}
+
+func TestFuseWeighted_RelationshipWeight(t *testing.T) {
+	svc := newTestService()
+
+	graphResults := []*UnifiedSearchGraphResult{
+		{ObjectID: "g1", Score: 1.0},
+	}
+	textResults := []*TextSearchResult{
+		{ID: uuid.New(), DocumentID: uuid.New(), Score: 1.0, Text: "text1"},
+	}
+	relResults := []*RelationshipSearchResult{
+		{ID: uuid.New(), SrcID: uuid.New(), DstID: uuid.New(), Type: "KNOWS", TripletText: "A knows B", Score: 1.0},
+	}
+
+	t.Run("backward compat: omitted RelationshipWeight uses graphWeight", func(t *testing.T) {
+		// With equal graph/text weights (0.5/0.5), normalized = 0.5/0.5
+		// Relationship should get graphWeight = 0.5
+		weights := &UnifiedSearchWeights{GraphWeight: 0.5, TextWeight: 0.5}
+		results := svc.fuseWeighted(graphResults, textResults, relResults, weights, 10)
+
+		assert.Len(t, results, 3)
+		var graphScore, textScore, relScore float32
+		for _, r := range results {
+			switch r.Type {
+			case ItemTypeGraph:
+				graphScore = r.Score
+			case ItemTypeText:
+				textScore = r.Score
+			case ItemTypeRelationship:
+				relScore = r.Score
+			}
+		}
+		// Graph and text each get 1.0 * 0.5 = 0.5
+		assert.InDelta(t, 0.5, graphScore, 0.01)
+		assert.InDelta(t, 0.5, textScore, 0.01)
+		// Relationship uses graphWeight (0.5) for backward compat
+		assert.InDelta(t, 0.5, relScore, 0.01)
+	})
+
+	t.Run("backward compat: uneven weights still applies graphWeight to rels", func(t *testing.T) {
+		// graphWeight=0.8, textWeight=0.2 → normalized: graph=0.8, text=0.2
+		// Relationship should get graphWeight = 0.8
+		weights := &UnifiedSearchWeights{GraphWeight: 0.8, TextWeight: 0.2}
+		results := svc.fuseWeighted(graphResults, textResults, relResults, weights, 10)
+
+		var graphScore, relScore float32
+		for _, r := range results {
+			switch r.Type {
+			case ItemTypeGraph:
+				graphScore = r.Score
+			case ItemTypeRelationship:
+				relScore = r.Score
+			}
+		}
+		assert.InDelta(t, 0.8, graphScore, 0.01)
+		assert.InDelta(t, 0.8, relScore, 0.01, "relationship score should equal graph score when RelationshipWeight is omitted")
+	})
+
+	t.Run("three-way normalize: explicit RelationshipWeight", func(t *testing.T) {
+		// graph=1, text=1, rel=1 → normalized: each = 1/3
+		weights := &UnifiedSearchWeights{GraphWeight: 1.0, TextWeight: 1.0, RelationshipWeight: 1.0}
+		results := svc.fuseWeighted(graphResults, textResults, relResults, weights, 10)
+
+		assert.Len(t, results, 3)
+		var graphScore, textScore, relScore float32
+		for _, r := range results {
+			switch r.Type {
+			case ItemTypeGraph:
+				graphScore = r.Score
+			case ItemTypeText:
+				textScore = r.Score
+			case ItemTypeRelationship:
+				relScore = r.Score
+			}
+		}
+		expected := float32(1.0 / 3.0)
+		assert.InDelta(t, expected, graphScore, 0.01)
+		assert.InDelta(t, expected, textScore, 0.01)
+		assert.InDelta(t, expected, relScore, 0.01)
+	})
+
+	t.Run("three-way normalize: uneven weights", func(t *testing.T) {
+		// graph=0.5, text=0.3, rel=0.2 → total=1.0
+		weights := &UnifiedSearchWeights{GraphWeight: 0.5, TextWeight: 0.3, RelationshipWeight: 0.2}
+		results := svc.fuseWeighted(graphResults, textResults, relResults, weights, 10)
+
+		assert.Len(t, results, 3)
+		var graphScore, textScore, relScore float32
+		for _, r := range results {
+			switch r.Type {
+			case ItemTypeGraph:
+				graphScore = r.Score
+			case ItemTypeText:
+				textScore = r.Score
+			case ItemTypeRelationship:
+				relScore = r.Score
+			}
+		}
+		assert.InDelta(t, 0.5, graphScore, 0.01)
+		assert.InDelta(t, 0.3, textScore, 0.01)
+		assert.InDelta(t, 0.2, relScore, 0.01)
+	})
+
+	t.Run("three-way normalize: high relationship weight", func(t *testing.T) {
+		// graph=0.2, text=0.2, rel=0.6 → total=1.0
+		// Relationships should dominate ranking
+		weights := &UnifiedSearchWeights{GraphWeight: 0.2, TextWeight: 0.2, RelationshipWeight: 0.6}
+		results := svc.fuseWeighted(graphResults, textResults, relResults, weights, 10)
+
+		assert.Len(t, results, 3)
+		// The relationship result should be first (highest fused score)
+		assert.Equal(t, ItemTypeRelationship, results[0].Type)
+		assert.InDelta(t, 0.6, results[0].Score, 0.01)
+	})
+}
+
+func TestFuseRRF_WithRelationships(t *testing.T) {
+	svc := newTestService()
+
+	graphResults := []*UnifiedSearchGraphResult{
+		{ObjectID: "g1", Score: 0.9},
+	}
+	textResults := []*TextSearchResult{
+		{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.8, Text: "text1"},
+	}
+	relResults := makeRelationshipResults(1)
+
+	t.Run("relationships included in RRF output", func(t *testing.T) {
+		results := svc.fuseRRF(graphResults, textResults, relResults, 10)
+
+		assert.Len(t, results, 3)
+		types := map[UnifiedSearchItemType]bool{}
+		for _, r := range results {
+			types[r.Type] = true
+		}
+		assert.True(t, types[ItemTypeRelationship], "RRF should include relationship results")
+		assert.True(t, types[ItemTypeGraph])
+		assert.True(t, types[ItemTypeText])
+	})
+
+	t.Run("relationship RRF scores are positive", func(t *testing.T) {
+		results := svc.fuseRRF(graphResults, textResults, relResults, 10)
+
+		for _, r := range results {
+			assert.Greater(t, r.Score, float32(0), "all RRF scores should be positive")
+		}
+	})
+}
+
+func TestFuseResults_WithRelationships_AllStrategies(t *testing.T) {
+	svc := newTestService()
+
+	graphResults := []*UnifiedSearchGraphResult{
+		{ObjectID: "g1", Score: 0.9},
+	}
+	textResults := []*TextSearchResult{
+		{ID: uuid.New(), DocumentID: uuid.New(), Score: 0.8, Text: "text1"},
+	}
+	relResults := makeRelationshipResults(1)
+
+	strategies := []UnifiedSearchFusionStrategy{
+		FusionStrategyWeighted,
+		FusionStrategyRRF,
+		FusionStrategyInterleave,
+		FusionStrategyGraphFirst,
+		FusionStrategyTextFirst,
+	}
+
+	for _, strategy := range strategies {
+		t.Run(string(strategy), func(t *testing.T) {
+			results := svc.fuseResults(graphResults, textResults, relResults, strategy, nil, 10)
+
+			assert.Len(t, results, 3, "all 3 result types should appear for strategy %s", strategy)
+
+			types := map[UnifiedSearchItemType]bool{}
+			for _, r := range results {
+				types[r.Type] = true
+			}
+			assert.True(t, types[ItemTypeGraph], "strategy %s missing graph results", strategy)
+			assert.True(t, types[ItemTypeText], "strategy %s missing text results", strategy)
+			assert.True(t, types[ItemTypeRelationship], "strategy %s missing relationship results", strategy)
+		})
+	}
 }
 
 // =============================================================================

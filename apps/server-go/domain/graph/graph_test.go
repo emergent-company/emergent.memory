@@ -1140,3 +1140,135 @@ func TestEmbedTripletText(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// cosineSimilarity Tests
+// =============================================================================
+
+func TestCosineSimilarity(t *testing.T) {
+	tests := []struct {
+		name     string
+		a        []float32
+		b        []float32
+		expected float32
+		delta    float64
+	}{
+		{
+			name:     "identical unit vectors",
+			a:        []float32{1, 0, 0},
+			b:        []float32{1, 0, 0},
+			expected: 1.0,
+			delta:    0.0001,
+		},
+		{
+			name:     "orthogonal vectors",
+			a:        []float32{1, 0, 0},
+			b:        []float32{0, 1, 0},
+			expected: 0.0,
+			delta:    0.0001,
+		},
+		{
+			name:     "opposite vectors",
+			a:        []float32{1, 0, 0},
+			b:        []float32{-1, 0, 0},
+			expected: -1.0,
+			delta:    0.0001,
+		},
+		{
+			name:     "similar vectors",
+			a:        []float32{0.8, 0.6, 0},
+			b:        []float32{0.6, 0.8, 0},
+			expected: 0.96, // dot = 0.48 + 0.48 = 0.96; both are unit vectors so similarity = 0.96
+			delta:    0.0001,
+		},
+		{
+			name:     "non-unit vectors",
+			a:        []float32{3, 4},
+			b:        []float32{4, 3},
+			expected: 0.96, // dot=24, |a|=5, |b|=5, sim=24/25=0.96
+			delta:    0.0001,
+		},
+		{
+			name:     "empty vector a",
+			a:        []float32{},
+			b:        []float32{1, 0, 0},
+			expected: 0.0,
+			delta:    0.0001,
+		},
+		{
+			name:     "empty vector b",
+			a:        []float32{1, 0, 0},
+			b:        []float32{},
+			expected: 0.0,
+			delta:    0.0001,
+		},
+		{
+			name:     "nil vector a",
+			a:        nil,
+			b:        []float32{1, 0, 0},
+			expected: 0.0,
+			delta:    0.0001,
+		},
+		{
+			name:     "nil vector b",
+			a:        []float32{1, 0, 0},
+			b:        nil,
+			expected: 0.0,
+			delta:    0.0001,
+		},
+		{
+			name:     "mismatched lengths",
+			a:        []float32{1, 0},
+			b:        []float32{1, 0, 0},
+			expected: 0.0,
+			delta:    0.0001,
+		},
+		{
+			name:     "zero vector a",
+			a:        []float32{0, 0, 0},
+			b:        []float32{1, 0, 0},
+			expected: 0.0,
+			delta:    0.0001,
+		},
+		{
+			name:     "zero vector b",
+			a:        []float32{1, 0, 0},
+			b:        []float32{0, 0, 0},
+			expected: 0.0,
+			delta:    0.0001,
+		},
+		{
+			name:     "45 degree angle",
+			a:        []float32{1, 0},
+			b:        []float32{1, 1},
+			expected: 0.7071, // 1/sqrt(2)
+			delta:    0.001,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := cosineSimilarity(tt.a, tt.b)
+			assert.InDelta(t, tt.expected, result, tt.delta,
+				"cosineSimilarity(%v, %v) = %v, expected %v", tt.a, tt.b, result, tt.expected)
+		})
+	}
+}
+
+func TestCosineSimilarity_Symmetric(t *testing.T) {
+	a := []float32{0.5, 0.3, 0.8, 0.1}
+	b := []float32{0.2, 0.7, 0.4, 0.6}
+
+	sim1 := cosineSimilarity(a, b)
+	sim2 := cosineSimilarity(b, a)
+
+	assert.InDelta(t, sim1, sim2, 0.0001, "cosine similarity should be symmetric")
+}
+
+func TestCosineSimilarity_SelfSimilarityIsOne(t *testing.T) {
+	v := []float32{0.3, 0.4, 0.5, 0.6, 0.7}
+
+	sim := cosineSimilarity(v, v)
+
+	assert.InDelta(t, 1.0, sim, 0.0001, "self-similarity should be 1.0")
+}
