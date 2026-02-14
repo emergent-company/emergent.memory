@@ -285,7 +285,7 @@ func printAPIKeyStatus(cfg *config.Config) {
 	fmt.Println("Authentication:")
 	fmt.Println("  Mode:        API Key (Standalone)")
 	fmt.Printf("  Server:      %s\n", cfg.ServerURL)
-	fmt.Printf("  API Key:     %s\n", maskAPIKey(cfg.APIKey))
+	fmt.Printf("  API Key:     %s\n", cfg.APIKey)
 
 	health, healthErr := fetchHealth(cfg.ServerURL)
 	if healthErr == nil {
