@@ -540,6 +540,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Enum:        []string{"outgoing", "incoming", "both"},
 						Default:     "both",
 					},
+					"query_context": {
+						Type:        "string",
+						Description: "Optional search query to prioritize edges by relevance during traversal. When provided, edges at each BFS level are sorted by semantic similarity to this query.",
+					},
 				},
 				Required: []string{"start_entity_id"},
 			},
@@ -1716,11 +1720,17 @@ func (s *Service) executeTraverseGraph(ctx context.Context, projectID string, ar
 		}
 	}
 
+	queryContext := ""
+	if qc, ok := args["query_context"].(string); ok {
+		queryContext = qc
+	}
+
 	req := &graph.TraverseGraphRequest{
 		RootIDs:           []uuid.UUID{startEntityID},
 		MaxDepth:          maxDepth,
 		Direction:         direction,
 		RelationshipTypes: relationshipTypes,
+		QueryContext:      queryContext,
 	}
 
 	results, err := s.graphService.TraverseGraph(ctx, projectUUID, req)

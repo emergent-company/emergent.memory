@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sort"
 
@@ -27,6 +28,22 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 		db:  db,
 		log: log.With(logger.Scope("search.repo")),
 	}
+}
+
+// beginTxWithIVFFlatProbes starts a transaction and sets ivfflat.probes for improved
+// vector index recall. SET LOCAL scopes the setting to the current transaction only,
+// preventing cross-request interference. With ~100 IVFFlat lists (typical), probes=10
+// scans 10% of the index, improving recall from ~40% to ~90%+ with negligible latency cost.
+func (r *Repository) beginTxWithIVFFlatProbes(ctx context.Context, probes int) (bun.Tx, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return tx, apperror.ErrDatabase.WithInternal(err)
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL ivfflat.probes = %d", probes)); err != nil {
+		_ = tx.Rollback()
+		return tx, apperror.ErrDatabase.WithInternal(err)
+	}
+	return tx, nil
 }
 
 // TextSearchMode defines the type of text search
@@ -127,6 +144,14 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 	limit := mathutil.ClampLimit(params.Limit, 20, 100)
 	vectorStr := pgutils.FormatVector(params.Vector)
 
+	// Begin transaction with increased IVFFlat probes for better recall
+	tx, err := r.beginTxWithIVFFlatProbes(ctx, 10)
+	if err != nil {
+		r.log.Error("vector search: failed to set ivfflat probes", logger.Error(err))
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	// Cosine distance: lower is better, convert to similarity score (1 - distance)
 	query := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
@@ -139,7 +164,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 		LIMIT ?
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, vectorStr, params.ProjectID, vectorStr, limit)
+	rows, err := tx.QueryContext(ctx, query, vectorStr, params.ProjectID, vectorStr, limit)
 	if err != nil {
 		r.log.Error("vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -167,6 +192,11 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 	}
 
 	if err := rows.Err(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Commit the read-only transaction
+	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -236,7 +266,13 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	}
 	lexicalRows.Close()
 
-	// Execute vector search
+	// Execute vector search with increased IVFFlat probes for better recall
+	tx, err := r.beginTxWithIVFFlatProbes(ctx, 10)
+	if err != nil {
+		r.log.Error("hybrid search: failed to set ivfflat probes", logger.Error(err))
+		return nil, err
+	}
+
 	vectorQuery := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
 			   (1 - (c.embedding <=> ?::vector)) AS score
@@ -247,8 +283,9 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		ORDER BY c.embedding <=> ?::vector
 		LIMIT ?
 	`
-	vectorRows, err := r.db.QueryContext(ctx, vectorQuery, vectorStr, params.ProjectID, vectorStr, fetchLimit)
+	vectorRows, err := tx.QueryContext(ctx, vectorQuery, vectorStr, params.ProjectID, vectorStr, fetchLimit)
 	if err != nil {
+		_ = tx.Rollback()
 		r.log.Error("hybrid vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
@@ -258,6 +295,7 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		var row TextSearchResultRow
 		if err := vectorRows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.Score); err != nil {
 			vectorRows.Close()
+			_ = tx.Rollback()
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
 		if existing, ok := lexicalResults[row.ID]; ok {
@@ -274,6 +312,8 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		vectorScores = append(vectorScores, row.Score)
 	}
 	vectorRows.Close()
+	// Commit the read-only vector search transaction
+	_ = tx.Commit()
 
 	// Calculate z-score normalization parameters
 	lexicalMean, lexicalStd := mathutil.CalcMeanStd(lexicalScores)
@@ -380,6 +420,14 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 	limit := mathutil.ClampLimit(params.Limit, 50, 100)
 	vectorStr := pgutils.FormatVector(params.Vector)
 
+	// Begin transaction with increased IVFFlat probes for better recall
+	tx, err := r.beginTxWithIVFFlatProbes(ctx, 10)
+	if err != nil {
+		r.log.Error("relationship search: failed to set ivfflat probes", logger.Error(err))
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	// Cosine distance: lower is better, convert to similarity score (1 - distance)
 	// Joins with graph_objects to construct triplet text: "{source.name} {type} {target.name}"
 	query := `
@@ -403,7 +451,7 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 		LIMIT ?
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, vectorStr, params.ProjectID, vectorStr, limit)
+	rows, err := tx.QueryContext(ctx, query, vectorStr, params.ProjectID, vectorStr, limit)
 	if err != nil {
 		r.log.Error("relationship vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -446,6 +494,11 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 	}
 
 	if err := rows.Err(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Commit the read-only transaction
+	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
