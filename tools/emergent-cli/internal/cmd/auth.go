@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -314,6 +315,11 @@ func printAPIKeyStatus(cfg *config.Config) {
 		fmt.Printf("  ID:          %s\n", project.ID)
 	}
 
+	// Print usage statistics if server is reachable
+	if healthErr == nil && project != nil {
+		printUsageStats(cfg, project.ID)
+	}
+
 	if project != nil {
 		fmt.Println()
 		fmt.Println(separator)
@@ -323,6 +329,342 @@ func printAPIKeyStatus(cfg *config.Config) {
 
 		printMCPConfig(cfg, project)
 	}
+}
+
+// --- Usage statistics types ---
+
+type documentSourceTypesResponse struct {
+	SourceTypes []sourceTypeCount `json:"sourceTypes"`
+}
+
+type sourceTypeCount struct {
+	SourceType string `json:"sourceType"`
+	Count      int    `json:"count"`
+}
+
+type documentListResponse struct {
+	Total int `json:"total"`
+}
+
+type graphSearchResponse struct {
+	Total int `json:"total"`
+}
+
+type typeRegistryStatsResponse struct {
+	TotalTypes       int `json:"total_types"`
+	EnabledTypes     int `json:"enabled_types"`
+	TemplateTypes    int `json:"template_types"`
+	CustomTypes      int `json:"custom_types"`
+	DiscoveredTypes  int `json:"discovered_types"`
+	TotalObjects     int `json:"total_objects"`
+	TypesWithObjects int `json:"types_with_objects"`
+}
+
+type installedPackResponse struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Active  bool   `json:"active"`
+}
+
+type jobMetricsResponse struct {
+	Queues []jobQueueMetrics `json:"queues"`
+}
+
+type jobQueueMetrics struct {
+	Queue      string `json:"queue"`
+	Pending    int64  `json:"pending"`
+	Processing int64  `json:"processing"`
+	Completed  int64  `json:"completed"`
+	Failed     int64  `json:"failed"`
+	Total      int64  `json:"total"`
+}
+
+type taskCountsResponse struct {
+	Pending   int64 `json:"pending"`
+	Accepted  int64 `json:"accepted"`
+	Rejected  int64 `json:"rejected"`
+	Cancelled int64 `json:"cancelled"`
+}
+
+// printUsageStats fetches and displays usage statistics for the project.
+func printUsageStats(cfg *config.Config, projectID string) {
+	fmt.Println()
+	fmt.Println("Usage Statistics:")
+
+	// Documents
+	docSources := fetchDocumentSourceTypes(cfg.ServerURL, cfg.APIKey, projectID)
+	if docSources != nil {
+		totalDocs := 0
+		for _, s := range docSources {
+			totalDocs += s.Count
+		}
+		if totalDocs == 0 {
+			fmt.Println("  Documents:     0")
+		} else {
+			parts := []string{}
+			for _, s := range docSources {
+				if s.Count > 0 {
+					parts = append(parts, fmt.Sprintf("%d %s", s.Count, s.SourceType))
+				}
+			}
+			fmt.Printf("  Documents:     %d", totalDocs)
+			if len(parts) > 0 {
+				fmt.Printf(" (%s)", strings.Join(parts, ", "))
+			}
+			fmt.Println()
+		}
+	}
+
+	// Graph objects
+	objTotal := fetchGraphObjectsTotal(cfg.ServerURL, cfg.APIKey, projectID)
+	if objTotal >= 0 {
+		fmt.Printf("  Graph Objects: %d\n", objTotal)
+	}
+
+	// Graph relationships
+	relTotal := fetchGraphRelationshipsTotal(cfg.ServerURL, cfg.APIKey, projectID)
+	if relTotal >= 0 {
+		fmt.Printf("  Relationships: %d\n", relTotal)
+	}
+
+	// Type Registry
+	typeStats := fetchTypeRegistryStats(cfg.ServerURL, cfg.APIKey, projectID)
+	if typeStats != nil && typeStats.TotalTypes > 0 {
+		fmt.Println()
+		fmt.Println("Type Registry:")
+		parts := []string{}
+		if typeStats.TemplateTypes > 0 {
+			parts = append(parts, fmt.Sprintf("%d template", typeStats.TemplateTypes))
+		}
+		if typeStats.CustomTypes > 0 {
+			parts = append(parts, fmt.Sprintf("%d custom", typeStats.CustomTypes))
+		}
+		if typeStats.DiscoveredTypes > 0 {
+			parts = append(parts, fmt.Sprintf("%d discovered", typeStats.DiscoveredTypes))
+		}
+		fmt.Printf("  Types:         %d", typeStats.TotalTypes)
+		if len(parts) > 0 {
+			fmt.Printf(" (%s)", strings.Join(parts, ", "))
+		}
+		fmt.Println()
+		fmt.Printf("  Enabled:       %d\n", typeStats.EnabledTypes)
+		fmt.Printf("  Types in Use:  %d\n", typeStats.TypesWithObjects)
+	}
+
+	// Template Packs
+	packs := fetchInstalledPacks(cfg.ServerURL, cfg.APIKey, projectID)
+	if packs != nil {
+		fmt.Println()
+		if len(packs) == 0 {
+			fmt.Println("Template Packs:  none installed")
+		} else {
+			fmt.Printf("Template Packs:  %d installed\n", len(packs))
+			for _, p := range packs {
+				status := ""
+				if !p.Active {
+					status = " (inactive)"
+				}
+				fmt.Printf("  • %s v%s%s\n", p.Name, p.Version, status)
+			}
+		}
+	}
+
+	// Job queue metrics (no auth required)
+	jobMetrics := fetchJobMetrics(cfg.ServerURL)
+	if jobMetrics != nil && len(jobMetrics) > 0 {
+		hasAnyJobs := false
+		for _, q := range jobMetrics {
+			if q.Total > 0 {
+				hasAnyJobs = true
+				break
+			}
+		}
+		if hasAnyJobs {
+			fmt.Println()
+			fmt.Println("Processing Pipeline:")
+			for _, q := range jobMetrics {
+				if q.Total == 0 {
+					continue
+				}
+				parts := []string{}
+				if q.Completed > 0 {
+					parts = append(parts, fmt.Sprintf("%d completed", q.Completed))
+				}
+				if q.Processing > 0 {
+					parts = append(parts, fmt.Sprintf("%d processing", q.Processing))
+				}
+				if q.Pending > 0 {
+					parts = append(parts, fmt.Sprintf("%d pending", q.Pending))
+				}
+				if q.Failed > 0 {
+					parts = append(parts, fmt.Sprintf("%d failed", q.Failed))
+				}
+				label := formatQueueName(q.Queue)
+				fmt.Printf("  %-16s %s\n", label+":", strings.Join(parts, ", "))
+			}
+		}
+	}
+
+	// Tasks
+	tasks := fetchTaskCounts(cfg.ServerURL, cfg.APIKey, projectID)
+	if tasks != nil {
+		total := tasks.Pending + tasks.Accepted + tasks.Rejected + tasks.Cancelled
+		if total > 0 {
+			fmt.Println()
+			parts := []string{}
+			if tasks.Pending > 0 {
+				parts = append(parts, fmt.Sprintf("%d pending", tasks.Pending))
+			}
+			if tasks.Accepted > 0 {
+				parts = append(parts, fmt.Sprintf("%d accepted", tasks.Accepted))
+			}
+			if tasks.Rejected > 0 {
+				parts = append(parts, fmt.Sprintf("%d rejected", tasks.Rejected))
+			}
+			if tasks.Cancelled > 0 {
+				parts = append(parts, fmt.Sprintf("%d cancelled", tasks.Cancelled))
+			}
+			fmt.Printf("Tasks:           %s\n", strings.Join(parts, ", "))
+		}
+	}
+}
+
+// formatQueueName converts queue names like "object_extraction" to "Extraction"
+func formatQueueName(queue string) string {
+	names := map[string]string{
+		"object_extraction": "Extraction",
+		"chunk_embedding":   "Chunk Embed",
+		"graph_embedding":   "Graph Embed",
+		"document_parsing":  "Doc Parsing",
+		"data_source_sync":  "Data Sync",
+		"document_chunking": "Chunking",
+		"email":             "Email",
+	}
+	if name, ok := names[queue]; ok {
+		return name
+	}
+	return queue
+}
+
+// --- Fetch helpers for usage stats ---
+
+func fetchDocumentSourceTypes(serverURL, apiKey, projectID string) []sourceTypeCount {
+	body, err := fetchAPI(serverURL, "/api/documents/source-types", apiKey, projectID)
+	if err != nil {
+		return nil
+	}
+	var resp documentSourceTypesResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil
+	}
+	return resp.SourceTypes
+}
+
+func fetchGraphObjectsTotal(serverURL, apiKey, projectID string) int {
+	body, err := fetchAPI(serverURL, "/api/graph/objects/search?limit=0", apiKey, projectID)
+	if err != nil {
+		return -1
+	}
+	var resp graphSearchResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return -1
+	}
+	return resp.Total
+}
+
+func fetchGraphRelationshipsTotal(serverURL, apiKey, projectID string) int {
+	body, err := fetchAPI(serverURL, "/api/graph/relationships/search?limit=0", apiKey, projectID)
+	if err != nil {
+		return -1
+	}
+	var resp graphSearchResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return -1
+	}
+	return resp.Total
+}
+
+func fetchTypeRegistryStats(serverURL, apiKey, projectID string) *typeRegistryStatsResponse {
+	body, err := fetchAPI(serverURL, fmt.Sprintf("/api/type-registry/projects/%s/stats", projectID), apiKey, projectID)
+	if err != nil {
+		return nil
+	}
+	var resp typeRegistryStatsResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil
+	}
+	return &resp
+}
+
+func fetchInstalledPacks(serverURL, apiKey, projectID string) []installedPackResponse {
+	body, err := fetchAPI(serverURL, fmt.Sprintf("/api/template-packs/projects/%s/installed", projectID), apiKey, projectID)
+	if err != nil {
+		return nil
+	}
+	var resp []installedPackResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil
+	}
+	return resp
+}
+
+func fetchJobMetrics(serverURL string) []jobQueueMetrics {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(serverURL + "/api/metrics/jobs")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	var metrics jobMetricsResponse
+	if err := json.Unmarshal(body, &metrics); err != nil {
+		return nil
+	}
+	return metrics.Queues
+}
+
+func fetchTaskCounts(serverURL, apiKey, projectID string) *taskCountsResponse {
+	body, err := fetchAPI(serverURL, "/api/tasks/counts?project_id="+projectID, apiKey, projectID)
+	if err != nil {
+		return nil
+	}
+	var resp taskCountsResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil
+	}
+	return &resp
+}
+
+// fetchAPI is a helper that makes authenticated GET requests with project context.
+func fetchAPI(serverURL, path, apiKey, projectID string) ([]byte, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", serverURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-API-Key", apiKey)
+	if projectID != "" {
+		req.Header.Set("X-Project-ID", projectID)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
 }
 
 func printMCPConfig(cfg *config.Config, project *projectResponse) {
