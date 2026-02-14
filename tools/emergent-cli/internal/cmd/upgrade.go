@@ -232,7 +232,8 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		}
 
 		fmt.Printf("Downloading %s...\n", assetName)
-		if err := installUpdate(assetURL, assetName); err != nil {
+		newBinaryPath, err := installUpdate(assetURL, assetName)
+		if err != nil {
 			fmt.Printf("CLI upgrade failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -240,18 +241,15 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		fmt.Printf("✓ CLI upgraded to %s\n", displayLatest)
 
 		// If server also needs upgrading, re-exec the new binary so it runs
-		// with the updated code (the current process still has old code in memory)
+		// with the updated code (the current process still has old code in memory).
+		// We use the path returned by installUpdate() rather than os.Executable()
+		// because on Linux /proc/self/exe becomes a dead symlink after the binary
+		// is replaced, causing filepath.EvalSymlinks to fail.
 		if serverInstalled && !upgradeFlags.cliOnly {
 			fmt.Println()
 			fmt.Println("Upgrading server with new CLI...")
-			newBinary, err := os.Executable()
-			if err != nil {
-				fmt.Printf("Server upgrade failed: %v\n", err)
-				os.Exit(1)
-			}
-			newBinary, _ = filepath.EvalSymlinks(newBinary)
 			reexecArgs := []string{"upgrade", "server", "--dir", upgradeFlags.dir, "--force"}
-			execCmd := exec.Command(newBinary, reexecArgs...)
+			execCmd := exec.Command(newBinaryPath, reexecArgs...)
 			execCmd.Stdout = os.Stdout
 			execCmd.Stderr = os.Stderr
 			execCmd.Stdin = os.Stdin
@@ -330,27 +328,29 @@ func findAsset(assets []Asset) (string, string, error) {
 	return "", "", fmt.Errorf("no asset found for %s/%s", osName, archName)
 }
 
-func installUpdate(url, filename string) error {
+// installUpdate downloads and installs the new binary, returning the path
+// of the installed binary. The caller can use this path to re-exec the new binary.
+func installUpdate(url, filename string) (string, error) {
 	tmpFile, err := os.CreateTemp("", "emergent-update-*")
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer os.Remove(tmpFile.Name())
 
 	resp, err := http.Get(url)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		return err
+		return "", err
 	}
 	tmpFile.Close()
 
 	tmpDir, err := os.MkdirTemp("", "emergent-extract-*")
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -362,39 +362,43 @@ func installUpdate(url, filename string) error {
 		binaryData, err = extractTarGz(tmpFile.Name())
 	}
 	if err != nil {
-		return fmt.Errorf("extraction failed: %w", err)
+		return "", fmt.Errorf("extraction failed: %w", err)
 	}
 
+	// Resolve the current executable path BEFORE replacing it.
+	// On Linux, os.Executable() reads /proc/self/exe which becomes a dead
+	// symlink after the binary is replaced, so we must capture it now.
 	currentExec, err := os.Executable()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	currentExec, err = filepath.EvalSymlinks(currentExec)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	newExecPath := currentExec + ".new"
 	if err := os.WriteFile(newExecPath, binaryData, 0755); err != nil {
-		return err
+		return "", err
 	}
 
 	oldExecPath := currentExec + ".old"
 	os.Remove(oldExecPath)
 
 	if err := os.Rename(currentExec, oldExecPath); err != nil {
-		return fmt.Errorf("failed to move current binary: %w", err)
+		return "", fmt.Errorf("failed to move current binary: %w", err)
 	}
 
 	if err := os.Rename(newExecPath, currentExec); err != nil {
 		_ = os.Rename(oldExecPath, currentExec)
-		return fmt.Errorf("failed to replace binary: %w", err)
+		return "", fmt.Errorf("failed to replace binary: %w", err)
 	}
 
 	_ = os.Remove(oldExecPath)
 
-	return nil
+	// Return the path where the new binary was installed
+	return currentExec, nil
 }
 
 func extractTarGz(filepath string) ([]byte, error) {
