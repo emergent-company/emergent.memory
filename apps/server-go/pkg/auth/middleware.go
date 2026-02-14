@@ -124,6 +124,12 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 			user.ProjectID = c.Request().Header.Get("X-Project-ID")
 			user.OrgID = c.Request().Header.Get("X-Org-ID")
 
+			// If authenticated via API token, normalize the project ID so all handlers
+			// can use user.ProjectID consistently without checking APITokenProjectID.
+			if user.ProjectID == "" && user.APITokenProjectID != "" {
+				user.ProjectID = user.APITokenProjectID
+			}
+
 			// Store user in context
 			c.Set(string(UserContextKey), user)
 
