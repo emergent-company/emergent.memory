@@ -298,6 +298,110 @@ func (s *AuthTestSuite) TestAPIToken_Invalid() {
 }
 
 // =============================================================================
+// Test: API Token Project ID Auto-Resolution
+// =============================================================================
+
+func (s *AuthTestSuite) TestAPIToken_ProjectIDAutoResolved() {
+	// Create an API token scoped to a project
+	resp := s.Client.POST("/api/projects/"+s.ProjectID+"/tokens",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"name":   "Project Scoped Token",
+			"scopes": []string{"data:read", "data:write"},
+		}),
+	)
+
+	s.Require().Equal(http.StatusCreated, resp.StatusCode, "Failed to create token: %s", resp.String())
+
+	var tokenResult map[string]any
+	err := json.Unmarshal(resp.Body, &tokenResult)
+	s.Require().NoError(err)
+
+	token := tokenResult["token"].(string)
+	s.Require().True(len(token) > 0, "Token should be returned")
+
+	// Use the API token to hit an endpoint that requires project ID,
+	// WITHOUT sending X-Project-ID header.
+	// The middleware should auto-resolve the project ID from the token.
+	resp = s.Client.GET("/api/test/project", testutil.WithAuth(token))
+
+	s.Equal(http.StatusOK, resp.StatusCode, "Should succeed without X-Project-ID header when using API token. Body: %s", resp.String())
+
+	var body map[string]any
+	err = json.Unmarshal(resp.Body, &body)
+	s.NoError(err)
+
+	// The project ID should match the project the token was created for
+	s.Equal(s.ProjectID, body["projectId"], "Project ID should be auto-resolved from API token")
+}
+
+func (s *AuthTestSuite) TestAPIToken_HeaderOverridesTokenProjectID() {
+	// Create an API token scoped to a project
+	resp := s.Client.POST("/api/projects/"+s.ProjectID+"/tokens",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"name":   "Override Test Token",
+			"scopes": []string{"data:read"},
+		}),
+	)
+
+	s.Require().Equal(http.StatusCreated, resp.StatusCode, "Failed to create token: %s", resp.String())
+
+	var tokenResult map[string]any
+	err := json.Unmarshal(resp.Body, &tokenResult)
+	s.Require().NoError(err)
+
+	token := tokenResult["token"].(string)
+
+	// If the caller explicitly provides X-Project-ID, that should take precedence
+	overrideProjectID := "explicit-project-id"
+	resp = s.Client.GET("/api/test/project",
+		testutil.WithAuth(token),
+		testutil.WithProjectID(overrideProjectID),
+	)
+
+	s.Equal(http.StatusOK, resp.StatusCode, "Should succeed with explicit X-Project-ID header")
+
+	var body map[string]any
+	err = json.Unmarshal(resp.Body, &body)
+	s.NoError(err)
+
+	// The explicit header should take precedence over the token's project ID
+	s.Equal(overrideProjectID, body["projectId"], "Explicit X-Project-ID header should take precedence")
+}
+
+func (s *AuthTestSuite) TestAPIToken_MeEndpointShowsProjectID() {
+	// Create an API token scoped to a project
+	resp := s.Client.POST("/api/projects/"+s.ProjectID+"/tokens",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"name":   "Me Endpoint Token",
+			"scopes": []string{"data:read"},
+		}),
+	)
+
+	s.Require().Equal(http.StatusCreated, resp.StatusCode, "Failed to create token: %s", resp.String())
+
+	var tokenResult map[string]any
+	err := json.Unmarshal(resp.Body, &tokenResult)
+	s.Require().NoError(err)
+
+	token := tokenResult["token"].(string)
+
+	// Use the API token to hit /me WITHOUT X-Project-ID header
+	resp = s.Client.GET("/api/test/me", testutil.WithAuth(token))
+
+	s.Equal(http.StatusOK, resp.StatusCode)
+
+	var body map[string]any
+	err = json.Unmarshal(resp.Body, &body)
+	s.NoError(err)
+
+	// The project ID should be populated from the token
+	s.Equal(s.ProjectID, body["projectId"], "Project ID should be auto-resolved from API token on /me endpoint")
+}
+
+// =============================================================================
 // Test: Invalid Auth Header Formats
 // =============================================================================
 
