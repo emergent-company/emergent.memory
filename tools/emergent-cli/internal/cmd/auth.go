@@ -49,6 +49,16 @@ func fetchHealth(serverURL string) (*healthResponse, error) {
 	return &health, nil
 }
 
+// setAuthHeader sets the appropriate authentication header based on the API key type.
+// Project API tokens (emt_ prefix) use Bearer auth; standalone keys use X-API-Key.
+func setAuthHeader(req *http.Request, apiKey string) {
+	if strings.HasPrefix(apiKey, "emt_") {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	} else {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+}
+
 // fetchProjects fetches the list of projects
 func fetchProjects(serverURL, apiKey string) ([]projectResponse, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -56,7 +66,7 @@ func fetchProjects(serverURL, apiKey string) ([]projectResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-API-Key", apiKey)
+	setAuthHeader(req, apiKey)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -102,10 +112,14 @@ func getCLIPath() string {
 	return filepath.Join(homeDir, ".emergent", "bin", "emergent")
 }
 
-// maskAPIKey masks an API key for display, showing first 8 and last 4 chars
+// maskAPIKey masks an API key for display, showing prefix and last 4 chars
 func maskAPIKey(key string) string {
 	if len(key) <= 12 {
 		return key
+	}
+	// For emt_ tokens, show the prefix
+	if strings.HasPrefix(key, "emt_") {
+		return "emt_" + "..." + key[len(key)-4:]
 	}
 	return key[:8] + "..." + key[len(key)-4:]
 }
@@ -282,10 +296,16 @@ func printAPIKeyStatus(cfg *config.Config) {
 	fmt.Println(separator)
 	fmt.Println()
 
+	isProjectToken := strings.HasPrefix(cfg.APIKey, "emt_")
+
 	fmt.Println("Authentication:")
-	fmt.Println("  Mode:        API Key (Standalone)")
+	if isProjectToken {
+		fmt.Println("  Mode:        Project API Token")
+	} else {
+		fmt.Println("  Mode:        API Key (Standalone)")
+	}
 	fmt.Printf("  Server:      %s\n", cfg.ServerURL)
-	fmt.Printf("  API Key:     %s\n", cfg.APIKey)
+	fmt.Printf("  API Key:     %s\n", maskAPIKey(cfg.APIKey))
 
 	health, healthErr := fetchHealth(cfg.ServerURL)
 	if healthErr == nil {
@@ -313,6 +333,9 @@ func printAPIKeyStatus(cfg *config.Config) {
 		fmt.Println("Project:")
 		fmt.Printf("  Name:        %s\n", project.Name)
 		fmt.Printf("  ID:          %s\n", project.ID)
+		if isProjectToken {
+			fmt.Println("  Source:      embedded in API token")
+		}
 	}
 
 	// Print usage statistics if server is reachable
@@ -649,7 +672,7 @@ func fetchAPI(serverURL, path, apiKey, projectID string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-API-Key", apiKey)
+	setAuthHeader(req, apiKey)
 	if projectID != "" {
 		req.Header.Set("X-Project-ID", projectID)
 	}
