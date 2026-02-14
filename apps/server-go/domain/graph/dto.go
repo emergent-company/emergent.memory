@@ -457,6 +457,7 @@ type GraphExpandRequest struct {
 	Labels                        []string               `json:"labels,omitempty"`
 	Projection                    *GraphExpandProjection `json:"projection,omitempty"`
 	IncludeRelationshipProperties bool                   `json:"include_relationship_properties,omitempty"`
+	QueryContext                  string                 `json:"query_context,omitempty"` // Optional query for relevance-based edge ordering during expansion
 }
 
 // GraphExpandProjection specifies property projection options.
@@ -547,6 +548,7 @@ type TraverseGraphRequest struct {
 	MaxPathsPerNode   int             `json:"maxPathsPerNode,omitempty"`
 	TemporalFilter    *TemporalFilter `json:"temporalFilter,omitempty"`
 	FieldStrategy     string          `json:"fieldStrategy,omitempty"` // "full", "compact", "minimal"
+	QueryContext      string          `json:"query_context,omitempty"` // Optional: query text for relevance-based edge ordering during BFS
 }
 
 // EdgePhase defines a phase in multi-phase traversal.

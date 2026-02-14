@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -1137,6 +1138,20 @@ type VectorSearchResult struct {
 	Distance float32
 }
 
+// beginTxWithIVFFlatProbes starts a transaction and sets ivfflat.probes for improved
+// vector index recall. SET LOCAL scopes the setting to the current transaction only.
+func (r *Repository) beginTxWithIVFFlatProbes(ctx context.Context, probes int) (bun.Tx, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return tx, apperror.ErrDatabase.WithInternal(err)
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL ivfflat.probes = %d", probes)); err != nil {
+		_ = tx.Rollback()
+		return tx, apperror.ErrDatabase.WithInternal(err)
+	}
+	return tx, nil
+}
+
 // VectorSearch performs vector similarity search using pgvector's cosine distance.
 // Returns objects sorted by similarity (ascending distance).
 func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams) ([]*VectorSearchResult, error) {
@@ -1193,7 +1208,15 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 	finalArgs := append([]any{vectorStr}, args...)
 	finalArgs = append(finalArgs, params.Limit, params.Offset)
 
-	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
+	// Begin transaction with increased IVFFlat probes for better recall
+	tx, err := r.beginTxWithIVFFlatProbes(ctx, 10)
+	if err != nil {
+		r.log.Error("vector search: failed to set ivfflat probes", logger.Error(err))
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, query, finalArgs...)
 	if err != nil {
 		r.log.Error("Vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -1220,6 +1243,11 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 	}
 
 	if err := rows.Err(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Commit the read-only transaction
+	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -1459,7 +1487,15 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 	finalArgs := append([]any{vectorStr}, args...)
 	finalArgs = append(finalArgs, params.Limit)
 
-	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
+	// Begin transaction with increased IVFFlat probes for better recall
+	tx, err := r.beginTxWithIVFFlatProbes(ctx, 10)
+	if err != nil {
+		r.log.Error("similar objects search: failed to set ivfflat probes", logger.Error(err))
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, query, finalArgs...)
 	if err != nil {
 		r.log.Error("similar objects search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -1484,12 +1520,42 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
+	// Commit the read-only transaction
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
 	return results, nil
 }
 
 // =============================================================================
 // Graph Expand/Traverse Operations
 // =============================================================================
+
+// cosineSimilarity computes cosine similarity between two vectors.
+// Returns the dot product divided by the product of magnitudes.
+// For unit-normalized vectors (as produced by Vertex AI), this simplifies to dot(a, b).
+// Returns 0.0 if either vector is empty or has zero magnitude.
+func cosineSimilarity(a, b []float32) float32 {
+	if len(a) == 0 || len(b) == 0 || len(a) != len(b) {
+		return 0.0
+	}
+
+	var dot, magA, magB float64
+	for i := range a {
+		ai, bi := float64(a[i]), float64(b[i])
+		dot += ai * bi
+		magA += ai * ai
+		magB += bi * bi
+	}
+
+	mag := math.Sqrt(magA * magB)
+	if mag == 0 {
+		return 0.0
+	}
+
+	return float32(dot / mag)
+}
 
 // ExpandParams contains parameters for graph expansion.
 type ExpandParams struct {
@@ -1503,6 +1569,8 @@ type ExpandParams struct {
 	ObjectTypes       []string
 	Labels            []string
 	BranchID          *uuid.UUID
+	QueryContext      string    // Optional query context for relevance-based edge ordering
+	QueryVector       []float32 // Pre-computed embedding of QueryContext; if nil and QueryContext is set, service layer embeds it
 }
 
 // ExpandResult contains the raw results of graph expansion.
@@ -1603,6 +1671,42 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 		err := q.Scan(ctx)
 		if err != nil && err != sql.ErrNoRows {
 			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		// Sort edges by cosine similarity to query vector when provided.
+		// This ensures that when MaxEdges/MaxNodes limits cause truncation,
+		// the most query-relevant edges survive.
+		if len(params.QueryVector) > 0 && len(relationships) > 1 {
+			// Fetch similarity scores from the database for relationships that have embeddings
+			relIDs := make([]uuid.UUID, len(relationships))
+			for i, rel := range relationships {
+				relIDs[i] = rel.ID
+			}
+
+			type similarityResult struct {
+				ID         uuid.UUID `bun:"id"`
+				Similarity float64   `bun:"similarity"`
+			}
+
+			var similarities []similarityResult
+			vecStr := vectorToString(params.QueryVector)
+			simErr := r.db.NewRaw(
+				"SELECT id, (1 - (embedding <=> ?::vector)) AS similarity FROM kb.graph_relationships WHERE id IN (?) AND embedding IS NOT NULL",
+				vecStr, bun.In(relIDs),
+			).Scan(ctx, &similarities)
+
+			if simErr == nil && len(similarities) > 0 {
+				// Build similarity map (relationships without embeddings get 0.0)
+				simMap := make(map[uuid.UUID]float64, len(similarities))
+				for _, s := range similarities {
+					simMap[s.ID] = s.Similarity
+				}
+
+				sort.SliceStable(relationships, func(i, j int) bool {
+					return simMap[relationships[i].ID] > simMap[relationships[j].ID]
+				})
+			}
+			// If similarity query fails, fall through to standard BFS order (graceful degradation)
 		}
 
 		// Collect neighbor IDs

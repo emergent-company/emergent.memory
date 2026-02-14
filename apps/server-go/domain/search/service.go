@@ -59,6 +59,17 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 		fusionStrategy = FusionStrategyWeighted
 	}
 
+	// Pre-compute query embedding once for all search goroutines (D1: embedding deduplication)
+	var queryVector []float32
+	if s.embeddings != nil {
+		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		if err != nil {
+			s.log.Warn("failed to generate query embedding, falling back to lexical-only search", logger.Error(err))
+		} else {
+			queryVector = vec
+		}
+	}
+
 	// Execute graph and text searches in parallel
 	type graphResult struct {
 		results  []*UnifiedSearchGraphResult
@@ -91,7 +102,7 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 			return
 		}
 		start := time.Now()
-		results, rawDebug, err := s.executeGraphSearch(ctx, projectID, req, searchCtx)
+		results, rawDebug, err := s.executeGraphSearch(ctx, projectID, req, searchCtx, queryVector)
 		graphCh <- graphResult{results: results, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
 	}()
 
@@ -102,7 +113,7 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 			return
 		}
 		start := time.Now()
-		results, mode, rawDebug, err := s.executeTextSearch(ctx, projectID, req)
+		results, mode, rawDebug, err := s.executeTextSearch(ctx, projectID, req, queryVector)
 		textCh <- textResult{results: results, mode: mode, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
 	}()
 
@@ -113,7 +124,7 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 			return
 		}
 		start := time.Now()
-		results, rawDebug, err := s.executeRelationshipSearch(ctx, projectID, req)
+		results, rawDebug, err := s.executeRelationshipSearch(ctx, projectID, req, queryVector)
 		relationshipCh <- relationshipResult{results: results, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
 	}()
 
@@ -202,11 +213,12 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 	}, nil
 }
 
-// executeGraphSearch runs the graph search using the graph service
-func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, searchCtx *SearchContext) ([]*UnifiedSearchGraphResult, any, error) {
-	// Get query embedding for hybrid search
-	var vector []float32
-	if s.embeddings != nil {
+// executeGraphSearch runs the graph search using the graph service.
+// If queryVector is non-nil, it is used directly; otherwise falls back to embedding the query.
+func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, searchCtx *SearchContext, queryVector []float32) ([]*UnifiedSearchGraphResult, any, error) {
+	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
+	vector := queryVector
+	if len(vector) == 0 && s.embeddings != nil {
 		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for graph search", logger.Error(err))
@@ -272,11 +284,12 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 	return results, rawDebug, nil
 }
 
-// executeTextSearch runs text search on document chunks
-func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest) ([]*TextSearchResult, string, any, error) {
-	// Get query embedding for hybrid search
-	var vector []float32
-	if s.embeddings != nil {
+// executeTextSearch runs text search on document chunks.
+// If queryVector is non-nil, it is used directly; otherwise falls back to embedding the query.
+func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, queryVector []float32) ([]*TextSearchResult, string, any, error) {
+	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
+	vector := queryVector
+	if len(vector) == 0 && s.embeddings != nil {
 		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for text search", logger.Error(err))
@@ -319,10 +332,12 @@ func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, re
 	return resp.Results, string(resp.Mode), rawDebug, nil
 }
 
-// executeRelationshipSearch runs relationship vector search
-func (s *Service) executeRelationshipSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest) ([]*RelationshipSearchResult, any, error) {
-	var vector []float32
-	if s.embeddings != nil {
+// executeRelationshipSearch runs relationship vector search.
+// If queryVector is non-nil, it is used directly; otherwise falls back to embedding the query.
+func (s *Service) executeRelationshipSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, queryVector []float32) ([]*RelationshipSearchResult, any, error) {
+	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
+	vector := queryVector
+	if len(vector) == 0 && s.embeddings != nil {
 		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("failed to generate query embedding for relationship search", logger.Error(err))
@@ -428,11 +443,11 @@ func (s *Service) fuseResults(graphResults []*UnifiedSearchGraphResult, textResu
 	case FusionStrategyRRF:
 		return s.fuseRRF(graphResults, textResults, relationshipResults, limit)
 	case FusionStrategyInterleave:
-		return s.fuseInterleave(graphResults, textResults, limit)
+		return s.fuseInterleave(graphResults, textResults, relationshipResults, limit)
 	case FusionStrategyGraphFirst:
-		return s.fuseGraphFirst(graphResults, textResults, limit)
+		return s.fuseGraphFirst(graphResults, textResults, relationshipResults, limit)
 	case FusionStrategyTextFirst:
-		return s.fuseTextFirst(graphResults, textResults, limit)
+		return s.fuseTextFirst(graphResults, textResults, relationshipResults, limit)
 	default:
 		return s.fuseWeighted(graphResults, textResults, relationshipResults, weights, limit)
 	}
@@ -442,6 +457,8 @@ func (s *Service) fuseResults(graphResults []*UnifiedSearchGraphResult, textResu
 func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, weights *UnifiedSearchWeights, limit int) []UnifiedSearchResultItem {
 	graphWeight := float32(0.5)
 	textWeight := float32(0.5)
+	relationshipWeight := float32(0)
+
 	if weights != nil {
 		if weights.GraphWeight > 0 {
 			graphWeight = weights.GraphWeight
@@ -449,12 +466,29 @@ func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textRes
 		if weights.TextWeight > 0 {
 			textWeight = weights.TextWeight
 		}
+		if weights.RelationshipWeight > 0 {
+			relationshipWeight = weights.RelationshipWeight
+		}
 	}
 
-	totalWeight := graphWeight + textWeight
-	if totalWeight > 0 {
-		graphWeight /= totalWeight
-		textWeight /= totalWeight
+	// Determine normalization mode based on whether RelationshipWeight is explicitly set
+	if relationshipWeight > 0 {
+		// Three-way normalize: all three weights participate in normalization
+		totalWeight := graphWeight + textWeight + relationshipWeight
+		if totalWeight > 0 {
+			graphWeight /= totalWeight
+			textWeight /= totalWeight
+			relationshipWeight /= totalWeight
+		}
+	} else {
+		// Backward-compatible: two-way normalize graph+text only
+		// Relationships will use the post-normalization graphWeight
+		totalWeight := graphWeight + textWeight
+		if totalWeight > 0 {
+			graphWeight /= totalWeight
+			textWeight /= totalWeight
+		}
+		relationshipWeight = graphWeight // same weight as graph results
 	}
 
 	type scoredItem struct {
@@ -484,7 +518,7 @@ func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textRes
 		item := s.relationshipResultToItem(r)
 		combined = append(combined, scoredItem{
 			item:       item,
-			fusedScore: r.Score * graphWeight,
+			fusedScore: r.Score * relationshipWeight,
 		})
 	}
 
@@ -565,34 +599,50 @@ func (s *Service) fuseRRF(graphResults []*UnifiedSearchGraphResult, textResults 
 	return results
 }
 
-// fuseInterleave alternates between graph and text results
-func (s *Service) fuseInterleave(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, limit int) []UnifiedSearchResultItem {
+// fuseInterleave alternates between graph, text, and relationship results (three-way round-robin).
+// When one source is exhausted, continues alternating between the remaining sources.
+func (s *Service) fuseInterleave(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, limit int) []UnifiedSearchResultItem {
 	var results []UnifiedSearchResultItem
 
 	graphIdx := 0
 	textIdx := 0
+	relIdx := 0
 
 	for len(results) < limit {
+		added := false
+
 		// Add graph result
 		if graphIdx < len(graphResults) {
 			results = append(results, s.graphResultToItem(graphResults[graphIdx]))
 			graphIdx++
-		}
-		if len(results) >= limit {
-			break
+			added = true
+			if len(results) >= limit {
+				break
+			}
 		}
 
 		// Add text result
 		if textIdx < len(textResults) {
 			results = append(results, s.textResultToItem(textResults[textIdx]))
 			textIdx++
-		}
-		if len(results) >= limit {
-			break
+			added = true
+			if len(results) >= limit {
+				break
+			}
 		}
 
-		// Stop if both exhausted
-		if graphIdx >= len(graphResults) && textIdx >= len(textResults) {
+		// Add relationship result
+		if relIdx < len(relationshipResults) {
+			results = append(results, s.relationshipResultToItem(relationshipResults[relIdx]))
+			relIdx++
+			added = true
+			if len(results) >= limit {
+				break
+			}
+		}
+
+		// Stop if all sources exhausted
+		if !added {
 			break
 		}
 	}
@@ -600,8 +650,8 @@ func (s *Service) fuseInterleave(graphResults []*UnifiedSearchGraphResult, textR
 	return results
 }
 
-// fuseGraphFirst shows all graph results, then text results
-func (s *Service) fuseGraphFirst(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, limit int) []UnifiedSearchResultItem {
+// fuseGraphFirst shows all graph results, then relationship results, then text results
+func (s *Service) fuseGraphFirst(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, limit int) []UnifiedSearchResultItem {
 	var results []UnifiedSearchResultItem
 
 	for _, g := range graphResults {
@@ -611,6 +661,13 @@ func (s *Service) fuseGraphFirst(graphResults []*UnifiedSearchGraphResult, textR
 		results = append(results, s.graphResultToItem(g))
 	}
 
+	for _, r := range relationshipResults {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, s.relationshipResultToItem(r))
+	}
+
 	for _, t := range textResults {
 		if len(results) >= limit {
 			break
@@ -621,8 +678,8 @@ func (s *Service) fuseGraphFirst(graphResults []*UnifiedSearchGraphResult, textR
 	return results
 }
 
-// fuseTextFirst shows all text results, then graph results
-func (s *Service) fuseTextFirst(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, limit int) []UnifiedSearchResultItem {
+// fuseTextFirst shows all text results, then relationship results, then graph results
+func (s *Service) fuseTextFirst(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, limit int) []UnifiedSearchResultItem {
 	var results []UnifiedSearchResultItem
 
 	for _, t := range textResults {
@@ -630,6 +687,13 @@ func (s *Service) fuseTextFirst(graphResults []*UnifiedSearchGraphResult, textRe
 			break
 		}
 		results = append(results, s.textResultToItem(t))
+	}
+
+	for _, r := range relationshipResults {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, s.relationshipResultToItem(r))
 	}
 
 	for _, g := range graphResults {
