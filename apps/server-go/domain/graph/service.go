@@ -1965,6 +1965,21 @@ func (s *Service) ExpandGraph(ctx context.Context, projectID uuid.UUID, req *Gra
 		Labels:            req.Labels,
 	}
 
+	// If QueryContext is provided, generate embedding for query-aware edge ordering
+	if req.QueryContext != "" {
+		embedding, err := s.embeddings.EmbedQuery(ctx, req.QueryContext)
+		if err != nil {
+			// Log warning but continue with standard BFS order (graceful degradation)
+			s.log.WarnContext(ctx, "failed to embed query context for graph expansion, falling back to standard BFS order",
+				"error", err,
+				"query_context", req.QueryContext,
+			)
+		} else if len(embedding) > 0 {
+			params.QueryContext = req.QueryContext
+			params.QueryVector = embedding
+		}
+	}
+
 	result, err := s.repo.ExpandGraph(ctx, params)
 	if err != nil {
 		return nil, err
@@ -2144,6 +2159,21 @@ func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *T
 		RelationshipTypes: req.RelationshipTypes,
 		ObjectTypes:       req.ObjectTypes,
 		Labels:            req.Labels,
+	}
+
+	// If QueryContext is provided, generate embedding for query-aware edge ordering
+	if req.QueryContext != "" {
+		embedding, err := s.embeddings.EmbedQuery(ctx, req.QueryContext)
+		if err != nil {
+			// Log warning but continue with standard BFS order (graceful degradation)
+			s.log.WarnContext(ctx, "failed to embed query context for graph traversal, falling back to standard BFS order",
+				"error", err,
+				"query_context", req.QueryContext,
+			)
+		} else if len(embedding) > 0 {
+			params.QueryContext = req.QueryContext
+			params.QueryVector = embedding
+		}
 	}
 
 	result, err := s.repo.ExpandGraph(ctx, params)

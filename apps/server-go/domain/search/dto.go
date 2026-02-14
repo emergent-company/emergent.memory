@@ -30,8 +30,9 @@ const (
 
 // UnifiedSearchWeights configures weights for combining graph and text scores
 type UnifiedSearchWeights struct {
-	GraphWeight float32 `json:"graphWeight,omitempty"`
-	TextWeight  float32 `json:"textWeight,omitempty"`
+	GraphWeight        float32 `json:"graphWeight,omitempty"`
+	TextWeight         float32 `json:"textWeight,omitempty"`
+	RelationshipWeight float32 `json:"relationshipWeight,omitempty"`
 }
 
 // UnifiedSearchRelationshipOptions configures relationship expansion for graph results
