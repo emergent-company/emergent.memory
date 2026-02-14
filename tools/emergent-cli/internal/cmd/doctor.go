@@ -82,6 +82,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	results = append(results, checkConfigStandalone(configPath, isStandalone, cfg))
+	results = append(results, checkShellPath(installDir))
 
 	if isStandalone {
 		results = append(results, checkGoogleAPIKey(installDir))
@@ -132,7 +133,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Offer to fix issues if --fix flag is set or prompt user
-	if failed > 0 && isStandalone {
+	if failed > 0 {
 		for _, r := range failedResults {
 			if r.fixable && doctorFlags.fix {
 				fmt.Println()
@@ -265,6 +266,177 @@ func checkConfigStandalone(configPath string, isStandalone bool, cfg *config.Con
 		status:  "fail",
 		message: msg,
 	}
+}
+
+// getShellConfigFiles returns the shell config files to check for PATH setup,
+// based on the user's current shell. Returns (primaryFile, fallbackFiles).
+func getShellConfigFiles() (primary string, fallbacks []string) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", nil
+	}
+
+	shell := os.Getenv("SHELL")
+	shellBase := filepath.Base(shell)
+
+	switch shellBase {
+	case "zsh":
+		primary = filepath.Join(homeDir, ".zshrc")
+		fallbacks = []string{
+			filepath.Join(homeDir, ".zshenv"),
+			filepath.Join(homeDir, ".zprofile"),
+		}
+	case "bash":
+		primary = filepath.Join(homeDir, ".bashrc")
+		fallbacks = []string{
+			filepath.Join(homeDir, ".bash_profile"),
+			filepath.Join(homeDir, ".profile"),
+		}
+	case "fish":
+		primary = filepath.Join(homeDir, ".config", "fish", "config.fish")
+	default:
+		// Unknown shell — check common files
+		primary = filepath.Join(homeDir, ".profile")
+		fallbacks = []string{
+			filepath.Join(homeDir, ".bashrc"),
+			filepath.Join(homeDir, ".zshrc"),
+		}
+	}
+	return primary, fallbacks
+}
+
+// fileContainsEmergentPath checks if a file contains the emergent bin PATH entry.
+func fileContainsEmergentPath(filePath string) bool {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(content), ".emergent/bin")
+}
+
+func checkShellPath(installDir string) checkResult {
+	fmt.Print("Checking shell PATH... ")
+
+	binDir := filepath.Join(installDir, "bin")
+	shell := os.Getenv("SHELL")
+	shellName := filepath.Base(shell)
+
+	// Check 1: is ~/.emergent/bin in the current runtime PATH?
+	pathEnv := os.Getenv("PATH")
+	inCurrentPath := strings.Contains(pathEnv, binDir)
+
+	// Check 2: is it configured in the user's shell config file?
+	primary, fallbacks := getShellConfigFiles()
+	configuredIn := ""
+
+	if primary != "" && fileContainsEmergentPath(primary) {
+		configuredIn = primary
+	}
+	if configuredIn == "" {
+		for _, fb := range fallbacks {
+			if fileContainsEmergentPath(fb) {
+				configuredIn = fb
+				break
+			}
+		}
+	}
+
+	// Shorten paths for display
+	homeDir, _ := os.UserHomeDir()
+	shortPath := func(p string) string {
+		if homeDir != "" && strings.HasPrefix(p, homeDir) {
+			return "~" + p[len(homeDir):]
+		}
+		return p
+	}
+
+	if configuredIn != "" {
+		fmt.Println("OK")
+		msg := fmt.Sprintf("Configured in %s (shell: %s)", shortPath(configuredIn), shellName)
+		if !inCurrentPath {
+			msg += "\n         Note: not active in current session — restart your terminal or run: source " + shortPath(configuredIn)
+		}
+		return checkResult{
+			name:    "Shell PATH",
+			status:  "pass",
+			message: msg,
+		}
+	}
+
+	// Not configured in any shell config file
+	if inCurrentPath {
+		// It's in the current PATH but not persisted
+		fmt.Println("WARN")
+		return checkResult{
+			name:    "Shell PATH",
+			status:  "warn",
+			message: fmt.Sprintf("~/.emergent/bin is in PATH but not persisted in shell config (%s)", shellName),
+			fixable: true,
+			fixType: "fix_shell_path",
+		}
+	}
+
+	fmt.Println("NOT CONFIGURED")
+	targetFile := shortPath(primary)
+	if primary == "" {
+		targetFile = "shell config"
+	}
+	return checkResult{
+		name:   "Shell PATH",
+		status: "fail",
+		message: fmt.Sprintf("~/.emergent/bin is not in PATH (shell: %s)\n"+
+			"         Add to %s: export PATH=\"$HOME/.emergent/bin:$PATH\"",
+			shellName, targetFile),
+		fixable: true,
+		fixType: "fix_shell_path",
+	}
+}
+
+func fixShellPath(installDir string) error {
+	fmt.Println("Fixing shell PATH configuration...")
+
+	primary, fallbacks := getShellConfigFiles()
+	pathLine := `export PATH="$HOME/.emergent/bin:$PATH"`
+
+	// Try primary first, then fallbacks
+	candidates := []string{}
+	if primary != "" {
+		candidates = append(candidates, primary)
+	}
+	candidates = append(candidates, fallbacks...)
+
+	homeDir, _ := os.UserHomeDir()
+	shortPath := func(p string) string {
+		if homeDir != "" && strings.HasPrefix(p, homeDir) {
+			return "~" + p[len(homeDir):]
+		}
+		return p
+	}
+
+	for _, file := range candidates {
+		// Skip if already configured
+		if fileContainsEmergentPath(file) {
+			fmt.Printf("Already configured in %s\n", shortPath(file))
+			return nil
+		}
+
+		// Try to append
+		f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			continue // Try next candidate
+		}
+		_, err = fmt.Fprintf(f, "\n# Emergent CLI\n%s\n", pathLine)
+		f.Close()
+		if err != nil {
+			continue
+		}
+
+		fmt.Printf("Added PATH to %s\n", shortPath(file))
+		fmt.Printf("Restart your terminal or run: source %s\n", shortPath(file))
+		return nil
+	}
+
+	return fmt.Errorf("could not write to any shell config file — add manually: %s", pathLine)
 }
 
 func checkGoogleAPIKey(installDir string) checkResult {
@@ -590,6 +762,8 @@ func attemptFix(r checkResult, installDir string) error {
 		return fixDatabasePassword(installDir)
 	case "restart_containers":
 		return restartContainers(installDir)
+	case "fix_shell_path":
+		return fixShellPath(installDir)
 	default:
 		return fmt.Errorf("unknown fix type: %s", r.fixType)
 	}
