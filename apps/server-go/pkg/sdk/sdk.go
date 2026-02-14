@@ -111,8 +111,8 @@ type Config struct {
 
 // AuthConfig holds authentication configuration.
 type AuthConfig struct {
-	Mode      string // "apikey" or "oauth"
-	APIKey    string // For API key mode
+	Mode      string // "apikey", "apitoken", or "oauth"
+	APIKey    string // For API key mode (standalone X-API-Key) or API token mode (emt_* Bearer token)
 	CredsPath string // For OAuth credential storage
 	ClientID  string // For OAuth mode
 }
@@ -130,11 +130,21 @@ func New(cfg Config) (*Client, error) {
 		if cfg.Auth.APIKey == "" {
 			return nil, fmt.Errorf("APIKey is required for apikey mode")
 		}
-		authProvider = auth.NewAPIKeyProvider(cfg.Auth.APIKey)
+		// Auto-detect project API tokens (emt_ prefix) and use Bearer auth
+		if auth.IsAPIToken(cfg.Auth.APIKey) {
+			authProvider = auth.NewAPITokenProvider(cfg.Auth.APIKey)
+		} else {
+			authProvider = auth.NewAPIKeyProvider(cfg.Auth.APIKey)
+		}
+	case "apitoken":
+		if cfg.Auth.APIKey == "" {
+			return nil, fmt.Errorf("APIKey is required for apitoken mode")
+		}
+		authProvider = auth.NewAPITokenProvider(cfg.Auth.APIKey)
 	case "oauth":
 		return nil, fmt.Errorf("OAuth mode not yet implemented - use NewWithDeviceFlow()")
 	default:
-		return nil, fmt.Errorf("invalid auth mode: %s (must be 'apikey' or 'oauth')", cfg.Auth.Mode)
+		return nil, fmt.Errorf("invalid auth mode: %s (must be 'apikey', 'apitoken', or 'oauth')", cfg.Auth.Mode)
 	}
 
 	httpClient := cfg.HTTPClient
