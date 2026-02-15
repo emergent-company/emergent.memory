@@ -8,7 +8,7 @@ import (
 
 // RegisterRoutes registers agent routes
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
-	// All agent routes require authentication and admin:read or admin:write scope
+	// --- Admin Agent routes (runtime agents) ---
 	admin := e.Group("/api/admin/agents")
 	admin.Use(authMiddleware.RequireAuth())
 
@@ -28,4 +28,28 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.DELETE("/:id", h.DeleteAgent)
 	writeGroup.POST("/:id/trigger", h.TriggerAgent)
 	writeGroup.POST("/:id/batch-trigger", h.BatchTrigger)
+
+	// --- Admin Agent Definition routes (configuration/manifest) ---
+	defAdmin := e.Group("/api/admin/agent-definitions")
+	defAdmin.Use(authMiddleware.RequireAuth())
+
+	defRead := defAdmin.Group("")
+	defRead.Use(authMiddleware.RequireScopes("admin:read"))
+	defRead.GET("", h.ListDefinitions)
+	defRead.GET("/:id", h.GetDefinition)
+
+	defWrite := defAdmin.Group("")
+	defWrite.Use(authMiddleware.RequireScopes("admin:write"))
+	defWrite.POST("", h.CreateDefinition)
+	defWrite.PATCH("/:id", h.UpdateDefinition)
+	defWrite.DELETE("/:id", h.DeleteDefinition)
+
+	// --- Project-scoped run history routes ---
+	runs := e.Group("/api/projects/:projectId/agent-runs")
+	runs.Use(authMiddleware.RequireAuth())
+	runs.Use(authMiddleware.RequireScopes("project:read"))
+	runs.GET("", h.ListProjectRuns)
+	runs.GET("/:runId", h.GetProjectRun)
+	runs.GET("/:runId/messages", h.GetRunMessages)
+	runs.GET("/:runId/tool-calls", h.GetRunToolCalls)
 }

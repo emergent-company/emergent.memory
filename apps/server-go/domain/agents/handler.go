@@ -12,12 +12,13 @@ import (
 
 // Handler handles HTTP requests for agents
 type Handler struct {
-	repo *Repository
+	repo     *Repository
+	executor *AgentExecutor // may be nil in tests
 }
 
 // NewHandler creates a new agents handler
-func NewHandler(repo *Repository) *Handler {
-	return &Handler{repo: repo}
+func NewHandler(repo *Repository, executor *AgentExecutor) *Handler {
+	return &Handler{repo: repo, executor: executor}
 }
 
 // ListAgents handles GET /api/admin/agents
@@ -411,19 +412,46 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 		return apperror.NewNotFound("Agent", id)
 	}
 
-	// For now, just create a run record - actual execution would be handled by the scheduler
-	// In a full implementation, this would trigger the agent execution via a job queue
-	run, err := h.repo.CreateRun(c.Request().Context(), id)
-	if err != nil {
-		return apperror.NewInternal("failed to create run", err)
+	// Check if executor is available
+	if h.executor == nil {
+		// Fallback: create a run record but skip execution (test mode or executor not wired)
+		run, err := h.repo.CreateRun(c.Request().Context(), id)
+		if err != nil {
+			return apperror.NewInternal("failed to create run", err)
+		}
+		_ = h.repo.SkipRun(c.Request().Context(), run.ID, "Executor not available")
+		msg := "Agent triggered (stub mode, run ID: " + run.ID + ")"
+		return c.JSON(http.StatusOK, TriggerResponseDTO{
+			Success: true,
+			RunID:   &run.ID,
+			Message: &msg,
+		})
 	}
 
-	// Mark it as skipped for now since we don't have execution implemented
-	_ = h.repo.SkipRun(c.Request().Context(), run.ID, "Manual trigger - execution not yet implemented in Go server")
+	// Look up the agent definition for this agent (if one exists)
+	var agentDef *AgentDefinition
+	agentDef, _ = h.repo.FindDefinitionByName(c.Request().Context(), agent.ProjectID, agent.Name)
 
-	msg := "Agent triggered successfully (run ID: " + run.ID + ")"
+	// Build the user message
+	userMessage := "Execute agent tasks"
+	if agent.Prompt != nil && *agent.Prompt != "" {
+		userMessage = *agent.Prompt
+	}
+
+	result, err := h.executor.Execute(c.Request().Context(), ExecuteRequest{
+		Agent:           agent,
+		AgentDefinition: agentDef,
+		ProjectID:       agent.ProjectID,
+		UserMessage:     userMessage,
+	})
+	if err != nil {
+		return apperror.NewInternal("failed to execute agent", err)
+	}
+
+	msg := "Agent triggered successfully (run ID: " + result.RunID + ")"
 	return c.JSON(http.StatusOK, TriggerResponseDTO{
 		Success: true,
+		RunID:   &result.RunID,
 		Message: &msg,
 	})
 }
@@ -617,4 +645,400 @@ func (h *Handler) BatchTrigger(c echo.Context) error {
 		Skipped:        skipped,
 		SkippedDetails: skippedDetails,
 	}))
+}
+
+// --- Agent Definition Handlers ---
+
+// ListDefinitions handles GET /api/admin/agent-definitions
+func (h *Handler) ListDefinitions(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
+
+	definitions, err := h.repo.FindAllDefinitions(c.Request().Context(), user.ProjectID, false)
+	if err != nil {
+		return apperror.NewInternal("failed to list agent definitions", err)
+	}
+
+	dtos := make([]*AgentDefinitionSummaryDTO, len(definitions))
+	for i, def := range definitions {
+		dtos[i] = def.ToSummaryDTO()
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dtos))
+}
+
+// GetDefinition handles GET /api/admin/agent-definitions/:id
+func (h *Handler) GetDefinition(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.NewBadRequest("definition id is required")
+	}
+
+	var projectID *string
+	if user.ProjectID != "" {
+		projectID = &user.ProjectID
+	}
+
+	def, err := h.repo.FindDefinitionByID(c.Request().Context(), id, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent definition", err)
+	}
+	if def == nil {
+		return apperror.NewNotFound("AgentDefinition", id)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(def.ToDTO()))
+}
+
+// CreateDefinition handles POST /api/admin/agent-definitions
+func (h *Handler) CreateDefinition(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
+
+	var dto CreateAgentDefinitionDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	if dto.Name == "" {
+		return apperror.NewBadRequest("name is required")
+	}
+
+	// Set defaults
+	flowType := FlowTypeSingle
+	if dto.FlowType != "" {
+		flowType = dto.FlowType
+	}
+
+	visibility := VisibilityProject
+	if dto.Visibility != "" {
+		visibility = dto.Visibility
+	}
+
+	isDefault := false
+	if dto.IsDefault != nil {
+		isDefault = *dto.IsDefault
+	}
+
+	tools := dto.Tools
+	if tools == nil {
+		tools = []string{}
+	}
+
+	config := dto.Config
+	if config == nil {
+		config = map[string]any{}
+	}
+
+	def := &AgentDefinition{
+		ProjectID:      user.ProjectID,
+		Name:           dto.Name,
+		Description:    dto.Description,
+		SystemPrompt:   dto.SystemPrompt,
+		Model:          dto.Model,
+		Tools:          tools,
+		Trigger:        dto.Trigger,
+		FlowType:       flowType,
+		IsDefault:      isDefault,
+		MaxSteps:       dto.MaxSteps,
+		DefaultTimeout: dto.DefaultTimeout,
+		Visibility:     visibility,
+		ACPConfig:      dto.ACPConfig,
+		Config:         config,
+	}
+
+	if err := h.repo.CreateDefinition(c.Request().Context(), def); err != nil {
+		return apperror.NewInternal("failed to create agent definition", err)
+	}
+
+	return c.JSON(http.StatusCreated, SuccessResponse(def.ToDTO()))
+}
+
+// UpdateDefinition handles PATCH /api/admin/agent-definitions/:id
+func (h *Handler) UpdateDefinition(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.NewBadRequest("definition id is required")
+	}
+
+	var dto UpdateAgentDefinitionDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	var projectID *string
+	if user.ProjectID != "" {
+		projectID = &user.ProjectID
+	}
+
+	def, err := h.repo.FindDefinitionByID(c.Request().Context(), id, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent definition", err)
+	}
+	if def == nil {
+		return apperror.NewNotFound("AgentDefinition", id)
+	}
+
+	// Apply updates
+	if dto.Name != nil {
+		def.Name = *dto.Name
+	}
+	if dto.Description != nil {
+		def.Description = dto.Description
+	}
+	if dto.SystemPrompt != nil {
+		def.SystemPrompt = dto.SystemPrompt
+	}
+	if dto.Model != nil {
+		def.Model = dto.Model
+	}
+	if dto.Tools != nil {
+		def.Tools = dto.Tools
+	}
+	if dto.Trigger != nil {
+		def.Trigger = dto.Trigger
+	}
+	if dto.FlowType != nil {
+		def.FlowType = *dto.FlowType
+	}
+	if dto.IsDefault != nil {
+		def.IsDefault = *dto.IsDefault
+	}
+	if dto.MaxSteps != nil {
+		def.MaxSteps = dto.MaxSteps
+	}
+	if dto.DefaultTimeout != nil {
+		def.DefaultTimeout = dto.DefaultTimeout
+	}
+	if dto.Visibility != nil {
+		def.Visibility = *dto.Visibility
+	}
+	if dto.ACPConfig != nil {
+		def.ACPConfig = dto.ACPConfig
+	}
+	if dto.Config != nil {
+		def.Config = dto.Config
+	}
+
+	if err := h.repo.UpdateDefinition(c.Request().Context(), def); err != nil {
+		return apperror.NewInternal("failed to update agent definition", err)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(def.ToDTO()))
+}
+
+// DeleteDefinition handles DELETE /api/admin/agent-definitions/:id
+func (h *Handler) DeleteDefinition(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.NewBadRequest("definition id is required")
+	}
+
+	var projectID *string
+	if user.ProjectID != "" {
+		projectID = &user.ProjectID
+	}
+
+	def, err := h.repo.FindDefinitionByID(c.Request().Context(), id, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent definition", err)
+	}
+	if def == nil {
+		return apperror.NewNotFound("AgentDefinition", id)
+	}
+
+	if err := h.repo.DeleteDefinition(c.Request().Context(), id); err != nil {
+		return apperror.NewInternal("failed to delete agent definition", err)
+	}
+
+	return c.JSON(http.StatusOK, APIResponse[any]{Success: true})
+}
+
+// --- Project-Scoped Run History Handlers ---
+
+// ListProjectRuns handles GET /api/projects/:projectId/agent-runs
+func (h *Handler) ListProjectRuns(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	// Parse pagination params
+	limit := 20
+	if limitStr := c.QueryParam("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+	offset := 0
+	if offsetStr := c.QueryParam("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	// Parse filters
+	var filters RunFilters
+	if agentID := c.QueryParam("agentId"); agentID != "" {
+		filters.AgentID = &agentID
+	}
+	if statusStr := c.QueryParam("status"); statusStr != "" {
+		status := AgentRunStatus(statusStr)
+		filters.Status = &status
+	}
+
+	runs, totalCount, err := h.repo.FindRunsByProjectPaginated(c.Request().Context(), projectID, filters, limit, offset)
+	if err != nil {
+		return apperror.NewInternal("failed to list agent runs", err)
+	}
+
+	dtos := make([]*AgentRunDTO, len(runs))
+	for i, run := range runs {
+		dtos[i] = run.ToDTO()
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(PaginatedResponse[*AgentRunDTO]{
+		Items:      dtos,
+		TotalCount: totalCount,
+		Limit:      limit,
+		Offset:     offset,
+	}))
+}
+
+// GetProjectRun handles GET /api/projects/:projectId/agent-runs/:runId
+func (h *Handler) GetProjectRun(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	runID := c.Param("runId")
+	if runID == "" {
+		return apperror.NewBadRequest("runId is required")
+	}
+
+	run, err := h.repo.FindRunByIDForProject(c.Request().Context(), runID, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent run", err)
+	}
+	if run == nil {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(run.ToDTO()))
+}
+
+// GetRunMessages handles GET /api/projects/:projectId/agent-runs/:runId/messages
+func (h *Handler) GetRunMessages(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	runID := c.Param("runId")
+	if runID == "" {
+		return apperror.NewBadRequest("runId is required")
+	}
+
+	// Verify the run belongs to this project
+	run, err := h.repo.FindRunByIDForProject(c.Request().Context(), runID, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent run", err)
+	}
+	if run == nil {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	messages, err := h.repo.FindMessagesByRunID(c.Request().Context(), runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get run messages", err)
+	}
+
+	dtos := make([]*AgentRunMessageDTO, len(messages))
+	for i, msg := range messages {
+		dtos[i] = msg.ToDTO()
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dtos))
+}
+
+// GetRunToolCalls handles GET /api/projects/:projectId/agent-runs/:runId/tool-calls
+func (h *Handler) GetRunToolCalls(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	runID := c.Param("runId")
+	if runID == "" {
+		return apperror.NewBadRequest("runId is required")
+	}
+
+	// Verify the run belongs to this project
+	run, err := h.repo.FindRunByIDForProject(c.Request().Context(), runID, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent run", err)
+	}
+	if run == nil {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	toolCalls, err := h.repo.FindToolCallsByRunID(c.Request().Context(), runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get run tool calls", err)
+	}
+
+	dtos := make([]*AgentRunToolCallDTO, len(toolCalls))
+	for i, tc := range toolCalls {
+		dtos[i] = tc.ToDTO()
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dtos))
 }

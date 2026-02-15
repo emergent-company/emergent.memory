@@ -358,3 +358,353 @@ func (r *Repository) MarkStuckJobsAsAbandoned(ctx context.Context, olderThan tim
 	n, _ := res.RowsAffected()
 	return int(n), nil
 }
+
+// --- Agent lookup by name ---
+
+// FindByName finds an agent by name within a project.
+func (r *Repository) FindByName(ctx context.Context, projectID, name string) (*Agent, error) {
+	agent := new(Agent)
+	err := r.db.NewSelect().
+		Model(agent).
+		Where("project_id = ?", projectID).
+		Where("name = ?", name).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return agent, nil
+}
+
+// --- Agent Definitions ---
+
+// FindAllDefinitions returns all agent definitions for a project.
+// If includeInternal is false, definitions with visibility='internal' are excluded.
+func (r *Repository) FindAllDefinitions(ctx context.Context, projectID string, includeInternal bool) ([]*AgentDefinition, error) {
+	var defs []*AgentDefinition
+	q := r.db.NewSelect().
+		Model(&defs).
+		Where("project_id = ?", projectID).
+		Order("name ASC")
+	if !includeInternal {
+		q = q.Where("visibility != ?", VisibilityInternal)
+	}
+	err := q.Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return defs, nil
+}
+
+// FindDefinitionByID returns an agent definition by ID, optionally filtering by project.
+func (r *Repository) FindDefinitionByID(ctx context.Context, id string, projectID *string) (*AgentDefinition, error) {
+	def := new(AgentDefinition)
+	q := r.db.NewSelect().
+		Model(def).
+		Where("id = ?", id)
+	if projectID != nil {
+		q = q.Where("project_id = ?", *projectID)
+	}
+	err := q.Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return def, nil
+}
+
+// FindDefinitionByName returns an agent definition by name within a project.
+func (r *Repository) FindDefinitionByName(ctx context.Context, projectID, name string) (*AgentDefinition, error) {
+	def := new(AgentDefinition)
+	err := r.db.NewSelect().
+		Model(def).
+		Where("project_id = ?", projectID).
+		Where("name = ?", name).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return def, nil
+}
+
+// FindAllTriggeredDefinitions returns all agent definitions that have a trigger set (non-null, non-empty).
+func (r *Repository) FindAllTriggeredDefinitions(ctx context.Context) ([]*AgentDefinition, error) {
+	var defs []*AgentDefinition
+	err := r.db.NewSelect().
+		Model(&defs).
+		Where("trigger IS NOT NULL").
+		Where("trigger != ''").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return defs, nil
+}
+
+// CreateDefinition creates a new agent definition.
+func (r *Repository) CreateDefinition(ctx context.Context, def *AgentDefinition) error {
+	_, err := r.db.NewInsert().
+		Model(def).
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// UpdateDefinition updates an agent definition.
+func (r *Repository) UpdateDefinition(ctx context.Context, def *AgentDefinition) error {
+	def.UpdatedAt = time.Now()
+	_, err := r.db.NewUpdate().
+		Model(def).
+		WherePK().
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// DeleteDefinition deletes an agent definition by ID.
+func (r *Repository) DeleteDefinition(ctx context.Context, id string) error {
+	_, err := r.db.NewDelete().
+		Model((*AgentDefinition)(nil)).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+// --- Extended Agent Run operations ---
+
+// CreateRunWithOptions creates a new agent run with coordination options.
+func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
+	run := &AgentRun{
+		AgentID:     opts.AgentID,
+		Status:      RunStatusRunning,
+		StartedAt:   time.Now(),
+		Summary:     make(map[string]any),
+		ParentRunID: opts.ParentRunID,
+		MaxSteps:    opts.MaxSteps,
+		ResumedFrom: opts.ResumedFrom,
+		StepCount:   opts.InitialStepCount,
+	}
+	_, err := r.db.NewInsert().
+		Model(run).
+		Returning("*").
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
+// FindRunByID returns an agent run by ID.
+func (r *Repository) FindRunByID(ctx context.Context, runID string) (*AgentRun, error) {
+	run := new(AgentRun)
+	err := r.db.NewSelect().
+		Model(run).
+		Where("id = ?", runID).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return run, nil
+}
+
+// PauseRun marks a run as paused, persisting the current step count.
+func (r *Repository) PauseRun(ctx context.Context, runID string, stepCount int) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusPaused).
+		Set("completed_at = ?", now).
+		Set("step_count = ?", stepCount).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
+// CancelRun marks a run as cancelled.
+func (r *Repository) CancelRun(ctx context.Context, runID string) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelled).
+		Set("completed_at = ?", now).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
+// UpdateStepCount updates the step count for a running agent.
+func (r *Repository) UpdateStepCount(ctx context.Context, runID string, stepCount int) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("step_count = ?", stepCount).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
+// FailRunWithSteps marks a run as failed, persisting the step count at the time of failure.
+func (r *Repository) FailRunWithSteps(ctx context.Context, runID string, errorMessage string, stepCount int) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusError).
+		Set("completed_at = ?", now).
+		Set("error_message = ?", errorMessage).
+		Set("step_count = ?", stepCount).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
+// CompleteRunWithSteps marks a run as successfully completed with step count and duration.
+func (r *Repository) CompleteRunWithSteps(ctx context.Context, runID string, summary map[string]any, stepCount int, durationMs int) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusSuccess).
+		Set("completed_at = ?", now).
+		Set("summary = ?", summary).
+		Set("step_count = ?", stepCount).
+		Set("duration_ms = ?", durationMs).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
+// FindChildRuns returns all child runs of a parent run.
+func (r *Repository) FindChildRuns(ctx context.Context, parentRunID string) ([]*AgentRun, error) {
+	var runs []*AgentRun
+	err := r.db.NewSelect().
+		Model(&runs).
+		Where("parent_run_id = ?", parentRunID).
+		Order("started_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return runs, nil
+}
+
+// --- Agent Run Messages ---
+
+// CreateMessage creates a new agent run message.
+func (r *Repository) CreateMessage(ctx context.Context, msg *AgentRunMessage) error {
+	_, err := r.db.NewInsert().
+		Model(msg).
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// FindMessagesByRunID returns all messages for a run, ordered by creation time.
+func (r *Repository) FindMessagesByRunID(ctx context.Context, runID string) ([]*AgentRunMessage, error) {
+	var msgs []*AgentRunMessage
+	err := r.db.NewSelect().
+		Model(&msgs).
+		Where("run_id = ?", runID).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return msgs, nil
+}
+
+// --- Agent Run Tool Calls ---
+
+// CreateToolCall creates a new agent run tool call record.
+func (r *Repository) CreateToolCall(ctx context.Context, tc *AgentRunToolCall) error {
+	_, err := r.db.NewInsert().
+		Model(tc).
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// FindToolCallsByRunID returns all tool calls for a run, ordered by creation time.
+func (r *Repository) FindToolCallsByRunID(ctx context.Context, runID string) ([]*AgentRunToolCall, error) {
+	var tcs []*AgentRunToolCall
+	err := r.db.NewSelect().
+		Model(&tcs).
+		Where("run_id = ?", runID).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return tcs, nil
+}
+
+// --- Project-scoped Run History ---
+
+// RunFilters holds optional filters for querying agent runs.
+type RunFilters struct {
+	AgentID *string
+	Status  *AgentRunStatus
+}
+
+// FindRunsByProjectPaginated returns paginated agent runs for a project.
+func (r *Repository) FindRunsByProjectPaginated(ctx context.Context, projectID string, filters RunFilters, limit, offset int) ([]*AgentRun, int, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	q := r.db.NewSelect().
+		Model((*AgentRun)(nil)).
+		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
+		Where("a.project_id = ?", projectID)
+
+	if filters.AgentID != nil {
+		q = q.Where("ar.agent_id = ?", *filters.AgentID)
+	}
+	if filters.Status != nil {
+		q = q.Where("ar.status = ?", *filters.Status)
+	}
+
+	totalCount, err := q.Count(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var runs []*AgentRun
+	err = q.Order("ar.started_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(ctx, &runs)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return runs, totalCount, nil
+}
+
+// FindRunByIDForProject returns a specific run scoped to a project.
+func (r *Repository) FindRunByIDForProject(ctx context.Context, runID, projectID string) (*AgentRun, error) {
+	run := new(AgentRun)
+	err := r.db.NewSelect().
+		Model(run).
+		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
+		Where("ar.id = ?", runID).
+		Where("a.project_id = ?", projectID).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return run, nil
+}
