@@ -220,6 +220,13 @@ type GetObjectEdgesResponse struct {
 	Outgoing []*GraphRelationshipResponse `json:"outgoing"`
 }
 
+// GetEdgesParams holds optional filters for GetObjectEdges.
+type GetEdgesParams struct {
+	Type      string   // Single relationship type filter
+	Types     []string // Multiple relationship type filters
+	Direction string   // "incoming", "outgoing", or "" (both)
+}
+
 // ObjectHistoryResponse is the response for version history.
 type ObjectHistoryResponse struct {
 	Versions []*GraphObjectResponse `json:"versions"`

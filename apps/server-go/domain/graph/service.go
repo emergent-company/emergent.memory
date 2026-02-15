@@ -143,6 +143,11 @@ func (s *Service) GetUnused(ctx context.Context, projectID uuid.UUID, limit int,
 	}, nil
 }
 
+// CountObjects returns the count of graph objects matching the given filters.
+func (s *Service) CountObjects(ctx context.Context, params ListParams) (int, error) {
+	return s.repo.Count(ctx, params)
+}
+
 // List returns graph objects matching the given parameters.
 func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObjectsResponse, error) {
 	// Run count and list queries
@@ -251,6 +256,187 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	}
 
 	return obj.ToResponse(), nil
+}
+
+// CreateOrUpdate implements upsert semantics for graph objects identified by (type, key).
+// If no existing HEAD object with the same (project_id, branch_id, type, key) is found, a new object is created.
+// If an existing HEAD is found but was deleted, a new version is created to restore it with the new properties.
+// If an existing HEAD is found and properties are identical, the existing object is returned (no-op).
+// If an existing HEAD is found and properties differ, a new version is created with the updated properties.
+// This follows the same pattern as CreateRelationship for relationships.
+func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, bool, error) {
+	if req.Key == nil || *req.Key == "" {
+		return nil, false, apperror.ErrBadRequest.WithMessage("key is required for upsert")
+	}
+
+	// Validate properties against schema
+	validatedProps := req.Properties
+	if s.schemaProvider != nil {
+		schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if err != nil {
+			s.log.Warn("failed to load schemas, skipping validation",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", err.Error()))
+		} else if schema, ok := schemas.ObjectSchemas[req.Type]; ok {
+			start := time.Now()
+			validated, err := validateProperties(req.Properties, schema)
+			duration := time.Since(start)
+
+			if err != nil {
+				s.incrementValidationError(duration)
+				return nil, false, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+			}
+			s.incrementValidationSuccess(duration)
+			validatedProps = validated
+		}
+	}
+
+	// Start transaction
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, false, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Acquire advisory lock for this (project_id, type, key) identity
+	if err := s.repo.AcquireObjectUpsertLock(ctx, tx.Tx, projectID, req.Type, *req.Key); err != nil {
+		return nil, false, err
+	}
+
+	// Check if object already exists
+	existing, err := s.repo.FindHeadByTypeAndKey(ctx, projectID, req.BranchID, req.Type, *req.Key)
+	if err != nil {
+		return nil, false, err
+	}
+
+	actorType := "user"
+
+	if existing == nil {
+		// Create new object
+		obj := &GraphObject{
+			ProjectID:  projectID,
+			BranchID:   req.BranchID,
+			Type:       req.Type,
+			Key:        req.Key,
+			Status:     req.Status,
+			Properties: validatedProps,
+			Labels:     req.Labels,
+			ActorType:  &actorType,
+			ActorID:    actorID,
+		}
+
+		if err := s.repo.CreateInTx(ctx, tx.Tx, obj); err != nil {
+			return nil, false, err
+		}
+
+		if err := tx.Commit(); err != nil {
+			return nil, false, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		return obj.ToResponse(), true, nil
+	}
+
+	// Object exists - check if it was deleted
+	if existing.DeletedAt != nil {
+		// Was deleted, create new version to "restore" with new properties
+		newVersion := &GraphObject{
+			Type:       req.Type,
+			Key:        req.Key,
+			Status:     req.Status,
+			Properties: validatedProps,
+			Labels:     req.Labels,
+			DeletedAt:  nil,
+			ActorType:  &actorType,
+			ActorID:    actorID,
+		}
+		newVersion.ChangeSummary = computeChangeSummary(existing.Properties, validatedProps)
+
+		if err := s.repo.CreateVersion(ctx, tx.Tx, existing, newVersion); err != nil {
+			return nil, false, err
+		}
+
+		if err := tx.Commit(); err != nil {
+			return nil, false, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		return newVersion.ToResponse(), false, nil
+	}
+
+	// Build the merged state to compare - check if properties, status, and labels changed
+	newProps := validatedProps
+	if newProps == nil {
+		newProps = make(map[string]any)
+	}
+
+	// Check if properties changed
+	diff := computeChangeSummary(existing.Properties, newProps)
+
+	// Check if status changed
+	statusChanged := false
+	newStatus := existing.Status
+	if req.Status != nil {
+		if existing.Status == nil || *existing.Status != *req.Status {
+			statusChanged = true
+			newStatus = req.Status
+		}
+	}
+
+	// Check if labels changed
+	labelsChanged := false
+	newLabels := existing.Labels
+	if req.Labels != nil {
+		existingLabelSet := make(map[string]bool, len(existing.Labels))
+		for _, l := range existing.Labels {
+			existingLabelSet[l] = true
+		}
+		reqLabelSet := make(map[string]bool, len(req.Labels))
+		for _, l := range req.Labels {
+			reqLabelSet[l] = true
+		}
+		if len(existingLabelSet) != len(reqLabelSet) {
+			labelsChanged = true
+		} else {
+			for l := range reqLabelSet {
+				if !existingLabelSet[l] {
+					labelsChanged = true
+					break
+				}
+			}
+		}
+		if labelsChanged {
+			newLabels = req.Labels
+		}
+	}
+
+	if diff == nil && !statusChanged && !labelsChanged {
+		// No change - return existing (no-op)
+		if err := tx.Commit(); err != nil {
+			return nil, false, apperror.ErrDatabase.WithInternal(err)
+		}
+		return existing.ToResponse(), false, nil
+	}
+
+	// Properties, status, or labels differ - create new version
+	newVersion := &GraphObject{
+		Type:       existing.Type,
+		Key:        existing.Key,
+		Status:     newStatus,
+		Properties: newProps,
+		Labels:     newLabels,
+		ActorType:  &actorType,
+		ActorID:    actorID,
+	}
+	newVersion.ChangeSummary = diff
+
+	if err := s.repo.CreateVersion(ctx, tx.Tx, existing, newVersion); err != nil {
+		return nil, false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return newVersion.ToResponse(), false, nil
 }
 
 // Patch updates a graph object by creating a new version.
@@ -471,14 +657,14 @@ func (s *Service) GetHistory(ctx context.Context, projectID, id uuid.UUID) (*Obj
 
 // GetEdges returns incoming and outgoing relationships for an object.
 // The objectID can be either a physical id or a canonical_id.
-func (s *Service) GetEdges(ctx context.Context, projectID, objectID uuid.UUID) (*GetObjectEdgesResponse, error) {
+func (s *Service) GetEdges(ctx context.Context, projectID, objectID uuid.UUID, params GetEdgesParams) (*GetObjectEdgesResponse, error) {
 	// Resolve the object to get its canonical_id, since relationships store canonical IDs.
 	obj, err := s.repo.GetByID(ctx, projectID, objectID)
 	if err != nil {
 		return nil, err
 	}
 
-	incoming, outgoing, err := s.repo.GetEdges(ctx, projectID, obj.CanonicalID)
+	incoming, outgoing, err := s.repo.GetEdges(ctx, projectID, obj.CanonicalID, params)
 	if err != nil {
 		return nil, err
 	}
