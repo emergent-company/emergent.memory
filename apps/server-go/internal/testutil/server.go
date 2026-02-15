@@ -161,9 +161,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	userProfileHandler := userprofile.NewHandler(userProfileSvc)
 	userprofile.RegisterRoutes(e, userProfileHandler, authMiddleware)
 
+	// Create encryption service (used by apitoken, integrations, datasource)
+	encryptionSvc := encryption.NewService(testDB.DB, log)
+
 	// Register apitoken routes
 	apitokenRepo := apitoken.NewRepository(db, log)
-	apitokenSvc := apitoken.NewService(apitokenRepo, log)
+	apitokenSvc := apitoken.NewService(apitokenRepo, encryptionSvc, log)
 	apitokenHandler := apitoken.NewHandler(apitokenSvc)
 	apitoken.RegisterRoutes(e, apitokenHandler, authMiddleware)
 
@@ -279,7 +282,6 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register integrations routes
 	integrationsRepo := integrations.NewRepository(db, log)
 	integrationsRegistry := integrations.NewIntegrationRegistry()
-	encryptionSvc := encryption.NewService(testDB.DB, log)
 	integrationsHandler := integrations.NewHandler(integrationsRepo, integrationsRegistry, encryptionSvc)
 	integrations.RegisterRoutes(e, integrationsHandler, authMiddleware)
 
