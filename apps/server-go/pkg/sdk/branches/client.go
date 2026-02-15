@@ -130,7 +130,7 @@ func (c *Client) List(ctx context.Context, opts *ListOptions) ([]*Branch, error)
 
 // Get retrieves a single branch by ID.
 func (c *Client) Get(ctx context.Context, id string) (*Branch, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/graph/branches/"+id, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/graph/branches/"+url.PathEscape(id), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -199,7 +199,7 @@ func (c *Client) Update(ctx context.Context, id string, updateReq *UpdateBranchR
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/graph/branches/"+id, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/graph/branches/"+url.PathEscape(id), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -229,7 +229,7 @@ func (c *Client) Update(ctx context.Context, id string, updateReq *UpdateBranchR
 
 // Delete deletes a branch by ID. Returns nil on success (HTTP 204).
 func (c *Client) Delete(ctx context.Context, id string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/graph/branches/"+id, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/graph/branches/"+url.PathEscape(id), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

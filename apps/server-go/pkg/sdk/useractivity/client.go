@@ -184,7 +184,7 @@ func (c *Client) GetRecent(ctx context.Context, opts *ListOptions) (*RecentItems
 
 // GetRecentByType retrieves recent activity filtered by resource type.
 func (c *Client) GetRecentByType(ctx context.Context, resourceType string, opts *ListOptions) (*RecentItemsResponse, error) {
-	u, err := url.Parse(c.base + "/api/user-activity/recent/" + resourceType)
+	u, err := url.Parse(c.base + "/api/user-activity/recent/" + url.PathEscape(resourceType))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -250,7 +250,7 @@ func (c *Client) DeleteAll(ctx context.Context) error {
 
 // DeleteByResource deletes a specific recent activity record by type and resource ID.
 func (c *Client) DeleteByResource(ctx context.Context, resourceType, resourceID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/user-activity/recent/"+resourceType+"/"+resourceID, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/user-activity/recent/"+url.PathEscape(resourceType)+"/"+url.PathEscape(resourceID), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

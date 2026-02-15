@@ -795,12 +795,12 @@ func (s *GraphSuite) TestCreateRelationship_EndpointNotFound() {
 
 func (s *GraphSuite) TestCreateRelationship_Idempotent() {
 	s.T().Log("TestCreateRelationship_Idempotent START")
-	
+
 	// Creating the same relationship twice should return the same relationship
 	s.T().Log("Creating srcID object...")
 	srcID := s.createObject("Requirement")
 	s.T().Logf("Created srcID: %s", srcID)
-	
+
 	s.T().Log("Creating dstID object...")
 	dstID := s.createObject("Decision")
 	s.T().Logf("Created dstID: %s", dstID)
@@ -918,8 +918,8 @@ func (s *GraphSuite) TestListRelationships_Empty() {
 	err := json.Unmarshal(rec.Body, &response)
 	s.Require().NoError(err)
 
-	s.Empty(response.Data)
-	s.False(response.HasMore)
+	s.Empty(response.Items)
+	s.Equal(0, response.Total)
 }
 
 func (s *GraphSuite) TestListRelationships_FilterByType() {
@@ -962,8 +962,8 @@ func (s *GraphSuite) TestListRelationships_FilterByType() {
 	err := json.Unmarshal(rec.Body, &response)
 	s.Require().NoError(err)
 
-	s.Len(response.Data, 1)
-	s.Equal("DEPENDS_ON", response.Data[0].Type)
+	s.Len(response.Items, 1)
+	s.Equal("DEPENDS_ON", response.Items[0].Type)
 }
 
 func (s *GraphSuite) TestListRelationships_FilterBySrcID() {
@@ -1006,8 +1006,8 @@ func (s *GraphSuite) TestListRelationships_FilterBySrcID() {
 	err := json.Unmarshal(rec.Body, &response)
 	s.Require().NoError(err)
 
-	s.Len(response.Data, 1)
-	s.Equal(src1ID, response.Data[0].SrcID)
+	s.Len(response.Items, 1)
+	s.Equal(src1ID, response.Items[0].SrcID)
 }
 
 func (s *GraphSuite) TestPatchRelationship_Success() {
@@ -1158,7 +1158,7 @@ func (s *GraphSuite) TestDeleteRelationship_Success() {
 	err = json.Unmarshal(listRec.Body, &listResponse)
 	s.Require().NoError(err)
 
-	s.Empty(listResponse.Data)
+	s.Empty(listResponse.Items)
 }
 
 func (s *GraphSuite) TestRestoreRelationship_Success() {
