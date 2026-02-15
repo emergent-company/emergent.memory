@@ -259,9 +259,10 @@ func (h *Handler) GetObject(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid object id")
 	}
 
-	// Parse resolveHead option
+	// Parse resolveHead option — defaults to true for user-friendly behavior.
+	// Users can pass resolveHead=false to get a specific historical version by physical ID.
 	resolveHead := c.QueryParam("resolveHead")
-	shouldResolveHead := resolveHead == "true" || resolveHead == "1" || resolveHead == "yes"
+	shouldResolveHead := resolveHead != "false" && resolveHead != "0" && resolveHead != "no"
 
 	result, err := h.svc.GetByID(c.Request().Context(), projectID, id, shouldResolveHead)
 	if err != nil {

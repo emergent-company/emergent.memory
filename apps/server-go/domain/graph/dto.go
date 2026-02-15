@@ -479,12 +479,13 @@ type GraphExpandResponse struct {
 
 // ExpandNode represents a node in the expand response.
 type ExpandNode struct {
-	ID         uuid.UUID      `json:"id"`
-	Depth      int            `json:"depth"`
-	Type       string         `json:"type"`
-	Key        *string        `json:"key,omitempty"`
-	Labels     []string       `json:"labels"`
-	Properties map[string]any `json:"properties,omitempty"`
+	ID          uuid.UUID      `json:"id"`
+	CanonicalID uuid.UUID      `json:"canonical_id"`
+	Depth       int            `json:"depth"`
+	Type        string         `json:"type"`
+	Key         *string        `json:"key,omitempty"`
+	Labels      []string       `json:"labels"`
+	Properties  map[string]any `json:"properties,omitempty"`
 }
 
 // ExpandEdge represents an edge in the expand response.
@@ -594,13 +595,14 @@ type TraverseGraphResponse struct {
 
 // TraverseNode represents a node in the traverse response.
 type TraverseNode struct {
-	ID         uuid.UUID  `json:"id"`
-	Depth      int        `json:"depth"`
-	Type       string     `json:"type"`
-	Key        *string    `json:"key,omitempty"`
-	Labels     []string   `json:"labels"`
-	PhaseIndex *int       `json:"phaseIndex,omitempty"`
-	Paths      [][]string `json:"paths,omitempty"`
+	ID          uuid.UUID  `json:"id"`
+	CanonicalID uuid.UUID  `json:"canonical_id"`
+	Depth       int        `json:"depth"`
+	Type        string     `json:"type"`
+	Key         *string    `json:"key,omitempty"`
+	Labels      []string   `json:"labels"`
+	PhaseIndex  *int       `json:"phaseIndex,omitempty"`
+	Paths       [][]string `json:"paths,omitempty"`
 }
 
 // TraverseEdge represents an edge in the traverse response.
