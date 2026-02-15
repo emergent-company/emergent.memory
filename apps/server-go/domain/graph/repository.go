@@ -1788,6 +1788,9 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 		currentLevel = append(currentLevel, obj.CanonicalID)
 	}
 
+	// Track seen edges to prevent duplicates at depth > 1
+	seenEdges := make(map[uuid.UUID]bool)
+
 	// BFS traversal
 	for depth := 0; depth < params.MaxDepth && len(currentLevel) > 0; depth++ {
 		// Check limits
@@ -1886,6 +1889,12 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 		// Collect neighbor IDs
 		neighborIDs := make(map[uuid.UUID]bool)
 		for _, rel := range relationships {
+			// Skip already-seen edges (prevents duplicates at depth > 1)
+			if seenEdges[rel.ID] {
+				continue
+			}
+			seenEdges[rel.ID] = true
+
 			// Check edge limit
 			if len(result.Edges) >= params.MaxEdges {
 				result.Truncated = true
