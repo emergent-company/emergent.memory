@@ -266,7 +266,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register agents routes
 	agentsRepo := agents.NewRepository(db)
-	agentsHandler := agents.NewHandler(agentsRepo)
+	agentsHandler := agents.NewHandler(agentsRepo, nil)
 	agents.RegisterRoutes(e, agentsHandler, authMiddleware)
 
 	// Register extraction admin routes

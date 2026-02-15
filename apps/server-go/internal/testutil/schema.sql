@@ -11,7 +11,6 @@ SET row_security = off;
 CREATE SCHEMA IF NOT EXISTS core;
 CREATE SCHEMA IF NOT EXISTS kb;
 CREATE SCHEMA IF NOT EXISTS public;
-COMMENT ON SCHEMA public IS 'standard public schema';
 CREATE TYPE kb.document_conversion_status AS ENUM (
     'pending',
     'processing',
@@ -111,6 +110,21 @@ CREATE FUNCTION kb.update_data_source_sync_jobs_updated_at() RETURNS trigger
         RETURN NEW;
       END;
       $$;
+CREATE FUNCTION kb.update_graph_objects_fts() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.fts :=
+        setweight(to_tsvector('simple', coalesce(NEW.key, '')), 'A') ||
+        setweight(to_tsvector('simple', coalesce(NEW.type, '')), 'B') ||
+        setweight(to_tsvector('simple', coalesce(
+            (SELECT string_agg(value::text, ' ')
+             FROM jsonb_each_text(CASE WHEN jsonb_typeof(NEW.properties) = 'object' THEN NEW.properties ELSE '{}'::jsonb END)),
+            ''
+        )), 'C');
+    RETURN NEW;
+END;
+$$;
 CREATE FUNCTION kb.update_tsv() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -174,6 +188,26 @@ CREATE TABLE core.user_profiles (
     last_synced_at timestamp with time zone,
     last_activity_at timestamp with time zone
 );
+CREATE TABLE kb.agent_definitions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    product_id uuid,
+    project_id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    description text,
+    system_prompt text,
+    model jsonb DEFAULT '{}'::jsonb,
+    tools text[] DEFAULT '{}'::text[],
+    trigger character varying(255),
+    flow_type character varying(50) DEFAULT 'single'::character varying NOT NULL,
+    is_default boolean DEFAULT false NOT NULL,
+    max_steps integer,
+    default_timeout integer,
+    visibility character varying(50) DEFAULT 'project'::character varying NOT NULL,
+    acp_config jsonb,
+    config jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
 CREATE TABLE kb.agent_processing_log (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     agent_id uuid NOT NULL,
@@ -189,6 +223,26 @@ CREATE TABLE kb.agent_processing_log (
     CONSTRAINT chk_agent_processing_log_event_type CHECK ((event_type = ANY (ARRAY['created'::text, 'updated'::text, 'deleted'::text]))),
     CONSTRAINT chk_agent_processing_log_status CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'completed'::text, 'failed'::text, 'abandoned'::text, 'skipped'::text])))
 );
+CREATE TABLE kb.agent_run_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid NOT NULL,
+    role character varying(20) NOT NULL,
+    content jsonb DEFAULT '{}'::jsonb NOT NULL,
+    step_number integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+CREATE TABLE kb.agent_run_tool_calls (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid NOT NULL,
+    message_id uuid,
+    tool_name character varying(255) NOT NULL,
+    input jsonb DEFAULT '{}'::jsonb NOT NULL,
+    output jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status character varying(20) DEFAULT 'completed'::character varying NOT NULL,
+    duration_ms integer,
+    step_number integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
 CREATE TABLE kb.agent_runs (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     agent_id uuid NOT NULL,
@@ -199,7 +253,11 @@ CREATE TABLE kb.agent_runs (
     summary jsonb DEFAULT '{}'::jsonb NOT NULL,
     error_message text,
     skip_reason text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    parent_run_id uuid,
+    step_count integer DEFAULT 0 NOT NULL,
+    max_steps integer,
+    resumed_from uuid
 );
 CREATE TABLE kb.agents (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -275,12 +333,6 @@ CREATE TABLE kb.backups (
     CONSTRAINT backups_progress_check CHECK (((progress >= 0) AND (progress <= 100))),
     CONSTRAINT backups_status_check CHECK ((status = ANY (ARRAY['creating'::text, 'ready'::text, 'failed'::text, 'deleted'::text])))
 );
-COMMENT ON TABLE kb.backups IS 'Stores metadata for project backups stored in MinIO';
-COMMENT ON COLUMN kb.backups.storage_key IS 'MinIO object key: backups/{orgId}/{backupId}/backup.zip';
-COMMENT ON COLUMN kb.backups.backup_type IS 'Type of backup: full (complete snapshot) or incremental (changes only)';
-COMMENT ON COLUMN kb.backups.includes IS 'What data is included: {documents: true, chat: true, graph: true}';
-COMMENT ON COLUMN kb.backups.stats IS 'Backup statistics: {documents: 150, chunks: 3000, files: 150, ...}';
-COMMENT ON COLUMN kb.backups.change_window IS 'For incremental backups: {from: timestamp, to: timestamp}';
 CREATE TABLE kb.branch_lineage (
     branch_id uuid NOT NULL,
     ancestor_branch_id uuid NOT NULL,
@@ -571,6 +623,20 @@ CREATE TABLE kb.external_sources (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+CREATE TABLE kb.goose_db_version (
+    id integer NOT NULL,
+    version_id bigint NOT NULL,
+    is_applied boolean NOT NULL,
+    tstamp timestamp without time zone DEFAULT now() NOT NULL
+);
+ALTER TABLE kb.goose_db_version ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME kb.goose_db_version_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
 CREATE TABLE kb.graph_embedding_jobs (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     object_id uuid NOT NULL,
@@ -613,10 +679,10 @@ CREATE TABLE kb.graph_objects (
     actor_type text DEFAULT 'user'::text,
     actor_id uuid,
     migration_archive jsonb DEFAULT '[]'::jsonb,
+    last_accessed_at timestamp with time zone,
     CONSTRAINT chk_graph_objects_actor_type CHECK ((actor_type = ANY (ARRAY['user'::text, 'agent'::text, 'system'::text])))
 );
 ALTER TABLE ONLY kb.graph_objects FORCE ROW LEVEL SECURITY;
-COMMENT ON COLUMN kb.graph_objects.migration_archive IS 'Archive of dropped properties from schema migrations. Each entry contains: from_version, to_version, timestamp, dropped_data';
 CREATE MATERIALIZED VIEW kb.graph_object_revision_counts AS
  SELECT canonical_id,
     project_id,
@@ -646,7 +712,7 @@ CREATE TABLE kb.graph_relationships (
     supersedes_id uuid,
     version integer DEFAULT 1 NOT NULL,
     branch_id uuid,
-    embedding vector(768),
+    embedding public.vector(768),
     embedding_updated_at timestamp with time zone
 );
 ALTER TABLE ONLY kb.graph_relationships FORCE ROW LEVEL SECURITY;
@@ -1172,8 +1238,14 @@ ALTER TABLE ONLY kb.chat_conversations
     ADD CONSTRAINT "PK_ff117d9f57807c4f2e3034a39f3" PRIMARY KEY (id);
 ALTER TABLE ONLY kb.clickup_sync_state
     ADD CONSTRAINT "UQ_9693cb36fc36f7f3f36d8ff53b0" UNIQUE (integration_id);
+ALTER TABLE ONLY kb.agent_definitions
+    ADD CONSTRAINT agent_definitions_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY kb.agent_processing_log
     ADD CONSTRAINT agent_processing_log_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY kb.agent_run_messages
+    ADD CONSTRAINT agent_run_messages_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY kb.agent_run_tool_calls
+    ADD CONSTRAINT agent_run_tool_calls_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY kb.agent_runs
     ADD CONSTRAINT agent_runs_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY kb.agents
@@ -1206,6 +1278,8 @@ ALTER TABLE ONLY kb.email_templates
     ADD CONSTRAINT email_templates_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY kb.external_sources
     ADD CONSTRAINT external_sources_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY kb.goose_db_version
+    ADD CONSTRAINT goose_db_version_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY kb.object_chunks
     ADD CONSTRAINT object_chunks_object_id_chunk_id_key UNIQUE (object_id, chunk_id);
 ALTER TABLE ONLY kb.object_chunks
@@ -1284,8 +1358,8 @@ CREATE INDEX "IDX_f8b7ed75170d2d7dca4477cc94" ON kb.notifications USING btree (r
 CREATE INDEX "IDX_f8d6b0b40d75cdabb27cf81084" ON kb.graph_relationships USING btree (dst_id);
 CREATE INDEX "IDX_graph_objects_embedding_v2_ivfflat" ON kb.graph_objects USING ivfflat (embedding_v2 public.vector_cosine_ops) WITH (lists='100');
 CREATE INDEX "IDX_graph_objects_key" ON kb.graph_objects USING btree (project_id, type, key) WHERE (key IS NOT NULL);
-CREATE UNIQUE INDEX "IDX_graph_objects_upsert_main" ON kb.graph_objects (project_id, type, key) WHERE (key IS NOT NULL AND supersedes_id IS NULL AND deleted_at IS NULL AND branch_id IS NULL);
-CREATE UNIQUE INDEX "IDX_graph_objects_upsert_branch" ON kb.graph_objects (project_id, branch_id, type, key) WHERE (key IS NOT NULL AND supersedes_id IS NULL AND deleted_at IS NULL AND branch_id IS NOT NULL);
+CREATE UNIQUE INDEX "IDX_graph_objects_upsert_branch" ON kb.graph_objects USING btree (project_id, branch_id, type, key) WHERE ((key IS NOT NULL) AND (supersedes_id IS NULL) AND (deleted_at IS NULL) AND (branch_id IS NOT NULL));
+CREATE UNIQUE INDEX "IDX_graph_objects_upsert_main" ON kb.graph_objects USING btree (project_id, type, key) WHERE ((key IS NOT NULL) AND (supersedes_id IS NULL) AND (deleted_at IS NULL) AND (branch_id IS NULL));
 CREATE INDEX "IDX_graph_template_packs_draft" ON kb.graph_template_packs USING btree (draft) WHERE (draft = true);
 CREATE INDEX "IDX_graph_template_packs_parent_version_id" ON kb.graph_template_packs USING btree (parent_version_id) WHERE (parent_version_id IS NOT NULL);
 CREATE INDEX "IDX_object_chunks_chunk_id" ON kb.object_chunks USING btree (chunk_id);
@@ -1295,11 +1369,19 @@ CREATE INDEX "IDX_template_pack_studio_messages_session_id" ON kb.template_pack_
 CREATE INDEX "IDX_template_pack_studio_sessions_pack_id" ON kb.template_pack_studio_sessions USING btree (pack_id) WHERE (pack_id IS NOT NULL);
 CREATE INDEX "IDX_template_pack_studio_sessions_status" ON kb.template_pack_studio_sessions USING btree (status) WHERE (status = 'active'::text);
 CREATE INDEX "IDX_template_pack_studio_sessions_user_id" ON kb.template_pack_studio_sessions USING btree (user_id);
+CREATE INDEX idx_agent_definitions_product_id ON kb.agent_definitions USING btree (product_id) WHERE (product_id IS NOT NULL);
+CREATE INDEX idx_agent_definitions_project_default ON kb.agent_definitions USING btree (project_id, is_default) WHERE (is_default = true);
+CREATE UNIQUE INDEX idx_agent_definitions_project_name ON kb.agent_definitions USING btree (project_id, name);
 CREATE INDEX idx_agent_processing_log_agent ON kb.agent_processing_log USING btree (agent_id, created_at DESC);
 CREATE INDEX idx_agent_processing_log_lookup ON kb.agent_processing_log USING btree (agent_id, graph_object_id, object_version, event_type);
 CREATE INDEX idx_agent_processing_log_object ON kb.agent_processing_log USING btree (graph_object_id, created_at DESC);
 CREATE INDEX idx_agent_processing_log_stuck ON kb.agent_processing_log USING btree (status, started_at) WHERE (status = 'processing'::text);
+CREATE INDEX idx_agent_run_messages_run_step ON kb.agent_run_messages USING btree (run_id, step_number);
+CREATE INDEX idx_agent_run_tool_calls_run_step ON kb.agent_run_tool_calls USING btree (run_id, step_number);
+CREATE INDEX idx_agent_run_tool_calls_run_tool ON kb.agent_run_tool_calls USING btree (run_id, tool_name);
 CREATE INDEX idx_agent_runs_agent_id ON kb.agent_runs USING btree (agent_id);
+CREATE INDEX idx_agent_runs_parent_run_id ON kb.agent_runs USING btree (parent_run_id) WHERE (parent_run_id IS NOT NULL);
+CREATE INDEX idx_agent_runs_resumed_from ON kb.agent_runs USING btree (resumed_from) WHERE (resumed_from IS NOT NULL);
 CREATE INDEX idx_agent_runs_started_at ON kb.agent_runs USING btree (started_at);
 CREATE INDEX idx_agent_runs_status ON kb.agent_runs USING btree (status);
 CREATE INDEX idx_agents_enabled ON kb.agents USING btree (enabled);
@@ -1357,8 +1439,11 @@ CREATE INDEX idx_external_sources_normalized_url ON kb.external_sources USING bt
 CREATE UNIQUE INDEX idx_external_sources_project_provider_external_id ON kb.external_sources USING btree (project_id, provider_type, external_id);
 CREATE INDEX idx_external_sources_sync_status ON kb.external_sources USING btree (status, sync_policy, last_checked_at) WHERE (status = 'active'::text);
 CREATE INDEX idx_graph_objects_actor ON kb.graph_objects USING btree (actor_type, actor_id) WHERE (actor_type IS NOT NULL);
+CREATE INDEX idx_graph_objects_fts ON kb.graph_objects USING gin (fts);
 CREATE INDEX idx_graph_objects_has_archive ON kb.graph_objects USING btree (((migration_archive <> '[]'::jsonb))) WHERE (migration_archive <> '[]'::jsonb);
+CREATE INDEX idx_graph_objects_last_accessed ON kb.graph_objects USING btree (last_accessed_at DESC) WHERE (last_accessed_at IS NOT NULL);
 CREATE INDEX idx_graph_objects_schema_version ON kb.graph_objects USING btree (schema_version);
+CREATE INDEX idx_graph_relationships_embedding_ivfflat ON kb.graph_relationships USING ivfflat (embedding public.vector_cosine_ops) WITH (lists='100');
 CREATE INDEX idx_notifications_action_status ON kb.notifications USING btree (action_status) WHERE (action_status IS NOT NULL);
 CREATE INDEX idx_notifications_task ON kb.notifications USING btree (task_id);
 CREATE INDEX idx_notifications_type_action_status ON kb.notifications USING btree (type, action_status) WHERE (type IS NOT NULL);
@@ -1382,6 +1467,7 @@ CREATE UNIQUE INDEX idx_user_recent_items_unique_resource ON kb.user_recent_item
 CREATE INDEX idx_user_recent_items_user_project_accessed ON kb.user_recent_items USING btree (user_id, project_id, accessed_at DESC);
 CREATE TRIGGER trg_user_email_preferences_updated BEFORE UPDATE ON core.user_email_preferences FOR EACH ROW EXECUTE FUNCTION core.update_email_preferences_timestamp();
 CREATE TRIGGER trg_chunks_tsv BEFORE INSERT OR UPDATE ON kb.chunks FOR EACH ROW EXECUTE FUNCTION kb.update_tsv();
+CREATE TRIGGER trg_graph_objects_fts BEFORE INSERT OR UPDATE ON kb.graph_objects FOR EACH ROW EXECUTE FUNCTION kb.update_graph_objects_fts();
 CREATE TRIGGER trigger_data_source_integrations_updated_at BEFORE UPDATE ON kb.data_source_integrations FOR EACH ROW EXECUTE FUNCTION kb.update_data_source_integrations_updated_at();
 CREATE TRIGGER trigger_data_source_sync_jobs_updated_at BEFORE UPDATE ON kb.data_source_sync_jobs FOR EACH ROW EXECUTE FUNCTION kb.update_data_source_sync_jobs_updated_at();
 ALTER TABLE ONLY core.user_emails
@@ -1454,12 +1540,24 @@ ALTER TABLE ONLY kb.graph_objects
     ADD CONSTRAINT "FK_ff6be6062964f2462ee8e8b2ac1" FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
 ALTER TABLE ONLY kb.notifications
     ADD CONSTRAINT "FK_notifications_project_id" FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE SET NULL;
+ALTER TABLE ONLY kb.agent_definitions
+    ADD CONSTRAINT agent_definitions_product_id_fkey FOREIGN KEY (product_id) REFERENCES kb.product_versions(id) ON DELETE SET NULL;
 ALTER TABLE ONLY kb.agent_processing_log
     ADD CONSTRAINT agent_processing_log_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES kb.agents(id) ON DELETE CASCADE;
 ALTER TABLE ONLY kb.agent_processing_log
     ADD CONSTRAINT agent_processing_log_graph_object_id_fkey FOREIGN KEY (graph_object_id) REFERENCES kb.graph_objects(id) ON DELETE CASCADE;
+ALTER TABLE ONLY kb.agent_run_messages
+    ADD CONSTRAINT agent_run_messages_run_id_fkey FOREIGN KEY (run_id) REFERENCES kb.agent_runs(id) ON DELETE CASCADE;
+ALTER TABLE ONLY kb.agent_run_tool_calls
+    ADD CONSTRAINT agent_run_tool_calls_message_id_fkey FOREIGN KEY (message_id) REFERENCES kb.agent_run_messages(id) ON DELETE SET NULL;
+ALTER TABLE ONLY kb.agent_run_tool_calls
+    ADD CONSTRAINT agent_run_tool_calls_run_id_fkey FOREIGN KEY (run_id) REFERENCES kb.agent_runs(id) ON DELETE CASCADE;
 ALTER TABLE ONLY kb.agent_runs
     ADD CONSTRAINT agent_runs_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES kb.agents(id) ON DELETE CASCADE;
+ALTER TABLE ONLY kb.agent_runs
+    ADD CONSTRAINT agent_runs_parent_run_id_fkey FOREIGN KEY (parent_run_id) REFERENCES kb.agent_runs(id) ON DELETE SET NULL;
+ALTER TABLE ONLY kb.agent_runs
+    ADD CONSTRAINT agent_runs_resumed_from_fkey FOREIGN KEY (resumed_from) REFERENCES kb.agent_runs(id) ON DELETE SET NULL;
 ALTER TABLE ONLY kb.backups
     ADD CONSTRAINT backups_baseline_backup_id_fkey FOREIGN KEY (baseline_backup_id) REFERENCES kb.backups(id);
 ALTER TABLE ONLY kb.backups
