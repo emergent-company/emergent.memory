@@ -147,6 +147,22 @@ type ListObjectsOptions struct {
 	PropertyFilters []PropertyFilter // JSONB property filters (JSON-encoded in query param)
 }
 
+// CountObjectsOptions holds query parameters for counting objects.
+// Same filters as ListObjectsOptions but without pagination fields (Limit, Cursor, Order).
+type CountObjectsOptions struct {
+	Type            string
+	Types           []string
+	Label           string
+	Labels          []string
+	Status          string
+	Key             string
+	BranchID        string
+	IncludeDeleted  bool
+	IDs             []string
+	ExtractionJobID string
+	PropertyFilters []PropertyFilter
+}
+
 // PropertyFilter defines a filter condition on the JSONB properties column.
 type PropertyFilter struct {
 	Path  string `json:"path"`            // Property path (dot-notation for nested, e.g. "address.city")
@@ -354,6 +370,11 @@ type SearchObjectsResponse struct {
 	Total      int            `json:"total"`
 }
 
+// CountResponse is the response for count endpoints.
+type CountResponse struct {
+	Count int `json:"count"`
+}
+
 // SearchRelationshipsResponse is the paginated response for listing relationships.
 type SearchRelationshipsResponse struct {
 	Items      []*GraphRelationship `json:"items"`
@@ -414,6 +435,13 @@ type ObjectHistoryResponse struct {
 }
 
 // GetObjectEdgesResponse is the response for listing edges of an object.
+// GetObjectEdgesOptions holds optional filters for retrieving object edges.
+type GetObjectEdgesOptions struct {
+	Type      string   // Filter by single relationship type
+	Types     []string // Filter by multiple relationship types
+	Direction string   // "incoming", "outgoing", or "" for both
+}
+
 type GetObjectEdgesResponse struct {
 	Incoming []*GraphRelationship `json:"incoming"`
 	Outgoing []*GraphRelationship `json:"outgoing"`
@@ -514,12 +542,13 @@ type GraphExpandResponse struct {
 
 // ExpandNode represents a node in the expand response.
 type ExpandNode struct {
-	ID         string         `json:"id"`
-	Depth      int            `json:"depth"`
-	Type       string         `json:"type"`
-	Key        *string        `json:"key,omitempty"`
-	Labels     []string       `json:"labels"`
-	Properties map[string]any `json:"properties,omitempty"`
+	ID          string         `json:"id"`
+	CanonicalID string         `json:"canonical_id"`
+	Depth       int            `json:"depth"`
+	Type        string         `json:"type"`
+	Key         *string        `json:"key,omitempty"`
+	Labels      []string       `json:"labels"`
+	Properties  map[string]any `json:"properties,omitempty"`
 }
 
 // ExpandEdge represents an edge in the expand response.
@@ -580,13 +609,14 @@ type TraverseGraphResponse struct {
 
 // TraverseNode represents a node in the traverse response.
 type TraverseNode struct {
-	ID         string     `json:"id"`
-	Depth      int        `json:"depth"`
-	Type       string     `json:"type"`
-	Key        *string    `json:"key,omitempty"`
-	Labels     []string   `json:"labels"`
-	PhaseIndex *int       `json:"phaseIndex,omitempty"`
-	Paths      [][]string `json:"paths,omitempty"`
+	ID          string     `json:"id"`
+	CanonicalID string     `json:"canonical_id"`
+	Depth       int        `json:"depth"`
+	Type        string     `json:"type"`
+	Key         *string    `json:"key,omitempty"`
+	Labels      []string   `json:"labels"`
+	PhaseIndex  *int       `json:"phaseIndex,omitempty"`
+	Paths       [][]string `json:"paths,omitempty"`
 }
 
 // TraverseEdge represents an edge in the traverse response.
@@ -774,6 +804,22 @@ func (c *Client) patchJSON(ctx context.Context, reqURL string, reqBody any, resu
 	return c.doJSON(req, result)
 }
 
+// putJSON performs a PUT request with JSON body and decodes the response.
+func (c *Client) putJSON(ctx context.Context, reqURL string, reqBody any, result any) error {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := c.prepareRequest(ctx, "PUT", reqURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	return c.doJSON(req, result)
+}
+
 // doDelete performs a DELETE request and drains the response body.
 func (c *Client) doDelete(ctx context.Context, reqURL string) error {
 	req, err := c.prepareRequest(ctx, "DELETE", reqURL, nil)
@@ -808,19 +854,42 @@ func (c *Client) CreateObject(ctx context.Context, req *CreateObjectRequest) (*G
 	return &result, nil
 }
 
-// GetObject retrieves a single graph object by ID.
-func (c *Client) GetObject(ctx context.Context, id string) (*GraphObject, error) {
+// UpsertObject creates or updates a graph object by (type, key).
+// If an object with the same type and key exists, it is updated; otherwise a new one is created.
+func (c *Client) UpsertObject(ctx context.Context, req *CreateObjectRequest) (*GraphObject, error) {
 	var result GraphObject
-	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+id, &result); err != nil {
+	if err := c.putJSON(ctx, c.base+"/api/graph/objects/upsert", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
+// GetObject retrieves a single graph object by ID.
+func (c *Client) GetObject(ctx context.Context, id string) (*GraphObject, error) {
+	var result GraphObject
+	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetObjects retrieves multiple graph objects by their IDs in a single request.
+// This is a convenience wrapper around ListObjects with the IDs filter.
+func (c *Client) GetObjects(ctx context.Context, ids []string) ([]*GraphObject, error) {
+	resp, err := c.ListObjects(ctx, &ListObjectsOptions{
+		IDs:   ids,
+		Limit: len(ids),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
 // UpdateObject patches a graph object, creating a new version.
 func (c *Client) UpdateObject(ctx context.Context, id string, req *UpdateObjectRequest) (*GraphObject, error) {
 	var result GraphObject
-	if err := c.patchJSON(ctx, c.base+"/api/graph/objects/"+id, req, &result); err != nil {
+	if err := c.patchJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id), req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -828,13 +897,13 @@ func (c *Client) UpdateObject(ctx context.Context, id string, req *UpdateObjectR
 
 // DeleteObject soft-deletes a graph object.
 func (c *Client) DeleteObject(ctx context.Context, id string) error {
-	return c.doDelete(ctx, c.base+"/api/graph/objects/"+id)
+	return c.doDelete(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id))
 }
 
 // RestoreObject restores a soft-deleted graph object.
 func (c *Client) RestoreObject(ctx context.Context, id string) (*GraphObject, error) {
 	var result GraphObject
-	req, err := c.prepareRequest(ctx, "POST", c.base+"/api/graph/objects/"+id+"/restore", nil)
+	req, err := c.prepareRequest(ctx, "POST", c.base+"/api/graph/objects/"+url.PathEscape(id)+"/restore", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -847,16 +916,37 @@ func (c *Client) RestoreObject(ctx context.Context, id string) (*GraphObject, er
 // GetObjectHistory retrieves the version history of a graph object.
 func (c *Client) GetObjectHistory(ctx context.Context, id string) (*ObjectHistoryResponse, error) {
 	var result ObjectHistoryResponse
-	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+id+"/history", &result); err != nil {
+	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id)+"/history", &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetObjectEdges retrieves incoming and outgoing relationships for an object.
-func (c *Client) GetObjectEdges(ctx context.Context, id string) (*GetObjectEdgesResponse, error) {
+// GetObjectEdges retrieves incoming and outgoing relationships for an object.
+// Pass nil for opts to get all edges without filtering.
+func (c *Client) GetObjectEdges(ctx context.Context, id string, opts *GetObjectEdgesOptions) (*GetObjectEdgesResponse, error) {
+	u, err := url.Parse(c.base + "/api/graph/objects/" + url.PathEscape(id) + "/edges")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if opts != nil {
+		if opts.Type != "" {
+			q.Set("type", opts.Type)
+		}
+		if len(opts.Types) > 0 {
+			q.Set("types", strings.Join(opts.Types, ","))
+		}
+		if opts.Direction != "" {
+			q.Set("direction", opts.Direction)
+		}
+	}
+	u.RawQuery = q.Encode()
+
 	var result GetObjectEdgesResponse
-	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+id+"/edges", &result); err != nil {
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -919,9 +1009,10 @@ func (c *Client) ListObjects(ctx context.Context, opts *ListObjectsOptions) (*Se
 		}
 		if len(opts.PropertyFilters) > 0 {
 			pfJSON, err := json.Marshal(opts.PropertyFilters)
-			if err == nil {
-				q.Set("property_filters", string(pfJSON))
+			if err != nil {
+				return nil, fmt.Errorf("marshaling property filters: %w", err)
 			}
+			q.Set("property_filters", string(pfJSON))
 		}
 	}
 	u.RawQuery = q.Encode()
@@ -931,6 +1022,62 @@ func (c *Client) ListObjects(ctx context.Context, opts *ListObjectsOptions) (*Se
 		return nil, err
 	}
 	return &result, nil
+}
+
+// CountObjects returns the count of graph objects matching the given filters.
+func (c *Client) CountObjects(ctx context.Context, opts *CountObjectsOptions) (int, error) {
+	u, err := url.Parse(c.base + "/api/graph/objects/count")
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if opts != nil {
+		if opts.Type != "" {
+			q.Set("type", opts.Type)
+		}
+		if len(opts.Types) > 0 {
+			q.Set("types", strings.Join(opts.Types, ","))
+		}
+		if opts.Label != "" {
+			q.Set("label", opts.Label)
+		}
+		if len(opts.Labels) > 0 {
+			q.Set("labels", strings.Join(opts.Labels, ","))
+		}
+		if opts.Status != "" {
+			q.Set("status", opts.Status)
+		}
+		if opts.Key != "" {
+			q.Set("key", opts.Key)
+		}
+		if opts.BranchID != "" {
+			q.Set("branch_id", opts.BranchID)
+		}
+		if opts.IncludeDeleted {
+			q.Set("include_deleted", "true")
+		}
+		if len(opts.IDs) > 0 {
+			q.Set("ids", strings.Join(opts.IDs, ","))
+		}
+		if opts.ExtractionJobID != "" {
+			q.Set("extraction_job_id", opts.ExtractionJobID)
+		}
+		if len(opts.PropertyFilters) > 0 {
+			pfJSON, err := json.Marshal(opts.PropertyFilters)
+			if err != nil {
+				return 0, fmt.Errorf("marshaling property filters: %w", err)
+			}
+			q.Set("property_filters", string(pfJSON))
+		}
+	}
+	u.RawQuery = q.Encode()
+
+	var result CountResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return 0, err
+	}
+	return result.Count, nil
 }
 
 // FTSSearch performs a full-text search on graph objects.
@@ -1025,7 +1172,7 @@ func (c *Client) ListTags(ctx context.Context, opts *ListTagsOptions) ([]string,
 
 // FindSimilar finds objects similar to the given object.
 func (c *Client) FindSimilar(ctx context.Context, id string, opts *FindSimilarOptions) ([]SimilarObjectResult, error) {
-	u, err := url.Parse(c.base + "/api/graph/objects/" + id + "/similar")
+	u, err := url.Parse(c.base + "/api/graph/objects/" + url.PathEscape(id) + "/similar")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -1137,7 +1284,7 @@ func (c *Client) TraverseGraph(ctx context.Context, req *TraverseGraphRequest) (
 // MergeBranch performs or previews a branch merge.
 func (c *Client) MergeBranch(ctx context.Context, targetBranchID string, req *BranchMergeRequest) (*BranchMergeResponse, error) {
 	var result BranchMergeResponse
-	if err := c.postJSON(ctx, c.base+"/api/graph/branches/"+targetBranchID+"/merge", req, &result); err != nil {
+	if err := c.postJSON(ctx, c.base+"/api/graph/branches/"+url.PathEscape(targetBranchID)+"/merge", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1242,7 +1389,7 @@ func (c *Client) BulkCreateRelationships(ctx context.Context, req *BulkCreateRel
 // GetRelationship retrieves a single graph relationship by ID.
 func (c *Client) GetRelationship(ctx context.Context, id string) (*GraphRelationship, error) {
 	var result GraphRelationship
-	if err := c.getJSON(ctx, c.base+"/api/graph/relationships/"+id, &result); err != nil {
+	if err := c.getJSON(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1251,7 +1398,7 @@ func (c *Client) GetRelationship(ctx context.Context, id string) (*GraphRelation
 // UpdateRelationship patches a graph relationship.
 func (c *Client) UpdateRelationship(ctx context.Context, id string, req *UpdateRelationshipRequest) (*GraphRelationship, error) {
 	var result GraphRelationship
-	if err := c.patchJSON(ctx, c.base+"/api/graph/relationships/"+id, req, &result); err != nil {
+	if err := c.patchJSON(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id), req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1259,13 +1406,13 @@ func (c *Client) UpdateRelationship(ctx context.Context, id string, req *UpdateR
 
 // DeleteRelationship soft-deletes a graph relationship.
 func (c *Client) DeleteRelationship(ctx context.Context, id string) error {
-	return c.doDelete(ctx, c.base+"/api/graph/relationships/"+id)
+	return c.doDelete(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id))
 }
 
 // RestoreRelationship restores a soft-deleted graph relationship.
 func (c *Client) RestoreRelationship(ctx context.Context, id string) (*GraphRelationship, error) {
 	var result GraphRelationship
-	req, err := c.prepareRequest(ctx, "POST", c.base+"/api/graph/relationships/"+id+"/restore", nil)
+	req, err := c.prepareRequest(ctx, "POST", c.base+"/api/graph/relationships/"+url.PathEscape(id)+"/restore", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1278,7 +1425,7 @@ func (c *Client) RestoreRelationship(ctx context.Context, id string) (*GraphRela
 // GetRelationshipHistory retrieves the version history of a relationship.
 func (c *Client) GetRelationshipHistory(ctx context.Context, id string) (*RelationshipHistoryResponse, error) {
 	var result RelationshipHistoryResponse
-	if err := c.getJSON(ctx, c.base+"/api/graph/relationships/"+id+"/history", &result); err != nil {
+	if err := c.getJSON(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id)+"/history", &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

@@ -101,12 +101,12 @@ func (h *Handler) List(c echo.Context) error {
 
 // Get returns a single API token by ID
 // @Summary      Get API token by ID
-// @Description  Returns a single API token by ID. Token value is not returned.
+// @Description  Returns a single API token by ID, including the full token value if encryption is configured.
 // @Tags         api-tokens
 // @Produce      json
 // @Param        projectId path string true "Project ID (UUID)"
 // @Param        tokenId path string true "Token ID (UUID)"
-// @Success      200 {object} ApiTokenDTO "Token details"
+// @Success      200 {object} GetApiTokenResponseDTO "Token details (includes full token value if available)"
 // @Failure      400 {object} apperror.Error "Invalid project ID or token ID"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Token not found"

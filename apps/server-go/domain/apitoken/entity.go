@@ -10,16 +10,17 @@ import (
 type ApiToken struct {
 	bun.BaseModel `bun:"table:core.api_tokens,alias:at"`
 
-	ID          string     `bun:"id,pk,type:uuid,default:uuid_generate_v4()"`
-	ProjectID   string     `bun:"project_id,notnull,type:uuid"`
-	UserID      string     `bun:"user_id,notnull,type:uuid"`
-	Name        string     `bun:"name,notnull"`
-	TokenHash   string     `bun:"token_hash,notnull"`
-	TokenPrefix string     `bun:"token_prefix,notnull"`
-	Scopes      []string   `bun:"scopes,array"`
-	CreatedAt   time.Time  `bun:"created_at,notnull,default:now()"`
-	LastUsedAt  *time.Time `bun:"last_used_at"`
-	RevokedAt   *time.Time `bun:"revoked_at"`
+	ID             string     `bun:"id,pk,type:uuid,default:uuid_generate_v4()"`
+	ProjectID      string     `bun:"project_id,notnull,type:uuid"`
+	UserID         string     `bun:"user_id,notnull,type:uuid"`
+	Name           string     `bun:"name,notnull"`
+	TokenHash      string     `bun:"token_hash,notnull"`
+	TokenPrefix    string     `bun:"token_prefix,notnull"`
+	TokenEncrypted *string    `bun:"token_encrypted"`
+	Scopes         []string   `bun:"scopes,array"`
+	CreatedAt      time.Time  `bun:"created_at,notnull,default:now()"`
+	LastUsedAt     *time.Time `bun:"last_used_at"`
+	RevokedAt      *time.Time `bun:"revoked_at"`
 }
 
 // ApiTokenDTO is the response DTO for API token endpoints (without sensitive data)
@@ -37,6 +38,12 @@ type ApiTokenDTO struct {
 type CreateApiTokenResponseDTO struct {
 	ApiTokenDTO
 	Token string `json:"token"`
+}
+
+// GetApiTokenResponseDTO extends ApiTokenDTO with the full token value (decrypted from storage)
+type GetApiTokenResponseDTO struct {
+	ApiTokenDTO
+	Token string `json:"token,omitempty"`
 }
 
 // ApiTokenListResponseDTO is the response for listing tokens

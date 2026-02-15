@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
@@ -69,7 +70,7 @@ func (c *Client) RecreateChunks(ctx context.Context, documentID string) (*Recrea
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/documents/"+documentID+"/recreate-chunks", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/documents/"+url.PathEscape(documentID)+"/recreate-chunks", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

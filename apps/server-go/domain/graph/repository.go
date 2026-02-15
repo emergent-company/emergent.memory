@@ -234,9 +234,9 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 		subq = subq.Where("branch_id IS NULL")
 	}
 
-	// Filter by specific IDs if provided
+	// Filter by specific IDs if provided (accepts both physical id and canonical_id)
 	if len(params.IDs) > 0 {
-		subq = subq.Where("id IN (?)", bun.In(params.IDs))
+		subq = subq.Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.IDs), bun.In(params.IDs))
 	}
 
 	// Support both single type (NestJS compat) and multiple types
@@ -319,9 +319,9 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 		q = q.Where("branch_id IS NULL")
 	}
 
-	// Filter by specific IDs if provided
+	// Filter by specific IDs if provided (accepts both physical id and canonical_id)
 	if len(params.IDs) > 0 {
-		q = q.Where("id IN (?)", bun.In(params.IDs))
+		q = q.Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.IDs), bun.In(params.IDs))
 	}
 
 	// Support both single type (NestJS compat) and multiple types
@@ -368,24 +368,39 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 	return count, nil
 }
 
-// GetByID returns a graph object by its physical ID.
+// GetByID returns a graph object by its physical ID or canonical ID.
+// It accepts either type of ID transparently:
+//   - If the ID matches a physical id, returns that object
+//   - If the ID matches a canonical_id, returns the HEAD version
+//
+// HEAD versions (supersedes_id IS NULL) are preferred when multiple rows match.
 func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*GraphObject, error) {
-	var obj GraphObject
+	var objects []GraphObject
 	err := r.db.NewSelect().
-		Model(&obj).
-		Where("id = ?", id).
+		Model(&objects).
+		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
+		Where("deleted_at IS NULL").
 		Scan(ctx)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, apperror.ErrNotFound
-		}
 		r.log.Error("failed to get graph object", logger.Error(err), slog.String("id", id.String()))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	return &obj, nil
+	if len(objects) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+
+	// Prefer the HEAD version (supersedes_id IS NULL)
+	for i := range objects {
+		if objects[i].SupersedesID == nil {
+			return &objects[i], nil
+		}
+	}
+
+	// Fallback: return the first match (exact physical id hit on a non-HEAD version)
+	return &objects[0], nil
 }
 
 // GetHeadByCanonicalID returns the HEAD version of a graph object by canonical ID.
@@ -539,33 +554,53 @@ func (r *Repository) GetHistory(ctx context.Context, projectID, canonicalID uuid
 	return versions, nil
 }
 
-// GetEdges returns incoming and outgoing relationships for an object.
-func (r *Repository) GetEdges(ctx context.Context, projectID, objectID uuid.UUID) ([]*GraphRelationship, []*GraphRelationship, error) {
+// GetEdges returns incoming and outgoing relationships for an object by its canonical_id.
+// Relationships store canonical_id values in src_id/dst_id, so this matches directly.
+func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.UUID, params GetEdgesParams) ([]*GraphRelationship, []*GraphRelationship, error) {
 	var incoming []*GraphRelationship
 	var outgoing []*GraphRelationship
 
-	// Get incoming edges (object is destination)
-	err := r.db.NewSelect().
-		Model(&incoming).
-		Where("dst_id = ?", objectID).
-		Where("project_id = ?", projectID).
-		Where("supersedes_id IS NULL").
-		Where("deleted_at IS NULL").
-		Scan(ctx)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, nil, apperror.ErrDatabase.WithInternal(err)
+	// Collect relationship types to filter by
+	var typeFilter []string
+	if params.Type != "" {
+		typeFilter = append(typeFilter, params.Type)
+	}
+	if len(params.Types) > 0 {
+		typeFilter = append(typeFilter, params.Types...)
 	}
 
-	// Get outgoing edges (object is source)
-	err = r.db.NewSelect().
-		Model(&outgoing).
-		Where("src_id = ?", objectID).
-		Where("project_id = ?", projectID).
-		Where("supersedes_id IS NULL").
-		Where("deleted_at IS NULL").
-		Scan(ctx)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, nil, apperror.ErrDatabase.WithInternal(err)
+	// Get incoming edges (object is destination) unless direction is "outgoing"
+	if params.Direction != "outgoing" {
+		q := r.db.NewSelect().
+			Model(&incoming).
+			Where("dst_id = ?", canonicalID).
+			Where("project_id = ?", projectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+		if len(typeFilter) > 0 {
+			q = q.Where("type IN (?)", bun.In(typeFilter))
+		}
+		err := q.Scan(ctx)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, nil, apperror.ErrDatabase.WithInternal(err)
+		}
+	}
+
+	// Get outgoing edges (object is source) unless direction is "incoming"
+	if params.Direction != "incoming" {
+		q := r.db.NewSelect().
+			Model(&outgoing).
+			Where("src_id = ?", canonicalID).
+			Where("project_id = ?", projectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+		if len(typeFilter) > 0 {
+			q = q.Where("type IN (?)", bun.In(typeFilter))
+		}
+		err := q.Scan(ctx)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, nil, apperror.ErrDatabase.WithInternal(err)
+		}
 	}
 
 	return incoming, outgoing, nil
@@ -579,6 +614,79 @@ func (r *Repository) AcquireObjectLock(ctx context.Context, tx bun.Tx, canonical
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
+	return nil
+}
+
+// FindHeadByTypeAndKey returns the HEAD version of an object identified by (project_id, type, key).
+// Returns nil, nil if not found (not an error).
+func (r *Repository) FindHeadByTypeAndKey(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID, objType string, key string) (*GraphObject, error) {
+	var obj GraphObject
+	q := r.db.NewSelect().
+		Model(&obj).
+		Where("project_id = ?", projectID).
+		Where("type = ?", objType).
+		Where("key = ?", key).
+		Where("supersedes_id IS NULL")
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	err := q.Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Not found is not an error for this method
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return &obj, nil
+}
+
+// AcquireObjectUpsertLock acquires an advisory lock for an object upsert by (project_id, type, key).
+// The lock is released when the transaction commits or rolls back.
+func (r *Repository) AcquireObjectUpsertLock(ctx context.Context, tx bun.Tx, projectID uuid.UUID, objType string, key string) error {
+	lockKey := "obj-upsert|" + projectID.String() + "|" + objType + "|" + key
+	_, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", lockKey)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// CreateInTx inserts a new graph object (version 1) within an existing transaction.
+func (r *Repository) CreateInTx(ctx context.Context, tx bun.Tx, obj *GraphObject) error {
+	// Set defaults
+	if obj.ID == uuid.Nil {
+		obj.ID = uuid.New()
+	}
+	if obj.CanonicalID == uuid.Nil {
+		obj.CanonicalID = obj.ID // First version: canonical_id == id
+	}
+	obj.Version = 1
+	obj.ContentHash = computeContentHash(obj.Properties)
+	now := time.Now()
+	obj.CreatedAt = now
+	obj.UpdatedAt = now
+
+	if obj.Properties == nil {
+		obj.Properties = make(map[string]any)
+	}
+	if obj.Labels == nil {
+		obj.Labels = []string{}
+	}
+
+	_, err := tx.NewInsert().
+		Model(obj).
+		Exec(ctx)
+
+	if err != nil {
+		r.log.Error("failed to create graph object in tx", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+
 	return nil
 }
 
@@ -720,24 +828,34 @@ func (r *Repository) ListRelationships(ctx context.Context, params RelationshipL
 	return rels, nil
 }
 
-// GetRelationshipByID returns a relationship by its physical ID.
+// GetRelationshipByID returns a relationship by its physical ID or canonical ID.
+// Accepts either type of ID transparently, preferring the HEAD version.
 func (r *Repository) GetRelationshipByID(ctx context.Context, projectID, id uuid.UUID) (*GraphRelationship, error) {
-	var rel GraphRelationship
+	var rels []GraphRelationship
 	err := r.db.NewSelect().
-		Model(&rel).
-		Where("id = ?", id).
+		Model(&rels).
+		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
 		Scan(ctx)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, apperror.ErrNotFound
-		}
 		r.log.Error("failed to get relationship", logger.Error(err), slog.String("id", id.String()))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	return &rel, nil
+	if len(rels) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+
+	// Prefer the HEAD version (supersedes_id IS NULL)
+	for i := range rels {
+		if rels[i].SupersedesID == nil {
+			return &rels[i], nil
+		}
+	}
+
+	// Fallback: return the first match
+	return &rels[0], nil
 }
 
 // GetRelationshipHead returns the HEAD version of a relationship by type, src, dst.
@@ -905,10 +1023,15 @@ func (r *Repository) AcquireRelationshipLock(ctx context.Context, tx bun.Tx, pro
 func (r *Repository) ValidateEndpoints(ctx context.Context, tx bun.Tx, projectID, srcID, dstID uuid.UUID) (*GraphObject, *GraphObject, error) {
 	var objects []*GraphObject
 
-	// Use the transaction for consistent reads
+	// Look up objects by physical ID or canonical_id (supports both).
+	// The caller may pass either the physical id (from a specific version) or
+	// the canonical_id (stable logical identity). We resolve to the HEAD version
+	// so that relationships are always anchored to canonical identities.
 	err := tx.NewSelect().
 		Model(&objects).
-		Where("id IN (?)", bun.In([]uuid.UUID{srcID, dstID})).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In([]uuid.UUID{srcID, dstID}), bun.In([]uuid.UUID{srcID, dstID})).
+		Where("supersedes_id IS NULL"). // HEAD versions only
+		Where("project_id = ?", projectID).
 		Scan(ctx)
 
 	if err != nil {
@@ -917,10 +1040,11 @@ func (r *Repository) ValidateEndpoints(ctx context.Context, tx bun.Tx, projectID
 
 	var srcObj, dstObj *GraphObject
 	for _, obj := range objects {
-		if obj.ID == srcID {
+		// Match by physical id or canonical_id
+		if obj.ID == srcID || obj.CanonicalID == srcID {
 			srcObj = obj
 		}
-		if obj.ID == dstID {
+		if obj.ID == dstID || obj.CanonicalID == dstID {
 			dstObj = obj
 		}
 	}
@@ -937,6 +1061,11 @@ func (r *Repository) ValidateEndpoints(ctx context.Context, tx bun.Tx, projectID
 	}
 	if dstObj.DeletedAt != nil {
 		return nil, nil, apperror.ErrBadRequest.WithMessage("dst_object_deleted")
+	}
+
+	// Prevent self-referencing relationships (src and dst resolve to the same logical object)
+	if srcObj.CanonicalID == dstObj.CanonicalID {
+		return nil, nil, apperror.ErrBadRequest.WithMessage("self_referencing_relationship_not_allowed")
 	}
 
 	// Verify same project
@@ -1342,6 +1471,7 @@ func (r *Repository) GetDistinctTags(ctx context.Context, projectID uuid.UUID, p
 }
 
 // BulkUpdateStatus updates the status of multiple objects.
+// Accepts either physical ids or canonical_ids.
 func (r *Repository) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID, status string, actorID *uuid.UUID) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -1353,7 +1483,7 @@ func (r *Repository) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, 
 		Set("status = ?", status).
 		Set("updated_at = ?", now).
 		Set("actor_id = ?", actorID).
-		Where("id IN (?)", bun.In(ids)).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In(ids), bun.In(ids)).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL"). // Only update HEAD versions
 		Where("deleted_at IS NULL").
@@ -1409,13 +1539,15 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 		params.Limit = 100
 	}
 
-	// First get the embedding for the source object
+	// First get the embedding for the source object (accepts physical id or canonical_id)
 	var embedding []float32
 	err := r.db.NewRaw(`
 		SELECT embedding_v2
 		FROM kb.graph_objects
-		WHERE id = ? AND project_id = ?
-	`, params.ObjectID, params.ProjectID).Scan(ctx, &embedding)
+		WHERE (id = ? OR canonical_id = ?) AND project_id = ?
+		AND supersedes_id IS NULL
+		LIMIT 1
+	`, params.ObjectID, params.ObjectID, params.ProjectID).Scan(ctx, &embedding)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, apperror.ErrNotFound
@@ -1433,12 +1565,12 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 
 	conditions := []string{
 		"project_id = ?",
-		"id != ?", // Exclude source object
+		"(id != ? AND canonical_id != ?)", // Exclude source object by either ID type
 		"supersedes_id IS NULL",
 		"deleted_at IS NULL",
 		"embedding_v2 IS NOT NULL",
 	}
-	args := []any{params.ProjectID, params.ObjectID}
+	args := []any{params.ProjectID, params.ObjectID, params.ObjectID}
 
 	if params.BranchID != nil {
 		conditions = append(conditions, "branch_id = ?")
@@ -1594,11 +1726,11 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 	currentLevel := make([]uuid.UUID, 0, len(params.RootIDs))
 	visited := make(map[uuid.UUID]bool)
 
-	// Fetch root objects
+	// Fetch root objects — accept physical id or canonical_id
 	var rootObjects []*GraphObject
 	err := r.db.NewSelect().
 		Model(&rootObjects).
-		Where("id IN (?)", bun.In(params.RootIDs)).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.RootIDs), bun.In(params.RootIDs)).
 		Where("project_id = ?", params.ProjectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL").
@@ -1607,11 +1739,12 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
+	// Use canonical_id for traversal since relationships store canonical IDs in src_id/dst_id
 	for _, obj := range rootObjects {
-		result.Nodes[obj.ID] = obj
-		result.NodeDepths[obj.ID] = 0
-		visited[obj.ID] = true
-		currentLevel = append(currentLevel, obj.ID)
+		result.Nodes[obj.CanonicalID] = obj
+		result.NodeDepths[obj.CanonicalID] = 0
+		visited[obj.CanonicalID] = true
+		currentLevel = append(currentLevel, obj.CanonicalID)
 	}
 
 	// BFS traversal
@@ -1739,7 +1872,7 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 			break
 		}
 
-		// Fetch neighbor objects
+		// Fetch neighbor objects — neighborIDs are canonical_id values
 		if len(neighborIDs) > 0 {
 			neighborIDList := make([]uuid.UUID, 0, len(neighborIDs))
 			for id := range neighborIDs {
@@ -1749,7 +1882,7 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 			var neighbors []*GraphObject
 			nq := r.db.NewSelect().
 				Model(&neighbors).
-				Where("id IN (?)", bun.In(neighborIDList)).
+				Where("canonical_id IN (?)", bun.In(neighborIDList)).
 				Where("project_id = ?", params.ProjectID).
 				Where("supersedes_id IS NULL").
 				Where("deleted_at IS NULL")
@@ -1768,17 +1901,17 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 			}
 
 			for _, obj := range neighbors {
-				if !visited[obj.ID] {
+				if !visited[obj.CanonicalID] {
 					// Check node limit
 					if len(result.Nodes) >= params.MaxNodes {
 						result.Truncated = true
 						break
 					}
 
-					result.Nodes[obj.ID] = obj
-					result.NodeDepths[obj.ID] = depth + 1
-					visited[obj.ID] = true
-					nextLevel = append(nextLevel, obj.ID)
+					result.Nodes[obj.CanonicalID] = obj
+					result.NodeDepths[obj.CanonicalID] = depth + 1
+					visited[obj.CanonicalID] = true
+					nextLevel = append(nextLevel, obj.CanonicalID)
 				}
 			}
 		}
@@ -1791,8 +1924,28 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 
 // GetNeighborObjects returns objects connected to the given object via relationships.
 // This is used by search-with-neighbors to find relationship-connected neighbors.
+// objectID can be a physical id or canonical_id; it is used to match against
+// src_id/dst_id in relationships, which store canonical_id values.
 func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID, objectID uuid.UUID, branchID *uuid.UUID, maxNeighbors int) ([]*GraphObject, error) {
-	// Get all connected object IDs via relationships
+	// Resolve objectID to canonical_id by looking up the object
+	var resolvedObj GraphObject
+	err := r.db.NewSelect().
+		Model(&resolvedObj).
+		Column("canonical_id").
+		Where("(id = ? OR canonical_id = ?)", objectID, objectID).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return []*GraphObject{}, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	canonicalID := resolvedObj.CanonicalID
+
+	// Get all connected object IDs via relationships (src_id/dst_id store canonical IDs)
 	var neighborIDs []uuid.UUID
 
 	// Get outgoing relationships
@@ -1800,7 +1953,7 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 	outQ := r.db.NewSelect().
 		Column("dst_id").
 		Model((*GraphRelationship)(nil)).
-		Where("src_id = ?", objectID).
+		Where("src_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL")
@@ -1811,7 +1964,7 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 		outQ = outQ.Where("branch_id IS NULL")
 	}
 
-	err := outQ.Scan(ctx, &outgoing)
+	err = outQ.Scan(ctx, &outgoing)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
@@ -1822,7 +1975,7 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 	inQ := r.db.NewSelect().
 		Column("src_id").
 		Model((*GraphRelationship)(nil)).
-		Where("dst_id = ?", objectID).
+		Where("dst_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL")
@@ -1843,11 +1996,11 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 		return []*GraphObject{}, nil
 	}
 
-	// Dedupe
+	// Dedupe (neighborIDs are canonical_id values)
 	seen := make(map[uuid.UUID]bool)
 	unique := make([]uuid.UUID, 0)
 	for _, id := range neighborIDs {
-		if !seen[id] && id != objectID {
+		if !seen[id] && id != canonicalID {
 			seen[id] = true
 			unique = append(unique, id)
 		}
@@ -1862,11 +2015,11 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 		unique = unique[:maxNeighbors]
 	}
 
-	// Fetch objects
+	// Fetch HEAD objects by canonical_id
 	var objects []*GraphObject
 	err = r.db.NewSelect().
 		Model(&objects).
-		Where("id IN (?)", bun.In(unique)).
+		Where("canonical_id IN (?)", bun.In(unique)).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL").
@@ -1879,13 +2032,16 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 }
 
 // GetObjectEmbedding returns the embedding vector for an object.
+// Accepts either physical id or canonical_id, returns the HEAD version's embedding.
 func (r *Repository) GetObjectEmbedding(ctx context.Context, projectID, objectID uuid.UUID) ([]float32, error) {
 	var embedding []float32
 	err := r.db.NewRaw(`
 		SELECT embedding_v2
 		FROM kb.graph_objects
-		WHERE id = ? AND project_id = ?
-	`, objectID, projectID).Scan(ctx, &embedding)
+		WHERE (id = ? OR canonical_id = ?) AND project_id = ?
+		AND supersedes_id IS NULL
+		LIMIT 1
+	`, objectID, objectID, projectID).Scan(ctx, &embedding)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, apperror.ErrNotFound
