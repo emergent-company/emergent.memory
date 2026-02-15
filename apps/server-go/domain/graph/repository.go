@@ -539,15 +539,16 @@ func (r *Repository) GetHistory(ctx context.Context, projectID, canonicalID uuid
 	return versions, nil
 }
 
-// GetEdges returns incoming and outgoing relationships for an object.
-func (r *Repository) GetEdges(ctx context.Context, projectID, objectID uuid.UUID) ([]*GraphRelationship, []*GraphRelationship, error) {
+// GetEdges returns incoming and outgoing relationships for an object by its canonical_id.
+// Relationships store canonical_id values in src_id/dst_id, so this matches directly.
+func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.UUID) ([]*GraphRelationship, []*GraphRelationship, error) {
 	var incoming []*GraphRelationship
 	var outgoing []*GraphRelationship
 
 	// Get incoming edges (object is destination)
 	err := r.db.NewSelect().
 		Model(&incoming).
-		Where("dst_id = ?", objectID).
+		Where("dst_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL").
@@ -559,7 +560,7 @@ func (r *Repository) GetEdges(ctx context.Context, projectID, objectID uuid.UUID
 	// Get outgoing edges (object is source)
 	err = r.db.NewSelect().
 		Model(&outgoing).
-		Where("src_id = ?", objectID).
+		Where("src_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL").
@@ -905,10 +906,15 @@ func (r *Repository) AcquireRelationshipLock(ctx context.Context, tx bun.Tx, pro
 func (r *Repository) ValidateEndpoints(ctx context.Context, tx bun.Tx, projectID, srcID, dstID uuid.UUID) (*GraphObject, *GraphObject, error) {
 	var objects []*GraphObject
 
-	// Use the transaction for consistent reads
+	// Look up objects by physical ID or canonical_id (supports both).
+	// The caller may pass either the physical id (from a specific version) or
+	// the canonical_id (stable logical identity). We resolve to the HEAD version
+	// so that relationships are always anchored to canonical identities.
 	err := tx.NewSelect().
 		Model(&objects).
-		Where("id IN (?)", bun.In([]uuid.UUID{srcID, dstID})).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In([]uuid.UUID{srcID, dstID}), bun.In([]uuid.UUID{srcID, dstID})).
+		Where("supersedes_id IS NULL"). // HEAD versions only
+		Where("project_id = ?", projectID).
 		Scan(ctx)
 
 	if err != nil {
@@ -917,10 +923,11 @@ func (r *Repository) ValidateEndpoints(ctx context.Context, tx bun.Tx, projectID
 
 	var srcObj, dstObj *GraphObject
 	for _, obj := range objects {
-		if obj.ID == srcID {
+		// Match by physical id or canonical_id
+		if obj.ID == srcID || obj.CanonicalID == srcID {
 			srcObj = obj
 		}
-		if obj.ID == dstID {
+		if obj.ID == dstID || obj.CanonicalID == dstID {
 			dstObj = obj
 		}
 	}
@@ -1594,11 +1601,11 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 	currentLevel := make([]uuid.UUID, 0, len(params.RootIDs))
 	visited := make(map[uuid.UUID]bool)
 
-	// Fetch root objects
+	// Fetch root objects — accept physical id or canonical_id
 	var rootObjects []*GraphObject
 	err := r.db.NewSelect().
 		Model(&rootObjects).
-		Where("id IN (?)", bun.In(params.RootIDs)).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.RootIDs), bun.In(params.RootIDs)).
 		Where("project_id = ?", params.ProjectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL").
@@ -1607,11 +1614,12 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
+	// Use canonical_id for traversal since relationships store canonical IDs in src_id/dst_id
 	for _, obj := range rootObjects {
-		result.Nodes[obj.ID] = obj
-		result.NodeDepths[obj.ID] = 0
-		visited[obj.ID] = true
-		currentLevel = append(currentLevel, obj.ID)
+		result.Nodes[obj.CanonicalID] = obj
+		result.NodeDepths[obj.CanonicalID] = 0
+		visited[obj.CanonicalID] = true
+		currentLevel = append(currentLevel, obj.CanonicalID)
 	}
 
 	// BFS traversal
@@ -1739,7 +1747,7 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 			break
 		}
 
-		// Fetch neighbor objects
+		// Fetch neighbor objects — neighborIDs are canonical_id values
 		if len(neighborIDs) > 0 {
 			neighborIDList := make([]uuid.UUID, 0, len(neighborIDs))
 			for id := range neighborIDs {
@@ -1749,7 +1757,7 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 			var neighbors []*GraphObject
 			nq := r.db.NewSelect().
 				Model(&neighbors).
-				Where("id IN (?)", bun.In(neighborIDList)).
+				Where("canonical_id IN (?)", bun.In(neighborIDList)).
 				Where("project_id = ?", params.ProjectID).
 				Where("supersedes_id IS NULL").
 				Where("deleted_at IS NULL")
@@ -1768,17 +1776,17 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 			}
 
 			for _, obj := range neighbors {
-				if !visited[obj.ID] {
+				if !visited[obj.CanonicalID] {
 					// Check node limit
 					if len(result.Nodes) >= params.MaxNodes {
 						result.Truncated = true
 						break
 					}
 
-					result.Nodes[obj.ID] = obj
-					result.NodeDepths[obj.ID] = depth + 1
-					visited[obj.ID] = true
-					nextLevel = append(nextLevel, obj.ID)
+					result.Nodes[obj.CanonicalID] = obj
+					result.NodeDepths[obj.CanonicalID] = depth + 1
+					visited[obj.CanonicalID] = true
+					nextLevel = append(nextLevel, obj.CanonicalID)
 				}
 			}
 		}
@@ -1791,8 +1799,28 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 
 // GetNeighborObjects returns objects connected to the given object via relationships.
 // This is used by search-with-neighbors to find relationship-connected neighbors.
+// objectID can be a physical id or canonical_id; it is used to match against
+// src_id/dst_id in relationships, which store canonical_id values.
 func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID, objectID uuid.UUID, branchID *uuid.UUID, maxNeighbors int) ([]*GraphObject, error) {
-	// Get all connected object IDs via relationships
+	// Resolve objectID to canonical_id by looking up the object
+	var resolvedObj GraphObject
+	err := r.db.NewSelect().
+		Model(&resolvedObj).
+		Column("canonical_id").
+		Where("(id = ? OR canonical_id = ?)", objectID, objectID).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return []*GraphObject{}, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	canonicalID := resolvedObj.CanonicalID
+
+	// Get all connected object IDs via relationships (src_id/dst_id store canonical IDs)
 	var neighborIDs []uuid.UUID
 
 	// Get outgoing relationships
@@ -1800,7 +1828,7 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 	outQ := r.db.NewSelect().
 		Column("dst_id").
 		Model((*GraphRelationship)(nil)).
-		Where("src_id = ?", objectID).
+		Where("src_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL")
@@ -1811,7 +1839,7 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 		outQ = outQ.Where("branch_id IS NULL")
 	}
 
-	err := outQ.Scan(ctx, &outgoing)
+	err = outQ.Scan(ctx, &outgoing)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
@@ -1822,7 +1850,7 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 	inQ := r.db.NewSelect().
 		Column("src_id").
 		Model((*GraphRelationship)(nil)).
-		Where("dst_id = ?", objectID).
+		Where("dst_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL")
@@ -1843,11 +1871,11 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 		return []*GraphObject{}, nil
 	}
 
-	// Dedupe
+	// Dedupe (neighborIDs are canonical_id values)
 	seen := make(map[uuid.UUID]bool)
 	unique := make([]uuid.UUID, 0)
 	for _, id := range neighborIDs {
-		if !seen[id] && id != objectID {
+		if !seen[id] && id != canonicalID {
 			seen[id] = true
 			unique = append(unique, id)
 		}
@@ -1862,11 +1890,11 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 		unique = unique[:maxNeighbors]
 	}
 
-	// Fetch objects
+	// Fetch HEAD objects by canonical_id
 	var objects []*GraphObject
 	err = r.db.NewSelect().
 		Model(&objects).
-		Where("id IN (?)", bun.In(unique)).
+		Where("canonical_id IN (?)", bun.In(unique)).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL").
