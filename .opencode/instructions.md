@@ -38,6 +38,21 @@ Before implementing new features, **always check** these domain-specific AGENT.m
 | Local       | `http://localhost:5176`                 | `http://localhost:3002`               |
 | Dev         | `https://admin.dev.emergent-company.ai` | `https://api.dev.emergent-company.ai` |
 
+## EPF Strategy Context
+
+The company-wide EPF strategy instance is at `docs/EPF/_instances/emergent/`.
+This is a **git submodule** pointing to `emergent-company/emergent-epf`.
+
+```bash
+# If the directory is empty after cloning, initialize the submodule:
+git submodule update --init
+
+# To update to the latest strategy:
+git submodule update --remote docs/EPF/_instances/emergent
+```
+
+Use EPF CLI MCP tools (epf-strategy server) with `instance_path: "docs/EPF/_instances/emergent"` for strategic context lookups, value model analysis, and feature-strategy alignment.
+
 ## 1. Logging
 
 Logs are browsed using the **logs MCP server**. Log files are stored in `logs/` (root directory):

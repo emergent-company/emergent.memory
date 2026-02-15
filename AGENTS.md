@@ -61,6 +61,21 @@ Local and Dev refer to the **same environment** accessible via two methods. Pref
 | Domain (preferred) | `https://admin.dev.emergent-company.ai` | `https://api.dev.emergent-company.ai` |
 | Localhost          | `http://localhost:5176`                 | `http://localhost:3002`               |
 
+## EPF Strategy Context
+
+The company-wide EPF strategy instance is at `docs/EPF/_instances/emergent/`.
+This is a **git submodule** pointing to `emergent-company/emergent-epf`.
+
+```bash
+# If the directory is empty after cloning, initialize the submodule:
+git submodule update --init
+
+# To update to the latest strategy:
+git submodule update --remote docs/EPF/_instances/emergent
+```
+
+Use EPF CLI MCP tools (epf-strategy server) with `instance_path: "docs/EPF/_instances/emergent"` for strategic context lookups, value model analysis, and feature-strategy alignment.
+
 ## Detailed Documentation
 
 - **Workspace operations**: `.opencode/instructions.md` (logging, process management, MCP tools)
