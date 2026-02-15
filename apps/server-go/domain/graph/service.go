@@ -819,6 +819,27 @@ type SearchRelationshipsResponse struct {
 }
 
 // ListRelationships returns relationships matching the given parameters.
+// CountRelationships returns the total count of relationships matching the given parameters.
+func (s *Service) CountRelationships(ctx context.Context, params RelationshipListParams) (int, error) {
+	// Resolve SrcID/DstID to canonical_id values, since relationships store canonical IDs.
+	if params.SrcID != nil {
+		obj, err := s.repo.GetByID(ctx, params.ProjectID, *params.SrcID)
+		if err != nil {
+			return 0, err
+		}
+		params.SrcID = &obj.CanonicalID
+	}
+	if params.DstID != nil {
+		obj, err := s.repo.GetByID(ctx, params.ProjectID, *params.DstID)
+		if err != nil {
+			return 0, err
+		}
+		params.DstID = &obj.CanonicalID
+	}
+
+	return s.repo.CountRelationships(ctx, params)
+}
+
 func (s *Service) ListRelationships(ctx context.Context, params RelationshipListParams) (*SearchRelationshipsResponse, error) {
 	// Resolve SrcID/DstID to canonical_id values, since relationships store canonical IDs.
 	// The caller may pass either a physical id or a canonical_id.
@@ -835,6 +856,12 @@ func (s *Service) ListRelationships(ctx context.Context, params RelationshipList
 			return nil, err
 		}
 		params.DstID = &obj.CanonicalID
+	}
+
+	// Run count and list queries
+	total, err := s.repo.CountRelationships(ctx, params)
+	if err != nil {
+		return nil, err
 	}
 
 	rels, err := s.repo.ListRelationships(ctx, params)
@@ -862,7 +889,7 @@ func (s *Service) ListRelationships(ctx context.Context, params RelationshipList
 	return &SearchRelationshipsResponse{
 		Items:      items,
 		NextCursor: nextCursor,
-		Total:      len(items),
+		Total:      total,
 	}, nil
 }
 
