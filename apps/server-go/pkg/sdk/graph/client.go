@@ -124,7 +124,7 @@ type CreateObjectRequest struct {
 type UpdateObjectRequest struct {
 	Properties    map[string]any `json:"properties,omitempty"`
 	Labels        []string       `json:"labels,omitempty"`
-	ReplaceLabels bool           `json:"replaceLabels,omitempty"`
+	ReplaceLabels *bool          `json:"replaceLabels,omitempty"`
 	Status        *string        `json:"status,omitempty"`
 }
 
