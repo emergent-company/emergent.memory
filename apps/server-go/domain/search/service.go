@@ -385,7 +385,7 @@ func (s *Service) expandRelationships(ctx context.Context, projectID uuid.UUID, 
 	relationshipMap := make(map[string][]UnifiedSearchRelationship)
 
 	for _, objID := range objectIDs {
-		edgesResp, err := s.graphService.GetEdges(ctx, projectID, objID)
+		edgesResp, err := s.graphService.GetEdges(ctx, projectID, objID, graph.GetEdgesParams{})
 		if err != nil {
 			s.log.Warn("failed to expand relationships", logger.Error(err), slog.String("object_id", objID.String()))
 			continue

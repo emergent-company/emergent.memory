@@ -1284,6 +1284,8 @@ CREATE INDEX "IDX_f8b7ed75170d2d7dca4477cc94" ON kb.notifications USING btree (r
 CREATE INDEX "IDX_f8d6b0b40d75cdabb27cf81084" ON kb.graph_relationships USING btree (dst_id);
 CREATE INDEX "IDX_graph_objects_embedding_v2_ivfflat" ON kb.graph_objects USING ivfflat (embedding_v2 public.vector_cosine_ops) WITH (lists='100');
 CREATE INDEX "IDX_graph_objects_key" ON kb.graph_objects USING btree (project_id, type, key) WHERE (key IS NOT NULL);
+CREATE UNIQUE INDEX "IDX_graph_objects_upsert_main" ON kb.graph_objects (project_id, type, key) WHERE (key IS NOT NULL AND supersedes_id IS NULL AND deleted_at IS NULL AND branch_id IS NULL);
+CREATE UNIQUE INDEX "IDX_graph_objects_upsert_branch" ON kb.graph_objects (project_id, branch_id, type, key) WHERE (key IS NOT NULL AND supersedes_id IS NULL AND deleted_at IS NULL AND branch_id IS NOT NULL);
 CREATE INDEX "IDX_graph_template_packs_draft" ON kb.graph_template_packs USING btree (draft) WHERE (draft = true);
 CREATE INDEX "IDX_graph_template_packs_parent_version_id" ON kb.graph_template_packs USING btree (parent_version_id) WHERE (parent_version_id IS NOT NULL);
 CREATE INDEX "IDX_object_chunks_chunk_id" ON kb.object_chunks USING btree (chunk_id);
