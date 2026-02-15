@@ -545,6 +545,39 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 	// Compute change summary
 	newVersion.ChangeSummary = computeChangeSummary(current.Properties, newProps)
 
+	// Check if status changed
+	statusChanged := false
+	if req.Status != nil {
+		if current.Status == nil || *current.Status != *req.Status {
+			statusChanged = true
+		}
+	}
+
+	// Check if labels changed
+	labelsChanged := false
+	if len(newLabels) != len(current.Labels) {
+		labelsChanged = true
+	} else {
+		existingLabelSet := make(map[string]bool, len(current.Labels))
+		for _, l := range current.Labels {
+			existingLabelSet[l] = true
+		}
+		for _, l := range newLabels {
+			if !existingLabelSet[l] {
+				labelsChanged = true
+				break
+			}
+		}
+	}
+
+	// No effective change — return existing version without creating a new one
+	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged {
+		if err := tx.Commit(); err != nil {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		return current.ToResponse(), nil
+	}
+
 	if err := s.repo.CreateVersion(ctx, tx.Tx, current, newVersion); err != nil {
 		return nil, err
 	}
@@ -2228,7 +2261,7 @@ func (s *Service) ExpandGraph(ctx context.Context, projectID uuid.UUID, req *Gra
 	nodes := make([]*ExpandNode, 0, len(result.Nodes))
 	for id, obj := range result.Nodes {
 		node := &ExpandNode{
-			ID:          obj.ID,
+			ID:          id, // Use canonical_id so edges (which store canonical_id in src_id/dst_id) can reference nodes
 			CanonicalID: id,
 			Depth:       result.NodeDepths[id],
 			Type:        obj.Type,
@@ -2425,7 +2458,7 @@ func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *T
 	nodes := make([]*TraverseNode, 0, len(result.Nodes))
 	for id, obj := range result.Nodes {
 		node := &TraverseNode{
-			ID:          obj.ID,
+			ID:          id, // Use canonical_id so edges (which store canonical_id in src_id/dst_id) can reference nodes
 			CanonicalID: id,
 			Depth:       result.NodeDepths[id],
 			Type:        obj.Type,
