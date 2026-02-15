@@ -139,7 +139,7 @@ func (c *Client) GetByID(ctx context.Context, policyID string) (*EmbeddingPolicy
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	u := c.base + "/api/graph/embedding-policies/" + policyID
+	u := c.base + "/api/graph/embedding-policies/" + url.PathEscape(policyID)
 	if projectID != "" {
 		u += "?project_id=" + url.QueryEscape(projectID)
 	}
@@ -222,7 +222,7 @@ func (c *Client) Update(ctx context.Context, policyID string, req *UpdateEmbeddi
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	u := c.base + "/api/graph/embedding-policies/" + policyID
+	u := c.base + "/api/graph/embedding-policies/" + url.PathEscape(policyID)
 	if projectID != "" {
 		u += "?project_id=" + url.QueryEscape(projectID)
 	}
@@ -269,7 +269,7 @@ func (c *Client) Delete(ctx context.Context, policyID string) error {
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	u := c.base + "/api/graph/embedding-policies/" + policyID
+	u := c.base + "/api/graph/embedding-policies/" + url.PathEscape(policyID)
 	if projectID != "" {
 		u += "?project_id=" + url.QueryEscape(projectID)
 	}

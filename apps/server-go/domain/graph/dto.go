@@ -220,6 +220,13 @@ type GetObjectEdgesResponse struct {
 	Outgoing []*GraphRelationshipResponse `json:"outgoing"`
 }
 
+// GetEdgesParams holds optional filters for GetObjectEdges.
+type GetEdgesParams struct {
+	Type      string   // Single relationship type filter
+	Types     []string // Multiple relationship type filters
+	Direction string   // "incoming", "outgoing", or "" (both)
+}
+
 // ObjectHistoryResponse is the response for version history.
 type ObjectHistoryResponse struct {
 	Versions []*GraphObjectResponse `json:"versions"`
@@ -479,12 +486,13 @@ type GraphExpandResponse struct {
 
 // ExpandNode represents a node in the expand response.
 type ExpandNode struct {
-	ID         uuid.UUID      `json:"id"`
-	Depth      int            `json:"depth"`
-	Type       string         `json:"type"`
-	Key        *string        `json:"key,omitempty"`
-	Labels     []string       `json:"labels"`
-	Properties map[string]any `json:"properties,omitempty"`
+	ID          uuid.UUID      `json:"id"`
+	CanonicalID uuid.UUID      `json:"canonical_id"`
+	Depth       int            `json:"depth"`
+	Type        string         `json:"type"`
+	Key         *string        `json:"key,omitempty"`
+	Labels      []string       `json:"labels"`
+	Properties  map[string]any `json:"properties,omitempty"`
 }
 
 // ExpandEdge represents an edge in the expand response.
@@ -594,13 +602,14 @@ type TraverseGraphResponse struct {
 
 // TraverseNode represents a node in the traverse response.
 type TraverseNode struct {
-	ID         uuid.UUID  `json:"id"`
-	Depth      int        `json:"depth"`
-	Type       string     `json:"type"`
-	Key        *string    `json:"key,omitempty"`
-	Labels     []string   `json:"labels"`
-	PhaseIndex *int       `json:"phaseIndex,omitempty"`
-	Paths      [][]string `json:"paths,omitempty"`
+	ID          uuid.UUID  `json:"id"`
+	CanonicalID uuid.UUID  `json:"canonical_id"`
+	Depth       int        `json:"depth"`
+	Type        string     `json:"type"`
+	Key         *string    `json:"key,omitempty"`
+	Labels      []string   `json:"labels"`
+	PhaseIndex  *int       `json:"phaseIndex,omitempty"`
+	Paths       [][]string `json:"paths,omitempty"`
 }
 
 // TraverseEdge represents an edge in the traverse response.

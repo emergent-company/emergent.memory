@@ -248,7 +248,7 @@ func (c *Client) List(ctx context.Context, opts *ListOptions) (*NotificationList
 
 // MarkRead marks a specific notification as read.
 func (c *Client) MarkRead(ctx context.Context, notificationID string) error {
-	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/notifications/"+notificationID+"/read", nil)
+	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/notifications/"+url.PathEscape(notificationID)+"/read", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -274,7 +274,7 @@ func (c *Client) MarkRead(ctx context.Context, notificationID string) error {
 
 // Dismiss dismisses a notification.
 func (c *Client) Dismiss(ctx context.Context, notificationID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/notifications/"+notificationID+"/dismiss", nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/notifications/"+url.PathEscape(notificationID)+"/dismiss", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

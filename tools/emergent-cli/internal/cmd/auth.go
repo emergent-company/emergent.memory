@@ -365,10 +365,6 @@ type sourceTypeCount struct {
 	Count      int    `json:"count"`
 }
 
-type documentListResponse struct {
-	Total int `json:"total"`
-}
-
 type graphSearchResponse struct {
 	Total int `json:"total"`
 }
@@ -495,7 +491,7 @@ func printUsageStats(cfg *config.Config, projectID string) {
 
 	// Job queue metrics (no auth required)
 	jobMetrics := fetchJobMetrics(cfg.ServerURL)
-	if jobMetrics != nil && len(jobMetrics) > 0 {
+	if len(jobMetrics) > 0 {
 		hasAnyJobs := false
 		for _, q := range jobMetrics {
 			if q.Total > 0 {

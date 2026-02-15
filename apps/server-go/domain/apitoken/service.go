@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	"github.com/emergent/emergent-core/pkg/apperror"
+	"github.com/emergent/emergent-core/pkg/encryption"
 	"github.com/emergent/emergent-core/pkg/logger"
 )
 
@@ -21,13 +22,15 @@ const (
 // Service handles business logic for API tokens
 type Service struct {
 	repo *Repository
+	enc  *encryption.Service
 	log  *slog.Logger
 }
 
 // NewService creates a new API token service
-func NewService(repo *Repository, log *slog.Logger) *Service {
+func NewService(repo *Repository, enc *encryption.Service, log *slog.Logger) *Service {
 	return &Service{
 		repo: repo,
+		enc:  enc,
 		log:  log.With(logger.Scope("apitoken.svc")),
 	}
 }
@@ -87,14 +90,27 @@ func (s *Service) Create(ctx context.Context, projectID, userID, name string, sc
 		return nil, apperror.ErrInternal.WithInternal(err)
 	}
 
+	// Encrypt the raw token for later retrieval
+	var tokenEncrypted *string
+	if s.enc != nil && s.enc.IsConfigured() {
+		encrypted, encErr := s.enc.EncryptJSON(ctx, rawToken)
+		if encErr != nil {
+			s.log.Warn("failed to encrypt token for storage, token will not be retrievable later",
+				slog.String("error", encErr.Error()))
+		} else {
+			tokenEncrypted = &encrypted
+		}
+	}
+
 	// Create token record
 	token := &ApiToken{
-		ProjectID:   projectID,
-		UserID:      userID,
-		Name:        name,
-		TokenHash:   hashToken(rawToken),
-		TokenPrefix: getTokenPrefix(rawToken),
-		Scopes:      scopes,
+		ProjectID:      projectID,
+		UserID:         userID,
+		Name:           name,
+		TokenHash:      hashToken(rawToken),
+		TokenPrefix:    getTokenPrefix(rawToken),
+		TokenEncrypted: tokenEncrypted,
+		Scopes:         scopes,
 	}
 
 	if err := s.repo.Create(ctx, token); err != nil {
@@ -130,8 +146,8 @@ func (s *Service) ListByProject(ctx context.Context, projectID string) (*ApiToke
 	}, nil
 }
 
-// GetByID returns a token by ID
-func (s *Service) GetByID(ctx context.Context, tokenID, projectID string) (*ApiTokenDTO, error) {
+// GetByID returns a token by ID, including the decrypted token value if available
+func (s *Service) GetByID(ctx context.Context, tokenID, projectID string) (*GetApiTokenResponseDTO, error) {
 	token, err := s.repo.GetByID(ctx, tokenID, projectID)
 	if err != nil {
 		return nil, err
@@ -140,8 +156,25 @@ func (s *Service) GetByID(ctx context.Context, tokenID, projectID string) (*ApiT
 		return nil, nil
 	}
 
-	dto := token.ToDTO()
-	return &dto, nil
+	dto := &GetApiTokenResponseDTO{
+		ApiTokenDTO: token.ToDTO(),
+	}
+
+	// Decrypt the token if available
+	if token.TokenEncrypted != nil && *token.TokenEncrypted != "" && s.enc != nil && s.enc.IsConfigured() {
+		decrypted, decErr := s.enc.Decrypt(ctx, *token.TokenEncrypted)
+		if decErr != nil {
+			s.log.Warn("failed to decrypt stored token",
+				slog.String("tokenID", tokenID),
+				slog.String("error", decErr.Error()))
+		} else if val, ok := decrypted["value"]; ok {
+			if tokenStr, ok := val.(string); ok {
+				dto.Token = tokenStr
+			}
+		}
+	}
+
+	return dto, nil
 }
 
 // Revoke revokes a token

@@ -81,12 +81,13 @@ func FixtureUserProfile() *users.UserProfile {
 	}
 }
 
-// FixtureAPIToken returns a sample API token (without full token value).
+// FixtureAPIToken returns a sample API token (with full token value for get responses).
 func FixtureAPIToken() *apitokens.APIToken {
 	return &apitokens.APIToken{
 		ID:        "token_test123",
 		Name:      "Test Token",
 		Prefix:    "emt_test",
+		Token:     "emt_test_full_token_value_here",
 		Scopes:    []string{"documents:read", "documents:write"},
 		CreatedAt: time.Now().Format(time.RFC3339),
 		RevokedAt: nil,
