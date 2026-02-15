@@ -131,7 +131,8 @@ CREATE TABLE core.api_tokens (
     scopes text[] DEFAULT '{}'::text[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     last_used_at timestamp with time zone,
-    revoked_at timestamp with time zone
+    revoked_at timestamp with time zone,
+    token_encrypted text
 );
 CREATE TABLE core.superadmins (
     user_id uuid NOT NULL,
