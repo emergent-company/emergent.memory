@@ -53,6 +53,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Relationship routes
 	relationships := g.Group("/relationships")
 	relationships.GET("/search", h.ListRelationships)
+	relationships.GET("/count", h.CountRelationships)
 	relationships.POST("/bulk", h.BulkCreateRelationships)
 	relationships.GET("/:id", h.GetRelationship)
 	relationships.POST("", h.CreateRelationship)

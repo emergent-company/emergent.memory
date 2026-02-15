@@ -725,6 +725,59 @@ func (h *Handler) GetObjectEdges(c echo.Context) error {
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Router       /api/graph/relationships/search [get]
 // @Security     bearerAuth
+// CountRelationships returns the total count of relationships matching filter parameters.
+func (h *Handler) CountRelationships(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	params := RelationshipListParams{
+		ProjectID:      projectID,
+		IncludeDeleted: c.QueryParam("include_deleted") == "true",
+	}
+
+	if relType := c.QueryParam("type"); relType != "" {
+		params.Type = &relType
+	}
+
+	if srcID := c.QueryParam("src_id"); srcID != "" {
+		id, err := uuid.Parse(srcID)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid src_id")
+		}
+		params.SrcID = &id
+	}
+
+	if dstID := c.QueryParam("dst_id"); dstID != "" {
+		id, err := uuid.Parse(dstID)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid dst_id")
+		}
+		params.DstID = &id
+	}
+
+	if branchIDStr := c.QueryParam("branch_id"); branchIDStr != "" {
+		branchID, err := uuid.Parse(branchIDStr)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+		}
+		params.BranchID = &branchID
+	}
+
+	count, err := h.svc.CountRelationships(c.Request().Context(), params)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]int{"count": count})
+}
+
 func (h *Handler) ListRelationships(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
