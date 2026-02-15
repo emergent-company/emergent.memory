@@ -272,14 +272,17 @@ func initClients(c *Client) {
 }
 
 // SetContext sets the default organization and project context for API calls.
-// It is safe to call concurrently with API methods.
+// It is safe to call concurrently with API methods. The lock is held for the
+// entire update to ensure all sub-clients see a consistent context atomically.
 func (c *Client) SetContext(orgID, projectID string) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.orgID = orgID
 	c.projectID = projectID
-	c.mu.Unlock()
 
-	// Update all context-scoped service clients
+	// Update all context-scoped service clients while holding the lock
+	// to prevent concurrent API calls from seeing partially-updated state.
 	c.Documents.SetContext(orgID, projectID)
 	c.Chunks.SetContext(orgID, projectID)
 	c.Search.SetContext(orgID, projectID)
@@ -330,4 +333,12 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 	}
 
 	return resp, nil
+}
+
+// Close releases resources held by the client, including idle HTTP connections.
+// After calling Close, the client should not be used.
+func (c *Client) Close() {
+	if t, ok := c.http.Transport.(*http.Transport); ok {
+		t.CloseIdleConnections()
+	}
 }

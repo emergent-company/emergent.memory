@@ -811,7 +811,7 @@ func (c *Client) CreateObject(ctx context.Context, req *CreateObjectRequest) (*G
 // GetObject retrieves a single graph object by ID.
 func (c *Client) GetObject(ctx context.Context, id string) (*GraphObject, error) {
 	var result GraphObject
-	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+id, &result); err != nil {
+	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -820,7 +820,7 @@ func (c *Client) GetObject(ctx context.Context, id string) (*GraphObject, error)
 // UpdateObject patches a graph object, creating a new version.
 func (c *Client) UpdateObject(ctx context.Context, id string, req *UpdateObjectRequest) (*GraphObject, error) {
 	var result GraphObject
-	if err := c.patchJSON(ctx, c.base+"/api/graph/objects/"+id, req, &result); err != nil {
+	if err := c.patchJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id), req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -828,13 +828,13 @@ func (c *Client) UpdateObject(ctx context.Context, id string, req *UpdateObjectR
 
 // DeleteObject soft-deletes a graph object.
 func (c *Client) DeleteObject(ctx context.Context, id string) error {
-	return c.doDelete(ctx, c.base+"/api/graph/objects/"+id)
+	return c.doDelete(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id))
 }
 
 // RestoreObject restores a soft-deleted graph object.
 func (c *Client) RestoreObject(ctx context.Context, id string) (*GraphObject, error) {
 	var result GraphObject
-	req, err := c.prepareRequest(ctx, "POST", c.base+"/api/graph/objects/"+id+"/restore", nil)
+	req, err := c.prepareRequest(ctx, "POST", c.base+"/api/graph/objects/"+url.PathEscape(id)+"/restore", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -847,7 +847,7 @@ func (c *Client) RestoreObject(ctx context.Context, id string) (*GraphObject, er
 // GetObjectHistory retrieves the version history of a graph object.
 func (c *Client) GetObjectHistory(ctx context.Context, id string) (*ObjectHistoryResponse, error) {
 	var result ObjectHistoryResponse
-	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+id+"/history", &result); err != nil {
+	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id)+"/history", &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -856,7 +856,7 @@ func (c *Client) GetObjectHistory(ctx context.Context, id string) (*ObjectHistor
 // GetObjectEdges retrieves incoming and outgoing relationships for an object.
 func (c *Client) GetObjectEdges(ctx context.Context, id string) (*GetObjectEdgesResponse, error) {
 	var result GetObjectEdgesResponse
-	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+id+"/edges", &result); err != nil {
+	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id)+"/edges", &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -919,9 +919,10 @@ func (c *Client) ListObjects(ctx context.Context, opts *ListObjectsOptions) (*Se
 		}
 		if len(opts.PropertyFilters) > 0 {
 			pfJSON, err := json.Marshal(opts.PropertyFilters)
-			if err == nil {
-				q.Set("property_filters", string(pfJSON))
+			if err != nil {
+				return nil, fmt.Errorf("marshaling property filters: %w", err)
 			}
+			q.Set("property_filters", string(pfJSON))
 		}
 	}
 	u.RawQuery = q.Encode()
@@ -1025,7 +1026,7 @@ func (c *Client) ListTags(ctx context.Context, opts *ListTagsOptions) ([]string,
 
 // FindSimilar finds objects similar to the given object.
 func (c *Client) FindSimilar(ctx context.Context, id string, opts *FindSimilarOptions) ([]SimilarObjectResult, error) {
-	u, err := url.Parse(c.base + "/api/graph/objects/" + id + "/similar")
+	u, err := url.Parse(c.base + "/api/graph/objects/" + url.PathEscape(id) + "/similar")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -1137,7 +1138,7 @@ func (c *Client) TraverseGraph(ctx context.Context, req *TraverseGraphRequest) (
 // MergeBranch performs or previews a branch merge.
 func (c *Client) MergeBranch(ctx context.Context, targetBranchID string, req *BranchMergeRequest) (*BranchMergeResponse, error) {
 	var result BranchMergeResponse
-	if err := c.postJSON(ctx, c.base+"/api/graph/branches/"+targetBranchID+"/merge", req, &result); err != nil {
+	if err := c.postJSON(ctx, c.base+"/api/graph/branches/"+url.PathEscape(targetBranchID)+"/merge", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1242,7 +1243,7 @@ func (c *Client) BulkCreateRelationships(ctx context.Context, req *BulkCreateRel
 // GetRelationship retrieves a single graph relationship by ID.
 func (c *Client) GetRelationship(ctx context.Context, id string) (*GraphRelationship, error) {
 	var result GraphRelationship
-	if err := c.getJSON(ctx, c.base+"/api/graph/relationships/"+id, &result); err != nil {
+	if err := c.getJSON(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1251,7 +1252,7 @@ func (c *Client) GetRelationship(ctx context.Context, id string) (*GraphRelation
 // UpdateRelationship patches a graph relationship.
 func (c *Client) UpdateRelationship(ctx context.Context, id string, req *UpdateRelationshipRequest) (*GraphRelationship, error) {
 	var result GraphRelationship
-	if err := c.patchJSON(ctx, c.base+"/api/graph/relationships/"+id, req, &result); err != nil {
+	if err := c.patchJSON(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id), req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1259,13 +1260,13 @@ func (c *Client) UpdateRelationship(ctx context.Context, id string, req *UpdateR
 
 // DeleteRelationship soft-deletes a graph relationship.
 func (c *Client) DeleteRelationship(ctx context.Context, id string) error {
-	return c.doDelete(ctx, c.base+"/api/graph/relationships/"+id)
+	return c.doDelete(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id))
 }
 
 // RestoreRelationship restores a soft-deleted graph relationship.
 func (c *Client) RestoreRelationship(ctx context.Context, id string) (*GraphRelationship, error) {
 	var result GraphRelationship
-	req, err := c.prepareRequest(ctx, "POST", c.base+"/api/graph/relationships/"+id+"/restore", nil)
+	req, err := c.prepareRequest(ctx, "POST", c.base+"/api/graph/relationships/"+url.PathEscape(id)+"/restore", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1278,7 +1279,7 @@ func (c *Client) RestoreRelationship(ctx context.Context, id string) (*GraphRela
 // GetRelationshipHistory retrieves the version history of a relationship.
 func (c *Client) GetRelationshipHistory(ctx context.Context, id string) (*RelationshipHistoryResponse, error) {
 	var result RelationshipHistoryResponse
-	if err := c.getJSON(ctx, c.base+"/api/graph/relationships/"+id+"/history", &result); err != nil {
+	if err := c.getJSON(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id)+"/history", &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

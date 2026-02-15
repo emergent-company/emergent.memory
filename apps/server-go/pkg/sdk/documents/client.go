@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -323,7 +324,7 @@ func (c *Client) List(ctx context.Context, opts *ListOptions) (*ListResult, erro
 //	}
 //	fmt.Printf("Document: %s\n", *doc.Filename)
 func (c *Client) Get(ctx context.Context, id string) (*Document, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents/"+id, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents/"+url.PathEscape(id), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -400,7 +401,7 @@ func (c *Client) Create(ctx context.Context, createReq *CreateRequest) (*Documen
 //
 //	result, err := client.Documents.Delete(ctx, "doc-uuid")
 func (c *Client) Delete(ctx context.Context, id string) (*DeleteResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/documents/"+id, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/documents/"+url.PathEscape(id), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -472,7 +473,7 @@ func (c *Client) BulkDelete(ctx context.Context, ids []string) (*DeleteResponse,
 //
 //	content, err := client.Documents.GetContent(ctx, "doc-uuid")
 func (c *Client) GetContent(ctx context.Context, id string) (*string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents/"+id+"/content", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents/"+url.PathEscape(id)+"/content", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -514,7 +515,7 @@ func (c *Client) Download(ctx context.Context, id string) (string, error) {
 		return http.ErrUseLastResponse
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents/"+id+"/download", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents/"+url.PathEscape(id)+"/download", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -588,7 +589,7 @@ func (c *Client) GetSourceTypes(ctx context.Context) ([]SourceTypeWithCount, err
 //
 //	impact, err := client.Documents.GetDeletionImpact(ctx, "doc-uuid")
 func (c *Client) GetDeletionImpact(ctx context.Context, id string) (*DeletionImpact, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents/"+id+"/deletion-impact", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents/"+url.PathEscape(id)+"/deletion-impact", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

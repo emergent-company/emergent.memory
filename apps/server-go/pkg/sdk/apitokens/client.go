@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
 	sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
@@ -29,11 +30,12 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 	}
 }
 
-// APIToken represents an API token (without the full token value)
+// APIToken represents an API token (includes full token value if retrieved by ID)
 type APIToken struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
 	Prefix    string   `json:"prefix"`
+	Token     string   `json:"token,omitempty"` // Full token value - available when retrieved by ID
 	Scopes    []string `json:"scopes"`
 	CreatedAt string   `json:"createdAt"`
 	RevokedAt *string  `json:"revokedAt,omitempty"`
@@ -67,7 +69,7 @@ func (c *Client) Create(ctx context.Context, projectID string, req *CreateTokenR
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/projects/"+projectID+"/tokens", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/projects/"+url.PathEscape(projectID)+"/tokens", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -102,7 +104,7 @@ func (c *Client) Create(ctx context.Context, projectID string, req *CreateTokenR
 
 // List returns all API tokens for a project.
 func (c *Client) List(ctx context.Context, projectID string) (*ListResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+projectID+"/tokens", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+url.PathEscape(projectID)+"/tokens", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -135,7 +137,7 @@ func (c *Client) List(ctx context.Context, projectID string) (*ListResponse, err
 
 // Get retrieves a single API token by ID.
 func (c *Client) Get(ctx context.Context, projectID, tokenID string) (*APIToken, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+projectID+"/tokens/"+tokenID, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+url.PathEscape(projectID)+"/tokens/"+url.PathEscape(tokenID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -168,7 +170,7 @@ func (c *Client) Get(ctx context.Context, projectID, tokenID string) (*APIToken,
 
 // Revoke revokes an API token, making it permanently unusable.
 func (c *Client) Revoke(ctx context.Context, projectID, tokenID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/projects/"+projectID+"/tokens/"+tokenID, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/projects/"+url.PathEscape(projectID)+"/tokens/"+url.PathEscape(tokenID), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

@@ -299,7 +299,7 @@ func (c *Client) GetAllCounts(ctx context.Context) (*TaskCounts, error) {
 
 // GetByID returns a specific task by ID for a given project.
 func (c *Client) GetByID(ctx context.Context, taskID, projectID string) (*TaskResponse, error) {
-	u, err := url.Parse(c.base + "/api/tasks/" + taskID)
+	u, err := url.Parse(c.base + "/api/tasks/" + url.PathEscape(taskID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -339,7 +339,7 @@ func (c *Client) GetByID(ctx context.Context, taskID, projectID string) (*TaskRe
 
 // Resolve marks a task as accepted or rejected.
 func (c *Client) Resolve(ctx context.Context, taskID, projectID string, resolveReq *ResolveTaskRequest) error {
-	u, err := url.Parse(c.base + "/api/tasks/" + taskID + "/resolve")
+	u, err := url.Parse(c.base + "/api/tasks/" + url.PathEscape(taskID) + "/resolve")
 	if err != nil {
 		return fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -382,7 +382,7 @@ func (c *Client) Resolve(ctx context.Context, taskID, projectID string, resolveR
 
 // Cancel cancels a pending task.
 func (c *Client) Cancel(ctx context.Context, taskID, projectID string) error {
-	u, err := url.Parse(c.base + "/api/tasks/" + taskID + "/cancel")
+	u, err := url.Parse(c.base + "/api/tasks/" + url.PathEscape(taskID) + "/cancel")
 	if err != nil {
 		return fmt.Errorf("failed to parse URL: %w", err)
 	}

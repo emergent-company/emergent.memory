@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -203,7 +204,7 @@ func (c *Client) Get(ctx context.Context, name string) (*Integration, error) {
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/integrations/"+name, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/integrations/"+url.PathEscape(name), nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -239,7 +240,7 @@ func (c *Client) GetPublic(ctx context.Context, name string) (*PublicIntegration
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/integrations/"+name+"/public", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/integrations/"+url.PathEscape(name)+"/public", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -322,7 +323,7 @@ func (c *Client) Update(ctx context.Context, name string, req *UpdateIntegration
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, c.base+"/api/integrations/"+name, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, c.base+"/api/integrations/"+url.PathEscape(name), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -359,7 +360,7 @@ func (c *Client) Delete(ctx context.Context, name string) error {
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.base+"/api/integrations/"+name, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.base+"/api/integrations/"+url.PathEscape(name), nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -393,7 +394,7 @@ func (c *Client) TestConnection(ctx context.Context, name string) (*TestConnecti
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/integrations/"+name+"/test", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/integrations/"+url.PathEscape(name)+"/test", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -438,7 +439,7 @@ func (c *Client) TriggerSync(ctx context.Context, name string, config *TriggerSy
 		body = bytes.NewReader(b)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/integrations/"+name+"/sync", body)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/integrations/"+url.PathEscape(name)+"/sync", body)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
