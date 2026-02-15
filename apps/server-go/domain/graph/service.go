@@ -470,8 +470,15 @@ func (s *Service) GetHistory(ctx context.Context, projectID, id uuid.UUID) (*Obj
 }
 
 // GetEdges returns incoming and outgoing relationships for an object.
+// The objectID can be either a physical id or a canonical_id.
 func (s *Service) GetEdges(ctx context.Context, projectID, objectID uuid.UUID) (*GetObjectEdgesResponse, error) {
-	incoming, outgoing, err := s.repo.GetEdges(ctx, projectID, objectID)
+	// Resolve the object to get its canonical_id, since relationships store canonical IDs.
+	obj, err := s.repo.GetByID(ctx, projectID, objectID)
+	if err != nil {
+		return nil, err
+	}
+
+	incoming, outgoing, err := s.repo.GetEdges(ctx, projectID, obj.CanonicalID)
 	if err != nil {
 		return nil, err
 	}
@@ -618,14 +625,32 @@ func vectorToString(v []float32) string {
 }
 
 // SearchRelationshipsResponse is the paginated response for relationship searches.
+// Uses NestJS-compatible field names: items, next_cursor, total (consistent with SearchGraphObjectsResponse)
 type SearchRelationshipsResponse struct {
-	Data       []*GraphRelationshipResponse `json:"data"`
-	NextCursor *string                      `json:"nextCursor,omitempty"`
-	HasMore    bool                         `json:"hasMore"`
+	Items      []*GraphRelationshipResponse `json:"items"`
+	NextCursor *string                      `json:"next_cursor,omitempty"`
+	Total      int                          `json:"total"`
 }
 
 // ListRelationships returns relationships matching the given parameters.
 func (s *Service) ListRelationships(ctx context.Context, params RelationshipListParams) (*SearchRelationshipsResponse, error) {
+	// Resolve SrcID/DstID to canonical_id values, since relationships store canonical IDs.
+	// The caller may pass either a physical id or a canonical_id.
+	if params.SrcID != nil {
+		obj, err := s.repo.GetByID(ctx, params.ProjectID, *params.SrcID)
+		if err != nil {
+			return nil, err
+		}
+		params.SrcID = &obj.CanonicalID
+	}
+	if params.DstID != nil {
+		obj, err := s.repo.GetByID(ctx, params.ProjectID, *params.DstID)
+		if err != nil {
+			return nil, err
+		}
+		params.DstID = &obj.CanonicalID
+	}
+
 	rels, err := s.repo.ListRelationships(ctx, params)
 	if err != nil {
 		return nil, err
@@ -636,9 +661,9 @@ func (s *Service) ListRelationships(ctx context.Context, params RelationshipList
 		rels = rels[:params.Limit]
 	}
 
-	data := make([]*GraphRelationshipResponse, len(rels))
+	items := make([]*GraphRelationshipResponse, len(rels))
 	for i, rel := range rels {
-		data[i] = rel.ToResponse()
+		items[i] = rel.ToResponse()
 	}
 
 	var nextCursor *string
@@ -649,9 +674,9 @@ func (s *Service) ListRelationships(ctx context.Context, params RelationshipList
 	}
 
 	return &SearchRelationshipsResponse{
-		Data:       data,
+		Items:      items,
 		NextCursor: nextCursor,
-		HasMore:    hasMore,
+		Total:      len(items),
 	}, nil
 }
 
@@ -706,25 +731,26 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		effectiveBranchID = srcObj.BranchID
 	}
 
-	// Acquire lock for this relationship identity
-	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, projectID, req.Type, req.SrcID, req.DstID); err != nil {
+	// Acquire lock for this relationship identity (use canonical IDs for stable locking)
+	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, projectID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID); err != nil {
 		return nil, err
 	}
 
-	// Check if relationship already exists
-	existing, err := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, req.SrcID, req.DstID)
+	// Check if relationship already exists (using canonical IDs)
+	existing, err := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
 	if err != nil {
 		return nil, err
 	}
 
 	if existing == nil {
-		// Create new relationship
+		// Create new relationship — store canonical_id values in src_id/dst_id
+		// so that relationships survive object versioning (CreateVersion generates new physical IDs).
 		rel := &GraphRelationship{
 			ProjectID:  projectID,
 			BranchID:   effectiveBranchID,
 			Type:       req.Type,
-			SrcID:      req.SrcID,
-			DstID:      req.DstID,
+			SrcID:      srcObj.CanonicalID,
+			DstID:      dstObj.CanonicalID,
 			Properties: req.Properties,
 			Weight:     req.Weight,
 		}
@@ -807,8 +833,8 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
 
-		// Return the new version
-		newHead, _ := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, req.SrcID, req.DstID)
+		// Return the new version (use canonical IDs for lookup)
+		newHead, _ := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
 		return newHead.ToResponse(), nil
 	}
 
@@ -854,7 +880,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	}
 
 	// Return the new version
-	newHead, _ := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, req.SrcID, req.DstID)
+	newHead, _ := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
 	return newHead.ToResponse(), nil
 }
 
@@ -897,16 +923,16 @@ func (s *Service) maybeCreateInverse(
 		}
 	}
 
-	// Acquire advisory lock for the inverse relationship identity (swapped endpoints)
-	if err := s.repo.AcquireRelationshipLock(ctx, tx, projectID, inverseType, dstObj.ID, srcObj.ID); err != nil {
+	// Acquire advisory lock for the inverse relationship identity (swapped endpoints, using canonical IDs)
+	if err := s.repo.AcquireRelationshipLock(ctx, tx, projectID, inverseType, dstObj.CanonicalID, srcObj.CanonicalID); err != nil {
 		s.log.Warn("failed to acquire lock for inverse relationship, skipping",
 			slog.String("inverse_type", inverseType),
 			slog.String("error", err.Error()))
 		return nil
 	}
 
-	// Check if inverse already exists
-	existingInverse, err := s.repo.GetRelationshipHead(ctx, projectID, branchID, inverseType, dstObj.ID, srcObj.ID)
+	// Check if inverse already exists (using canonical IDs)
+	existingInverse, err := s.repo.GetRelationshipHead(ctx, projectID, branchID, inverseType, dstObj.CanonicalID, srcObj.CanonicalID)
 	if err != nil {
 		s.log.Warn("failed to check existing inverse relationship, skipping",
 			slog.String("inverse_type", inverseType),
@@ -950,13 +976,13 @@ func (s *Service) maybeCreateInverse(
 		return newVersion.ToResponse()
 	}
 
-	// Create brand new inverse relationship
+	// Create brand new inverse relationship (store canonical IDs)
 	inverseRel := &GraphRelationship{
 		ProjectID:  projectID,
 		BranchID:   branchID,
 		Type:       inverseType,
-		SrcID:      dstObj.ID, // swapped
-		DstID:      srcObj.ID, // swapped
+		SrcID:      dstObj.CanonicalID, // swapped
+		DstID:      srcObj.CanonicalID, // swapped
 		Properties: properties,
 		Weight:     weight,
 	}
