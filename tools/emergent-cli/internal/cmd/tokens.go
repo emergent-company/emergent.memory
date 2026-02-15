@@ -28,8 +28,7 @@ var createTokenCmd = &cobra.Command{
 	Short: "Create a new API token",
 	Long: `Create a new API token for the specified project.
 
-The full token value is only shown once at creation time.
-Make sure to copy and save it securely.
+The full token value can be retrieved later using 'tokens get'.
 
 Valid scopes: schema:read, data:read, data:write`,
 	RunE: runCreateToken,
@@ -154,10 +153,6 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("Token created successfully!")
 	fmt.Println()
-	fmt.Println("============================================================")
-	fmt.Println("  IMPORTANT: Save this token now. It cannot be shown again!")
-	fmt.Println("============================================================")
-	fmt.Println()
 	fmt.Printf("  Token:   %s\n", result.Token)
 	fmt.Println()
 	fmt.Println("------------------------------------------------------------")
@@ -166,6 +161,8 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Prefix:  %s\n", result.Prefix)
 	fmt.Printf("  Scopes:  %s\n", strings.Join(result.Scopes, ", "))
 	fmt.Printf("  Created: %s\n", result.CreatedAt)
+	fmt.Println()
+	fmt.Println("  Retrieve this token later: emergent-cli tokens get " + result.ID)
 	fmt.Println()
 
 	return nil
@@ -192,6 +189,12 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Token: %s\n", token.Name)
 	fmt.Printf("  ID:      %s\n", token.ID)
 	fmt.Printf("  Prefix:  %s\n", token.Prefix)
+	if token.Token != "" {
+		fmt.Println()
+		fmt.Println("  ------------------------------------------------------------")
+		fmt.Printf("  Token:   %s\n", token.Token)
+		fmt.Println("  ------------------------------------------------------------")
+	}
 	fmt.Printf("  Scopes:  %s\n", strings.Join(token.Scopes, ", "))
 	fmt.Printf("  Created: %s\n", token.CreatedAt)
 	if token.RevokedAt != nil {

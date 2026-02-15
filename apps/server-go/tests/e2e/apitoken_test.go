@@ -259,7 +259,7 @@ func (s *ApiTokenSuite) TestGetToken_Success() {
 
 	s.Equal(http.StatusOK, rec.StatusCode)
 
-	var response apitoken.ApiTokenDTO
+	var response apitoken.GetApiTokenResponseDTO
 	err := json.Unmarshal(rec.Body, &response)
 	s.Require().NoError(err)
 
@@ -268,6 +268,11 @@ func (s *ApiTokenSuite) TestGetToken_Success() {
 	s.Equal(createResponse.TokenPrefix, response.TokenPrefix)
 	s.Equal([]string{"schema:read", "data:write"}, response.Scopes)
 	s.False(response.IsRevoked)
+
+	// The full token should be retrievable if encryption is configured
+	if response.Token != "" {
+		s.Equal(createResponse.Token, response.Token, "retrieved token should match the one returned at creation")
+	}
 }
 
 func (s *ApiTokenSuite) TestGetToken_NotFound() {

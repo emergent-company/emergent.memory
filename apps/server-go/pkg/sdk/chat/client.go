@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -116,11 +117,13 @@ type StreamEvent struct {
 
 // Stream represents an active SSE stream.
 type Stream struct {
-	resp   *http.Response
-	reader *bufio.Reader
-	events chan *StreamEvent
-	done   chan struct{}
-	err    error
+	resp      *http.Response
+	reader    *bufio.Reader
+	events    chan *StreamEvent
+	done      chan struct{}
+	err       error
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // =============================================================================
@@ -269,7 +272,7 @@ func (c *Client) CreateConversation(ctx context.Context, req *CreateConversation
 // GetConversation retrieves a conversation with all its messages.
 // Server: GET /api/chat/:id
 func (c *Client) GetConversation(ctx context.Context, id string) (*ConversationWithMessages, error) {
-	req, err := c.prepareRequest(ctx, "GET", c.base+"/api/chat/"+id, nil)
+	req, err := c.prepareRequest(ctx, "GET", c.base+"/api/chat/"+url.PathEscape(id), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +288,7 @@ func (c *Client) GetConversation(ctx context.Context, id string) (*ConversationW
 // Server: PATCH /api/chat/:id (requires chat:admin scope)
 func (c *Client) UpdateConversation(ctx context.Context, id string, req *UpdateConversationRequest) (*Conversation, error) {
 	var result Conversation
-	if err := c.patchJSON(ctx, c.base+"/api/chat/"+id, req, &result); err != nil {
+	if err := c.patchJSON(ctx, c.base+"/api/chat/"+url.PathEscape(id), req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -294,7 +297,7 @@ func (c *Client) UpdateConversation(ctx context.Context, id string, req *UpdateC
 // DeleteConversation permanently deletes a conversation and all its messages.
 // Server: DELETE /api/chat/:id → 200 {status: "deleted"} (requires chat:admin scope)
 func (c *Client) DeleteConversation(ctx context.Context, id string) error {
-	req, err := c.prepareRequest(ctx, "DELETE", c.base+"/api/chat/"+id, nil)
+	req, err := c.prepareRequest(ctx, "DELETE", c.base+"/api/chat/"+url.PathEscape(id), nil)
 	if err != nil {
 		return err
 	}
@@ -321,7 +324,7 @@ func (c *Client) DeleteConversation(ctx context.Context, id string) error {
 // Server: POST /api/chat/:id/messages → 201
 func (c *Client) AddMessage(ctx context.Context, conversationID string, req *AddMessageRequest) (*Message, error) {
 	var result Message
-	if err := c.postJSON(ctx, c.base+"/api/chat/"+conversationID+"/messages", req, &result); err != nil {
+	if err := c.postJSON(ctx, c.base+"/api/chat/"+url.PathEscape(conversationID)+"/messages", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -373,10 +376,13 @@ func (s *Stream) Events() <-chan *StreamEvent {
 	return s.events
 }
 
-// Close closes the stream.
+// Close closes the stream. It is safe to call multiple times.
 func (s *Stream) Close() error {
-	close(s.done)
-	return s.resp.Body.Close()
+	s.closeOnce.Do(func() {
+		close(s.done)
+		s.closeErr = s.resp.Body.Close()
+	})
+	return s.closeErr
 }
 
 // Err returns any error that occurred during streaming.

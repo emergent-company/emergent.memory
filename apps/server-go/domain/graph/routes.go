@@ -15,11 +15,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Object routes
 	objects := g.Group("/objects")
 	objects.GET("/search", h.ListObjects)
+	objects.GET("/count", h.CountObjects)
 	objects.GET("/fts", h.FTSSearch)
 	objects.POST("/vector-search", h.VectorSearch)
 	objects.GET("/tags", h.GetTags)
 	objects.POST("/bulk-update-status", h.BulkUpdateStatus)
 	objects.POST("/bulk", h.BulkCreateObjects)
+	objects.PUT("/upsert", h.UpsertObject)
 	objects.GET("/:id", h.GetObject)
 	objects.GET("/:id/similar", h.GetSimilarObjects) // New: similar objects
 	objects.POST("", h.CreateObject)
