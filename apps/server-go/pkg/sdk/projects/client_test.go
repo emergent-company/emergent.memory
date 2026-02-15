@@ -62,7 +62,7 @@ func TestProjectsListWithOptions(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[]`))
+		_, _ = w.Write([]byte(`[]`))
 	})
 
 	client, _ := sdk.New(sdk.Config{
@@ -231,7 +231,7 @@ func TestProjectsGetNotFound(t *testing.T) {
 	mock.On("GET", "/api/projects/invalid", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":{"code":"not_found","message":"Project not found"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"Project not found"}}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{
@@ -252,7 +252,7 @@ func TestProjectsCreateValidationError(t *testing.T) {
 	mock.On("POST", "/api/projects", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":{"code":"validation_error","message":"Name is required"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"validation_error","message":"Name is required"}}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{

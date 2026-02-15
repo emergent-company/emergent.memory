@@ -172,7 +172,7 @@ func TestDocumentsListUnauthorized(t *testing.T) {
 	mock.On("GET", "/api/documents", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":{"code":"unauthorized","message":"Invalid API key"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"unauthorized","message":"Invalid API key"}}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{
@@ -193,7 +193,7 @@ func TestDocumentsListEmpty(t *testing.T) {
 	mock.On("GET", "/api/documents", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"documents":[],"total":0}`))
+		_, _ = w.Write([]byte(`{"documents":[],"total":0}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{
@@ -221,7 +221,7 @@ func TestDocumentsSetContext(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"documents":[],"total":0}`))
+		_, _ = w.Write([]byte(`{"documents":[],"total":0}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{

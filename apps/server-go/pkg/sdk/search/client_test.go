@@ -105,7 +105,7 @@ func TestSearchError(t *testing.T) {
 	mock.On("POST", "/api/search/unified", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":{"code":"validation_error","message":"Query is required"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"validation_error","message":"Query is required"}}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{
