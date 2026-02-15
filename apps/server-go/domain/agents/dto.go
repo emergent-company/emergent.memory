@@ -34,6 +34,12 @@ type AgentRunDTO struct {
 	Summary      map[string]any `json:"summary"`
 	ErrorMessage *string        `json:"errorMessage"`
 	SkipReason   *string        `json:"skipReason"`
+
+	// Multi-agent coordination fields
+	ParentRunID *string `json:"parentRunId,omitempty"`
+	StepCount   int     `json:"stepCount"`
+	MaxSteps    *int    `json:"maxSteps,omitempty"`
+	ResumedFrom *string `json:"resumedFrom,omitempty"`
 }
 
 // CreateAgentDTO is the request DTO for creating an agent
@@ -104,6 +110,7 @@ type BatchTriggerResponseDTO struct {
 // TriggerResponseDTO is the response for triggering an agent
 type TriggerResponseDTO struct {
 	Success bool    `json:"success"`
+	RunID   *string `json:"runId,omitempty"`
 	Message *string `json:"message,omitempty"`
 	Error   *string `json:"error,omitempty"`
 }
@@ -151,6 +158,10 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 		Summary:      r.Summary,
 		ErrorMessage: r.ErrorMessage,
 		SkipReason:   r.SkipReason,
+		ParentRunID:  r.ParentRunID,
+		StepCount:    r.StepCount,
+		MaxSteps:     r.MaxSteps,
+		ResumedFrom:  r.ResumedFrom,
 	}
 }
 
@@ -167,5 +178,181 @@ func ErrorResponse[T any](err string) APIResponse[T] {
 	return APIResponse[T]{
 		Success: false,
 		Error:   &err,
+	}
+}
+
+// PaginatedResponse wraps paginated API responses
+type PaginatedResponse[T any] struct {
+	Items      []T `json:"items"`
+	TotalCount int `json:"totalCount"`
+	Limit      int `json:"limit"`
+	Offset     int `json:"offset"`
+}
+
+// --- Agent Definition DTOs ---
+
+// AgentDefinitionDTO is the full response DTO for an agent definition
+type AgentDefinitionDTO struct {
+	ID             string          `json:"id"`
+	ProductID      *string         `json:"productId,omitempty"`
+	ProjectID      string          `json:"projectId"`
+	Name           string          `json:"name"`
+	Description    *string         `json:"description,omitempty"`
+	SystemPrompt   *string         `json:"systemPrompt,omitempty"`
+	Model          *ModelConfig    `json:"model,omitempty"`
+	Tools          []string        `json:"tools"`
+	Trigger        *string         `json:"trigger,omitempty"`
+	FlowType       AgentFlowType   `json:"flowType"`
+	IsDefault      bool            `json:"isDefault"`
+	MaxSteps       *int            `json:"maxSteps,omitempty"`
+	DefaultTimeout *int            `json:"defaultTimeout,omitempty"`
+	Visibility     AgentVisibility `json:"visibility"`
+	ACPConfig      *ACPConfig      `json:"acpConfig,omitempty"`
+	Config         map[string]any  `json:"config,omitempty"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
+}
+
+// AgentDefinitionSummaryDTO is a lightweight DTO for listing agent definitions
+type AgentDefinitionSummaryDTO struct {
+	ID          string          `json:"id"`
+	ProjectID   string          `json:"projectId"`
+	Name        string          `json:"name"`
+	Description *string         `json:"description,omitempty"`
+	FlowType    AgentFlowType   `json:"flowType"`
+	Visibility  AgentVisibility `json:"visibility"`
+	IsDefault   bool            `json:"isDefault"`
+	ToolCount   int             `json:"toolCount"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
+}
+
+// CreateAgentDefinitionDTO is the request DTO for creating an agent definition
+type CreateAgentDefinitionDTO struct {
+	Name           string          `json:"name" validate:"required"`
+	Description    *string         `json:"description"`
+	SystemPrompt   *string         `json:"systemPrompt"`
+	Model          *ModelConfig    `json:"model"`
+	Tools          []string        `json:"tools"`
+	Trigger        *string         `json:"trigger"`
+	FlowType       AgentFlowType   `json:"flowType"`
+	IsDefault      *bool           `json:"isDefault"`
+	MaxSteps       *int            `json:"maxSteps"`
+	DefaultTimeout *int            `json:"defaultTimeout"`
+	Visibility     AgentVisibility `json:"visibility"`
+	ACPConfig      *ACPConfig      `json:"acpConfig"`
+	Config         map[string]any  `json:"config"`
+}
+
+// UpdateAgentDefinitionDTO is the request DTO for updating an agent definition
+type UpdateAgentDefinitionDTO struct {
+	Name           *string          `json:"name"`
+	Description    *string          `json:"description"`
+	SystemPrompt   *string          `json:"systemPrompt"`
+	Model          *ModelConfig     `json:"model"`
+	Tools          []string         `json:"tools"`
+	Trigger        *string          `json:"trigger"`
+	FlowType       *AgentFlowType   `json:"flowType"`
+	IsDefault      *bool            `json:"isDefault"`
+	MaxSteps       *int             `json:"maxSteps"`
+	DefaultTimeout *int             `json:"defaultTimeout"`
+	Visibility     *AgentVisibility `json:"visibility"`
+	ACPConfig      *ACPConfig       `json:"acpConfig"`
+	Config         map[string]any   `json:"config"`
+}
+
+// --- Agent Run Message / Tool Call DTOs ---
+
+// AgentRunMessageDTO is the response DTO for an agent run message
+type AgentRunMessageDTO struct {
+	ID         string         `json:"id"`
+	RunID      string         `json:"runId"`
+	Role       string         `json:"role"`
+	Content    map[string]any `json:"content"`
+	StepNumber int            `json:"stepNumber"`
+	CreatedAt  time.Time      `json:"createdAt"`
+}
+
+// AgentRunToolCallDTO is the response DTO for an agent run tool call
+type AgentRunToolCallDTO struct {
+	ID         string         `json:"id"`
+	RunID      string         `json:"runId"`
+	MessageID  *string        `json:"messageId,omitempty"`
+	ToolName   string         `json:"toolName"`
+	Input      map[string]any `json:"input"`
+	Output     map[string]any `json:"output"`
+	Status     string         `json:"status"`
+	DurationMs *int           `json:"durationMs,omitempty"`
+	StepNumber int            `json:"stepNumber"`
+	CreatedAt  time.Time      `json:"createdAt"`
+}
+
+// --- ToDTO methods ---
+
+// ToDTO converts an AgentDefinition entity to AgentDefinitionDTO
+func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
+	return &AgentDefinitionDTO{
+		ID:             d.ID,
+		ProductID:      d.ProductID,
+		ProjectID:      d.ProjectID,
+		Name:           d.Name,
+		Description:    d.Description,
+		SystemPrompt:   d.SystemPrompt,
+		Model:          d.Model,
+		Tools:          d.Tools,
+		Trigger:        d.Trigger,
+		FlowType:       d.FlowType,
+		IsDefault:      d.IsDefault,
+		MaxSteps:       d.MaxSteps,
+		DefaultTimeout: d.DefaultTimeout,
+		Visibility:     d.Visibility,
+		ACPConfig:      d.ACPConfig,
+		Config:         d.Config,
+		CreatedAt:      d.CreatedAt,
+		UpdatedAt:      d.UpdatedAt,
+	}
+}
+
+// ToSummaryDTO converts an AgentDefinition entity to AgentDefinitionSummaryDTO
+func (d *AgentDefinition) ToSummaryDTO() *AgentDefinitionSummaryDTO {
+	return &AgentDefinitionSummaryDTO{
+		ID:          d.ID,
+		ProjectID:   d.ProjectID,
+		Name:        d.Name,
+		Description: d.Description,
+		FlowType:    d.FlowType,
+		Visibility:  d.Visibility,
+		IsDefault:   d.IsDefault,
+		ToolCount:   len(d.Tools),
+		CreatedAt:   d.CreatedAt,
+		UpdatedAt:   d.UpdatedAt,
+	}
+}
+
+// ToDTO converts an AgentRunMessage entity to AgentRunMessageDTO
+func (m *AgentRunMessage) ToDTO() *AgentRunMessageDTO {
+	return &AgentRunMessageDTO{
+		ID:         m.ID,
+		RunID:      m.RunID,
+		Role:       m.Role,
+		Content:    m.Content,
+		StepNumber: m.StepNumber,
+		CreatedAt:  m.CreatedAt,
+	}
+}
+
+// ToDTO converts an AgentRunToolCall entity to AgentRunToolCallDTO
+func (tc *AgentRunToolCall) ToDTO() *AgentRunToolCallDTO {
+	return &AgentRunToolCallDTO{
+		ID:         tc.ID,
+		RunID:      tc.RunID,
+		MessageID:  tc.MessageID,
+		ToolName:   tc.ToolName,
+		Input:      tc.Input,
+		Output:     tc.Output,
+		Status:     tc.Status,
+		DurationMs: tc.DurationMs,
+		StepNumber: tc.StepNumber,
+		CreatedAt:  tc.CreatedAt,
 	}
 }
