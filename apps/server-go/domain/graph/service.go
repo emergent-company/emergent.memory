@@ -183,21 +183,21 @@ func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObje
 	}, nil
 }
 
-// GetByID returns a graph object by its physical ID.
-// If resolveHead is true and the ID refers to an older version, returns the HEAD version instead.
+// GetByID returns a graph object by its physical ID or canonical ID.
+// The ID is resolved transparently — canonical IDs automatically return the HEAD version.
+// If resolveHead is true and the ID refers to an older physical version, returns the HEAD version instead.
 func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveHead bool) (*GraphObjectResponse, error) {
 	obj, err := s.repo.GetByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
 	}
 
-	// If resolveHead is requested and this isn't the HEAD version, fetch the HEAD
+	// If resolveHead is requested and this isn't the HEAD version, fetch the HEAD.
+	// Note: When a canonical_id is passed, the repo already returns HEAD. This only
+	// matters when a physical ID of an old version is passed directly.
 	if resolveHead && obj.SupersedesID != nil {
-		// This version has been superseded, so it's not the HEAD
-		// Fetch the HEAD version by canonical_id
 		headObj, err := s.repo.GetHeadByCanonicalID(ctx, projectID, obj.CanonicalID, obj.BranchID)
 		if err != nil {
-			// If we can't find HEAD, return the original object
 			s.log.Warn("could not find HEAD version for resolveHead",
 				slog.String("canonical_id", obj.CanonicalID.String()),
 				slog.String("requested_id", id.String()))
@@ -2015,11 +2015,12 @@ func (s *Service) ExpandGraph(ctx context.Context, projectID uuid.UUID, req *Gra
 	nodes := make([]*ExpandNode, 0, len(result.Nodes))
 	for id, obj := range result.Nodes {
 		node := &ExpandNode{
-			ID:     id,
-			Depth:  result.NodeDepths[id],
-			Type:   obj.Type,
-			Key:    obj.Key,
-			Labels: obj.Labels,
+			ID:          obj.ID,
+			CanonicalID: id,
+			Depth:       result.NodeDepths[id],
+			Type:        obj.Type,
+			Key:         obj.Key,
+			Labels:      obj.Labels,
 		}
 
 		// Apply property projection
@@ -2211,11 +2212,12 @@ func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *T
 	nodes := make([]*TraverseNode, 0, len(result.Nodes))
 	for id, obj := range result.Nodes {
 		node := &TraverseNode{
-			ID:     id,
-			Depth:  result.NodeDepths[id],
-			Type:   obj.Type,
-			Key:    obj.Key,
-			Labels: obj.Labels,
+			ID:          obj.ID,
+			CanonicalID: id,
+			Depth:       result.NodeDepths[id],
+			Type:        obj.Type,
+			Key:         obj.Key,
+			Labels:      obj.Labels,
 		}
 		nodes = append(nodes, node)
 	}

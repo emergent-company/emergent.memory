@@ -234,9 +234,9 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 		subq = subq.Where("branch_id IS NULL")
 	}
 
-	// Filter by specific IDs if provided
+	// Filter by specific IDs if provided (accepts both physical id and canonical_id)
 	if len(params.IDs) > 0 {
-		subq = subq.Where("id IN (?)", bun.In(params.IDs))
+		subq = subq.Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.IDs), bun.In(params.IDs))
 	}
 
 	// Support both single type (NestJS compat) and multiple types
@@ -319,9 +319,9 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 		q = q.Where("branch_id IS NULL")
 	}
 
-	// Filter by specific IDs if provided
+	// Filter by specific IDs if provided (accepts both physical id and canonical_id)
 	if len(params.IDs) > 0 {
-		q = q.Where("id IN (?)", bun.In(params.IDs))
+		q = q.Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.IDs), bun.In(params.IDs))
 	}
 
 	// Support both single type (NestJS compat) and multiple types
@@ -368,24 +368,38 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 	return count, nil
 }
 
-// GetByID returns a graph object by its physical ID.
+// GetByID returns a graph object by its physical ID or canonical ID.
+// It accepts either type of ID transparently:
+//   - If the ID matches a physical id, returns that object
+//   - If the ID matches a canonical_id, returns the HEAD version
+//
+// HEAD versions (supersedes_id IS NULL) are preferred when multiple rows match.
 func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*GraphObject, error) {
-	var obj GraphObject
+	var objects []GraphObject
 	err := r.db.NewSelect().
-		Model(&obj).
-		Where("id = ?", id).
+		Model(&objects).
+		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
 		Scan(ctx)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, apperror.ErrNotFound
-		}
 		r.log.Error("failed to get graph object", logger.Error(err), slog.String("id", id.String()))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	return &obj, nil
+	if len(objects) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+
+	// Prefer the HEAD version (supersedes_id IS NULL)
+	for i := range objects {
+		if objects[i].SupersedesID == nil {
+			return &objects[i], nil
+		}
+	}
+
+	// Fallback: return the first match (exact physical id hit on a non-HEAD version)
+	return &objects[0], nil
 }
 
 // GetHeadByCanonicalID returns the HEAD version of a graph object by canonical ID.
@@ -721,24 +735,34 @@ func (r *Repository) ListRelationships(ctx context.Context, params RelationshipL
 	return rels, nil
 }
 
-// GetRelationshipByID returns a relationship by its physical ID.
+// GetRelationshipByID returns a relationship by its physical ID or canonical ID.
+// Accepts either type of ID transparently, preferring the HEAD version.
 func (r *Repository) GetRelationshipByID(ctx context.Context, projectID, id uuid.UUID) (*GraphRelationship, error) {
-	var rel GraphRelationship
+	var rels []GraphRelationship
 	err := r.db.NewSelect().
-		Model(&rel).
-		Where("id = ?", id).
+		Model(&rels).
+		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
 		Scan(ctx)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, apperror.ErrNotFound
-		}
 		r.log.Error("failed to get relationship", logger.Error(err), slog.String("id", id.String()))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	return &rel, nil
+	if len(rels) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+
+	// Prefer the HEAD version (supersedes_id IS NULL)
+	for i := range rels {
+		if rels[i].SupersedesID == nil {
+			return &rels[i], nil
+		}
+	}
+
+	// Fallback: return the first match
+	return &rels[0], nil
 }
 
 // GetRelationshipHead returns the HEAD version of a relationship by type, src, dst.
@@ -1349,6 +1373,7 @@ func (r *Repository) GetDistinctTags(ctx context.Context, projectID uuid.UUID, p
 }
 
 // BulkUpdateStatus updates the status of multiple objects.
+// Accepts either physical ids or canonical_ids.
 func (r *Repository) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, ids []uuid.UUID, status string, actorID *uuid.UUID) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -1360,7 +1385,7 @@ func (r *Repository) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, 
 		Set("status = ?", status).
 		Set("updated_at = ?", now).
 		Set("actor_id = ?", actorID).
-		Where("id IN (?)", bun.In(ids)).
+		Where("(id IN (?) OR canonical_id IN (?))", bun.In(ids), bun.In(ids)).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL"). // Only update HEAD versions
 		Where("deleted_at IS NULL").
@@ -1416,13 +1441,15 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 		params.Limit = 100
 	}
 
-	// First get the embedding for the source object
+	// First get the embedding for the source object (accepts physical id or canonical_id)
 	var embedding []float32
 	err := r.db.NewRaw(`
 		SELECT embedding_v2
 		FROM kb.graph_objects
-		WHERE id = ? AND project_id = ?
-	`, params.ObjectID, params.ProjectID).Scan(ctx, &embedding)
+		WHERE (id = ? OR canonical_id = ?) AND project_id = ?
+		AND supersedes_id IS NULL
+		LIMIT 1
+	`, params.ObjectID, params.ObjectID, params.ProjectID).Scan(ctx, &embedding)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, apperror.ErrNotFound
@@ -1440,12 +1467,12 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 
 	conditions := []string{
 		"project_id = ?",
-		"id != ?", // Exclude source object
+		"(id != ? AND canonical_id != ?)", // Exclude source object by either ID type
 		"supersedes_id IS NULL",
 		"deleted_at IS NULL",
 		"embedding_v2 IS NOT NULL",
 	}
-	args := []any{params.ProjectID, params.ObjectID}
+	args := []any{params.ProjectID, params.ObjectID, params.ObjectID}
 
 	if params.BranchID != nil {
 		conditions = append(conditions, "branch_id = ?")
@@ -1907,13 +1934,16 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 }
 
 // GetObjectEmbedding returns the embedding vector for an object.
+// Accepts either physical id or canonical_id, returns the HEAD version's embedding.
 func (r *Repository) GetObjectEmbedding(ctx context.Context, projectID, objectID uuid.UUID) ([]float32, error) {
 	var embedding []float32
 	err := r.db.NewRaw(`
 		SELECT embedding_v2
 		FROM kb.graph_objects
-		WHERE id = ? AND project_id = ?
-	`, objectID, projectID).Scan(ctx, &embedding)
+		WHERE (id = ? OR canonical_id = ?) AND project_id = ?
+		AND supersedes_id IS NULL
+		LIMIT 1
+	`, objectID, objectID, projectID).Scan(ctx, &embedding)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, apperror.ErrNotFound
