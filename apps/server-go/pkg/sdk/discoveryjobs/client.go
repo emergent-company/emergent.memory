@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -219,7 +220,7 @@ func (c *Client) GetJobStatus(ctx context.Context, jobID string) (*JobStatusResp
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/discovery-jobs/"+jobID, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/discovery-jobs/"+url.PathEscape(jobID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -255,7 +256,7 @@ func (c *Client) CancelJob(ctx context.Context, jobID string) (*CancelJobRespons
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/discovery-jobs/"+jobID+"/cancel", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/discovery-jobs/"+url.PathEscape(jobID)+"/cancel", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -296,7 +297,7 @@ func (c *Client) FinalizeDiscovery(ctx context.Context, jobID string, req *Final
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/discovery-jobs/"+jobID+"/finalize", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/discovery-jobs/"+url.PathEscape(jobID)+"/finalize", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

@@ -592,7 +592,7 @@ func (c *Client) ListUsers(ctx context.Context, opts *ListUsersOptions) (*ListUs
 // DELETE /api/superadmin/users/:id
 func (c *Client) DeleteUser(ctx context.Context, userID string) (*SuccessResponse, error) {
 	var result SuccessResponse
-	if err := c.doDelete(ctx, "/api/superadmin/users/"+userID, &result); err != nil {
+	if err := c.doDelete(ctx, "/api/superadmin/users/"+url.PathEscape(userID), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -622,7 +622,7 @@ func (c *Client) ListOrganizations(ctx context.Context, opts *PaginationOptions)
 // DELETE /api/superadmin/organizations/:id
 func (c *Client) DeleteOrganization(ctx context.Context, orgID string) (*SuccessResponse, error) {
 	var result SuccessResponse
-	if err := c.doDelete(ctx, "/api/superadmin/organizations/"+orgID, &result); err != nil {
+	if err := c.doDelete(ctx, "/api/superadmin/organizations/"+url.PathEscape(orgID), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -655,7 +655,7 @@ func (c *Client) ListProjects(ctx context.Context, opts *ListProjectsOptions) (*
 // DELETE /api/superadmin/projects/:id
 func (c *Client) DeleteProject(ctx context.Context, projectID string) (*SuccessResponse, error) {
 	var result SuccessResponse
-	if err := c.doDelete(ctx, "/api/superadmin/projects/"+projectID, &result); err != nil {
+	if err := c.doDelete(ctx, "/api/superadmin/projects/"+url.PathEscape(projectID), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -697,7 +697,7 @@ func (c *Client) ListEmailJobs(ctx context.Context, opts *ListEmailJobsOptions) 
 // GET /api/superadmin/email-jobs/:id/preview-json
 func (c *Client) GetEmailJobPreview(ctx context.Context, jobID string) (*EmailJobPreviewResponse, error) {
 	var result EmailJobPreviewResponse
-	if err := c.doGet(ctx, "/api/superadmin/email-jobs/"+jobID+"/preview-json", &result); err != nil {
+	if err := c.doGet(ctx, "/api/superadmin/email-jobs/"+url.PathEscape(jobID)+"/preview-json", &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -889,7 +889,7 @@ func (c *Client) ListSyncJobs(ctx context.Context, opts *ListSyncJobsOptions) (*
 // GET /api/superadmin/sync-jobs/:id/logs
 func (c *Client) GetSyncJobLogs(ctx context.Context, jobID string) (*SyncJobLogsResponse, error) {
 	var result SyncJobLogsResponse
-	if err := c.doGet(ctx, "/api/superadmin/sync-jobs/"+jobID+"/logs", &result); err != nil {
+	if err := c.doGet(ctx, "/api/superadmin/sync-jobs/"+url.PathEscape(jobID)+"/logs", &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

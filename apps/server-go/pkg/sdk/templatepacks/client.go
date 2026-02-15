@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -265,7 +266,7 @@ func (c *Client) projectPath() string {
 	c.mu.RLock()
 	pid := c.projectID
 	c.mu.RUnlock()
-	return c.base + "/api/template-packs/projects/" + pid
+	return c.base + "/api/template-packs/projects/" + url.PathEscape(pid)
 }
 
 // packPath returns the base path for global (non-project-scoped) template pack operations.
@@ -319,7 +320,7 @@ func (c *Client) AssignPack(ctx context.Context, req *AssignPackRequest) (*Proje
 // PATCH /api/template-packs/projects/:projectId/assignments/:assignmentId
 func (c *Client) UpdateAssignment(ctx context.Context, assignmentID string, req *UpdateAssignmentRequest) (*UpdateAssignmentResponse, error) {
 	var result UpdateAssignmentResponse
-	if err := c.patchJSON(ctx, c.projectPath()+"/assignments/"+assignmentID, req, &result); err != nil {
+	if err := c.patchJSON(ctx, c.projectPath()+"/assignments/"+url.PathEscape(assignmentID), req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -328,7 +329,7 @@ func (c *Client) UpdateAssignment(ctx context.Context, assignmentID string, req 
 // DeleteAssignment removes a template pack assignment from the current project.
 // DELETE /api/template-packs/projects/:projectId/assignments/:assignmentId
 func (c *Client) DeleteAssignment(ctx context.Context, assignmentID string) error {
-	return c.doDelete(ctx, c.projectPath()+"/assignments/"+assignmentID)
+	return c.doDelete(ctx, c.projectPath()+"/assignments/"+url.PathEscape(assignmentID))
 }
 
 // --- Global Template Pack CRUD ---
@@ -347,7 +348,7 @@ func (c *Client) CreatePack(ctx context.Context, req *CreatePackRequest) (*Templ
 // GET /api/template-packs/:packId
 func (c *Client) GetPack(ctx context.Context, packID string) (*TemplatePack, error) {
 	var result TemplatePack
-	if err := c.getJSON(ctx, c.packPath()+"/"+packID, &result); err != nil {
+	if err := c.getJSON(ctx, c.packPath()+"/"+url.PathEscape(packID), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -356,5 +357,5 @@ func (c *Client) GetPack(ctx context.Context, packID string) (*TemplatePack, err
 // DeletePack deletes a template pack by ID. Fails if the pack is assigned to any projects.
 // DELETE /api/template-packs/:packId
 func (c *Client) DeletePack(ctx context.Context, packID string) error {
-	return c.doDelete(ctx, c.packPath()+"/"+packID)
+	return c.doDelete(ctx, c.packPath()+"/"+url.PathEscape(packID))
 }

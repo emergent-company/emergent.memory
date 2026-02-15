@@ -125,7 +125,7 @@ func (c *Client) List(ctx context.Context, opts *ListOptions) ([]Project, error)
 
 // Get retrieves a single project by ID.
 func (c *Client) Get(ctx context.Context, id string) (*Project, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+id, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+url.PathEscape(id), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -203,7 +203,7 @@ func (c *Client) Update(ctx context.Context, id string, req *UpdateProjectReques
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/projects/"+id, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/projects/"+url.PathEscape(id), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -238,7 +238,7 @@ func (c *Client) Update(ctx context.Context, id string, req *UpdateProjectReques
 
 // Delete deletes a project by ID.
 func (c *Client) Delete(ctx context.Context, id string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/projects/"+id, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/projects/"+url.PathEscape(id), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -268,7 +268,7 @@ func (c *Client) Delete(ctx context.Context, id string) error {
 
 // ListMembers returns all members of a project.
 func (c *Client) ListMembers(ctx context.Context, projectID string) ([]ProjectMember, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+projectID+"/members", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+url.PathEscape(projectID)+"/members", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -301,7 +301,7 @@ func (c *Client) ListMembers(ctx context.Context, projectID string) ([]ProjectMe
 
 // RemoveMember removes a user from a project.
 func (c *Client) RemoveMember(ctx context.Context, projectID, userID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/projects/"+projectID+"/members/"+userID, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/projects/"+url.PathEscape(projectID)+"/members/"+url.PathEscape(userID), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

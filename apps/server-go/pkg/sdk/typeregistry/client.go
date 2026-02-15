@@ -133,7 +133,7 @@ func (c *Client) setHeaders(req *http.Request) error {
 
 // GetProjectTypes returns all object types registered for a project.
 func (c *Client) GetProjectTypes(ctx context.Context, projectID string, opts *ListTypesOptions) ([]TypeRegistryEntry, error) {
-	u, err := url.Parse(c.base + "/api/type-registry/projects/" + projectID)
+	u, err := url.Parse(c.base + "/api/type-registry/projects/" + url.PathEscape(projectID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -181,7 +181,7 @@ func (c *Client) GetProjectTypes(ctx context.Context, projectID string, opts *Li
 
 // GetObjectType returns a specific object type definition by name.
 func (c *Client) GetObjectType(ctx context.Context, projectID, typeName string) (*TypeRegistryEntry, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/type-registry/projects/"+projectID+"/types/"+typeName, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/type-registry/projects/"+url.PathEscape(projectID)+"/types/"+url.PathEscape(typeName), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -210,7 +210,7 @@ func (c *Client) GetObjectType(ctx context.Context, projectID, typeName string) 
 
 // GetTypeStats returns statistics about a project's type registry.
 func (c *Client) GetTypeStats(ctx context.Context, projectID string) (*TypeRegistryStats, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/type-registry/projects/"+projectID+"/stats", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/type-registry/projects/"+url.PathEscape(projectID)+"/stats", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -245,7 +245,7 @@ func (c *Client) CreateType(ctx context.Context, projectID string, req *CreateTy
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/type-registry/projects/"+projectID+"/types", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/type-registry/projects/"+url.PathEscape(projectID)+"/types", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -281,7 +281,7 @@ func (c *Client) UpdateType(ctx context.Context, projectID, typeName string, req
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "PUT", c.base+"/api/type-registry/projects/"+projectID+"/types/"+typeName, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "PUT", c.base+"/api/type-registry/projects/"+url.PathEscape(projectID)+"/types/"+url.PathEscape(typeName), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -312,7 +312,7 @@ func (c *Client) UpdateType(ctx context.Context, projectID, typeName string, req
 // DeleteType removes a type from the project type registry.
 // DELETE /api/type-registry/projects/:projectId/types/:typeName
 func (c *Client) DeleteType(ctx context.Context, projectID, typeName string) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/type-registry/projects/"+projectID+"/types/"+typeName, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/type-registry/projects/"+url.PathEscape(projectID)+"/types/"+url.PathEscape(typeName), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

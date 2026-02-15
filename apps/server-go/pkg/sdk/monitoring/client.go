@@ -252,7 +252,7 @@ func (c *Client) ListExtractionJobs(ctx context.Context, opts *ListExtractionJob
 // including logs, LLM calls, and metrics.
 // GET /api/monitoring/extraction-jobs/:id
 func (c *Client) GetExtractionJobDetail(ctx context.Context, jobID string) (*ExtractionJobDetail, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/monitoring/extraction-jobs/"+jobID, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/monitoring/extraction-jobs/"+url.PathEscape(jobID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -282,7 +282,7 @@ func (c *Client) GetExtractionJobDetail(ctx context.Context, jobID string) (*Ext
 // GetExtractionJobLogs retrieves process logs for a specific extraction job.
 // GET /api/monitoring/extraction-jobs/:id/logs
 func (c *Client) GetExtractionJobLogs(ctx context.Context, jobID string, opts *LogsOptions) (*ProcessLogListResponse, error) {
-	u, err := url.Parse(c.base + "/api/monitoring/extraction-jobs/" + jobID + "/logs")
+	u, err := url.Parse(c.base + "/api/monitoring/extraction-jobs/" + url.PathEscape(jobID) + "/logs")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -331,7 +331,7 @@ func (c *Client) GetExtractionJobLogs(ctx context.Context, jobID string, opts *L
 // GetExtractionJobLLMCalls retrieves LLM API call logs for a specific extraction job.
 // GET /api/monitoring/extraction-jobs/:id/llm-calls
 func (c *Client) GetExtractionJobLLMCalls(ctx context.Context, jobID string, opts *LLMCallsOptions) (*LLMCallListResponse, error) {
-	u, err := url.Parse(c.base + "/api/monitoring/extraction-jobs/" + jobID + "/llm-calls")
+	u, err := url.Parse(c.base + "/api/monitoring/extraction-jobs/" + url.PathEscape(jobID) + "/llm-calls")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
