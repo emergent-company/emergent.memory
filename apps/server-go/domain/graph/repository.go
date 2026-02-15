@@ -380,6 +380,7 @@ func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*Gra
 		Model(&objects).
 		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
+		Where("deleted_at IS NULL").
 		Scan(ctx)
 
 	if err != nil {
@@ -968,6 +969,11 @@ func (r *Repository) ValidateEndpoints(ctx context.Context, tx bun.Tx, projectID
 	}
 	if dstObj.DeletedAt != nil {
 		return nil, nil, apperror.ErrBadRequest.WithMessage("dst_object_deleted")
+	}
+
+	// Prevent self-referencing relationships (src and dst resolve to the same logical object)
+	if srcObj.CanonicalID == dstObj.CanonicalID {
+		return nil, nil, apperror.ErrBadRequest.WithMessage("self_referencing_relationship_not_allowed")
 	}
 
 	// Verify same project
