@@ -102,9 +102,9 @@ type GraphRelationship struct {
 	CreatedAt time.Time  `bun:"created_at,notnull,default:now()" json:"created_at"`
 	DeletedAt *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
 
-	// Populated by joins
-	SrcObject *GraphObject `bun:"rel:belongs-to,join:src_id=id" json:"src,omitempty"`
-	DstObject *GraphObject `bun:"rel:belongs-to,join:dst_id=id" json:"dst,omitempty"`
+	// Populated by joins — src_id/dst_id store canonical_id values
+	SrcObject *GraphObject `bun:"rel:belongs-to,join:src_id=canonical_id" json:"src,omitempty"`
+	DstObject *GraphObject `bun:"rel:belongs-to,join:dst_id=canonical_id" json:"dst,omitempty"`
 }
 
 // Branch represents a named branch for isolated changes.
