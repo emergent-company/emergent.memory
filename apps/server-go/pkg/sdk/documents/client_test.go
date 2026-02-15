@@ -84,7 +84,7 @@ func TestDocumentsListWithOptions(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"documents":[],"total":0}`))
+		_, _ = w.Write([]byte(`{"documents":[],"total":0}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{
@@ -151,7 +151,7 @@ func TestDocumentsGetNotFound(t *testing.T) {
 	mock.On("GET", "/api/documents/invalid", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":{"code":"not_found","message":"Document not found"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"Document not found"}}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{
