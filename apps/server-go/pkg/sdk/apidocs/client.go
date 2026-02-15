@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
@@ -115,7 +116,7 @@ func (c *Client) ListDocuments(ctx context.Context) (*ListDocumentsResponse, err
 // GetDocument gets a specific documentation document by slug.
 // GET /api/docs/:slug
 func (c *Client) GetDocument(ctx context.Context, slug string) (*Document, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/docs/"+slug, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/docs/"+url.PathEscape(slug), nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

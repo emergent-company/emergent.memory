@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
@@ -196,7 +197,7 @@ func (c *Client) List(ctx context.Context, opts *ListOptions) (*ListResponse, er
 // Delete removes a single chunk by ID.
 // Server: DELETE /api/chunks/:id → 204
 func (c *Client) Delete(ctx context.Context, id string) error {
-	req, err := c.prepareRequest(ctx, "DELETE", c.base+"/api/chunks/"+id, nil)
+	req, err := c.prepareRequest(ctx, "DELETE", c.base+"/api/chunks/"+url.PathEscape(id), nil)
 	if err != nil {
 		return err
 	}
@@ -239,7 +240,7 @@ func (c *Client) BulkDelete(ctx context.Context, ids []string) (*BulkDeletionSum
 // DeleteByDocument deletes all chunks for a specific document.
 // Server: DELETE /api/chunks/by-document/:documentId → DocumentChunksDeletionResult
 func (c *Client) DeleteByDocument(ctx context.Context, documentID string) (*DocumentChunksDeletionResult, error) {
-	req, err := c.prepareRequest(ctx, "DELETE", c.base+"/api/chunks/by-document/"+documentID, nil)
+	req, err := c.prepareRequest(ctx, "DELETE", c.base+"/api/chunks/by-document/"+url.PathEscape(documentID), nil)
 	if err != nil {
 		return nil, err
 	}

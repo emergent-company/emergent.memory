@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
 	sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
@@ -75,7 +76,7 @@ func (c *Client) List(ctx context.Context) ([]Organization, error) {
 
 // Get retrieves a single organization by ID.
 func (c *Client) Get(ctx context.Context, id string) (*Organization, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/orgs/"+id, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/orgs/"+url.PathEscape(id), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -148,7 +149,7 @@ func (c *Client) Create(ctx context.Context, req *CreateOrganizationRequest) (*O
 
 // Delete deletes an organization by ID.
 func (c *Client) Delete(ctx context.Context, id string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/orgs/"+id, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/orgs/"+url.PathEscape(id), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
