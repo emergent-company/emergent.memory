@@ -760,6 +760,44 @@ type RelationshipListParams struct {
 	Order          string // "asc" or "desc"
 }
 
+// CountRelationships returns the total count of relationships matching the given parameters.
+func (r *Repository) CountRelationships(ctx context.Context, params RelationshipListParams) (int, error) {
+	q := r.db.NewSelect().
+		Model((*GraphRelationship)(nil)).
+		Where("project_id = ?", params.ProjectID).
+		Where("supersedes_id IS NULL") // HEAD versions only
+
+	if params.BranchID != nil {
+		q = q.Where("branch_id = ?", *params.BranchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	if params.Type != nil {
+		q = q.Where("type = ?", *params.Type)
+	}
+
+	if params.SrcID != nil {
+		q = q.Where("src_id = ?", *params.SrcID)
+	}
+
+	if params.DstID != nil {
+		q = q.Where("dst_id = ?", *params.DstID)
+	}
+
+	if !params.IncludeDeleted {
+		q = q.Where("deleted_at IS NULL")
+	}
+
+	count, err := q.Count(ctx)
+	if err != nil {
+		r.log.Error("failed to count relationships", logger.Error(err))
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return count, nil
+}
+
 // ListRelationships returns relationships matching the given parameters.
 // Returns only HEAD versions (supersedes_id IS NULL).
 func (r *Repository) ListRelationships(ctx context.Context, params RelationshipListParams) ([]*GraphRelationship, error) {

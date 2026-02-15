@@ -325,32 +325,49 @@ func printAPIKeyStatus(cfg *config.Config) {
 		fmt.Printf("  Health:      ✗ Unreachable (%v)\n", healthErr)
 	}
 
-	var project *projectResponse
 	projects, projErr := fetchProjects(cfg.ServerURL, cfg.APIKey)
-	if projErr == nil && len(projects) > 0 {
-		project = &projects[0]
+	if projErr != nil || len(projects) == 0 {
+		return
+	}
+
+	if isProjectToken {
+		// Project-scoped token: show single project
+		project := &projects[0]
 		fmt.Println()
 		fmt.Println("Project:")
 		fmt.Printf("  Name:        %s\n", project.Name)
 		fmt.Printf("  ID:          %s\n", project.ID)
-		if isProjectToken {
-			fmt.Println("  Source:      embedded in API token")
+		fmt.Println("  Source:      embedded in API token")
+
+		if healthErr == nil {
+			printUsageStats(cfg, project.ID)
 		}
-	}
 
-	// Print usage statistics if server is reachable
-	if healthErr == nil && project != nil {
-		printUsageStats(cfg, project.ID)
-	}
-
-	if project != nil {
 		fmt.Println()
 		fmt.Println(separator)
 		fmt.Println("MCP Configuration (copy to your AI agent config)")
 		fmt.Println(separator)
 		fmt.Println()
-
 		printMCPConfig(cfg, project)
+	} else {
+		// Standalone API key: show all projects with aggregated stats
+		fmt.Println()
+		fmt.Printf("Projects:      %d\n", len(projects))
+		for _, p := range projects {
+			fmt.Printf("  • %s (%s)\n", p.Name, p.ID)
+		}
+
+		if healthErr == nil {
+			printAggregatedUsageStats(cfg, projects)
+		}
+
+		// Use first project for MCP config
+		fmt.Println()
+		fmt.Println(separator)
+		fmt.Println("MCP Configuration (copy to your AI agent config)")
+		fmt.Println(separator)
+		fmt.Println()
+		printMCPConfig(cfg, &projects[0])
 	}
 }
 
@@ -365,8 +382,8 @@ type sourceTypeCount struct {
 	Count      int    `json:"count"`
 }
 
-type graphSearchResponse struct {
-	Total int `json:"total"`
+type graphCountResponse struct {
+	Count int `json:"count"`
 }
 
 type typeRegistryStatsResponse struct {
@@ -549,6 +566,96 @@ func printUsageStats(cfg *config.Config, projectID string) {
 	}
 }
 
+// printAggregatedUsageStats fetches and displays usage statistics summed across all projects.
+func printAggregatedUsageStats(cfg *config.Config, projects []projectResponse) {
+	fmt.Println()
+	fmt.Println("Usage Statistics (all projects):")
+
+	type projectStats struct {
+		name string
+		docs int
+		objs int
+		rels int
+	}
+
+	stats := make([]projectStats, len(projects))
+	totalDocs := 0
+	totalObjects := 0
+	totalRelationships := 0
+
+	for i, p := range projects {
+		docs := 0
+		docSources := fetchDocumentSourceTypes(cfg.ServerURL, cfg.APIKey, p.ID)
+		if docSources != nil {
+			for _, s := range docSources {
+				docs += s.Count
+			}
+		}
+		objs := fetchGraphObjectsTotal(cfg.ServerURL, cfg.APIKey, p.ID)
+		if objs < 0 {
+			objs = 0
+		}
+		rels := fetchGraphRelationshipsTotal(cfg.ServerURL, cfg.APIKey, p.ID)
+		if rels < 0 {
+			rels = 0
+		}
+
+		stats[i] = projectStats{name: p.Name, docs: docs, objs: objs, rels: rels}
+		totalDocs += docs
+		totalObjects += objs
+		totalRelationships += rels
+	}
+
+	fmt.Printf("  Documents:     %d\n", totalDocs)
+	fmt.Printf("  Graph Objects: %d\n", totalObjects)
+	fmt.Printf("  Relationships: %d\n", totalRelationships)
+
+	// Show per-project breakdown if more than one project has data
+	var withData []projectStats
+	for _, ps := range stats {
+		if ps.docs > 0 || ps.objs > 0 || ps.rels > 0 {
+			withData = append(withData, ps)
+		}
+	}
+
+	if len(withData) > 1 {
+		fmt.Println()
+		fmt.Println("  Per Project:")
+		for _, ps := range withData {
+			fmt.Printf("    %s: %d docs, %d objects, %d relationships\n", ps.name, ps.docs, ps.objs, ps.rels)
+		}
+	}
+
+	// Job queue metrics (not project-scoped)
+	jobMetrics := fetchJobMetrics(cfg.ServerURL)
+	if len(jobMetrics) > 0 {
+		hasActive := false
+		for _, jm := range jobMetrics {
+			if jm.Pending > 0 || jm.Processing > 0 {
+				hasActive = true
+				break
+			}
+		}
+		if hasActive {
+			fmt.Println()
+			fmt.Println("Active Jobs:")
+			for _, jm := range jobMetrics {
+				if jm.Pending > 0 || jm.Processing > 0 {
+					label := formatQueueName(jm.Queue)
+					parts := []string{}
+					if jm.Processing > 0 {
+						parts = append(parts, fmt.Sprintf("%d processing", jm.Processing))
+					}
+					if jm.Pending > 0 {
+						parts = append(parts, fmt.Sprintf("%d pending", jm.Pending))
+					}
+					fmt.Printf("  %-16s %s\n", label+":", strings.Join(parts, ", "))
+				}
+			}
+		}
+	}
+}
+
 // formatQueueName converts queue names like "object_extraction" to "Extraction"
 func formatQueueName(queue string) string {
 	names := map[string]string{
@@ -581,27 +688,27 @@ func fetchDocumentSourceTypes(serverURL, apiKey, projectID string) []sourceTypeC
 }
 
 func fetchGraphObjectsTotal(serverURL, apiKey, projectID string) int {
-	body, err := fetchAPI(serverURL, "/api/graph/objects/search?limit=0", apiKey, projectID)
+	body, err := fetchAPI(serverURL, "/api/graph/objects/count", apiKey, projectID)
 	if err != nil {
 		return -1
 	}
-	var resp graphSearchResponse
+	var resp graphCountResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return -1
 	}
-	return resp.Total
+	return resp.Count
 }
 
 func fetchGraphRelationshipsTotal(serverURL, apiKey, projectID string) int {
-	body, err := fetchAPI(serverURL, "/api/graph/relationships/search?limit=0", apiKey, projectID)
+	body, err := fetchAPI(serverURL, "/api/graph/relationships/count", apiKey, projectID)
 	if err != nil {
 		return -1
 	}
-	var resp graphSearchResponse
+	var resp graphCountResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return -1
 	}
-	return resp.Total
+	return resp.Count
 }
 
 func fetchTypeRegistryStats(serverURL, apiKey, projectID string) *typeRegistryStatsResponse {
