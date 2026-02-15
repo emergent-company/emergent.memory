@@ -229,6 +229,131 @@ func (h *Handler) ListObjects(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+// CountObjects returns the count of graph objects matching the given filters.
+// @Summary      Count graph objects
+// @Description  Returns the total count of graph objects matching the given filters, without returning the objects themselves.
+// @Tags         graph
+// @Produce      json
+// @Param        type query string false "Object type filter (single)"
+// @Param        types query []string false "Object types filter (multiple)"
+// @Param        label query string false "Label filter (single)"
+// @Param        labels query []string false "Labels filter (multiple)"
+// @Param        status query string false "Object status filter"
+// @Param        key query string false "Object key filter"
+// @Param        include_deleted query boolean false "Include soft-deleted objects"
+// @Param        ids query string false "Comma-separated list of object IDs"
+// @Param        extraction_job_id query string false "Extraction job ID filter"
+// @Param        property_filters query string false "JSON-encoded property filters"
+// @Param        branch_id query string false "Branch ID filter"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]int "Count result"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/count [get]
+// @Security     bearerAuth
+func (h *Handler) CountObjects(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	params := ListParams{
+		ProjectID:      projectID,
+		IncludeDeleted: c.QueryParam("include_deleted") == "true",
+	}
+
+	// Support both "type" (single) and "types" (array/comma-separated)
+	if singleType := c.QueryParam("type"); singleType != "" {
+		params.Type = &singleType
+	} else if types := c.QueryParams()["types"]; len(types) > 0 {
+		params.Types = splitCommaSeparated(types)
+	}
+
+	// Support both "label" (single) and "labels" (array/comma-separated)
+	if singleLabel := c.QueryParam("label"); singleLabel != "" {
+		params.Label = &singleLabel
+	} else if labels := c.QueryParams()["labels"]; len(labels) > 0 {
+		params.Labels = splitCommaSeparated(labels)
+	}
+
+	if status := c.QueryParam("status"); status != "" {
+		params.Status = &status
+	}
+
+	if key := c.QueryParam("key"); key != "" {
+		params.Key = &key
+	}
+
+	// Parse ids (comma-separated)
+	if idsParam := c.QueryParam("ids"); idsParam != "" {
+		idStrs := strings.Split(idsParam, ",")
+		for _, idStr := range idStrs {
+			idStr = strings.TrimSpace(idStr)
+			if idStr == "" {
+				continue
+			}
+			id, err := uuid.Parse(idStr)
+			if err != nil {
+				return apperror.ErrBadRequest.WithMessage("invalid id in ids parameter")
+			}
+			params.IDs = append(params.IDs, id)
+		}
+	}
+
+	// Parse extraction_job_id
+	if extractionJobID := c.QueryParam("extraction_job_id"); extractionJobID != "" {
+		id, err := uuid.Parse(extractionJobID)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid extraction_job_id")
+		}
+		params.ExtractionJobID = &id
+	}
+
+	// Parse property_filters
+	if pf := c.QueryParam("property_filters"); pf != "" {
+		var filters []PropertyFilter
+		if err := json.Unmarshal([]byte(pf), &filters); err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid property_filters: must be JSON array")
+		}
+		validOps := map[string]bool{
+			"eq": true, "neq": true, "gt": true, "gte": true,
+			"lt": true, "lte": true, "contains": true, "exists": true, "in": true,
+		}
+		for _, f := range filters {
+			if f.Path == "" {
+				return apperror.ErrBadRequest.WithMessage("property_filters: path is required")
+			}
+			if !validOps[f.Op] {
+				return apperror.ErrBadRequest.WithMessage("property_filters: invalid operator '" + f.Op + "'")
+			}
+		}
+		params.PropertyFilters = filters
+	}
+
+	// Handle branch_id
+	if branchIDStr := c.QueryParam("branch_id"); branchIDStr != "" {
+		if branchIDStr != "null" {
+			branchID, err := uuid.Parse(branchIDStr)
+			if err != nil {
+				return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+			}
+			params.BranchID = &branchID
+		}
+	}
+
+	count, err := h.svc.CountObjects(c.Request().Context(), params)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]int{"count": count})
+}
+
 // GetObject returns a single graph object by ID.
 // @Summary      Get graph object by ID
 // @Description  Retrieve a graph object. Use resolveHead=true to get the latest version when ID refers to an older version in the version chain.
@@ -312,6 +437,56 @@ func (h *Handler) CreateObject(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, result)
+}
+
+// UpsertObject creates or updates a graph object by (type, key).
+// @Summary      Upsert graph object
+// @Description  Create or update a graph object identified by its (type, key) combination. If an object with the same type and key exists, it is updated; otherwise, a new object is created.
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateGraphObjectRequest true "Object data (key is required)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphObjectResponse "Object was updated (existing)"
+// @Success      201 {object} GraphObjectResponse "Object was created (new)"
+// @Failure      400 {object} apperror.Error "Invalid request (key is required)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/upsert [put]
+// @Security     bearerAuth
+func (h *Handler) UpsertObject(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req CreateGraphObjectRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Type == "" {
+		return apperror.ErrBadRequest.WithMessage("type is required")
+	}
+
+	if req.Key == nil || *req.Key == "" {
+		return apperror.ErrBadRequest.WithMessage("key is required for upsert")
+	}
+
+	actorID, _ := getUserID(c)
+	result, created, err := h.svc.CreateOrUpdate(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	if created {
+		return c.JSON(http.StatusCreated, result)
+	}
+	return c.JSON(http.StatusOK, result)
 }
 
 // PatchObject updates a graph object by creating a new version.
@@ -473,10 +648,13 @@ func (h *Handler) GetObjectHistory(c echo.Context) error {
 
 // GetObjectEdges returns incoming and outgoing relationships for an object.
 // @Summary      Get object relationships (edges)
-// @Description  Retrieve all incoming and outgoing relationships for a graph object
+// @Description  Retrieve all incoming and outgoing relationships for a graph object, with optional type and direction filtering.
 // @Tags         graph
 // @Produce      json
 // @Param        id path string true "Object ID (UUID)"
+// @Param        type query string false "Filter by relationship type (single)"
+// @Param        types query []string false "Filter by relationship types (multiple, comma-separated)"
+// @Param        direction query string false "Filter by direction: 'incoming', 'outgoing', or omit for both"
 // @Param        X-Project-ID header string true "Project ID"
 // @Success      200 {object} map[string]interface{} "Edges with incoming/outgoing relationships"
 // @Failure      400 {object} apperror.Error "Invalid ID"
@@ -499,7 +677,24 @@ func (h *Handler) GetObjectEdges(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid object id")
 	}
 
-	result, err := h.svc.GetEdges(c.Request().Context(), projectID, id)
+	params := GetEdgesParams{}
+
+	// Parse type filters
+	if singleType := c.QueryParam("type"); singleType != "" {
+		params.Type = singleType
+	} else if types := c.QueryParams()["types"]; len(types) > 0 {
+		params.Types = splitCommaSeparated(types)
+	}
+
+	// Parse direction filter
+	if dir := c.QueryParam("direction"); dir != "" {
+		if dir != "incoming" && dir != "outgoing" {
+			return apperror.ErrBadRequest.WithMessage("direction must be 'incoming' or 'outgoing'")
+		}
+		params.Direction = dir
+	}
+
+	result, err := h.svc.GetEdges(c.Request().Context(), projectID, id, params)
 	if err != nil {
 		return err
 	}

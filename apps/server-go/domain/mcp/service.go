@@ -1298,7 +1298,7 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 		return nil, fmt.Errorf("invalid entity_id: %w", err)
 	}
 
-	edges, err := s.graphService.GetEdges(ctx, projectUUID, entityID)
+	edges, err := s.graphService.GetEdges(ctx, projectUUID, entityID, graph.GetEdgesParams{})
 	if err != nil {
 		return nil, fmt.Errorf("get entity edges: %w", err)
 	}

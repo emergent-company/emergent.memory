@@ -556,32 +556,51 @@ func (r *Repository) GetHistory(ctx context.Context, projectID, canonicalID uuid
 
 // GetEdges returns incoming and outgoing relationships for an object by its canonical_id.
 // Relationships store canonical_id values in src_id/dst_id, so this matches directly.
-func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.UUID) ([]*GraphRelationship, []*GraphRelationship, error) {
+func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.UUID, params GetEdgesParams) ([]*GraphRelationship, []*GraphRelationship, error) {
 	var incoming []*GraphRelationship
 	var outgoing []*GraphRelationship
 
-	// Get incoming edges (object is destination)
-	err := r.db.NewSelect().
-		Model(&incoming).
-		Where("dst_id = ?", canonicalID).
-		Where("project_id = ?", projectID).
-		Where("supersedes_id IS NULL").
-		Where("deleted_at IS NULL").
-		Scan(ctx)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, nil, apperror.ErrDatabase.WithInternal(err)
+	// Collect relationship types to filter by
+	var typeFilter []string
+	if params.Type != "" {
+		typeFilter = append(typeFilter, params.Type)
+	}
+	if len(params.Types) > 0 {
+		typeFilter = append(typeFilter, params.Types...)
 	}
 
-	// Get outgoing edges (object is source)
-	err = r.db.NewSelect().
-		Model(&outgoing).
-		Where("src_id = ?", canonicalID).
-		Where("project_id = ?", projectID).
-		Where("supersedes_id IS NULL").
-		Where("deleted_at IS NULL").
-		Scan(ctx)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, nil, apperror.ErrDatabase.WithInternal(err)
+	// Get incoming edges (object is destination) unless direction is "outgoing"
+	if params.Direction != "outgoing" {
+		q := r.db.NewSelect().
+			Model(&incoming).
+			Where("dst_id = ?", canonicalID).
+			Where("project_id = ?", projectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+		if len(typeFilter) > 0 {
+			q = q.Where("type IN (?)", bun.In(typeFilter))
+		}
+		err := q.Scan(ctx)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, nil, apperror.ErrDatabase.WithInternal(err)
+		}
+	}
+
+	// Get outgoing edges (object is source) unless direction is "incoming"
+	if params.Direction != "incoming" {
+		q := r.db.NewSelect().
+			Model(&outgoing).
+			Where("src_id = ?", canonicalID).
+			Where("project_id = ?", projectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+		if len(typeFilter) > 0 {
+			q = q.Where("type IN (?)", bun.In(typeFilter))
+		}
+		err := q.Scan(ctx)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, nil, apperror.ErrDatabase.WithInternal(err)
+		}
 	}
 
 	return incoming, outgoing, nil
@@ -595,6 +614,79 @@ func (r *Repository) AcquireObjectLock(ctx context.Context, tx bun.Tx, canonical
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
+	return nil
+}
+
+// FindHeadByTypeAndKey returns the HEAD version of an object identified by (project_id, type, key).
+// Returns nil, nil if not found (not an error).
+func (r *Repository) FindHeadByTypeAndKey(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID, objType string, key string) (*GraphObject, error) {
+	var obj GraphObject
+	q := r.db.NewSelect().
+		Model(&obj).
+		Where("project_id = ?", projectID).
+		Where("type = ?", objType).
+		Where("key = ?", key).
+		Where("supersedes_id IS NULL")
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	err := q.Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Not found is not an error for this method
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return &obj, nil
+}
+
+// AcquireObjectUpsertLock acquires an advisory lock for an object upsert by (project_id, type, key).
+// The lock is released when the transaction commits or rolls back.
+func (r *Repository) AcquireObjectUpsertLock(ctx context.Context, tx bun.Tx, projectID uuid.UUID, objType string, key string) error {
+	lockKey := "obj-upsert|" + projectID.String() + "|" + objType + "|" + key
+	_, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", lockKey)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// CreateInTx inserts a new graph object (version 1) within an existing transaction.
+func (r *Repository) CreateInTx(ctx context.Context, tx bun.Tx, obj *GraphObject) error {
+	// Set defaults
+	if obj.ID == uuid.Nil {
+		obj.ID = uuid.New()
+	}
+	if obj.CanonicalID == uuid.Nil {
+		obj.CanonicalID = obj.ID // First version: canonical_id == id
+	}
+	obj.Version = 1
+	obj.ContentHash = computeContentHash(obj.Properties)
+	now := time.Now()
+	obj.CreatedAt = now
+	obj.UpdatedAt = now
+
+	if obj.Properties == nil {
+		obj.Properties = make(map[string]any)
+	}
+	if obj.Labels == nil {
+		obj.Labels = []string{}
+	}
+
+	_, err := tx.NewInsert().
+		Model(obj).
+		Exec(ctx)
+
+	if err != nil {
+		r.log.Error("failed to create graph object in tx", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+
 	return nil
 }
 
