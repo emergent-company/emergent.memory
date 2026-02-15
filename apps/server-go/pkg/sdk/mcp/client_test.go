@@ -35,7 +35,7 @@ func TestMCPInitialize(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	})
 
 	client, err := sdk.New(sdk.Config{
@@ -62,7 +62,9 @@ func TestMCPListTools(t *testing.T) {
 
 	mock.On("POST", "/api/mcp/rpc", func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("failed to decode request: %v", err)
+		}
 
 		if req["method"] != "tools/list" {
 			t.Errorf("expected method 'tools/list', got %v", req["method"])
@@ -79,7 +81,7 @@ func TestMCPListTools(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	})
 
 	client, _ := sdk.New(sdk.Config{
@@ -104,7 +106,9 @@ func TestMCPCallTool(t *testing.T) {
 
 	mock.On("POST", "/api/mcp/rpc", func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("failed to decode request: %v", err)
+		}
 
 		if req["method"] != "tools/call" {
 			t.Errorf("expected method 'tools/call', got %v", req["method"])
@@ -121,7 +125,7 @@ func TestMCPCallTool(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	})
 
 	client, _ := sdk.New(sdk.Config{
@@ -148,7 +152,9 @@ func TestMCPListResources(t *testing.T) {
 
 	mock.On("POST", "/api/mcp/rpc", func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("failed to decode request: %v", err)
+		}
 
 		response := map[string]interface{}{
 			"jsonrpc": "2.0",
@@ -161,7 +167,7 @@ func TestMCPListResources(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	})
 
 	client, _ := sdk.New(sdk.Config{

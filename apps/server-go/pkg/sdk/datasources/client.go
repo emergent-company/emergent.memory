@@ -241,7 +241,7 @@ func (c *Client) ListProviders(ctx context.Context) ([]Provider, error) {
 // GetProviderSchema returns the configuration schema for a provider type.
 // GET /api/data-source-integrations/providers/:providerType/schema
 func (c *Client) GetProviderSchema(ctx context.Context, providerType string) (*ProviderSchema, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/data-source-integrations/providers/"+providerType+"/schema", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/data-source-integrations/providers/"+url.PathEscape(providerType)+"/schema", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -390,7 +390,7 @@ func (c *Client) List(ctx context.Context, opts *ListIntegrationsOptions) ([]Int
 // Get returns a specific integration by ID.
 // GET /api/data-source-integrations/:id
 func (c *Client) Get(ctx context.Context, integrationID string) (*Integration, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/data-source-integrations/"+integrationID, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/data-source-integrations/"+url.PathEscape(integrationID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -462,7 +462,7 @@ func (c *Client) Update(ctx context.Context, integrationID string, updateReq *Up
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/data-source-integrations/"+integrationID, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/data-source-integrations/"+url.PathEscape(integrationID), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -494,7 +494,7 @@ func (c *Client) Update(ctx context.Context, integrationID string, updateReq *Up
 // DELETE /api/data-source-integrations/:id
 // Returns 204 No Content on success.
 func (c *Client) Delete(ctx context.Context, integrationID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/data-source-integrations/"+integrationID, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/data-source-integrations/"+url.PathEscape(integrationID), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -523,7 +523,7 @@ func (c *Client) Delete(ctx context.Context, integrationID string) error {
 // TestConnection tests the connection for an existing integration.
 // POST /api/data-source-integrations/:id/test-connection
 func (c *Client) TestConnection(ctx context.Context, integrationID string) (*TestConnectionResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/data-source-integrations/"+integrationID+"/test-connection", nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/data-source-integrations/"+url.PathEscape(integrationID)+"/test-connection", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -564,7 +564,7 @@ func (c *Client) TriggerSync(ctx context.Context, integrationID string, syncReq 
 		bodyReader = bytes.NewReader([]byte("{}"))
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/data-source-integrations/"+integrationID+"/sync", bodyReader)
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/data-source-integrations/"+url.PathEscape(integrationID)+"/sync", bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -597,7 +597,7 @@ func (c *Client) TriggerSync(ctx context.Context, integrationID string, syncReq 
 // ListSyncJobs returns sync jobs for an integration.
 // GET /api/data-source-integrations/:id/sync-jobs
 func (c *Client) ListSyncJobs(ctx context.Context, integrationID string, opts *ListSyncJobsOptions) (*ListSyncJobsResponse, error) {
-	u, err := url.Parse(c.base + "/api/data-source-integrations/" + integrationID + "/sync-jobs")
+	u, err := url.Parse(c.base + "/api/data-source-integrations/" + url.PathEscape(integrationID) + "/sync-jobs")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -641,7 +641,7 @@ func (c *Client) ListSyncJobs(ctx context.Context, integrationID string, opts *L
 // GET /api/data-source-integrations/:id/sync-jobs/latest
 // Returns nil if no jobs exist.
 func (c *Client) GetLatestSyncJob(ctx context.Context, integrationID string) (*SyncJob, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/data-source-integrations/"+integrationID+"/sync-jobs/latest", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/data-source-integrations/"+url.PathEscape(integrationID)+"/sync-jobs/latest", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -681,7 +681,7 @@ func (c *Client) GetLatestSyncJob(ctx context.Context, integrationID string) (*S
 // GetSyncJob returns a specific sync job by ID.
 // GET /api/data-source-integrations/:id/sync-jobs/:jobId
 func (c *Client) GetSyncJob(ctx context.Context, integrationID, jobID string) (*SyncJob, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/data-source-integrations/"+integrationID+"/sync-jobs/"+jobID, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/data-source-integrations/"+url.PathEscape(integrationID)+"/sync-jobs/"+url.PathEscape(jobID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -711,7 +711,7 @@ func (c *Client) GetSyncJob(ctx context.Context, integrationID, jobID string) (*
 // CancelSyncJob cancels a running or pending sync job.
 // POST /api/data-source-integrations/:id/sync-jobs/:jobId/cancel
 func (c *Client) CancelSyncJob(ctx context.Context, integrationID, jobID string) (*CancelSyncJobResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/data-source-integrations/"+integrationID+"/sync-jobs/"+jobID+"/cancel", nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/data-source-integrations/"+url.PathEscape(integrationID)+"/sync-jobs/"+url.PathEscape(jobID)+"/cancel", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

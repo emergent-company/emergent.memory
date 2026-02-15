@@ -15,7 +15,7 @@ func TestSearchHybrid(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.On("POST", "/api/search", func(w http.ResponseWriter, r *http.Request) {
+	mock.On("POST", "/api/search/unified", func(w http.ResponseWriter, r *http.Request) {
 		testutil.AssertHeader(t, r, "X-API-Key", "test_key")
 		testutil.AssertHeader(t, r, "Content-Type", "application/json")
 
@@ -68,7 +68,7 @@ func TestSearchSemantic(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.On("POST", "/api/search", func(w http.ResponseWriter, r *http.Request) {
+	mock.On("POST", "/api/search/unified", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		testutil.JSONResponse(t, w, map[string]interface{}{
@@ -102,10 +102,10 @@ func TestSearchError(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.On("POST", "/api/search", func(w http.ResponseWriter, r *http.Request) {
+	mock.On("POST", "/api/search/unified", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":{"code":"validation_error","message":"Query is required"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"validation_error","message":"Query is required"}}`))
 	})
 
 	client, _ := sdk.New(sdk.Config{

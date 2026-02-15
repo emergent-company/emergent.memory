@@ -237,7 +237,7 @@ func (c *Client) List(ctx context.Context) (*APIResponse[[]Agent], error) {
 // GET /api/admin/agents/:id
 // Requires admin:read scope.
 func (c *Client) Get(ctx context.Context, agentID string) (*APIResponse[Agent], error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/admin/agents/"+agentID, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/admin/agents/"+url.PathEscape(agentID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -268,7 +268,7 @@ func (c *Client) Get(ctx context.Context, agentID string) (*APIResponse[Agent], 
 // GET /api/admin/agents/:id/runs
 // Requires admin:read scope.
 func (c *Client) GetRuns(ctx context.Context, agentID string, limit int) (*APIResponse[[]AgentRun], error) {
-	u, err := url.Parse(c.base + "/api/admin/agents/" + agentID + "/runs")
+	u, err := url.Parse(c.base + "/api/admin/agents/" + url.PathEscape(agentID) + "/runs")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -310,7 +310,7 @@ func (c *Client) GetRuns(ctx context.Context, agentID string, limit int) (*APIRe
 // GET /api/admin/agents/:id/pending-events
 // Requires admin:read scope.
 func (c *Client) GetPendingEvents(ctx context.Context, agentID string, limit int) (*APIResponse[PendingEventsResponse], error) {
-	u, err := url.Parse(c.base + "/api/admin/agents/" + agentID + "/pending-events")
+	u, err := url.Parse(c.base + "/api/admin/agents/" + url.PathEscape(agentID) + "/pending-events")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -394,7 +394,7 @@ func (c *Client) Update(ctx context.Context, agentID string, updateReq *UpdateAg
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/admin/agents/"+agentID, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/admin/agents/"+url.PathEscape(agentID), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -426,7 +426,7 @@ func (c *Client) Update(ctx context.Context, agentID string, updateReq *UpdateAg
 // DELETE /api/admin/agents/:id
 // Requires admin:write scope.
 func (c *Client) Delete(ctx context.Context, agentID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/admin/agents/"+agentID, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/admin/agents/"+url.PathEscape(agentID), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -454,7 +454,7 @@ func (c *Client) Delete(ctx context.Context, agentID string) error {
 // POST /api/admin/agents/:id/trigger
 // Requires admin:write scope.
 func (c *Client) Trigger(ctx context.Context, agentID string) (*TriggerResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/admin/agents/"+agentID+"/trigger", nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/trigger", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -490,7 +490,7 @@ func (c *Client) BatchTrigger(ctx context.Context, agentID string, batchReq *Bat
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/admin/agents/"+agentID+"/batch-trigger", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/batch-trigger", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

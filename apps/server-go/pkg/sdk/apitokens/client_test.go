@@ -98,6 +98,9 @@ func TestAPITokensGet(t *testing.T) {
 	if result.Name != fixtureToken.Name {
 		t.Errorf("expected token name %s, got %s", fixtureToken.Name, result.Name)
 	}
+	if result.Token != fixtureToken.Token {
+		t.Errorf("expected token value %s, got %s", fixtureToken.Token, result.Token)
+	}
 }
 
 func TestAPITokensRevoke(t *testing.T) {
