@@ -479,20 +479,23 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 	newVersion.CreatedAt = now
 	newVersion.UpdatedAt = now
 
-	// Insert new version
-	_, err := tx.NewInsert().
-		Model(newVersion).
+	// Update previous HEAD first to clear the unique index slot.
+	// The unique index IDX_graph_objects_upsert_main enforces one HEAD
+	// (supersedes_id IS NULL) per (project_id, type, key), so the old HEAD
+	// must be marked as superseded before the new HEAD can be inserted.
+	_, err := tx.NewUpdate().
+		Model((*GraphObject)(nil)).
+		Set("supersedes_id = ?", newVersion.ID).
+		Set("updated_at = ?", now).
+		Where("id = ?", prevHead.ID).
 		Exec(ctx)
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 
-	// Update previous HEAD to point to new version
-	_, err = tx.NewUpdate().
-		Model((*GraphObject)(nil)).
-		Set("supersedes_id = ?", newVersion.ID).
-		Set("updated_at = ?", now).
-		Where("id = ?", prevHead.ID).
+	// Insert new version as HEAD
+	_, err = tx.NewInsert().
+		Model(newVersion).
 		Exec(ctx)
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
