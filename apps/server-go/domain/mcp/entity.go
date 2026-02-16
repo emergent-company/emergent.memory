@@ -29,6 +29,9 @@ type AgentToolHandler interface {
 	ExecuteGetAgentRunMessages(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteGetAgentRunToolCalls(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 
+	// Agent Catalog
+	ExecuteListAvailableAgents(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
 	// GetAgentToolDefinitions returns tool definitions for all agent tools
 	GetAgentToolDefinitions() []ToolDefinition
 }
