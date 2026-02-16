@@ -93,3 +93,5 @@ spec-server-dev-vertex-ai.json
 tools/emergent-cli/emergent-cli-*
 tools/emergent-cli/emergent-darwin-*
 tools/emergent-cli/emergent-linux-*
+bin/
+apps/server-go/tmp/
