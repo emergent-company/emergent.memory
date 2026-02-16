@@ -456,6 +456,74 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 	})
 }
 
+// CancelRun handles POST /api/admin/agents/:id/runs/:runId/cancel
+// @Summary      Cancel a running agent run
+// @Description  Cancels a running agent run
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Agent ID (UUID)"
+// @Param        runId path string true "Run ID (UUID)"
+// @Param        X-Project-ID header string false "Project ID (optional)"
+// @Success      200 {object} APIResponse[map[string]string] "Run cancelled successfully"
+// @Failure      400 {object} apperror.Error "Invalid agent ID or run ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Agent or run not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agents/{id}/runs/{runId}/cancel [post]
+// @Security     bearerAuth
+func (h *Handler) CancelRun(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	agentID := c.Param("id")
+	if agentID == "" {
+		return apperror.NewBadRequest("agent id is required")
+	}
+
+	runID := c.Param("runId")
+	if runID == "" {
+		return apperror.NewBadRequest("runId is required")
+	}
+
+	// Verify agent exists and belongs to project
+	var projectID *string
+	if user.ProjectID != "" {
+		projectID = &user.ProjectID
+	}
+	agent, err := h.repo.FindByID(c.Request().Context(), agentID, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent", err)
+	}
+	if agent == nil {
+		return apperror.NewNotFound("Agent", agentID)
+	}
+
+	// Verify run exists and belongs to this agent
+	run, err := h.repo.FindRunByID(c.Request().Context(), runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get run", err)
+	}
+	if run == nil {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+	if run.AgentID != agentID {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	// Cancel the run
+	if err := h.repo.CancelRun(c.Request().Context(), runID); err != nil {
+		return apperror.NewInternal("failed to cancel run", err)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(map[string]string{
+		"message": "Run cancelled successfully",
+		"runId":   runID,
+	}))
+}
+
 // GetPendingEvents handles GET /api/admin/agents/:id/pending-events
 // @Summary      Get pending events for reaction agent
 // @Description  Returns pending events (unprocessed graph objects) for a reaction agent

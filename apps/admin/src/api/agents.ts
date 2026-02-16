@@ -96,13 +96,129 @@ export interface Agent {
 export interface AgentRun {
   id: string;
   agentId: string;
-  status: 'running' | 'success' | 'completed' | 'error' | 'failed' | 'skipped';
+  status:
+    | 'running'
+    | 'success'
+    | 'completed'
+    | 'error'
+    | 'failed'
+    | 'paused'
+    | 'cancelled'
+    | 'skipped';
   startedAt: string;
   completedAt: string | null;
   durationMs: number | null;
   summary: Record<string, any> | null;
   errorMessage: string | null;
   skipReason: string | null;
+
+  // Execution metrics
+  stepCount: number;
+  maxSteps: number | null;
+
+  // Multi-agent coordination
+  parentRunId: string | null;
+  resumedFrom: string | null;
+}
+
+/**
+ * Agent run message (conversation history)
+ */
+export interface AgentRunMessage {
+  id: string;
+  runId: string;
+  role: 'system' | 'user' | 'assistant' | 'tool_result';
+  content: Record<string, any>;
+  stepNumber: number;
+  createdAt: string;
+}
+
+/**
+ * Agent run tool call (tool invocation record)
+ */
+export interface AgentRunToolCall {
+  id: string;
+  runId: string;
+  messageId: string | null;
+  toolName: string;
+  input: Record<string, any>;
+  output: Record<string, any>;
+  status: 'completed' | 'error';
+  durationMs: number;
+  stepNumber: number;
+  createdAt: string;
+}
+
+/**
+ * Model configuration for agents
+ */
+export interface ModelConfig {
+  name: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+/**
+ * Agent definition (configuration/manifest)
+ */
+export interface AgentDefinition {
+  id: string;
+  productId?: string;
+  projectId: string;
+  name: string;
+  description?: string;
+  systemPrompt?: string;
+  model?: ModelConfig;
+  tools: string[];
+  flowType: string;
+  isDefault: boolean;
+  maxSteps?: number;
+  defaultTimeout?: number;
+  visibility: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Create agent definition payload
+ */
+export interface CreateAgentDefinitionPayload {
+  name: string;
+  description?: string;
+  systemPrompt?: string;
+  model?: ModelConfig;
+  tools?: string[];
+  flowType?: string;
+  isDefault?: boolean;
+  maxSteps?: number;
+  defaultTimeout?: number;
+  visibility?: string;
+}
+
+/**
+ * Update agent definition payload
+ */
+export interface UpdateAgentDefinitionPayload {
+  name?: string;
+  description?: string;
+  systemPrompt?: string;
+  model?: ModelConfig;
+  tools?: string[];
+  flowType?: string;
+  isDefault?: boolean;
+  maxSteps?: number;
+  defaultTimeout?: number;
+  visibility?: string;
+}
+
+/**
+ * Paginated response wrapper
+ */
+export interface PaginatedResponse<T> {
+  items: T[];
+  totalCount: number;
+  limit: number;
+  offset: number;
 }
 
 /**
@@ -241,6 +357,68 @@ export interface AgentsClient {
    * Batch trigger a reaction agent for multiple objects
    */
   batchTrigger(id: string, objectIds: string[]): Promise<BatchTriggerResponse>;
+
+  /**
+   * Get messages (conversation history) for a run
+   */
+  getRunMessages(projectId: string, runId: string): Promise<AgentRunMessage[]>;
+
+  /**
+   * Get tool calls for a run
+   */
+  getRunToolCalls(
+    projectId: string,
+    runId: string
+  ): Promise<AgentRunToolCall[]>;
+
+  /**
+   * Cancel a running agent run
+   */
+  cancelRun(agentId: string, runId: string): Promise<void>;
+
+  /**
+   * List agent definitions
+   */
+  listDefinitions(projectId: string): Promise<AgentDefinition[]>;
+
+  /**
+   * Get agent definition by ID
+   */
+  getDefinition(id: string): Promise<AgentDefinition | null>;
+
+  /**
+   * Create agent definition
+   */
+  createDefinition(
+    projectId: string,
+    payload: CreateAgentDefinitionPayload
+  ): Promise<AgentDefinition>;
+
+  /**
+   * Update agent definition
+   */
+  updateDefinition(
+    id: string,
+    payload: UpdateAgentDefinitionPayload
+  ): Promise<AgentDefinition>;
+
+  /**
+   * Delete agent definition
+   */
+  deleteDefinition(id: string): Promise<void>;
+
+  /**
+   * List all runs for a project with filtering
+   */
+  listProjectRuns(
+    projectId: string,
+    options?: {
+      limit?: number;
+      offset?: number;
+      agentId?: string;
+      status?: AgentRun['status'];
+    }
+  ): Promise<PaginatedResponse<AgentRun>>;
 }
 
 /**
@@ -342,6 +520,118 @@ export function createAgentsClient(
       );
       if (!response.success || !response.data) {
         throw new Error(response.error || 'Failed to batch trigger agent');
+      }
+      return response.data;
+    },
+
+    async getRunMessages(projectId: string, runId: string) {
+      const response = await fetchJson<AgentApiResponse<AgentRunMessage[]>>(
+        `${apiBase}/api/projects/${projectId}/agent-runs/${runId}/messages`
+      );
+      return response.data || [];
+    },
+
+    async getRunToolCalls(projectId: string, runId: string) {
+      const response = await fetchJson<AgentApiResponse<AgentRunToolCall[]>>(
+        `${apiBase}/api/projects/${projectId}/agent-runs/${runId}/tool-calls`
+      );
+      return response.data || [];
+    },
+
+    async cancelRun(agentId: string, runId: string) {
+      const response = await fetchJson<AgentApiResponse<void>>(
+        `${baseUrl}/${agentId}/runs/${runId}/cancel`,
+        {
+          method: 'POST',
+        }
+      );
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to cancel run');
+      }
+    },
+
+    async listDefinitions(projectId: string) {
+      const response = await fetchJson<AgentApiResponse<AgentDefinition[]>>(
+        `${apiBase}/api/admin/agent-definitions?projectId=${projectId}`
+      );
+      return response.data || [];
+    },
+
+    async getDefinition(id: string) {
+      const response = await fetchJson<AgentApiResponse<AgentDefinition>>(
+        `${apiBase}/api/admin/agent-definitions/${id}`
+      );
+      return response.data || null;
+    },
+
+    async createDefinition(
+      projectId: string,
+      payload: CreateAgentDefinitionPayload
+    ) {
+      const response = await fetchJson<AgentApiResponse<AgentDefinition>>(
+        `${apiBase}/api/admin/agent-definitions`,
+        {
+          method: 'POST',
+          body: { ...payload, projectId },
+        }
+      );
+      if (!response.success || !response.data) {
+        throw new Error(response.error || 'Failed to create agent definition');
+      }
+      return response.data;
+    },
+
+    async updateDefinition(id: string, payload: UpdateAgentDefinitionPayload) {
+      const response = await fetchJson<AgentApiResponse<AgentDefinition>>(
+        `${apiBase}/api/admin/agent-definitions/${id}`,
+        {
+          method: 'PATCH',
+          body: payload,
+        }
+      );
+      if (!response.success || !response.data) {
+        throw new Error(response.error || 'Failed to update agent definition');
+      }
+      return response.data;
+    },
+
+    async deleteDefinition(id: string) {
+      const response = await fetchJson<AgentApiResponse<void>>(
+        `${apiBase}/api/admin/agent-definitions/${id}`,
+        {
+          method: 'DELETE',
+        }
+      );
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to delete agent definition');
+      }
+    },
+
+    async listProjectRuns(
+      projectId: string,
+      options?: {
+        limit?: number;
+        offset?: number;
+        agentId?: string;
+        status?: AgentRun['status'];
+      }
+    ) {
+      const params = new URLSearchParams();
+      if (options?.limit) params.set('limit', options.limit.toString());
+      if (options?.offset) params.set('offset', options.offset.toString());
+      if (options?.agentId) params.set('agentId', options.agentId);
+      if (options?.status) params.set('status', options.status);
+
+      const queryString = params.toString();
+      const url = `${apiBase}/api/projects/${projectId}/agent-runs${
+        queryString ? `?${queryString}` : ''
+      }`;
+
+      const response = await fetchJson<
+        AgentApiResponse<PaginatedResponse<AgentRun>>
+      >(url);
+      if (!response.success || !response.data) {
+        throw new Error(response.error || 'Failed to list project runs');
       }
       return response.data;
     },
