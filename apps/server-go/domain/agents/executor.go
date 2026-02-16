@@ -250,6 +250,15 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.CallbackContext, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
+		// Check if context was cancelled (timeout or manual cancellation)
+		if ctx.Err() != nil {
+			ae.log.Warn("context cancelled, stopping agent",
+				slog.String("run_id", run.ID),
+				slog.String("reason", ctx.Err().Error()),
+			)
+			return nil, fmt.Errorf("agent stopped: %w", ctx.Err())
+		}
+
 		currentStep := tracker.increment()
 
 		// Check step limit
@@ -398,6 +407,36 @@ func (ae *AgentExecutor) runPipeline(
 		if event.IsFinalResponse() {
 			lastEvent = event
 		}
+	}
+
+	// Check if we exited due to context cancellation (timeout or manual cancellation)
+	if ctx.Err() != nil {
+		steps := tracker.current()
+		errMsg := "Run cancelled"
+		reason := "unknown"
+
+		if ctx.Err() == context.DeadlineExceeded {
+			reason = "timeout"
+			errMsg = "Run cancelled: timeout exceeded"
+		} else if ctx.Err() == context.Canceled {
+			reason = "cancelled"
+			errMsg = "Run cancelled: context cancelled"
+		}
+
+		ae.log.Warn("run cancelled by context",
+			slog.String("run_id", run.ID),
+			slog.String("reason", reason),
+			slog.Int("steps", steps),
+		)
+
+		_ = ae.repo.FailRunWithSteps(ctx, run.ID, errMsg, steps)
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusError,
+			Summary:  map[string]any{"error": errMsg, "reason": reason},
+			Steps:    steps,
+			Duration: time.Since(startTime),
+		}, nil
 	}
 
 	// Determine final status

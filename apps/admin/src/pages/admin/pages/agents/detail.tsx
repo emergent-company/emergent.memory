@@ -105,6 +105,16 @@ function StatusBadge({ status }: { status: AgentRun['status'] }) {
     },
     failed: { class: 'badge-error', icon: 'lucide--x', animate: false },
     error: { class: 'badge-error', icon: 'lucide--x', animate: false },
+    paused: {
+      class: 'badge-warning',
+      icon: 'lucide--pause',
+      animate: false,
+    },
+    cancelled: {
+      class: 'badge-neutral',
+      icon: 'lucide--ban',
+      animate: false,
+    },
     skipped: {
       class: 'badge-warning',
       icon: 'lucide--skip-forward',
