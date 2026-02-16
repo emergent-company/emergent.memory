@@ -56,28 +56,44 @@ var (
 	tokenScopes    string
 )
 
-// resolveProjectID gets the project ID from the --project-id flag or config
+// resolveProjectID gets the project ID from the --project-id flag or config.
+// The value can be either a UUID or a project name, which will be resolved to an ID.
 func resolveProjectID(cmd *cobra.Command) (string, error) {
-	if tokenProjectID != "" {
-		return tokenProjectID, nil
+	nameOrID := tokenProjectID
+
+	if nameOrID == "" {
+		// Fall back to config / env
+		configPath, _ := cmd.Flags().GetString("config")
+		if configPath == "" {
+			configPath = config.DiscoverPath("")
+		}
+
+		cfg, err := config.LoadWithEnv(configPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to load config: %w", err)
+		}
+
+		if cfg.ProjectID != "" {
+			nameOrID = cfg.ProjectID
+		}
 	}
 
-	// Fall back to config / env
-	configPath, _ := cmd.Flags().GetString("config")
-	if configPath == "" {
-		configPath = config.DiscoverPath("")
+	if nameOrID == "" {
+		return "", fmt.Errorf("project is required. Use --project-id flag with a project name or ID, set EMERGENT_PROJECT_ID, or configure it in your config file")
 	}
 
-	cfg, err := config.LoadWithEnv(configPath)
+	// If it's already a UUID, return directly
+	if isUUID(nameOrID) {
+		return nameOrID, nil
+	}
+
+	// Otherwise resolve the name to an ID
+	c, err := getClient(cmd)
 	if err != nil {
-		return "", fmt.Errorf("failed to load config: %w", err)
+		return "", err
 	}
 
-	if cfg.ProjectID != "" {
-		return cfg.ProjectID, nil
-	}
-
-	return "", fmt.Errorf("project ID is required. Use --project-id flag, set EMERGENT_PROJECT_ID, or configure it in your config file")
+	return resolveProjectNameOrID(c, nameOrID)
 }
 
 func runListTokens(cmd *cobra.Command, args []string) error {
@@ -106,6 +122,13 @@ func runListTokens(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%d. %s\n", i+1, t.Name)
 		fmt.Printf("   ID:      %s\n", t.ID)
 		fmt.Printf("   Prefix:  %s\n", t.Prefix)
+
+		// Fetch full token value via individual GET
+		fullToken, getErr := c.SDK.APITokens.Get(context.Background(), projectID, t.ID)
+		if getErr == nil && fullToken.Token != "" {
+			fmt.Printf("   Token:   %s\n", fullToken.Token)
+		}
+
 		fmt.Printf("   Scopes:  %s\n", strings.Join(t.Scopes, ", "))
 		fmt.Printf("   Created: %s\n", t.CreatedAt)
 		if t.RevokedAt != nil {
@@ -229,7 +252,7 @@ func runRevokeToken(cmd *cobra.Command, args []string) error {
 
 func init() {
 	// Persistent flag for all token subcommands
-	tokensCmd.PersistentFlags().StringVar(&tokenProjectID, "project-id", "", "Project ID (auto-detected from config/env if not specified)")
+	tokensCmd.PersistentFlags().StringVar(&tokenProjectID, "project-id", "", "Project name or ID (auto-detected from config/env if not specified)")
 
 	// Create token flags
 	createTokenCmd.Flags().StringVar(&tokenName, "name", "", "Token name (required)")
