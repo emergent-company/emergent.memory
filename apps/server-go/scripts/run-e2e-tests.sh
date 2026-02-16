@@ -15,6 +15,13 @@ set -e
 
 cd "$(dirname "$0")/.."
 
+# Load environment variables from workspace root
+if [ -f "../../.env.local" ]; then
+    set -a
+    source "../../.env.local"
+    set +a
+fi
+
 # Parse arguments
 VERBOSE=false
 PATTERN=""
