@@ -24,6 +24,47 @@ var upgradeFlags struct {
 	cliOnly bool
 }
 
+// Package manager detection functions
+func isPackageManagerInstalled() (string, bool) {
+	// Check if installed via pacman (Arch Linux)
+	if isArchLinux() {
+		cmd := exec.Command("pacman", "-Qi", "emergent")
+		if err := cmd.Run(); err == nil {
+			return "pacman", true
+		}
+	}
+	// Future: check for dpkg (Debian/Ubuntu), rpm (Fedora/RHEL), etc.
+	return "", false
+}
+
+func isArchLinux() bool {
+	// Check for Arch-specific files
+	if _, err := os.Stat("/etc/arch-release"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/etc/manjaro-release"); err == nil {
+		return true
+	}
+	// Check if pacman exists
+	if _, err := exec.LookPath("pacman"); err == nil {
+		return true
+	}
+	return false
+}
+
+func isCLIInPath() bool {
+	path, err := exec.LookPath("emergent")
+	if err != nil {
+		return false
+	}
+	// Verify it's actually the emergent CLI (not just any executable named emergent)
+	cmd := exec.Command(path, "version")
+	if err := cmd.Run(); err != nil {
+		return false
+	}
+	return true
+}
+
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
 	Short: "Upgrade Emergent (CLI and server)",
@@ -133,6 +174,36 @@ func runUpgradeServer(cmd *cobra.Command, args []string) error {
 
 func runUpgrade(cmd *cobra.Command, args []string) {
 	fmt.Println("Checking for updates...")
+
+	// Check if installed via package manager
+	pkgMgr, installedViaPkgMgr := isPackageManagerInstalled()
+	if installedViaPkgMgr {
+		fmt.Println()
+		fmt.Printf("⚠️  Emergent is installed via %s package manager\n", pkgMgr)
+		fmt.Println()
+		fmt.Println("To upgrade, use your system package manager:")
+		switch pkgMgr {
+		case "pacman":
+			fmt.Println("  sudo pacman -Syu emergent")
+		}
+		fmt.Println()
+		fmt.Println("The 'emergent upgrade' command is for standalone installations only.")
+		fmt.Println()
+		return
+	}
+
+	// Check if CLI is in PATH (for standalone installations)
+	if !isCLIInPath() {
+		fmt.Println()
+		fmt.Println("⚠️  Warning: emergent CLI is not in your PATH")
+		fmt.Println()
+		currentExec, err := os.Executable()
+		if err == nil {
+			execDir := filepath.Dir(currentExec)
+			fmt.Printf("Add to PATH: export PATH=\"%s:$PATH\"\n", execDir)
+			fmt.Println()
+		}
+	}
 
 	release, err := getLatestRelease()
 	if err != nil {
