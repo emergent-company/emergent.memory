@@ -50,36 +50,61 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 //
 // This allows overriding the default model for specific use cases (e.g., using
 // a different model for extraction vs verification).
+//
+// Backend selection:
+//   - If GCP_PROJECT_ID + VERTEX_AI_LOCATION are set → Vertex AI (production)
+//   - Else if GOOGLE_API_KEY is set → Google AI / Gemini API (standalone/dev)
+//   - Otherwise → error
 func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string) (model.LLM, error) {
-	if f.cfg.GCPProjectID == "" {
-		return nil, fmt.Errorf("GCP project ID is required for Vertex AI")
-	}
-	if f.cfg.VertexAILocation == "" {
-		return nil, fmt.Errorf("Vertex AI location is required")
-	}
 	if modelName == "" {
 		return nil, fmt.Errorf("model name is required")
 	}
 
-	// Configure for Vertex AI backend
-	clientCfg := &genai.ClientConfig{
-		Backend:  genai.BackendVertexAI,
-		Project:  f.cfg.GCPProjectID,
-		Location: f.cfg.VertexAILocation,
+	// Try Vertex AI first (production), then fall back to Google AI API key (standalone/dev)
+	if f.cfg.UseVertexAI() {
+		clientCfg := &genai.ClientConfig{
+			Backend:  genai.BackendVertexAI,
+			Project:  f.cfg.GCPProjectID,
+			Location: f.cfg.VertexAILocation,
+		}
+		f.log.Debug("creating ADK Gemini model via Vertex AI",
+			slog.String("model", modelName),
+			slog.String("project", f.cfg.GCPProjectID),
+			slog.String("location", f.cfg.VertexAILocation),
+		)
+
+		llm, err := gemini.NewModel(ctx, modelName, clientCfg)
+		if err == nil {
+			return llm, nil
+		}
+
+		// If Vertex AI fails and we have an API key, fall back
+		if f.cfg.GoogleAPIKey != "" {
+			f.log.Warn("Vertex AI model creation failed, falling back to Google AI API key",
+				slog.String("error", err.Error()),
+			)
+		} else {
+			return nil, fmt.Errorf("failed to create Gemini model: %w", err)
+		}
 	}
 
-	f.log.Debug("creating ADK Gemini model",
-		slog.String("model", modelName),
-		slog.String("project", f.cfg.GCPProjectID),
-		slog.String("location", f.cfg.VertexAILocation),
-	)
+	if f.cfg.GoogleAPIKey != "" {
+		clientCfg := &genai.ClientConfig{
+			Backend: genai.BackendGeminiAPI,
+			APIKey:  f.cfg.GoogleAPIKey,
+		}
+		f.log.Debug("creating ADK Gemini model via Google AI (API key)",
+			slog.String("model", modelName),
+		)
 
-	llm, err := gemini.NewModel(ctx, modelName, clientCfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Gemini model: %w", err)
+		llm, err := gemini.NewModel(ctx, modelName, clientCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Gemini model via Google AI: %w", err)
+		}
+		return llm, nil
 	}
 
-	return llm, nil
+	return nil, fmt.Errorf("no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI")
 }
 
 // DefaultGenerateConfig returns a default GenerateContentConfig for extraction tasks.
