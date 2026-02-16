@@ -797,6 +797,29 @@ CREATE TABLE kb.merge_provenance (
     role text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
+CREATE TABLE kb.mcp_servers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    type character varying(50) NOT NULL,
+    command text,
+    args text[] DEFAULT '{}'::text[],
+    env jsonb DEFAULT '{}'::jsonb,
+    url text,
+    headers jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+CREATE TABLE kb.mcp_server_tools (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    server_id uuid NOT NULL,
+    tool_name character varying(255) NOT NULL,
+    description text,
+    input_schema jsonb DEFAULT '{}'::jsonb,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
 CREATE TABLE kb.notifications (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     project_id uuid,
@@ -1318,6 +1341,18 @@ ALTER TABLE ONLY public.checkpoints
     ADD CONSTRAINT checkpoints_pkey PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id);
 ALTER TABLE ONLY public.goose_db_version
     ADD CONSTRAINT goose_db_version_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY kb.mcp_servers
+    ADD CONSTRAINT mcp_servers_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY kb.mcp_server_tools
+    ADD CONSTRAINT mcp_server_tools_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY kb.mcp_server_tools
+    ADD CONSTRAINT mcp_server_tools_server_id_fkey FOREIGN KEY (server_id) REFERENCES kb.mcp_servers(id) ON DELETE CASCADE;
+CREATE UNIQUE INDEX idx_mcp_servers_project_name ON kb.mcp_servers USING btree (project_id, name);
+CREATE INDEX idx_mcp_servers_project_id ON kb.mcp_servers USING btree (project_id);
+CREATE INDEX idx_mcp_servers_project_enabled ON kb.mcp_servers USING btree (project_id, enabled) WHERE (enabled = true);
+CREATE UNIQUE INDEX idx_mcp_server_tools_server_name ON kb.mcp_server_tools USING btree (server_id, tool_name);
+CREATE INDEX idx_mcp_server_tools_server_id ON kb.mcp_server_tools USING btree (server_id);
+CREATE INDEX idx_mcp_server_tools_enabled ON kb.mcp_server_tools USING btree (server_id, enabled) WHERE (enabled = true);
 CREATE INDEX "IDX_2e88b95787b903d46ab3cc3eb9" ON core.user_emails USING btree (user_id);
 CREATE UNIQUE INDEX "IDX_3ef997e65ad4f83f35356a1a6e" ON core.user_profiles USING btree (zitadel_user_id);
 CREATE UNIQUE INDEX "IDX_6594597afde633cfeab9a806e4" ON core.user_emails USING btree (email);

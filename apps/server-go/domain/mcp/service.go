@@ -30,6 +30,9 @@ type Service struct {
 	// Agent tool handler (injected to break import cycle)
 	agentToolHandler AgentToolHandler
 
+	// MCP registry tool handler (injected to break import cycle)
+	mcpRegistryToolHandler MCPRegistryToolHandler
+
 	// Schema version caching
 	cacheMu       sync.RWMutex
 	cachedVersion string
@@ -49,6 +52,11 @@ func NewService(db bun.IDB, graphService *graph.Service, searchSvc *search.Servi
 // SetAgentToolHandler sets the agent tool handler (called after construction to break circular init)
 func (s *Service) SetAgentToolHandler(h AgentToolHandler) {
 	s.agentToolHandler = h
+}
+
+// SetMCPRegistryToolHandler sets the MCP registry tool handler (called after construction to break circular init)
+func (s *Service) SetMCPRegistryToolHandler(h MCPRegistryToolHandler) {
+	s.mcpRegistryToolHandler = h
 }
 
 // GetToolDefinitions returns all available MCP tools
@@ -727,6 +735,11 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		tools = append(tools, s.agentToolHandler.GetAgentToolDefinitions()...)
 	}
 
+	// Append MCP registry tool definitions if handler is available
+	if s.mcpRegistryToolHandler != nil {
+		tools = append(tools, s.mcpRegistryToolHandler.GetMCPRegistryToolDefinitions()...)
+	}
+
 	return tools
 }
 
@@ -958,6 +971,32 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// Agent Catalog tools
 	case "list_available_agents":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
+
+	// MCP Registry tools
+	case "list_mcp_servers":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "get_mcp_server":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "create_mcp_server":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "update_mcp_server":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "delete_mcp_server":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "toggle_mcp_server_tool":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "sync_mcp_server_tools":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+
+	// Official MCP Registry browse/install tools
+	case "search_mcp_registry":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "get_mcp_registry_server":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "install_mcp_from_registry":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "inspect_mcp_server":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
 
 	default:
 		return nil, fmt.Errorf("tool not found: %s", toolName)
@@ -4147,5 +4186,39 @@ func (s *Service) delegateAgentTool(ctx context.Context, projectID, toolName str
 
 	default:
 		return nil, fmt.Errorf("unknown agent tool: %s", toolName)
+	}
+}
+
+// delegateRegistryTool dispatches MCP registry tool calls to the MCPRegistryToolHandler.
+func (s *Service) delegateRegistryTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error) {
+	if s.mcpRegistryToolHandler == nil {
+		return nil, fmt.Errorf("MCP registry tools not available: handler not configured")
+	}
+
+	switch toolName {
+	case "list_mcp_servers":
+		return s.mcpRegistryToolHandler.ExecuteListMCPServers(ctx, projectID, args)
+	case "get_mcp_server":
+		return s.mcpRegistryToolHandler.ExecuteGetMCPServer(ctx, projectID, args)
+	case "create_mcp_server":
+		return s.mcpRegistryToolHandler.ExecuteCreateMCPServer(ctx, projectID, args)
+	case "update_mcp_server":
+		return s.mcpRegistryToolHandler.ExecuteUpdateMCPServer(ctx, projectID, args)
+	case "delete_mcp_server":
+		return s.mcpRegistryToolHandler.ExecuteDeleteMCPServer(ctx, projectID, args)
+	case "toggle_mcp_server_tool":
+		return s.mcpRegistryToolHandler.ExecuteToggleMCPServerTool(ctx, projectID, args)
+	case "sync_mcp_server_tools":
+		return s.mcpRegistryToolHandler.ExecuteSyncMCPServerTools(ctx, projectID, args)
+	case "search_mcp_registry":
+		return s.mcpRegistryToolHandler.ExecuteSearchMCPRegistry(ctx, projectID, args)
+	case "get_mcp_registry_server":
+		return s.mcpRegistryToolHandler.ExecuteGetMCPRegistryServer(ctx, projectID, args)
+	case "install_mcp_from_registry":
+		return s.mcpRegistryToolHandler.ExecuteInstallMCPFromRegistry(ctx, projectID, args)
+	case "inspect_mcp_server":
+		return s.mcpRegistryToolHandler.ExecuteInspectMCPServer(ctx, projectID, args)
+	default:
+		return nil, fmt.Errorf("unknown MCP registry tool: %s", toolName)
 	}
 }
