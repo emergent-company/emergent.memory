@@ -434,18 +434,18 @@ func (r *Repository) FindDefinitionByName(ctx context.Context, projectID, name s
 	return def, nil
 }
 
-// FindAllTriggeredDefinitions returns all agent definitions that have a trigger set (non-null, non-empty).
-func (r *Repository) FindAllTriggeredDefinitions(ctx context.Context) ([]*AgentDefinition, error) {
-	var defs []*AgentDefinition
+// FindEnabledByTriggerType returns all enabled agents matching the given trigger type.
+func (r *Repository) FindEnabledByTriggerType(ctx context.Context, triggerType AgentTriggerType) ([]*Agent, error) {
+	var agents []*Agent
 	err := r.db.NewSelect().
-		Model(&defs).
-		Where("trigger IS NOT NULL").
-		Where("trigger != ''").
+		Model(&agents).
+		Where("enabled = true").
+		Where("trigger_type = ?", triggerType).
 		Scan(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return defs, nil
+	return agents, nil
 }
 
 // CreateDefinition creates a new agent definition.
