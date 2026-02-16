@@ -1,6 +1,37 @@
 package mcp
 
-import "time"
+import (
+	"context"
+	"time"
+)
+
+// AgentToolHandler is the interface for executing agent-related MCP tools.
+// Implemented by the agents domain to avoid circular imports (agents → mcp).
+type AgentToolHandler interface {
+	// Agent Definitions
+	ExecuteListAgentDefinitions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteCreateAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteUpdateAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteDeleteAgentDefinition(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Agents (runtime)
+	ExecuteListAgents(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetAgent(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteCreateAgent(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteUpdateAgent(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteDeleteAgent(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteTriggerAgent(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Agent Runs
+	ExecuteListAgentRuns(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetAgentRun(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetAgentRunMessages(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetAgentRunToolCalls(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// GetAgentToolDefinitions returns tool definitions for all agent tools
+	GetAgentToolDefinitions() []ToolDefinition
+}
 
 // InitializeParams represents the params for initialize method
 type InitializeParams struct {

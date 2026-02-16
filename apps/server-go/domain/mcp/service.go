@@ -27,6 +27,9 @@ type Service struct {
 	searchSvc    *search.Service
 	log          *slog.Logger
 
+	// Agent tool handler (injected to break import cycle)
+	agentToolHandler AgentToolHandler
+
 	// Schema version caching
 	cacheMu       sync.RWMutex
 	cachedVersion string
@@ -43,9 +46,14 @@ func NewService(db bun.IDB, graphService *graph.Service, searchSvc *search.Servi
 	}
 }
 
+// SetAgentToolHandler sets the agent tool handler (called after construction to break circular init)
+func (s *Service) SetAgentToolHandler(h AgentToolHandler) {
+	s.agentToolHandler = h
+}
+
 // GetToolDefinitions returns all available MCP tools
 func (s *Service) GetToolDefinitions() []ToolDefinition {
-	return []ToolDefinition{
+	tools := []ToolDefinition{
 		{
 			Name:        "schema_version",
 			Description: "Get the current schema version and metadata. Returns version hash, timestamp, total types, and relationships.",
@@ -713,6 +721,13 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 	}
+
+	// Append agent tool definitions if handler is available
+	if s.agentToolHandler != nil {
+		tools = append(tools, s.agentToolHandler.GetAgentToolDefinitions()...)
+	}
+
+	return tools
 }
 
 func (s *Service) GetResourceDefinitions() []ResourceDefinition {
@@ -903,6 +918,43 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeListMigrationArchives(ctx, projectID, args)
 	case "get_migration_archive":
 		return s.executeGetMigrationArchive(ctx, projectID, args)
+
+	// Agent Definition tools
+	case "list_agent_definitions":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "get_agent_definition":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "create_agent_definition":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "update_agent_definition":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "delete_agent_definition":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+
+	// Agent (runtime) tools
+	case "list_agents":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "get_agent":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "create_agent":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "update_agent":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "delete_agent":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "trigger_agent":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+
+	// Agent Run tools
+	case "list_agent_runs":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "get_agent_run":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "get_agent_run_messages":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "get_agent_run_tool_calls":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+
 	default:
 		return nil, fmt.Errorf("tool not found: %s", toolName)
 	}
@@ -4040,4 +4092,52 @@ func (s *Service) executeGetMigrationArchive(ctx context.Context, projectID stri
 	return &ToolResult{
 		Content: []ContentBlock{{Type: "text", Text: output}},
 	}, nil
+}
+
+// delegateAgentTool dispatches agent-related tool calls to the AgentToolHandler.
+func (s *Service) delegateAgentTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error) {
+	if s.agentToolHandler == nil {
+		return nil, fmt.Errorf("agent tools not available: handler not configured")
+	}
+
+	switch toolName {
+	// Agent Definitions
+	case "list_agent_definitions":
+		return s.agentToolHandler.ExecuteListAgentDefinitions(ctx, projectID, args)
+	case "get_agent_definition":
+		return s.agentToolHandler.ExecuteGetAgentDefinition(ctx, projectID, args)
+	case "create_agent_definition":
+		return s.agentToolHandler.ExecuteCreateAgentDefinition(ctx, projectID, args)
+	case "update_agent_definition":
+		return s.agentToolHandler.ExecuteUpdateAgentDefinition(ctx, projectID, args)
+	case "delete_agent_definition":
+		return s.agentToolHandler.ExecuteDeleteAgentDefinition(ctx, projectID, args)
+
+	// Agents (runtime)
+	case "list_agents":
+		return s.agentToolHandler.ExecuteListAgents(ctx, projectID, args)
+	case "get_agent":
+		return s.agentToolHandler.ExecuteGetAgent(ctx, projectID, args)
+	case "create_agent":
+		return s.agentToolHandler.ExecuteCreateAgent(ctx, projectID, args)
+	case "update_agent":
+		return s.agentToolHandler.ExecuteUpdateAgent(ctx, projectID, args)
+	case "delete_agent":
+		return s.agentToolHandler.ExecuteDeleteAgent(ctx, projectID, args)
+	case "trigger_agent":
+		return s.agentToolHandler.ExecuteTriggerAgent(ctx, projectID, args)
+
+	// Agent Runs
+	case "list_agent_runs":
+		return s.agentToolHandler.ExecuteListAgentRuns(ctx, projectID, args)
+	case "get_agent_run":
+		return s.agentToolHandler.ExecuteGetAgentRun(ctx, projectID, args)
+	case "get_agent_run_messages":
+		return s.agentToolHandler.ExecuteGetAgentRunMessages(ctx, projectID, args)
+	case "get_agent_run_tool_calls":
+		return s.agentToolHandler.ExecuteGetAgentRunToolCalls(ctx, projectID, args)
+
+	default:
+		return nil, fmt.Errorf("unknown agent tool: %s", toolName)
+	}
 }
