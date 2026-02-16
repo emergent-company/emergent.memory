@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
@@ -24,9 +25,9 @@ var listProjectsCmd = &cobra.Command{
 }
 
 var getProjectCmd = &cobra.Command{
-	Use:   "get [id]",
+	Use:   "get [name-or-id]",
 	Short: "Get project details",
-	Long:  "Get details for a specific project by ID",
+	Long:  "Get details for a specific project by name or ID",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runGetProject,
 }
@@ -80,8 +81,7 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Found %d project(s):\n\n", len(projectList))
 	for i, p := range projectList {
-		fmt.Printf("%d. %s\n", i+1, p.Name)
-		fmt.Printf("   ID: %s\n", p.ID)
+		fmt.Printf("%d. %s (%s)\n", i+1, p.Name, p.ID)
 		if p.KBPurpose != nil && *p.KBPurpose != "" {
 			fmt.Printf("   KB Purpose: %s\n", *p.KBPurpose)
 		}
@@ -92,9 +92,12 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 }
 
 func runGetProject(cmd *cobra.Command, args []string) error {
-	projectID := args[0]
-
 	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	projectID, err := resolveProjectNameOrID(c, args[0])
 	if err != nil {
 		return err
 	}
@@ -104,14 +107,66 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get project: %w", err)
 	}
 
-	fmt.Printf("Project: %s\n", project.Name)
-	fmt.Printf("  ID:          %s\n", project.ID)
+	fmt.Printf("Project: %s (%s)\n", project.Name, project.ID)
 	fmt.Printf("  Org ID:      %s\n", project.OrgID)
 	if project.KBPurpose != nil && *project.KBPurpose != "" {
 		fmt.Printf("  KB Purpose:  %s\n", *project.KBPurpose)
 	}
 
 	return nil
+}
+
+// isUUID checks if a string looks like a UUID
+func isUUID(s string) bool {
+	// Simple check: UUIDs are 36 chars with hyphens in specific positions
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+		} else if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveProjectNameOrID resolves a project name or ID to a project ID.
+// If the input looks like a UUID, it's returned as-is.
+// Otherwise, it fetches all projects and finds a match by name (case-insensitive).
+func resolveProjectNameOrID(c *client.Client, nameOrID string) (string, error) {
+	if isUUID(nameOrID) {
+		return nameOrID, nil
+	}
+
+	// Treat as a name — look up all projects and match
+	projectList, err := c.SDK.Projects.List(context.Background(), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to list projects for name resolution: %w", err)
+	}
+
+	var matches []projects.Project
+	for _, p := range projectList {
+		if strings.EqualFold(p.Name, nameOrID) {
+			matches = append(matches, p)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no project found with name %q", nameOrID)
+	case 1:
+		return matches[0].ID, nil
+	default:
+		fmt.Printf("Multiple projects match %q:\n", nameOrID)
+		for _, p := range matches {
+			fmt.Printf("  - %s (%s)\n", p.Name, p.ID)
+		}
+		return "", fmt.Errorf("ambiguous project name %q — use the project ID instead", nameOrID)
+	}
 }
 
 func runCreateProject(cmd *cobra.Command, args []string) error {
@@ -147,8 +202,7 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("Project created successfully!")
-	fmt.Printf("  ID:   %s\n", project.ID)
-	fmt.Printf("  Name: %s\n", project.Name)
+	fmt.Printf("  Name: %s (%s)\n", project.Name, project.ID)
 
 	return nil
 }

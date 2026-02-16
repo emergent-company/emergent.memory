@@ -397,17 +397,26 @@ func runGetAgentRuns(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// resolveAgentProjectID resolves the project ID from --project-id flag or config
+// resolveAgentProjectID resolves the project ID from --project-id flag or config.
+// Accepts both project names and IDs.
 func resolveAgentProjectID(cmd *cobra.Command) (string, error) {
 	if agentProjectID != "" {
-		return agentProjectID, nil
+		if isUUID(agentProjectID) {
+			return agentProjectID, nil
+		}
+		// Resolve name to ID
+		c, err := getClient(cmd)
+		if err != nil {
+			return "", err
+		}
+		return resolveProjectNameOrID(c, agentProjectID)
 	}
 	return resolveProjectID(cmd)
 }
 
 func init() {
 	// Persistent flags for all agent subcommands
-	agentsCmd.PersistentFlags().StringVar(&agentProjectID, "project-id", "", "Project ID (auto-detected from config/env if not specified)")
+	agentsCmd.PersistentFlags().StringVar(&agentProjectID, "project-id", "", "Project name or ID (auto-detected from config/env if not specified)")
 
 	// Create agent flags
 	createAgentCmd.Flags().StringVar(&agentName, "name", "", "Agent name (required)")
