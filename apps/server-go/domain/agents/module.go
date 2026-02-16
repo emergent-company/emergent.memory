@@ -59,7 +59,7 @@ func provideTriggerService(
 	return NewTriggerService(sched, executor, repo, log)
 }
 
-// registerAgentTriggers syncs all agent definition triggers on startup.
+// registerAgentTriggers syncs all agent triggers on startup.
 func registerAgentTriggers(lc fx.Lifecycle, ts *TriggerService) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
