@@ -19,10 +19,12 @@ var Module = fx.Module("agents",
 		provideAgentExecutor,
 		provideHandler,
 		provideTriggerService,
+		provideMCPToolHandler,
 	),
 	fx.Invoke(
 		RegisterRoutes,
 		registerAgentTriggers,
+		registerAgentToolHandler,
 	),
 )
 
@@ -57,6 +59,17 @@ func provideTriggerService(
 	log *slog.Logger,
 ) *TriggerService {
 	return NewTriggerService(sched, executor, repo, log)
+}
+
+// provideMCPToolHandler creates an MCPToolHandler from fx dependencies.
+func provideMCPToolHandler(repo *Repository, executor *AgentExecutor, log *slog.Logger) *MCPToolHandler {
+	return NewMCPToolHandler(repo, executor, log)
+}
+
+// registerAgentToolHandler injects the MCPToolHandler into the MCP Service
+// via setter injection to break the circular dependency (agents → mcp).
+func registerAgentToolHandler(mcpService *mcp.Service, handler *MCPToolHandler) {
+	mcpService.SetAgentToolHandler(handler)
 }
 
 // registerAgentTriggers syncs all agent triggers on startup.
