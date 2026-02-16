@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/uptrace/bun"
 
 	"github.com/emergent/emergent-core/internal/database"
@@ -1178,15 +1179,31 @@ const graphObjectColumns = `id, project_id, branch_id, canonical_id, supersedes_
 	extraction_job_id, extraction_confidence, needs_review, reviewed_by, reviewed_at,
 	actor_type, actor_id, schema_version`
 
-// scanGraphObject scans a row into a GraphObject.
-func scanGraphObject(rows *sql.Rows, obj *GraphObject) error {
-	return rows.Scan(
+// scanGraphObject scans a row from a raw SQL query into a GraphObject.
+// Uses JSONMap and pq.StringArray intermediaries because database/sql's rows.Scan()
+// cannot directly scan JSONB ([]uint8) into map[string]any or PostgreSQL arrays into []string.
+func scanGraphObject(rows *sql.Rows, obj *GraphObject, extraDest ...any) error {
+	var props JSONMap
+	var changeSummary JSONMap
+	var labels pq.StringArray
+
+	dest := []any{
 		&obj.ID, &obj.ProjectID, &obj.BranchID, &obj.CanonicalID, &obj.SupersedesID, &obj.Version,
-		&obj.Type, &obj.Key, &obj.Status, &obj.Properties, &obj.Labels, &obj.ChangeSummary, &obj.ContentHash,
+		&obj.Type, &obj.Key, &obj.Status, &props, &labels, &changeSummary, &obj.ContentHash,
 		&obj.CreatedAt, &obj.UpdatedAt, &obj.DeletedAt, &obj.FTS, &obj.EmbeddingUpdatedAt,
 		&obj.ExtractionJobID, &obj.ExtractionConfidence, &obj.NeedsReview, &obj.ReviewedBy, &obj.ReviewedAt,
 		&obj.ActorType, &obj.ActorID, &obj.SchemaVersion,
-	)
+	}
+	dest = append(dest, extraDest...)
+
+	if err := rows.Scan(dest...); err != nil {
+		return err
+	}
+
+	obj.Properties = map[string]any(props)
+	obj.ChangeSummary = map[string]any(changeSummary)
+	obj.Labels = []string(labels)
+	return nil
 }
 
 // FTSSearchParams contains parameters for full-text search.
@@ -1266,14 +1283,7 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 	for rows.Next() {
 		obj := &GraphObject{}
 		var rank float32
-		err := rows.Scan(
-			&obj.ID, &obj.ProjectID, &obj.BranchID, &obj.CanonicalID, &obj.SupersedesID, &obj.Version,
-			&obj.Type, &obj.Key, &obj.Status, &obj.Properties, &obj.Labels, &obj.ChangeSummary, &obj.ContentHash,
-			&obj.CreatedAt, &obj.UpdatedAt, &obj.DeletedAt, &obj.FTS, &obj.EmbeddingUpdatedAt,
-			&obj.ExtractionJobID, &obj.ExtractionConfidence, &obj.NeedsReview, &obj.ReviewedBy, &obj.ReviewedAt,
-			&obj.ActorType, &obj.ActorID, &obj.SchemaVersion,
-			&rank,
-		)
+		err := scanGraphObject(rows, obj, &rank)
 		if err != nil {
 			r.log.Error("FTS search row scan failed", logger.Error(err))
 			return nil, apperror.ErrDatabase.WithInternal(err)
@@ -1397,14 +1407,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 	for rows.Next() {
 		obj := &GraphObject{}
 		var distance float32
-		err := rows.Scan(
-			&obj.ID, &obj.ProjectID, &obj.BranchID, &obj.CanonicalID, &obj.SupersedesID, &obj.Version,
-			&obj.Type, &obj.Key, &obj.Status, &obj.Properties, &obj.Labels, &obj.ChangeSummary, &obj.ContentHash,
-			&obj.CreatedAt, &obj.UpdatedAt, &obj.DeletedAt, &obj.FTS, &obj.EmbeddingUpdatedAt,
-			&obj.ExtractionJobID, &obj.ExtractionConfidence, &obj.NeedsReview, &obj.ReviewedBy, &obj.ReviewedAt,
-			&obj.ActorType, &obj.ActorID, &obj.SchemaVersion,
-			&distance,
-		)
+		err := scanGraphObject(rows, obj, &distance)
 		if err != nil {
 			r.log.Error("Vector search row scan failed", logger.Error(err))
 			return nil, apperror.ErrDatabase.WithInternal(err)
@@ -1678,14 +1681,18 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 	var results []*SimilarSearchResult
 	for rows.Next() {
 		result := &SimilarSearchResult{}
+		var props JSONMap
+		var labels pq.StringArray
 		err := rows.Scan(
 			&result.ID, &result.CanonicalID, &result.Version, &result.ProjectID, &result.BranchID,
-			&result.Type, &result.Key, &result.Status, &result.Properties, &result.Labels, &result.CreatedAt,
+			&result.Type, &result.Key, &result.Status, &props, &labels, &result.CreatedAt,
 			&result.Distance,
 		)
 		if err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
+		result.Properties = map[string]any(props)
+		result.Labels = []string(labels)
 		results = append(results, result)
 	}
 
