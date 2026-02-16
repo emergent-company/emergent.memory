@@ -25,7 +25,7 @@ func NewHandler(svc *Service) *Handler {
 // @Description  List all MCP servers registered for the current project
 // @Tags         mcp-registry
 // @Produce      json
-// @Success      200 {object} SuccessResponse{data=[]MCPServerDTO}
+// @Success      200 {object} mcpregistry.APIResponse[[]mcpregistry.MCPServerDTO]
 // @Failure      401 {object} apperror.Error
 // @Failure      500 {object} apperror.Error
 // @Router       /api/admin/mcp-servers [get]
@@ -58,7 +58,7 @@ func (h *Handler) ListServers(c echo.Context) error {
 // @Tags         mcp-registry
 // @Produce      json
 // @Param        id path string true "Server ID"
-// @Success      200 {object} SuccessResponse{data=MCPServerDetailDTO}
+// @Success      200 {object} mcpregistry.APIResponse[mcpregistry.MCPServerDetailDTO]
 // @Failure      401 {object} apperror.Error
 // @Failure      404 {object} apperror.Error
 // @Failure      500 {object} apperror.Error
@@ -96,7 +96,7 @@ func (h *Handler) GetServer(c echo.Context) error {
 // @Accept       json
 // @Produce      json
 // @Param        server body CreateMCPServerDTO true "MCP Server configuration"
-// @Success      201 {object} SuccessResponse{data=MCPServerDTO}
+// @Success      201 {object} mcpregistry.APIResponse[mcpregistry.MCPServerDTO]
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
 // @Failure      500 {object} apperror.Error
@@ -132,7 +132,7 @@ func (h *Handler) CreateServer(c echo.Context) error {
 // @Produce      json
 // @Param        id path string true "Server ID"
 // @Param        server body UpdateMCPServerDTO true "Updated server configuration"
-// @Success      200 {object} SuccessResponse{data=MCPServerDTO}
+// @Success      200 {object} mcpregistry.APIResponse[mcpregistry.MCPServerDTO]
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
 // @Failure      404 {object} apperror.Error

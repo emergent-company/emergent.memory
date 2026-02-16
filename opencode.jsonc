@@ -1,8 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "github-copilot/claude-opus-4.5",
+  "model": "github-copilot/claude-opus-4.6",
   // Use a fast, cheap model for automatic session title generation
-  "small_model": "github-copilot/gpt-4o-mini",
+  "small_model": "github-copilot/gpt-5-mini",
   "theme": "tokyonight",
   // Keybinds for session management
   "keybinds": {
@@ -26,6 +26,11 @@
       "type": "local",
       "command": ["./scripts/mcp-postgres-wrapper.sh"],
       "timeout": 60000
+    },
+    "diane": {
+        "type": "remote",
+        "url": "http://mcp-emergent:8765/mcp/sse?context=work",
+        "oauth": false
     },
     "context7": {
       "type": "remote",
