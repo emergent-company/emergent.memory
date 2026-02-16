@@ -608,10 +608,46 @@ func (h *MCPToolHandler) ExecuteGetAgentRunToolCalls(ctx context.Context, projec
 }
 
 // ============================================================================
+// Agent Catalog Tools
+// ============================================================================
+
+// ExecuteListAvailableAgents returns a lightweight catalog of all agent definitions
+// for the project, including name, description, tools, flow_type, and visibility.
+// Unlike list_agent_definitions, this returns a simplified summary without IDs or timestamps,
+// matching the format used by agent coordination tools (spawn_agents).
+func (h *MCPToolHandler) ExecuteListAvailableAgents(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	// Always include internal — MCP callers should see the full catalog
+	defs, err := h.repo.FindAllDefinitions(ctx, projectID, true)
+	if err != nil {
+		return errResult("failed to list available agents: " + err.Error())
+	}
+
+	agents := make([]AgentSummary, 0, len(defs))
+	for _, def := range defs {
+		desc := ""
+		if def.Description != nil {
+			desc = *def.Description
+		}
+		agents = append(agents, AgentSummary{
+			Name:        def.Name,
+			Description: desc,
+			Tools:       def.Tools,
+			FlowType:    def.FlowType,
+			Visibility:  string(def.Visibility),
+		})
+	}
+
+	return wrapResult(ListAvailableAgentsResult{
+		Agents: agents,
+		Count:  len(agents),
+	})
+}
+
+// ============================================================================
 // Tool Definitions
 // ============================================================================
 
-// GetAgentToolDefinitions returns MCP tool definitions for all 16 agent tools.
+// GetAgentToolDefinitions returns MCP tool definitions for all agent tools.
 func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 	return []mcp.ToolDefinition{
 		// --- Agent Definitions ---
@@ -987,6 +1023,17 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 					},
 				},
 				Required: []string{"run_id"},
+			},
+		},
+
+		// --- Agent Catalog ---
+		{
+			Name:        "list_available_agents",
+			Description: "List all available agents in the project catalog. Returns a lightweight summary with name, description, tools list, flow_type, and visibility for each agent definition. Does not include system prompts or IDs — use list_agent_definitions for full details.",
+			InputSchema: mcp.InputSchema{
+				Type:       "object",
+				Properties: map[string]mcp.PropertySchema{},
+				Required:   []string{},
 			},
 		},
 	}
