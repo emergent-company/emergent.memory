@@ -1,0 +1,88 @@
+# Maintainer: Emergent <support@emergent-company.ai>
+pkgname=emergent
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Emergent - AI-powered knowledge management and RAG platform"
+arch=('x86_64' 'aarch64')
+url="https://github.com/emergent-company/emergent"
+license=('custom')
+depends=('glibc' 'docker' 'docker-compose')
+optdepends=(
+    'postgresql: for local database setup'
+    'nodejs: for admin frontend development'
+)
+makedepends=('go>=1.23' 'git' 'nodejs>=20' 'pnpm')
+backup=(
+    'etc/emergent/config.json'
+    'etc/emergent/.env'
+)
+source=()
+
+# When building from local source, run: makepkg -si
+# The PKGBUILD expects to be run from the repo root or with the repo available
+
+build() {
+    cd "$startdir/../.."
+
+    local _version
+    _version=$(git describe --tags --always --dirty 2>/dev/null || echo "$pkgver")
+
+    echo "Building Emergent ${_version}..."
+    
+    # Build Go server
+    echo "Building server..."
+    cd apps/server-go
+    CGO_ENABLED=1 go build \
+        -ldflags="-s -w -X main.Version=${_version}" \
+        -o "${srcdir}/emergent-server" \
+        ./cmd/server
+
+    # Build CLI
+    echo "Building CLI..."
+    cd ../../tools/emergent-cli
+    CGO_ENABLED=0 go build \
+        -ldflags="-s -w -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.Version=${_version}" \
+        -o "${srcdir}/emergent" \
+        .
+
+    # Build admin frontend (production build)
+    echo "Building admin frontend..."
+    cd ../../apps/admin
+    pnpm install --frozen-lockfile
+    pnpm run build
+    # Copy dist to srcdir
+    cp -r dist "${srcdir}/admin-dist"
+}
+
+package() {
+    # Install binaries
+    install -Dm755 "${srcdir}/emergent" "${pkgdir}/usr/bin/emergent"
+    install -Dm755 "${srcdir}/emergent-server" "${pkgdir}/usr/bin/emergent-server"
+
+    # Install systemd services
+    install -Dm644 "${startdir}/emergent-server.service" \
+        "${pkgdir}/usr/lib/systemd/system/emergent-server.service"
+    install -Dm644 "${startdir}/emergent-admin.service" \
+        "${pkgdir}/usr/lib/systemd/system/emergent-admin.service"
+
+    # Install default configuration
+    install -Dm644 "${startdir}/emergent.config.json" \
+        "${pkgdir}/etc/emergent/config.json"
+    
+    # Install environment template
+    install -Dm644 "${startdir}/emergent.env.template" \
+        "${pkgdir}/etc/emergent/.env.template"
+
+    # Create data directories
+    install -dm755 "${pkgdir}/var/lib/emergent"
+    install -dm755 "${pkgdir}/var/log/emergent"
+
+    # Install admin frontend
+    install -dm755 "${pkgdir}/usr/share/emergent/admin"
+    cp -r "${srcdir}/admin-dist/"* "${pkgdir}/usr/share/emergent/admin/"
+
+    # Install Docker compose files (for dependencies)
+    install -dm755 "${pkgdir}/usr/share/emergent/docker"
+    install -Dm644 "${startdir}/../../docker-compose.yml" \
+        "${pkgdir}/usr/share/emergent/docker/docker-compose.yml"
+}
