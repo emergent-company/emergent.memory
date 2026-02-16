@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"google.golang.org/adk/tool/functiontool"
 
 	"github.com/emergent/emergent-core/domain/mcp"
+	"github.com/emergent/emergent-core/domain/mcpregistry"
 )
 
 // Coordination tool names that are restricted for sub-agents by default.
@@ -30,16 +32,18 @@ const DefaultMaxDepth = 2
 
 // ToolPoolConfig holds configuration for creating a ToolPool.
 type ToolPoolConfig struct {
-	MCPService *mcp.Service
-	Logger     *slog.Logger
+	MCPService      *mcp.Service
+	RegistryService *mcpregistry.Service
+	Logger          *slog.Logger
 }
 
 // ToolPool maintains a per-project cache of available tools, combining
 // built-in MCP tools with external MCP server tools into a unified set.
 // Tool resolution filters this pool per agent definition at pipeline build time.
 type ToolPool struct {
-	mcpService *mcp.Service
-	log        *slog.Logger
+	mcpService      *mcp.Service
+	registryService *mcpregistry.Service
+	log             *slog.Logger
 
 	// Per-project cache of tool definitions
 	mu    sync.RWMutex
@@ -62,9 +66,10 @@ func NewToolPool(cfg ToolPoolConfig) *ToolPool {
 	}
 
 	return &ToolPool{
-		mcpService: cfg.MCPService,
-		log:        log,
-		cache:      make(map[string]*projectToolCache),
+		mcpService:      cfg.MCPService,
+		registryService: cfg.RegistryService,
+		log:             log,
+		cache:           make(map[string]*projectToolCache),
 	}
 }
 
@@ -112,9 +117,38 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 		)
 	}
 
-	// 2. External MCP server tools (stub — will be implemented in Task Group 12)
-	// When external MCP connections are implemented, their tools will be
-	// discovered via tools/list and added to the cache here.
+	// 2. External MCP server tools from mcpregistry
+	if tp.registryService != nil {
+		extTools, err := tp.registryService.GetEnabledToolsForProject(context.Background(), projectID)
+		if err != nil {
+			tp.log.Warn("failed to load external MCP tools into pool",
+				slog.String("project_id", projectID),
+				slog.String("error", err.Error()),
+			)
+		} else {
+			for _, et := range extTools {
+				// Prefix external tool names: servername_toolname (Diane convention)
+				prefixedName := et.ServerName + "_" + et.ToolName
+				desc := ""
+				if et.Description != nil {
+					desc = *et.Description
+				}
+				td := mcp.ToolDefinition{
+					Name:        prefixedName,
+					Description: desc,
+					InputSchema: mapToInputSchema(et.InputSchema),
+				}
+				cache.toolDefs[prefixedName] = td
+				cache.toolNames = append(cache.toolNames, prefixedName)
+			}
+			if len(extTools) > 0 {
+				tp.log.Debug("loaded external MCP tools into pool",
+					slog.String("project_id", projectID),
+					slog.Int("count", len(extTools)),
+				)
+			}
+		}
+	}
 
 	return cache
 }
@@ -340,12 +374,39 @@ func (tp *ToolPool) wrapTools(projectID string, defs []mcp.ToolDefinition) ([]to
 }
 
 // wrapSingleTool wraps a single MCP tool definition as an ADK tool.
+// For builtin tools, it delegates to mcp.Service.ExecuteTool().
+// For external tools (prefixed with server name), it delegates to
+// mcpregistry.Service.CallExternalTool() which proxies through the
+// external MCP server connection.
 func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (tool.Tool, error) {
 	// Capture for closure
-	svc := tp.mcpService
-	pid := projectID
 	toolName := td.Name
 
+	// Check if this is an external tool (has server name prefix)
+	isExternal := mcpregistry.IsExternalTool(toolName)
+
+	if isExternal && tp.registryService != nil {
+		// External tool: route through proxy
+		regSvc := tp.registryService
+		pid := projectID
+		return functiontool.New(
+			functiontool.Config{
+				Name:        toolName,
+				Description: td.Description,
+			},
+			func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+				result, err := regSvc.CallExternalTool(ctx, pid, toolName, args)
+				if err != nil {
+					return map[string]any{"error": err.Error()}, nil
+				}
+				return convertToolResult(result)
+			},
+		)
+	}
+
+	// Builtin tool: route through mcp.Service
+	svc := tp.mcpService
+	pid := projectID
 	return functiontool.New(
 		functiontool.Config{
 			Name:        toolName,
@@ -356,29 +417,47 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 			if err != nil {
 				return map[string]any{"error": err.Error()}, nil
 			}
-
-			// Convert MCP ToolResult to map
-			if result != nil && len(result.Content) > 0 {
-				var textParts []string
-				for _, block := range result.Content {
-					if block.Text != "" {
-						textParts = append(textParts, block.Text)
-					}
-				}
-				if len(textParts) == 1 {
-					// Try to parse as JSON first
-					var parsed map[string]any
-					if err := json.Unmarshal([]byte(textParts[0]), &parsed); err == nil {
-						return parsed, nil
-					}
-					return map[string]any{"result": textParts[0]}, nil
-				}
-				return map[string]any{"results": textParts}, nil
-			}
-
-			return map[string]any{"result": "ok"}, nil
+			return convertToolResult(result)
 		},
 	)
+}
+
+// convertToolResult converts an MCP ToolResult to a map for the ADK function tool response.
+func convertToolResult(result *mcp.ToolResult) (map[string]any, error) {
+	if result != nil && len(result.Content) > 0 {
+		// If the external tool reported an error, include that flag
+		if result.IsError {
+			var textParts []string
+			for _, block := range result.Content {
+				if block.Text != "" {
+					textParts = append(textParts, block.Text)
+				}
+			}
+			errMsg := "tool execution failed"
+			if len(textParts) > 0 {
+				errMsg = textParts[0]
+			}
+			return map[string]any{"error": errMsg}, nil
+		}
+
+		var textParts []string
+		for _, block := range result.Content {
+			if block.Text != "" {
+				textParts = append(textParts, block.Text)
+			}
+		}
+		if len(textParts) == 1 {
+			// Try to parse as JSON first
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(textParts[0]), &parsed); err == nil {
+				return parsed, nil
+			}
+			return map[string]any{"result": textParts[0]}, nil
+		}
+		return map[string]any{"results": textParts}, nil
+	}
+
+	return map[string]any{"result": "ok"}, nil
 }
 
 // isGlobPattern returns true if the string contains glob metacharacters.
@@ -411,4 +490,26 @@ func (tp *ToolPool) ToolCount(projectID string) int {
 func (tp *ToolPool) String(projectID string) string {
 	cache := tp.getOrBuildCache(projectID)
 	return fmt.Sprintf("ToolPool[project=%s, tools=%d]", projectID, len(cache.toolNames))
+}
+
+// mapToInputSchema converts a generic map[string]any (from JSONB) back to mcp.InputSchema.
+// This is the inverse of mcpregistry.schemaToMap().
+func mapToInputSchema(m map[string]any) mcp.InputSchema {
+	if m == nil {
+		return mcp.InputSchema{Type: "object"}
+	}
+
+	// Marshal map to JSON, then unmarshal into InputSchema
+	data, err := json.Marshal(m)
+	if err != nil {
+		return mcp.InputSchema{Type: "object"}
+	}
+	var schema mcp.InputSchema
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return mcp.InputSchema{Type: "object"}
+	}
+	if schema.Type == "" {
+		schema.Type = "object"
+	}
+	return schema
 }
