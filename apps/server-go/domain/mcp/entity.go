@@ -5,6 +5,29 @@ import (
 	"time"
 )
 
+// MCPRegistryToolHandler is the interface for executing MCP registry management tools.
+// Implemented by the mcpregistry domain to avoid circular imports (mcpregistry → mcp).
+type MCPRegistryToolHandler interface {
+	ExecuteListMCPServers(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteCreateMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteUpdateMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteDeleteMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteToggleMCPServerTool(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteSyncMCPServerTools(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Official MCP Registry browse/install tools
+	ExecuteSearchMCPRegistry(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetMCPRegistryServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteInstallMCPFromRegistry(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Inspect/test-connection tool
+	ExecuteInspectMCPServer(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// GetMCPRegistryToolDefinitions returns tool definitions for all MCP registry tools
+	GetMCPRegistryToolDefinitions() []ToolDefinition
+}
+
 // AgentToolHandler is the interface for executing agent-related MCP tools.
 // Implemented by the agents domain to avoid circular imports (agents → mcp).
 type AgentToolHandler interface {
@@ -193,6 +216,7 @@ type ToolsCallParams struct {
 // ToolResult represents the result of a tool call (MCP content format)
 type ToolResult struct {
 	Content []ContentBlock `json:"content"`
+	IsError bool           `json:"isError,omitempty"`
 }
 
 // ContentBlock represents a piece of content in tool results

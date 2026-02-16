@@ -29,6 +29,7 @@ import (
 	"github.com/emergent/emergent-core/domain/integrations"
 	"github.com/emergent/emergent-core/domain/invites"
 	"github.com/emergent/emergent-core/domain/mcp"
+	"github.com/emergent/emergent-core/domain/mcpregistry"
 	"github.com/emergent/emergent-core/domain/monitoring"
 	"github.com/emergent/emergent-core/domain/notifications"
 	"github.com/emergent/emergent-core/domain/orgs"
@@ -214,6 +215,13 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	mcpSSEHandler := mcp.NewSSEHandler(mcpSvc, mcpHandler, log)
 	mcpStreamableHandler := mcp.NewStreamableHTTPHandler(mcpSvc, log)
 	mcp.RegisterRoutes(e, mcpHandler, mcpSSEHandler, mcpStreamableHandler, authMiddleware)
+
+	// Register MCP registry routes
+	mcpRegistryRepo := mcpregistry.NewRepository(db)
+	mcpRegistryClient := mcpregistry.NewRegistryClient()
+	mcpRegistrySvc := mcpregistry.NewService(mcpRegistryRepo, mcpSvc, mcpRegistryClient, log)
+	mcpRegistryHandler := mcpregistry.NewHandler(mcpRegistrySvc)
+	mcpregistry.RegisterRoutes(e, mcpRegistryHandler, authMiddleware)
 
 	// Register useraccess routes
 	useraccessSvc := useraccess.NewService(db)
