@@ -1,0 +1,43 @@
+[Unit]
+Description=Emergent Server
+Documentation=https://github.com/emergent-company/emergent
+After=network-online.target docker.service postgresql.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=emergent
+Group=emergent
+WorkingDirectory=/var/lib/emergent
+ExecStart=/usr/bin/emergent-server
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment=HOME=/var/lib/emergent
+Environment=EMERGENT_CONFIG=/etc/emergent/config.json
+EnvironmentFile=-/etc/emergent/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=emergent-server
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/emergent /var/log/emergent
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

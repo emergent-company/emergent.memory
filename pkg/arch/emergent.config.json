@@ -1,0 +1,23 @@
+{
+  "server": {
+    "port": 3002,
+    "host": "0.0.0.0"
+  },
+  "admin": {
+    "port": 5176,
+    "host": "0.0.0.0"
+  },
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "name": "emergent",
+    "user": "emergent"
+  },
+  "docker": {
+    "compose_file": "/usr/share/emergent/docker/docker-compose.yml"
+  },
+  "paths": {
+    "data": "/var/lib/emergent",
+    "logs": "/var/log/emergent"
+  }
+}

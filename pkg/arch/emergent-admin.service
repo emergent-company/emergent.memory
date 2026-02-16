@@ -1,0 +1,38 @@
+[Unit]
+Description=Emergent Admin Frontend
+Documentation=https://github.com/emergent-company/emergent
+After=network-online.target emergent-server.service
+Wants=network-online.target
+PartOf=emergent-server.service
+
+[Service]
+Type=simple
+User=emergent
+Group=emergent
+WorkingDirectory=/usr/share/emergent/admin
+ExecStart=/usr/bin/emergent admin serve --port 5176 --host 0.0.0.0
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment=HOME=/var/lib/emergent
+EnvironmentFile=-/etc/emergent/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=emergent-admin
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/emergent /var/log/emergent
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+
+[Install]
+WantedBy=multi-user.target
