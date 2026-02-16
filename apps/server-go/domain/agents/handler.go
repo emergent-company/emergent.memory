@@ -754,7 +754,6 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		SystemPrompt:   dto.SystemPrompt,
 		Model:          dto.Model,
 		Tools:          tools,
-		Trigger:        dto.Trigger,
 		FlowType:       flowType,
 		IsDefault:      isDefault,
 		MaxSteps:       dto.MaxSteps,
@@ -816,9 +815,6 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.Tools != nil {
 		def.Tools = dto.Tools
-	}
-	if dto.Trigger != nil {
-		def.Trigger = dto.Trigger
 	}
 	if dto.FlowType != nil {
 		def.FlowType = *dto.FlowType

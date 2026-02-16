@@ -11,6 +11,9 @@ SET row_security = off;
 CREATE SCHEMA IF NOT EXISTS core;
 CREATE SCHEMA IF NOT EXISTS kb;
 CREATE SCHEMA IF NOT EXISTS public;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
 CREATE TYPE kb.document_conversion_status AS ENUM (
     'pending',
     'processing',
@@ -197,7 +200,6 @@ CREATE TABLE kb.agent_definitions (
     system_prompt text,
     model jsonb DEFAULT '{}'::jsonb,
     tools text[] DEFAULT '{}'::text[],
-    trigger character varying(255),
     flow_type character varying(50) DEFAULT 'single'::character varying NOT NULL,
     is_default boolean DEFAULT false NOT NULL,
     max_steps integer,

@@ -201,7 +201,6 @@ type AgentDefinitionDTO struct {
 	SystemPrompt   *string         `json:"systemPrompt,omitempty"`
 	Model          *ModelConfig    `json:"model,omitempty"`
 	Tools          []string        `json:"tools"`
-	Trigger        *string         `json:"trigger,omitempty"`
 	FlowType       AgentFlowType   `json:"flowType"`
 	IsDefault      bool            `json:"isDefault"`
 	MaxSteps       *int            `json:"maxSteps,omitempty"`
@@ -234,7 +233,6 @@ type CreateAgentDefinitionDTO struct {
 	SystemPrompt   *string         `json:"systemPrompt"`
 	Model          *ModelConfig    `json:"model"`
 	Tools          []string        `json:"tools"`
-	Trigger        *string         `json:"trigger"`
 	FlowType       AgentFlowType   `json:"flowType"`
 	IsDefault      *bool           `json:"isDefault"`
 	MaxSteps       *int            `json:"maxSteps"`
@@ -251,7 +249,6 @@ type UpdateAgentDefinitionDTO struct {
 	SystemPrompt   *string          `json:"systemPrompt"`
 	Model          *ModelConfig     `json:"model"`
 	Tools          []string         `json:"tools"`
-	Trigger        *string          `json:"trigger"`
 	FlowType       *AgentFlowType   `json:"flowType"`
 	IsDefault      *bool            `json:"isDefault"`
 	MaxSteps       *int             `json:"maxSteps"`
@@ -300,7 +297,6 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		SystemPrompt:   d.SystemPrompt,
 		Model:          d.Model,
 		Tools:          d.Tools,
-		Trigger:        d.Trigger,
 		FlowType:       d.FlowType,
 		IsDefault:      d.IsDefault,
 		MaxSteps:       d.MaxSteps,

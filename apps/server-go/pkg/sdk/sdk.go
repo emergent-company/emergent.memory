@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/agentdefinitions"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/agents"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apidocs"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apitokens"
@@ -70,29 +71,30 @@ type Client struct {
 	http      *http.Client
 
 	// Service clients — context-scoped (use org/project headers)
-	Documents       *documents.Client
-	Chunks          *chunks.Client
-	Search          *search.Client
-	Graph           *graph.Client
-	Chat            *chat.Client
-	Projects        *projects.Client
-	Orgs            *orgs.Client
-	Users           *users.Client
-	APITokens       *apitokens.Client
-	MCP             *mcp.Client
-	Branches        *branches.Client
-	UserActivity    *useractivity.Client
-	TypeRegistry    *typeregistry.Client
-	Notifications   *notifications.Client
-	Tasks           *tasks.Client
-	Monitoring      *monitoring.Client
-	Agents          *agents.Client
-	DataSources     *datasources.Client
-	DiscoveryJobs   *discoveryjobs.Client
-	EmbeddingPolicy *embeddingpolicies.Client
-	Integrations    *integrations.Client
-	TemplatePacks   *templatepacks.Client
-	Chunking        *chunking.Client
+	Documents        *documents.Client
+	Chunks           *chunks.Client
+	Search           *search.Client
+	Graph            *graph.Client
+	Chat             *chat.Client
+	Projects         *projects.Client
+	Orgs             *orgs.Client
+	Users            *users.Client
+	APITokens        *apitokens.Client
+	MCP              *mcp.Client
+	Branches         *branches.Client
+	UserActivity     *useractivity.Client
+	TypeRegistry     *typeregistry.Client
+	Notifications    *notifications.Client
+	Tasks            *tasks.Client
+	Monitoring       *monitoring.Client
+	Agents           *agents.Client
+	AgentDefinitions *agentdefinitions.Client
+	DataSources      *datasources.Client
+	DiscoveryJobs    *discoveryjobs.Client
+	EmbeddingPolicy  *embeddingpolicies.Client
+	Integrations     *integrations.Client
+	TemplatePacks    *templatepacks.Client
+	Chunking         *chunking.Client
 
 	// Service clients — non-context (no org/project needed)
 	Health     *health.Client
@@ -258,6 +260,7 @@ func initClients(c *Client) {
 	c.Tasks = tasks.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Monitoring = monitoring.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Agents = agents.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.AgentDefinitions = agentdefinitions.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.DataSources = datasources.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.DiscoveryJobs = discoveryjobs.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.EmbeddingPolicy = embeddingpolicies.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
@@ -296,6 +299,7 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.Tasks.SetContext(orgID, projectID)
 	c.Monitoring.SetContext(orgID, projectID)
 	c.Agents.SetContext(orgID, projectID)
+	c.AgentDefinitions.SetContext(orgID, projectID)
 	c.DataSources.SetContext(orgID, projectID)
 	c.DiscoveryJobs.SetContext(orgID, projectID)
 	c.EmbeddingPolicy.SetContext(orgID, projectID)
