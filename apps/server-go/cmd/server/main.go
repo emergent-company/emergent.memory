@@ -45,6 +45,7 @@ import (
 	"github.com/emergent/emergent-core/domain/integrations"
 	"github.com/emergent/emergent-core/domain/invites"
 	"github.com/emergent/emergent-core/domain/mcp"
+	"github.com/emergent/emergent-core/domain/mcpregistry"
 	"github.com/emergent/emergent-core/domain/monitoring"
 	"github.com/emergent/emergent-core/domain/notifications"
 	"github.com/emergent/emergent-core/domain/orgs"
@@ -124,6 +125,7 @@ func main() {
 		search.Module,
 		chat.Module,
 		mcp.Module,
+		mcpregistry.Module,
 		monitoring.Module,
 		notifications.Module,
 		superadmin.Module,

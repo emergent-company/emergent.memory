@@ -7,6 +7,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent/emergent-core/domain/mcp"
+	"github.com/emergent/emergent-core/domain/mcpregistry"
 	"github.com/emergent/emergent-core/domain/scheduler"
 	"github.com/emergent/emergent-core/pkg/adk"
 )
@@ -25,14 +26,16 @@ var Module = fx.Module("agents",
 		RegisterRoutes,
 		registerAgentTriggers,
 		registerAgentToolHandler,
+		registerToolPoolInvalidator,
 	),
 )
 
 // provideToolPool creates a ToolPool from fx dependencies.
-func provideToolPool(mcpService *mcp.Service, log *slog.Logger) *ToolPool {
+func provideToolPool(mcpService *mcp.Service, registryService *mcpregistry.Service, log *slog.Logger) *ToolPool {
 	return NewToolPool(ToolPoolConfig{
-		MCPService: mcpService,
-		Logger:     log,
+		MCPService:      mcpService,
+		RegistryService: registryService,
+		Logger:          log,
 	})
 }
 
@@ -85,4 +88,11 @@ func registerAgentTriggers(lc fx.Lifecycle, ts *TriggerService) {
 			return nil
 		},
 	})
+}
+
+// registerToolPoolInvalidator injects the ToolPool into the MCP registry service
+// so that registry mutations (create/update/delete server, sync/toggle tools)
+// automatically invalidate the ToolPool cache for the affected project.
+func registerToolPoolInvalidator(registryService *mcpregistry.Service, toolPool *ToolPool) {
+	registryService.SetToolPoolInvalidator(toolPool)
 }
