@@ -28,6 +28,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.DELETE("/:id", h.DeleteAgent)
 	writeGroup.POST("/:id/trigger", h.TriggerAgent)
 	writeGroup.POST("/:id/batch-trigger", h.BatchTrigger)
+	writeGroup.POST("/:id/runs/:runId/cancel", h.CancelRun)
 
 	// --- Admin Agent Definition routes (configuration/manifest) ---
 	defAdmin := e.Group("/api/admin/agent-definitions")
