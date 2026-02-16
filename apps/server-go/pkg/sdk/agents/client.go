@@ -99,6 +99,54 @@ type AgentRun struct {
 	Summary      map[string]any `json:"summary"`
 	ErrorMessage *string        `json:"errorMessage"`
 	SkipReason   *string        `json:"skipReason"`
+
+	// Execution metrics
+	StepCount int  `json:"stepCount"`
+	MaxSteps  *int `json:"maxSteps,omitempty"`
+
+	// Multi-agent coordination
+	ParentRunID *string `json:"parentRunId,omitempty"`
+	ResumedFrom *string `json:"resumedFrom,omitempty"`
+}
+
+// AgentRunMessage represents a message in the agent conversation.
+type AgentRunMessage struct {
+	ID         string         `json:"id"`
+	RunID      string         `json:"runId"`
+	Role       string         `json:"role"`
+	Content    map[string]any `json:"content"`
+	StepNumber int            `json:"stepNumber"`
+	CreatedAt  time.Time      `json:"createdAt"`
+}
+
+// AgentRunToolCall represents a tool invocation record.
+type AgentRunToolCall struct {
+	ID         string         `json:"id"`
+	RunID      string         `json:"runId"`
+	MessageID  *string        `json:"messageId,omitempty"`
+	ToolName   string         `json:"toolName"`
+	Input      map[string]any `json:"input"`
+	Output     map[string]any `json:"output"`
+	Status     string         `json:"status"`
+	DurationMs *int           `json:"durationMs,omitempty"`
+	StepNumber int            `json:"stepNumber"`
+	CreatedAt  time.Time      `json:"createdAt"`
+}
+
+// PaginatedResponse wraps paginated API responses.
+type PaginatedResponse[T any] struct {
+	Items      []T `json:"items"`
+	TotalCount int `json:"totalCount"`
+	Limit      int `json:"limit"`
+	Offset     int `json:"offset"`
+}
+
+// ListRunsOptions contains options for listing project runs.
+type ListRunsOptions struct {
+	Limit   int
+	Offset  int
+	AgentID string
+	Status  string
 }
 
 // APIResponse wraps API responses with success flag.
@@ -511,6 +559,199 @@ func (c *Client) BatchTrigger(ctx context.Context, agentID string, batchReq *Bat
 	}
 
 	var result APIResponse[BatchTriggerResponse]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// CancelRun cancels a running agent run.
+// POST /api/admin/agents/:id/runs/:runId/cancel
+// Requires admin:write scope.
+func (c *Client) CancelRun(ctx context.Context, agentID, runID string) error {
+	req, err := http.NewRequestWithContext(
+		ctx, 
+		"POST", 
+		c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/runs/"+url.PathEscape(runID)+"/cancel", 
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// ListProjectRuns lists agent runs for a project with filtering and pagination.
+// GET /api/projects/:projectId/agent-runs
+// Requires project:read scope.
+func (c *Client) ListProjectRuns(ctx context.Context, projectID string, opts *ListRunsOptions) (*APIResponse[PaginatedResponse[AgentRun]], error) {
+	u, err := url.Parse(c.base + "/api/projects/" + url.PathEscape(projectID) + "/agent-runs")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	if opts != nil {
+		q := u.Query()
+		if opts.Limit > 0 {
+			q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+		}
+		if opts.Offset > 0 {
+			q.Set("offset", fmt.Sprintf("%d", opts.Offset))
+		}
+		if opts.AgentID != "" {
+			q.Set("agentId", opts.AgentID)
+		}
+		if opts.Status != "" {
+			q.Set("status", opts.Status)
+		}
+		u.RawQuery = q.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[PaginatedResponse[AgentRun]]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetProjectRun gets a specific run by ID.
+// GET /api/projects/:projectId/agent-runs/:runId
+// Requires project:read scope.
+func (c *Client) GetProjectRun(ctx context.Context, projectID, runID string) (*APIResponse[AgentRun], error) {
+	req, err := http.NewRequestWithContext(
+		ctx, 
+		"GET", 
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-runs/"+url.PathEscape(runID), 
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[AgentRun]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetRunMessages gets conversation messages for a run.
+// GET /api/projects/:projectId/agent-runs/:runId/messages
+// Requires project:read scope.
+func (c *Client) GetRunMessages(ctx context.Context, projectID, runID string) (*APIResponse[[]AgentRunMessage], error) {
+	req, err := http.NewRequestWithContext(
+		ctx, 
+		"GET", 
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-runs/"+url.PathEscape(runID)+"/messages", 
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[[]AgentRunMessage]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetRunToolCalls gets tool invocations for a run.
+// GET /api/projects/:projectId/agent-runs/:runId/tool-calls
+// Requires project:read scope.
+func (c *Client) GetRunToolCalls(ctx context.Context, projectID, runID string) (*APIResponse[[]AgentRunToolCall], error) {
+	req, err := http.NewRequestWithContext(
+		ctx, 
+		"GET", 
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-runs/"+url.PathEscape(runID)+"/tool-calls", 
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[[]AgentRunToolCall]
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
