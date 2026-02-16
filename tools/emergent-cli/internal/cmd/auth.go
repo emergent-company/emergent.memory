@@ -586,10 +586,8 @@ func printAggregatedUsageStats(cfg *config.Config, projects []projectResponse) {
 	for i, p := range projects {
 		docs := 0
 		docSources := fetchDocumentSourceTypes(cfg.ServerURL, cfg.APIKey, p.ID)
-		if docSources != nil {
-			for _, s := range docSources {
-				docs += s.Count
-			}
+		for _, s := range docSources {
+			docs += s.Count
 		}
 		objs := fetchGraphObjectsTotal(cfg.ServerURL, cfg.APIKey, p.ID)
 		if objs < 0 {
