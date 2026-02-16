@@ -175,6 +175,9 @@ type LLMConfig struct {
 	// Request timeout
 	Timeout time.Duration `env:"LLM_TIMEOUT" envDefault:"120s"`
 
+	// Google API Key for Google AI (standalone/development fallback)
+	GoogleAPIKey string `env:"GOOGLE_API_KEY" envDefault:""`
+
 	// Disable LLM network calls (for testing)
 	NetworkDisabled bool `env:"LLM_NETWORK_DISABLED" envDefault:"false"`
 }
@@ -184,6 +187,11 @@ func (l *LLMConfig) IsEnabled() bool {
 	if l.NetworkDisabled {
 		return false
 	}
+	return l.UseVertexAI() || l.GoogleAPIKey != ""
+}
+
+// UseVertexAI returns true if Vertex AI should be used (GCP credentials available)
+func (l *LLMConfig) UseVertexAI() bool {
 	return l.GCPProjectID != "" && l.VertexAILocation != ""
 }
 
