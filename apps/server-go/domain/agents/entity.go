@@ -56,6 +56,17 @@ const (
 	MaxTotalStepsPerRun = 500
 )
 
+// SessionStatus tracks the workspace provisioning lifecycle for an agent run.
+// This is distinct from AgentRunStatus which tracks execution state.
+type SessionStatus string
+
+const (
+	SessionStatusProvisioning SessionStatus = "provisioning" // Workspace being set up
+	SessionStatusActive       SessionStatus = "active"       // Workspace ready, agent executing
+	SessionStatusCompleted    SessionStatus = "completed"    // Run finished successfully
+	SessionStatusError        SessionStatus = "error"        // Run or provisioning failed
+)
+
 // AgentProcessingStatus defines the status of agent processing for a graph object
 type AgentProcessingStatus string
 
@@ -125,6 +136,9 @@ type AgentRun struct {
 	ErrorMessage *string        `bun:"error_message" json:"errorMessage"`
 	SkipReason   *string        `bun:"skip_reason" json:"skipReason"`
 	CreatedAt    time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+
+	// Workspace session lifecycle tracking (distinct from run execution status)
+	SessionStatus SessionStatus `bun:"session_status,notnull,default:'active'" json:"sessionStatus"`
 
 	// Multi-agent coordination fields
 	ParentRunID *string `bun:"parent_run_id,type:uuid" json:"parentRunId,omitempty"`
@@ -207,23 +221,24 @@ type ModelConfig struct {
 type AgentDefinition struct {
 	bun.BaseModel `bun:"table:kb.agent_definitions,alias:ad"`
 
-	ID             string          `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	ProductID      *string         `bun:"product_id,type:uuid" json:"productId,omitempty"`
-	ProjectID      string          `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	Name           string          `bun:"name,notnull" json:"name"`
-	Description    *string         `bun:"description" json:"description,omitempty"`
-	SystemPrompt   *string         `bun:"system_prompt" json:"systemPrompt,omitempty"`
-	Model          *ModelConfig    `bun:"model,type:jsonb,default:'{}'" json:"model,omitempty"`
-	Tools          []string        `bun:"tools,array" json:"tools"`
-	FlowType       AgentFlowType   `bun:"flow_type,notnull,default:'single'" json:"flowType"`
-	IsDefault      bool            `bun:"is_default,notnull,default:false" json:"isDefault"`
-	MaxSteps       *int            `bun:"max_steps" json:"maxSteps,omitempty"`
-	DefaultTimeout *int            `bun:"default_timeout" json:"defaultTimeout,omitempty"`
-	Visibility     AgentVisibility `bun:"visibility,notnull,default:'project'" json:"visibility"`
-	ACPConfig      *ACPConfig      `bun:"acp_config,type:jsonb" json:"acpConfig,omitempty"`
-	Config         map[string]any  `bun:"config,type:jsonb,default:'{}'" json:"config,omitempty"`
-	CreatedAt      time.Time       `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt      time.Time       `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	ID              string          `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProductID       *string         `bun:"product_id,type:uuid" json:"productId,omitempty"`
+	ProjectID       string          `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	Name            string          `bun:"name,notnull" json:"name"`
+	Description     *string         `bun:"description" json:"description,omitempty"`
+	SystemPrompt    *string         `bun:"system_prompt" json:"systemPrompt,omitempty"`
+	Model           *ModelConfig    `bun:"model,type:jsonb,default:'{}'" json:"model,omitempty"`
+	Tools           []string        `bun:"tools,array" json:"tools"`
+	FlowType        AgentFlowType   `bun:"flow_type,notnull,default:'single'" json:"flowType"`
+	IsDefault       bool            `bun:"is_default,notnull,default:false" json:"isDefault"`
+	MaxSteps        *int            `bun:"max_steps" json:"maxSteps,omitempty"`
+	DefaultTimeout  *int            `bun:"default_timeout" json:"defaultTimeout,omitempty"`
+	Visibility      AgentVisibility `bun:"visibility,notnull,default:'project'" json:"visibility"`
+	ACPConfig       *ACPConfig      `bun:"acp_config,type:jsonb" json:"acpConfig,omitempty"`
+	Config          map[string]any  `bun:"config,type:jsonb,default:'{}'" json:"config,omitempty"`
+	WorkspaceConfig map[string]any  `bun:"workspace_config,type:jsonb" json:"workspaceConfig,omitempty"`
+	CreatedAt       time.Time       `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt       time.Time       `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }
 
 // AgentRunMessage stores a single LLM message exchanged during an agent run.

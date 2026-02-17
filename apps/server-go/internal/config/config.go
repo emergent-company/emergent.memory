@@ -46,6 +46,9 @@ type Config struct {
 	// Standalone mode configuration (minimal deployment)
 	Standalone StandaloneConfig
 
+	// Agent workspace configuration
+	Workspace WorkspaceConfig
+
 	// Server timeouts
 	ReadTimeout     time.Duration `env:"SERVER_READ_TIMEOUT" envDefault:"5s"`
 	WriteTimeout    time.Duration `env:"SERVER_WRITE_TIMEOUT" envDefault:"28800s"` // 8 hours for SSE
@@ -267,6 +270,41 @@ type StorageConfig struct {
 // IsConfigured returns true if storage is configured
 func (s *StorageConfig) IsConfigured() bool {
 	return s.Endpoint != "" && s.AccessKeyID != "" && s.SecretAccessKey != ""
+}
+
+// WorkspaceConfig holds configuration for agent workspaces
+type WorkspaceConfig struct {
+	// Enabled determines if agent workspace endpoints and cleanup are active
+	Enabled bool `env:"ENABLE_AGENT_WORKSPACES" envDefault:"false"`
+	// MaxConcurrent is the maximum number of concurrent active workspaces
+	MaxConcurrent int `env:"WORKSPACE_MAX_CONCURRENT" envDefault:"10"`
+	// DefaultTTLDays is the default TTL for ephemeral workspaces in days
+	DefaultTTLDays int `env:"WORKSPACE_DEFAULT_TTL_DAYS" envDefault:"30"`
+	// CleanupIntervalMin is the cleanup job interval in minutes
+	CleanupIntervalMin int `env:"WORKSPACE_CLEANUP_INTERVAL_MIN" envDefault:"60"`
+	// AlertThresholdPct is the usage threshold for resource alerts (0-100)
+	AlertThresholdPct int `env:"WORKSPACE_ALERT_THRESHOLD_PCT" envDefault:"80"`
+	// WarmPoolSize is the number of pre-booted containers to keep ready (0 = disabled)
+	WarmPoolSize int `env:"WORKSPACE_WARM_POOL_SIZE" envDefault:"0"`
+	// DefaultProvider is the default sandbox provider (gvisor, firecracker, e2b)
+	DefaultProvider string `env:"WORKSPACE_DEFAULT_PROVIDER" envDefault:"gvisor"`
+	// DefaultCPU is the default CPU limit for workspaces (e.g. "2")
+	DefaultCPU string `env:"WORKSPACE_DEFAULT_CPU" envDefault:"2"`
+	// DefaultMemory is the default memory limit for workspaces (e.g. "4G")
+	DefaultMemory string `env:"WORKSPACE_DEFAULT_MEMORY" envDefault:"4G"`
+	// DefaultDisk is the default disk limit for workspaces (e.g. "10G")
+	DefaultDisk string `env:"WORKSPACE_DEFAULT_DISK" envDefault:"10G"`
+	// E2BAPIKey is the API key for E2B managed sandbox provider
+	E2BAPIKey string `env:"E2B_API_KEY" envDefault:""`
+	// GitHubAppEncryptionKey is the AES-256 encryption key for GitHub App credentials (64-char hex)
+	GitHubAppEncryptionKey string `env:"GITHUB_APP_ENCRYPTION_KEY" envDefault:""`
+	// NetworkName is the Docker network to attach workspace containers to for isolation
+	NetworkName string `env:"WORKSPACE_NETWORK_NAME" envDefault:""`
+}
+
+// IsEnabled returns true if agent workspaces are enabled
+func (w *WorkspaceConfig) IsEnabled() bool {
+	return w.Enabled
 }
 
 // StandaloneConfig holds configuration for standalone minimal deployment mode

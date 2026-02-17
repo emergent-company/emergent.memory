@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent/emergent-core/pkg/apperror"
-	"github.com/emergent/emergent-core/pkg/auth"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/auth"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // StreamableHTTPHandler implements MCP Streamable HTTP transport (spec 2025-11-25)

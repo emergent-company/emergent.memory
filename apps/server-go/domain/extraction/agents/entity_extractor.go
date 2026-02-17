@@ -13,7 +13,7 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 
-	"github.com/emergent/emergent-core/pkg/adk"
+	"github.com/emergent-company/emergent/pkg/adk"
 )
 
 // EntityExtractorConfig holds configuration for the entity extractor agent.

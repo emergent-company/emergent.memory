@@ -15,8 +15,10 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 
-	"github.com/emergent/emergent-core/pkg/adk"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/domain/workspace"
+	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent/pkg/adk"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // ExecuteRequest defines the parameters for executing an agent.
@@ -45,10 +47,16 @@ type ExecuteResult struct {
 // It builds an LLM agent pipeline with tools from the ToolPool, runs it
 // via the ADK runner, tracks steps, detects doom loops, and persists
 // all messages and tool calls to the database for full state recovery.
+//
+// When workspace provisioning is enabled and an agent definition has a
+// workspace_config, the executor automatically provisions a sandboxed
+// container before the run starts and tears it down after the run completes.
 type AgentExecutor struct {
 	modelFactory *adk.ModelFactory
 	toolPool     *ToolPool
 	repo         *Repository
+	provisioner  *workspace.AutoProvisioner // nil if workspaces are disabled
+	wsEnabled    bool                       // cached feature flag
 	log          *slog.Logger
 }
 
@@ -57,12 +65,20 @@ func NewAgentExecutor(
 	modelFactory *adk.ModelFactory,
 	toolPool *ToolPool,
 	repo *Repository,
+	provisioner *workspace.AutoProvisioner,
+	cfg *config.Config,
 	log *slog.Logger,
 ) *AgentExecutor {
+	wsEnabled := cfg.Workspace.IsEnabled()
+	if wsEnabled {
+		log.Info("agent executor: workspace provisioning enabled")
+	}
 	return &AgentExecutor{
 		modelFactory: modelFactory,
 		toolPool:     toolPool,
 		repo:         repo,
+		provisioner:  provisioner,
+		wsEnabled:    wsEnabled,
 		log:          log.With(logger.Scope("agents.executor")),
 	}
 }
@@ -104,8 +120,35 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		slog.Int("max_steps", maxSteps),
 	)
 
+	// Provision workspace if configured
+	hasWorkspaceConfig := ae.wsEnabled && ae.provisioner != nil &&
+		req.AgentDefinition != nil && len(req.AgentDefinition.WorkspaceConfig) > 0
+	if hasWorkspaceConfig {
+		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusProvisioning); err != nil {
+			ae.log.Warn("failed to update session status to provisioning",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	wsResult := ae.provisionWorkspace(ctx, run.ID, req)
+	if wsResult != nil && wsResult.Workspace != nil {
+		defer ae.teardownWorkspace(ctx, wsResult)
+	}
+
+	// Workspace provisioning complete (or skipped) — mark session active
+	if hasWorkspaceConfig {
+		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
+			ae.log.Warn("failed to update session status to active",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
 	// Build and run the pipeline
-	result, err := ae.runPipeline(ctx, run, req, maxSteps, 0, startTime)
+	result, err := ae.runPipeline(ctx, run, req, maxSteps, 0, startTime, wsResult)
 	if err != nil {
 		// Mark run as failed
 		_ = ae.repo.FailRunWithSteps(ctx, run.ID, err.Error(), 0)
@@ -158,8 +201,35 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		slog.Int("max_steps", maxSteps),
 	)
 
+	// Provision workspace if configured
+	hasWorkspaceConfig := ae.wsEnabled && ae.provisioner != nil &&
+		req.AgentDefinition != nil && len(req.AgentDefinition.WorkspaceConfig) > 0
+	if hasWorkspaceConfig {
+		if err := ae.repo.UpdateSessionStatus(ctx, newRun.ID, SessionStatusProvisioning); err != nil {
+			ae.log.Warn("failed to update session status to provisioning",
+				slog.String("run_id", newRun.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	wsResult := ae.provisionWorkspace(ctx, newRun.ID, req)
+	if wsResult != nil && wsResult.Workspace != nil {
+		defer ae.teardownWorkspace(ctx, wsResult)
+	}
+
+	// Workspace provisioning complete (or skipped) — mark session active
+	if hasWorkspaceConfig {
+		if err := ae.repo.UpdateSessionStatus(ctx, newRun.ID, SessionStatusActive); err != nil {
+			ae.log.Warn("failed to update session status to active",
+				slog.String("run_id", newRun.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
 	// Build and run the pipeline with accumulated step count
-	result, err := ae.runPipeline(ctx, newRun, req, maxSteps, priorRun.StepCount, startTime)
+	result, err := ae.runPipeline(ctx, newRun, req, maxSteps, priorRun.StepCount, startTime, wsResult)
 	if err != nil {
 		_ = ae.repo.FailRunWithSteps(ctx, newRun.ID, err.Error(), priorRun.StepCount)
 		return &ExecuteResult{
@@ -174,6 +244,76 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	return result, nil
 }
 
+// provisionWorkspace provisions a workspace for the agent run if configured.
+// Returns nil if workspace provisioning is disabled, not configured, or not needed.
+// Provisioning failures are non-fatal — the agent runs in degraded mode without a workspace.
+func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, req ExecuteRequest) *workspace.ProvisioningResult {
+	// Check preconditions: feature enabled, provisioner available, definition has workspace config
+	if !ae.wsEnabled || ae.provisioner == nil {
+		return nil
+	}
+	if req.AgentDefinition == nil || len(req.AgentDefinition.WorkspaceConfig) == 0 {
+		return nil
+	}
+
+	ae.log.Info("provisioning workspace for agent run",
+		slog.String("run_id", runID),
+		slog.String("agent_definition_id", req.AgentDefinition.ID),
+	)
+
+	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.AgentDefinition.WorkspaceConfig, nil)
+	if err != nil {
+		ae.log.Error("workspace provisioning returned error, running without workspace",
+			slog.String("run_id", runID),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+	if result == nil {
+		// Workspace not enabled in agent definition config
+		return nil
+	}
+
+	// Link workspace to this run
+	if result.Workspace != nil {
+		if linkErr := ae.provisioner.LinkToRun(ctx, result.Workspace, runID); linkErr != nil {
+			ae.log.Warn("failed to link workspace to run",
+				slog.String("run_id", runID),
+				slog.String("workspace_id", result.Workspace.ID),
+				slog.String("error", linkErr.Error()),
+			)
+		}
+	}
+
+	if result.Degraded {
+		ae.log.Warn("workspace provisioned in degraded mode",
+			slog.String("run_id", runID),
+			slog.String("error", result.Error.Error()),
+		)
+	} else if result.Workspace != nil {
+		ae.log.Info("workspace provisioned successfully",
+			slog.String("run_id", runID),
+			slog.String("workspace_id", result.Workspace.ID),
+		)
+	}
+
+	return result
+}
+
+// teardownWorkspace destroys the provisioned workspace after the agent run completes.
+// Called via defer so it runs regardless of how the run exits.
+func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *workspace.ProvisioningResult) {
+	if result == nil || result.Workspace == nil || ae.provisioner == nil {
+		return
+	}
+
+	// Use a detached context for teardown since the run context may be cancelled
+	teardownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	ae.provisioner.TeardownWorkspace(teardownCtx, result.Workspace)
+}
+
 // runPipeline builds the ADK agent, resolves tools, creates the runner, and
 // iterates over events until the agent is done or a safety limit is reached.
 func (ae *AgentExecutor) runPipeline(
@@ -183,6 +323,7 @@ func (ae *AgentExecutor) runPipeline(
 	maxSteps int,
 	initialSteps int,
 	startTime time.Time,
+	wsResult *workspace.ProvisioningResult,
 ) (*ExecuteResult, error) {
 	// Apply timeout if specified
 	if req.Timeout != nil && *req.Timeout > 0 {
@@ -228,9 +369,31 @@ func (ae *AgentExecutor) runPipeline(
 		resolvedTools = append(resolvedTools, coordTools...)
 	}
 
+	// Add workspace tools if a non-degraded workspace was provisioned
+	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
+		wsTools, wsToolErr := ae.resolveWorkspaceTools(wsResult, req)
+		if wsToolErr != nil {
+			ae.log.Warn("failed to build workspace tools, continuing without them",
+				slog.String("run_id", run.ID),
+				slog.String("error", wsToolErr.Error()),
+			)
+		} else if len(wsTools) > 0 {
+			resolvedTools = append(resolvedTools, wsTools...)
+			ae.log.Info("workspace tools added to agent pipeline",
+				slog.String("run_id", run.ID),
+				slog.Int("count", len(wsTools)),
+			)
+		}
+	}
+
 	// Build the LLM agent
 	agentName := ae.resolveAgentName(req)
 	instruction := ae.resolveInstruction(req)
+
+	// Augment system instruction with workspace context if available
+	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
+		instruction = ae.augmentInstructionWithWorkspace(instruction, wsResult)
+	}
 
 	genConfig := ae.modelFactory.DefaultGenerateConfig()
 	if req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
@@ -459,6 +622,14 @@ func (ae *AgentExecutor) runPipeline(
 	// Build summary from the last event
 	summary := ae.buildSummary(lastEvent, steps)
 
+	// Include workspace info in summary if provisioned
+	if wsResult != nil && wsResult.Workspace != nil {
+		summary["workspace_id"] = wsResult.Workspace.ID
+		if wsResult.Degraded {
+			summary["workspace_degraded"] = true
+		}
+	}
+
 	// Mark run as complete
 	if err := ae.repo.CompleteRunWithSteps(ctx, run.ID, summary, steps, durationMs); err != nil {
 		ae.log.Warn("failed to complete run record",
@@ -485,6 +656,60 @@ func (ae *AgentExecutor) runPipeline(
 		Steps:    steps,
 		Duration: duration,
 	}, nil
+}
+
+// augmentInstructionWithWorkspace appends workspace context to the system instruction
+// so the agent knows it has a sandboxed environment available.
+func (ae *AgentExecutor) augmentInstructionWithWorkspace(instruction string, wsResult *workspace.ProvisioningResult) string {
+	if wsResult == nil || wsResult.Workspace == nil {
+		return instruction
+	}
+
+	wsContext := "\n\n## Workspace Environment\n" +
+		"You have a sandboxed workspace container available for this run.\n" +
+		fmt.Sprintf("- Workspace ID: %s\n", wsResult.Workspace.ID)
+
+	if wsResult.RepoURL != "" {
+		wsContext += fmt.Sprintf("- Repository: %s\n", wsResult.RepoURL)
+		if wsResult.Branch != "" {
+			wsContext += fmt.Sprintf("- Branch: %s\n", wsResult.Branch)
+		}
+		wsContext += "- Working directory: /workspace\n"
+	}
+
+	wsContext += "\nWorkspace tools are prefixed with workspace_ (e.g. workspace_bash, workspace_read, etc.).\n" +
+		"Use these tools to interact with files and run commands in the sandboxed container.\n"
+
+	return instruction + wsContext
+}
+
+// resolveWorkspaceTools builds ADK tools that let the agent interact with its
+// provisioned workspace container (bash, read, write, edit, glob, grep, git).
+// Returns nil if the provisioner can't provide a provider for the workspace.
+func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *workspace.ProvisioningResult, req ExecuteRequest) ([]tool.Tool, error) {
+	if ae.provisioner == nil || wsResult == nil || wsResult.Workspace == nil {
+		return nil, nil
+	}
+
+	// Get the provider for this workspace
+	provider, err := ae.provisioner.GetProviderForWorkspace(wsResult.Workspace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get provider for workspace %s: %w", wsResult.Workspace.ID, err)
+	}
+
+	// Parse workspace config for tool filtering
+	var wsCfg *workspace.AgentWorkspaceConfig
+	if req.AgentDefinition != nil && len(req.AgentDefinition.WorkspaceConfig) > 0 {
+		wsCfg, _ = workspace.ParseAgentWorkspaceConfig(req.AgentDefinition.WorkspaceConfig)
+	}
+
+	return BuildWorkspaceTools(WorkspaceToolDeps{
+		Provider:    provider,
+		ProviderID:  wsResult.Workspace.ProviderWorkspaceID,
+		WorkspaceID: wsResult.Workspace.ID,
+		Config:      wsCfg,
+		Logger:      ae.log,
+	})
 }
 
 // buildCoordinationTools creates spawn_agents and list_available_agents tools

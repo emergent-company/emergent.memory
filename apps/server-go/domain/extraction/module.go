@@ -8,14 +8,14 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
-	"github.com/emergent/emergent-core/domain/chunking"
-	"github.com/emergent/emergent-core/domain/documents"
-	"github.com/emergent/emergent-core/domain/graph"
-	"github.com/emergent/emergent-core/internal/config"
-	"github.com/emergent/emergent-core/internal/storage"
-	"github.com/emergent/emergent-core/pkg/adk"
-	"github.com/emergent/emergent-core/pkg/embeddings"
-	"github.com/emergent/emergent-core/pkg/kreuzberg"
+	"github.com/emergent-company/emergent/domain/chunking"
+	"github.com/emergent-company/emergent/domain/documents"
+	"github.com/emergent-company/emergent/domain/graph"
+	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent/internal/storage"
+	"github.com/emergent-company/emergent/pkg/adk"
+	"github.com/emergent-company/emergent/pkg/embeddings"
+	"github.com/emergent-company/emergent/pkg/kreuzberg"
 )
 
 // ParsingJobCreatorAdapter adapts DocumentParsingJobsService to documents.ParsingJobCreator

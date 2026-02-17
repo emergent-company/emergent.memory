@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // Worker processes email jobs from the queue.

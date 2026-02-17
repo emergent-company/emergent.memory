@@ -11,7 +11,7 @@ import (
 	"google.golang.org/adk/model/gemini"
 	"google.golang.org/genai"
 
-	"github.com/emergent/emergent-core/internal/config"
+	"github.com/emergent-company/emergent/internal/config"
 )
 
 // Module provides the ADK ModelFactory as an fx module

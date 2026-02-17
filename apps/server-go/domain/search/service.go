@@ -8,9 +8,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/emergent/emergent-core/domain/graph"
-	"github.com/emergent/emergent-core/pkg/embeddings"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/domain/graph"
+	"github.com/emergent-company/emergent/pkg/embeddings"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // Service handles unified search combining graph and text results
