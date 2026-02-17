@@ -6,7 +6,7 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/emergent/emergent-core/domain/mcp"
+	"github.com/emergent-company/emergent/domain/mcp"
 )
 
 // Module provides the MCP registry domain

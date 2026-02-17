@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent/emergent-core/domain/scheduler"
-	"github.com/emergent/emergent-core/internal/testutil"
+	"github.com/emergent-company/emergent/domain/scheduler"
+	"github.com/emergent-company/emergent/internal/testutil"
 )
 
 // SchedulerTestSuite tests the scheduler functionality

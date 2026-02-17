@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/fx"
 
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 var Module = fx.Module("storage",

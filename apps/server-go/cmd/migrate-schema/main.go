@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/emergent/emergent-core/domain/extraction/agents"
-	"github.com/emergent/emergent-core/domain/graph"
+	"github.com/emergent-company/emergent/domain/extraction/agents"
+	"github.com/emergent-company/emergent/domain/graph"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"

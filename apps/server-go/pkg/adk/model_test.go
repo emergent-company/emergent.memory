@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/emergent/emergent-core/internal/config"
+	"github.com/emergent-company/emergent/internal/config"
 	"google.golang.org/genai"
 )
 

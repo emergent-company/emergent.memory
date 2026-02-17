@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/emergent/emergent-core/domain/workspace"
+	"github.com/emergent-company/emergent/domain/workspace"
 )
 
 // --- Mock Provider ---

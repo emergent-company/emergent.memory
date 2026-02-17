@@ -7,7 +7,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/emergent/emergent-core/domain/extraction"
+	"github.com/emergent-company/emergent/domain/extraction"
 )
 
 // Repository handles database queries for monitoring data

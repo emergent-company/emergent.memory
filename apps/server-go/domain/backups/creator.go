@@ -11,7 +11,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/emergent/emergent-core/internal/storage"
+	"github.com/emergent-company/emergent/internal/storage"
 	"github.com/uptrace/bun"
 )
 

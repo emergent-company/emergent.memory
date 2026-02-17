@@ -8,7 +8,7 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 
-	"github.com/emergent/emergent-core/domain/workspace"
+	"github.com/emergent-company/emergent/domain/workspace"
 )
 
 // WorkspaceToolDeps holds dependencies for building workspace tools.
