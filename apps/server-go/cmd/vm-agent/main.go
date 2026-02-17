@@ -5,6 +5,16 @@
 // Firecracker provider. It listens on port 8080 and exposes a simple REST API.
 //
 // The agent is compiled as a static binary and embedded into the microVM rootfs.
+//
+// SECURITY MODEL:
+// This agent runs INSIDE the untrusted sandbox (Firecracker microVM), not on the host.
+// The security boundary is VM isolation via Firecracker/KVM, not the agent code itself.
+// Path traversal and command injection findings are FALSE POSITIVES because:
+//   - An attacker with filesystem/command access is already isolated in an ephemeral VM
+//   - The VM has no access to the host filesystem or network (except controlled NAT)
+//   - VMs are destroyed after use; there's no persistent attack surface
+//
+// See docs/security/SNYK_FALSE_POSITIVES.md for detailed architectural analysis.
 package main
 
 import (
@@ -213,6 +223,10 @@ func handleReadFile(w http.ResponseWriter, r *http.Request) {
 
 	// Directory listing
 	if info.IsDir() {
+		// nosemgrep: go.lang.security.audit.path-traversal.path-join-resolve.path-join-resolve
+		// snyk:ignore SNYK-CODE-GO-CWE-23-PATH-TRAVERSAL-READDIR
+		// FALSE POSITIVE: vm-agent runs INSIDE the isolated sandbox (Firecracker microVM)
+		// Security boundary is VM isolation, not this agent code. No access to host filesystem.
 		entries, err := os.ReadDir(req.FilePath)
 		if err != nil {
 			http.Error(w, "failed to read directory: "+err.Error(), http.StatusInternalServerError)
@@ -253,6 +267,10 @@ func handleReadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read text file
+	// nosemgrep: go.lang.security.audit.path-traversal.path-join-resolve.path-join-resolve
+	// snyk:ignore SNYK-CODE-GO-CWE-23-PATH-TRAVERSAL-READFILE
+	// FALSE POSITIVE: vm-agent runs INSIDE the isolated sandbox (Firecracker microVM)
+	// Security boundary is VM isolation, not this agent code. No access to host filesystem.
 	data, err := os.ReadFile(req.FilePath)
 	if err != nil {
 		http.Error(w, "failed to read file: "+err.Error(), http.StatusInternalServerError)
@@ -314,6 +332,10 @@ func handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// nosemgrep: go.lang.security.audit.path-traversal.path-join-resolve.path-join-resolve
+	// snyk:ignore SNYK-CODE-GO-CWE-23-PATH-TRAVERSAL-WRITEFILE
+	// FALSE POSITIVE: vm-agent runs INSIDE the isolated sandbox (Firecracker microVM)
+	// Security boundary is VM isolation, not this agent code. No access to host filesystem.
 	if err := os.WriteFile(req.FilePath, []byte(req.Content), 0644); err != nil {
 		http.Error(w, "failed to write file: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -383,6 +405,10 @@ func handleListFiles(w http.ResponseWriter, r *http.Request) {
 
 // isBinaryFile checks if a file appears to be binary by reading first 512 bytes.
 func isBinaryFile(path string) bool {
+	// nosemgrep: go.lang.security.audit.path-traversal.path-join-resolve.path-join-resolve
+	// snyk:ignore SNYK-CODE-GO-CWE-23-PATH-TRAVERSAL-OPEN
+	// FALSE POSITIVE: vm-agent runs INSIDE the isolated sandbox (Firecracker microVM)
+	// Security boundary is VM isolation, not this agent code. No access to host filesystem.
 	f, err := os.Open(path)
 	if err != nil {
 		return false
