@@ -21,6 +21,12 @@ type Handler struct {
 // defaultListLimit is the default number of results for paginated list endpoints.
 const defaultListLimit = 20
 
+// maxBatchObjects is the maximum number of objects allowed in a single batch operation
+const maxBatchObjects = 100
+
+// maxBatchRelationships is the maximum number of relationships allowed in a single batch operation
+const maxBatchRelationships = 200
+
 // splitCommaSeparated splits comma-separated query parameter values.
 // SDK clients typically send "labels=tag1,tag2" as a single comma-joined param,
 // but the server expects separate values. This normalizes both forms.
@@ -1889,10 +1895,10 @@ func (h *Handler) CreateSubgraph(c echo.Context) error {
 	if len(req.Objects) == 0 {
 		return apperror.ErrBadRequest.WithMessage("objects is required and must not be empty")
 	}
-	if len(req.Objects) > 100 {
+	if len(req.Objects) > maxBatchObjects {
 		return apperror.ErrBadRequest.WithMessage("objects must not exceed 100")
 	}
-	if len(req.Relationships) > 200 {
+	if len(req.Relationships) > maxBatchRelationships {
 		return apperror.ErrBadRequest.WithMessage("relationships must not exceed 200")
 	}
 

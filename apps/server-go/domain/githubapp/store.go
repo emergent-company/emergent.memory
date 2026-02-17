@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -102,12 +103,22 @@ func (s *Store) Delete(ctx context.Context) (bool, error) {
 
 // UpdateInstallation sets the installation_id and installation_org for an app.
 func (s *Store) UpdateInstallation(ctx context.Context, appID int64, installationID int64, org string) error {
-	_, err := s.db.NewUpdate().
+	res, err := s.db.NewUpdate().
 		Model((*GitHubAppConfig)(nil)).
 		Set("installation_id = ?", installationID).
 		Set("installation_org = ?", org).
 		Set("updated_at = ?", time.Now()).
 		Where("app_id = ?", appID).
 		Exec(ctx)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("app_id %d not found", appID)
+	}
+	return nil
 }

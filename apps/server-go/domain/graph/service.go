@@ -2897,6 +2897,11 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 
 	// Phase 1: Create all objects
 	for i, objReq := range req.Objects {
+		// Validate type is non-empty
+		if objReq.Type == "" {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d] (%s): type is required and must not be empty", i, objReq.Ref))
+		}
+
 		// Validate properties against schema
 		validatedProps := objReq.Properties
 		if schemas != nil {
@@ -2938,6 +2943,11 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 	// Phase 2: Create all relationships
 	relResponses := make([]*GraphRelationshipResponse, 0, len(req.Relationships))
 	for i, relReq := range req.Relationships {
+		// Validate type is non-empty
+		if relReq.Type == "" {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: type is required and must not be empty", i))
+		}
+
 		srcObj := objByRef[relReq.SrcRef]
 		dstObj := objByRef[relReq.DstRef]
 

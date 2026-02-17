@@ -126,7 +126,7 @@ func (b *StdioBridge) Call(method string, params any, timeout time.Duration) (*J
 		}
 
 		if resp.ID != id {
-			b.log.Warn("JSON-RPC response ID mismatch", "expected", id, "got", resp.ID)
+			return nil, fmt.Errorf("JSON-RPC response ID mismatch: expected %d, got %d", id, resp.ID)
 		}
 
 		return &resp, nil

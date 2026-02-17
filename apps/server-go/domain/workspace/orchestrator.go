@@ -201,6 +201,27 @@ func (o *Orchestrator) checkAllHealth(ctx context.Context) {
 	}
 }
 
+// UpdateHealth manually updates the health status of a provider.
+// This is useful for marking a provider unhealthy after a failed operation
+// to prevent it from being selected again immediately.
+func (o *Orchestrator) UpdateHealth(providerType ProviderType, healthy bool, message string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if _, exists := o.providers[providerType]; !exists {
+		return // Provider not registered
+	}
+
+	o.health[providerType] = &HealthStatus{
+		Healthy: healthy,
+		Message: message,
+	}
+
+	if !healthy {
+		o.log.Warn("provider manually marked unhealthy", "type", providerType, "message", message)
+	}
+}
+
 // buildSelectionChain returns the priority order of providers for a given container type and deployment mode.
 func (o *Orchestrator) buildSelectionChain(containerType ContainerType, deploymentMode DeploymentMode) []ProviderType {
 	if deploymentMode == DeploymentManaged {
