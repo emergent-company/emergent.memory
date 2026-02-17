@@ -51,7 +51,6 @@ func (e *SetupExecutor) RunSetupCommands(ctx context.Context, ws *AgentWorkspace
 			"workspace_id", ws.ID,
 			"command_index", i+1,
 			"command_total", len(commands),
-			"command", cmd,
 		)
 
 		result, err := provider.Exec(cmdCtx, ws.ProviderWorkspaceID, &ExecRequest{
@@ -65,7 +64,6 @@ func (e *SetupExecutor) RunSetupCommands(ctx context.Context, ws *AgentWorkspace
 			e.log.Warn("setup command execution failed, skipping remaining commands",
 				"workspace_id", ws.ID,
 				"command_index", i+1,
-				"command", cmd,
 				"error", err,
 			)
 			return i, fmt.Errorf("setup command %d failed: %w", i+1, err)
@@ -75,7 +73,6 @@ func (e *SetupExecutor) RunSetupCommands(ctx context.Context, ws *AgentWorkspace
 			e.log.Warn("setup command returned non-zero exit code, skipping remaining commands",
 				"workspace_id", ws.ID,
 				"command_index", i+1,
-				"command", cmd,
 				"exit_code", result.ExitCode,
 				"stderr", truncateOutput(result.Stderr, 500),
 			)

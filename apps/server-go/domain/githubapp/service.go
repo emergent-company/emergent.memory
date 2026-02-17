@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"time"
 )
 
@@ -95,12 +96,19 @@ func (s *Service) GetStatus(ctx context.Context) (*StatusResponse, error) {
 
 // GenerateManifestURL creates a GitHub App manifest and returns the redirect URL.
 func (s *Service) GenerateManifestURL(callbackURL string) (string, error) {
+	// Build webhook URL by replacing the last path segment with "webhook"
+	hookURL, err := url.Parse(callbackURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid callback URL: %w", err)
+	}
+	hookURL.Path = path.Join(path.Dir(hookURL.Path), "webhook")
+
 	manifest := map[string]any{
 		"name":         "Emergent",
 		"url":          "https://emergent.sh",
 		"redirect_url": callbackURL,
 		"hook_attributes": map[string]any{
-			"url":    callbackURL + "/../webhook",
+			"url":    hookURL.String(),
 			"active": true,
 		},
 		"default_permissions": map[string]string{
@@ -142,7 +150,10 @@ func (s *Service) HandleCallback(ctx context.Context, code string, ownerID strin
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read GitHub response body: %w", err)
+	}
 
 	if resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(body))
@@ -176,7 +187,9 @@ func (s *Service) HandleCallback(ctx context.Context, code string, ownerID strin
 	}
 
 	// Delete any existing config first (singleton)
-	_, _ = s.store.Delete(ctx)
+	if _, err := s.store.Delete(ctx); err != nil {
+		s.log.Warn("failed to delete existing GitHub App config", "error", err)
+	}
 
 	// Store the new config
 	config := &GitHubAppConfig{
@@ -243,7 +256,9 @@ func (s *Service) CLISetup(ctx context.Context, req *CLISetupRequest, ownerID st
 	}
 
 	// Delete any existing config first
-	_, _ = s.store.Delete(ctx)
+	if _, err := s.store.Delete(ctx); err != nil {
+		s.log.Warn("failed to delete existing GitHub App config", "error", err)
+	}
 
 	// Store the new config
 	config := &GitHubAppConfig{
