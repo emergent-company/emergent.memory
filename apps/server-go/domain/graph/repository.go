@@ -140,6 +140,7 @@ type ListParams struct {
 	IDs             []uuid.UUID      // Filter by specific IDs
 	ExtractionJobID *uuid.UUID       // Filter by extraction job
 	PropertyFilters []PropertyFilter // JSONB property filters
+	Fields          []string         // Property field projection (include only these property keys)
 }
 
 // applyPropertyFilters applies JSONB property filters to a Bun select query.

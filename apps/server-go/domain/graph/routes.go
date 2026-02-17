@@ -41,6 +41,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.POST("/expand", h.ExpandGraph)
 	g.POST("/traverse", h.TraverseGraph)
 
+	// Atomic subgraph creation
+	g.POST("/subgraph", h.CreateSubgraph)
+
 	// Branch routes
 	branches := g.Group("/branches")
 	branches.POST("/:targetBranchId/merge", h.MergeBranch)
