@@ -124,7 +124,12 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	hasWorkspaceConfig := ae.wsEnabled && ae.provisioner != nil &&
 		req.AgentDefinition != nil && len(req.AgentDefinition.WorkspaceConfig) > 0
 	if hasWorkspaceConfig {
-		_ = ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusProvisioning)
+		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusProvisioning); err != nil {
+			ae.log.Warn("failed to update session status to provisioning",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	wsResult := ae.provisionWorkspace(ctx, run.ID, req)
@@ -134,7 +139,12 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasWorkspaceConfig {
-		_ = ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive)
+		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
+			ae.log.Warn("failed to update session status to active",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	// Build and run the pipeline
@@ -195,7 +205,12 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	hasWorkspaceConfig := ae.wsEnabled && ae.provisioner != nil &&
 		req.AgentDefinition != nil && len(req.AgentDefinition.WorkspaceConfig) > 0
 	if hasWorkspaceConfig {
-		_ = ae.repo.UpdateSessionStatus(ctx, newRun.ID, SessionStatusProvisioning)
+		if err := ae.repo.UpdateSessionStatus(ctx, newRun.ID, SessionStatusProvisioning); err != nil {
+			ae.log.Warn("failed to update session status to provisioning",
+				slog.String("run_id", newRun.ID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	wsResult := ae.provisionWorkspace(ctx, newRun.ID, req)
@@ -205,7 +220,12 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasWorkspaceConfig {
-		_ = ae.repo.UpdateSessionStatus(ctx, newRun.ID, SessionStatusActive)
+		if err := ae.repo.UpdateSessionStatus(ctx, newRun.ID, SessionStatusActive); err != nil {
+			ae.log.Warn("failed to update session status to active",
+				slog.String("run_id", newRun.ID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	// Build and run the pipeline with accumulated step count

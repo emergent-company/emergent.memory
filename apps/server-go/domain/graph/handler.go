@@ -18,6 +18,9 @@ type Handler struct {
 	svc *Service
 }
 
+// defaultListLimit is the default number of results for paginated list endpoints.
+const defaultListLimit = 20
+
 // splitCommaSeparated splits comma-separated query parameter values.
 // SDK clients typically send "labels=tag1,tag2" as a single comma-joined param,
 // but the server expects separate values. This normalizes both forms.
@@ -114,7 +117,7 @@ func (h *Handler) ListObjects(c echo.Context) error {
 	params := ListParams{
 		ProjectID:      projectID,
 		IncludeDeleted: c.QueryParam("include_deleted") == "true",
-		Limit:          20, // NestJS default is 20
+		Limit:          defaultListLimit,
 	}
 
 	if limitStr := c.QueryParam("limit"); limitStr != "" {
@@ -799,7 +802,7 @@ func (h *Handler) ListRelationships(c echo.Context) error {
 	params := RelationshipListParams{
 		ProjectID:      projectID,
 		IncludeDeleted: c.QueryParam("include_deleted") == "true",
-		Limit:          20,
+		Limit:          defaultListLimit,
 	}
 
 	if limitStr := c.QueryParam("limit"); limitStr != "" {
@@ -1131,7 +1134,7 @@ func (h *Handler) FTSSearch(c echo.Context) error {
 	req := &FTSSearchRequest{
 		Query:          c.QueryParam("q"),
 		IncludeDeleted: c.QueryParam("include_deleted") == "true",
-		Limit:          20,
+		Limit:          defaultListLimit,
 	}
 
 	if req.Query == "" {
