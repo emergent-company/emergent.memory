@@ -35,7 +35,8 @@ services:
       - -c
       - log_line_prefix=%t [%p] %u@%d
     ports:
-      - '${POSTGRES_PORT:-5432}:5432'
+      # Bind to localhost only for security
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ${DB_LOGS_PATH:-./docker/logs}:/var/log/postgresql

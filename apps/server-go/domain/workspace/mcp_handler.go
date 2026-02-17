@@ -50,6 +50,10 @@ func (h *MCPHostingHandler) RegisterServer(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
 	}
 
+	if err := c.Validate(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage(err.Error())
+	}
+
 	status, err := h.hosting.Register(c.Request().Context(), &req)
 	if err != nil {
 		return err

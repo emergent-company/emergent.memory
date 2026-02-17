@@ -3,6 +3,7 @@ package agents
 import (
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"google.golang.org/adk/tool"
@@ -441,6 +442,10 @@ func buildGitTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 				branch, _ := args["branch"].(string)
 				if branch == "" {
 					return map[string]any{"error": "branch is required for checkout action"}, nil
+				}
+				// Validate branch name to prevent shell injection
+				if match, _ := regexp.MatchString(`^[a-zA-Z0-9_\-\./]+$`, branch); !match {
+					return map[string]any{"error": "invalid branch name: must contain only alphanumeric characters, dots, slashes, hyphens and underscores"}, nil
 				}
 				cmd = fmt.Sprintf("git checkout -b %q 2>/dev/null || git checkout %q", branch, branch)
 			default:

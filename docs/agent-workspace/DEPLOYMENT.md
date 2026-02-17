@@ -91,7 +91,7 @@ E2B provides managed sandboxes via their cloud API. No local infrastructure requ
 
 ## Network Architecture
 
-```
+```text
                         ┌─────────────────────────────────────┐
                         │         Docker Host                  │
                         │                                      │
