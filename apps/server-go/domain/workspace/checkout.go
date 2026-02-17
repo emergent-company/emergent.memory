@@ -169,8 +169,16 @@ fi
 
 // configureGitIdentity sets the git user.name and user.email in the workspace.
 func (cs *CheckoutService) configureGitIdentity(ctx context.Context, provider Provider, providerID string) {
-	name, email, err := cs.credProvider.GetBotIdentity(ctx)
-	if err != nil {
+	var name, email string
+	if cs.credProvider != nil {
+		var err error
+		name, email, err = cs.credProvider.GetBotIdentity(ctx)
+		if err != nil {
+			name = ""
+			email = ""
+		}
+	}
+	if name == "" || email == "" {
 		name = "Emergent Agent"
 		email = "agent@emergent.local"
 		cs.log.Debug("using default git identity (no GitHub App configured)")
@@ -180,12 +188,12 @@ func (cs *CheckoutService) configureGitIdentity(ctx context.Context, provider Pr
 		`git config user.name %q && git config user.email %q`,
 		name, email,
 	)
-	_, err = provider.Exec(ctx, providerID, &ExecRequest{
+	_, execErr := provider.Exec(ctx, providerID, &ExecRequest{
 		Command: cmd,
 		Workdir: "/workspace",
 	})
-	if err != nil {
-		cs.log.Warn("failed to configure git identity", "error", err)
+	if execErr != nil {
+		cs.log.Warn("failed to configure git identity", "error", execErr)
 	}
 }
 

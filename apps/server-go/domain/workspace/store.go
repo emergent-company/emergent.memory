@@ -189,6 +189,37 @@ func (s *Store) TouchLastUsed(ctx context.Context, id string, extendTTL *time.Ti
 	return err
 }
 
+// GetBySessionID returns a workspace attached to the given agent session.
+func (s *Store) GetBySessionID(ctx context.Context, sessionID string) (*AgentWorkspace, error) {
+	ws := new(AgentWorkspace)
+	err := s.db.NewSelect().
+		Model(ws).
+		Where("agent_session_id = ?", sessionID).
+		Where("status NOT IN (?)", bun.In([]Status{StatusStopped, StatusError})).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return ws, nil
+}
+
+// GetBySnapshotID returns workspaces that were created from the given snapshot.
+func (s *Store) GetBySnapshotID(ctx context.Context, snapshotID string) ([]*AgentWorkspace, error) {
+	var workspaces []*AgentWorkspace
+	err := s.db.NewSelect().
+		Model(&workspaces).
+		Where("snapshot_id = ?", snapshotID).
+		Order("created_at DESC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return workspaces, nil
+}
+
 // ListFilters holds optional filters for listing workspaces.
 type ListFilters struct {
 	ContainerType  ContainerType `json:"container_type,omitempty"`

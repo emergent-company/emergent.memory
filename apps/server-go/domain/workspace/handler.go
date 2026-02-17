@@ -249,3 +249,151 @@ func (h *Handler) ListProviders(c echo.Context) error {
 	providers := h.orchestrator.ListProviders()
 	return c.JSON(http.StatusOK, providers)
 }
+
+// AttachSession handles POST /api/v1/agent/workspaces/:id/attach
+// @Summary      Attach agent session to workspace
+// @Description  Attaches an agent session to a workspace for sequential access. Rejects concurrent attachment.
+// @Tags         agent-workspaces
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Workspace ID (UUID)"
+// @Param        request body AttachSessionRequest true "Session to attach"
+// @Success      200 {object} WorkspaceResponse "Workspace with attached session"
+// @Failure      400 {object} apperror.Error "Concurrent access or invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Workspace not found"
+// @Router       /api/v1/agent/workspaces/{id}/attach [post]
+// @Security     bearerAuth
+func (h *Handler) AttachSession(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.ErrBadRequest.WithMessage("workspace id required")
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid workspace id format")
+	}
+
+	var req AttachSessionRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	if req.AgentSessionID == "" {
+		return apperror.ErrBadRequest.WithMessage("agent_session_id is required")
+	}
+
+	ws, err := h.svc.AttachToSession(c.Request().Context(), id, req.AgentSessionID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, ws)
+}
+
+// DetachSession handles POST /api/v1/agent/workspaces/:id/detach
+// @Summary      Detach agent session from workspace
+// @Description  Clears the agent session from a workspace, making it available for new attachments
+// @Tags         agent-workspaces
+// @Produce      json
+// @Param        id path string true "Workspace ID (UUID)"
+// @Success      200 {object} WorkspaceResponse "Workspace with session detached"
+// @Failure      400 {object} apperror.Error "Invalid workspace ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Workspace not found"
+// @Router       /api/v1/agent/workspaces/{id}/detach [post]
+// @Security     bearerAuth
+func (h *Handler) DetachSession(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.ErrBadRequest.WithMessage("workspace id required")
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid workspace id format")
+	}
+
+	ws, err := h.svc.DetachSession(c.Request().Context(), id)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, ws)
+}
+
+// CreateSnapshot handles POST /api/v1/agent/workspaces/:id/snapshot
+// @Summary      Create workspace snapshot
+// @Description  Creates a point-in-time snapshot of a workspace's filesystem state
+// @Tags         agent-workspaces
+// @Produce      json
+// @Param        id path string true "Workspace ID (UUID)"
+// @Success      201 {object} SnapshotResponse "Snapshot created"
+// @Failure      400 {object} apperror.Error "Invalid workspace state or provider"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Workspace not found"
+// @Failure      500 {object} apperror.Error "Snapshot creation failed"
+// @Router       /api/v1/agent/workspaces/{id}/snapshot [post]
+// @Security     bearerAuth
+func (h *Handler) CreateSnapshot(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.ErrBadRequest.WithMessage("workspace id required")
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid workspace id format")
+	}
+
+	snap, err := h.svc.CreateSnapshot(c.Request().Context(), id)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, snap)
+}
+
+// CreateFromSnapshot handles POST /api/v1/agent/workspaces/from-snapshot
+// @Summary      Create workspace from snapshot
+// @Description  Creates a new workspace with filesystem state restored from a snapshot
+// @Tags         agent-workspaces
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateFromSnapshotRequest true "Snapshot to restore from"
+// @Success      201 {object} WorkspaceResponse "Workspace created from snapshot"
+// @Failure      400 {object} apperror.Error "Invalid snapshot or provider"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Restore failed"
+// @Router       /api/v1/agent/workspaces/from-snapshot [post]
+// @Security     bearerAuth
+func (h *Handler) CreateFromSnapshot(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	var req CreateFromSnapshotRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	if req.SnapshotID == "" {
+		return apperror.ErrBadRequest.WithMessage("snapshot_id is required")
+	}
+
+	ws, err := h.svc.CreateFromSnapshot(c.Request().Context(), &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, ws)
+}
