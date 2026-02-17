@@ -175,6 +175,9 @@ func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObje
 	}
 
 	// Apply field projection if requested (filter properties to only include specified keys)
+	// TODO: Push field projection down to the repository/DB layer to avoid fetching
+	// full property maps when only a subset of keys is needed. This is an optimization
+	// for large property sets — the current in-memory approach is correct but wasteful.
 	if len(params.Fields) > 0 {
 		projection := &GraphExpandProjection{
 			IncludeObjectProperties: params.Fields,

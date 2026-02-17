@@ -32,6 +32,7 @@ type CleanupJob struct {
 	log          *slog.Logger
 	config       CleanupConfig
 	stopCh       chan struct{}
+	doneCh       chan struct{} // closed when the goroutine exits
 	mu           sync.Mutex
 	running      bool
 }
@@ -44,6 +45,7 @@ func NewCleanupJob(store *Store, orchestrator *Orchestrator, log *slog.Logger, c
 		log:          log.With("component", "workspace-cleanup"),
 		config:       config,
 		stopCh:       make(chan struct{}),
+		doneCh:       make(chan struct{}),
 	}
 }
 
@@ -58,6 +60,8 @@ func (j *CleanupJob) Start(ctx context.Context) {
 	j.mu.Unlock()
 
 	go func() {
+		defer close(j.doneCh)
+
 		ticker := time.NewTicker(j.config.Interval)
 		defer ticker.Stop()
 
@@ -83,14 +87,20 @@ func (j *CleanupJob) Start(ctx context.Context) {
 	)
 }
 
-// Stop signals the cleanup goroutine to stop.
+// Stop signals the cleanup goroutine to stop and waits for it to finish.
 func (j *CleanupJob) Stop() {
 	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.running {
-		close(j.stopCh)
-		j.running = false
+	if !j.running {
+		j.mu.Unlock()
+		return
 	}
+	j.running = false
+	close(j.stopCh)
+	// Release the lock before waiting to avoid blocking Start() or other callers.
+	j.mu.Unlock()
+
+	// Wait for the goroutine to finish its current cycle and exit.
+	<-j.doneCh
 }
 
 // runCycle performs a single cleanup cycle: destroy expired workspaces and check resource usage.

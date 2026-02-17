@@ -11,7 +11,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -26,9 +25,10 @@ import (
 )
 
 const (
-	listenAddr     = ":8080"
-	maxOutputBytes = 50 * 1024 // 50KB output limit
-	defaultTimeout = 120 * time.Second
+	listenAddr       = ":8080"
+	maxOutputBytes   = 50 * 1024        // 50KB output limit
+	maxFileReadBytes = 10 * 1024 * 1024 // 10MB max file read for microVM memory safety
+	defaultTimeout   = 120 * time.Second
 )
 
 // ExecRequest matches the workspace ExecRequest type.
@@ -246,6 +246,12 @@ func handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Guard against reading very large files into memory (microVM has limited RAM)
+	if info.Size() > maxFileReadBytes {
+		http.Error(w, "file too large: exceeds 10MB limit", http.StatusRequestEntityTooLarge)
+		return
+	}
+
 	// Read text file
 	data, err := os.ReadFile(req.FilePath)
 	if err != nil {
@@ -338,12 +344,14 @@ func handleListFiles(w http.ResponseWriter, r *http.Request) {
 
 	err := filepath.Walk(searchPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil // skip errors
+			log.Printf("walk error at %s: %v", path, err)
+			return nil // skip errors but log them
 		}
 
 		// Match pattern against base name
 		matched, matchErr := filepath.Match(req.Pattern, info.Name())
 		if matchErr != nil {
+			log.Printf("pattern match error for %s: %v", info.Name(), matchErr)
 			return nil
 		}
 		if !matched {
@@ -411,30 +419,3 @@ func init() {
 	log.SetPrefix("[vm-agent] ")
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }
-
-// formatError creates an error response in JSON.
-func formatError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
-}
-
-// readBody reads the request body with a size limit.
-func readBody(r *http.Request, maxBytes int64) ([]byte, error) {
-	limited := io.LimitReader(r.Body, maxBytes)
-	return io.ReadAll(limited)
-}
-
-// writeJSON writes a JSON response.
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("failed to encode response: %v", err)
-	}
-}
-
-// unused but kept for future use
-var _ = fmt.Sprintf
-var _ = readBody
-var _ = formatError
-var _ = writeJSON
