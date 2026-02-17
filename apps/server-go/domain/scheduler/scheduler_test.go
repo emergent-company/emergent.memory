@@ -697,12 +697,7 @@ func TestAddScheduledTask_CronOverridesInterval(t *testing.T) {
 	log := slog.Default()
 	s := NewScheduler(log)
 
-	taskCalled := false
-	task := func(ctx context.Context) error {
-		taskCalled = true
-		return nil
-	}
-	_ = taskCalled // used in assertions below
+	task := func(ctx context.Context) error { return nil }
 
 	// With cron schedule set, should use AddCronTask
 	err := addScheduledTask(s, log, "test_cron", "0 0 2 * * *", 5*time.Minute, task)

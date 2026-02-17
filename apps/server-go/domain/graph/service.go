@@ -2938,6 +2938,11 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		srcObj := objByRef[relReq.SrcRef]
 		dstObj := objByRef[relReq.DstRef]
 
+		// Validate branch consistency: src and dst must be on the same branch
+		if !branchIDsEqual(srcObj.BranchID, dstObj.BranchID) {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: branch mismatch between src_ref %q and dst_ref %q", i, relReq.SrcRef, relReq.DstRef))
+		}
+
 		rel := &GraphRelationship{
 			ProjectID:  projectID,
 			BranchID:   srcObj.BranchID,
