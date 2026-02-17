@@ -25,6 +25,14 @@ type Config struct {
 
 	// StaleJobMinutes is how long a job can be running before it's considered stale
 	StaleJobMinutes int
+
+	// Cron schedule overrides (take precedence over intervals when set)
+	// Standard cron format: "minute hour day-of-month month day-of-week"
+	// Examples: "*/5 * * * *" (every 5 min), "0 2 * * *" (daily at 2am)
+	RevisionCountRefreshSchedule string
+	TagCleanupSchedule           string
+	CacheCleanupSchedule         string
+	StaleJobCleanupSchedule      string
 }
 
 // NewConfig creates a new Config from environment variables
@@ -36,6 +44,11 @@ func NewConfig() *Config {
 		CacheCleanupInterval:         getEnvDuration("CACHE_CLEANUP_INTERVAL", 15*time.Minute),
 		StaleJobCleanupInterval:      getEnvDuration("STALE_JOB_CLEANUP_INTERVAL_MS", 10*time.Minute),
 		StaleJobMinutes:              getEnvInt("STALE_JOB_MINUTES", 30),
+		// Cron schedule overrides (empty string means use interval)
+		RevisionCountRefreshSchedule: getEnvString("REVISION_COUNT_REFRESH_SCHEDULE", ""),
+		TagCleanupSchedule:           getEnvString("TAG_CLEANUP_SCHEDULE", ""),
+		CacheCleanupSchedule:         getEnvString("CACHE_CLEANUP_SCHEDULE", ""),
+		StaleJobCleanupSchedule:      getEnvString("STALE_JOB_CLEANUP_SCHEDULE", ""),
 	}
 }
 
@@ -65,6 +78,14 @@ func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
 		if ms, err := strconv.Atoi(val); err == nil {
 			return time.Duration(ms) * time.Millisecond
 		}
+	}
+	return defaultVal
+}
+
+// getEnvString returns a string from an environment variable
+func getEnvString(key string, defaultVal string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
 	}
 	return defaultVal
 }
