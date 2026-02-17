@@ -36,11 +36,12 @@ func NewService(repo *Repository, log *slog.Logger) *Service {
 	}
 }
 
-// ListParams defines parameters for listing projects
+// ServiceListParams defines parameters for listing projects
 type ServiceListParams struct {
-	UserID string
-	OrgID  string
-	Limit  int
+	UserID    string
+	OrgID     string
+	ProjectID string // If set, restrict results to this single project (for API token scope)
+	Limit     int
 }
 
 // List returns all projects the user is a member of
@@ -64,9 +65,10 @@ func (s *Service) List(ctx context.Context, params ServiceListParams) ([]Project
 	}
 
 	projects, err := s.repo.List(ctx, ListParams{
-		UserID: params.UserID,
-		OrgID:  params.OrgID,
-		Limit:  limit,
+		UserID:    params.UserID,
+		OrgID:     params.OrgID,
+		ProjectID: params.ProjectID,
+		Limit:     limit,
 	})
 	if err != nil {
 		return nil, err

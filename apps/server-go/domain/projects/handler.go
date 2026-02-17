@@ -48,10 +48,17 @@ func (h *Handler) List(c echo.Context) error {
 
 	orgID := c.QueryParam("orgId")
 
+	// If authenticated via a project-scoped API token, restrict to that project only
+	var projectID string
+	if user.APITokenProjectID != "" {
+		projectID = user.APITokenProjectID
+	}
+
 	projects, err := h.svc.List(c.Request().Context(), ServiceListParams{
-		UserID: user.ID,
-		OrgID:  orgID,
-		Limit:  limit,
+		UserID:    user.ID,
+		OrgID:     orgID,
+		ProjectID: projectID,
+		Limit:     limit,
 	})
 	if err != nil {
 		return err
