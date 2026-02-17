@@ -1,80 +1,139 @@
 #!/usr/bin/env sh
 
 # Pre-commit hook to validate code quality
+# Run by husky via .husky/_/h (invoked with sh -e, so all commands must || true on expected failures)
 ERRORS=0
 
 # ============================================================================
 # TypeScript Type Checking
 # ============================================================================
-echo "🔍 Running TypeScript type checks..."
+echo "Checking TypeScript types..."
 
 # Get list of staged TypeScript files
 TS_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx)$' || true)
 
 if [ -n "$TS_FILES" ]; then
-  echo "Found staged TypeScript files, checking types..."
-  
-  # Check server TypeScript files
-  if echo "$TS_FILES" | grep -q '^apps/server-nest/'; then
-    echo "  Checking server-nest types..."
-    if ! npm --prefix apps/server-nest run build > /dev/null 2>&1; then
-      echo "❌ ERROR: TypeScript errors in server-nest"
-      echo "   Run 'npm --prefix apps/server-nest run build' to see details"
-      ERRORS=$((ERRORS + 1))
-    else
-      echo "  ✓ Server types OK"
-    fi
-  fi
-  
   # Check admin TypeScript files
   if echo "$TS_FILES" | grep -q '^apps/admin/'; then
     echo "  Checking admin types..."
     if ! npm --prefix apps/admin run build > /dev/null 2>&1; then
-      echo "❌ ERROR: TypeScript errors in admin"
-      echo "   Run 'npm --prefix apps/admin run build' to see details"
+      echo "ERROR: TypeScript errors in apps/admin"
+      echo "  Run 'npm --prefix apps/admin run build' to see details"
       ERRORS=$((ERRORS + 1))
     else
-      echo "  ✓ Admin types OK"
+      echo "  Admin types OK"
     fi
   fi
 else
-  echo "  ✓ No TypeScript files to check"
+  echo "  No TypeScript files to check"
 fi
 
 # ============================================================================
 # SQL Migration Validation
 # ============================================================================
 echo ""
-echo "🔍 Checking SQL migration files for syntax errors..."
+echo "Checking SQL migration files..."
 
-# Get list of staged SQL migration files
-MIGRATION_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^apps/server-nest/migrations/.*\.sql$' || true)
+# Get list of staged SQL migration files (server-go migrations)
+MIGRATION_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^apps/server-go/migrations/.*\.sql$' || true)
 
 if [ -z "$MIGRATION_FILES" ]; then
-  echo "  ✓ No migration files to check"
+  echo "  No migration files to check"
 else
   for file in $MIGRATION_FILES; do
     echo "  Checking: $file"
-    
+
     # Check for invalid backslash metacommands
     if grep -q '^\\' "$file"; then
-      echo "❌ ERROR: Found backslash metacommand in $file"
-      echo "   SQL migrations should not contain psql metacommands (lines starting with \\)"
-      grep -n '^\\' "$file"
+      echo "ERROR: Found backslash metacommand in $file"
+      echo "  SQL migrations should not contain psql metacommands (lines starting with \\)"
+      grep -n '^\\' "$file" || true
       ERRORS=$((ERRORS + 1))
     fi
-    
+
     # Check for spaced dollar quotes
     if grep -q '\$ \$' "$file"; then
-      echo "❌ ERROR: Found spaced dollar quotes in $file"
-      echo "   Dollar quotes should be $$ not $ $"
-      grep -n '\$ \$' "$file" | head -5
+      echo "ERROR: Found spaced dollar quotes in $file"
+      echo "  Dollar quotes should be \$\$ not \$ \$"
+      grep -n '\$ \$' "$file" | head -5 || true
       ERRORS=$((ERRORS + 1))
     fi
   done
-  
-  if [ $(echo "$MIGRATION_FILES" | wc -l) -gt 0 ] && [ $ERRORS -eq 0 ]; then
-    echo "  ✅ All SQL migration files look good!"
+fi
+
+# ============================================================================
+# Go Untracked Import Detection
+# Prevents CI build failures caused by importing local packages that exist
+# on disk but haven't been committed to git. This was the root cause of the
+# v0.14.1 Docker build failure.
+# ============================================================================
+echo ""
+echo "Checking Go imports for untracked packages..."
+
+STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACMR | grep '^apps/server-go/.*\.go$' || true)
+
+if [ -z "$STAGED_GO_FILES" ]; then
+  echo "  No Go files to check"
+else
+  # Extract all local module imports from staged Go files
+  # Module: github.com/emergent/emergent-core (rooted at apps/server-go/)
+  ALL_IMPORTS=$(echo "$STAGED_GO_FILES" | xargs grep -oh '"github\.com/emergent/emergent-core/[^"]*"' 2>/dev/null | tr -d '"' | sort -u || true)
+
+  IMPORT_ERRORS=0
+  for imp in $ALL_IMPORTS; do
+    # Convert import path to local directory relative to repo root
+    local_dir="apps/server-go/${imp#github.com/emergent/emergent-core/}"
+
+    # Check if any .go files are tracked in git index (committed + staged) for this package
+    tracked_count=$(git ls-files --cached -- "$local_dir" 2>/dev/null | grep '\.go$' | wc -l)
+
+    if [ "$tracked_count" -eq 0 ]; then
+      echo "ERROR: Import \"$imp\" references untracked package"
+      echo "  Expected files in: $local_dir"
+      echo "  Add the package files with 'git add $local_dir' before committing"
+      IMPORT_ERRORS=$((IMPORT_ERRORS + 1))
+    fi
+  done
+
+  if [ "$IMPORT_ERRORS" -gt 0 ]; then
+    echo ""
+    echo "  $IMPORT_ERRORS package(s) imported but not tracked by git."
+    echo "  This WILL cause CI Docker builds to fail."
+    ERRORS=$((ERRORS + IMPORT_ERRORS))
+  else
+    echo "  All imported packages are tracked in git"
+  fi
+fi
+
+# ============================================================================
+# Swagger Annotation Check
+# Ensures handler files have @Router annotations for API documentation.
+# ============================================================================
+echo ""
+echo "Checking Swagger annotations on handler files..."
+
+CHANGED_HANDLERS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^apps/server-go/domain/.*/handler[^/]*\.go$' || true)
+
+if [ -z "$CHANGED_HANDLERS" ]; then
+  echo "  No handler files to check"
+else
+  SWAGGER_ERRORS=0
+  for file in $CHANGED_HANDLERS; do
+    if [ -f "$file" ]; then
+      # Check if file has at least one @Router annotation
+      if ! grep -q '^// @Router' "$file"; then
+        echo "ERROR: Missing Swagger annotations in $file"
+        echo "  Handler files must have @Router annotations"
+        echo "  See apps/server-go/domain/chunks/handler.go for examples"
+        SWAGGER_ERRORS=$((SWAGGER_ERRORS + 1))
+      fi
+    fi
+  done
+
+  if [ "$SWAGGER_ERRORS" -gt 0 ]; then
+    ERRORS=$((ERRORS + SWAGGER_ERRORS))
+  else
+    echo "  All handler files have Swagger annotations"
   fi
 fi
 
@@ -83,10 +142,11 @@ fi
 # ============================================================================
 echo ""
 if [ $ERRORS -gt 0 ]; then
-  echo "❌ Pre-commit checks failed with $ERRORS error(s)"
-  echo "Please fix the issues above before committing"
+  echo "Pre-commit checks failed with $ERRORS error(s)"
+  echo "Fix the issues above before committing."
+  echo "To skip (NOT RECOMMENDED): git commit --no-verify"
   exit 1
 fi
 
-echo "✅ All pre-commit checks passed!"
+echo "All pre-commit checks passed!"
 exit 0
