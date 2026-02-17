@@ -189,17 +189,21 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 	}
 
 	// Validate required fields
+	var missing []string
 	if dto.ProjectID == "" {
-		return apperror.NewBadRequest("projectId is required")
+		missing = append(missing, "projectId")
 	}
 	if dto.Name == "" {
-		return apperror.NewBadRequest("name is required")
+		missing = append(missing, "name")
 	}
 	if dto.StrategyType == "" {
-		return apperror.NewBadRequest("strategyType is required")
+		missing = append(missing, "strategyType")
 	}
 	if dto.CronSchedule == "" {
-		return apperror.NewBadRequest("cronSchedule is required")
+		missing = append(missing, "cronSchedule")
+	}
+	if len(missing) > 0 {
+		return apperror.NewBadRequest("missing required fields: " + strings.Join(missing, ", "))
 	}
 
 	// Set defaults
