@@ -680,3 +680,42 @@ type BranchMergeRelationshipSummary struct {
 	TargetPaths  []string   `json:"target_paths,omitempty"`
 	Conflicts    []string   `json:"conflicts,omitempty"`
 }
+
+// =============================================================================
+// Subgraph Create DTOs
+// =============================================================================
+
+// SubgraphObjectRequest is a single object in a subgraph creation request.
+// It extends CreateGraphObjectRequest with a client-side placeholder reference (_ref).
+type SubgraphObjectRequest struct {
+	Ref        string         `json:"_ref" validate:"required,max=128"`
+	Type       string         `json:"type" validate:"required,max=64"`
+	Key        *string        `json:"key,omitempty" validate:"omitempty,max=128"`
+	Status     *string        `json:"status,omitempty" validate:"omitempty,max=64"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Labels     []string       `json:"labels,omitempty" validate:"omitempty,max=32,dive,max=64"`
+	BranchID   *uuid.UUID     `json:"branch_id,omitempty"`
+}
+
+// SubgraphRelationshipRequest is a single relationship in a subgraph creation request.
+// It uses _ref placeholders (src_ref, dst_ref) to reference objects defined in the same request.
+type SubgraphRelationshipRequest struct {
+	Type       string         `json:"type" validate:"required,max=64"`
+	SrcRef     string         `json:"src_ref" validate:"required,max=128"`
+	DstRef     string         `json:"dst_ref" validate:"required,max=128"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Weight     *float32       `json:"weight,omitempty"`
+}
+
+// CreateSubgraphRequest is the request body for atomic subgraph creation.
+type CreateSubgraphRequest struct {
+	Objects       []SubgraphObjectRequest       `json:"objects" validate:"required,min=1,max=100"`
+	Relationships []SubgraphRelationshipRequest `json:"relationships,omitempty" validate:"omitempty,max=200"`
+}
+
+// CreateSubgraphResponse is the response for atomic subgraph creation.
+type CreateSubgraphResponse struct {
+	Objects       []*GraphObjectResponse       `json:"objects"`
+	Relationships []*GraphRelationshipResponse `json:"relationships"`
+	RefMap        map[string]uuid.UUID         `json:"ref_map"`
+}

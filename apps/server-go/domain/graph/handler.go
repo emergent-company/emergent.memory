@@ -92,6 +92,7 @@ func getUserID(c echo.Context) (*uuid.UUID, error) {
 // @Param        extraction_job_id query string false "Filter by extraction job"
 // @Param        branch_id query string false "Branch ID (use 'null' for main branch)"
 // @Param        include_deleted query boolean false "Include soft-deleted objects"
+// @Param        fields query string false "Comma-separated property fields to include in response (projection)"
 // @Param        X-Project-ID header string true "Project ID"
 // @Success      200 {object} map[string]interface{} "Paginated list with cursor"
 // @Failure      400 {object} apperror.Error "Invalid parameters"
@@ -219,6 +220,11 @@ func (h *Handler) ListObjects(c echo.Context) error {
 			params.BranchID = &branchID
 		}
 		// If branch_id=null, leave BranchID as nil (main branch)
+	}
+
+	// Parse fields projection (comma-separated property keys to include)
+	if fieldsParam := c.QueryParam("fields"); fieldsParam != "" {
+		params.Fields = splitCommaSeparated([]string{fieldsParam})
 	}
 
 	result, err := h.svc.List(c.Request().Context(), params)
@@ -1846,4 +1852,52 @@ func (h *Handler) BulkCreateRelationships(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, result)
+}
+
+// CreateSubgraph atomically creates a set of objects and relationships in a single transaction.
+// @Summary      Create subgraph atomically
+// @Description  Create multiple objects and relationships in a single atomic transaction using client-side placeholder references
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateSubgraphRequest true "Subgraph to create (max 100 objects, 200 relationships)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} CreateSubgraphResponse "Created subgraph"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/subgraph [post]
+// @Security     bearerAuth
+func (h *Handler) CreateSubgraph(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req CreateSubgraphRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.Objects) == 0 {
+		return apperror.ErrBadRequest.WithMessage("objects is required and must not be empty")
+	}
+	if len(req.Objects) > 100 {
+		return apperror.ErrBadRequest.WithMessage("objects must not exceed 100")
+	}
+	if len(req.Relationships) > 200 {
+		return apperror.ErrBadRequest.WithMessage("relationships must not exceed 200")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.CreateSubgraph(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, result)
 }
