@@ -100,6 +100,6 @@ exclude:
     - '**/mocks/**'
   
   # Skip dependency scanning for the monorepo's own module
-  # Snyk cannot fetch github.com/emergent/emergent-core (it's this repo!)
+  # Snyk cannot fetch github.com/emergent-company/emergent (it's this repo!)
   dependencies:
-    - 'github.com/emergent/emergent-core'
+    - 'github.com/emergent-company/emergent'

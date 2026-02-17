@@ -3,7 +3,7 @@ package chunking
 import (
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent/emergent-core/pkg/auth"
+	"github.com/emergent-company/emergent/pkg/auth"
 )
 
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {

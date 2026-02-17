@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent/emergent-core/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/apperror"
 )
 
 // ServiceConfig holds configuration for the workspace service.

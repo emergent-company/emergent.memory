@@ -10,11 +10,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/emergent/emergent-core/domain/documents"
-	"github.com/emergent/emergent-core/domain/extraction/agents"
-	"github.com/emergent/emergent-core/domain/graph"
-	"github.com/emergent/emergent-core/pkg/adk"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/domain/documents"
+	"github.com/emergent-company/emergent/domain/extraction/agents"
+	"github.com/emergent-company/emergent/domain/graph"
+	"github.com/emergent-company/emergent/pkg/adk"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // ObjectExtractionWorkerConfig holds configuration for the extraction worker.

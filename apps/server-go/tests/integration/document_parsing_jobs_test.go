@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent/emergent-core/domain/extraction"
-	"github.com/emergent/emergent-core/internal/testutil"
+	"github.com/emergent-company/emergent/domain/extraction"
+	"github.com/emergent-company/emergent/internal/testutil"
 )
 
 // DocumentParsingJobsTestSuite tests the document parsing job queue functionality

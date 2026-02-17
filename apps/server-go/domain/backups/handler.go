@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/emergent/emergent-core/internal/storage"
-	"github.com/emergent/emergent-core/pkg/apperror"
-	"github.com/emergent/emergent-core/pkg/auth"
+	"github.com/emergent-company/emergent/internal/storage"
+	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/auth"
 	"github.com/labstack/echo/v4"
 )
 

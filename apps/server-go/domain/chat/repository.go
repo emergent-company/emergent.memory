@@ -9,9 +9,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
-	"github.com/emergent/emergent-core/pkg/apperror"
-	"github.com/emergent/emergent-core/pkg/logger"
-	"github.com/emergent/emergent-core/pkg/pgutils"
+	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/pgutils"
 )
 
 // Repository handles chat database operations

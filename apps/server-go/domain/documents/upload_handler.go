@@ -13,10 +13,10 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent/emergent-core/internal/storage"
-	"github.com/emergent/emergent-core/pkg/apperror"
-	"github.com/emergent/emergent-core/pkg/auth"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/internal/storage"
+	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/auth"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 const (

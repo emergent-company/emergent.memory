@@ -18,7 +18,7 @@ import (
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 
-	"github.com/emergent/emergent-core/pkg/adk"
+	"github.com/emergent-company/emergent/pkg/adk"
 )
 
 // ExtractionPipelineConfig holds configuration for the extraction pipeline.

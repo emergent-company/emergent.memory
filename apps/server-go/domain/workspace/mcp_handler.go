@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent/emergent-core/pkg/apperror"
-	"github.com/emergent/emergent-core/pkg/auth"
+	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/auth"
 )
 
 // MCPHostingHandler handles HTTP requests for MCP server hosting.

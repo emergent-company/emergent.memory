@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/emergent/emergent-core/domain/extraction/agents"
+	"github.com/emergent-company/emergent/domain/extraction/agents"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
