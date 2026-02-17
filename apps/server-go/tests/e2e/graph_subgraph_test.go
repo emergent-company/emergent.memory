@@ -218,6 +218,83 @@ func (s *GraphSubgraphSuite) TestCreateSubgraph_ObjectsRetrievable() {
 	s.Equal("Test Requirement", obj.Properties["title"])
 }
 
+// TestCreateSubgraph_SameBranch creates a subgraph with objects on the same branch (should succeed).
+func (s *GraphSubgraphSuite) TestCreateSubgraph_SameBranch() {
+	branchID := "00000000-0000-0000-0000-000000000099"
+	rec := s.Client.POST(
+		"/api/graph/subgraph",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithProjectID(s.ProjectID),
+		testutil.WithJSONBody(map[string]any{
+			"objects": []map[string]any{
+				{"_ref": "a", "type": "Task", "branch_id": branchID, "properties": map[string]any{"title": "Task A"}},
+				{"_ref": "b", "type": "Task", "branch_id": branchID, "properties": map[string]any{"title": "Task B"}},
+			},
+			"relationships": []map[string]any{
+				{"type": "depends_on", "src_ref": "a", "dst_ref": "b"},
+			},
+		}),
+	)
+
+	s.Equal(http.StatusCreated, rec.StatusCode, "Response: %s", rec.String())
+
+	var response graph.CreateSubgraphResponse
+	err := json.Unmarshal(rec.Body, &response)
+	s.Require().NoError(err)
+
+	s.Len(response.Objects, 2)
+	s.Len(response.Relationships, 1)
+}
+
+// TestCreateSubgraph_DifferentBranches returns 400 when objects are on different branches.
+func (s *GraphSubgraphSuite) TestCreateSubgraph_DifferentBranches() {
+	branchA := "00000000-0000-0000-0000-000000000001"
+	branchB := "00000000-0000-0000-0000-000000000002"
+	rec := s.Client.POST(
+		"/api/graph/subgraph",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithProjectID(s.ProjectID),
+		testutil.WithJSONBody(map[string]any{
+			"objects": []map[string]any{
+				{"_ref": "a", "type": "Task", "branch_id": branchA, "properties": map[string]any{"title": "Task A"}},
+				{"_ref": "b", "type": "Task", "branch_id": branchB, "properties": map[string]any{"title": "Task B"}},
+			},
+			"relationships": []map[string]any{
+				{"type": "depends_on", "src_ref": "a", "dst_ref": "b"},
+			},
+		}),
+	)
+
+	s.Equal(http.StatusBadRequest, rec.StatusCode)
+}
+
+// TestCreateSubgraph_NilBranches succeeds when all objects have nil branch_id (main branch).
+func (s *GraphSubgraphSuite) TestCreateSubgraph_NilBranches() {
+	rec := s.Client.POST(
+		"/api/graph/subgraph",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithProjectID(s.ProjectID),
+		testutil.WithJSONBody(map[string]any{
+			"objects": []map[string]any{
+				{"_ref": "a", "type": "Task", "properties": map[string]any{"title": "Task A"}},
+				{"_ref": "b", "type": "Task", "properties": map[string]any{"title": "Task B"}},
+			},
+			"relationships": []map[string]any{
+				{"type": "depends_on", "src_ref": "a", "dst_ref": "b"},
+			},
+		}),
+	)
+
+	s.Equal(http.StatusCreated, rec.StatusCode, "Response: %s", rec.String())
+
+	var response graph.CreateSubgraphResponse
+	err := json.Unmarshal(rec.Body, &response)
+	s.Require().NoError(err)
+
+	s.Len(response.Objects, 2)
+	s.Len(response.Relationships, 1)
+}
+
 func stringPtr(s string) *string {
 	return &s
 }
