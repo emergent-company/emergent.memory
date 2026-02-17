@@ -5,6 +5,44 @@ version: v1.25.0
 # See docs/security/SNYK_FALSE_POSITIVES.md for detailed explanations
 
 ignore:
+  # Path Traversal in vm-agent (CWE-23) - 4 findings
+  # FALSE POSITIVE: vm-agent runs INSIDE the untrusted sandbox
+  # The security boundary is VM/container isolation, not the agent code
+  # An attacker with filesystem access is already isolated in the ephemeral VM
+  
+  # Finding 1: os.ReadDir at line 215
+  'SNYK-CODE-GO-CWE-23-PATH-TRAVERSAL-READDIR':
+    - 'apps/server-go/cmd/vm-agent/main.go:215':
+        reason: 'vm-agent runs inside isolated sandbox; no access to host filesystem'
+        expires: '2027-02-17T00:00:00.000Z'
+  
+  # Finding 2: os.ReadFile at line 255
+  'SNYK-CODE-GO-CWE-23-PATH-TRAVERSAL-READFILE':
+    - 'apps/server-go/cmd/vm-agent/main.go:255':
+        reason: 'vm-agent runs inside isolated sandbox; no access to host filesystem'
+        expires: '2027-02-17T00:00:00.000Z'
+  
+  # Finding 3: os.WriteFile at line 316
+  'SNYK-CODE-GO-CWE-23-PATH-TRAVERSAL-WRITEFILE':
+    - 'apps/server-go/cmd/vm-agent/main.go:316':
+        reason: 'vm-agent runs inside isolated sandbox; no access to host filesystem'
+        expires: '2027-02-17T00:00:00.000Z'
+  
+  # Finding 4: os.Open at line 385
+  'SNYK-CODE-GO-CWE-23-PATH-TRAVERSAL-OPEN':
+    - 'apps/server-go/cmd/vm-agent/main.go:385':
+        reason: 'vm-agent runs inside isolated sandbox; no access to host filesystem'
+        expires: '2027-02-17T00:00:00.000Z'
+  
+  # Generic CWE-23 Path Traversal (catch-all for vm-agent)
+  'SNYK-CODE-GO-PATH-TRAVERSAL':
+    - 'apps/server-go/cmd/vm-agent/main.go':
+        reason: 'vm-agent runs inside isolated sandbox; security boundary is VM isolation'
+        expires: '2027-02-17T00:00:00.000Z'
+    - 'apps/server-go/cmd/vm-agent/main.go:*':
+        reason: 'vm-agent runs inside isolated sandbox; security boundary is VM isolation'
+        expires: '2027-02-17T00:00:00.000Z'
+  
   # Command injection in vm-agent
   # FALSE POSITIVE: vm-agent runs INSIDE the untrusted sandbox
   # The security boundary is VM/container isolation, not the agent code
