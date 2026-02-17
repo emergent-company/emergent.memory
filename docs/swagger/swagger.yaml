@@ -69,6 +69,17 @@ definitions:
       success:
         type: boolean
     type: object
+  domain_agents.APIResponse-github_com_emergent_emergent-core_domain_workspace_AgentWorkspaceConfig:
+    properties:
+      data:
+        $ref: '#/definitions/github_com_emergent_emergent-core_domain_workspace.AgentWorkspaceConfig'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
   domain_agents.APIResponse-map_string_string:
     properties:
       data:
@@ -4708,6 +4719,68 @@ definitions:
     required:
     - file_path
     type: object
+  github_com_emergent_emergent-core_domain_workspace.AgentWorkspaceConfig:
+    properties:
+      base_image:
+        type: string
+      checkout_on_start:
+        type: boolean
+      enabled:
+        type: boolean
+      repo_source:
+        $ref: '#/definitions/github_com_emergent_emergent-core_domain_workspace.RepoSourceConfig'
+      resource_limits:
+        $ref: '#/definitions/github_com_emergent_emergent-core_domain_workspace.ResourceLimits'
+      setup_commands:
+        items:
+          type: string
+        type: array
+      tools:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_emergent_emergent-core_domain_workspace.RepoSourceConfig:
+    properties:
+      branch:
+        description: Default branch; overridden by task context
+        type: string
+      type:
+        $ref: '#/definitions/github_com_emergent_emergent-core_domain_workspace.RepoSourceType'
+      url:
+        description: Only for "fixed" type
+        type: string
+    type: object
+  github_com_emergent_emergent-core_domain_workspace.RepoSourceType:
+    enum:
+    - task_context
+    - fixed
+    - none
+    type: string
+    x-enum-comments:
+      RepoSourceFixed: Use a fixed repo URL from config
+      RepoSourceNone: Empty workspace, no repo checkout
+      RepoSourceTaskContext: Use repo URL from task metadata
+    x-enum-descriptions:
+    - Use repo URL from task metadata
+    - Use a fixed repo URL from config
+    - Empty workspace, no repo checkout
+    x-enum-varnames:
+    - RepoSourceTaskContext
+    - RepoSourceFixed
+    - RepoSourceNone
+  github_com_emergent_emergent-core_domain_workspace.ResourceLimits:
+    properties:
+      cpu:
+        description: e.g. "2"
+        type: string
+      disk:
+        description: e.g. "10G"
+        type: string
+      memory:
+        description: e.g. "4G"
+        type: string
+    type: object
   github_com_emergent_emergent-core_pkg_apperror.Error:
     properties:
       code:
@@ -4735,8 +4808,92 @@ info:
   license:
     name: Proprietary
   title: Emergent API
-  version: 0.14.2
+  version: 0.14.3
 paths:
+  /api/admin/agent-definitions/{id}/workspace-config:
+    get:
+      consumes:
+      - application/json
+      description: Returns the workspace configuration for an agent definition, or
+        defaults if not set
+      parameters:
+      - description: Agent Definition ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Workspace config
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-github_com_emergent_emergent-core_domain_workspace_AgentWorkspaceConfig'
+        "400":
+          description: Invalid definition ID
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Agent definition not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get workspace config for an agent definition
+      tags:
+      - agent-definitions
+    put:
+      consumes:
+      - application/json
+      description: Sets or replaces the workspace configuration for an agent definition
+      parameters:
+      - description: Agent Definition ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Workspace configuration
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_emergent_emergent-core_domain_workspace.AgentWorkspaceConfig'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated workspace config
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-github_com_emergent_emergent-core_domain_workspace_AgentWorkspaceConfig'
+        "400":
+          description: Invalid definition ID, request body, or validation error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Agent definition not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update workspace config for an agent definition
+      tags:
+      - agent-definitions
   /api/admin/agents:
     get:
       consumes:
