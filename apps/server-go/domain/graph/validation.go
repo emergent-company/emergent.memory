@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent/emergent-core/domain/extraction/agents"
+	"github.com/emergent-company/emergent/domain/extraction/agents"
 )
 
 func coerceToNumber(value any) (float64, error) {

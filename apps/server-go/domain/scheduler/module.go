@@ -77,12 +77,22 @@ func RegisterTasks(p TaskParams) error {
 
 // addScheduledTask registers a task using a cron schedule if provided, otherwise using an interval.
 // The cron schedule takes precedence over the interval when both are specified.
+// If the cron schedule is invalid, falls back to using the interval.
 func addScheduledTask(s *Scheduler, log *slog.Logger, name, cronSchedule string, interval time.Duration, task TaskFunc) error {
 	if cronSchedule != "" {
 		log.Info("using cron schedule for task",
 			slog.String("name", name),
 			slog.String("schedule", cronSchedule))
-		return s.AddCronTask(name, cronSchedule, task)
+		err := s.AddCronTask(name, cronSchedule, task)
+		if err != nil {
+			log.Warn("invalid cron schedule, falling back to interval",
+				slog.String("name", name),
+				slog.String("schedule", cronSchedule),
+				slog.Duration("interval", interval),
+				slog.String("error", err.Error()))
+			return s.AddIntervalTask(name, interval, task)
+		}
+		return nil
 	}
 	return s.AddIntervalTask(name, interval, task)
 }

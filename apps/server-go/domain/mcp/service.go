@@ -14,10 +14,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
-	"github.com/emergent/emergent-core/domain/graph"
-	"github.com/emergent/emergent-core/domain/search"
-	"github.com/emergent/emergent-core/internal/database"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/domain/graph"
+	"github.com/emergent-company/emergent/domain/search"
+	"github.com/emergent-company/emergent/internal/database"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // Service handles MCP business logic and tool execution

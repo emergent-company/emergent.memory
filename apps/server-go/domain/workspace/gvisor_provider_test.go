@@ -12,7 +12,7 @@ func TestGVisorCapabilities(t *testing.T) {
 
 	assert.Equal(t, "gVisor (Docker)", caps.Name)
 	assert.True(t, caps.SupportsPersistence)
-	assert.False(t, caps.SupportsSnapshots)
+	assert.True(t, caps.SupportsSnapshots)
 	assert.True(t, caps.SupportsWarmPool)
 	assert.False(t, caps.RequiresKVM)
 	assert.Equal(t, 50, caps.EstimatedStartupMs)

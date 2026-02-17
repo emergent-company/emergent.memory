@@ -15,7 +15,7 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
 
-	"github.com/emergent/emergent-core/domain/extraction/agents"
+	"github.com/emergent-company/emergent/domain/extraction/agents"
 )
 
 func TestSchemaProviderCaching(t *testing.T) {

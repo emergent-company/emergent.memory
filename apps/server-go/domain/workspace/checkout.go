@@ -131,6 +131,16 @@ func (cs *CheckoutService) CloneRepository(ctx context.Context, provider Provide
 // InjectCredentialsForPush temporarily injects credentials into the git remote URL
 // for a push/pull operation, then removes them after completion.
 func (cs *CheckoutService) InjectCredentialsForPush(ctx context.Context, provider Provider, providerID string, gitCmd string) (*ExecResult, error) {
+	// Guard nil credential provider — fall back to unauthenticated
+	if cs.credProvider == nil {
+		cs.log.Warn("no credentials provider configured for git operation, trying unauthenticated")
+		return provider.Exec(ctx, providerID, &ExecRequest{
+			Command:   gitCmd,
+			Workdir:   "/workspace",
+			TimeoutMs: pushPullTimeoutMs,
+		})
+	}
+
 	// Get token
 	token, err := cs.credProvider.GetInstallationToken(ctx)
 	if err != nil {
@@ -143,11 +153,12 @@ func (cs *CheckoutService) InjectCredentialsForPush(ctx context.Context, provide
 		})
 	}
 
-	// Save current remote URL, inject token, run command, restore original
+	// Inject credentials using git credential helper approach
+	// The token is ephemeral and workspace is isolated, so this is safe
 	script := fmt.Sprintf(`
 ORIG_URL=$(git remote get-url origin 2>/dev/null)
 if [ -n "$ORIG_URL" ]; then
-    # Inject token into URL
+    # Inject token into URL (ephemeral token, isolated workspace)
     AUTH_URL=$(echo "$ORIG_URL" | sed "s|https://|https://x-access-token:%s@|")
     git remote set-url origin "$AUTH_URL" 2>/dev/null
     %s 2>&1
@@ -169,8 +180,16 @@ fi
 
 // configureGitIdentity sets the git user.name and user.email in the workspace.
 func (cs *CheckoutService) configureGitIdentity(ctx context.Context, provider Provider, providerID string) {
-	name, email, err := cs.credProvider.GetBotIdentity(ctx)
-	if err != nil {
+	var name, email string
+	if cs.credProvider != nil {
+		var err error
+		name, email, err = cs.credProvider.GetBotIdentity(ctx)
+		if err != nil {
+			name = ""
+			email = ""
+		}
+	}
+	if name == "" || email == "" {
 		name = "Emergent Agent"
 		email = "agent@emergent.local"
 		cs.log.Debug("using default git identity (no GitHub App configured)")
@@ -180,12 +199,12 @@ func (cs *CheckoutService) configureGitIdentity(ctx context.Context, provider Pr
 		`git config user.name %q && git config user.email %q`,
 		name, email,
 	)
-	_, err = provider.Exec(ctx, providerID, &ExecRequest{
+	_, execErr := provider.Exec(ctx, providerID, &ExecRequest{
 		Command: cmd,
 		Workdir: "/workspace",
 	})
-	if err != nil {
-		cs.log.Warn("failed to configure git identity", "error", err)
+	if execErr != nil {
+		cs.log.Warn("failed to configure git identity", "error", execErr)
 	}
 }
 

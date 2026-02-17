@@ -16,10 +16,10 @@ import (
 	"github.com/lib/pq"
 	"github.com/uptrace/bun"
 
-	"github.com/emergent/emergent-core/internal/database"
-	"github.com/emergent/emergent-core/pkg/apperror"
-	"github.com/emergent/emergent-core/pkg/logger"
-	"github.com/emergent/emergent-core/pkg/pgutils"
+	"github.com/emergent-company/emergent/internal/database"
+	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/pgutils"
 )
 
 // Repository handles database operations for graph objects and relationships.

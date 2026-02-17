@@ -737,16 +737,10 @@ func TestAddScheduledTask_FallbackToInterval(t *testing.T) {
 
 func TestNewConfig_CronScheduleEnvVars(t *testing.T) {
 	// Set cron schedule env vars
-	os.Setenv("REVISION_COUNT_REFRESH_SCHEDULE", "0 */5 * * *")
-	os.Setenv("TAG_CLEANUP_SCHEDULE", "0 2 * * *")
-	os.Setenv("CACHE_CLEANUP_SCHEDULE", "0 */15 * * *")
-	os.Setenv("STALE_JOB_CLEANUP_SCHEDULE", "0 */10 * * *")
-	defer func() {
-		os.Unsetenv("REVISION_COUNT_REFRESH_SCHEDULE")
-		os.Unsetenv("TAG_CLEANUP_SCHEDULE")
-		os.Unsetenv("CACHE_CLEANUP_SCHEDULE")
-		os.Unsetenv("STALE_JOB_CLEANUP_SCHEDULE")
-	}()
+	t.Setenv("REVISION_COUNT_REFRESH_SCHEDULE", "0 */5 * * *")
+	t.Setenv("TAG_CLEANUP_SCHEDULE", "0 2 * * *")
+	t.Setenv("CACHE_CLEANUP_SCHEDULE", "0 */15 * * *")
+	t.Setenv("STALE_JOB_CLEANUP_SCHEDULE", "0 */10 * * *")
 
 	cfg := NewConfig()
 
@@ -766,10 +760,10 @@ func TestNewConfig_CronScheduleEnvVars(t *testing.T) {
 
 func TestNewConfig_DefaultCronScheduleEmpty(t *testing.T) {
 	// Ensure no env vars set
-	os.Unsetenv("REVISION_COUNT_REFRESH_SCHEDULE")
-	os.Unsetenv("TAG_CLEANUP_SCHEDULE")
-	os.Unsetenv("CACHE_CLEANUP_SCHEDULE")
-	os.Unsetenv("STALE_JOB_CLEANUP_SCHEDULE")
+	t.Setenv("REVISION_COUNT_REFRESH_SCHEDULE", "")
+	t.Setenv("TAG_CLEANUP_SCHEDULE", "")
+	t.Setenv("CACHE_CLEANUP_SCHEDULE", "")
+	t.Setenv("STALE_JOB_CLEANUP_SCHEDULE", "")
 
 	cfg := NewConfig()
 

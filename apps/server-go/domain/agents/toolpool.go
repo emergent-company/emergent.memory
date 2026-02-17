@@ -11,8 +11,8 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 
-	"github.com/emergent/emergent-core/domain/mcp"
-	"github.com/emergent/emergent-core/domain/mcpregistry"
+	"github.com/emergent-company/emergent/domain/mcp"
+	"github.com/emergent-company/emergent/domain/mcpregistry"
 )
 
 // Coordination tool names that are restricted for sub-agents by default.

@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/emergent/emergent-core/domain/extraction/agents"
+	"github.com/emergent-company/emergent/domain/extraction/agents"
 	"github.com/google/uuid"
 )
 
