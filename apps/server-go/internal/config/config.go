@@ -275,7 +275,7 @@ func (s *StorageConfig) IsConfigured() bool {
 // WorkspaceConfig holds configuration for agent workspaces
 type WorkspaceConfig struct {
 	// Enabled determines if agent workspace endpoints and cleanup are active
-	Enabled bool `env:"ENABLE_AGENT_WORKSPACES" envDefault:"false"`
+	Enabled bool `env:"ENABLE_AGENT_WORKSPACES" envDefault:"true"`
 	// MaxConcurrent is the maximum number of concurrent active workspaces
 	MaxConcurrent int `env:"WORKSPACE_MAX_CONCURRENT" envDefault:"10"`
 	// DefaultTTLDays is the default TTL for ephemeral workspaces in days
