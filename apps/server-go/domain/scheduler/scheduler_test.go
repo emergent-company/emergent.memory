@@ -664,10 +664,10 @@ func TestNewConfig(t *testing.T) {
 
 	t.Run("custom values from env vars", func(t *testing.T) {
 		os.Setenv("SCHEDULER_ENABLED", "false")
-		os.Setenv("REVISION_COUNT_REFRESH_INTERVAL_MS", "60000")  // 1 minute
-		os.Setenv("TAG_CLEANUP_INTERVAL_MS", "120000")            // 2 minutes
-		os.Setenv("CACHE_CLEANUP_INTERVAL", "300000")             // 5 minutes
-		os.Setenv("STALE_JOB_CLEANUP_INTERVAL_MS", "600000")      // 10 minutes
+		os.Setenv("REVISION_COUNT_REFRESH_INTERVAL_MS", "60000") // 1 minute
+		os.Setenv("TAG_CLEANUP_INTERVAL_MS", "120000")           // 2 minutes
+		os.Setenv("CACHE_CLEANUP_INTERVAL", "300000")            // 5 minutes
+		os.Setenv("STALE_JOB_CLEANUP_INTERVAL_MS", "600000")     // 10 minutes
 		os.Setenv("STALE_JOB_MINUTES", "60")
 
 		cfg := NewConfig()
@@ -691,4 +691,103 @@ func TestNewConfig(t *testing.T) {
 			t.Errorf("StaleJobMinutes = %d, want 60", cfg.StaleJobMinutes)
 		}
 	})
+}
+
+func TestAddScheduledTask_CronOverridesInterval(t *testing.T) {
+	log := slog.Default()
+	s := NewScheduler(log)
+
+	taskCalled := false
+	task := func(ctx context.Context) error {
+		taskCalled = true
+		return nil
+	}
+	_ = taskCalled // used in assertions below
+
+	// With cron schedule set, should use AddCronTask
+	err := addScheduledTask(s, log, "test_cron", "0 0 2 * * *", 5*time.Minute, task)
+	if err != nil {
+		t.Fatalf("addScheduledTask with cron schedule failed: %v", err)
+	}
+
+	tasks := s.ListTasks()
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if tasks[0] != "test_cron" {
+		t.Errorf("task name = %q, want test_cron", tasks[0])
+	}
+}
+
+func TestAddScheduledTask_FallbackToInterval(t *testing.T) {
+	log := slog.Default()
+	s := NewScheduler(log)
+
+	task := func(ctx context.Context) error { return nil }
+
+	// With empty cron schedule, should use AddIntervalTask
+	err := addScheduledTask(s, log, "test_interval", "", 5*time.Minute, task)
+	if err != nil {
+		t.Fatalf("addScheduledTask with interval fallback failed: %v", err)
+	}
+
+	tasks := s.ListTasks()
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if tasks[0] != "test_interval" {
+		t.Errorf("task name = %q, want test_interval", tasks[0])
+	}
+}
+
+func TestNewConfig_CronScheduleEnvVars(t *testing.T) {
+	// Set cron schedule env vars
+	os.Setenv("REVISION_COUNT_REFRESH_SCHEDULE", "0 */5 * * *")
+	os.Setenv("TAG_CLEANUP_SCHEDULE", "0 2 * * *")
+	os.Setenv("CACHE_CLEANUP_SCHEDULE", "0 */15 * * *")
+	os.Setenv("STALE_JOB_CLEANUP_SCHEDULE", "0 */10 * * *")
+	defer func() {
+		os.Unsetenv("REVISION_COUNT_REFRESH_SCHEDULE")
+		os.Unsetenv("TAG_CLEANUP_SCHEDULE")
+		os.Unsetenv("CACHE_CLEANUP_SCHEDULE")
+		os.Unsetenv("STALE_JOB_CLEANUP_SCHEDULE")
+	}()
+
+	cfg := NewConfig()
+
+	if cfg.RevisionCountRefreshSchedule != "0 */5 * * *" {
+		t.Errorf("RevisionCountRefreshSchedule = %q, want %q", cfg.RevisionCountRefreshSchedule, "0 */5 * * *")
+	}
+	if cfg.TagCleanupSchedule != "0 2 * * *" {
+		t.Errorf("TagCleanupSchedule = %q, want %q", cfg.TagCleanupSchedule, "0 2 * * *")
+	}
+	if cfg.CacheCleanupSchedule != "0 */15 * * *" {
+		t.Errorf("CacheCleanupSchedule = %q, want %q", cfg.CacheCleanupSchedule, "0 */15 * * *")
+	}
+	if cfg.StaleJobCleanupSchedule != "0 */10 * * *" {
+		t.Errorf("StaleJobCleanupSchedule = %q, want %q", cfg.StaleJobCleanupSchedule, "0 */10 * * *")
+	}
+}
+
+func TestNewConfig_DefaultCronScheduleEmpty(t *testing.T) {
+	// Ensure no env vars set
+	os.Unsetenv("REVISION_COUNT_REFRESH_SCHEDULE")
+	os.Unsetenv("TAG_CLEANUP_SCHEDULE")
+	os.Unsetenv("CACHE_CLEANUP_SCHEDULE")
+	os.Unsetenv("STALE_JOB_CLEANUP_SCHEDULE")
+
+	cfg := NewConfig()
+
+	if cfg.RevisionCountRefreshSchedule != "" {
+		t.Errorf("RevisionCountRefreshSchedule should be empty by default, got %q", cfg.RevisionCountRefreshSchedule)
+	}
+	if cfg.TagCleanupSchedule != "" {
+		t.Errorf("TagCleanupSchedule should be empty by default, got %q", cfg.TagCleanupSchedule)
+	}
+	if cfg.CacheCleanupSchedule != "" {
+		t.Errorf("CacheCleanupSchedule should be empty by default, got %q", cfg.CacheCleanupSchedule)
+	}
+	if cfg.StaleJobCleanupSchedule != "" {
+		t.Errorf("StaleJobCleanupSchedule should be empty by default, got %q", cfg.StaleJobCleanupSchedule)
+	}
 }
