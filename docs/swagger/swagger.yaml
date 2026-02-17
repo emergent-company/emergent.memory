@@ -47,6 +47,17 @@ definitions:
       success:
         type: boolean
     type: object
+  domain_agents.APIResponse-domain_agents_AgentRunDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_agents.AgentRunDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
   domain_agents.APIResponse-domain_agents_BatchTriggerResponseDTO:
     properties:
       data:
@@ -173,6 +184,8 @@ definitions:
         type: string
       resumedFrom:
         type: string
+      sessionStatus:
+        $ref: '#/definitions/domain_agents.SessionStatus'
       skipReason:
         type: string
       startedAt:
@@ -341,6 +354,28 @@ definitions:
     - EventTypeCreated
     - EventTypeUpdated
     - EventTypeDeleted
+  domain_agents.SessionStatus:
+    enum:
+    - provisioning
+    - active
+    - completed
+    - error
+    type: string
+    x-enum-comments:
+      SessionStatusActive: Workspace ready, agent executing
+      SessionStatusCompleted: Run finished successfully
+      SessionStatusError: Run or provisioning failed
+      SessionStatusProvisioning: Workspace being set up
+    x-enum-descriptions:
+    - Workspace being set up
+    - Workspace ready, agent executing
+    - Run finished successfully
+    - Run or provisioning failed
+    x-enum-varnames:
+    - SessionStatusProvisioning
+    - SessionStatusActive
+    - SessionStatusCompleted
+    - SessionStatusError
   domain_agents.TriggerResponseDTO:
     properties:
       error:
@@ -4808,7 +4843,7 @@ info:
   license:
     name: Proprietary
   title: Emergent API
-  version: 0.14.3
+  version: 0.15.0
 paths:
   /api/admin/agent-definitions/{id}/workspace-config:
     get:
@@ -12492,6 +12527,45 @@ paths:
       summary: Search users by email
       tags:
       - users
+  /api/v1/agent/sessions/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Returns session status (workspace lifecycle) for an agent run
+      parameters:
+      - description: Run ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Session/run details with session status
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_AgentRunDTO'
+        "400":
+          description: Invalid run ID
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Session not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get agent session status
+      tags:
+      - agent-sessions
   /api/v1/agent/workspaces:
     get:
       description: Returns agent workspaces with optional filtering by type, provider,
