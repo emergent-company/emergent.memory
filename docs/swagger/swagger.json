@@ -15,7 +15,7 @@
         "license": {
             "name": "Proprietary"
         },
-        "version": "0.14.1"
+        "version": "0.14.2"
     },
     "host": "localhost:5300",
     "basePath": "/",
@@ -11622,6 +11622,781 @@
                 }
             }
         },
+        "/api/v1/agent/workspaces": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns agent workspaces with optional filtering by type, provider, status, or session",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "List agent workspaces",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by container type",
+                        "name": "container_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by provider",
+                        "name": "provider",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by agent session ID",
+                        "name": "agent_session_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of workspaces",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates a new isolated agent workspace (container/sandbox)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Create agent workspace",
+                "parameters": [
+                    {
+                        "description": "Workspace configuration",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.CreateWorkspaceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created workspace",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/workspaces/providers": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns available workspace providers and their capabilities",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "List workspace providers",
+                "responses": {
+                    "200": {
+                        "description": "List of providers",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_workspace.ProviderStatusResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/workspaces/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns a single agent workspace by ID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Get agent workspace",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Workspace details",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid workspace ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Workspace not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Permanently deletes an agent workspace and its resources",
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Delete agent workspace",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No content"
+                    },
+                    "400": {
+                        "description": "Invalid workspace ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Workspace not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/workspaces/{id}/bash": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Executes a command inside the workspace container",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Execute bash command",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Command to execute",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.BashRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Command output",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.BashResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/workspaces/{id}/edit": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Performs string replacement editing on a file in the workspace",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Edit file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Edit parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.EditRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Edit result",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.EditResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "File not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/workspaces/{id}/git": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Executes structured git operations (status, diff, commit, push, pull, checkout) without exposing credentials",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Git operations",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Git operation parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.GitRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Git output",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.GitResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/workspaces/{id}/glob": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Finds files matching a glob pattern in the workspace, sorted by modification time",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Glob file search",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Glob pattern",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.GlobRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Matching file paths",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/workspaces/{id}/grep": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Searches file contents with regex pattern in the workspace, returns structured matches",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Grep content search",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Search pattern",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.GrepRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Search results",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.GrepResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/workspaces/{id}/read": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Reads file content or directory listing from the workspace",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Read file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "File read parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.ReadRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "File content",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.ReadResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "File not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/workspaces/{id}/resume": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Resumes a stopped agent workspace",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Resume agent workspace",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Resumed workspace",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid workspace ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Workspace not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/workspaces/{id}/stop": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Stops a running agent workspace",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Stop agent workspace",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Stopped workspace",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid workspace ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Workspace not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/workspaces/{id}/write": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Writes file content to the workspace, auto-creating parent directories",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-workspaces"
+                ],
+                "summary": "Write file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "File write parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspace.WriteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Write confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/organizations/{orgId}/backups": {
             "get": {
                 "security": [
@@ -19502,6 +20277,476 @@
                     "type": "string"
                 },
                 "lastName": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_workspace.BashRequest": {
+            "type": "object",
+            "required": [
+                "command"
+            ],
+            "properties": {
+                "command": {
+                    "type": "string"
+                },
+                "timeout_ms": {
+                    "type": "integer"
+                },
+                "workdir": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_workspace.BashResponse": {
+            "type": "object",
+            "properties": {
+                "duration_ms": {
+                    "type": "integer"
+                },
+                "exit_code": {
+                    "type": "integer"
+                },
+                "stderr": {
+                    "type": "string"
+                },
+                "stdout": {
+                    "type": "string"
+                },
+                "truncated": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_workspace.ContainerType": {
+            "type": "string",
+            "enum": [
+                "agent_workspace",
+                "mcp_server"
+            ],
+            "x-enum-varnames": [
+                "ContainerTypeAgentWorkspace",
+                "ContainerTypeMCPServer"
+            ]
+        },
+        "domain_workspace.CreateWorkspaceRequest": {
+            "type": "object",
+            "required": [
+                "container_type"
+            ],
+            "properties": {
+                "branch": {
+                    "type": "string"
+                },
+                "container_type": {
+                    "$ref": "#/definitions/domain_workspace.ContainerType"
+                },
+                "deployment_mode": {
+                    "description": "\"managed\" or \"self-hosted\"",
+                    "type": "string"
+                },
+                "mcp_config": {
+                    "description": "MCP-specific fields",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_workspace.MCPConfig"
+                        }
+                    ]
+                },
+                "provider": {
+                    "description": "\"firecracker\", \"e2b\", \"gvisor\", or \"auto\"",
+                    "type": "string"
+                },
+                "repository_url": {
+                    "type": "string"
+                },
+                "resource_limits": {
+                    "$ref": "#/definitions/domain_workspace.ResourceLimits"
+                },
+                "warm_start": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_workspace.DeploymentMode": {
+            "type": "string",
+            "enum": [
+                "managed",
+                "self-hosted"
+            ],
+            "x-enum-varnames": [
+                "DeploymentManaged",
+                "DeploymentSelfHosted"
+            ]
+        },
+        "domain_workspace.EditRequest": {
+            "type": "object",
+            "required": [
+                "file_path",
+                "old_string"
+            ],
+            "properties": {
+                "file_path": {
+                    "type": "string"
+                },
+                "new_string": {
+                    "type": "string"
+                },
+                "old_string": {
+                    "type": "string"
+                },
+                "replace_all": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_workspace.EditResponse": {
+            "type": "object",
+            "properties": {
+                "lines_changed": {
+                    "type": "integer"
+                },
+                "replacements": {
+                    "type": "integer"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_workspace.GitRequest": {
+            "type": "object",
+            "required": [
+                "action"
+            ],
+            "properties": {
+                "action": {
+                    "description": "status, diff, commit, push, pull, checkout",
+                    "type": "string"
+                },
+                "branch": {
+                    "description": "For checkout",
+                    "type": "string"
+                },
+                "files": {
+                    "description": "For commit (files to stage)",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "message": {
+                    "description": "For commit",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_workspace.GitResponse": {
+            "type": "object",
+            "properties": {
+                "output": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_workspace.GlobRequest": {
+            "type": "object",
+            "required": [
+                "pattern"
+            ],
+            "properties": {
+                "path": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_workspace.GrepMatch": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string"
+                },
+                "line": {
+                    "type": "string"
+                },
+                "line_number": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_workspace.GrepRequest": {
+            "type": "object",
+            "required": [
+                "pattern"
+            ],
+            "properties": {
+                "include": {
+                    "description": "File pattern filter e.g. \"*.ts\"",
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_workspace.GrepResponse": {
+            "type": "object",
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_workspace.GrepMatch"
+                    }
+                }
+            }
+        },
+        "domain_workspace.Lifecycle": {
+            "type": "string",
+            "enum": [
+                "ephemeral",
+                "persistent"
+            ],
+            "x-enum-varnames": [
+                "LifecycleEphemeral",
+                "LifecyclePersistent"
+            ]
+        },
+        "domain_workspace.MCPConfig": {
+            "type": "object",
+            "properties": {
+                "environment": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "image": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "restart_policy": {
+                    "description": "\"always\", \"on-failure\", \"never\"",
+                    "type": "string"
+                },
+                "stdio_bridge": {
+                    "type": "boolean"
+                },
+                "volumes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "domain_workspace.ProviderCapabilities": {
+            "type": "object",
+            "properties": {
+                "estimated_startup_ms": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "provider_type": {
+                    "$ref": "#/definitions/domain_workspace.ProviderType"
+                },
+                "requires_kvm": {
+                    "type": "boolean"
+                },
+                "supports_persistence": {
+                    "type": "boolean"
+                },
+                "supports_snapshots": {
+                    "type": "boolean"
+                },
+                "supports_warm_pool": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_workspace.ProviderStatusResponse": {
+            "type": "object",
+            "properties": {
+                "active_count": {
+                    "type": "integer"
+                },
+                "capabilities": {
+                    "$ref": "#/definitions/domain_workspace.ProviderCapabilities"
+                },
+                "healthy": {
+                    "type": "boolean"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/domain_workspace.ProviderType"
+                }
+            }
+        },
+        "domain_workspace.ProviderType": {
+            "type": "string",
+            "enum": [
+                "firecracker",
+                "e2b",
+                "gvisor"
+            ],
+            "x-enum-varnames": [
+                "ProviderFirecracker",
+                "ProviderE2B",
+                "ProviderGVisor"
+            ]
+        },
+        "domain_workspace.ReadRequest": {
+            "type": "object",
+            "required": [
+                "file_path"
+            ],
+            "properties": {
+                "file_path": {
+                    "type": "string"
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_workspace.ReadResponse": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "file_size": {
+                    "type": "integer"
+                },
+                "is_binary": {
+                    "type": "boolean"
+                },
+                "is_dir": {
+                    "type": "boolean"
+                },
+                "total_lines": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_workspace.ResourceLimits": {
+            "type": "object",
+            "properties": {
+                "cpu": {
+                    "description": "e.g. \"2\"",
+                    "type": "string"
+                },
+                "disk": {
+                    "description": "e.g. \"10G\"",
+                    "type": "string"
+                },
+                "memory": {
+                    "description": "e.g. \"4G\"",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_workspace.Status": {
+            "type": "string",
+            "enum": [
+                "creating",
+                "ready",
+                "stopping",
+                "stopped",
+                "error"
+            ],
+            "x-enum-varnames": [
+                "StatusCreating",
+                "StatusReady",
+                "StatusStopping",
+                "StatusStopped",
+                "StatusError"
+            ]
+        },
+        "domain_workspace.WorkspaceResponse": {
+            "type": "object",
+            "properties": {
+                "agent_session_id": {
+                    "type": "string"
+                },
+                "branch": {
+                    "type": "string"
+                },
+                "container_type": {
+                    "$ref": "#/definitions/domain_workspace.ContainerType"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "deployment_mode": {
+                    "$ref": "#/definitions/domain_workspace.DeploymentMode"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "lifecycle": {
+                    "$ref": "#/definitions/domain_workspace.Lifecycle"
+                },
+                "mcp_config": {
+                    "$ref": "#/definitions/domain_workspace.MCPConfig"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "provider": {
+                    "$ref": "#/definitions/domain_workspace.ProviderType"
+                },
+                "provider_workspace_id": {
+                    "type": "string"
+                },
+                "repository_url": {
+                    "type": "string"
+                },
+                "resource_limits": {
+                    "$ref": "#/definitions/domain_workspace.ResourceLimits"
+                },
+                "snapshot_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/domain_workspace.Status"
+                }
+            }
+        },
+        "domain_workspace.WriteRequest": {
+            "type": "object",
+            "required": [
+                "file_path"
+            ],
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "file_path": {
                     "type": "string"
                 }
             }

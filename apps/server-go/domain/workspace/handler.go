@@ -236,7 +236,7 @@ func (h *Handler) ResumeWorkspace(c echo.Context) error {
 // @Description  Returns available workspace providers and their capabilities
 // @Tags         agent-workspaces
 // @Produce      json
-// @Success      200 {array} ProviderInfo "List of providers"
+// @Success      200 {array} ProviderStatusResponse "List of providers"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Router       /api/v1/agent/workspaces/providers [get]
 // @Security     bearerAuth
