@@ -196,6 +196,8 @@ func (s *Store) GetBySessionID(ctx context.Context, sessionID string) (*AgentWor
 		Model(ws).
 		Where("agent_session_id = ?", sessionID).
 		Where("status NOT IN (?)", bun.In([]Status{StatusStopped, StatusError})).
+		Order("created_at DESC").
+		Limit(1).
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

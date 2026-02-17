@@ -448,7 +448,7 @@ func (s *Service) CreateFromSnapshot(ctx context.Context, req *CreateFromSnapsho
 		DeploymentMode:      deploymentMode,
 		Lifecycle:           LifecycleEphemeral,
 		Status:              StatusReady,
-		ResourceLimits:      req.ResourceLimits,
+		ResourceLimits:      s.applyDefaultLimits(req.ResourceLimits),
 		SnapshotID:          &req.SnapshotID,
 		Metadata:            map[string]any{"created_from_snapshot": req.SnapshotID},
 	}

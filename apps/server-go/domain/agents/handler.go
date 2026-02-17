@@ -1144,7 +1144,14 @@ func (h *Handler) GetSession(c echo.Context) error {
 		return apperror.NewBadRequest("session id is required")
 	}
 
-	run, err := h.repo.FindRunByID(c.Request().Context(), id)
+	// Use project-scoped lookup if project ID is available
+	var run *AgentRun
+	var err error
+	if user.ProjectID != "" {
+		run, err = h.repo.FindRunByIDForProject(c.Request().Context(), id, user.ProjectID)
+	} else {
+		run, err = h.repo.FindRunByID(c.Request().Context(), id)
+	}
 	if err != nil {
 		return apperror.NewInternal("failed to get session", err)
 	}

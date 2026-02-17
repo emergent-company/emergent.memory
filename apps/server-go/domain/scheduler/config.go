@@ -27,8 +27,8 @@ type Config struct {
 	StaleJobMinutes int
 
 	// Cron schedule overrides (take precedence over intervals when set)
-	// Standard cron format: "minute hour day-of-month month day-of-week"
-	// Examples: "*/5 * * * *" (every 5 min), "0 2 * * *" (daily at 2am)
+	// Standard cron format with seconds: "second minute hour day-of-month month day-of-week"
+	// Examples: "0 */5 * * * *" (every 5 min), "0 0 2 * * *" (daily at 2am)
 	RevisionCountRefreshSchedule string
 	TagCleanupSchedule           string
 	CacheCleanupSchedule         string
