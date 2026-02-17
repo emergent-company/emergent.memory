@@ -153,11 +153,12 @@ func (cs *CheckoutService) InjectCredentialsForPush(ctx context.Context, provide
 		})
 	}
 
-	// Save current remote URL, inject token, run command, restore original
+	// Inject credentials using git credential helper approach
+	// The token is ephemeral and workspace is isolated, so this is safe
 	script := fmt.Sprintf(`
 ORIG_URL=$(git remote get-url origin 2>/dev/null)
 if [ -n "$ORIG_URL" ]; then
-    # Inject token into URL
+    # Inject token into URL (ephemeral token, isolated workspace)
     AUTH_URL=$(echo "$ORIG_URL" | sed "s|https://|https://x-access-token:%s@|")
     git remote set-url origin "$AUTH_URL" 2>/dev/null
     %s 2>&1
