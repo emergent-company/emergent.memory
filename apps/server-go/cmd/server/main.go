@@ -1,7 +1,7 @@
 // Package main provides the entry point for the Emergent API server
 //
 // @title Emergent API
-// @version 0.9.2
+// @version 0.14.1
 // @description Emergent Knowledge Base API - AI-powered knowledge management system
 // @contact.name Emergent Team
 // @contact.url https://emergent-company.ai

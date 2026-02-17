@@ -1,112 +1,5 @@
 basePath: /
 definitions:
-  documentation.CategoriesResponse:
-    properties:
-      categories:
-        items:
-          $ref: '#/definitions/documentation.CategoryInfo'
-        type: array
-      total:
-        type: integer
-    type: object
-  documentation.CategoryInfo:
-    properties:
-      description:
-        type: string
-      icon:
-        type: string
-      name:
-        type: string
-    type: object
-  documentation.Check:
-    properties:
-      message:
-        type: string
-      status:
-        type: string
-    type: object
-  documentation.Document:
-    properties:
-      category:
-        type: string
-      content:
-        type: string
-      description:
-        type: string
-      id:
-        type: string
-      lastUpdated:
-        type: string
-      parsedAt:
-        type: string
-      path:
-        type: string
-      readTime:
-        type: integer
-      related:
-        items:
-          type: string
-        type: array
-      slug:
-        type: string
-      tags:
-        items:
-          type: string
-        type: array
-      title:
-        type: string
-    type: object
-  documentation.DocumentList:
-    properties:
-      documents:
-        items:
-          $ref: '#/definitions/documentation.DocumentMeta'
-        type: array
-      total:
-        type: integer
-    type: object
-  documentation.DocumentMeta:
-    properties:
-      category:
-        type: string
-      description:
-        type: string
-      id:
-        type: string
-      lastUpdated:
-        type: string
-      path:
-        type: string
-      readTime:
-        type: integer
-      related:
-        items:
-          type: string
-        type: array
-      slug:
-        type: string
-      tags:
-        items:
-          type: string
-        type: array
-      title:
-        type: string
-    type: object
-  documentation.HealthResponse:
-    properties:
-      checks:
-        additionalProperties:
-          $ref: '#/definitions/documentation.Check'
-        type: object
-      status:
-        type: string
-      timestamp:
-        type: string
-      uptime:
-        type: string
-      version:
-        type: string
-    type: object
   domain_agents.APIResponse-any:
     properties:
       data: {}
@@ -169,6 +62,17 @@ definitions:
     properties:
       data:
         $ref: '#/definitions/domain_agents.PendingEventsResponseDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  domain_agents.APIResponse-map_string_string:
+    properties:
+      data:
+        $ref: '#/definitions/map_string_string'
       error:
         type: string
       message:
@@ -251,12 +155,21 @@ definitions:
         type: string
       id:
         type: string
+      maxSteps:
+        type: integer
+      parentRunId:
+        description: Multi-agent coordination fields
+        type: string
+      resumedFrom:
+        type: string
       skipReason:
         type: string
       startedAt:
         type: string
       status:
         $ref: '#/definitions/domain_agents.AgentRunStatus'
+      stepCount:
+        type: integer
       summary:
         additionalProperties: {}
         type: object
@@ -267,12 +180,16 @@ definitions:
     - success
     - skipped
     - error
+    - paused
+    - cancelled
     type: string
     x-enum-varnames:
     - RunStatusRunning
     - RunStatusSuccess
     - RunStatusSkipped
     - RunStatusError
+    - RunStatusPaused
+    - RunStatusCancelled
   domain_agents.AgentTriggerType:
     enum:
     - schedule
@@ -419,6 +336,8 @@ definitions:
         type: string
       message:
         type: string
+      runId:
+        type: string
       success:
         type: boolean
     type: object
@@ -508,6 +427,50 @@ definitions:
       token:
         type: string
       tokenPrefix:
+        type: string
+    type: object
+  domain_apitoken.GetApiTokenResponseDTO:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      isRevoked:
+        type: boolean
+      lastUsedAt:
+        type: string
+      name:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token:
+        type: string
+      tokenPrefix:
+        type: string
+    type: object
+  domain_authinfo.TokenInfoResponse:
+    properties:
+      email:
+        type: string
+      org_id:
+        type: string
+      project_id:
+        type: string
+      project_name:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token_id:
+        type: string
+      token_name:
+        type: string
+      type:
+        type: string
+      user_id:
         type: string
     type: object
   domain_backups.Backup:
@@ -626,6 +589,10 @@ definitions:
       content:
         maxLength: 100000
         type: string
+      retrievalContext:
+        items:
+          type: integer
+        type: array
       role:
         enum:
         - user
@@ -736,12 +703,18 @@ definitions:
         type: array
       content:
         type: string
+      contextSummary:
+        type: string
       conversationId:
         type: string
       createdAt:
         type: string
       id:
         type: string
+      retrievalContext:
+        items:
+          type: integer
+        type: array
       role:
         description: user, assistant, system
         type: string
@@ -1542,6 +1515,72 @@ definitions:
     required:
     - sourceBranchId
     type: object
+  domain_graph.BulkCreateObjectResult:
+    properties:
+      error:
+        type: string
+      index:
+        type: integer
+      object:
+        $ref: '#/definitions/domain_graph.GraphObjectResponse'
+      success:
+        type: boolean
+    type: object
+  domain_graph.BulkCreateObjectsRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/domain_graph.CreateGraphObjectRequest'
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - items
+    type: object
+  domain_graph.BulkCreateObjectsResponse:
+    properties:
+      failed:
+        type: integer
+      results:
+        items:
+          $ref: '#/definitions/domain_graph.BulkCreateObjectResult'
+        type: array
+      success:
+        type: integer
+    type: object
+  domain_graph.BulkCreateRelationshipResult:
+    properties:
+      error:
+        type: string
+      index:
+        type: integer
+      relationship:
+        $ref: '#/definitions/domain_graph.GraphRelationshipResponse'
+      success:
+        type: boolean
+    type: object
+  domain_graph.BulkCreateRelationshipsRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/domain_graph.CreateGraphRelationshipRequest'
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - items
+    type: object
+  domain_graph.BulkCreateRelationshipsResponse:
+    properties:
+      failed:
+        type: integer
+      results:
+        items:
+          $ref: '#/definitions/domain_graph.BulkCreateRelationshipResult'
+        type: array
+      success:
+        type: integer
+    type: object
   domain_graph.BulkUpdateStatusRequest:
     properties:
       ids:
@@ -1667,6 +1706,9 @@ definitions:
         type: array
       projection:
         $ref: '#/definitions/domain_graph.GraphExpandProjection'
+      query_context:
+        description: Optional query for relevance-based edge ordering during expansion
+        type: string
       relationship_types:
         items:
           type: string
@@ -1766,6 +1808,64 @@ definitions:
       version:
         type: integer
     type: object
+  domain_graph.GraphObjectResponse:
+    properties:
+      branch_id:
+        type: string
+      canonical_id:
+        type: string
+      change_summary:
+        additionalProperties: {}
+        type: object
+      content_hash:
+        type: string
+      created_at:
+        type: string
+      deleted_at:
+        type: string
+      external_id:
+        type: string
+      external_parent_id:
+        type: string
+      external_source:
+        description: External source fields for data sync
+        type: string
+      external_updated_at:
+        type: string
+      external_url:
+        type: string
+      id:
+        type: string
+      key:
+        type: string
+      labels:
+        items:
+          type: string
+        type: array
+      org_id:
+        type: string
+      project_id:
+        type: string
+      properties:
+        additionalProperties: {}
+        type: object
+      relationship_count:
+        type: integer
+      revision_count:
+        type: integer
+      schema_version:
+        type: string
+      status:
+        type: string
+      supersedes_id:
+        type: string
+      synced_at:
+        type: string
+      type:
+        type: string
+      version:
+        type: integer
+    type: object
   domain_graph.GraphRelationship:
     properties:
       branch_id:
@@ -1794,7 +1894,7 @@ definitions:
       src:
         allOf:
         - $ref: '#/definitions/domain_graph.GraphObject'
-        description: Populated by joins
+        description: Populated by joins — src_id/dst_id store canonical_id values
       src_id:
         type: string
       supersedes_id:
@@ -1805,6 +1905,45 @@ definitions:
         description: Temporal validity
         type: string
       valid_to:
+        type: string
+      version:
+        type: integer
+      weight:
+        type: number
+    type: object
+  domain_graph.GraphRelationshipResponse:
+    properties:
+      branch_id:
+        type: string
+      canonical_id:
+        type: string
+      change_summary:
+        additionalProperties: {}
+        type: object
+      created_at:
+        type: string
+      deleted_at:
+        type: string
+      dst_id:
+        type: string
+      id:
+        type: string
+      inverse_relationship:
+        allOf:
+        - $ref: '#/definitions/domain_graph.GraphRelationshipResponse'
+        description: |-
+          InverseRelationship is populated when an inverse relationship was auto-created
+          based on the template pack's inverseType declaration.
+      project_id:
+        type: string
+      properties:
+        additionalProperties: {}
+        type: object
+      src_id:
+        type: string
+      supersedes_id:
+        type: string
+      type:
         type: string
       version:
         type: integer
@@ -1827,6 +1966,8 @@ definitions:
       lexicalWeight:
         type: number
       limit:
+        type: integer
+      offset:
         type: integer
       query:
         type: string
@@ -1983,6 +2124,10 @@ definitions:
       page_direction:
         description: '"forward" or "backward"'
         type: string
+      query_context:
+        description: 'Optional: query text for relevance-based edge ordering during
+          BFS'
+        type: string
       relationship_types:
         items:
           type: string
@@ -2025,6 +2170,8 @@ definitions:
         type: integer
       maxDistance:
         type: number
+      offset:
+        type: integer
       status:
         type: string
       types:
@@ -2321,6 +2468,193 @@ definitions:
       jsonrpc:
         type: string
       result: {}
+    type: object
+  domain_mcpregistry.APIResponse-array_domain_mcpregistry_MCPServerDTO:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/domain_mcpregistry.MCPServerDTO'
+        type: array
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_mcpregistry.MCPServerDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDetailDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_mcpregistry.MCPServerDetailDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  domain_mcpregistry.CreateMCPServerDTO:
+    properties:
+      args:
+        items:
+          type: string
+        type: array
+      command:
+        type: string
+      enabled:
+        type: boolean
+      env:
+        additionalProperties: {}
+        type: object
+      headers:
+        additionalProperties: {}
+        type: object
+      name:
+        type: string
+      type:
+        allOf:
+        - $ref: '#/definitions/domain_mcpregistry.MCPServerType'
+        enum:
+        - stdio
+        - sse
+        - http
+      url:
+        type: string
+    required:
+    - name
+    - type
+    type: object
+  domain_mcpregistry.MCPServerDTO:
+    properties:
+      args:
+        items:
+          type: string
+        type: array
+      command:
+        type: string
+      createdAt:
+        type: string
+      enabled:
+        type: boolean
+      env:
+        additionalProperties: {}
+        type: object
+      headers:
+        additionalProperties: {}
+        type: object
+      id:
+        type: string
+      name:
+        type: string
+      projectId:
+        type: string
+      toolCount:
+        type: integer
+      type:
+        $ref: '#/definitions/domain_mcpregistry.MCPServerType'
+      updatedAt:
+        type: string
+      url:
+        type: string
+    type: object
+  domain_mcpregistry.MCPServerDetailDTO:
+    properties:
+      args:
+        items:
+          type: string
+        type: array
+      command:
+        type: string
+      createdAt:
+        type: string
+      enabled:
+        type: boolean
+      env:
+        additionalProperties: {}
+        type: object
+      headers:
+        additionalProperties: {}
+        type: object
+      id:
+        type: string
+      name:
+        type: string
+      projectId:
+        type: string
+      toolCount:
+        type: integer
+      tools:
+        items:
+          $ref: '#/definitions/domain_mcpregistry.MCPServerToolDTO'
+        type: array
+      type:
+        $ref: '#/definitions/domain_mcpregistry.MCPServerType'
+      updatedAt:
+        type: string
+      url:
+        type: string
+    type: object
+  domain_mcpregistry.MCPServerToolDTO:
+    properties:
+      createdAt:
+        type: string
+      description:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: string
+      inputSchema:
+        additionalProperties: {}
+        type: object
+      serverId:
+        type: string
+      toolName:
+        type: string
+    type: object
+  domain_mcpregistry.MCPServerType:
+    enum:
+    - builtin
+    - stdio
+    - sse
+    - http
+    type: string
+    x-enum-varnames:
+    - ServerTypeBuiltin
+    - ServerTypeStdio
+    - ServerTypeSSE
+    - ServerTypeHTTP
+  domain_mcpregistry.UpdateMCPServerDTO:
+    properties:
+      args:
+        items:
+          type: string
+        type: array
+      command:
+        type: string
+      enabled:
+        type: boolean
+      env:
+        additionalProperties: {}
+        type: object
+      headers:
+        additionalProperties: {}
+        type: object
+      name:
+        type: string
+      url:
+        type: string
     type: object
   domain_monitoring.ExtractionJobDetailDTO:
     properties:
@@ -2696,6 +3030,8 @@ definitions:
     properties:
       graph:
         type: integer
+      relationship:
+        type: integer
       text:
         type: integer
     type: object
@@ -2724,6 +3060,8 @@ definitions:
       graphSearchMs:
         type: integer
       relationshipExpansionMs:
+        type: integer
+      relationshipSearchMs:
         type: integer
       textSearchMs:
         type: integer
@@ -2759,10 +3097,12 @@ definitions:
     enum:
     - graph
     - text
+    - relationship
     type: string
     x-enum-varnames:
     - ItemTypeGraph
     - ItemTypeText
+    - ItemTypeRelationship
   domain_search.UnifiedSearchMetadata:
     properties:
       executionTime:
@@ -2770,6 +3110,8 @@ definitions:
       fusionStrategy:
         $ref: '#/definitions/domain_search.UnifiedSearchFusionStrategy'
       graphResultCount:
+        type: integer
+      relationshipResultCount:
         type: integer
       textResultCount:
         type: integer
@@ -2860,8 +3202,14 @@ definitions:
         type: string
       object_type:
         type: string
+      properties:
+        additionalProperties: {}
+        type: object
       rank:
         type: integer
+      relationship_type:
+        description: Relationship-specific fields
+        type: string
       relationships:
         items:
           $ref: '#/definitions/domain_search.UnifiedSearchRelationship'
@@ -2872,6 +3220,12 @@ definitions:
         description: Text-specific fields
         type: string
       source:
+        type: string
+      source_id:
+        type: string
+      target_id:
+        type: string
+      triplet_text:
         type: string
       truncated_fields:
         items:
@@ -2896,12 +3250,16 @@ definitions:
     properties:
       graph:
         $ref: '#/definitions/domain_search.ScoreStats'
+      relationship:
+        $ref: '#/definitions/domain_search.ScoreStats'
       text:
         $ref: '#/definitions/domain_search.ScoreStats'
     type: object
   domain_search.UnifiedSearchWeights:
     properties:
       graphWeight:
+        type: number
+      relationshipWeight:
         type: number
       textWeight:
         type: number
@@ -3541,15 +3899,62 @@ definitions:
           $ref: '#/definitions/domain_templatepacks.RelationshipTypeSchema'
         type: array
     type: object
+  domain_templatepacks.CreatePackRequest:
+    properties:
+      author:
+        type: string
+      description:
+        type: string
+      documentation_url:
+        type: string
+      extraction_prompts:
+        items:
+          type: integer
+        type: array
+      license:
+        type: string
+      name:
+        type: string
+      object_type_schemas:
+        items:
+          type: integer
+        type: array
+      relationship_type_schemas:
+        items:
+          type: integer
+        type: array
+      repository_url:
+        type: string
+      ui_configs:
+        items:
+          type: integer
+        type: array
+      version:
+        type: string
+    type: object
   domain_templatepacks.GraphTemplatePack:
     properties:
       author:
         type: string
+      checksum:
+        type: string
       createdAt:
+        type: string
+      deprecatedAt:
         type: string
       description:
         type: string
+      documentationUrl:
+        type: string
+      draft:
+        type: boolean
+      extractionPrompts:
+        items:
+          type: integer
+        type: array
       id:
+        type: string
+      license:
         type: string
       name:
         type: string
@@ -3557,7 +3962,17 @@ definitions:
         items:
           type: integer
         type: array
+      publishedAt:
+        type: string
       relationshipTypeSchemas:
+        items:
+          type: integer
+        type: array
+      repositoryUrl:
+        type: string
+      source:
+        type: string
+      uiConfigs:
         items:
           type: integer
         type: array
@@ -3660,11 +4075,99 @@ definitions:
       active:
         type: boolean
     type: object
+  domain_typeregistry.CreateTypeRequest:
+    properties:
+      description:
+        type: string
+      enabled:
+        description: defaults to true
+        type: boolean
+      extraction_config:
+        items:
+          type: integer
+        type: array
+      json_schema:
+        items:
+          type: integer
+        type: array
+      type_name:
+        type: string
+      ui_config:
+        items:
+          type: integer
+        type: array
+    type: object
+  domain_typeregistry.GraphTemplatePack:
+    properties:
+      createdAt:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      relationshipTypeSchemas:
+        items:
+          type: integer
+        type: array
+      updatedAt:
+        type: string
+      version:
+        type: string
+    type: object
+  domain_typeregistry.ProjectObjectTypeRegistry:
+    properties:
+      createdAt:
+        type: string
+      createdBy:
+        type: string
+      description:
+        type: string
+      discoveryConfidence:
+        type: number
+      enabled:
+        type: boolean
+      extractionConfig:
+        items:
+          type: integer
+        type: array
+      id:
+        type: string
+      jsonSchema:
+        items:
+          type: integer
+        type: array
+      projectId:
+        type: string
+      schemaVersion:
+        type: integer
+      source:
+        description: '''template'', ''custom'', ''discovered'''
+        type: string
+      templatePack:
+        allOf:
+        - $ref: '#/definitions/domain_typeregistry.GraphTemplatePack'
+        description: Relations - for joining
+      templatePackId:
+        type: string
+      typeName:
+        type: string
+      uiConfig:
+        items:
+          type: integer
+        type: array
+      updatedAt:
+        type: string
+    type: object
   domain_typeregistry.RelationshipTypeInfo:
     properties:
       description:
         type: string
       inverse_label:
+        type: string
+      inverse_type:
+        description: When set, creating this relationship auto-creates the inverse
         type: string
       label:
         type: string
@@ -3743,6 +4246,25 @@ definitions:
         type: integer
       types_with_objects:
         type: integer
+    type: object
+  domain_typeregistry.UpdateTypeRequest:
+    properties:
+      description:
+        type: string
+      enabled:
+        type: boolean
+      extraction_config:
+        items:
+          type: integer
+        type: array
+      json_schema:
+        items:
+          type: integer
+        type: array
+      ui_config:
+        items:
+          type: integer
+        type: array
     type: object
   domain_useraccess.OrgWithProjects:
     properties:
@@ -3883,6 +4405,10 @@ definitions:
       message:
         type: string
     type: object
+  map_string_string:
+    additionalProperties:
+      type: string
+    type: object
 host: localhost:5300
 info:
   contact:
@@ -3893,7 +4419,7 @@ info:
   license:
     name: Proprietary
   title: Emergent API
-  version: 0.4.9
+  version: 0.14.1
 paths:
   /api/admin/agents:
     get:
@@ -4249,6 +4775,54 @@ paths:
       summary: Get agent run history
       tags:
       - agents
+  /api/admin/agents/{id}/runs/{runId}/cancel:
+    post:
+      consumes:
+      - application/json
+      description: Cancels a running agent run
+      parameters:
+      - description: Agent ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Run ID (UUID)
+        in: path
+        name: runId
+        required: true
+        type: string
+      - description: Project ID (optional)
+        in: header
+        name: X-Project-ID
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Run cancelled successfully
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-map_string_string'
+        "400":
+          description: Invalid agent ID or run ID
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Agent or run not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Cancel a running agent run
+      tags:
+      - agents
   /api/admin/agents/{id}/trigger:
     post:
       consumes:
@@ -4292,6 +4866,502 @@ paths:
       summary: Trigger agent execution
       tags:
       - agents
+  /api/admin/mcp-servers:
+    get:
+      description: List all MCP servers registered for the current project
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcpregistry.APIResponse-array_domain_mcpregistry_MCPServerDTO'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List MCP servers
+      tags:
+      - mcp-registry
+    post:
+      consumes:
+      - application/json
+      description: Register a new MCP server for the current project
+      parameters:
+      - description: MCP Server configuration
+        in: body
+        name: server
+        required: true
+        schema:
+          $ref: '#/definitions/domain_mcpregistry.CreateMCPServerDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create MCP server
+      tags:
+      - mcp-registry
+  /api/admin/mcp-servers/{id}:
+    delete:
+      description: Delete an MCP server and all its tools
+      parameters:
+      - description: Server ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete MCP server
+      tags:
+      - mcp-registry
+    get:
+      description: Get detailed information about a specific MCP server
+      parameters:
+      - description: Server ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDetailDTO'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get MCP server details
+      tags:
+      - mcp-registry
+    patch:
+      consumes:
+      - application/json
+      description: Update an existing MCP server configuration
+      parameters:
+      - description: Server ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Updated server configuration
+        in: body
+        name: server
+        required: true
+        schema:
+          $ref: '#/definitions/domain_mcpregistry.UpdateMCPServerDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update MCP server
+      tags:
+      - mcp-registry
+  /api/auth/me:
+    get:
+      description: Returns metadata about the current authentication token including
+        project/org context
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Token information
+          schema:
+            $ref: '#/definitions/domain_authinfo.TokenInfoResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Token introspection
+      tags:
+      - auth
+  /api/chat/{id}:
+    delete:
+      description: Permanently deletes a conversation and all its messages
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Conversation ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Deletion status
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid conversation ID
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Conversation not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete conversation
+      tags:
+      - chat
+    get:
+      description: Returns a single conversation with all its messages
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Conversation ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Conversation with messages
+          schema:
+            $ref: '#/definitions/domain_chat.ConversationWithMessages'
+        "400":
+          description: Invalid conversation ID
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Conversation not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get conversation with messages
+      tags:
+      - chat
+    patch:
+      consumes:
+      - application/json
+      description: Updates conversation properties (title, draft text)
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Conversation ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_chat.UpdateConversationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated conversation
+          schema:
+            $ref: '#/definitions/domain_chat.Conversation'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Conversation not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update conversation
+      tags:
+      - chat
+  /api/chat/{id}/messages:
+    post:
+      consumes:
+      - application/json
+      description: Adds a new message to an existing conversation
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Conversation ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Message content
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_chat.AddMessageRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Message created
+          schema:
+            $ref: '#/definitions/domain_chat.Message'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Conversation not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Add message to conversation
+      tags:
+      - chat
+  /api/chat/conversations:
+    get:
+      description: Returns all chat conversations for the current project with pagination
+        support
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Max results (1-100, default 50)
+        in: query
+        maximum: 100
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        minimum: 0
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of conversations
+          schema:
+            $ref: '#/definitions/domain_chat.ListConversationsResult'
+        "400":
+          description: Invalid parameters
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List chat conversations
+      tags:
+      - chat
+    post:
+      consumes:
+      - application/json
+      description: Creates a new chat conversation with an initial message
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Conversation creation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_chat.CreateConversationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Conversation created
+          schema:
+            $ref: '#/definitions/domain_chat.Conversation'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create conversation
+      tags:
+      - chat
+  /api/chat/stream:
+    post:
+      consumes:
+      - application/json
+      description: Streams AI chat responses using Server-Sent Events (SSE). Creates
+        or continues a conversation with streaming token delivery.
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Stream request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_chat.StreamRequest'
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream of tokens
+          schema:
+            type: string
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Stream chat completion
+      tags:
+      - chat
   /api/data-source-integrations:
     get:
       consumes:
@@ -4947,70 +6017,345 @@ paths:
       summary: Test provider configuration
       tags:
       - datasource
-  /api/docs:
-    get:
-      description: Returns a list of all available documentation files with metadata
-        (title, category, description, tags, etc.) but without content
+  /api/documents:
+    delete:
+      consumes:
+      - application/json
+      description: Delete multiple documents and all related entities by ID list
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Document IDs to delete
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_documents.BulkDeleteRequest'
       produces:
       - application/json
       responses:
         "200":
-          description: List of documentation with metadata
+          description: OK
           schema:
-            $ref: '#/definitions/documentation.DocumentList'
-        "500":
-          description: Internal server error
+            $ref: '#/definitions/domain_documents.DeleteResponse'
+        "400":
+          description: Bad Request
           schema:
             $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      summary: List all documentation
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Bulk delete documents
       tags:
-      - documentation
-  /api/docs/{slug}:
+      - documents
     get:
-      description: Returns the full documentation document including markdown content
-        for the specified slug (e.g., "template-pack-creation")
+      consumes:
+      - application/json
+      description: List all documents for the project with optional filtering and
+        pagination
       parameters:
-      - description: Document slug (e.g., template-pack-creation)
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Maximum number of results (1-500)
+        in: query
+        maximum: 500
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Pagination cursor (opaque, from previous response)
+        in: query
+        name: cursor
+        type: string
+      - description: Filter by source type
+        in: query
+        name: sourceType
+        type: string
+      - description: Filter by integration ID
+        in: query
+        name: integrationId
+        type: string
+      - description: Filter to root documents only (no parent)
+        in: query
+        name: rootOnly
+        type: boolean
+      - description: Filter by parent document ID
+        in: query
+        name: parentDocumentId
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_documents.ListResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List documents
+      tags:
+      - documents
+    post:
+      consumes:
+      - application/json
+      description: Create a new document or return existing if content hash matches
+        (deduplication)
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Document data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_documents.CreateDocumentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Existing document returned (deduplicated)
+          schema:
+            $ref: '#/definitions/domain_documents.Document'
+        "201":
+          description: Document created
+          schema:
+            $ref: '#/definitions/domain_documents.Document'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create document
+      tags:
+      - documents
+  /api/documents/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a single document and all related entities (chunks, extraction
+        jobs, graph objects)
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Document ID
         in: path
-        name: slug
+        name: id
         required: true
         type: string
       produces:
       - application/json
       responses:
         "200":
-          description: Full document with markdown content
+          description: OK
           schema:
-            $ref: '#/definitions/documentation.Document'
+            $ref: '#/definitions/domain_documents.DeleteResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
         "404":
-          description: Document not found
+          description: Not Found
           schema:
             $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      summary: Get documentation by slug
+      security:
+      - bearerAuth: []
+      summary: Delete document
       tags:
-      - documentation
-  /api/docs/categories:
+      - documents
     get:
-      description: Returns all documentation categories with their metadata (name,
-        description, icon) from index.json
+      consumes:
+      - application/json
+      description: Retrieve a single document by its ID
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
       produces:
       - application/json
       responses:
         "200":
-          description: List of categories
+          description: OK
           schema:
-            $ref: '#/definitions/documentation.CategoriesResponse'
-        "500":
-          description: Internal server error
+            $ref: '#/definitions/domain_documents.Document'
+        "400":
+          description: Bad Request
           schema:
             $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      summary: Get documentation categories
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get document by ID
       tags:
-      - documentation
+      - documents
+  /api/documents/{id}/content:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve the text content of a document
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_documents.ContentResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get document content
+      tags:
+      - documents
+  /api/documents/{id}/deletion-impact:
+    get:
+      consumes:
+      - application/json
+      description: Preview the impact of deleting a document (counts of related entities
+        that will be deleted)
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_documents.DeletionImpact'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get deletion impact
+      tags:
+      - documents
+  /api/documents/{id}/download:
+    get:
+      consumes:
+      - application/json
+      description: Returns a redirect to a signed URL for downloading the original
+        file
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "307":
+          description: Redirect to signed download URL
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "503":
+          description: Storage service unavailable
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Download document
+      tags:
+      - documents
   /api/documents/{id}/recreate-chunks:
     post:
       consumes:
@@ -5056,6 +6401,43 @@ paths:
       summary: Recreate document chunks
       tags:
       - chunking
+  /api/documents/deletion-impact:
+    post:
+      consumes:
+      - application/json
+      description: Preview the impact of bulk deleting multiple documents
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Document IDs to analyze
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_documents.BulkDeletionImpactRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_documents.BulkDeletionImpact'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get bulk deletion impact
+      tags:
+      - documents
   /api/documents/source-types:
     get:
       consumes:
@@ -5079,6 +6461,60 @@ paths:
       security:
       - bearerAuth: []
       summary: Get source types
+      tags:
+      - documents
+  /api/documents/upload:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Upload a file and create a document record (with automatic deduplication)
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: File to upload (max 100MB)
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: 'Source type (default: upload)'
+        in: formData
+        name: source_type
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Existing document returned (deduplicated)
+          schema:
+            additionalProperties: true
+            type: object
+        "201":
+          description: Document created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "413":
+          description: File too large (>100MB)
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "503":
+          description: Storage service unavailable
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Upload document
       tags:
       - documents
   /api/events/connections/count:
@@ -5175,14 +6611,14 @@ paths:
       - graph
   /api/graph/analytics/unused:
     get:
-      description: Returns graph objects that haven't been accessed in specified days
-        for cleanup analytics
+      description: List graph objects that have not been accessed within a specified
+        number of days
       parameters:
-      - description: 'Max results (default: 50, max: 200)'
+      - description: Max results (default 50)
         in: query
         name: limit
         type: integer
-      - description: 'Days threshold for unused (default: 30)'
+      - description: Days idle threshold (default 30)
         in: query
         name: days
         type: integer
@@ -5211,6 +6647,196 @@ paths:
       summary: Get unused objects
       tags:
       - graph
+  /api/graph/branches:
+    get:
+      consumes:
+      - application/json
+      description: Returns all branches, optionally filtered by project
+      parameters:
+      - description: Filter by project ID (UUID)
+        in: query
+        name: project_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of branches
+          schema:
+            items:
+              $ref: '#/definitions/domain_branches.BranchResponse'
+            type: array
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List branches
+      tags:
+      - branches
+    post:
+      consumes:
+      - application/json
+      description: Creates a new branch for graph versioning and isolation
+      parameters:
+      - description: Branch creation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_branches.CreateBranchRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created branch
+          schema:
+            $ref: '#/definitions/domain_branches.BranchResponse'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create branch
+      tags:
+      - branches
+  /api/graph/branches/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Deletes a branch by ID
+      parameters:
+      - description: Branch ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No content
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Branch not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete branch
+      tags:
+      - branches
+    get:
+      consumes:
+      - application/json
+      description: Retrieves a specific branch by ID
+      parameters:
+      - description: Branch ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Branch details
+          schema:
+            $ref: '#/definitions/domain_branches.BranchResponse'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Branch not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get branch
+      tags:
+      - branches
+    patch:
+      consumes:
+      - application/json
+      description: Updates a branch's name or metadata
+      parameters:
+      - description: Branch ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Branch update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_branches.UpdateBranchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated branch
+          schema:
+            $ref: '#/definitions/domain_branches.BranchResponse'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Branch not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update branch
+      tags:
+      - branches
   /api/graph/branches/{targetBranchId}/merge:
     post:
       consumes:
@@ -5254,6 +6880,202 @@ paths:
       summary: Merge graph branches
       tags:
       - graph
+  /api/graph/embedding-policies:
+    get:
+      consumes:
+      - application/json
+      description: Returns embedding policies for a project with optional filtering
+        by object type
+      parameters:
+      - description: Project ID (UUID)
+        in: query
+        name: project_id
+        required: true
+        type: string
+      - description: Filter by object type
+        in: query
+        name: object_type
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of policies
+          schema:
+            items:
+              $ref: '#/definitions/domain_embeddingpolicies.Response'
+            type: array
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List embedding policies
+      tags:
+      - embedding-policies
+    post:
+      consumes:
+      - application/json
+      description: Creates a new embedding policy for controlling vector embedding
+        generation
+      parameters:
+      - description: Policy creation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_embeddingpolicies.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created policy
+          schema:
+            $ref: '#/definitions/domain_embeddingpolicies.Response'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create embedding policy
+      tags:
+      - embedding-policies
+  /api/graph/embedding-policies/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Deletes an embedding policy by ID
+      parameters:
+      - description: Project ID (UUID)
+        in: query
+        name: project_id
+        required: true
+        type: string
+      - description: Policy ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No content
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Policy not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete embedding policy
+      tags:
+      - embedding-policies
+    get:
+      consumes:
+      - application/json
+      description: Retrieves a specific embedding policy by ID
+      parameters:
+      - description: Project ID (UUID)
+        in: query
+        name: project_id
+        required: true
+        type: string
+      - description: Policy ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Policy details
+          schema:
+            $ref: '#/definitions/domain_embeddingpolicies.Response'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Policy not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get embedding policy
+      tags:
+      - embedding-policies
+    patch:
+      consumes:
+      - application/json
+      description: Updates an existing embedding policy's configuration
+      parameters:
+      - description: Project ID (UUID)
+        in: query
+        name: project_id
+        required: true
+        type: string
+      - description: Policy ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Policy update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_embeddingpolicies.UpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated policy
+          schema:
+            $ref: '#/definitions/domain_embeddingpolicies.Response'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Policy not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update embedding policy
+      tags:
+      - embedding-policies
   /api/graph/expand:
     post:
       consumes:
@@ -5461,12 +7283,29 @@ paths:
       - graph
   /api/graph/objects/{id}/edges:
     get:
-      description: Retrieve all incoming and outgoing relationships for a graph object
+      description: Retrieve all incoming and outgoing relationships for a graph object,
+        with optional type and direction filtering.
       parameters:
       - description: Object ID (UUID)
         in: path
         name: id
         required: true
+        type: string
+      - description: Filter by relationship type (single)
+        in: query
+        name: type
+        type: string
+      - collectionFormat: csv
+        description: Filter by relationship types (multiple, comma-separated)
+        in: query
+        items:
+          type: string
+        name: types
+        type: array
+      - description: 'Filter by direction: ''incoming'', ''outgoing'', or omit for
+          both'
+        in: query
+        name: direction
         type: string
       - description: Project ID
         in: header
@@ -5646,6 +7485,44 @@ paths:
       summary: Find similar objects
       tags:
       - graph
+  /api/graph/objects/bulk:
+    post:
+      consumes:
+      - application/json
+      description: Create multiple graph objects in a single request with partial
+        success semantics
+      parameters:
+      - description: Objects to create (max 100)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.BulkCreateObjectsRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Create results
+          schema:
+            $ref: '#/definitions/domain_graph.BulkCreateObjectsResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Bulk create objects
+      tags:
+      - graph
   /api/graph/objects/bulk-update-status:
     post:
       consumes:
@@ -5683,6 +7560,88 @@ paths:
       security:
       - bearerAuth: []
       summary: Bulk update object statuses
+      tags:
+      - graph
+  /api/graph/objects/count:
+    get:
+      description: Returns the total count of graph objects matching the given filters,
+        without returning the objects themselves.
+      parameters:
+      - description: Object type filter (single)
+        in: query
+        name: type
+        type: string
+      - collectionFormat: csv
+        description: Object types filter (multiple)
+        in: query
+        items:
+          type: string
+        name: types
+        type: array
+      - description: Label filter (single)
+        in: query
+        name: label
+        type: string
+      - collectionFormat: csv
+        description: Labels filter (multiple)
+        in: query
+        items:
+          type: string
+        name: labels
+        type: array
+      - description: Object status filter
+        in: query
+        name: status
+        type: string
+      - description: Object key filter
+        in: query
+        name: key
+        type: string
+      - description: Include soft-deleted objects
+        in: query
+        name: include_deleted
+        type: boolean
+      - description: Comma-separated list of object IDs
+        in: query
+        name: ids
+        type: string
+      - description: Extraction job ID filter
+        in: query
+        name: extraction_job_id
+        type: string
+      - description: JSON-encoded property filters
+        in: query
+        name: property_filters
+        type: string
+      - description: Branch ID filter
+        in: query
+        name: branch_id
+        type: string
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Count result
+          schema:
+            additionalProperties:
+              type: integer
+            type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Count graph objects
       tags:
       - graph
   /api/graph/objects/fts:
@@ -5852,15 +7811,29 @@ paths:
         name: X-Project-ID
         required: true
         type: string
+      - description: Filter to tags from objects of this type
+        in: query
+        name: type
+        type: string
+      - description: Filter to tags starting with this prefix
+        in: query
+        name: prefix
+        type: string
+      - description: Maximum number of tags to return
+        in: query
+        name: limit
+        type: integer
       produces:
       - application/json
       responses:
         "200":
           description: List of unique tags
           schema:
-            items:
-              type: string
-            type: array
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
         "401":
           description: Unauthorized
           schema:
@@ -5868,6 +7841,49 @@ paths:
       security:
       - bearerAuth: []
       summary: Get all object tags
+      tags:
+      - graph
+  /api/graph/objects/upsert:
+    put:
+      consumes:
+      - application/json
+      description: Create or update a graph object identified by its (type, key) combination.
+        If an object with the same type and key exists, it is updated; otherwise,
+        a new object is created.
+      parameters:
+      - description: Object data (key is required)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.CreateGraphObjectRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Object was updated (existing)
+          schema:
+            $ref: '#/definitions/domain_graph.GraphObjectResponse'
+        "201":
+          description: Object was created (new)
+          schema:
+            $ref: '#/definitions/domain_graph.GraphObjectResponse'
+        "400":
+          description: Invalid request (key is required)
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Upsert graph object
       tags:
       - graph
   /api/graph/objects/vector-search:
@@ -5912,7 +7928,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a new relationship (edge) between two graph objects
+      description: |-
+        Create a new relationship (edge) between two graph objects.
+        Automatically generates a triplet text embedding for semantic search
+        (e.g., "Elon Musk founded Tesla") using Vertex AI text-embedding-004.
+        Embedding failures are non-blocking — the relationship is created even if embedding fails.
       parameters:
       - description: Relationship data
         in: body
@@ -6143,6 +8163,44 @@ paths:
       security:
       - bearerAuth: []
       summary: Restore deleted relationship
+      tags:
+      - graph
+  /api/graph/relationships/bulk:
+    post:
+      consumes:
+      - application/json
+      description: Create multiple graph relationships in a single request with partial
+        success semantics
+      parameters:
+      - description: Relationships to create (max 100)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.BulkCreateRelationshipsRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Create results
+          schema:
+            $ref: '#/definitions/domain_graph.BulkCreateRelationshipsResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Bulk create relationships
       tags:
       - graph
   /api/graph/relationships/search:
@@ -7855,7 +9913,8 @@ paths:
       tags:
       - api-tokens
     get:
-      description: Returns a single API token by ID. Token value is not returned.
+      description: Returns a single API token by ID, including the full token value
+        if encryption is configured.
       parameters:
       - description: Project ID (UUID)
         in: path
@@ -7871,9 +9930,9 @@ paths:
       - application/json
       responses:
         "200":
-          description: Token details
+          description: Token details (includes full token value if available)
           schema:
-            $ref: '#/definitions/domain_apitoken.ApiTokenDTO'
+            $ref: '#/definitions/domain_apitoken.GetApiTokenResponseDTO'
         "400":
           description: Invalid project ID or token ID
           schema:
@@ -9041,6 +11100,119 @@ paths:
       summary: Get task counts by project
       tags:
       - tasks
+  /api/template-packs:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new template pack in the global registry with object
+        type schemas, relationship schemas, and optional UI/extraction configs
+      parameters:
+      - description: Template pack definition
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_templatepacks.CreatePackRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created template pack
+          schema:
+            $ref: '#/definitions/domain_templatepacks.GraphTemplatePack'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create template pack
+      tags:
+      - template-packs
+  /api/template-packs/{packId}:
+    delete:
+      consumes:
+      - application/json
+      description: Deletes a template pack from the global registry. Fails if the
+        pack is assigned to any projects.
+      parameters:
+      - description: Template Pack ID (UUID)
+        in: path
+        name: packId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No content
+        "400":
+          description: Bad request (e.g., pack is assigned to projects)
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Template pack not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete template pack
+      tags:
+      - template-packs
+    get:
+      consumes:
+      - application/json
+      description: Returns a template pack by ID including all schemas and configs
+      parameters:
+      - description: Template Pack ID (UUID)
+        in: path
+        name: packId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Template pack
+          schema:
+            $ref: '#/definitions/domain_templatepacks.GraphTemplatePack'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Template pack not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get template pack
+      tags:
+      - template-packs
   /api/template-packs/projects/{projectId}/assign:
     post:
       consumes:
@@ -9379,7 +11551,94 @@ paths:
       summary: Get type statistics
       tags:
       - type-registry
+  /api/type-registry/projects/{projectId}/types:
+    post:
+      consumes:
+      - application/json
+      description: Registers a new custom object type for a project with JSON schema,
+        UI config, and extraction config
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Type definition
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_typeregistry.CreateTypeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created type
+          schema:
+            $ref: '#/definitions/domain_typeregistry.ProjectObjectTypeRegistry'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "409":
+          description: Type already exists
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Register custom type
+      tags:
+      - type-registry
   /api/type-registry/projects/{projectId}/types/{typeName}:
+    delete:
+      consumes:
+      - application/json
+      description: Removes a type from the project type registry
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Object type name
+        in: path
+        name: typeName
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No content
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Type not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete registered type
+      tags:
+      - type-registry
     get:
       consumes:
       - application/json
@@ -9422,6 +11681,56 @@ paths:
       security:
       - bearerAuth: []
       summary: Get object type
+      tags:
+      - type-registry
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing type in the project type registry. Bumps schema_version
+        when json_schema changes.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Object type name
+        in: path
+        name: typeName
+        required: true
+        type: string
+      - description: Update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_typeregistry.UpdateTypeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated type
+          schema:
+            $ref: '#/definitions/domain_typeregistry.ProjectObjectTypeRegistry'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Type not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update registered type
       tags:
       - type-registry
   /api/user-activity/recent:
@@ -9611,6 +11920,105 @@ paths:
       summary: Record user activity
       tags:
       - user-activity
+  /api/user/profile:
+    get:
+      consumes:
+      - application/json
+      description: Returns the authenticated user's profile information
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User profile
+          schema:
+            $ref: '#/definitions/domain_userprofile.ProfileDTO'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "404":
+          description: Profile not found
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get user profile
+      tags:
+      - user-profile
+    put:
+      consumes:
+      - application/json
+      description: Updates the authenticated user's profile information (name, phone,
+        etc.)
+      parameters:
+      - description: Profile updates
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_userprofile.UpdateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated profile
+          schema:
+            $ref: '#/definitions/domain_userprofile.ProfileDTO'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update user profile
+      tags:
+      - user-profile
+  /api/users/search:
+    get:
+      description: Searches for users by email query (partial match). Returns matching
+        users excluding the authenticated user.
+      parameters:
+      - description: Email query (partial match supported)
+        in: query
+        name: email
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Search results
+          schema:
+            $ref: '#/definitions/domain_users.UserSearchResponse'
+        "400":
+          description: Missing or invalid email query parameter
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Search users by email
+      tags:
+      - users
   /api/v1/organizations/{orgId}/backups:
     get:
       description: Returns paginated list of backups for an organization with optional
@@ -9858,1232 +12266,6 @@ paths:
       summary: Get restore job status
       tags:
       - backups
-  /api/v2/chat/{id}:
-    delete:
-      description: Permanently deletes a conversation and all its messages
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Conversation ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Deletion status
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Invalid conversation ID
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Conversation not found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Delete conversation
-      tags:
-      - chat
-    get:
-      description: Returns a single conversation with all its messages
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Conversation ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Conversation with messages
-          schema:
-            $ref: '#/definitions/domain_chat.ConversationWithMessages'
-        "400":
-          description: Invalid conversation ID
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Conversation not found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get conversation with messages
-      tags:
-      - chat
-    patch:
-      consumes:
-      - application/json
-      description: Updates conversation properties (title, draft text)
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Conversation ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Update request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_chat.UpdateConversationRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Updated conversation
-          schema:
-            $ref: '#/definitions/domain_chat.Conversation'
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Conversation not found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Update conversation
-      tags:
-      - chat
-  /api/v2/chat/{id}/messages:
-    post:
-      consumes:
-      - application/json
-      description: Adds a new message to an existing conversation
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Conversation ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Message content
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_chat.AddMessageRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Message created
-          schema:
-            $ref: '#/definitions/domain_chat.Message'
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Conversation not found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Add message to conversation
-      tags:
-      - chat
-  /api/v2/chat/conversations:
-    get:
-      description: Returns all chat conversations for the current project with pagination
-        support
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Max results (1-100, default 50)
-        in: query
-        maximum: 100
-        minimum: 1
-        name: limit
-        type: integer
-      - description: Offset for pagination
-        in: query
-        minimum: 0
-        name: offset
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: List of conversations
-          schema:
-            $ref: '#/definitions/domain_chat.ListConversationsResult'
-        "400":
-          description: Invalid parameters
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List chat conversations
-      tags:
-      - chat
-    post:
-      consumes:
-      - application/json
-      description: Creates a new chat conversation with an initial message
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Conversation creation request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_chat.CreateConversationRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Conversation created
-          schema:
-            $ref: '#/definitions/domain_chat.Conversation'
-        "400":
-          description: Invalid request body
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Create conversation
-      tags:
-      - chat
-  /api/v2/chat/stream:
-    post:
-      consumes:
-      - application/json
-      description: Streams AI chat responses using Server-Sent Events (SSE). Creates
-        or continues a conversation with streaming token delivery.
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Stream request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_chat.StreamRequest'
-      produces:
-      - text/event-stream
-      responses:
-        "200":
-          description: SSE stream of tokens
-          schema:
-            type: string
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Stream chat completion
-      tags:
-      - chat
-  /api/v2/documents:
-    delete:
-      consumes:
-      - application/json
-      description: Delete multiple documents and all related entities by ID list
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Document IDs to delete
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_documents.BulkDeleteRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_documents.DeleteResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Bulk delete documents
-      tags:
-      - documents
-    get:
-      consumes:
-      - application/json
-      description: List all documents for the project with optional filtering and
-        pagination
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Maximum number of results (1-500)
-        in: query
-        maximum: 500
-        minimum: 1
-        name: limit
-        type: integer
-      - description: Pagination cursor (opaque, from previous response)
-        in: query
-        name: cursor
-        type: string
-      - description: Filter by source type
-        in: query
-        name: sourceType
-        type: string
-      - description: Filter by integration ID
-        in: query
-        name: integrationId
-        type: string
-      - description: Filter to root documents only (no parent)
-        in: query
-        name: rootOnly
-        type: boolean
-      - description: Filter by parent document ID
-        in: query
-        name: parentDocumentId
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_documents.ListResult'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List documents
-      tags:
-      - documents
-    post:
-      consumes:
-      - application/json
-      description: Create a new document or return existing if content hash matches
-        (deduplication)
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Document data
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_documents.CreateDocumentRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Existing document returned (deduplicated)
-          schema:
-            $ref: '#/definitions/domain_documents.Document'
-        "201":
-          description: Document created
-          schema:
-            $ref: '#/definitions/domain_documents.Document'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Create document
-      tags:
-      - documents
-  /api/v2/documents/{id}:
-    delete:
-      consumes:
-      - application/json
-      description: Delete a single document and all related entities (chunks, extraction
-        jobs, graph objects)
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Document ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_documents.DeleteResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Delete document
-      tags:
-      - documents
-    get:
-      consumes:
-      - application/json
-      description: Retrieve a single document by its ID
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Document ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_documents.Document'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get document by ID
-      tags:
-      - documents
-  /api/v2/documents/{id}/content:
-    get:
-      consumes:
-      - application/json
-      description: Retrieve the text content of a document
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Document ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_documents.ContentResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get document content
-      tags:
-      - documents
-  /api/v2/documents/{id}/deletion-impact:
-    get:
-      consumes:
-      - application/json
-      description: Preview the impact of deleting a document (counts of related entities
-        that will be deleted)
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Document ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_documents.DeletionImpact'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get deletion impact
-      tags:
-      - documents
-  /api/v2/documents/{id}/download:
-    get:
-      consumes:
-      - application/json
-      description: Returns a redirect to a signed URL for downloading the original
-        file
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Document ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "307":
-          description: Redirect to signed download URL
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "503":
-          description: Storage service unavailable
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Download document
-      tags:
-      - documents
-  /api/v2/documents/deletion-impact:
-    post:
-      consumes:
-      - application/json
-      description: Preview the impact of bulk deleting multiple documents
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Document IDs to analyze
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_documents.BulkDeletionImpactRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_documents.BulkDeletionImpact'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get bulk deletion impact
-      tags:
-      - documents
-  /api/v2/documents/upload:
-    post:
-      consumes:
-      - multipart/form-data
-      description: Upload a file and create a document record (with automatic deduplication)
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: File to upload (max 100MB)
-        in: formData
-        name: file
-        required: true
-        type: file
-      - description: 'Source type (default: upload)'
-        in: formData
-        name: source_type
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Existing document returned (deduplicated)
-          schema:
-            additionalProperties: true
-            type: object
-        "201":
-          description: Document created
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "413":
-          description: File too large (>100MB)
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "503":
-          description: Storage service unavailable
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Upload document
-      tags:
-      - documents
-  /api/v2/graph/branches:
-    get:
-      consumes:
-      - application/json
-      description: Returns all branches, optionally filtered by project
-      parameters:
-      - description: Filter by project ID (UUID)
-        in: query
-        name: project_id
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: List of branches
-          schema:
-            items:
-              $ref: '#/definitions/domain_branches.BranchResponse'
-            type: array
-        "400":
-          description: Bad request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List branches
-      tags:
-      - branches
-    post:
-      consumes:
-      - application/json
-      description: Creates a new branch for graph versioning and isolation
-      parameters:
-      - description: Branch creation request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_branches.CreateBranchRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created branch
-          schema:
-            $ref: '#/definitions/domain_branches.BranchResponse'
-        "400":
-          description: Bad request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Create branch
-      tags:
-      - branches
-  /api/v2/graph/branches/{id}:
-    delete:
-      consumes:
-      - application/json
-      description: Deletes a branch by ID
-      parameters:
-      - description: Branch ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No content
-        "400":
-          description: Bad request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Branch not found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Delete branch
-      tags:
-      - branches
-    get:
-      consumes:
-      - application/json
-      description: Retrieves a specific branch by ID
-      parameters:
-      - description: Branch ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Branch details
-          schema:
-            $ref: '#/definitions/domain_branches.BranchResponse'
-        "400":
-          description: Bad request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Branch not found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get branch
-      tags:
-      - branches
-    patch:
-      consumes:
-      - application/json
-      description: Updates a branch's name or metadata
-      parameters:
-      - description: Branch ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Branch update request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_branches.UpdateBranchRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Updated branch
-          schema:
-            $ref: '#/definitions/domain_branches.BranchResponse'
-        "400":
-          description: Bad request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Branch not found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Update branch
-      tags:
-      - branches
-  /api/v2/graph/embedding-policies:
-    get:
-      consumes:
-      - application/json
-      description: Returns embedding policies for a project with optional filtering
-        by object type
-      parameters:
-      - description: Project ID (UUID)
-        in: query
-        name: project_id
-        required: true
-        type: string
-      - description: Filter by object type
-        in: query
-        name: object_type
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: List of policies
-          schema:
-            items:
-              $ref: '#/definitions/domain_embeddingpolicies.Response'
-            type: array
-        "400":
-          description: Bad request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List embedding policies
-      tags:
-      - embedding-policies
-    post:
-      consumes:
-      - application/json
-      description: Creates a new embedding policy for controlling vector embedding
-        generation
-      parameters:
-      - description: Policy creation request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_embeddingpolicies.CreateRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created policy
-          schema:
-            $ref: '#/definitions/domain_embeddingpolicies.Response'
-        "400":
-          description: Bad request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Create embedding policy
-      tags:
-      - embedding-policies
-  /api/v2/graph/embedding-policies/{id}:
-    delete:
-      consumes:
-      - application/json
-      description: Deletes an embedding policy by ID
-      parameters:
-      - description: Project ID (UUID)
-        in: query
-        name: project_id
-        required: true
-        type: string
-      - description: Policy ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No content
-        "400":
-          description: Bad request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Policy not found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Delete embedding policy
-      tags:
-      - embedding-policies
-    get:
-      consumes:
-      - application/json
-      description: Retrieves a specific embedding policy by ID
-      parameters:
-      - description: Project ID (UUID)
-        in: query
-        name: project_id
-        required: true
-        type: string
-      - description: Policy ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Policy details
-          schema:
-            $ref: '#/definitions/domain_embeddingpolicies.Response'
-        "400":
-          description: Bad request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Policy not found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get embedding policy
-      tags:
-      - embedding-policies
-    patch:
-      consumes:
-      - application/json
-      description: Updates an existing embedding policy's configuration
-      parameters:
-      - description: Project ID (UUID)
-        in: query
-        name: project_id
-        required: true
-        type: string
-      - description: Policy ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Policy update request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_embeddingpolicies.UpdateRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Updated policy
-          schema:
-            $ref: '#/definitions/domain_embeddingpolicies.Response'
-        "400":
-          description: Bad request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Policy not found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Update embedding policy
-      tags:
-      - embedding-policies
-  /api/v2/user/profile:
-    get:
-      consumes:
-      - application/json
-      description: Returns the authenticated user's profile information
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: User profile
-          schema:
-            $ref: '#/definitions/domain_userprofile.ProfileDTO'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "404":
-          description: Profile not found
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get user profile
-      tags:
-      - user-profile
-    put:
-      consumes:
-      - application/json
-      description: Updates the authenticated user's profile information (name, phone,
-        etc.)
-      parameters:
-      - description: Profile updates
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_userprofile.UpdateProfileRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Updated profile
-          schema:
-            $ref: '#/definitions/domain_userprofile.ProfileDTO'
-        "400":
-          description: Bad request
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Update user profile
-      tags:
-      - user-profile
-  /api/v2/users/search:
-    get:
-      description: Searches for users by email query (partial match). Returns matching
-        users excluding the authenticated user.
-      parameters:
-      - description: Email query (partial match supported)
-        in: query
-        name: email
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Search results
-          schema:
-            $ref: '#/definitions/domain_users.UserSearchResponse'
-        "400":
-          description: Missing or invalid email query parameter
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Search users by email
-      tags:
-      - users
   /chunks:
     delete:
       consumes:
@@ -11587,11 +12769,11 @@ paths:
         "200":
           description: Service is healthy
           schema:
-            $ref: '#/definitions/documentation.HealthResponse'
+            $ref: '#/definitions/domain_health.HealthResponse'
         "503":
           description: Service is unhealthy
           schema:
-            $ref: '#/definitions/documentation.HealthResponse'
+            $ref: '#/definitions/domain_health.HealthResponse'
       summary: Get service health
       tags:
       - health
@@ -11649,8 +12831,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Search across graph objects and document chunks with configurable
-        fusion strategies
+      description: |-
+        Search across graph objects, relationships, and document chunks with configurable fusion strategies
+        Supports multiple result types: graph nodes, relationship edges (triplets), and text chunks
+        Relationships are returned when embeddings are available and fusion strategy is RRF or weighted
       parameters:
       - description: Search request
         in: body
