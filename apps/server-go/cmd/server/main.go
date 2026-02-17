@@ -1,7 +1,7 @@
 // Package main provides the entry point for the Emergent API server
 //
 // @title Emergent API
-// @version 0.14.3
+// @version 0.15.0
 // @description Emergent Knowledge Base API - AI-powered knowledge management system
 // @contact.name Emergent Team
 // @contact.url https://emergent-company.ai
@@ -41,6 +41,7 @@ import (
 	"github.com/emergent/emergent-core/domain/embeddingpolicies"
 	"github.com/emergent/emergent-core/domain/events"
 	"github.com/emergent/emergent-core/domain/extraction"
+	"github.com/emergent/emergent-core/domain/githubapp"
 	"github.com/emergent/emergent-core/domain/graph"
 	"github.com/emergent/emergent-core/domain/health"
 	"github.com/emergent/emergent-core/domain/integrations"
@@ -162,5 +163,8 @@ func main() {
 
 		// Agent workspace infrastructure (isolated execution environments)
 		workspace.Module,
+
+		// GitHub App integration (repository access, credential management)
+		githubapp.Module,
 	).Run()
 }
