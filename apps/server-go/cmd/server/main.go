@@ -26,6 +26,7 @@ import (
 
 	"github.com/emergent/emergent-core/domain/agents"
 	"github.com/emergent/emergent-core/domain/apitoken"
+	"github.com/emergent/emergent-core/domain/authinfo"
 	"github.com/emergent/emergent-core/domain/backups"
 	"github.com/emergent/emergent-core/domain/branches"
 	"github.com/emergent/emergent-core/domain/chat"
@@ -61,6 +62,7 @@ import (
 	"github.com/emergent/emergent-core/domain/useractivity"
 	"github.com/emergent/emergent-core/domain/userprofile"
 	"github.com/emergent/emergent-core/domain/users"
+	"github.com/emergent/emergent-core/domain/workspace"
 	"github.com/emergent/emergent-core/internal/config"
 	"github.com/emergent/emergent-core/internal/database"
 	"github.com/emergent/emergent-core/internal/server"
@@ -109,6 +111,7 @@ func main() {
 
 		// Domain modules
 		health.Module,
+		authinfo.Module,
 		agents.Module,
 		backups.Module,
 		documents.Module,
@@ -156,5 +159,8 @@ func main() {
 
 		// Documentation API (serves markdown files from docs/public)
 		docs.Module,
+
+		// Agent workspace infrastructure (isolated execution environments)
+		workspace.Module,
 	).Run()
 }
