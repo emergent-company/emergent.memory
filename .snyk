@@ -1,0 +1,54 @@
+# Snyk (https://snyk.io) policy file
+version: v1.25.0
+
+#Ignores for agent workspace infrastructure
+# See docs/security/SNYK_FALSE_POSITIVES.md for detailed explanations
+
+ignore:
+  # Command injection in vm-agent
+  # FALSE POSITIVE: vm-agent runs INSIDE the untrusted sandbox
+  # The security boundary is VM/container isolation, not the agent code
+  # An attacker with command execution is already isolated in the ephemeral VM
+  'SNYK-GO-GOSEC-G204':
+    - 'apps/server-go/cmd/vm-agent/main.go':
+        reason: 'Runs inside isolated sandbox; security boundary is VM isolation, not agent code'
+        expires: '2027-02-17T00:00:00.000Z'
+  
+  # Cleartext credentials in checkout service
+  # FALSE POSITIVE: Ephemeral GitHub installation token (1hr expiry)
+  # Token is in-memory only, passed to git inside isolated ephemeral workspace
+  # This is the standard pattern used by GitHub Actions, GitLab CI, etc.
+  'SNYK-GO-GOSEC-G101':
+    - 'apps/server-go/domain/workspace/checkout.go':
+        reason: 'Ephemeral token in isolated container; standard git credential pattern'
+        expires: '2027-02-17T00:00:00.000Z'
+
+# Vulnerable dependencies - indirect, waiting on upstream updates
+# These are pulled in by firecracker-go-sdk and go-openapi libraries
+# Monitoring for upstream updates; CVEs not exploitable in our use case
+
+ignore:
+  # CVE-2021-20206 in containernetworking/plugins
+  # Indirect dependency via firecracker-go-sdk
+  # Not exploitable: we don't use the affected CNI features
+  'SNYK-GOLANG-GITHUBCOMCONTAINERNETWORKINGPLUGINSPLUGINSMAINIPVLAN-1540855':
+    - '*':
+        reason: 'Indirect via firecracker-go-sdk; CNI vulnerability not exploitable in our architecture'
+        expires: '2027-02-17T00:00:00.000Z'
+  
+  # Vulnerabilities in go.mongodb.org/mongo-driver
+  # Indirect dependency via go-openapi or other libraries
+  # Not exploitable: we use PostgreSQL, not MongoDB
+  'SNYK-GOLANG-GOMONGODBORGMONGODRIVER*':
+    - '*':
+        reason: 'Indirect dependency; we do not use MongoDB in production'
+        expires: '2027-02-17T00:00:00.000Z'
+
+patch: {}
+
+exclude:
+  # Test files don't need security scanning
+  global:
+    - '**/*_test.go'
+    - '**/testdata/**'
+    - '**/mocks/**'
