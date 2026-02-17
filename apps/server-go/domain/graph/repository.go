@@ -459,6 +459,21 @@ func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
 		Exec(ctx)
 
 	if err != nil {
+		if pgutils.IsUniqueViolation(err) {
+			// Handle duplicate key - likely concurrent upsert race condition
+			r.log.Warn("graph object with same key already exists",
+				slog.String("project_id", obj.ProjectID.String()),
+				slog.String("type", obj.Type),
+				slog.Any("key", obj.Key),
+				logger.Error(err))
+			keyStr := "<nil>"
+			if obj.Key != nil {
+				keyStr = *obj.Key
+			}
+			return apperror.New(409, "conflict", fmt.Sprintf(
+				"Graph object with type '%s' and key '%s' already exists",
+				obj.Type, keyStr))
+		}
 		r.log.Error("failed to create graph object", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
 	}
@@ -500,6 +515,23 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 		Model(newVersion).
 		Exec(ctx)
 	if err != nil {
+		if pgutils.IsUniqueViolation(err) {
+			// This should rarely happen since we just updated the old HEAD
+			// Indicates a race condition or logic error
+			r.log.Error("duplicate key when creating new version - possible race condition",
+				slog.String("project_id", newVersion.ProjectID.String()),
+				slog.String("type", newVersion.Type),
+				slog.Any("key", newVersion.Key),
+				slog.Int("version", newVersion.Version),
+				logger.Error(err))
+			keyStr := "<nil>"
+			if newVersion.Key != nil {
+				keyStr = *newVersion.Key
+			}
+			return apperror.New(409, "conflict", fmt.Sprintf(
+				"Failed to create new version for type '%s' and key '%s' - concurrent modification detected",
+				newVersion.Type, keyStr))
+		}
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -688,6 +720,21 @@ func (r *Repository) CreateInTx(ctx context.Context, tx bun.Tx, obj *GraphObject
 		Exec(ctx)
 
 	if err != nil {
+		if pgutils.IsUniqueViolation(err) {
+			// Handle duplicate key - likely concurrent upsert race condition
+			r.log.Warn("graph object with same key already exists (in tx)",
+				slog.String("project_id", obj.ProjectID.String()),
+				slog.String("type", obj.Type),
+				slog.Any("key", obj.Key),
+				logger.Error(err))
+			keyStr := "<nil>"
+			if obj.Key != nil {
+				keyStr = *obj.Key
+			}
+			return apperror.New(409, "conflict", fmt.Sprintf(
+				"Graph object with type '%s' and key '%s' already exists",
+				obj.Type, keyStr))
+		}
 		r.log.Error("failed to create graph object in tx", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
 	}
