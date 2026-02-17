@@ -11753,6 +11753,67 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/agent/sessions/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns session status (workspace lifecycle) for an agent run",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sessions"
+                ],
+                "summary": "Get agent session status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Run ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Session/run details with session status",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentRunDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid run ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/agent/workspaces": {
             "get": {
                 "security": [
@@ -13914,6 +13975,23 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.APIResponse-domain_agents_AgentRunDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.AgentRunDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_agents.APIResponse-domain_agents_BatchTriggerResponseDTO": {
             "type": "object",
             "properties": {
@@ -14102,6 +14180,9 @@ const docTemplate = `{
                 },
                 "resumedFrom": {
                     "type": "string"
+                },
+                "sessionStatus": {
+                    "$ref": "#/definitions/domain_agents.SessionStatus"
                 },
                 "skipReason": {
                     "type": "string"
@@ -14344,6 +14425,33 @@ const docTemplate = `{
                 "EventTypeCreated",
                 "EventTypeUpdated",
                 "EventTypeDeleted"
+            ]
+        },
+        "domain_agents.SessionStatus": {
+            "type": "string",
+            "enum": [
+                "provisioning",
+                "active",
+                "completed",
+                "error"
+            ],
+            "x-enum-comments": {
+                "SessionStatusActive": "Workspace ready, agent executing",
+                "SessionStatusCompleted": "Run finished successfully",
+                "SessionStatusError": "Run or provisioning failed",
+                "SessionStatusProvisioning": "Workspace being set up"
+            },
+            "x-enum-descriptions": [
+                "Workspace being set up",
+                "Workspace ready, agent executing",
+                "Run finished successfully",
+                "Run or provisioning failed"
+            ],
+            "x-enum-varnames": [
+                "SessionStatusProvisioning",
+                "SessionStatusActive",
+                "SessionStatusCompleted",
+                "SessionStatusError"
             ]
         },
         "domain_agents.TriggerResponseDTO": {
@@ -21025,7 +21133,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.14.3",
+	Version:          "0.15.0",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
