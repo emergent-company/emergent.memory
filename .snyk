@@ -81,6 +81,14 @@ ignore:
     - '*':
         reason: 'Indirect dependency; we do not use MongoDB in production'
         expires: '2027-02-17T00:00:00.000Z'
+  
+  # SNYK-OS-GO-0011: Unable to fetch private dependencies
+  # This is the monorepo's own module (github.com/emergent/emergent-core)
+  # Snyk cannot access it because it's private. This is expected and not a security issue.
+  'SNYK-OS-GO-0011':
+    - 'apps/server-go/go.mod':
+        reason: 'Private monorepo module; Snyk lacks credentials to fetch'
+        expires: '2027-02-17T00:00:00.000Z'
 
 patch: {}
 
@@ -90,3 +98,8 @@ exclude:
     - '**/*_test.go'
     - '**/testdata/**'
     - '**/mocks/**'
+  
+  # Skip dependency scanning for the monorepo's own module
+  # Snyk cannot fetch github.com/emergent/emergent-core (it's this repo!)
+  dependencies:
+    - 'github.com/emergent/emergent-core'
