@@ -11,7 +11,7 @@ import (
 type GraphTemplatePack struct {
 	bun.BaseModel `bun:"table:kb.graph_template_packs,alias:gtp"`
 
-	ID                      string          `bun:"id,pk,type:uuid" json:"id"`
+	ID                      string          `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
 	Name                    string          `bun:"name,notnull" json:"name"`
 	Version                 string          `bun:"version,notnull" json:"version"`
 	Description             *string         `bun:"description" json:"description,omitempty"`

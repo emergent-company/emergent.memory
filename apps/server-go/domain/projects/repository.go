@@ -29,9 +29,10 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 
 // ListParams defines parameters for listing projects
 type ListParams struct {
-	UserID string
-	OrgID  string // Optional filter by org
-	Limit  int
+	UserID    string
+	OrgID     string // Optional filter by org
+	ProjectID string // Optional filter by specific project (for API token scope)
+	Limit     int
 }
 
 // List returns all projects the user is a member of
@@ -46,6 +47,10 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Project, er
 
 	if params.OrgID != "" {
 		query = query.Where("p.organization_id = ?", params.OrgID)
+	}
+
+	if params.ProjectID != "" {
+		query = query.Where("p.id = ?", params.ProjectID)
 	}
 
 	if params.Limit > 0 {
