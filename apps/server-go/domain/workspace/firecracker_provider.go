@@ -288,7 +288,7 @@ func (p *FirecrackerProvider) Create(ctx context.Context, req *CreateContainerRe
 			DriveID:      firecracker.String("rootfs"),
 			PathOnHost:   firecracker.String(rootfsPath),
 			IsRootDevice: firecracker.Bool(true),
-			IsReadOnly:   firecracker.Bool(false),
+			IsReadOnly:   firecracker.Bool(true),
 		},
 		{
 			DriveID:      firecracker.String("data"),
@@ -333,12 +333,12 @@ func (p *FirecrackerProvider) Create(ctx context.Context, req *CreateContainerRe
 	// Create and start the machine
 	machine, err := firecracker.NewMachine(ctx, fcConfig)
 	if err != nil {
-		p.cleanupVMResources(vmID, tapName, dataDevicePath, socketPath)
+		p.cleanupVMResources(vmID, tapName, vmIP, dataDevicePath, socketPath)
 		return nil, fmt.Errorf("failed to create Firecracker machine: %w", err)
 	}
 
 	if err := machine.Start(ctx); err != nil {
-		p.cleanupVMResources(vmID, tapName, dataDevicePath, socketPath)
+		p.cleanupVMResources(vmID, tapName, vmIP, dataDevicePath, socketPath)
 		return nil, fmt.Errorf("failed to start Firecracker VM: %w", err)
 	}
 
@@ -360,7 +360,7 @@ func (p *FirecrackerProvider) Create(ctx context.Context, req *CreateContainerRe
 	// Wait for agent to become ready
 	if err := p.waitForAgent(ctx, vm); err != nil {
 		_ = machine.StopVMM()
-		p.cleanupVMResources(vmID, tapName, dataDevicePath, socketPath)
+		p.cleanupVMResources(vmID, tapName, vmIP, dataDevicePath, socketPath)
 		return nil, fmt.Errorf("VM started but agent not ready: %w", err)
 	}
 
@@ -402,7 +402,7 @@ func (p *FirecrackerProvider) Destroy(ctx context.Context, providerID string) er
 	}
 
 	// Clean up all resources
-	p.cleanupVMResources(vm.id, vm.tapDevice, vm.dataDevice, vm.socketPath)
+	p.cleanupVMResources(vm.id, vm.tapDevice, vm.vmIP, vm.dataDevice, vm.socketPath)
 
 	// Clean up snapshot directory if it exists
 	if vm.snapshotDir != "" {
@@ -688,7 +688,7 @@ func (p *FirecrackerProvider) CreateFromSnapshot(ctx context.Context, snapshotID
 			DriveID:      firecracker.String("rootfs"),
 			PathOnHost:   firecracker.String(rootfsPath),
 			IsRootDevice: firecracker.Bool(true),
-			IsReadOnly:   firecracker.Bool(false),
+			IsReadOnly:   firecracker.Bool(true),
 		},
 		{
 			DriveID:      firecracker.String("data"),
@@ -737,12 +737,12 @@ func (p *FirecrackerProvider) CreateFromSnapshot(ctx context.Context, snapshotID
 
 	machine, err := firecracker.NewMachine(ctx, fcConfig)
 	if err != nil {
-		p.cleanupVMResources(vmID, tapName, dataDevicePath, socketPath)
+		p.cleanupVMResources(vmID, tapName, vmIP, dataDevicePath, socketPath)
 		return nil, fmt.Errorf("failed to create Firecracker machine from snapshot: %w", err)
 	}
 
 	if err := machine.Start(ctx); err != nil {
-		p.cleanupVMResources(vmID, tapName, dataDevicePath, socketPath)
+		p.cleanupVMResources(vmID, tapName, vmIP, dataDevicePath, socketPath)
 		return nil, fmt.Errorf("failed to start Firecracker VM from snapshot: %w", err)
 	}
 
@@ -763,7 +763,7 @@ func (p *FirecrackerProvider) CreateFromSnapshot(ctx context.Context, snapshotID
 	// Wait for agent
 	if err := p.waitForAgent(ctx, vm); err != nil {
 		_ = machine.StopVMM()
-		p.cleanupVMResources(vmID, tapName, dataDevicePath, socketPath)
+		p.cleanupVMResources(vmID, tapName, vmIP, dataDevicePath, socketPath)
 		return nil, fmt.Errorf("VM restored from snapshot but agent not ready: %w", err)
 	}
 
@@ -972,12 +972,20 @@ func (p *FirecrackerProvider) setupIPTablesNAT(tapName, vmIP string) error {
 }
 
 // cleanupVMResources removes TAP device, block device, and socket file.
-func (p *FirecrackerProvider) cleanupVMResources(vmID, tapName, dataDevice, socketPath string) {
+func (p *FirecrackerProvider) cleanupVMResources(vmID, tapName, vmIP, dataDevice, socketPath string) {
 	// Remove TAP device
 	if tapName != "" {
-		// Clean up iptables rules (best effort)
-		_ = exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING",
-			"-o", "eth0", "-j", "MASQUERADE").Run()
+		// Clean up iptables rules for this specific VM (best effort)
+		if vmIP != "" {
+			_ = exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING",
+				"-s", vmIP+"/32", "-o", "eth0", "-j", "MASQUERADE").Run()
+			_ = exec.Command("iptables", "-D", "FORWARD",
+				"-i", tapName, "-o", "eth0", "-j", "ACCEPT").Run()
+			_ = exec.Command("iptables", "-D", "FORWARD",
+				"-i", "eth0", "-o", tapName,
+				"-m", "state", "--state", "ESTABLISHED,RELATED",
+				"-j", "ACCEPT").Run()
+		}
 
 		cmd := exec.Command("ip", "link", "delete", tapName)
 		if err := cmd.Run(); err != nil {
