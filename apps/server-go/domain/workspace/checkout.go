@@ -131,6 +131,16 @@ func (cs *CheckoutService) CloneRepository(ctx context.Context, provider Provide
 // InjectCredentialsForPush temporarily injects credentials into the git remote URL
 // for a push/pull operation, then removes them after completion.
 func (cs *CheckoutService) InjectCredentialsForPush(ctx context.Context, provider Provider, providerID string, gitCmd string) (*ExecResult, error) {
+	// Guard nil credential provider — fall back to unauthenticated
+	if cs.credProvider == nil {
+		cs.log.Warn("no credentials provider configured for git operation, trying unauthenticated")
+		return provider.Exec(ctx, providerID, &ExecRequest{
+			Command:   gitCmd,
+			Workdir:   "/workspace",
+			TimeoutMs: pushPullTimeoutMs,
+		})
+	}
+
 	// Get token
 	token, err := cs.credProvider.GetInstallationToken(ctx)
 	if err != nil {

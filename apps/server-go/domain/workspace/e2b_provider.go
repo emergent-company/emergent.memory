@@ -461,9 +461,9 @@ func (p *E2BProvider) WriteFile(ctx context.Context, providerID string, req *Fil
 		return err
 	}
 
-	// Create parent directories
-	dir := req.FilePath[:strings.LastIndex(req.FilePath, "/")]
-	if dir != "" {
+	// Create parent directories safely
+	if idx := strings.LastIndex(req.FilePath, "/"); idx > 0 {
+		dir := req.FilePath[:idx]
 		if _, err := p.envdExecCommand(ctx, sandbox, fmt.Sprintf("mkdir -p %q", dir)); err != nil {
 			p.log.Warn("failed to create parent directories", "path", dir, "error", err)
 		}

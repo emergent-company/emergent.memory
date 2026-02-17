@@ -8,11 +8,12 @@ import (
 
 // ProvisioningResult holds the result of auto-provisioning a workspace for an agent session.
 type ProvisioningResult struct {
-	Workspace *AgentWorkspace
-	RepoURL   string
-	Branch    string
-	Degraded  bool  // True if provisioning failed and session started without workspace
-	Error     error // Non-nil if provisioning failed
+	Workspace    *AgentWorkspace
+	RepoURL      string
+	Branch       string
+	ProviderType ProviderType // Provider used for this attempt
+	Degraded     bool         // True if provisioning failed and session started without workspace
+	Error        error        // Non-nil if provisioning failed
 }
 
 // AutoProvisioner handles automatic workspace provisioning for agent sessions.
@@ -88,7 +89,12 @@ func (ap *AutoProvisioner) ProvisionForSession(
 			"error", err,
 		)
 
-		// Retry once
+		// Mark the failed provider as unhealthy temporarily to force fallback selection
+		if result != nil && result.ProviderType != "" {
+			ap.orchestrator.UpdateHealth(result.ProviderType, false, fmt.Sprintf("provisioning failed: %v", err))
+		}
+
+		// Retry once with fallback
 		result, err = ap.attemptProvision(ctx, cfg, repoURL, branch, shouldCheckout)
 		if err != nil {
 			ap.log.Error("workspace provisioning failed after retry, starting in degraded mode",
@@ -204,7 +210,7 @@ func (ap *AutoProvisioner) attemptProvision(
 
 	containerResult, err := provider.Create(ctx, containerReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create container via %s: %w", providerType, err)
+		return &ProvisioningResult{ProviderType: providerType}, fmt.Errorf("failed to create container via %s: %w", providerType, err)
 	}
 
 	// Create workspace record in DB
@@ -218,7 +224,7 @@ func (ap *AutoProvisioner) attemptProvision(
 	if err != nil {
 		// Try to clean up the container
 		_ = provider.Destroy(ctx, containerResult.ProviderID)
-		return nil, fmt.Errorf("failed to create workspace record: %w", err)
+		return &ProvisioningResult{ProviderType: providerType}, fmt.Errorf("failed to create workspace record: %w", err)
 	}
 
 	// Build the entity for internal use
@@ -274,7 +280,8 @@ func (ap *AutoProvisioner) attemptProvision(
 	)
 
 	return &ProvisioningResult{
-		Workspace: wsEntity,
+		Workspace:    wsEntity,
+		ProviderType: providerType,
 	}, nil
 }
 
