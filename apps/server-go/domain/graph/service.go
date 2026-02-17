@@ -174,6 +174,16 @@ func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObje
 		items[i] = obj.ToResponse()
 	}
 
+	// Apply field projection if requested (filter properties to only include specified keys)
+	if len(params.Fields) > 0 {
+		projection := &GraphExpandProjection{
+			IncludeObjectProperties: params.Fields,
+		}
+		for _, item := range items {
+			item.Properties = projectProperties(item.Properties, projection)
+		}
+	}
+
 	var nextCursor *string
 	if hasMore && len(objects) > 0 {
 		last := objects[len(objects)-1]
@@ -2823,4 +2833,166 @@ type ValidationMetrics struct {
 	Success       int64
 	Errors        int64
 	TotalDuration time.Duration
+}
+
+// =============================================================================
+// Atomic Subgraph Creation
+// =============================================================================
+
+// CreateSubgraph atomically creates a set of objects and relationships in a single transaction.
+// Objects are referenced by client-side placeholder refs (_ref), which are resolved to server-assigned
+// IDs before relationship creation. If any step fails, the entire operation is rolled back.
+func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *CreateSubgraphRequest, actorID *uuid.UUID) (*CreateSubgraphResponse, error) {
+	// Validate: check for duplicate refs
+	refSet := make(map[string]bool, len(req.Objects))
+	for i, obj := range req.Objects {
+		if obj.Ref == "" {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d]: _ref is required", i))
+		}
+		if refSet[obj.Ref] {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d]: duplicate _ref %q", i, obj.Ref))
+		}
+		refSet[obj.Ref] = true
+	}
+
+	// Validate: check that all relationship refs point to defined objects
+	for i, rel := range req.Relationships {
+		if !refSet[rel.SrcRef] {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: src_ref %q not found in objects", i, rel.SrcRef))
+		}
+		if !refSet[rel.DstRef] {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: dst_ref %q not found in objects", i, rel.DstRef))
+		}
+		if rel.SrcRef == rel.DstRef {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: self-loop not allowed (src_ref == dst_ref == %q)", i, rel.SrcRef))
+		}
+	}
+
+	// Load schemas once for property validation
+	var schemas *ExtractionSchemas
+	if s.schemaProvider != nil {
+		var err error
+		schemas, err = s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if err != nil {
+			s.log.Warn("failed to load schemas for subgraph creation, skipping validation",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", err.Error()))
+		}
+	}
+
+	// Start transaction
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	actorType := "user"
+	refMap := make(map[string]uuid.UUID, len(req.Objects))
+	objResponses := make([]*GraphObjectResponse, 0, len(req.Objects))
+	objByRef := make(map[string]*GraphObject, len(req.Objects))
+
+	// Phase 1: Create all objects
+	for i, objReq := range req.Objects {
+		// Validate properties against schema
+		validatedProps := objReq.Properties
+		if schemas != nil {
+			if schema, ok := schemas.ObjectSchemas[objReq.Type]; ok {
+				start := time.Now()
+				validated, err := validateProperties(objReq.Properties, schema)
+				duration := time.Since(start)
+
+				if err != nil {
+					s.incrementValidationError(duration)
+					return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d] (%s): property validation failed: %s", i, objReq.Ref, err.Error()))
+				}
+				s.incrementValidationSuccess(duration)
+				validatedProps = validated
+			}
+		}
+
+		obj := &GraphObject{
+			ProjectID:  projectID,
+			BranchID:   objReq.BranchID,
+			Type:       objReq.Type,
+			Key:        objReq.Key,
+			Status:     objReq.Status,
+			Properties: validatedProps,
+			Labels:     objReq.Labels,
+			ActorType:  &actorType,
+			ActorID:    actorID,
+		}
+
+		if err := s.repo.CreateInTx(ctx, tx.Tx, obj); err != nil {
+			return nil, apperror.ErrDatabase.WithMessage(fmt.Sprintf("objects[%d] (%s): %s", i, objReq.Ref, err.Error()))
+		}
+
+		refMap[objReq.Ref] = obj.ID
+		objByRef[objReq.Ref] = obj
+		objResponses = append(objResponses, obj.ToResponse())
+	}
+
+	// Phase 2: Create all relationships
+	relResponses := make([]*GraphRelationshipResponse, 0, len(req.Relationships))
+	for i, relReq := range req.Relationships {
+		srcObj := objByRef[relReq.SrcRef]
+		dstObj := objByRef[relReq.DstRef]
+
+		rel := &GraphRelationship{
+			ProjectID:  projectID,
+			BranchID:   srcObj.BranchID,
+			Type:       relReq.Type,
+			SrcID:      srcObj.CanonicalID,
+			DstID:      dstObj.CanonicalID,
+			Properties: relReq.Properties,
+			Weight:     relReq.Weight,
+		}
+
+		// Compute change summary
+		rel.ChangeSummary = computeChangeSummary(nil, relReq.Properties)
+
+		if err := s.repo.CreateRelationship(ctx, tx.Tx, rel); err != nil {
+			return nil, apperror.ErrDatabase.WithMessage(fmt.Sprintf("relationships[%d] (%s->%s): %s", i, relReq.SrcRef, relReq.DstRef, err.Error()))
+		}
+
+		// Generate triplet embedding (best-effort, don't fail the transaction)
+		tripletText := generateTripletText(srcObj, dstObj, relReq.Type)
+		embedding, embeddingTimestamp, embedErr := s.embedTripletText(ctx, tripletText)
+		if embedErr != nil {
+			s.log.Warn("subgraph: failed to generate embedding for relationship, continuing",
+				slog.String("relationship_id", rel.ID.String()),
+				slog.String("error", embedErr.Error()))
+		} else if embedding != nil {
+			_, updateErr := tx.Tx.NewRaw(`UPDATE kb.graph_relationships 
+				SET embedding = ?::vector, embedding_updated_at = ? 
+				WHERE id = ?`,
+				vectorToString(embedding), embeddingTimestamp, rel.ID).Exec(ctx)
+			if updateErr != nil {
+				s.log.Warn("subgraph: failed to store embedding, continuing",
+					slog.String("relationship_id", rel.ID.String()),
+					slog.String("error", updateErr.Error()))
+			}
+		}
+
+		// Auto-create inverse relationship if template pack declares inverseType
+		var inverseResponse *GraphRelationshipResponse
+		if s.inverseTypeProvider != nil {
+			inverseResponse = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relReq.Type, srcObj, dstObj, relReq.Properties, relReq.Weight)
+		}
+
+		resp := rel.ToResponse()
+		resp.InverseRelationship = inverseResponse
+		relResponses = append(relResponses, resp)
+	}
+
+	// Commit the transaction
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return &CreateSubgraphResponse{
+		Objects:       objResponses,
+		Relationships: relResponses,
+		RefMap:        refMap,
+	}, nil
 }
