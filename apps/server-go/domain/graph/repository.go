@@ -466,9 +466,13 @@ func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
 				slog.String("type", obj.Type),
 				slog.Any("key", obj.Key),
 				logger.Error(err))
+			keyStr := "<nil>"
+			if obj.Key != nil {
+				keyStr = *obj.Key
+			}
 			return apperror.New(409, "conflict", fmt.Sprintf(
 				"Graph object with type '%s' and key '%s' already exists",
-				obj.Type, *obj.Key))
+				obj.Type, keyStr))
 		}
 		r.log.Error("failed to create graph object", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
@@ -520,9 +524,13 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 				slog.Any("key", newVersion.Key),
 				slog.Int("version", newVersion.Version),
 				logger.Error(err))
+			keyStr := "<nil>"
+			if newVersion.Key != nil {
+				keyStr = *newVersion.Key
+			}
 			return apperror.New(409, "conflict", fmt.Sprintf(
 				"Failed to create new version for type '%s' and key '%s' - concurrent modification detected",
-				newVersion.Type, *newVersion.Key))
+				newVersion.Type, keyStr))
 		}
 		return apperror.ErrDatabase.WithInternal(err)
 	}
@@ -719,9 +727,13 @@ func (r *Repository) CreateInTx(ctx context.Context, tx bun.Tx, obj *GraphObject
 				slog.String("type", obj.Type),
 				slog.Any("key", obj.Key),
 				logger.Error(err))
+			keyStr := "<nil>"
+			if obj.Key != nil {
+				keyStr = *obj.Key
+			}
 			return apperror.New(409, "conflict", fmt.Sprintf(
 				"Graph object with type '%s' and key '%s' already exists",
-				obj.Type, *obj.Key))
+				obj.Type, keyStr))
 		}
 		r.log.Error("failed to create graph object in tx", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
