@@ -48,6 +48,7 @@ import (
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/health"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/integrations"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/mcp"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/mcpregistry"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/monitoring"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/notifications"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/orgs"
@@ -81,6 +82,7 @@ type Client struct {
 	Users            *users.Client
 	APITokens        *apitokens.Client
 	MCP              *mcp.Client
+	MCPRegistry      *mcpregistry.Client
 	Branches         *branches.Client
 	UserActivity     *useractivity.Client
 	TypeRegistry     *typeregistry.Client
@@ -253,6 +255,7 @@ func initClients(c *Client) {
 	c.Users = users.NewClient(c.http, c.base, c.auth)
 	c.APITokens = apitokens.NewClient(c.http, c.base, c.auth)
 	c.MCP = mcp.NewClient(c.http, c.base, c.auth)
+	c.MCPRegistry = mcpregistry.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Branches = branches.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.UserActivity = useractivity.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.TypeRegistry = typeregistry.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
@@ -292,6 +295,7 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.Graph.SetContext(orgID, projectID)
 	c.Chat.SetContext(orgID, projectID)
 	c.MCP.SetContext(projectID)
+	c.MCPRegistry.SetContext(orgID, projectID)
 	c.Branches.SetContext(orgID, projectID)
 	c.UserActivity.SetContext(orgID, projectID)
 	c.TypeRegistry.SetContext(orgID, projectID)
