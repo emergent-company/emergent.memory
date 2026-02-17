@@ -22,6 +22,135 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/admin/agent-definitions/{id}/workspace-config": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the workspace configuration for an agent definition, or defaults if not set",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-definitions"
+                ],
+                "summary": "Get workspace config for an agent definition",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent Definition ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Workspace config",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-github_com_emergent_emergent-core_domain_workspace_AgentWorkspaceConfig"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid definition ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Agent definition not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Sets or replaces the workspace configuration for an agent definition",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-definitions"
+                ],
+                "summary": "Update workspace config for an agent definition",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent Definition ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Workspace configuration",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_domain_workspace.AgentWorkspaceConfig"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated workspace config",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-github_com_emergent_emergent-core_domain_workspace_AgentWorkspaceConfig"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid definition ID, request body, or validation error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Agent definition not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent_emergent-core_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/admin/agents": {
             "get": {
                 "security": [
@@ -13819,6 +13948,23 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.APIResponse-github_com_emergent_emergent-core_domain_workspace_AgentWorkspaceConfig": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/github_com_emergent_emergent-core_domain_workspace.AgentWorkspaceConfig"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_agents.APIResponse-map_string_string": {
             "type": "object",
             "properties": {
@@ -20753,6 +20899,94 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_emergent_emergent-core_domain_workspace.AgentWorkspaceConfig": {
+            "type": "object",
+            "properties": {
+                "base_image": {
+                    "type": "string"
+                },
+                "checkout_on_start": {
+                    "type": "boolean"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "repo_source": {
+                    "$ref": "#/definitions/github_com_emergent_emergent-core_domain_workspace.RepoSourceConfig"
+                },
+                "resource_limits": {
+                    "$ref": "#/definitions/github_com_emergent_emergent-core_domain_workspace.ResourceLimits"
+                },
+                "setup_commands": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_emergent_emergent-core_domain_workspace.RepoSourceConfig": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "description": "Default branch; overridden by task context",
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/github_com_emergent_emergent-core_domain_workspace.RepoSourceType"
+                },
+                "url": {
+                    "description": "Only for \"fixed\" type",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_emergent_emergent-core_domain_workspace.RepoSourceType": {
+            "type": "string",
+            "enum": [
+                "task_context",
+                "fixed",
+                "none"
+            ],
+            "x-enum-comments": {
+                "RepoSourceFixed": "Use a fixed repo URL from config",
+                "RepoSourceNone": "Empty workspace, no repo checkout",
+                "RepoSourceTaskContext": "Use repo URL from task metadata"
+            },
+            "x-enum-descriptions": [
+                "Use repo URL from task metadata",
+                "Use a fixed repo URL from config",
+                "Empty workspace, no repo checkout"
+            ],
+            "x-enum-varnames": [
+                "RepoSourceTaskContext",
+                "RepoSourceFixed",
+                "RepoSourceNone"
+            ]
+        },
+        "github_com_emergent_emergent-core_domain_workspace.ResourceLimits": {
+            "type": "object",
+            "properties": {
+                "cpu": {
+                    "description": "e.g. \"2\"",
+                    "type": "string"
+                },
+                "disk": {
+                    "description": "e.g. \"10G\"",
+                    "type": "string"
+                },
+                "memory": {
+                    "description": "e.g. \"4G\"",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_emergent_emergent-core_pkg_apperror.Error": {
             "type": "object",
             "properties": {
@@ -20791,7 +21025,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.14.2",
+	Version:          "0.14.3",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
