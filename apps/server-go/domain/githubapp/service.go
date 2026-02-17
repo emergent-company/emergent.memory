@@ -2,6 +2,9 @@ package githubapp
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +32,43 @@ func NewService(store *Store, crypto *Crypto, tokenService *TokenService, log *s
 		log:          log.With("component", "githubapp-service"),
 		httpClient:   &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// VerifyWebhookSignature verifies the X-Hub-Signature-256 header against the stored webhook secret.
+func (s *Service) VerifyWebhookSignature(ctx context.Context, signature string, body []byte) error {
+	config, err := s.store.Get(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get GitHub App config: %w", err)
+	}
+	if config == nil {
+		return fmt.Errorf("GitHub App not configured")
+	}
+
+	if len(config.WebhookSecretEncrypted) == 0 {
+		return fmt.Errorf("webhook secret not configured")
+	}
+
+	secret, err := s.crypto.Decrypt(config.WebhookSecretEncrypted)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt webhook secret: %w", err)
+	}
+
+	return verifyHMACSignature(secret, signature, body)
+}
+
+// verifyHMACSignature verifies an HMAC-SHA256 signature against a secret and body.
+// The signature must be in the format "sha256=<hex-encoded-hmac>".
+func verifyHMACSignature(secret []byte, signature string, body []byte) error {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(body)
+	expectedMAC := mac.Sum(nil)
+	expectedSignature := "sha256=" + hex.EncodeToString(expectedMAC)
+
+	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
+		return fmt.Errorf("invalid signature")
+	}
+
+	return nil
 }
 
 // GetStatus returns the current GitHub App connection status.
