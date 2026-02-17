@@ -11,12 +11,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent/emergent-core/domain/search"
-	"github.com/emergent/emergent-core/pkg/apperror"
-	"github.com/emergent/emergent-core/pkg/auth"
-	"github.com/emergent/emergent-core/pkg/llm/vertex"
-	"github.com/emergent/emergent-core/pkg/logger"
-	"github.com/emergent/emergent-core/pkg/sse"
+	"github.com/emergent-company/emergent/domain/search"
+	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/auth"
+	"github.com/emergent-company/emergent/pkg/llm/vertex"
+	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/sse"
 )
 
 // Handler handles chat HTTP requests

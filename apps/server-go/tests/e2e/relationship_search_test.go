@@ -10,9 +10,9 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent/emergent-core/domain/search"
-	"github.com/emergent/emergent-core/internal/testutil"
-	"github.com/emergent/emergent-core/pkg/pgutils"
+	"github.com/emergent-company/emergent/domain/search"
+	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/emergent-company/emergent/pkg/pgutils"
 )
 
 // RelationshipSearchSuite tests that graph relationships with embeddings

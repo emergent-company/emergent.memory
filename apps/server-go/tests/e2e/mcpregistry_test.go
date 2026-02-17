@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/emergent/emergent-core/internal/testutil"
+	"github.com/emergent-company/emergent/internal/testutil"
 	"github.com/stretchr/testify/suite"
 )
 

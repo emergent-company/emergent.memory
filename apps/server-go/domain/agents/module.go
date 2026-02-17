@@ -6,12 +6,12 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/emergent/emergent-core/domain/mcp"
-	"github.com/emergent/emergent-core/domain/mcpregistry"
-	"github.com/emergent/emergent-core/domain/scheduler"
-	"github.com/emergent/emergent-core/domain/workspace"
-	"github.com/emergent/emergent-core/internal/config"
-	"github.com/emergent/emergent-core/pkg/adk"
+	"github.com/emergent-company/emergent/domain/mcp"
+	"github.com/emergent-company/emergent/domain/mcpregistry"
+	"github.com/emergent-company/emergent/domain/scheduler"
+	"github.com/emergent-company/emergent/domain/workspace"
+	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent/pkg/adk"
 )
 
 // Module provides the agents domain

@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/emergent/emergent-core/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/apperror"
 )
 
 // Service handles business logic for branches

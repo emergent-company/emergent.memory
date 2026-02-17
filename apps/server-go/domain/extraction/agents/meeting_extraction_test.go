@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/emergent/emergent-core/internal/config"
-	"github.com/emergent/emergent-core/pkg/adk"
+	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent/pkg/adk"
 )
 
 // MeetingGroundTruth defines the expected entities and relationships for testing.

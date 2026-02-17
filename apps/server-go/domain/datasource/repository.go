@@ -8,7 +8,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // Common errors for integrations

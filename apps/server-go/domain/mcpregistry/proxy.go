@@ -12,8 +12,8 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/emergent/emergent-core/domain/mcp"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/domain/mcp"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // ProxyManager manages connections to external MCP servers and proxies

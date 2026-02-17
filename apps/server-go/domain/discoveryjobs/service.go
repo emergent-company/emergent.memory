@@ -10,10 +10,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/emergent/emergent-core/internal/config"
-	"github.com/emergent/emergent-core/pkg/apperror"
-	"github.com/emergent/emergent-core/pkg/llm"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/llm"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // Service handles business logic for discovery jobs

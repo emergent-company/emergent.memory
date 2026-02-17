@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent/emergent-core/internal/testutil"
-	"github.com/emergent/emergent-core/pkg/auth"
+	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/emergent-company/emergent/pkg/auth"
 )
 
 // AuthTestSuite tests authentication and authorization

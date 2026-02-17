@@ -1,4 +1,4 @@
-module github.com/emergent/emergent-core
+module github.com/emergent-company/emergent
 
 go 1.24.12
 

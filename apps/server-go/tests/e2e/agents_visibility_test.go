@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent/emergent-core/domain/agents"
-	"github.com/emergent/emergent-core/internal/testutil"
+	"github.com/emergent-company/emergent/domain/agents"
+	"github.com/emergent-company/emergent/internal/testutil"
 )
 
 // AgentsVisibilityTestSuite tests agent execution visibility and control features
