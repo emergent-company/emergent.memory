@@ -29,12 +29,18 @@ ARG TARGETARCH=amd64
 
 RUN apk add --no-cache curl tar
 
-# Download official Firecracker release
+# Download official Firecracker release and verify checksum
 RUN ARCH=$(case "$TARGETARCH" in arm64) echo "aarch64";; *) echo "x86_64";; esac) && \
-    curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/v${FIRECRACKER_VERSION}/firecracker-v${FIRECRACKER_VERSION}-${ARCH}.tgz" \
-    | tar xzf - && \
+    TARBALL="firecracker-v${FIRECRACKER_VERSION}-${ARCH}.tgz" && \
+    curl -fsSL -o "/tmp/${TARBALL}" \
+    "https://github.com/firecracker-microvm/firecracker/releases/download/v${FIRECRACKER_VERSION}/${TARBALL}" && \
+    curl -fsSL -o /tmp/SHA256SUMS \
+    "https://github.com/firecracker-microvm/firecracker/releases/download/v${FIRECRACKER_VERSION}/SHA256SUMS" && \
+    (cd /tmp && grep "${TARBALL}" SHA256SUMS | sha256sum -c -) && \
+    tar xzf "/tmp/${TARBALL}" && \
     mv release-v${FIRECRACKER_VERSION}-${ARCH}/firecracker-v${FIRECRACKER_VERSION}-${ARCH} /usr/local/bin/firecracker && \
-    chmod +x /usr/local/bin/firecracker
+    chmod +x /usr/local/bin/firecracker && \
+    rm -rf /tmp/${TARBALL} /tmp/SHA256SUMS
 
 # Download compatible kernel
 RUN ARCH=$(case "$TARGETARCH" in arm64) echo "aarch64";; *) echo "x86_64";; esac) && \

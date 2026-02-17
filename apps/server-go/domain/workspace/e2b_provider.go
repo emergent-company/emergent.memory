@@ -748,40 +748,13 @@ func (p *E2BProvider) envdExecViaCommandsAPI(ctx context.Context, sandbox *e2bSa
 	}, nil
 }
 
-// envdExecViaScript executes a command by writing a script to the sandbox
-// and polling for completion. This is the fallback approach when the commands
-// API is not available.
-func (p *E2BProvider) envdExecViaScript(ctx context.Context, sandbox *e2bSandbox, command string, start time.Time) (*ExecResult, error) {
-	// Write the command to a temp file
-	script := fmt.Sprintf(`#!/bin/bash
-%s >%s 2>%s
-echo $? > %s
-`, command, e2bExecStdoutPath, e2bExecStderrPath, e2bExecExitCodePath)
-
-	doneMarker := "/tmp/.e2b-exec-done"
-	script = fmt.Sprintf(`#!/bin/bash
-rm -f %s
-%s >%s 2>%s
-echo $? > %s
-touch %s
-`, doneMarker, command, e2bExecStdoutPath, e2bExecStderrPath, e2bExecExitCodePath, doneMarker)
-
-	scriptPath := "/tmp/.e2b-run.sh"
-	if err := p.envdWriteFile(ctx, sandbox, scriptPath, script); err != nil {
-		return nil, fmt.Errorf("failed to write execution script: %w", err)
-	}
-
-	// Make executable and run in background via another write
-	bgScript := fmt.Sprintf("#!/bin/bash\nchmod +x %s\nnohup bash %s &\n", scriptPath, scriptPath)
-	bgPath := "/tmp/.e2b-bg.sh"
-	if err := p.envdWriteFile(ctx, sandbox, bgPath, bgScript); err != nil {
-		return nil, fmt.Errorf("failed to write background launcher: %w", err)
-	}
-
-	// We can't directly "run" a script via /files alone without a running process.
-	// This fallback approach has limitations — it requires some mechanism to trigger
-	// the script. In practice, newer E2B versions support the commands API.
-	// Return an error indicating that command execution requires the commands API.
+// envdExecViaScript is a placeholder for executing commands when the envd
+// commands API is unavailable. The file-based approach cannot trigger script
+// execution without a running process, so this always returns an error.
+//
+// TODO: Remove this method once all E2B sandbox templates support the commands API,
+// or implement a polling-based approach if older templates must be supported.
+func (p *E2BProvider) envdExecViaScript(_ context.Context, _ *e2bSandbox, _ string, start time.Time) (*ExecResult, error) {
 	return &ExecResult{
 		Stdout:     "",
 		Stderr:     "E2B command execution requires envd commands API support",
