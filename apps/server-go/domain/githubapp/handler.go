@@ -205,6 +205,18 @@ func (h *Handler) Webhook(c echo.Context) error {
 		return apperror.NewBadRequest("failed to read request body")
 	}
 
+	// Verify webhook signature (X-Hub-Signature-256) against stored webhook secret.
+	signature := c.Request().Header.Get("X-Hub-Signature-256")
+	if signature == "" {
+		h.log.Warn("webhook request missing X-Hub-Signature-256 header")
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "missing signature"})
+	}
+
+	if err := h.svc.VerifyWebhookSignature(c.Request().Context(), signature, body); err != nil {
+		h.log.Warn("webhook signature verification failed", "error", err)
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "invalid signature"})
+	}
+
 	// Only handle installation events
 	if eventType != "installation" {
 		h.log.Debug("ignoring webhook event", "event", eventType)
@@ -246,6 +258,3 @@ func (h *Handler) Webhook(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
-
-// NOTE: In production, the Webhook handler should verify the X-Hub-Signature-256 header
-// against the stored webhook secret. This is deferred to a later task.

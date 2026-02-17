@@ -1,7 +1,9 @@
 package githubapp
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"testing"
 
@@ -210,4 +212,75 @@ func TestTokenCacheDuration(t *testing.T) {
 
 func ptrInt64(v int64) *int64 {
 	return &v
+}
+
+// --- Webhook Signature Verification Tests ---
+
+func computeHMACSHA256(secret, body []byte) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func TestVerifyHMACSignature_Valid(t *testing.T) {
+	secret := []byte("webhook-secret-123")
+	body := []byte(`{"action":"created","installation":{"id":1}}`)
+	signature := computeHMACSHA256(secret, body)
+
+	err := verifyHMACSignature(secret, signature, body)
+	assert.NoError(t, err)
+}
+
+func TestVerifyHMACSignature_InvalidSignature(t *testing.T) {
+	secret := []byte("webhook-secret-123")
+	body := []byte(`{"action":"created"}`)
+
+	err := verifyHMACSignature(secret, "sha256=deadbeef", body)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid signature")
+}
+
+func TestVerifyHMACSignature_WrongSecret(t *testing.T) {
+	secret1 := []byte("correct-secret")
+	secret2 := []byte("wrong-secret")
+	body := []byte(`{"action":"created"}`)
+	signature := computeHMACSHA256(secret1, body)
+
+	err := verifyHMACSignature(secret2, signature, body)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid signature")
+}
+
+func TestVerifyHMACSignature_TamperedBody(t *testing.T) {
+	secret := []byte("webhook-secret-123")
+	body := []byte(`{"action":"created"}`)
+	signature := computeHMACSHA256(secret, body)
+
+	tamperedBody := []byte(`{"action":"deleted"}`)
+	err := verifyHMACSignature(secret, signature, tamperedBody)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid signature")
+}
+
+func TestVerifyHMACSignature_EmptyBody(t *testing.T) {
+	secret := []byte("webhook-secret-123")
+	body := []byte{}
+	signature := computeHMACSHA256(secret, body)
+
+	err := verifyHMACSignature(secret, signature, body)
+	assert.NoError(t, err)
+}
+
+func TestVerifyHMACSignature_MissingPrefix(t *testing.T) {
+	secret := []byte("webhook-secret-123")
+	body := []byte(`test`)
+
+	// Compute valid HMAC but strip "sha256=" prefix
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(body)
+	rawSig := hex.EncodeToString(mac.Sum(nil))
+
+	err := verifyHMACSignature(secret, rawSig, body)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid signature")
 }

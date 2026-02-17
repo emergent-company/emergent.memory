@@ -149,8 +149,10 @@ func (ts *TokenService) signJWT(appID int64, pemData []byte) (string, error) {
 
 	now := time.Now()
 	claims := jwt.RegisteredClaims{
-		IssuedAt:  jwt.NewNumericDate(now.Add(-60 * time.Second)), // 60 second clock drift allowance
-		ExpiresAt: jwt.NewNumericDate(now.Add(10 * time.Minute)),  // Max 10 min for GitHub
+		// IssuedAt is backdated by 60 seconds to allow for clock drift between
+		// the local system and GitHub's servers, preventing "token not yet valid" errors.
+		IssuedAt:  jwt.NewNumericDate(now.Add(-60 * time.Second)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(10 * time.Minute)), // Max 10 min for GitHub
 		Issuer:    fmt.Sprintf("%d", appID),
 	}
 
