@@ -76,13 +76,13 @@ if [ -z "$STAGED_GO_FILES" ]; then
   echo "  No Go files to check"
 else
   # Extract all local module imports from staged Go files
-  # Module: github.com/emergent/emergent-core (rooted at apps/server-go/)
-  ALL_IMPORTS=$(echo "$STAGED_GO_FILES" | xargs grep -oh '"github\.com/emergent/emergent-core/[^"]*"' 2>/dev/null | tr -d '"' | sort -u || true)
+  # Module: github.com/emergent-company/emergent (rooted at apps/server-go/)
+  ALL_IMPORTS=$(echo "$STAGED_GO_FILES" | xargs grep -oh '"github\.com/emergent-company/emergent/[^"]*"' 2>/dev/null | tr -d '"' | sort -u || true)
 
   IMPORT_ERRORS=0
   for imp in $ALL_IMPORTS; do
     # Convert import path to local directory relative to repo root
-    local_dir="apps/server-go/${imp#github.com/emergent/emergent-core/}"
+    local_dir="apps/server-go/${imp#github.com/emergent-company/emergent/}"
 
     # Check if any .go files are tracked in git index (committed + staged) for this package
     tracked_count=$(git ls-files --cached -- "$local_dir" 2>/dev/null | grep '\.go$' | wc -l)
@@ -112,7 +112,7 @@ fi
 echo ""
 echo "Checking Swagger annotations on handler files..."
 
-CHANGED_HANDLERS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^apps/server-go/domain/.*/handler[^/]*\.go$' || true)
+CHANGED_HANDLERS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^apps/server-go/domain/.*/handler[^/]*\.go$' | grep -v '_test\.go$' || true)
 
 if [ -z "$CHANGED_HANDLERS" ]; then
   echo "  No handler files to check"

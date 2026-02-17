@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 func TestRateLimiter(t *testing.T) {

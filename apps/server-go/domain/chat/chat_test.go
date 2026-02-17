@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emergent/emergent-core/domain/search"
+	"github.com/emergent-company/emergent/domain/search"
 )
 
 func TestValidateCreateConversationRequest(t *testing.T) {

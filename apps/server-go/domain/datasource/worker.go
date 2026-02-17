@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emergent/emergent-core/pkg/encryption"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/encryption"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // Worker processes data source sync jobs from the queue.

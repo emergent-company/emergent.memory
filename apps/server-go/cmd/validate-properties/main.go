@@ -13,7 +13,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 
-	"github.com/emergent/emergent-core/domain/graph"
+	"github.com/emergent-company/emergent/domain/graph"
 )
 
 func main() {

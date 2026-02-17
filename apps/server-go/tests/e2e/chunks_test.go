@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent/emergent-core/domain/chunks"
-	"github.com/emergent/emergent-core/internal/testutil"
+	"github.com/emergent-company/emergent/domain/chunks"
+	"github.com/emergent-company/emergent/internal/testutil"
 )
 
 // ChunksTestSuite tests the chunks API endpoints

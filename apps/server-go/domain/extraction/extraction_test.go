@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emergent/emergent-core/domain/extraction/agents"
-	"github.com/emergent/emergent-core/internal/config"
+	"github.com/emergent-company/emergent/domain/extraction/agents"
+	"github.com/emergent-company/emergent/internal/config"
 )
 
 func TestConvertToObjectSchema(t *testing.T) {

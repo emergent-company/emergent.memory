@@ -14,10 +14,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
-	"github.com/emergent/emergent-core/domain/extraction/agents"
-	"github.com/emergent/emergent-core/pkg/apperror"
-	"github.com/emergent/emergent-core/pkg/logger"
-	"github.com/emergent/emergent-core/pkg/mathutil"
+	"github.com/emergent-company/emergent/domain/extraction/agents"
+	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/mathutil"
 )
 
 // ExtractionSchemas contains object and relationship schemas.
@@ -175,6 +175,9 @@ func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObje
 	}
 
 	// Apply field projection if requested (filter properties to only include specified keys)
+	// TODO: Push field projection down to the repository/DB layer to avoid fetching
+	// full property maps when only a subset of keys is needed. This is an optimization
+	// for large property sets — the current in-memory approach is correct but wasteful.
 	if len(params.Fields) > 0 {
 		projection := &GraphExpandProjection{
 			IncludeObjectProperties: params.Fields,
@@ -2894,6 +2897,11 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 
 	// Phase 1: Create all objects
 	for i, objReq := range req.Objects {
+		// Validate type is non-empty
+		if objReq.Type == "" {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d] (%s): type is required and must not be empty", i, objReq.Ref))
+		}
+
 		// Validate properties against schema
 		validatedProps := objReq.Properties
 		if schemas != nil {
@@ -2935,6 +2943,11 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 	// Phase 2: Create all relationships
 	relResponses := make([]*GraphRelationshipResponse, 0, len(req.Relationships))
 	for i, relReq := range req.Relationships {
+		// Validate type is non-empty
+		if relReq.Type == "" {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: type is required and must not be empty", i))
+		}
+
 		srcObj := objByRef[relReq.SrcRef]
 		dstObj := objByRef[relReq.DstRef]
 

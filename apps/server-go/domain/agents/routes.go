@@ -3,7 +3,7 @@ package agents
 import (
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent/emergent-core/pkg/auth"
+	"github.com/emergent-company/emergent/pkg/auth"
 )
 
 // RegisterRoutes registers agent routes
@@ -38,12 +38,14 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	defRead.Use(authMiddleware.RequireScopes("admin:read"))
 	defRead.GET("", h.ListDefinitions)
 	defRead.GET("/:id", h.GetDefinition)
+	defRead.GET("/:id/workspace-config", h.GetWorkspaceConfig)
 
 	defWrite := defAdmin.Group("")
 	defWrite.Use(authMiddleware.RequireScopes("admin:write"))
 	defWrite.POST("", h.CreateDefinition)
 	defWrite.PATCH("/:id", h.UpdateDefinition)
 	defWrite.DELETE("/:id", h.DeleteDefinition)
+	defWrite.PUT("/:id/workspace-config", h.UpdateWorkspaceConfig)
 
 	// --- Project-scoped run history routes ---
 	runs := e.Group("/api/projects/:projectId/agent-runs")
@@ -53,4 +55,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	runs.GET("/:runId", h.GetProjectRun)
 	runs.GET("/:runId/messages", h.GetRunMessages)
 	runs.GET("/:runId/tool-calls", h.GetRunToolCalls)
+
+	// --- Agent session status routes ---
+	sessions := e.Group("/api/v1/agent/sessions")
+	sessions.Use(authMiddleware.RequireAuth())
+	sessions.Use(authMiddleware.RequireScopes("project:read"))
+	sessions.GET("/:id", h.GetSession)
 }

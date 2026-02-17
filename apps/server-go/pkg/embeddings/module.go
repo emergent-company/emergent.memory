@@ -7,9 +7,9 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/emergent/emergent-core/internal/config"
-	"github.com/emergent/emergent-core/pkg/embeddings/genai"
-	"github.com/emergent/emergent-core/pkg/embeddings/vertex"
+	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent/pkg/embeddings/genai"
+	"github.com/emergent-company/emergent/pkg/embeddings/vertex"
 )
 
 // NewNoopService creates a service with a noop client (for testing)

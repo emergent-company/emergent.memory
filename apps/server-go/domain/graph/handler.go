@@ -9,14 +9,23 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent/emergent-core/pkg/apperror"
-	"github.com/emergent/emergent-core/pkg/auth"
+	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/auth"
 )
 
 // Handler handles HTTP requests for graph operations.
 type Handler struct {
 	svc *Service
 }
+
+// defaultListLimit is the default number of results for paginated list endpoints.
+const defaultListLimit = 20
+
+// maxBatchObjects is the maximum number of objects allowed in a single batch operation
+const maxBatchObjects = 100
+
+// maxBatchRelationships is the maximum number of relationships allowed in a single batch operation
+const maxBatchRelationships = 200
 
 // splitCommaSeparated splits comma-separated query parameter values.
 // SDK clients typically send "labels=tag1,tag2" as a single comma-joined param,
@@ -114,7 +123,7 @@ func (h *Handler) ListObjects(c echo.Context) error {
 	params := ListParams{
 		ProjectID:      projectID,
 		IncludeDeleted: c.QueryParam("include_deleted") == "true",
-		Limit:          20, // NestJS default is 20
+		Limit:          defaultListLimit,
 	}
 
 	if limitStr := c.QueryParam("limit"); limitStr != "" {
@@ -799,7 +808,7 @@ func (h *Handler) ListRelationships(c echo.Context) error {
 	params := RelationshipListParams{
 		ProjectID:      projectID,
 		IncludeDeleted: c.QueryParam("include_deleted") == "true",
-		Limit:          20,
+		Limit:          defaultListLimit,
 	}
 
 	if limitStr := c.QueryParam("limit"); limitStr != "" {
@@ -1131,7 +1140,7 @@ func (h *Handler) FTSSearch(c echo.Context) error {
 	req := &FTSSearchRequest{
 		Query:          c.QueryParam("q"),
 		IncludeDeleted: c.QueryParam("include_deleted") == "true",
-		Limit:          20,
+		Limit:          defaultListLimit,
 	}
 
 	if req.Query == "" {
@@ -1886,10 +1895,10 @@ func (h *Handler) CreateSubgraph(c echo.Context) error {
 	if len(req.Objects) == 0 {
 		return apperror.ErrBadRequest.WithMessage("objects is required and must not be empty")
 	}
-	if len(req.Objects) > 100 {
+	if len(req.Objects) > maxBatchObjects {
 		return apperror.ErrBadRequest.WithMessage("objects must not exceed 100")
 	}
-	if len(req.Relationships) > 200 {
+	if len(req.Relationships) > maxBatchRelationships {
 		return apperror.ErrBadRequest.WithMessage("relationships must not exceed 200")
 	}
 
