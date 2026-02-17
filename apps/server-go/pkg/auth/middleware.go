@@ -130,6 +130,20 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 				user.ProjectID = user.APITokenProjectID
 			}
 
+			// If authenticated via API token and OrgID is not set via header,
+			// resolve it from the token's project to avoid empty org_id errors.
+			if user.OrgID == "" && user.APITokenProjectID != "" {
+				var orgID string
+				err := m.db.NewSelect().
+					TableExpr("kb.projects").
+					Column("organization_id").
+					Where("id = ?", user.APITokenProjectID).
+					Scan(c.Request().Context(), &orgID)
+				if err == nil && orgID != "" {
+					user.OrgID = orgID
+				}
+			}
+
 			// Store user in context
 			c.Set(string(UserContextKey), user)
 
@@ -152,6 +166,47 @@ func (m *Middleware) RequireProjectID() echo.MiddlewareFunc {
 					"error": map[string]any{
 						"code":    "bad_request",
 						"message": "x-project-id header required",
+					},
+				})
+			}
+
+			return next(c)
+		}
+	}
+}
+
+// RequireProjectScope returns middleware that enforces API token project scope.
+// For emt_* tokens, it validates that the :projectId URL param matches the token's project.
+// For non-API-token auth (e.g. OAuth sessions), this is a no-op pass-through.
+func (m *Middleware) RequireProjectScope() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			user := GetUser(c)
+			if user == nil {
+				return apperror.ErrUnauthorized
+			}
+
+			// Only enforce for API token auth (emt_* tokens)
+			if user.APITokenProjectID == "" {
+				return next(c)
+			}
+
+			// Check if the route has a :projectId param
+			projectID := c.Param("projectId")
+			if projectID == "" {
+				return next(c)
+			}
+
+			// Validate the URL project matches the token's project
+			if projectID != user.APITokenProjectID {
+				return echo.NewHTTPError(http.StatusForbidden, map[string]any{
+					"error": map[string]any{
+						"code":    "forbidden",
+						"message": "API token is scoped to a different project",
+						"details": map[string]any{
+							"token_project_id":     user.APITokenProjectID,
+							"requested_project_id": projectID,
+						},
 					},
 				})
 			}
@@ -410,6 +465,17 @@ func (m *Middleware) checkStandaloneAPIKey(r *http.Request) *AuthUser {
 	// Look up the standalone user's actual UUID
 	ctx := r.Context()
 	var userID string
+
+	if m.db == nil {
+		// No database connection available — fall back to using "standalone" as ID
+		return &AuthUser{
+			ID:     "standalone",
+			Sub:    "standalone",
+			Email:  m.cfg.Standalone.UserEmail,
+			Scopes: GetAllScopes(),
+		}
+	}
+
 	err := m.db.NewSelect().
 		TableExpr("core.user_profiles").
 		Column("id").

@@ -19,6 +19,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Project-scoped template pack routes
 	projects := g.Group("/projects/:projectId")
+	projects.Use(authMiddleware.RequireProjectScope())
 
 	// Get available packs for a project
 	projects.GET("/available", h.GetAvailablePacks)
