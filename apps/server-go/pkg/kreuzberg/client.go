@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent/emergent-core/internal/config"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent/pkg/logger"
 	"go.uber.org/fx"
 )
 

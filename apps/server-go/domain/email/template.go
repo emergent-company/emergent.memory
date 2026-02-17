@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/aymerick/raymond"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // TemplateService handles email template rendering using Handlebars.

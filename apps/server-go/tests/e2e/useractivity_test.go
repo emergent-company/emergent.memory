@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent/emergent-core/domain/useractivity"
-	"github.com/emergent/emergent-core/internal/testutil"
+	"github.com/emergent-company/emergent/domain/useractivity"
+	"github.com/emergent-company/emergent/internal/testutil"
 )
 
 // UserActivityTestSuite tests the User Activity API endpoints

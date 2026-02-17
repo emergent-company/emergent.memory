@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent/emergent-core/internal/testutil"
+	"github.com/emergent-company/emergent/internal/testutil"
 )
 
 // DocumentsUploadTestSuite tests the document upload API endpoints.

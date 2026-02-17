@@ -33,14 +33,15 @@ services:
       - -c
       - log_duration=off
       - -c
-      - log_line_prefix=%t [%p] %u@%d 
+      - log_line_prefix=%t [%p] %u@%d
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Bind to localhost only for security
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ${DB_LOGS_PATH:-./docker/logs}:/var/log/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U spec -d spec"]
+      test: ['CMD-SHELL', 'pg_isready -U spec -d spec']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -48,5 +49,74 @@ services:
   # NOTE: Zitadel is now deployed independently in ../emergent-infra/zitadel/
   # See ../emergent-infra/zitadel/README.md for setup instructions
 
+  # ──────────────────────────────────────────────────────────────────────
+  # Agent Workspace Infrastructure (requires ENABLE_AGENT_WORKSPACES=true)
+  # ──────────────────────────────────────────────────────────────────────
+
+  # Firecracker MicroVM Manager (DISABLED by default — requires KVM)
+  #
+  # Manages Firecracker microVMs for agent workspaces with hardware-level
+  # isolation. Requires the host to have /dev/kvm available (bare-metal or
+  # nested virtualization enabled). Uncomment to enable.
+  #
+  # To build: docker compose build firecracker-manager
+  # To enable: uncomment the service block and the firecracker_data volume below
+  #
+  # firecracker-manager:
+  #   build:
+  #     context: .
+  #     dockerfile: deploy/firecracker/Dockerfile
+  #   image: emergent/firecracker-manager:latest
+  #   container_name: emergent-firecracker-manager
+  #   restart: unless-stopped
+  #   privileged: true
+  #   environment:
+  #     FIRECRACKER_BIN: /usr/local/bin/firecracker
+  #     FIRECRACKER_KERNEL: /var/lib/firecracker/vmlinux
+  #     FIRECRACKER_ROOTFS: /var/lib/firecracker/rootfs.ext4
+  #     FIRECRACKER_DATA_DIR: /var/lib/firecracker/data
+  #     FIRECRACKER_MAX_VMS: ${FIRECRACKER_MAX_VMS:-10}
+  #     FIRECRACKER_DEFAULT_VCPUS: ${FIRECRACKER_DEFAULT_VCPUS:-2}
+  #     FIRECRACKER_DEFAULT_MEM_MB: ${FIRECRACKER_DEFAULT_MEM_MB:-512}
+  #     LOG_LEVEL: ${LOG_LEVEL:-info}
+  #   volumes:
+  #     - /dev/kvm:/dev/kvm
+  #     - firecracker_data:/var/lib/firecracker/data
+  #   networks:
+  #     workspace_net:
+  #       ipv4_address: 172.30.0.10
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 1G
+  #       reservations:
+  #         memory: 256M
+  #   healthcheck:
+  #     test: ["CMD", "firecracker", "--version"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
 volumes:
   pg_data:
+  # Persistent storage for agent workspace container volumes (gVisor/Docker)
+  workspace_volumes:
+    driver: local
+  # Persistent storage for Firecracker microVM block devices (uncomment with firecracker-manager)
+  # firecracker_data:
+  #   driver: local
+
+# Isolated network for agent workspace containers
+# Restricts inter-container communication — workspaces cannot reach
+# infrastructure services (db, zitadel) directly. The server bridges
+# requests between the main network and the workspace network.
+networks:
+  workspace_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1
+    internal: false # Allow outbound internet (for git clone, package install)
+    driver_opts:
+      com.docker.network.bridge.enable_icc: 'false' # Disable inter-container communication

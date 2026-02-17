@@ -6,9 +6,9 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/emergent/emergent-core/internal/config"
-	"github.com/emergent/emergent-core/pkg/llm/vertex"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent/pkg/llm/vertex"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // Module provides chat functionality

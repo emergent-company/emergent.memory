@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent/emergent-core/domain/email"
-	"github.com/emergent/emergent-core/internal/testutil"
+	"github.com/emergent-company/emergent/domain/email"
+	"github.com/emergent-company/emergent/internal/testutil"
 )
 
 // EmailJobsTestSuite tests the email job queue functionality

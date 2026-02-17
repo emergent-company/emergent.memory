@@ -11,8 +11,8 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
-	"github.com/emergent/emergent-core/domain/extraction/agents"
-	"github.com/emergent/emergent-core/pkg/embeddings"
+	"github.com/emergent-company/emergent/domain/extraction/agents"
+	"github.com/emergent-company/emergent/pkg/embeddings"
 )
 
 // Module provides graph domain dependencies.

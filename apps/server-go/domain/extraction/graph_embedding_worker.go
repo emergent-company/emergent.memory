@@ -10,8 +10,8 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/emergent/emergent-core/pkg/embeddings/vertex"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/embeddings/vertex"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // EmbeddingService is the interface for embedding services used by the worker.

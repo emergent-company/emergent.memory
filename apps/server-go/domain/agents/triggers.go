@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/emergent/emergent-core/domain/scheduler"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/domain/scheduler"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // TriggerService manages trigger registration for agents.

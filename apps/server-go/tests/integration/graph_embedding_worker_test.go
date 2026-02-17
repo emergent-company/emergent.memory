@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent/emergent-core/domain/extraction"
-	"github.com/emergent/emergent-core/internal/testutil"
-	"github.com/emergent/emergent-core/pkg/embeddings/vertex"
+	"github.com/emergent-company/emergent/domain/extraction"
+	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/emergent-company/emergent/pkg/embeddings/vertex"
 )
 
 // GraphEmbeddingWorkerTestSuite tests the graph embedding worker functionality

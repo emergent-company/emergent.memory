@@ -3,11 +3,13 @@ package agents
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent/emergent-core/pkg/apperror"
-	"github.com/emergent/emergent-core/pkg/auth"
+	"github.com/emergent-company/emergent/domain/workspace"
+	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent/pkg/auth"
 )
 
 // Handler handles HTTP requests for agents
@@ -187,17 +189,21 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 	}
 
 	// Validate required fields
+	var missing []string
 	if dto.ProjectID == "" {
-		return apperror.NewBadRequest("projectId is required")
+		missing = append(missing, "projectId")
 	}
 	if dto.Name == "" {
-		return apperror.NewBadRequest("name is required")
+		missing = append(missing, "name")
 	}
 	if dto.StrategyType == "" {
-		return apperror.NewBadRequest("strategyType is required")
+		missing = append(missing, "strategyType")
 	}
 	if dto.CronSchedule == "" {
-		return apperror.NewBadRequest("cronSchedule is required")
+		missing = append(missing, "cronSchedule")
+	}
+	if len(missing) > 0 {
+		return apperror.NewBadRequest("missing required fields: " + strings.Join(missing, ", "))
 	}
 
 	// Set defaults
@@ -816,19 +822,20 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 	}
 
 	def := &AgentDefinition{
-		ProjectID:      user.ProjectID,
-		Name:           dto.Name,
-		Description:    dto.Description,
-		SystemPrompt:   dto.SystemPrompt,
-		Model:          dto.Model,
-		Tools:          tools,
-		FlowType:       flowType,
-		IsDefault:      isDefault,
-		MaxSteps:       dto.MaxSteps,
-		DefaultTimeout: dto.DefaultTimeout,
-		Visibility:     visibility,
-		ACPConfig:      dto.ACPConfig,
-		Config:         config,
+		ProjectID:       user.ProjectID,
+		Name:            dto.Name,
+		Description:     dto.Description,
+		SystemPrompt:    dto.SystemPrompt,
+		Model:           dto.Model,
+		Tools:           tools,
+		FlowType:        flowType,
+		IsDefault:       isDefault,
+		MaxSteps:        dto.MaxSteps,
+		DefaultTimeout:  dto.DefaultTimeout,
+		Visibility:      visibility,
+		ACPConfig:       dto.ACPConfig,
+		Config:          config,
+		WorkspaceConfig: dto.WorkspaceConfig,
 	}
 
 	if err := h.repo.CreateDefinition(c.Request().Context(), def); err != nil {
@@ -904,6 +911,9 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.Config != nil {
 		def.Config = dto.Config
+	}
+	if dto.WorkspaceConfig != nil {
+		def.WorkspaceConfig = dto.WorkspaceConfig
 	}
 
 	if err := h.repo.UpdateDefinition(c.Request().Context(), def); err != nil {
@@ -1105,4 +1115,169 @@ func (h *Handler) GetRunToolCalls(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(dtos))
+}
+
+// --- Workspace Config Handlers ---
+
+// GetSession handles GET /api/v1/agent/sessions/:id
+// @Summary      Get agent session status
+// @Description  Returns session status (workspace lifecycle) for an agent run
+// @Tags         agent-sessions
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Run ID (UUID)"
+// @Success      200 {object} APIResponse[AgentRunDTO] "Session/run details with session status"
+// @Failure      400 {object} apperror.Error "Invalid run ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Session not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v1/agent/sessions/{id} [get]
+// @Security     bearerAuth
+func (h *Handler) GetSession(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.NewBadRequest("session id is required")
+	}
+
+	// Use project-scoped lookup if project ID is available
+	var run *AgentRun
+	var err error
+	if user.ProjectID != "" {
+		run, err = h.repo.FindRunByIDForProject(c.Request().Context(), id, user.ProjectID)
+	} else {
+		run, err = h.repo.FindRunByID(c.Request().Context(), id)
+	}
+	if err != nil {
+		return apperror.NewInternal("failed to get session", err)
+	}
+	if run == nil {
+		return apperror.NewNotFound("AgentSession", id)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(run.ToDTO()))
+}
+
+// GetWorkspaceConfig handles GET /api/admin/agent-definitions/:id/workspace-config
+// @Summary      Get workspace config for an agent definition
+// @Description  Returns the workspace configuration for an agent definition, or defaults if not set
+// @Tags         agent-definitions
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Agent Definition ID (UUID)"
+// @Success      200 {object} APIResponse[workspace.AgentWorkspaceConfig] "Workspace config"
+// @Failure      400 {object} apperror.Error "Invalid definition ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Agent definition not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agent-definitions/{id}/workspace-config [get]
+// @Security     bearerAuth
+func (h *Handler) GetWorkspaceConfig(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.NewBadRequest("definition id is required")
+	}
+
+	var projectID *string
+	if user.ProjectID != "" {
+		projectID = &user.ProjectID
+	}
+
+	def, err := h.repo.FindDefinitionByID(c.Request().Context(), id, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent definition", err)
+	}
+	if def == nil {
+		return apperror.NewNotFound("AgentDefinition", id)
+	}
+
+	// Parse workspace config from the definition's JSONB field
+	cfg, err := workspace.ParseAgentWorkspaceConfig(def.WorkspaceConfig)
+	if err != nil {
+		return apperror.NewInternal("failed to parse workspace config", err)
+	}
+
+	// Return default config if none is set
+	if cfg == nil {
+		cfg = workspace.DefaultAgentWorkspaceConfig()
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(cfg))
+}
+
+// UpdateWorkspaceConfig handles PUT /api/admin/agent-definitions/:id/workspace-config
+// @Summary      Update workspace config for an agent definition
+// @Description  Sets or replaces the workspace configuration for an agent definition
+// @Tags         agent-definitions
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Agent Definition ID (UUID)"
+// @Param        request body workspace.AgentWorkspaceConfig true "Workspace configuration"
+// @Success      200 {object} APIResponse[workspace.AgentWorkspaceConfig] "Updated workspace config"
+// @Failure      400 {object} apperror.Error "Invalid definition ID, request body, or validation error"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Agent definition not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/agent-definitions/{id}/workspace-config [put]
+// @Security     bearerAuth
+func (h *Handler) UpdateWorkspaceConfig(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.NewBadRequest("definition id is required")
+	}
+
+	var cfg workspace.AgentWorkspaceConfig
+	if err := c.Bind(&cfg); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	// Normalize tools before validation
+	cfg.NormalizeTools()
+
+	// Validate
+	if errs := cfg.Validate(); len(errs) > 0 {
+		return apperror.NewBadRequest("workspace config validation failed: " + strings.Join(errs, "; "))
+	}
+
+	// Look up the definition
+	var projectID *string
+	if user.ProjectID != "" {
+		projectID = &user.ProjectID
+	}
+
+	def, err := h.repo.FindDefinitionByID(c.Request().Context(), id, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent definition", err)
+	}
+	if def == nil {
+		return apperror.NewNotFound("AgentDefinition", id)
+	}
+
+	// Convert to map for JSONB storage
+	cfgMap, err := cfg.ToMap()
+	if err != nil {
+		return apperror.NewInternal("failed to serialize workspace config", err)
+	}
+
+	def.WorkspaceConfig = cfgMap
+
+	if err := h.repo.UpdateDefinition(c.Request().Context(), def); err != nil {
+		return apperror.NewInternal("failed to update agent definition", err)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(&cfg))
 }

@@ -11,7 +11,7 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 
-	"github.com/emergent/emergent-core/migrations"
+	"github.com/emergent-company/emergent/migrations"
 )
 
 // Module provides migration dependencies.
