@@ -443,8 +443,15 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 		return nil, fmt.Errorf("failed to create restore copy container: %w", err)
 	}
 
+	// Ensure copy container is removed if we return early
+	defer func() {
+		if copyResp.ID != "" {
+			_ = p.client.ContainerRemove(ctx, copyResp.ID, container.RemoveOptions{Force: true})
+		}
+	}()
+
 	if err := p.client.ContainerStart(ctx, copyResp.ID, container.StartOptions{}); err != nil {
-		_ = p.client.ContainerRemove(ctx, copyResp.ID, container.RemoveOptions{Force: true})
+		// defer will handle container removal
 		_ = p.client.VolumeRemove(ctx, volumeName, true)
 		return nil, fmt.Errorf("failed to start restore copy: %w", err)
 	}
@@ -454,18 +461,18 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 	select {
 	case err := <-errCh:
 		if err != nil {
-			_ = p.client.ContainerRemove(ctx, copyResp.ID, container.RemoveOptions{Force: true})
+			// defer will handle container removal
 			_ = p.client.VolumeRemove(ctx, volumeName, true)
 			return nil, fmt.Errorf("failed waiting for restore copy: %w", err)
 		}
 	case status := <-statusCh:
 		if status.StatusCode != 0 {
-			_ = p.client.ContainerRemove(ctx, copyResp.ID, container.RemoveOptions{Force: true})
+			// defer will handle container removal
 			_ = p.client.VolumeRemove(ctx, volumeName, true)
 			return nil, fmt.Errorf("restore copy failed with exit code %d", status.StatusCode)
 		}
 	}
-	_ = p.client.ContainerRemove(ctx, copyResp.ID, container.RemoveOptions{Force: true})
+	// defer will handle container removal
 
 	// Now create the actual workspace container with the restored volume
 	cmd := []string{"sleep", "infinity"}

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -600,9 +601,9 @@ func (p *E2BProvider) envdBaseURL(sandbox *e2bSandbox) string {
 
 // envdReadFile reads a file from the sandbox via the envd /files REST endpoint.
 func (p *E2BProvider) envdReadFile(ctx context.Context, sandbox *e2bSandbox, path string) (string, error) {
-	url := fmt.Sprintf("%s/files?path=%s", p.envdBaseURL(sandbox), path)
+	reqURL := fmt.Sprintf("%s/files?path=%s", p.envdBaseURL(sandbox), url.QueryEscape(path))
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -646,8 +647,8 @@ func (p *E2BProvider) envdWriteFile(ctx context.Context, sandbox *e2bSandbox, fi
 		return fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/files?path=%s", p.envdBaseURL(sandbox), filePath)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
+	reqURL := fmt.Sprintf("%s/files?path=%s", p.envdBaseURL(sandbox), url.QueryEscape(filePath))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, &buf)
 	if err != nil {
 		return err
 	}
