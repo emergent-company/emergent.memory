@@ -25,9 +25,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, l
 	writeGroup := g.Group("")
 	writeGroup.Use(authMiddleware.RequireScopes("admin:write"))
 	writeGroup.POST("", h.CreateWorkspace)
+	writeGroup.POST("/from-snapshot", h.CreateFromSnapshot)
 	writeGroup.DELETE("/:id", h.DeleteWorkspace)
 	writeGroup.POST("/:id/stop", h.StopWorkspace)
 	writeGroup.POST("/:id/resume", h.ResumeWorkspace)
+	writeGroup.POST("/:id/attach", h.AttachSession)
+	writeGroup.POST("/:id/detach", h.DetachSession)
+	writeGroup.POST("/:id/snapshot", h.CreateSnapshot)
 
 	// Tool operations (require write scope + audit logging)
 	toolGroup := g.Group("/:id")

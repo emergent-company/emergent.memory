@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -31,12 +32,25 @@ type Provider interface {
 	// ListFiles returns files matching a glob pattern inside a workspace container.
 	ListFiles(ctx context.Context, providerID string, req *FileListRequest) (*FileListResult, error)
 
+	// Snapshot creates a point-in-time snapshot of a workspace's filesystem state.
+	// Returns a snapshot ID that can be used with CreateFromSnapshot.
+	// Returns ErrSnapshotNotSupported if the provider doesn't support snapshots.
+	Snapshot(ctx context.Context, providerID string) (string, error)
+
+	// CreateFromSnapshot creates a new workspace from a previously-taken snapshot.
+	// Returns a new provider ID for the restored workspace.
+	// Returns ErrSnapshotNotSupported if the provider doesn't support snapshots.
+	CreateFromSnapshot(ctx context.Context, snapshotID string, req *CreateContainerRequest) (*CreateContainerResult, error)
+
 	// Health checks the health of this provider.
 	Health(ctx context.Context) (*HealthStatus, error)
 
 	// Capabilities returns what this provider supports.
 	Capabilities() *ProviderCapabilities
 }
+
+// ErrSnapshotNotSupported is returned by providers that do not support snapshot operations.
+var ErrSnapshotNotSupported = fmt.Errorf("snapshot operations not supported by this provider")
 
 // ProviderCapabilities describes what a provider supports.
 type ProviderCapabilities struct {
@@ -55,6 +69,11 @@ type CreateContainerRequest struct {
 	ResourceLimits *ResourceLimits   `json:"resource_limits,omitempty"`
 	BaseImage      string            `json:"base_image,omitempty"` // Docker image for gVisor/MCP
 	Labels         map[string]string `json:"labels,omitempty"`     // Metadata labels on the container
+	// MCP-specific fields for container customization
+	Cmd          []string          `json:"cmd,omitempty"`           // Override container entrypoint command
+	Env          map[string]string `json:"env,omitempty"`           // Environment variables
+	ExtraVolumes []string          `json:"extra_volumes,omitempty"` // Additional volume mount paths (e.g. "/data")
+	AttachStdin  bool              `json:"attach_stdin,omitempty"`  // Keep stdin open for stdio bridge
 }
 
 // CreateContainerResult holds the result of a container creation.

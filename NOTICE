@@ -1,0 +1,92 @@
+Emergent
+Copyright 2024-2026 Emergent Company
+
+This product includes software developed by third parties, licensed under the
+Apache License 2.0 or compatible open-source licenses.
+
+================================================================================
+
+Docker SDK for Go (github.com/docker/docker)
+Copyright 2013-2024 Docker, Inc.
+Licensed under the Apache License, Version 2.0
+https://github.com/moby/moby
+
+Used for container lifecycle management in the agent workspace infrastructure.
+
+================================================================================
+
+containerd errdefs (github.com/containerd/errdefs)
+Copyright The containerd Authors
+Licensed under the Apache License, Version 2.0
+https://github.com/containerd/errdefs
+
+Used as a transitive dependency of the Docker SDK.
+
+================================================================================
+
+distribution/reference (github.com/distribution/reference)
+Copyright 2014 Docker, Inc.
+Licensed under the Apache License, Version 2.0
+https://github.com/distribution/reference
+
+Used for container image reference parsing.
+
+================================================================================
+
+opencontainers/go-digest (github.com/opencontainers/go-digest)
+Copyright 2019 Open Containers Initiative
+Licensed under the Apache License, Version 2.0
+https://github.com/opencontainers/go-digest
+
+OCI digest implementation used by the Docker SDK.
+
+================================================================================
+
+opencontainers/image-spec (github.com/opencontainers/image-spec)
+Copyright 2016 The Linux Foundation
+Licensed under the Apache License, Version 2.0
+https://github.com/opencontainers/image-spec
+
+OCI image specification types used by the Docker SDK.
+
+================================================================================
+
+moby/docker-image-spec (github.com/moby/docker-image-spec)
+Copyright Moby Authors
+Licensed under the Apache License, Version 2.0
+https://github.com/moby/docker-image-spec
+
+Docker image specification types.
+
+================================================================================
+
+golang-jwt/jwt (github.com/golang-jwt/jwt/v5)
+Copyright 2012 Dave Grijalva; 2021 golang-jwt maintainers
+Licensed under the MIT License
+https://github.com/golang-jwt/jwt
+
+Used for JWT signing in GitHub App authentication.
+
+================================================================================
+
+Runtime Dependencies (not compiled into binary, used at runtime):
+
+  gVisor (runsc)
+  Copyright 2018 The gVisor Authors
+  Licensed under the Apache License, Version 2.0
+  https://github.com/google/gvisor
+  Used as an OCI container runtime for sandboxed workspace execution.
+
+  Firecracker
+  Copyright 2018 Amazon.com, Inc. or its affiliates
+  Licensed under the Apache License, Version 2.0
+  https://github.com/firecracker-microvm/firecracker
+  Used for microVM-based workspace isolation (when KVM is available).
+
+================================================================================
+
+For the full text of the Apache License, Version 2.0, see:
+https://www.apache.org/licenses/LICENSE-2.0
+
+For the full text of the MIT License, see:
+https://opensource.org/licenses/MIT

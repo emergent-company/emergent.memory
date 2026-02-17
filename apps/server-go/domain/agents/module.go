@@ -9,6 +9,8 @@ import (
 	"github.com/emergent/emergent-core/domain/mcp"
 	"github.com/emergent/emergent-core/domain/mcpregistry"
 	"github.com/emergent/emergent-core/domain/scheduler"
+	"github.com/emergent/emergent-core/domain/workspace"
+	"github.com/emergent/emergent-core/internal/config"
 	"github.com/emergent/emergent-core/pkg/adk"
 )
 
@@ -44,9 +46,11 @@ func provideAgentExecutor(
 	modelFactory *adk.ModelFactory,
 	toolPool *ToolPool,
 	repo *Repository,
+	provisioner *workspace.AutoProvisioner,
+	cfg *config.Config,
 	log *slog.Logger,
 ) *AgentExecutor {
-	return NewAgentExecutor(modelFactory, toolPool, repo, log)
+	return NewAgentExecutor(modelFactory, toolPool, repo, provisioner, cfg, log)
 }
 
 // provideHandler creates a Handler with both repo and executor.
