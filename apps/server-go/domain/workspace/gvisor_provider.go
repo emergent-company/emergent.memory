@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -34,12 +35,17 @@ type GVisorProvider struct {
 	log         *slog.Logger
 	useGVisor   bool   // Whether gVisor runtime is available
 	runtimeName string // "runsc" or "" (default)
+	networkName string // Docker network for container isolation
 }
 
 // GVisorProviderConfig holds configuration for the gVisor provider.
 type GVisorProviderConfig struct {
 	// ForceStandardRuntime disables gVisor even if available (for testing).
 	ForceStandardRuntime bool
+	// NetworkName is the Docker network to attach workspace containers to (e.g. "workspace_net").
+	// When set, containers are isolated from infrastructure services.
+	// Leave empty to use the default Docker bridge network.
+	NetworkName string
 }
 
 // NewGVisorProvider creates a new gVisor-based workspace provider.
@@ -52,6 +58,10 @@ func NewGVisorProvider(log *slog.Logger, cfg *GVisorProviderConfig) (*GVisorProv
 	p := &GVisorProvider{
 		client: cli,
 		log:    log.With("component", "gvisor-provider"),
+	}
+
+	if cfg != nil {
+		p.networkName = cfg.NetworkName
 	}
 
 	if cfg != nil && cfg.ForceStandardRuntime {
@@ -95,7 +105,7 @@ func (p *GVisorProvider) Capabilities() *ProviderCapabilities {
 	return &ProviderCapabilities{
 		Name:                "gVisor (Docker)",
 		SupportsPersistence: true,
-		SupportsSnapshots:   false,
+		SupportsSnapshots:   true,
 		SupportsWarmPool:    true,
 		RequiresKVM:         false,
 		EstimatedStartupMs:  50,
@@ -130,10 +140,16 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		return nil, fmt.Errorf("failed to create volume: %w", err)
 	}
 
+	// Determine command — MCP containers use custom commands, workspaces use sleep
+	cmd := []string{"sleep", "infinity"}
+	if len(req.Cmd) > 0 {
+		cmd = req.Cmd
+	}
+
 	// Build container config
 	containerConfig := &container.Config{
 		Image: image,
-		Cmd:   []string{"sleep", "infinity"}, // Keep container running
+		Cmd:   cmd,
 		Labels: map[string]string{
 			defaultRuntimeLabel: "true",
 			"workspace.type":    string(req.ContainerType),
@@ -142,20 +158,61 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		WorkingDir: workspaceDir,
 	}
 
+	// Set stdin attachment for stdio bridge (MCP servers)
+	if req.AttachStdin {
+		containerConfig.OpenStdin = true
+		containerConfig.StdinOnce = false
+		containerConfig.AttachStdin = true
+		containerConfig.AttachStdout = true
+		containerConfig.AttachStderr = true
+	}
+
+	// Set environment variables
+	if len(req.Env) > 0 {
+		for k, v := range req.Env {
+			containerConfig.Env = append(containerConfig.Env, k+"="+v)
+		}
+	}
+
 	// Merge caller-provided labels
 	for k, v := range req.Labels {
 		containerConfig.Labels[k] = v
 	}
 
 	// Build host config with resource limits and volume mount
-	hostConfig := &container.HostConfig{
-		Mounts: []mount.Mount{
-			{
-				Type:   mount.TypeVolume,
-				Source: volumeName,
-				Target: workspaceDir,
-			},
+	mounts := []mount.Mount{
+		{
+			Type:   mount.TypeVolume,
+			Source: volumeName,
+			Target: workspaceDir,
 		},
+	}
+
+	// Add extra volume mounts (for MCP persistent data)
+	for i, mountPath := range req.ExtraVolumes {
+		extraVolumeName := fmt.Sprintf("%s-extra-%d", volumeName, i)
+		_, err := p.client.VolumeCreate(ctx, volume.CreateOptions{
+			Name: extraVolumeName,
+			Labels: map[string]string{
+				defaultRuntimeLabel: "true",
+				"workspace.type":    string(req.ContainerType),
+				"workspace.parent":  volumeName,
+			},
+		})
+		if err != nil {
+			// Clean up primary volume on failure
+			_ = p.client.VolumeRemove(ctx, volumeName, true)
+			return nil, fmt.Errorf("failed to create extra volume for %s: %w", mountPath, err)
+		}
+		mounts = append(mounts, mount.Mount{
+			Type:   mount.TypeVolume,
+			Source: extraVolumeName,
+			Target: mountPath,
+		})
+	}
+
+	hostConfig := &container.HostConfig{
+		Mounts:        mounts,
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
 	}
 
@@ -170,7 +227,16 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 	}
 
 	// Create container
-	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
+	var networkConfig *network.NetworkingConfig
+	if p.networkName != "" {
+		networkConfig = &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				p.networkName: {},
+			},
+		}
+	}
+
+	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, nil, "")
 	if err != nil {
 		// Clean up volume on failure
 		_ = p.client.VolumeRemove(ctx, volumeName, true)
@@ -244,6 +310,219 @@ func (p *GVisorProvider) Resume(ctx context.Context, providerID string) error {
 	}
 	p.log.Info("workspace container resumed", "container_id", providerID[:min(12, len(providerID))])
 	return nil
+}
+
+// Snapshot creates a point-in-time snapshot of a workspace container's filesystem.
+// For gVisor, this creates a new Docker volume by copying data from the workspace's volume.
+func (p *GVisorProvider) Snapshot(ctx context.Context, providerID string) (string, error) {
+	// Get the volume name from the container's labels
+	info, err := p.client.ContainerInspect(ctx, providerID)
+	if err != nil {
+		return "", fmt.Errorf("failed to inspect container: %w", err)
+	}
+
+	volumeName := info.Config.Labels["workspace.volume"]
+	if volumeName == "" {
+		return "", fmt.Errorf("container has no workspace volume label")
+	}
+
+	// Create snapshot volume
+	snapshotID := fmt.Sprintf("emergent-snapshot-%d", time.Now().UnixNano())
+	_, err = p.client.VolumeCreate(ctx, volume.CreateOptions{
+		Name: snapshotID,
+		Labels: map[string]string{
+			defaultRuntimeLabel:   "true",
+			"workspace.type":      "snapshot",
+			"workspace.source":    volumeName,
+			"workspace.container": providerID,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create snapshot volume: %w", err)
+	}
+
+	// Copy data from source volume to snapshot volume using a temporary container.
+	// Mount both volumes and use cp to copy all data.
+	copyCmd := []string{"sh", "-c", "cp -a /source/. /snapshot/"}
+	copyConfig := &container.Config{
+		Image: info.Config.Image,
+		Cmd:   copyCmd,
+	}
+	copyHostConfig := &container.HostConfig{
+		Mounts: []mount.Mount{
+			{Type: mount.TypeVolume, Source: volumeName, Target: "/source", ReadOnly: true},
+			{Type: mount.TypeVolume, Source: snapshotID, Target: "/snapshot"},
+		},
+	}
+
+	copyResp, err := p.client.ContainerCreate(ctx, copyConfig, copyHostConfig, nil, nil, "")
+	if err != nil {
+		_ = p.client.VolumeRemove(ctx, snapshotID, true)
+		return "", fmt.Errorf("failed to create snapshot copy container: %w", err)
+	}
+	defer func() {
+		_ = p.client.ContainerRemove(ctx, copyResp.ID, container.RemoveOptions{Force: true})
+	}()
+
+	if err := p.client.ContainerStart(ctx, copyResp.ID, container.StartOptions{}); err != nil {
+		_ = p.client.VolumeRemove(ctx, snapshotID, true)
+		return "", fmt.Errorf("failed to start snapshot copy: %w", err)
+	}
+
+	// Wait for copy to complete
+	statusCh, errCh := p.client.ContainerWait(ctx, copyResp.ID, container.WaitConditionNotRunning)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			_ = p.client.VolumeRemove(ctx, snapshotID, true)
+			return "", fmt.Errorf("failed waiting for snapshot copy: %w", err)
+		}
+	case status := <-statusCh:
+		if status.StatusCode != 0 {
+			_ = p.client.VolumeRemove(ctx, snapshotID, true)
+			return "", fmt.Errorf("snapshot copy failed with exit code %d", status.StatusCode)
+		}
+	}
+
+	p.log.Info("workspace snapshot created",
+		"container_id", providerID[:min(12, len(providerID))],
+		"source_volume", volumeName,
+		"snapshot_id", snapshotID,
+	)
+
+	return snapshotID, nil
+}
+
+// CreateFromSnapshot creates a new workspace container from a previously-taken snapshot.
+func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID string, req *CreateContainerRequest) (*CreateContainerResult, error) {
+	// Verify the snapshot volume exists
+	_, err := p.client.VolumeInspect(ctx, snapshotID)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot volume not found: %s: %w", snapshotID, err)
+	}
+
+	imgRef := defaultWorkspaceImage
+	if req.BaseImage != "" {
+		imgRef = req.BaseImage
+	}
+
+	if err := p.ensureImage(ctx, imgRef); err != nil {
+		return nil, fmt.Errorf("failed to ensure image %s: %w", imgRef, err)
+	}
+
+	// Create a new workspace volume and copy snapshot data into it
+	volumeName := fmt.Sprintf("emergent-workspace-%d", time.Now().UnixNano())
+	_, err = p.client.VolumeCreate(ctx, volume.CreateOptions{
+		Name: volumeName,
+		Labels: map[string]string{
+			defaultRuntimeLabel:       "true",
+			"workspace.type":          string(req.ContainerType),
+			"workspace.from_snapshot": snapshotID,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create workspace volume: %w", err)
+	}
+
+	// Copy snapshot data to new volume
+	copyCmd := []string{"sh", "-c", "cp -a /snapshot/. /workspace/"}
+	copyConfig := &container.Config{
+		Image: imgRef,
+		Cmd:   copyCmd,
+	}
+	copyHostConfig := &container.HostConfig{
+		Mounts: []mount.Mount{
+			{Type: mount.TypeVolume, Source: snapshotID, Target: "/snapshot", ReadOnly: true},
+			{Type: mount.TypeVolume, Source: volumeName, Target: "/workspace"},
+		},
+	}
+
+	copyResp, err := p.client.ContainerCreate(ctx, copyConfig, copyHostConfig, nil, nil, "")
+	if err != nil {
+		_ = p.client.VolumeRemove(ctx, volumeName, true)
+		return nil, fmt.Errorf("failed to create restore copy container: %w", err)
+	}
+
+	if err := p.client.ContainerStart(ctx, copyResp.ID, container.StartOptions{}); err != nil {
+		_ = p.client.ContainerRemove(ctx, copyResp.ID, container.RemoveOptions{Force: true})
+		_ = p.client.VolumeRemove(ctx, volumeName, true)
+		return nil, fmt.Errorf("failed to start restore copy: %w", err)
+	}
+
+	// Wait for copy
+	statusCh, errCh := p.client.ContainerWait(ctx, copyResp.ID, container.WaitConditionNotRunning)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			_ = p.client.ContainerRemove(ctx, copyResp.ID, container.RemoveOptions{Force: true})
+			_ = p.client.VolumeRemove(ctx, volumeName, true)
+			return nil, fmt.Errorf("failed waiting for restore copy: %w", err)
+		}
+	case status := <-statusCh:
+		if status.StatusCode != 0 {
+			_ = p.client.ContainerRemove(ctx, copyResp.ID, container.RemoveOptions{Force: true})
+			_ = p.client.VolumeRemove(ctx, volumeName, true)
+			return nil, fmt.Errorf("restore copy failed with exit code %d", status.StatusCode)
+		}
+	}
+	_ = p.client.ContainerRemove(ctx, copyResp.ID, container.RemoveOptions{Force: true})
+
+	// Now create the actual workspace container with the restored volume
+	cmd := []string{"sleep", "infinity"}
+	if len(req.Cmd) > 0 {
+		cmd = req.Cmd
+	}
+
+	containerConfig := &container.Config{
+		Image: imgRef,
+		Cmd:   cmd,
+		Labels: map[string]string{
+			defaultRuntimeLabel:       "true",
+			"workspace.type":          string(req.ContainerType),
+			"workspace.volume":        volumeName,
+			"workspace.from_snapshot": snapshotID,
+		},
+		WorkingDir: workspaceDir,
+	}
+
+	for k, v := range req.Labels {
+		containerConfig.Labels[k] = v
+	}
+
+	hostConfig := &container.HostConfig{
+		Mounts: []mount.Mount{
+			{Type: mount.TypeVolume, Source: volumeName, Target: workspaceDir},
+		},
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
+	}
+
+	if p.useGVisor {
+		hostConfig.Runtime = p.runtimeName
+	}
+
+	if req.ResourceLimits != nil {
+		p.applyResourceLimits(hostConfig, req.ResourceLimits)
+	}
+
+	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
+	if err != nil {
+		_ = p.client.VolumeRemove(ctx, volumeName, true)
+		return nil, fmt.Errorf("failed to create container from snapshot: %w", err)
+	}
+
+	if err := p.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		_ = p.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		_ = p.client.VolumeRemove(ctx, volumeName, true)
+		return nil, fmt.Errorf("failed to start container from snapshot: %w", err)
+	}
+
+	p.log.Info("workspace created from snapshot",
+		"container_id", resp.ID[:12],
+		"snapshot_id", snapshotID,
+		"volume", volumeName,
+	)
+
+	return &CreateContainerResult{ProviderID: resp.ID}, nil
 }
 
 // Exec executes a command inside a workspace container.
@@ -599,4 +878,65 @@ func parseFloat(s string) float64 {
 // base64Encode encodes a string to base64.
 func base64Encode(s string) string {
 	return base64.StdEncoding.EncodeToString([]byte(s))
+}
+
+// ContainerAttachment represents a live stdin/stdout connection to a container.
+type ContainerAttachment struct {
+	Conn   io.ReadWriteCloser // Bidirectional connection to container
+	Reader io.Reader          // Demuxed stdout reader
+	conn   interface{ CloseWrite() error }
+}
+
+// Close closes the container attachment.
+func (a *ContainerAttachment) Close() error {
+	return a.Conn.Close()
+}
+
+// AttachToContainer attaches to a running container's stdin/stdout for stdio bridge communication.
+// The caller is responsible for closing the returned ContainerAttachment.
+func (p *GVisorProvider) AttachToContainer(ctx context.Context, providerID string) (*ContainerAttachment, error) {
+	resp, err := p.client.ContainerAttach(ctx, providerID, container.AttachOptions{
+		Stream: true,
+		Stdin:  true,
+		Stdout: true,
+		Stderr: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to attach to container: %w", err)
+	}
+
+	return &ContainerAttachment{
+		Conn:   resp.Conn,
+		Reader: resp.Reader,
+	}, nil
+}
+
+// InspectContainer returns the current state of a container.
+func (p *GVisorProvider) InspectContainer(ctx context.Context, providerID string) (*ContainerInspection, error) {
+	info, err := p.client.ContainerInspect(ctx, providerID)
+	if err != nil {
+		if client.IsErrNotFound(err) {
+			return nil, fmt.Errorf("container not found: %s", providerID)
+		}
+		return nil, fmt.Errorf("failed to inspect container: %w", err)
+	}
+
+	result := &ContainerInspection{
+		Running:    info.State.Running,
+		ExitCode:   info.State.ExitCode,
+		StartedAt:  info.State.StartedAt,
+		FinishedAt: info.State.FinishedAt,
+		Status:     info.State.Status,
+	}
+
+	return result, nil
+}
+
+// ContainerInspection holds the inspection result of a container.
+type ContainerInspection struct {
+	Running    bool   `json:"running"`
+	ExitCode   int    `json:"exit_code"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at"`
+	Status     string `json:"status"` // "created", "running", "paused", "restarting", "removing", "exited", "dead"
 }
