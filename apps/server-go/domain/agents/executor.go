@@ -15,10 +15,10 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 
-	"github.com/emergent/emergent-core/domain/workspace"
-	"github.com/emergent/emergent-core/internal/config"
-	"github.com/emergent/emergent-core/pkg/adk"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/domain/workspace"
+	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent/pkg/adk"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // ExecuteRequest defines the parameters for executing an agent.

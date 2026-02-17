@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emergent/emergent-core/domain/chunking"
-	"github.com/emergent/emergent-core/domain/documents"
-	"github.com/emergent/emergent-core/internal/storage"
-	"github.com/emergent/emergent-core/pkg/kreuzberg"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/domain/chunking"
+	"github.com/emergent-company/emergent/domain/documents"
+	"github.com/emergent-company/emergent/internal/storage"
+	"github.com/emergent-company/emergent/pkg/kreuzberg"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // DocumentParsingWorker processes document parsing jobs.

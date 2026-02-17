@@ -3,7 +3,7 @@ package email
 import (
 	"time"
 
-	"github.com/emergent/emergent-core/internal/config"
+	"github.com/emergent-company/emergent/internal/config"
 )
 
 // Config contains email service configuration

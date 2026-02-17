@@ -8,7 +8,7 @@ import (
 
 	"github.com/mailgun/mailgun-go/v4"
 
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // MailgunSender sends emails via Mailgun API.

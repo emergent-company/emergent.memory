@@ -9,8 +9,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent/emergent-core/internal/config"
-	"github.com/emergent/emergent-core/pkg/logger"
+	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent/pkg/logger"
 )
 
 // Handler serves developer tools endpoints

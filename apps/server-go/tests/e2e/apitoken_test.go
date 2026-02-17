@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent/emergent-core/domain/apitoken"
-	"github.com/emergent/emergent-core/internal/testutil"
+	"github.com/emergent-company/emergent/domain/apitoken"
+	"github.com/emergent-company/emergent/internal/testutil"
 )
 
 type ApiTokenSuite struct {

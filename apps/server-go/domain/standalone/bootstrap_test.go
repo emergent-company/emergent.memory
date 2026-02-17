@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/emergent/emergent-core/internal/config"
+	"github.com/emergent-company/emergent/internal/config"
 )
 
 func TestBootstrapService_Initialize_Disabled(t *testing.T) {

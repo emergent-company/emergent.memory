@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent/emergent-core/internal/config"
-	"github.com/emergent/emergent-core/internal/version"
+	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent/internal/version"
 )
 
 // Handler handles health check requests
