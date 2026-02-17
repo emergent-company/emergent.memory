@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,21 +14,32 @@ import (
 
 // mockProvider implements Provider for testing.
 type mockProvider struct {
-	name         string
-	providerType ProviderType
-	healthy      bool
-	createErr    error
+	name              string
+	providerType      ProviderType
+	healthy           bool
+	createErr         error
+	destroyErr        error
+	snapshotErr       error
+	fromSnapshotErr   error
+	snapshotID        string // returned by Snapshot()
+	supportsSnapshots bool
+	createCount       atomic.Int64
+	destroyCount      atomic.Int64
 }
 
 func (m *mockProvider) Create(_ context.Context, _ *CreateContainerRequest) (*CreateContainerResult, error) {
 	if m.createErr != nil {
 		return nil, m.createErr
 	}
-	return &CreateContainerResult{ProviderID: "mock-" + m.name}, nil
+	id := fmt.Sprintf("mock-%s-%d", m.name, m.createCount.Add(1))
+	return &CreateContainerResult{ProviderID: id}, nil
 }
-func (m *mockProvider) Destroy(_ context.Context, _ string) error { return nil }
-func (m *mockProvider) Stop(_ context.Context, _ string) error    { return nil }
-func (m *mockProvider) Resume(_ context.Context, _ string) error  { return nil }
+func (m *mockProvider) Destroy(_ context.Context, _ string) error {
+	m.destroyCount.Add(1)
+	return m.destroyErr
+}
+func (m *mockProvider) Stop(_ context.Context, _ string) error   { return nil }
+func (m *mockProvider) Resume(_ context.Context, _ string) error { return nil }
 func (m *mockProvider) Exec(_ context.Context, _ string, _ *ExecRequest) (*ExecResult, error) {
 	return &ExecResult{ExitCode: 0}, nil
 }
@@ -40,13 +52,36 @@ func (m *mockProvider) WriteFile(_ context.Context, _ string, _ *FileWriteReques
 func (m *mockProvider) ListFiles(_ context.Context, _ string, _ *FileListRequest) (*FileListResult, error) {
 	return &FileListResult{}, nil
 }
+func (m *mockProvider) Snapshot(_ context.Context, _ string) (string, error) {
+	if m.snapshotErr != nil {
+		return "", m.snapshotErr
+	}
+	if !m.supportsSnapshots {
+		return "", ErrSnapshotNotSupported
+	}
+	if m.snapshotID != "" {
+		return m.snapshotID, nil
+	}
+	return fmt.Sprintf("snap-%s-%d", m.name, m.createCount.Load()), nil
+}
+func (m *mockProvider) CreateFromSnapshot(_ context.Context, snapshotID string, _ *CreateContainerRequest) (*CreateContainerResult, error) {
+	if m.fromSnapshotErr != nil {
+		return nil, m.fromSnapshotErr
+	}
+	if !m.supportsSnapshots {
+		return nil, ErrSnapshotNotSupported
+	}
+	id := fmt.Sprintf("mock-%s-from-%s-%d", m.name, snapshotID, m.createCount.Add(1))
+	return &CreateContainerResult{ProviderID: id}, nil
+}
 func (m *mockProvider) Health(_ context.Context) (*HealthStatus, error) {
 	return &HealthStatus{Healthy: m.healthy, Message: m.name + " health"}, nil
 }
 func (m *mockProvider) Capabilities() *ProviderCapabilities {
 	return &ProviderCapabilities{
-		Name:         m.name,
-		ProviderType: m.providerType,
+		Name:              m.name,
+		ProviderType:      m.providerType,
+		SupportsSnapshots: m.supportsSnapshots,
 	}
 }
 

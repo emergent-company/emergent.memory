@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -181,4 +182,75 @@ type ProviderStatusResponse struct {
 	Message      string                `json:"message,omitempty"`
 	Capabilities *ProviderCapabilities `json:"capabilities"`
 	ActiveCount  int                   `json:"active_count"`
+}
+
+// --- Workspace Attachment ---
+
+// AttachSessionRequest is the request DTO for attaching an agent session to a workspace.
+type AttachSessionRequest struct {
+	AgentSessionID string `json:"agent_session_id" validate:"required"`
+}
+
+// --- Workspace Snapshots ---
+
+// SnapshotResponse is the response DTO after creating a workspace snapshot.
+type SnapshotResponse struct {
+	SnapshotID  string `json:"snapshot_id"`
+	WorkspaceID string `json:"workspace_id"`
+	Provider    string `json:"provider"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// CreateFromSnapshotRequest is the request DTO for creating a workspace from a snapshot.
+type CreateFromSnapshotRequest struct {
+	SnapshotID     string          `json:"snapshot_id" validate:"required"`
+	Provider       string          `json:"provider,omitempty"` // Must match snapshot provider; defaults to original
+	DeploymentMode string          `json:"deployment_mode,omitempty"`
+	ResourceLimits *ResourceLimits `json:"resource_limits,omitempty"`
+}
+
+// --- MCP Hosting ---
+
+// RegisterMCPServerRequest is the request DTO for registering an MCP server for hosting.
+type RegisterMCPServerRequest struct {
+	Name           string            `json:"name" validate:"required"`
+	Image          string            `json:"image" validate:"required"`
+	Cmd            []string          `json:"cmd,omitempty"`
+	StdioBridge    bool              `json:"stdio_bridge"`
+	RestartPolicy  string            `json:"restart_policy,omitempty"` // "always" (default), "on-failure", "never"
+	Environment    map[string]string `json:"environment,omitempty"`
+	Volumes        []string          `json:"volumes,omitempty"`         // Persistent mount paths (e.g. "/data")
+	ResourceLimits *ResourceLimits   `json:"resource_limits,omitempty"` // Default: 0.5 CPU, 512MB memory, 1GB disk
+}
+
+// MCPCallRequest is the request DTO for calling an MCP method via the stdio bridge.
+type MCPCallRequest struct {
+	Method    string `json:"method" validate:"required"` // JSON-RPC method (e.g. "tools/call", "tools/list")
+	Params    any    `json:"params,omitempty"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"` // Default: 30000ms
+}
+
+// MCPCallResponse is the response DTO for an MCP method call.
+type MCPCallResponse struct {
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *JSONRPCError   `json:"error,omitempty"`
+}
+
+// MCPServerStatus is the response DTO for MCP server status.
+type MCPServerStatus struct {
+	WorkspaceID     string          `json:"workspace_id"`
+	Name            string          `json:"name"`
+	Image           string          `json:"image"`
+	Status          Status          `json:"status"`
+	Provider        ProviderType    `json:"provider"`
+	StdioBridge     bool            `json:"stdio_bridge"`
+	BridgeConnected bool            `json:"bridge_connected"`
+	RestartPolicy   string          `json:"restart_policy"`
+	RestartCount    int             `json:"restart_count"`
+	LastCrash       *string         `json:"last_crash,omitempty"`
+	Uptime          string          `json:"uptime,omitempty"`
+	Volumes         []string        `json:"volumes,omitempty"`
+	ResourceLimits  *ResourceLimits `json:"resource_limits,omitempty"`
+	CreatedAt       string          `json:"created_at"`
+	LastUsedAt      string          `json:"last_used_at"`
 }

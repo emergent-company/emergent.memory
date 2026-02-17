@@ -479,6 +479,16 @@ func (r *Repository) DeleteDefinition(ctx context.Context, id string) error {
 
 // --- Extended Agent Run operations ---
 
+// UpdateSessionStatus updates the workspace session status for an agent run.
+func (r *Repository) UpdateSessionStatus(ctx context.Context, runID string, status SessionStatus) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("session_status = ?", status).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
 // CreateRunWithOptions creates a new agent run with coordination options.
 func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
 	run := &AgentRun{
@@ -561,6 +571,7 @@ func (r *Repository) FailRunWithSteps(ctx context.Context, runID string, errorMe
 		Set("completed_at = ?", now).
 		Set("error_message = ?", errorMessage).
 		Set("step_count = ?", stepCount).
+		Set("session_status = ?", SessionStatusError).
 		Where("id = ?", runID).
 		Exec(ctx)
 	return err
@@ -576,6 +587,7 @@ func (r *Repository) CompleteRunWithSteps(ctx context.Context, runID string, sum
 		Set("summary = ?", summary).
 		Set("step_count = ?", stepCount).
 		Set("duration_ms = ?", durationMs).
+		Set("session_status = ?", SessionStatusCompleted).
 		Where("id = ?", runID).
 		Exec(ctx)
 	return err
