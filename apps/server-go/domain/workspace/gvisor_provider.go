@@ -691,9 +691,9 @@ func (p *GVisorProvider) ReadFile(ctx context.Context, providerID string, req *F
 
 // WriteFile writes file content to a workspace container, creating parent directories as needed.
 func (p *GVisorProvider) WriteFile(ctx context.Context, providerID string, req *FileWriteRequest) error {
-	// Create parent directories
-	dir := req.FilePath[:strings.LastIndex(req.FilePath, "/")]
-	if dir != "" {
+	// Create parent directories safely
+	if idx := strings.LastIndex(req.FilePath, "/"); idx > 0 {
+		dir := req.FilePath[:idx]
 		_, err := p.Exec(ctx, providerID, &ExecRequest{
 			Command: fmt.Sprintf("mkdir -p %q", dir),
 		})
