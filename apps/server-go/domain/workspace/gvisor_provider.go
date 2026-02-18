@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	defaultWorkspaceImage = "ubuntu:22.04"
+	defaultWorkspaceImage = "emergent-workspace:latest"
 	gvisorRuntime         = "runsc"
 	defaultRuntimeLabel   = "emergent.workspace"
 	workspaceDir          = "/workspace"
