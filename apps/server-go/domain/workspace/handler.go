@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -29,6 +30,86 @@ func (h *Handler) SetCheckoutService(cs *CheckoutService) {
 	h.checkoutSvc = cs
 }
 
+// provisionContainer asynchronously provisions a container for a workspace.
+func (h *Handler) provisionContainer(ctx context.Context, ws *WorkspaceResponse, req *CreateWorkspaceRequest) {
+	h.log.Info("starting async container provisioning", "workspace_id", ws.ID)
+
+	// Get provider
+	provider, err := h.orchestrator.GetProvider(ProviderType(ws.Provider))
+	if err != nil {
+		h.log.Error("failed to get provider", "workspace_id", ws.ID, "provider", ws.Provider, "error", err)
+		_, _ = h.svc.UpdateStatus(ctx, ws.ID, StatusError)
+		return
+	}
+
+	// Create container
+	h.log.Info("creating container", "workspace_id", ws.ID, "provider", ws.Provider)
+	containerReq := &CreateContainerRequest{
+		ContainerType:  req.ContainerType,
+		ResourceLimits: req.ResourceLimits,
+		BaseImage:      "", // Will use default from provider
+	}
+
+	containerResult, err := provider.Create(ctx, containerReq)
+	if err != nil {
+		h.log.Error("failed to create container",
+			"workspace_id", ws.ID,
+			"provider", ws.Provider,
+			"error", err,
+		)
+		_, _ = h.svc.UpdateStatus(ctx, ws.ID, StatusError)
+		return
+	}
+
+	h.log.Info("container created successfully",
+		"workspace_id", ws.ID,
+		"provider_id", containerResult.ProviderID,
+	)
+
+	// Update workspace with provider ID
+	wsEntity, err := h.svc.store.GetByID(ctx, ws.ID)
+	if err != nil {
+		h.log.Error("failed to get workspace entity", "workspace_id", ws.ID, "error", err)
+		_ = provider.Destroy(ctx, containerResult.ProviderID)
+		_, _ = h.svc.UpdateStatus(ctx, ws.ID, StatusError)
+		return
+	}
+
+	wsEntity.ProviderWorkspaceID = containerResult.ProviderID
+	_, err = h.svc.store.Update(ctx, wsEntity, "provider_workspace_id")
+	if err != nil {
+		h.log.Error("failed to update provider_workspace_id", "workspace_id", ws.ID, "error", err)
+		_ = provider.Destroy(ctx, containerResult.ProviderID)
+		_, _ = h.svc.UpdateStatus(ctx, ws.ID, StatusError)
+		return
+	}
+
+	// Clone repository if needed
+	if req.RepositoryURL != "" && h.checkoutSvc != nil {
+		h.log.Info("cloning repository", "workspace_id", ws.ID, "repo_url", req.RepositoryURL)
+		if cloneErr := h.checkoutSvc.CloneRepository(ctx, provider, containerResult.ProviderID, req.RepositoryURL, req.Branch); cloneErr != nil {
+			h.log.Warn("repository clone failed",
+				"workspace_id", ws.ID,
+				"repo_url", req.RepositoryURL,
+				"error", cloneErr,
+			)
+			// Don't fail on clone error - workspace is still usable
+		} else {
+			h.log.Info("repository cloned successfully", "workspace_id", ws.ID)
+		}
+	}
+
+	// Mark workspace as ready
+	h.log.Info("marking workspace as ready", "workspace_id", ws.ID)
+	_, err = h.svc.UpdateStatus(ctx, ws.ID, StatusReady)
+	if err != nil {
+		h.log.Error("failed to mark workspace as ready", "workspace_id", ws.ID, "error", err)
+		return
+	}
+
+	h.log.Info("workspace provisioned successfully", "workspace_id", ws.ID)
+}
+
 // CreateWorkspace handles POST /api/v1/agent/workspaces
 // @Summary      Create agent workspace
 // @Description  Creates a new isolated agent workspace (container/sandbox)
@@ -53,10 +134,25 @@ func (h *Handler) CreateWorkspace(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
 	}
 
+	h.log.Info("creating workspace via API",
+		"container_type", req.ContainerType,
+		"provider", req.Provider,
+		"repo_url", req.RepositoryURL,
+	)
+
 	ws, err := h.svc.Create(c.Request().Context(), &req)
 	if err != nil {
+		h.log.Error("failed to create workspace database record", "error", err)
 		return err
 	}
+
+	h.log.Info("workspace database record created, now provisioning container",
+		"workspace_id", ws.ID,
+		"status", ws.Status,
+	)
+
+	// Trigger async container provisioning
+	go h.provisionContainer(c.Request().Context(), ws, &req)
 
 	return c.JSON(http.StatusCreated, ws)
 }
