@@ -51,7 +51,7 @@ const (
 	fcStartupTimeout = 30 * time.Second
 
 	// fcKernelArgs is the kernel command line for microVMs.
-	fcKernelArgs = "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init"
+	fcKernelArgs = "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init random.trust_cpu=on"
 )
 
 // FirecrackerProvider implements the Provider interface using Firecracker microVMs.
