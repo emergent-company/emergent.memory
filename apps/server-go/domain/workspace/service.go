@@ -146,19 +146,32 @@ func (s *Service) List(ctx context.Context, filters *ListFilters) ([]*WorkspaceR
 
 // UpdateStatus updates the status of a workspace.
 func (s *Service) UpdateStatus(ctx context.Context, id string, status Status) (*WorkspaceResponse, error) {
+	s.log.Info("updating workspace status", "workspace_id", id, "new_status", status)
+
 	ws, err := s.store.GetByID(ctx, id)
 	if err != nil {
+		s.log.Error("failed to get workspace for status update", "workspace_id", id, "error", err)
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 	if ws == nil {
+		s.log.Warn("workspace not found for status update", "workspace_id", id)
 		return nil, apperror.NewNotFound("workspace", id)
 	}
 
+	oldStatus := ws.Status
 	ws.Status = status
 	updated, err := s.store.Update(ctx, ws, "status")
 	if err != nil {
+		s.log.Error("failed to update workspace status", "workspace_id", id, "error", err)
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
+
+	s.log.Info("workspace status updated successfully",
+		"workspace_id", id,
+		"old_status", oldStatus,
+		"new_status", status,
+	)
+
 	return ToResponse(updated), nil
 }
 
