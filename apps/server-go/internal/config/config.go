@@ -300,6 +300,8 @@ type WorkspaceConfig struct {
 	GitHubAppEncryptionKey string `env:"GITHUB_APP_ENCRYPTION_KEY" envDefault:""`
 	// NetworkName is the Docker network to attach workspace containers to for isolation
 	NetworkName string `env:"WORKSPACE_NETWORK_NAME" envDefault:""`
+	// DefaultImage is the Docker image for workspace containers (e.g. ghcr.io/emergent-company/emergent-workspace:latest)
+	DefaultImage string `env:"WORKSPACE_DEFAULT_IMAGE" envDefault:""`
 }
 
 // IsEnabled returns true if agent workspaces are enabled
