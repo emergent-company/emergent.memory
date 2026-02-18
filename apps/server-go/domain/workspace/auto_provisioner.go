@@ -22,6 +22,7 @@ type AutoProvisioner struct {
 	orchestrator *Orchestrator
 	checkoutSvc  *CheckoutService
 	setupExec    *SetupExecutor
+	warmPool     *WarmPool
 	log          *slog.Logger
 }
 
@@ -31,6 +32,7 @@ func NewAutoProvisioner(
 	orchestrator *Orchestrator,
 	checkoutSvc *CheckoutService,
 	setupExec *SetupExecutor,
+	warmPool *WarmPool,
 	log *slog.Logger,
 ) *AutoProvisioner {
 	return &AutoProvisioner{
@@ -38,6 +40,7 @@ func NewAutoProvisioner(
 		orchestrator: orchestrator,
 		checkoutSvc:  checkoutSvc,
 		setupExec:    setupExec,
+		warmPool:     warmPool,
 		log:          log.With("component", "workspace-auto-provisioner"),
 	}
 }
@@ -219,14 +222,25 @@ func (ap *AutoProvisioner) attemptProvision(
 		BaseImage:      cfg.BaseImage,
 	}
 
-	containerResult, err := provider.Create(ctx, containerReq)
-	if err != nil {
-		ap.log.Error("failed to create container", "provider_type", providerType, "error", err)
-		return &ProvisioningResult{ProviderType: providerType}, fmt.Errorf("failed to create container via %s: %w", providerType, err)
+	// Try warm pool first, fall back to cold creation
+	var containerProviderID string
+	if wc := ap.warmPool.Acquire(providerType); wc != nil {
+		containerProviderID = wc.ProviderID()
+		ap.log.Info("acquired warm container",
+			"provider_type", providerType,
+			"provider_id", containerProviderID,
+		)
+	} else {
+		result, err := provider.Create(ctx, containerReq)
+		if err != nil {
+			ap.log.Error("failed to create container", "provider_type", providerType, "error", err)
+			return &ProvisioningResult{ProviderType: providerType}, fmt.Errorf("failed to create container via %s: %w", providerType, err)
+		}
+		containerProviderID = result.ProviderID
 	}
 	ap.log.Info("container created successfully",
 		"provider_type", providerType,
-		"provider_id", containerResult.ProviderID,
+		"provider_id", containerProviderID,
 	)
 
 	// Create workspace record in DB
@@ -240,11 +254,11 @@ func (ap *AutoProvisioner) attemptProvision(
 	})
 	if err != nil {
 		ap.log.Error("failed to create workspace record, cleaning up container",
-			"provider_id", containerResult.ProviderID,
+			"provider_id", containerProviderID,
 			"error", err,
 		)
 		// Try to clean up the container
-		_ = provider.Destroy(ctx, containerResult.ProviderID)
+		_ = provider.Destroy(ctx, containerProviderID)
 		return &ProvisioningResult{ProviderType: providerType}, fmt.Errorf("failed to create workspace record: %w", err)
 	}
 	ap.log.Info("workspace database record created", "workspace_id", ws.ID)
@@ -253,16 +267,16 @@ func (ap *AutoProvisioner) attemptProvision(
 	wsEntity := &AgentWorkspace{
 		ID:                  ws.ID,
 		Provider:            providerType,
-		ProviderWorkspaceID: containerResult.ProviderID,
+		ProviderWorkspaceID: containerProviderID,
 		Status:              StatusCreating,
 	}
 
 	// Update provider workspace ID
 	ap.log.Info("updating provider workspace ID",
 		"workspace_id", ws.ID,
-		"provider_id", containerResult.ProviderID,
+		"provider_id", containerProviderID,
 	)
-	wsEntity.ProviderWorkspaceID = containerResult.ProviderID
+	wsEntity.ProviderWorkspaceID = containerProviderID
 	_, err = ap.service.store.Update(ctx, wsEntity, "provider_workspace_id")
 	if err != nil {
 		ap.log.Warn("failed to update provider_workspace_id", "workspace_id", ws.ID, "error", err)
@@ -275,7 +289,7 @@ func (ap *AutoProvisioner) attemptProvision(
 			"repo_url", repoURL,
 			"branch", branch,
 		)
-		if cloneErr := ap.checkoutSvc.CloneRepository(ctx, provider, containerResult.ProviderID, repoURL, branch); cloneErr != nil {
+		if cloneErr := ap.checkoutSvc.CloneRepository(ctx, provider, containerProviderID, repoURL, branch); cloneErr != nil {
 			ap.log.Warn("repository clone failed",
 				"workspace_id", ws.ID,
 				"repo_url", repoURL,

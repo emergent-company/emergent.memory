@@ -17,15 +17,17 @@ type Handler struct {
 	svc          *Service
 	orchestrator *Orchestrator
 	checkoutSvc  *CheckoutService
+	warmPool     *WarmPool
 	log          *slog.Logger
 }
 
 // NewHandler creates a new workspace handler.
-func NewHandler(svc *Service, orchestrator *Orchestrator, checkoutSvc *CheckoutService, log *slog.Logger) *Handler {
+func NewHandler(svc *Service, orchestrator *Orchestrator, checkoutSvc *CheckoutService, warmPool *WarmPool, log *slog.Logger) *Handler {
 	return &Handler{
 		svc:          svc,
 		orchestrator: orchestrator,
 		checkoutSvc:  checkoutSvc,
+		warmPool:     warmPool,
 		log:          log.With("component", "workspace-handler"),
 	}
 }
@@ -34,52 +36,66 @@ func NewHandler(svc *Service, orchestrator *Orchestrator, checkoutSvc *CheckoutS
 func (h *Handler) provisionContainer(ctx context.Context, ws *WorkspaceResponse, req *CreateWorkspaceRequest) {
 	h.log.Info("starting async container provisioning", "workspace_id", ws.ID)
 
+	providerType := ProviderType(ws.Provider)
+
 	// Get provider
-	provider, err := h.orchestrator.GetProvider(ProviderType(ws.Provider))
+	provider, err := h.orchestrator.GetProvider(providerType)
 	if err != nil {
 		h.log.Error("failed to get provider", "workspace_id", ws.ID, "provider", ws.Provider, "error", err)
 		_, _ = h.svc.UpdateStatus(ctx, ws.ID, StatusError)
 		return
 	}
 
-	// Create container
-	h.log.Info("creating container", "workspace_id", ws.ID, "provider", ws.Provider)
-	containerReq := &CreateContainerRequest{
-		ContainerType:  req.ContainerType,
-		ResourceLimits: req.ResourceLimits,
-		BaseImage:      "", // Will use default from provider
-	}
-
-	containerResult, err := provider.Create(ctx, containerReq)
-	if err != nil {
-		h.log.Error("failed to create container",
+	// Try warm pool first (if enabled and container matches)
+	var providerID string
+	if wc := h.warmPool.Acquire(providerType); wc != nil {
+		providerID = wc.ProviderID()
+		h.log.Info("acquired warm container",
 			"workspace_id", ws.ID,
+			"provider_id", providerID,
 			"provider", ws.Provider,
-			"error", err,
 		)
-		_, _ = h.svc.UpdateStatus(ctx, ws.ID, StatusError)
-		return
+	} else {
+		// Cold start — create container from scratch
+		h.log.Info("creating container (cold start)", "workspace_id", ws.ID, "provider", ws.Provider)
+		containerReq := &CreateContainerRequest{
+			ContainerType:  req.ContainerType,
+			ResourceLimits: req.ResourceLimits,
+			BaseImage:      "", // Will use default from provider
+		}
+
+		containerResult, createErr := provider.Create(ctx, containerReq)
+		if createErr != nil {
+			h.log.Error("failed to create container",
+				"workspace_id", ws.ID,
+				"provider", ws.Provider,
+				"error", createErr,
+			)
+			_, _ = h.svc.UpdateStatus(ctx, ws.ID, StatusError)
+			return
+		}
+		providerID = containerResult.ProviderID
 	}
 
 	h.log.Info("container created successfully",
 		"workspace_id", ws.ID,
-		"provider_id", containerResult.ProviderID,
+		"provider_id", providerID,
 	)
 
 	// Update workspace with provider ID
 	wsEntity, err := h.svc.store.GetByID(ctx, ws.ID)
 	if err != nil {
 		h.log.Error("failed to get workspace entity", "workspace_id", ws.ID, "error", err)
-		_ = provider.Destroy(ctx, containerResult.ProviderID)
+		_ = provider.Destroy(ctx, providerID)
 		_, _ = h.svc.UpdateStatus(ctx, ws.ID, StatusError)
 		return
 	}
 
-	wsEntity.ProviderWorkspaceID = containerResult.ProviderID
+	wsEntity.ProviderWorkspaceID = providerID
 	_, err = h.svc.store.Update(ctx, wsEntity, "provider_workspace_id")
 	if err != nil {
 		h.log.Error("failed to update provider_workspace_id", "workspace_id", ws.ID, "error", err)
-		_ = provider.Destroy(ctx, containerResult.ProviderID)
+		_ = provider.Destroy(ctx, providerID)
 		_, _ = h.svc.UpdateStatus(ctx, ws.ID, StatusError)
 		return
 	}
@@ -87,7 +103,7 @@ func (h *Handler) provisionContainer(ctx context.Context, ws *WorkspaceResponse,
 	// Clone repository if needed
 	if req.RepositoryURL != "" && h.checkoutSvc != nil {
 		h.log.Info("cloning repository", "workspace_id", ws.ID, "repo_url", req.RepositoryURL)
-		if cloneErr := h.checkoutSvc.CloneRepository(ctx, provider, containerResult.ProviderID, req.RepositoryURL, req.Branch); cloneErr != nil {
+		if cloneErr := h.checkoutSvc.CloneRepository(ctx, provider, providerID, req.RepositoryURL, req.Branch); cloneErr != nil {
 			h.log.Warn("repository clone failed",
 				"workspace_id", ws.ID,
 				"repo_url", req.RepositoryURL,
