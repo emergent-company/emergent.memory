@@ -121,7 +121,8 @@ func registerProviders(lc fx.Lifecycle, orchestrator *Orchestrator, cfg *config.
 		OnStart: func(ctx context.Context) error {
 			// Register gVisor provider (always available — cross-platform fallback)
 			gvisorCfg := &GVisorProviderConfig{
-				NetworkName: cfg.Workspace.NetworkName,
+				NetworkName:  cfg.Workspace.NetworkName,
+				DefaultImage: cfg.Workspace.DefaultImage,
 			}
 			gvisorProvider, err := NewGVisorProvider(log, gvisorCfg)
 			if err != nil {
