@@ -92,8 +92,8 @@ func newCheckoutService(log *slog.Logger) *CheckoutService {
 }
 
 // newAutoProvisioner creates the auto-provisioning service for agent workspaces.
-func newAutoProvisioner(service *Service, orchestrator *Orchestrator, checkoutSvc *CheckoutService, setupExec *SetupExecutor, log *slog.Logger) *AutoProvisioner {
-	return NewAutoProvisioner(service, orchestrator, checkoutSvc, setupExec, log)
+func newAutoProvisioner(service *Service, orchestrator *Orchestrator, checkoutSvc *CheckoutService, setupExec *SetupExecutor, warmPool *WarmPool, log *slog.Logger) *AutoProvisioner {
+	return NewAutoProvisioner(service, orchestrator, checkoutSvc, setupExec, warmPool, log)
 }
 
 // newCleanupJob creates a cleanup job with configuration from env vars.
