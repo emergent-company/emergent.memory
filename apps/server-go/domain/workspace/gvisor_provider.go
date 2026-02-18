@@ -31,11 +31,12 @@ const (
 // GVisorProvider implements the Provider interface using Docker with gVisor (runsc) runtime.
 // Falls back to standard Docker runtime when gVisor is not available.
 type GVisorProvider struct {
-	client      client.APIClient
-	log         *slog.Logger
-	useGVisor   bool   // Whether gVisor runtime is available
-	runtimeName string // "runsc" or "" (default)
-	networkName string // Docker network for container isolation
+	client       client.APIClient
+	log          *slog.Logger
+	useGVisor    bool   // Whether gVisor runtime is available
+	runtimeName  string // "runsc" or "" (default)
+	networkName  string // Docker network for container isolation
+	defaultImage string // Override for default workspace image
 }
 
 // GVisorProviderConfig holds configuration for the gVisor provider.
@@ -46,6 +47,9 @@ type GVisorProviderConfig struct {
 	// When set, containers are isolated from infrastructure services.
 	// Leave empty to use the default Docker bridge network.
 	NetworkName string
+	// DefaultImage overrides the default workspace base image.
+	// When empty, falls back to the package constant (emergent-workspace:latest).
+	DefaultImage string
 }
 
 // NewGVisorProvider creates a new gVisor-based workspace provider.
@@ -62,6 +66,7 @@ func NewGVisorProvider(log *slog.Logger, cfg *GVisorProviderConfig) (*GVisorProv
 
 	if cfg != nil {
 		p.networkName = cfg.NetworkName
+		p.defaultImage = cfg.DefaultImage
 	}
 
 	if cfg != nil && cfg.ForceStandardRuntime {
@@ -121,6 +126,9 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 	)
 
 	image := defaultWorkspaceImage
+	if p.defaultImage != "" {
+		image = p.defaultImage
+	}
 	if req.BaseImage != "" {
 		image = req.BaseImage
 	}
@@ -180,7 +188,10 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		containerConfig.AttachStderr = true
 	}
 
-	// Set environment variables
+	// Inject default environment variables for API discoverability
+	containerConfig.Env = append(containerConfig.Env, "EMERGENT_API_URL=http://host.docker.internal:3002")
+
+	// Set caller-provided environment variables (may override defaults)
 	if len(req.Env) > 0 {
 		for k, v := range req.Env {
 			containerConfig.Env = append(containerConfig.Env, k+"="+v)
@@ -227,6 +238,9 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 	hostConfig := &container.HostConfig{
 		Mounts:        mounts,
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
+		// Ensure host.docker.internal resolves on Linux Docker (automatic on Docker Desktop).
+		// This allows workspace containers to reach the Emergent API on the host.
+		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 	}
 
 	// Set gVisor runtime if available
@@ -427,6 +441,9 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 	}
 
 	imgRef := defaultWorkspaceImage
+	if p.defaultImage != "" {
+		imgRef = p.defaultImage
+	}
 	if req.BaseImage != "" {
 		imgRef = req.BaseImage
 	}
@@ -526,6 +543,7 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 			{Type: mount.TypeVolume, Source: volumeName, Target: workspaceDir},
 		},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
+		ExtraHosts:    []string{"host.docker.internal:host-gateway"},
 	}
 
 	if p.useGVisor {

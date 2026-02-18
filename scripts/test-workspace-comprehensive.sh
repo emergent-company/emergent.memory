@@ -230,97 +230,67 @@ echo "$GREP_RESULT" | jq -r '.matches[0:3][]' 2>/dev/null || true
 log_section "Test 5: Vector Database Operations"
 
 log_step "Creating a test document via workspace..."
-DOC_CREATE_SCRIPT='
-curl -s -X POST http://host.docker.internal:3002/api/documents \
-  -H "Authorization: Bearer '"$API_KEY"'" \
-  -H "X-Project-ID: '"$PROJECT_ID"'" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"source_type\": \"agent_workspace\",
-    \"title\": \"Agent Test Document\",
-    \"text_content\": \"This is a test document created by the agent workspace. It contains information about vector databases, embeddings, and semantic search.\",
-    \"metadata\": {
-      \"workspace_id\": \"'"$WORKSPACE_ID"'\",
-      \"test_type\": \"comprehensive\",
-      \"created_by\": \"test_script\"
-    }
-  }"
-'
+# Use a single-line curl command to avoid backslash-newline quoting issues
+DOC_CREATE_CMD="curl -s -w '\\n%{http_code}' -X POST \$EMERGENT_API_URL/api/documents -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}' -H 'Content-Type: application/json' -d '{\"source_type\":\"agent_workspace\",\"title\":\"Agent Test Document\",\"text_content\":\"Test document created by agent workspace test.\",\"metadata\":{\"workspace_id\":\"${WORKSPACE_ID}\",\"test_type\":\"comprehensive\"}}'"
 
 DOC_CREATE_RESULT=$(workspace_api POST "/${WORKSPACE_ID}/bash" "{
-    \"command\": $(echo "$DOC_CREATE_SCRIPT" | jq -Rs .)
+    \"command\": $(echo "$DOC_CREATE_CMD" | jq -Rs .)
 }")
 
-DOC_ID=$(echo "$DOC_CREATE_RESULT" | jq -r '.stdout' | jq -r '.id' 2>/dev/null || echo "")
+DOC_EXIT_CODE=$(echo "$DOC_CREATE_RESULT" | jq -r '.exit_code')
+DOC_STDOUT=$(echo "$DOC_CREATE_RESULT" | jq -r '.stdout')
 
-if [ -n "$DOC_ID" ] && [ "$DOC_ID" != "null" ]; then
-    log_success "Document created: $DOC_ID"
+if [ "$DOC_EXIT_CODE" = "0" ]; then
+    DOC_ID=$(echo "$DOC_STDOUT" | head -1 | jq -r '.id' 2>/dev/null || echo "")
+    if [ -n "$DOC_ID" ] && [ "$DOC_ID" != "null" ]; then
+        log_success "Document created: $DOC_ID"
+    else
+        log_error "Curl succeeded but response unexpected"
+        echo "$DOC_STDOUT"
+    fi
 else
-    log_error "Failed to create document"
+    log_error "Failed to create document (exit code: $DOC_EXIT_CODE)"
     echo "$DOC_CREATE_RESULT" | jq .
 fi
 
 log_step "Listing documents..."
-DOCS_LIST_SCRIPT='
-curl -s -X GET "http://host.docker.internal:3002/api/documents?limit=5" \
-  -H "Authorization: Bearer '"$API_KEY"'" \
-  -H "X-Project-ID: '"$PROJECT_ID"'"
-'
+DOCS_LIST_CMD="curl -s -X GET '\$EMERGENT_API_URL/api/documents?limit=5' -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}'"
 
 DOCS_LIST=$(workspace_api POST "/${WORKSPACE_ID}/bash" "{
-    \"command\": $(echo "$DOCS_LIST_SCRIPT" | jq -Rs .)
+    \"command\": $(echo "$DOCS_LIST_CMD" | jq -Rs .)
 }")
 
 DOC_COUNT=$(echo "$DOCS_LIST" | jq -r '.stdout' | jq -r '.items | length' 2>/dev/null || echo "0")
 log_success "Found $DOC_COUNT documents in project"
 
 log_step "Creating a graph object..."
-GRAPH_CREATE_SCRIPT='
-curl -s -X POST http://host.docker.internal:3002/api/graph/objects \
-  -H "Authorization: Bearer '"$API_KEY"'" \
-  -H "X-Project-ID: '"$PROJECT_ID"'" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"type\": \"test_entity\",
-    \"key\": \"workspace_test_'$(date +%s)'\",
-    \"properties\": {
-      \"name\": \"Agent Workspace Test Entity\",
-      \"description\": \"Created by comprehensive workspace test\",
-      \"workspace_id\": \"'"$WORKSPACE_ID"'\"
-    },
-    \"labels\": [\"test\", \"agent_created\"]
-  }"
-'
+GRAPH_CREATE_CMD="curl -s -w '\\n%{http_code}' -X POST \$EMERGENT_API_URL/api/graph/objects -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}' -H 'Content-Type: application/json' -d '{\"type\":\"test_entity\",\"key\":\"workspace_test_$(date +%s)\",\"properties\":{\"name\":\"Agent Workspace Test Entity\",\"description\":\"Created by comprehensive workspace test\"},\"labels\":[\"test\",\"agent_created\"]}'"
 
 GRAPH_CREATE_RESULT=$(workspace_api POST "/${WORKSPACE_ID}/bash" "{
-    \"command\": $(echo "$GRAPH_CREATE_SCRIPT" | jq -Rs .)
+    \"command\": $(echo "$GRAPH_CREATE_CMD" | jq -Rs .)
 }")
 
-OBJECT_ID=$(echo "$GRAPH_CREATE_RESULT" | jq -r '.stdout' | jq -r '.id' 2>/dev/null || echo "")
+GRAPH_EXIT_CODE=$(echo "$GRAPH_CREATE_RESULT" | jq -r '.exit_code')
+GRAPH_STDOUT=$(echo "$GRAPH_CREATE_RESULT" | jq -r '.stdout')
 
-if [ -n "$OBJECT_ID" ] && [ "$OBJECT_ID" != "null" ]; then
-    log_success "Graph object created: $OBJECT_ID"
+if [ "$GRAPH_EXIT_CODE" = "0" ]; then
+    OBJECT_ID=$(echo "$GRAPH_STDOUT" | head -1 | jq -r '.id' 2>/dev/null || echo "")
+    if [ -n "$OBJECT_ID" ] && [ "$OBJECT_ID" != "null" ]; then
+        log_success "Graph object created: $OBJECT_ID"
+    else
+        log_error "Curl succeeded but response unexpected"
+        echo "$GRAPH_STDOUT"
+    fi
 else
-    log_error "Failed to create graph object"
+    log_error "Failed to create graph object (exit code: $GRAPH_EXIT_CODE)"
     echo "$GRAPH_CREATE_RESULT" | jq .
 fi
 
 log_step "Performing unified search..."
-SEARCH_SCRIPT='
-curl -s -X POST http://host.docker.internal:3002/api/search/unified \
-  -H "Authorization: Bearer '"$API_KEY"'" \
-  -H "X-Project-ID: '"$PROJECT_ID"'" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"query\": \"workspace test\",
-    \"limit\": 5,
-    \"resultTypes\": \"both\",
-    \"fusionStrategy\": \"rrf\"
-  }"
-'
+SEARCH_CMD="curl -s -X POST \$EMERGENT_API_URL/api/search/unified -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}' -H 'Content-Type: application/json' -d '{\"query\":\"workspace test\",\"limit\":5,\"resultTypes\":\"both\",\"fusionStrategy\":\"rrf\"}'"
 
 SEARCH_RESULT=$(workspace_api POST "/${WORKSPACE_ID}/bash" "{
-    \"command\": $(echo "$SEARCH_SCRIPT" | jq -Rs .)
+    \"command\": $(echo "$SEARCH_CMD" | jq -Rs .)
 }")
 
 SEARCH_COUNT=$(echo "$SEARCH_RESULT" | jq -r '.stdout' | jq -r '.results | length' 2>/dev/null || echo "0")

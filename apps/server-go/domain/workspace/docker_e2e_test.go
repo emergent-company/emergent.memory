@@ -511,6 +511,166 @@ func TestDockerE2E_ConcurrentWorkspaceCreates(t *testing.T) {
 }
 
 // =============================================================================
+// TG16.8 — Warm pool under concurrent pressure: race to acquire
+// =============================================================================
+
+func TestDockerE2E_WarmPoolConcurrentAcquire(t *testing.T) {
+	skipWithoutDocker(t)
+	if testing.Short() {
+		t.Skip("skipping long Docker E2E test in short mode")
+	}
+
+	const poolSize = 5
+	const acquirers = 10 // More acquirers than pool containers
+
+	// Set up orchestrator with real gVisor provider
+	o := NewOrchestrator(testLogger())
+	p := newRealGVisorProvider(t)
+	o.RegisterProvider(ProviderGVisor, p)
+
+	// Create warm pool
+	pool := NewWarmPool(o, testLogger(), WarmPoolConfig{Size: poolSize})
+	err := pool.Start(t.Context())
+	require.NoError(t, err, "failed to start warm pool")
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if stopErr := pool.Stop(ctx); stopErr != nil {
+			t.Logf("cleanup: pool stop error: %v", stopErr)
+		}
+	})
+
+	metrics := pool.Metrics()
+	require.Equal(t, poolSize, metrics.PoolSize, "pool should be fully populated")
+
+	// Race: 10 goroutines acquire concurrently from pool of 5
+	var (
+		mu          sync.Mutex
+		acquiredIDs []string
+		hitCount    int32
+		missCount   int32
+	)
+
+	var wg sync.WaitGroup
+	start := time.Now()
+
+	for i := 0; i < acquirers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			wc := pool.Acquire(ProviderGVisor)
+			if wc != nil {
+				atomic.AddInt32(&hitCount, 1)
+				mu.Lock()
+				acquiredIDs = append(acquiredIDs, wc.ProviderID())
+				mu.Unlock()
+			} else {
+				atomic.AddInt32(&missCount, 1)
+			}
+		}()
+	}
+
+	wg.Wait()
+	raceDuration := time.Since(start)
+
+	t.Logf("Concurrent warm pool acquire results:")
+	t.Logf("  Pool size:   %d", poolSize)
+	t.Logf("  Acquirers:   %d", acquirers)
+	t.Logf("  Hits:        %d", hitCount)
+	t.Logf("  Misses:      %d", missCount)
+	t.Logf("  Race time:   %v", raceDuration)
+
+	// Cleanup acquired containers
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		for _, id := range acquiredIDs {
+			if err := p.Destroy(cleanupCtx, id); err != nil {
+				t.Logf("cleanup: failed to destroy %s: %v", id[:min(12, len(id))], err)
+			}
+		}
+	})
+
+	// Exactly poolSize containers should be acquired (no double-assignment)
+	assert.Equal(t, int32(poolSize), hitCount, "hits should equal pool size")
+	assert.Equal(t, int32(acquirers-poolSize), missCount, "misses should equal overflow")
+
+	// No duplicates — each container assigned exactly once
+	idSet := make(map[string]bool)
+	for _, id := range acquiredIDs {
+		assert.False(t, idSet[id], "duplicate container ID acquired: %s", id[:min(12, len(id))])
+		idSet[id] = true
+	}
+
+	// All should complete in under 100ms (pure in-memory operations)
+	assert.Less(t, raceDuration.Milliseconds(), int64(100),
+		"10 concurrent acquires should complete in <100ms")
+
+	// Verify acquired containers are functional
+	for i, id := range acquiredIDs {
+		execResult, err := p.Exec(t.Context(), id, &ExecRequest{
+			Command:   fmt.Sprintf("echo container-%d", i),
+			TimeoutMs: 10000,
+		})
+		assert.NoError(t, err, "exec on acquired container %d failed", i)
+		if err == nil {
+			assert.Equal(t, 0, execResult.ExitCode)
+		}
+	}
+
+	// Wait for replenishment (pool should refill automatically)
+	t.Log("waiting for pool replenishment...")
+	time.Sleep(35 * time.Second) // Allow time for async replenishment
+
+	finalMetrics := pool.Metrics()
+	t.Logf("  Pool after replenish: %d/%d", finalMetrics.PoolSize, finalMetrics.TargetSize)
+	assert.Greater(t, finalMetrics.PoolSize, 0,
+		"pool should have replenished at least some containers")
+
+	t.Log("TG16.8: Warm pool concurrent acquire E2E test passed")
+}
+
+// =============================================================================
+// TG16.9 — Host DNS resolution from workspace containers
+// =============================================================================
+
+func TestDockerE2E_HostDNSResolution(t *testing.T) {
+	skipWithoutDocker(t)
+	if testing.Short() {
+		t.Skip("skipping long Docker E2E test in short mode")
+	}
+
+	p := newRealGVisorProvider(t)
+
+	result, err := p.Create(t.Context(), &CreateContainerRequest{
+		ContainerType: ContainerTypeAgentWorkspace,
+	})
+	require.NoError(t, err)
+	destroyOnCleanup(t, p, result.ProviderID)
+
+	// Verify host.docker.internal resolves
+	resolveResult, err := p.Exec(t.Context(), result.ProviderID, &ExecRequest{
+		Command:   "getent hosts host.docker.internal",
+		TimeoutMs: 10000,
+	})
+	require.NoError(t, err, "DNS resolution command failed")
+	assert.Equal(t, 0, resolveResult.ExitCode,
+		"host.docker.internal should resolve (got: %s %s)", resolveResult.Stdout, resolveResult.Stderr)
+	t.Logf("host.docker.internal resolves to: %s", strings.TrimSpace(resolveResult.Stdout))
+
+	// Verify EMERGENT_API_URL is set
+	envResult, err := p.Exec(t.Context(), result.ProviderID, &ExecRequest{
+		Command: "echo $EMERGENT_API_URL",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, envResult.ExitCode)
+	assert.Contains(t, envResult.Stdout, "http://host.docker.internal:3002",
+		"EMERGENT_API_URL should be set in container environment")
+
+	t.Log("TG16.9: Host DNS resolution E2E test passed")
+}
+
+// =============================================================================
 // TG17.17 — GitHub App: clone private repo → push → verify bot authorship
 // =============================================================================
 
