@@ -115,18 +115,29 @@ func (p *GVisorProvider) Capabilities() *ProviderCapabilities {
 
 // Create provisions a new workspace container with gVisor runtime and named volume.
 func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest) (*CreateContainerResult, error) {
+	p.log.Info("starting workspace container creation",
+		"container_type", req.ContainerType,
+		"base_image_override", req.BaseImage,
+	)
+
 	image := defaultWorkspaceImage
 	if req.BaseImage != "" {
 		image = req.BaseImage
 	}
 
+	p.log.Info("using workspace image", "image", image)
+
 	// Ensure image is available
+	p.log.Info("ensuring image is available", "image", image)
 	if err := p.ensureImage(ctx, image); err != nil {
+		p.log.Error("failed to ensure image", "image", image, "error", err)
 		return nil, fmt.Errorf("failed to ensure image %s: %w", image, err)
 	}
+	p.log.Info("image is ready", "image", image)
 
 	// Generate volume name
 	volumeName := fmt.Sprintf("emergent-workspace-%d", time.Now().UnixNano())
+	p.log.Info("creating volume", "volume_name", volumeName)
 
 	// Create named volume for persistence
 	_, err := p.client.VolumeCreate(ctx, volume.CreateOptions{
@@ -137,8 +148,10 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		},
 	})
 	if err != nil {
+		p.log.Error("failed to create volume", "volume_name", volumeName, "error", err)
 		return nil, fmt.Errorf("failed to create volume: %w", err)
 	}
+	p.log.Info("volume created successfully", "volume_name", volumeName)
 
 	// Determine command — MCP containers use custom commands, workspaces use sleep
 	cmd := []string{"sleep", "infinity"}
@@ -229,6 +242,7 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 	// Create container
 	var networkConfig *network.NetworkingConfig
 	if p.networkName != "" {
+		p.log.Info("attaching container to network", "network", p.networkName)
 		networkConfig = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				p.networkName: {},
@@ -236,15 +250,26 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		}
 	}
 
+	p.log.Info("creating Docker container",
+		"image", image,
+		"runtime", p.runtimeName,
+		"volume", volumeName,
+		"workdir", workspaceDir,
+	)
+
 	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, nil, "")
 	if err != nil {
+		p.log.Error("failed to create Docker container", "image", image, "error", err)
 		// Clean up volume on failure
 		_ = p.client.VolumeRemove(ctx, volumeName, true)
 		return nil, fmt.Errorf("failed to create container: %w", err)
 	}
+	p.log.Info("Docker container created successfully", "container_id", resp.ID[:12])
 
 	// Start container
+	p.log.Info("starting Docker container", "container_id", resp.ID[:12])
 	if err := p.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		p.log.Error("failed to start Docker container", "container_id", resp.ID[:12], "error", err)
 		// Clean up on failure
 		_ = p.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 		_ = p.client.VolumeRemove(ctx, volumeName, true)
@@ -820,21 +845,30 @@ func (p *GVisorProvider) applyResourceLimits(hostConfig *container.HostConfig, l
 
 // ensureImage pulls an image if it's not already available locally.
 func (p *GVisorProvider) ensureImage(ctx context.Context, imgRef string) error {
+	p.log.Info("checking if image exists locally", "image", imgRef)
 	_, _, err := p.client.ImageInspectWithRaw(ctx, imgRef)
 	if err == nil {
+		p.log.Info("image already exists locally", "image", imgRef)
 		return nil // Image already exists
 	}
 
-	p.log.Info("pulling workspace image", "image", imgRef)
+	p.log.Info("image not found locally, pulling from registry", "image", imgRef)
 	reader, err := p.client.ImagePull(ctx, imgRef, image.PullOptions{})
 	if err != nil {
+		p.log.Error("failed to start image pull", "image", imgRef, "error", err)
 		return fmt.Errorf("failed to pull image %s: %w", imgRef, err)
 	}
 	defer reader.Close()
 
+	p.log.Info("image pull started, consuming output stream", "image", imgRef)
 	// Consume the pull output (required for the pull to complete)
-	_, _ = io.Copy(io.Discard, reader)
+	bytesRead, err := io.Copy(io.Discard, reader)
+	if err != nil {
+		p.log.Error("error reading image pull output", "image", imgRef, "error", err)
+		return fmt.Errorf("failed to read pull output for %s: %w", imgRef, err)
+	}
 
+	p.log.Info("image pull completed successfully", "image", imgRef, "bytes_read", bytesRead)
 	return nil
 }
 

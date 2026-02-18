@@ -191,17 +191,28 @@ func (ap *AutoProvisioner) attemptProvision(
 	repoURL, branch string,
 	shouldCheckout bool,
 ) (*ProvisioningResult, error) {
+	ap.log.Info("starting workspace provisioning attempt",
+		"repo_url", repoURL,
+		"branch", branch,
+		"should_checkout", shouldCheckout,
+		"base_image", cfg.BaseImage,
+	)
+
 	// Select provider
+	ap.log.Info("selecting provider with fallback")
 	provider, providerType, err := ap.orchestrator.SelectProviderWithFallback(
 		ContainerTypeAgentWorkspace,
 		DeploymentSelfHosted,
 		"", // auto-select
 	)
 	if err != nil {
+		ap.log.Error("no provider available", "error", err)
 		return nil, fmt.Errorf("no provider available: %w", err)
 	}
+	ap.log.Info("provider selected", "provider_type", providerType)
 
 	// Create container
+	ap.log.Info("creating container via provider", "provider_type", providerType)
 	containerReq := &CreateContainerRequest{
 		ContainerType:  ContainerTypeAgentWorkspace,
 		ResourceLimits: cfg.ResourceLimits,
@@ -210,10 +221,16 @@ func (ap *AutoProvisioner) attemptProvision(
 
 	containerResult, err := provider.Create(ctx, containerReq)
 	if err != nil {
+		ap.log.Error("failed to create container", "provider_type", providerType, "error", err)
 		return &ProvisioningResult{ProviderType: providerType}, fmt.Errorf("failed to create container via %s: %w", providerType, err)
 	}
+	ap.log.Info("container created successfully",
+		"provider_type", providerType,
+		"provider_id", containerResult.ProviderID,
+	)
 
 	// Create workspace record in DB
+	ap.log.Info("creating workspace database record")
 	ws, err := ap.service.Create(ctx, &CreateWorkspaceRequest{
 		ContainerType:  ContainerTypeAgentWorkspace,
 		Provider:       string(providerType),
@@ -222,10 +239,15 @@ func (ap *AutoProvisioner) attemptProvision(
 		ResourceLimits: cfg.ResourceLimits,
 	})
 	if err != nil {
+		ap.log.Error("failed to create workspace record, cleaning up container",
+			"provider_id", containerResult.ProviderID,
+			"error", err,
+		)
 		// Try to clean up the container
 		_ = provider.Destroy(ctx, containerResult.ProviderID)
 		return &ProvisioningResult{ProviderType: providerType}, fmt.Errorf("failed to create workspace record: %w", err)
 	}
+	ap.log.Info("workspace database record created", "workspace_id", ws.ID)
 
 	// Build the entity for internal use
 	wsEntity := &AgentWorkspace{
@@ -236,14 +258,23 @@ func (ap *AutoProvisioner) attemptProvision(
 	}
 
 	// Update provider workspace ID
+	ap.log.Info("updating provider workspace ID",
+		"workspace_id", ws.ID,
+		"provider_id", containerResult.ProviderID,
+	)
 	wsEntity.ProviderWorkspaceID = containerResult.ProviderID
 	_, err = ap.service.store.Update(ctx, wsEntity, "provider_workspace_id")
 	if err != nil {
-		ap.log.Warn("failed to update provider_workspace_id", "error", err)
+		ap.log.Warn("failed to update provider_workspace_id", "workspace_id", ws.ID, "error", err)
 	}
 
 	// Clone repository if needed
 	if shouldCheckout && repoURL != "" && ap.checkoutSvc != nil {
+		ap.log.Info("cloning repository",
+			"workspace_id", ws.ID,
+			"repo_url", repoURL,
+			"branch", branch,
+		)
 		if cloneErr := ap.checkoutSvc.CloneRepository(ctx, provider, containerResult.ProviderID, repoURL, branch); cloneErr != nil {
 			ap.log.Warn("repository clone failed",
 				"workspace_id", ws.ID,
@@ -251,11 +282,17 @@ func (ap *AutoProvisioner) attemptProvision(
 				"error", cloneErr,
 			)
 			// Don't fail provisioning on clone error — workspace is still usable
+		} else {
+			ap.log.Info("repository cloned successfully", "workspace_id", ws.ID)
 		}
 	}
 
 	// Run setup commands
 	if len(cfg.SetupCommands) > 0 && ap.setupExec != nil {
+		ap.log.Info("running setup commands",
+			"workspace_id", ws.ID,
+			"num_commands", len(cfg.SetupCommands),
+		)
 		completed, setupErr := ap.setupExec.RunSetupCommands(ctx, wsEntity, cfg.SetupCommands)
 		if setupErr != nil {
 			ap.log.Warn("setup commands partially failed",
@@ -265,10 +302,16 @@ func (ap *AutoProvisioner) attemptProvision(
 				"error", setupErr,
 			)
 			// Don't fail provisioning on setup error — workspace is still usable
+		} else {
+			ap.log.Info("all setup commands completed successfully",
+				"workspace_id", ws.ID,
+				"num_commands", len(cfg.SetupCommands),
+			)
 		}
 	}
 
 	// Mark workspace as ready
+	ap.log.Info("marking workspace as ready", "workspace_id", ws.ID)
 	_, err = ap.service.UpdateStatus(ctx, ws.ID, StatusReady)
 	if err != nil {
 		ap.log.Warn("failed to mark workspace as ready", "workspace_id", ws.ID, "error", err)
