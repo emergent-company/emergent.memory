@@ -104,8 +104,7 @@ services:
       dockerfile: deploy/minimal/Dockerfile.server-with-cli
     container_name: emergent-server
     restart: unless-stopped
-    ports:
-      - '${SERVER_PORT:-3002}:3002'
+    network_mode: host
     volumes:
       - emergent_cli_config:/root/.emergent
       - /var/run/docker.sock:/var/run/docker.sock
@@ -116,8 +115,6 @@ services:
       - /dev/net/tun:/dev/net/tun
     cap_add:
       - NET_ADMIN
-    sysctls:
-      - net.ipv4.ip_forward=1
     environment:
       STANDALONE_MODE: 'true'
       STANDALONE_API_KEY: ${STANDALONE_API_KEY:-test-api-key-12345}
@@ -125,21 +122,21 @@ services:
       STANDALONE_ORG_NAME: ${STANDALONE_ORG_NAME:-Default Organization}
       STANDALONE_PROJECT_NAME: ${STANDALONE_PROJECT_NAME:-Default Project}
 
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 5432
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_USER: ${POSTGRES_USER:-emergent}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       POSTGRES_DB: ${POSTGRES_DB:-emergent}
 
-      PORT: 3002
+      SERVER_PORT: ${SERVER_PORT:-3002}
       GO_ENV: production
 
-      KREUZBERG_SERVICE_URL: http://kreuzberg:8000
+      KREUZBERG_SERVICE_URL: http://localhost:${KREUZBERG_PORT:-8000}
       KREUZBERG_SERVICE_TIMEOUT: 300000
       KREUZBERG_ENABLED: 'true'
 
       STORAGE_PROVIDER: minio
-      STORAGE_ENDPOINT: http://minio:9000
+      STORAGE_ENDPOINT: http://localhost:${MINIO_API_PORT:-9000}
       STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-changeme}
       STORAGE_BUCKET_DOCUMENTS: documents
@@ -156,13 +153,6 @@ services:
       WORKSPACE_WARM_POOL_SIZE: ${WORKSPACE_WARM_POOL_SIZE:-2}
       WORKSPACE_DEFAULT_IMAGE: ${WORKSPACE_DEFAULT_IMAGE:-emergent-workspace:latest}
       WORKSPACE_DEFAULT_PROVIDER: ${WORKSPACE_DEFAULT_PROVIDER:-gvisor}
-    depends_on:
-      db:
-        condition: service_healthy
-      kreuzberg:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
     healthcheck:
       test:
         [
@@ -176,8 +166,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    networks:
-      - emergent
 
 volumes:
   postgres_data:
