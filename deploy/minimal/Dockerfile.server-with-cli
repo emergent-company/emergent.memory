@@ -100,13 +100,18 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM alpine:3.21
 
 # Install runtime dependencies
+# Includes Firecracker prerequisites: iptables (NAT), iproute2 (TAP), e2fsprogs (mkfs.ext4)
 RUN apk --no-cache add \
     ca-certificates \
     curl \
     wget \
     bash \
     jq \
-    postgresql16-client
+    postgresql16-client \
+    iptables \
+    iproute2 \
+    e2fsprogs \
+    coreutils
 
 WORKDIR /app
 

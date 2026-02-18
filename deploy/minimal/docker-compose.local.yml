@@ -108,6 +108,16 @@ services:
       - '${SERVER_PORT:-3002}:3002'
     volumes:
       - emergent_cli_config:/root/.emergent
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/emergent/firecracker:/var/lib/emergent/firecracker
+      - /var/lib/emergent/firecracker/firecracker:/usr/local/bin/firecracker:ro
+    devices:
+      - /dev/kvm:/dev/kvm
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.ip_forward=1
     environment:
       STANDALONE_MODE: 'true'
       STANDALONE_API_KEY: ${STANDALONE_API_KEY:-test-api-key-12345}
@@ -141,6 +151,11 @@ services:
 
       DB_AUTOINIT: 'true'
       SCOPES_DISABLED: 'true'
+
+      # Workspace configuration
+      WORKSPACE_WARM_POOL_SIZE: ${WORKSPACE_WARM_POOL_SIZE:-2}
+      WORKSPACE_DEFAULT_IMAGE: ${WORKSPACE_DEFAULT_IMAGE:-emergent-workspace:latest}
+      WORKSPACE_DEFAULT_PROVIDER: ${WORKSPACE_DEFAULT_PROVIDER:-gvisor}
     depends_on:
       db:
         condition: service_healthy
