@@ -21,13 +21,13 @@ type Handler struct {
 }
 
 // NewHandler creates a new workspace handler.
-func NewHandler(svc *Service, orchestrator *Orchestrator, log *slog.Logger) *Handler {
-	return &Handler{svc: svc, orchestrator: orchestrator, log: log.With("component", "workspace-handler")}
-}
-
-// SetCheckoutService sets the checkout service (deferred injection to break circular deps).
-func (h *Handler) SetCheckoutService(cs *CheckoutService) {
-	h.checkoutSvc = cs
+func NewHandler(svc *Service, orchestrator *Orchestrator, checkoutSvc *CheckoutService, log *slog.Logger) *Handler {
+	return &Handler{
+		svc:          svc,
+		orchestrator: orchestrator,
+		checkoutSvc:  checkoutSvc,
+		log:          log.With("component", "workspace-handler"),
+	}
 }
 
 // provisionContainer asynchronously provisions a container for a workspace.
