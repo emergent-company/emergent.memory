@@ -93,13 +93,13 @@ func TestDockerE2E_FullWorkspaceLifecycle(t *testing.T) {
 	})
 	t.Logf("created workspace container: %s", result.ProviderID[:12])
 
-	// Step 2: Install git (ubuntu:22.04 base image doesn't include it)
+	// Step 2: Verify git is available (emergent-workspace:latest includes it)
 	installResult, err := p.Exec(t.Context(), result.ProviderID, &ExecRequest{
-		Command:   "apt-get update -qq && apt-get install -y -qq git >/dev/null 2>&1 && git --version",
+		Command:   "git --version",
 		TimeoutMs: 60000,
 	})
-	require.NoError(t, err, "failed to install git")
-	assert.Equal(t, 0, installResult.ExitCode, "git install failed: %s %s", installResult.Stdout, installResult.Stderr)
+	require.NoError(t, err, "failed to run git")
+	assert.Equal(t, 0, installResult.ExitCode, "git not available: %s %s", installResult.Stdout, installResult.Stderr)
 	assert.Contains(t, installResult.Stdout, "git version")
 
 	// Step 3: Initialize a git repo inside (simulates clone without needing a real remote)
