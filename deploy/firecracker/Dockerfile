@@ -34,18 +34,18 @@ RUN ARCH=$(case "$TARGETARCH" in arm64) echo "aarch64";; *) echo "x86_64";; esac
     TARBALL="firecracker-v${FIRECRACKER_VERSION}-${ARCH}.tgz" && \
     curl -fsSL -o "/tmp/${TARBALL}" \
     "https://github.com/firecracker-microvm/firecracker/releases/download/v${FIRECRACKER_VERSION}/${TARBALL}" && \
-    curl -fsSL -o /tmp/SHA256SUMS \
-    "https://github.com/firecracker-microvm/firecracker/releases/download/v${FIRECRACKER_VERSION}/SHA256SUMS" && \
-    (cd /tmp && grep "${TARBALL}" SHA256SUMS | sha256sum -c -) && \
+    curl -fsSL -o "/tmp/${TARBALL}.sha256.txt" \
+    "https://github.com/firecracker-microvm/firecracker/releases/download/v${FIRECRACKER_VERSION}/${TARBALL}.sha256.txt" && \
+    (cd /tmp && sha256sum -c "${TARBALL}.sha256.txt") && \
     tar xzf "/tmp/${TARBALL}" && \
     mv release-v${FIRECRACKER_VERSION}-${ARCH}/firecracker-v${FIRECRACKER_VERSION}-${ARCH} /usr/local/bin/firecracker && \
     chmod +x /usr/local/bin/firecracker && \
-    rm -rf /tmp/${TARBALL} /tmp/SHA256SUMS
+    rm -rf /tmp/${TARBALL} /tmp/${TARBALL}.sha256.txt
 
 # Download compatible kernel
 RUN ARCH=$(case "$TARGETARCH" in arm64) echo "aarch64";; *) echo "x86_64";; esac) && \
     curl -fsSL -o /vmlinux \
-    "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/${ARCH}/vmlinux-5.10" && \
+    "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/${ARCH}/kernels/vmlinux.bin" && \
     chmod +r /vmlinux
 
 # ──────────────────────────────────────────────────────────────────────
@@ -80,7 +80,10 @@ RUN mkdir -p /rootfs && \
     done
 
 # Copy Alpine base into rootfs
-RUN apk add --no-cache --root /rootfs --initdb \
+RUN mkdir -p /rootfs/etc/apk && \
+    cp /etc/apk/repositories /rootfs/etc/apk/repositories && \
+    cp -r /etc/apk/keys /rootfs/etc/apk/ && \
+    (apk add --no-cache --no-scripts --root /rootfs --initdb \
     alpine-baselayout \
     busybox \
     musl \
@@ -98,37 +101,55 @@ RUN apk add --no-cache --root /rootfs --initdb \
     gzip \
     make \
     patch \
-    diffutils
+    diffutils || true)
 
 # Copy vm-agent
 COPY --from=agent-builder /vm-agent /rootfs/usr/bin/vm-agent
 RUN chmod +x /rootfs/usr/bin/vm-agent
 
-# Configure init
-RUN cat > /rootfs/etc/inittab <<'EOF'
-::sysinit:/etc/init.d/rcS
-::respawn:/usr/bin/vm-agent
-::ctrlaltdel:/sbin/reboot
-::shutdown:/bin/umount -a -r
-EOF
+# Install BusyBox symlinks (Alpine 3.20 doesn't create them with --no-scripts)
+RUN chroot /rootfs /bin/busybox --install -s
 
-RUN mkdir -p /rootfs/etc/init.d && \
-    cat > /rootfs/etc/init.d/rcS <<'INITEOF'
+# Create /sbin/init script (BusyBox on Alpine 3.20 doesn't include init applet)
+RUN cat > /rootfs/sbin/init <<'INITEOF'
 #!/bin/sh
+# Firecracker VM init script
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts /dev/shm
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t tmpfs tmpfs /dev/shm
+mount -t tmpfs tmpfs /run
+mount -t tmpfs tmpfs /tmp
+
+# Remount root read-write
+mount -o remount,rw / 2>/dev/null || true
+
+# Set hostname
 hostname emergent-vm
+
+# Bring up loopback
 ip link set lo up
+
+# Bring up eth0 (IP configured by kernel boot args)
 ip link set eth0 up
-sleep 0.5
+
+# Wait briefly for network interface
+sleep 0.3
+
+# Mount data disk if present
 if [ -e /dev/vdb ]; then
     mkdir -p /workspace
     mount /dev/vdb /workspace
 fi
-echo "Emergent VM agent starting..."
+
+# Start vm-agent
+echo "Starting Emergent VM agent..."
+exec /usr/bin/vm-agent
 INITEOF
-    chmod +x /rootfs/etc/init.d/rcS
+
+RUN chmod +x /rootfs/sbin/init
 
 RUN echo "nameserver 8.8.8.8" > /rootfs/etc/resolv.conf && \
     echo "nameserver 8.8.4.4" >> /rootfs/etc/resolv.conf
@@ -137,13 +158,9 @@ RUN echo "root:x:0:0:root:/root:/bin/bash" > /rootfs/etc/passwd && \
     echo "root:x:0:" > /rootfs/etc/group && \
     mkdir -p /rootfs/workspace && chmod 777 /rootfs/workspace
 
-# Create ext4 image (512MB sparse)
+# Create ext4 image (512MB sparse) — uses mkfs.ext4 -d to populate without mount
 RUN truncate -s 512M /rootfs.ext4 && \
-    mkfs.ext4 -F -L rootfs /rootfs.ext4 && \
-    mkdir -p /mnt/rootfs && \
-    mount -o loop /rootfs.ext4 /mnt/rootfs && \
-    cp -a /rootfs/* /mnt/rootfs/ && \
-    umount /mnt/rootfs
+    mkfs.ext4 -F -L rootfs -d /rootfs /rootfs.ext4
 
 # ──────────────────────────────────────────────────────────────────────
 # Stage 4: Runtime image
