@@ -21,6 +21,7 @@ var Module = fx.Options(
 	fx.Provide(newOrchestrator),
 	fx.Provide(newCleanupJob),
 	fx.Provide(newSetupExecutor),
+	fx.Provide(newCheckoutService),
 	fx.Provide(newAutoProvisioner),
 	fx.Provide(newWarmPool),
 	fx.Provide(NewHandler),
@@ -81,12 +82,18 @@ func newSetupExecutor(orchestrator *Orchestrator, log *slog.Logger) *SetupExecut
 	return NewSetupExecutor(orchestrator, log)
 }
 
+// newCheckoutService creates a checkout service for git operations.
+// For now, we pass nil as the credential provider, which means:
+// - Public repositories work fine (unauthenticated clone)
+// - Private repositories will fail (requires GitHub App integration)
+// - Git identity falls back to "Emergent Agent <agent@emergent.local>"
+func newCheckoutService(log *slog.Logger) *CheckoutService {
+	return NewCheckoutService(nil, log)
+}
+
 // newAutoProvisioner creates the auto-provisioning service for agent workspaces.
-// CheckoutService is not yet wired into DI (requires GitCredentialProvider adapter),
-// so it is passed as nil. The AutoProvisioner handles this gracefully — workspace
-// provisioning works but repository cloning is skipped.
-func newAutoProvisioner(service *Service, orchestrator *Orchestrator, setupExec *SetupExecutor, log *slog.Logger) *AutoProvisioner {
-	return NewAutoProvisioner(service, orchestrator, nil, setupExec, log)
+func newAutoProvisioner(service *Service, orchestrator *Orchestrator, checkoutSvc *CheckoutService, setupExec *SetupExecutor, log *slog.Logger) *AutoProvisioner {
+	return NewAutoProvisioner(service, orchestrator, checkoutSvc, setupExec, log)
 }
 
 // newCleanupJob creates a cleanup job with configuration from env vars.
