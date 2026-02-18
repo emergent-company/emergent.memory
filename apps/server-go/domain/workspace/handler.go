@@ -151,8 +151,8 @@ func (h *Handler) CreateWorkspace(c echo.Context) error {
 		"status", ws.Status,
 	)
 
-	// Trigger async container provisioning
-	go h.provisionContainer(c.Request().Context(), ws, &req)
+	// Trigger async container provisioning (use background context to avoid cancellation)
+	go h.provisionContainer(context.Background(), ws, &req)
 
 	return c.JSON(http.StatusCreated, ws)
 }
