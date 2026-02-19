@@ -4962,6 +4962,53 @@ definitions:
     required:
     - file_path
     type: object
+  domain_workspaceimages.APIResponse-domain_workspaceimages_WorkspaceImageDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_workspaceimages.WorkspaceImageDTO'
+    type: object
+  domain_workspaceimages.CreateWorkspaceImageRequest:
+    properties:
+      docker_ref:
+        type: string
+      name:
+        type: string
+      provider:
+        description: defaults based on docker_ref presence
+        type: string
+    required:
+    - name
+    type: object
+  domain_workspaceimages.ListResponse-domain_workspaceimages_WorkspaceImageDTO:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/domain_workspaceimages.WorkspaceImageDTO'
+        type: array
+    type: object
+  domain_workspaceimages.WorkspaceImageDTO:
+    properties:
+      created_at:
+        type: string
+      docker_ref:
+        type: string
+      error_msg:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      project_id:
+        type: string
+      provider:
+        type: string
+      status:
+        type: string
+      type:
+        type: string
+      updated_at:
+        type: string
+    type: object
   github_com_emergent-company_emergent_domain_workspace.AgentWorkspaceConfig:
     properties:
       base_image:
@@ -4970,6 +5017,9 @@ definitions:
         type: boolean
       enabled:
         type: boolean
+      provider:
+        description: 'Explicit provider: "firecracker", "gvisor", "e2b", or "" (auto)'
+        type: string
       repo_source:
         $ref: '#/definitions/github_com_emergent-company_emergent_domain_workspace.RepoSourceConfig'
       resource_limits:
@@ -5051,7 +5101,7 @@ info:
   license:
     name: Proprietary
   title: Emergent API
-  version: 0.16.9
+  version: 0.17.0
 paths:
   /api/admin/agent-definitions/{id}/workspace-config:
     get:
@@ -5747,6 +5797,115 @@ paths:
       summary: Update MCP server
       tags:
       - mcp-registry
+  /api/admin/workspace-images:
+    get:
+      description: Returns all registered workspace images (built-in and custom) for
+        the project
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_workspaceimages.ListResponse-domain_workspaceimages_WorkspaceImageDTO'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      summary: List workspace images
+      tags:
+      - workspace-images
+    post:
+      consumes:
+      - application/json
+      description: Registers a new workspace image. For Docker refs, triggers background
+        pull.
+      parameters:
+      - description: Image details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_workspaceimages.CreateWorkspaceImageRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_workspaceimages.APIResponse-domain_workspaceimages_WorkspaceImageDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      summary: Create workspace image
+      tags:
+      - workspace-images
+  /api/admin/workspace-images/{id}:
+    delete:
+      description: Removes a custom workspace image. Built-in images cannot be deleted.
+      parameters:
+      - description: Image ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      summary: Delete workspace image
+      tags:
+      - workspace-images
+    get:
+      description: Returns details of a specific workspace image
+      parameters:
+      - description: Image ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_workspaceimages.APIResponse-domain_workspaceimages_WorkspaceImageDTO'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      summary: Get workspace image
+      tags:
+      - workspace-images
   /api/auth/me:
     get:
       description: Returns metadata about the current authentication token including
