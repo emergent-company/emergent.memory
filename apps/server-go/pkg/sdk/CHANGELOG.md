@@ -5,6 +5,26 @@ All notable changes to the Emergent Go SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - Unreleased
+
+### Added
+
+**Graph ID Model Reform (Issues #43–#47):**
+
+- **`graphutil` package** — New `pkg/sdk/graph/graphutil/` with `IDSet`, `ObjectIndex`, and `UniqueByEntity` helpers for canonical-aware ID comparison, O(1) lookup by either ID variant, and query result deduplication
+- **`GetByAnyID` method** — Semantic alias for `GetObject` that makes caller intent explicit when the ID could be either version-specific or entity-stable
+- **`HasRelationship` method** — Boolean check for relationship existence by type, src, and dst (accepts either ID form)
+- **`VersionID` / `EntityID` fields** — Added to `GraphObject` and `GraphRelationship` SDK types alongside deprecated `ID` / `CanonicalID`; custom `UnmarshalJSON` cross-populates all four fields regardless of which names the server sends
+- **Dual JSON field names** — Server DTOs (`GraphObjectResponse`, `GraphRelationshipResponse`, `ExpandNode`, `TraverseNode`, `AnalyticsObjectItem`, `SimilarObjectResult`) now emit both `id`/`canonical_id` and `version_id`/`entity_id` via custom `MarshalJSON`
+- **Documentation** — `docs/graph/id-model.md` with lifecycle diagrams, UpdateObject footgun examples, relationship lookup guidance, and dedup patterns; godoc on `GraphObject.ID`, `CanonicalID`, `UpdateObject`, `CreateRelationship`
+
+### Deprecated
+
+- `GraphObject.ID` — Use `VersionID` instead
+- `GraphObject.CanonicalID` — Use `EntityID` instead
+- `GraphRelationship.ID` — Use `VersionID` instead
+- `GraphRelationship.CanonicalID` — Use `EntityID` instead
+
 ## [0.7.0] - 2026-02-12
 
 ### Added
