@@ -53,12 +53,34 @@ func (c *Client) SetContext(orgID, projectID string) {
 // =============================================================================
 
 // GraphObject represents a graph object response from the API.
+//
+// The dual-ID model:
+//   - ID / VersionID is the version-specific identifier. It changes on every
+//     update — each version of an object gets a new, immutable ID.
+//   - CanonicalID / EntityID is the stable entity identifier. It stays the same
+//     across all versions of an object.
+//
+// When storing references to objects (e.g., for relationship creation), prefer
+// EntityID (CanonicalID) — it remains valid even after the object is updated.
+// See also docs/graph/id-model.md for the full lifecycle explanation.
 type GraphObject struct {
-	ID                string         `json:"id"`
-	OrgID             *string        `json:"org_id,omitempty"`
-	ProjectID         string         `json:"project_id"`
-	BranchID          *string        `json:"branch_id,omitempty"`
-	CanonicalID       string         `json:"canonical_id"`
+	// ID is the version-specific identifier for this object. It changes on every
+	// UpdateObject call — each version gets a new, unique ID.
+	//
+	// Deprecated: Use VersionID instead.
+	ID        string  `json:"id"`
+	OrgID     *string `json:"org_id,omitempty"`
+	ProjectID string  `json:"project_id"`
+	BranchID  *string `json:"branch_id,omitempty"`
+	// CanonicalID is the stable entity identifier. It remains constant across all
+	// versions of an object.
+	//
+	// Deprecated: Use EntityID instead.
+	CanonicalID string `json:"canonical_id"`
+	// VersionID is the preferred name for the version-specific identifier (same as ID).
+	VersionID string `json:"version_id"`
+	// EntityID is the preferred name for the stable entity identifier (same as CanonicalID).
+	EntityID          string         `json:"entity_id"`
 	SupersedesID      *string        `json:"supersedes_id,omitempty"`
 	Version           int            `json:"version"`
 	Type              string         `json:"type"`
@@ -81,16 +103,47 @@ type GraphObject struct {
 	RelationshipCount *int           `json:"relationship_count,omitempty"`
 }
 
+// UnmarshalJSON populates both old (ID, CanonicalID) and new (VersionID, EntityID)
+// fields regardless of which JSON field names the server sends. This ensures
+// callers using either naming convention always see correct values.
+func (o *GraphObject) UnmarshalJSON(data []byte) error {
+	type Alias GraphObject
+	aux := &struct {
+		*Alias
+	}{Alias: (*Alias)(o)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	// Cross-populate: ensure all four fields are set
+	if o.VersionID == "" && o.ID != "" {
+		o.VersionID = o.ID
+	} else if o.ID == "" && o.VersionID != "" {
+		o.ID = o.VersionID
+	}
+	if o.EntityID == "" && o.CanonicalID != "" {
+		o.EntityID = o.CanonicalID
+	} else if o.CanonicalID == "" && o.EntityID != "" {
+		o.CanonicalID = o.EntityID
+	}
+	return nil
+}
+
 // =============================================================================
 // SDK Types — GraphRelationship
 // =============================================================================
 
 // GraphRelationship represents a graph relationship response from the API.
 type GraphRelationship struct {
-	ID            string         `json:"id"`
-	ProjectID     string         `json:"project_id"`
-	BranchID      *string        `json:"branch_id,omitempty"`
-	CanonicalID   string         `json:"canonical_id"`
+	// Deprecated: Use VersionID instead.
+	ID        string  `json:"id"`
+	ProjectID string  `json:"project_id"`
+	BranchID  *string `json:"branch_id,omitempty"`
+	// Deprecated: Use EntityID instead.
+	CanonicalID string `json:"canonical_id"`
+	// VersionID is the preferred name for the version-specific identifier.
+	VersionID string `json:"version_id"`
+	// EntityID is the preferred name for the stable entity identifier.
+	EntityID      string         `json:"entity_id"`
 	SupersedesID  *string        `json:"supersedes_id,omitempty"`
 	Version       int            `json:"version"`
 	Type          string         `json:"type"`
@@ -104,6 +157,29 @@ type GraphRelationship struct {
 	// InverseRelationship is populated when an inverse relationship was auto-created
 	// based on the template pack's inverseType declaration.
 	InverseRelationship *GraphRelationship `json:"inverse_relationship,omitempty"`
+}
+
+// UnmarshalJSON populates both old (ID, CanonicalID) and new (VersionID, EntityID)
+// fields regardless of which JSON field names the server sends.
+func (r *GraphRelationship) UnmarshalJSON(data []byte) error {
+	type Alias GraphRelationship
+	aux := &struct {
+		*Alias
+	}{Alias: (*Alias)(r)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if r.VersionID == "" && r.ID != "" {
+		r.VersionID = r.ID
+	} else if r.ID == "" && r.VersionID != "" {
+		r.ID = r.VersionID
+	}
+	if r.EntityID == "" && r.CanonicalID != "" {
+		r.EntityID = r.CanonicalID
+	} else if r.CanonicalID == "" && r.EntityID != "" {
+		r.CanonicalID = r.EntityID
+	}
+	return nil
 }
 
 // =============================================================================
@@ -873,6 +949,14 @@ func (c *Client) GetObject(ctx context.Context, id string) (*GraphObject, error)
 	return &result, nil
 }
 
+// GetByAnyID retrieves a graph object by either its version-specific ID or its
+// stable canonical (entity) ID. The server already resolves both forms, so this
+// is a semantic alias for GetObject that makes the caller's intent explicit:
+// "I have an ID that might be either kind — just give me the object."
+func (c *Client) GetByAnyID(ctx context.Context, id string) (*GraphObject, error) {
+	return c.GetObject(ctx, id)
+}
+
 // GetObjects retrieves multiple graph objects by their IDs in a single request.
 // This is a convenience wrapper around ListObjects with the IDs filter.
 func (c *Client) GetObjects(ctx context.Context, ids []string) ([]*GraphObject, error) {
@@ -887,6 +971,16 @@ func (c *Client) GetObjects(ctx context.Context, ids []string) ([]*GraphObject, 
 }
 
 // UpdateObject patches a graph object, creating a new version.
+//
+// WARNING: The returned object has a NEW ID (the old ID is now stale). Callers
+// MUST use the returned *GraphObject for all subsequent operations — do NOT
+// continue using the ID from before the update. The CanonicalID remains stable.
+//
+// Example:
+//
+//	updated, _ := client.UpdateObject(ctx, obj.ID, req)
+//	// WRONG: obj.ID is stale after this call
+//	// RIGHT: use updated.ID or updated.CanonicalID
 func (c *Client) UpdateObject(ctx context.Context, id string, req *UpdateObjectRequest) (*GraphObject, error) {
 	var result GraphObject
 	if err := c.patchJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id), req, &result); err != nil {
@@ -1367,6 +1461,11 @@ func (c *Client) GetUnused(ctx context.Context, opts *UnusedOptions) (*UnusedObj
 // =============================================================================
 
 // CreateRelationship creates a new graph relationship.
+//
+// Recommendation: Use CanonicalID (not ID) for SrcID and DstID in the request.
+// The server internally resolves both forms to canonical IDs before storing, but
+// passing CanonicalID directly makes intent explicit and avoids accidental use of
+// stale version-specific IDs after an UpdateObject call.
 func (c *Client) CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) (*GraphRelationship, error) {
 	var result GraphRelationship
 	if err := c.postJSON(ctx, c.base+"/api/graph/relationships", req, &result); err != nil {
@@ -1475,4 +1574,23 @@ func (c *Client) ListRelationships(ctx context.Context, opts *ListRelationshipsO
 		return nil, err
 	}
 	return &result, nil
+}
+
+// HasRelationship checks whether at least one relationship of the given type
+// exists between srcID and dstID. Both version-specific and canonical (entity)
+// IDs are accepted — the server resolves either form.
+//
+// Returns true if one or more matching relationships are found, false otherwise.
+// Only non-deleted relationships are considered.
+func (c *Client) HasRelationship(ctx context.Context, relType, srcID, dstID string) (bool, error) {
+	resp, err := c.ListRelationships(ctx, &ListRelationshipsOptions{
+		Type:  relType,
+		SrcID: srcID,
+		DstID: dstID,
+		Limit: 1,
+	})
+	if err != nil {
+		return false, err
+	}
+	return len(resp.Items) > 0, nil
 }

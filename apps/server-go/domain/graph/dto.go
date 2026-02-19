@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +27,9 @@ type PatchGraphObjectRequest struct {
 }
 
 // GraphObjectResponse is the API response for a graph object.
+//
+// The JSON output includes both legacy field names (id, canonical_id) and new
+// names (version_id, entity_id) via custom MarshalJSON, for backward compatibility.
 type GraphObjectResponse struct {
 	ID            uuid.UUID      `json:"id"`
 	OrgID         *string        `json:"org_id,omitempty"`
@@ -53,6 +57,21 @@ type GraphObjectResponse struct {
 	CreatedAt         time.Time  `json:"created_at"`
 	RevisionCount     *int       `json:"revision_count,omitempty"`
 	RelationshipCount *int       `json:"relationship_count,omitempty"`
+}
+
+// MarshalJSON emits both legacy (id, canonical_id) and new (version_id, entity_id)
+// field names in the JSON output for backward compatibility during the rename transition.
+func (o GraphObjectResponse) MarshalJSON() ([]byte, error) {
+	type Alias GraphObjectResponse
+	return json.Marshal(struct {
+		Alias
+		VersionID uuid.UUID `json:"version_id"`
+		EntityID  uuid.UUID `json:"entity_id"`
+	}{
+		Alias:     Alias(o),
+		VersionID: o.ID,
+		EntityID:  o.CanonicalID,
+	})
 }
 
 // ToResponse converts a GraphObject entity to API response.
@@ -105,6 +124,21 @@ type AnalyticsObjectItem struct {
 	AccessCount     *int64         `json:"access_count,omitempty"`
 	DaysSinceAccess *int           `json:"days_since_access,omitempty"`
 	CreatedAt       time.Time      `json:"created_at"`
+}
+
+// MarshalJSON emits both legacy (id, canonical_id) and new (version_id, entity_id)
+// field names for backward compatibility.
+func (a AnalyticsObjectItem) MarshalJSON() ([]byte, error) {
+	type Alias AnalyticsObjectItem
+	return json.Marshal(struct {
+		Alias
+		VersionID uuid.UUID `json:"version_id"`
+		EntityID  uuid.UUID `json:"entity_id"`
+	}{
+		Alias:     Alias(a),
+		VersionID: a.ID,
+		EntityID:  a.CanonicalID,
+	})
 }
 
 // MostAccessedResponse is the response for most-accessed analytics.
@@ -174,6 +208,9 @@ type PatchGraphRelationshipRequest struct {
 }
 
 // GraphRelationshipResponse is the API response for a relationship.
+//
+// The JSON output includes both legacy field names (id, canonical_id) and new
+// names (version_id, entity_id) via custom MarshalJSON, for backward compatibility.
 type GraphRelationshipResponse struct {
 	ID            uuid.UUID      `json:"id"`
 	ProjectID     uuid.UUID      `json:"project_id"`
@@ -192,6 +229,21 @@ type GraphRelationshipResponse struct {
 	// InverseRelationship is populated when an inverse relationship was auto-created
 	// based on the template pack's inverseType declaration.
 	InverseRelationship *GraphRelationshipResponse `json:"inverse_relationship,omitempty"`
+}
+
+// MarshalJSON emits both legacy (id, canonical_id) and new (version_id, entity_id)
+// field names in the JSON output for backward compatibility during the rename transition.
+func (r GraphRelationshipResponse) MarshalJSON() ([]byte, error) {
+	type Alias GraphRelationshipResponse
+	return json.Marshal(struct {
+		Alias
+		VersionID uuid.UUID `json:"version_id"`
+		EntityID  uuid.UUID `json:"entity_id"`
+	}{
+		Alias:     Alias(r),
+		VersionID: r.ID,
+		EntityID:  r.CanonicalID,
+	})
 }
 
 // ToResponse converts a GraphRelationship entity to API response.
@@ -448,6 +500,22 @@ type SimilarObjectResult struct {
 	CreatedAt   *time.Time     `json:"created_at,omitempty"`
 }
 
+// MarshalJSON emits both legacy (id, canonical_id) and new (version_id, entity_id)
+// field names for backward compatibility.
+func (s SimilarObjectResult) MarshalJSON() ([]byte, error) {
+	type Alias SimilarObjectResult
+	aux := struct {
+		Alias
+		VersionID uuid.UUID  `json:"version_id"`
+		EntityID  *uuid.UUID `json:"entity_id,omitempty"`
+	}{
+		Alias:     Alias(s),
+		VersionID: s.ID,
+		EntityID:  s.CanonicalID,
+	}
+	return json.Marshal(aux)
+}
+
 // =============================================================================
 // Graph Expand DTOs
 // =============================================================================
@@ -493,6 +561,21 @@ type ExpandNode struct {
 	Key         *string        `json:"key,omitempty"`
 	Labels      []string       `json:"labels"`
 	Properties  map[string]any `json:"properties,omitempty"`
+}
+
+// MarshalJSON emits both legacy (id, canonical_id) and new (version_id, entity_id)
+// field names for backward compatibility.
+func (n ExpandNode) MarshalJSON() ([]byte, error) {
+	type Alias ExpandNode
+	return json.Marshal(struct {
+		Alias
+		VersionID uuid.UUID `json:"version_id"`
+		EntityID  uuid.UUID `json:"entity_id"`
+	}{
+		Alias:     Alias(n),
+		VersionID: n.ID,
+		EntityID:  n.CanonicalID,
+	})
 }
 
 // ExpandEdge represents an edge in the expand response.
@@ -610,6 +693,21 @@ type TraverseNode struct {
 	Labels      []string   `json:"labels"`
 	PhaseIndex  *int       `json:"phaseIndex,omitempty"`
 	Paths       [][]string `json:"paths,omitempty"`
+}
+
+// MarshalJSON emits both legacy (id, canonical_id) and new (version_id, entity_id)
+// field names for backward compatibility.
+func (n TraverseNode) MarshalJSON() ([]byte, error) {
+	type Alias TraverseNode
+	return json.Marshal(struct {
+		Alias
+		VersionID uuid.UUID `json:"version_id"`
+		EntityID  uuid.UUID `json:"entity_id"`
+	}{
+		Alias:     Alias(n),
+		VersionID: n.ID,
+		EntityID:  n.CanonicalID,
+	})
 }
 
 // TraverseEdge represents an edge in the traverse response.
