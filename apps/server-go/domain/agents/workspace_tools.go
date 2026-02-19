@@ -147,10 +147,15 @@ func buildReadTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 			Name: "workspace_read",
 			Description: "Read a file or directory listing from the workspace container. " +
 				"Returns file content with line numbers, or directory entries. " +
-				"Use offset and limit for paginated reading of large files.",
+				"Use offset and limit for paginated reading of large files. " +
+				"Parameters: file_path (string, required) - absolute path like /workspace/foo.py; " +
+				"offset (number, optional) - line to start from; limit (number, optional) - max lines.",
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			filePath, _ := args["file_path"].(string)
+			if filePath == "" {
+				filePath, _ = args["path"].(string)
+			}
 			if filePath == "" {
 				return map[string]any{"error": "file_path is required"}, nil
 			}
@@ -196,10 +201,16 @@ func buildWriteTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 			Name: "workspace_write",
 			Description: "Write content to a file in the workspace container. " +
 				"Creates the file if it doesn't exist. Parent directories are auto-created. " +
-				"Overwrites existing content completely.",
+				"Overwrites existing content completely. " +
+				"Parameters: file_path (string, required) - absolute path like /workspace/foo.py; " +
+				"content (string, required) - the file content to write.",
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			filePath, _ := args["file_path"].(string)
+			if filePath == "" {
+				// Fallback: accept "path" as alias for "file_path"
+				filePath, _ = args["path"].(string)
+			}
 			if filePath == "" {
 				return map[string]any{"error": "file_path is required"}, nil
 			}
@@ -231,10 +242,14 @@ func buildEditTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 			Description: "Perform string-replacement editing on a file in the workspace container. " +
 				"Provide old_string (the exact text to find) and new_string (the replacement). " +
 				"By default replaces only the first match. Set replace_all to true for global replacement. " +
-				"If multiple matches exist and replace_all is false, the operation fails — provide more context in old_string.",
+				"If multiple matches exist and replace_all is false, the operation fails — provide more context in old_string. " +
+				"Parameters: file_path (string, required); old_string (string, required); new_string (string, required); replace_all (boolean, optional).",
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			filePath, _ := args["file_path"].(string)
+			if filePath == "" {
+				filePath, _ = args["path"].(string)
+			}
 			if filePath == "" {
 				return map[string]any{"error": "file_path is required"}, nil
 			}

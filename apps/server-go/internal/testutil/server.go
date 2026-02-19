@@ -210,7 +210,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	chat.RegisterRoutes(e, chatHandler, authMiddleware)
 
 	// Register MCP routes
-	mcpSvc := mcp.NewService(db, graphSvc, searchSvc, log)
+	mcpSvc := mcp.NewService(db, graphSvc, searchSvc, testDB.Config, log)
 	mcpHandler := mcp.NewHandler(mcpSvc, log)
 	mcpSSEHandler := mcp.NewSSEHandler(mcpSvc, mcpHandler, log)
 	mcpStreamableHandler := mcp.NewStreamableHTTPHandler(mcpSvc, log)
