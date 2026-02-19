@@ -261,7 +261,7 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 		slog.String("agent_definition_id", req.AgentDefinition.ID),
 	)
 
-	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.AgentDefinition.WorkspaceConfig, nil)
+	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.WorkspaceConfig, nil)
 	if err != nil {
 		ae.log.Error("workspace provisioning returned error, running without workspace",
 			slog.String("run_id", runID),
