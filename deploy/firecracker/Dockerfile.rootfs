@@ -1,0 +1,277 @@
+# Multi-stage Dockerfile for building specialized Firecracker rootfs images
+#
+# This Dockerfile creates 4 rootfs variants:
+#   - base:       Minimal Alpine with basic tools (for warm pool)
+#   - coder:      Base + Python 3.12, Go 1.24, Node.js 22, build tools
+#   - researcher: Base + Python 3.12, jq, wget, text processing
+#   - reviewer:   Base + Python 3.12, linters, static analysis tools
+#
+# Build context: REPOSITORY ROOT (.)
+# Usage: 
+#   docker build --target rootfs-base -f deploy/firecracker/Dockerfile.rootfs -o type=local,dest=./out .
+#   docker build --target rootfs-coder -f deploy/firecracker/Dockerfile.rootfs -o type=local,dest=./out .
+#   docker build --target rootfs-researcher -f deploy/firecracker/Dockerfile.rootfs -o type=local,dest=./out .
+#   docker build --target rootfs-reviewer -f deploy/firecracker/Dockerfile.rootfs -o type=local,dest=./out .
+#
+# Or use build-rootfs.sh script to build all variants at once.
+
+# ──────────────────────────────────────────────────────────────────────
+# Stage 1: Build vm-agent binary
+# ──────────────────────────────────────────────────────────────────────
+FROM golang:1.24-alpine AS agent-builder
+
+RUN apk add --no-cache git
+
+WORKDIR /build
+COPY apps/server-go/go.mod apps/server-go/go.sum ./
+RUN go mod download
+
+COPY apps/server-go/ ./
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w -extldflags '-static'" \
+    -o /vm-agent \
+    ./cmd/vm-agent/main.go
+
+# ──────────────────────────────────────────────────────────────────────
+# Stage 2: Base rootfs directory structure (shared foundation)
+# ──────────────────────────────────────────────────────────────────────
+FROM alpine:3.20 AS rootfs-base-setup
+
+RUN apk add --no-cache e2fsprogs
+
+# Create directory structure
+RUN mkdir -p /rootfs && \
+    for d in bin sbin usr/bin usr/sbin lib etc dev proc sys tmp run var/log var/run workspace usr/lib usr/share; do \
+        mkdir -p /rootfs/$d; \
+    done
+
+# Copy Alpine base repositories and keys
+RUN mkdir -p /rootfs/etc/apk && \
+    cp /etc/apk/repositories /rootfs/etc/apk/repositories && \
+    cp -r /etc/apk/keys /rootfs/etc/apk/
+
+# Install base packages (shared across all variants)
+RUN apk add --no-cache --no-scripts --root /rootfs --initdb \
+    alpine-baselayout \
+    busybox \
+    musl \
+    bash \
+    coreutils \
+    git \
+    openssh-client \
+    curl \
+    ca-certificates \
+    findutils \
+    grep \
+    sed \
+    gawk \
+    tar \
+    gzip \
+    make \
+    patch \
+    diffutils || true
+
+# Copy vm-agent
+COPY --from=agent-builder /vm-agent /rootfs/usr/bin/vm-agent
+RUN chmod +x /rootfs/usr/bin/vm-agent
+
+# Install BusyBox symlinks
+RUN chroot /rootfs /bin/busybox --install -s
+
+# Set up CA certificates
+RUN chroot /rootfs /usr/sbin/update-ca-certificates 2>/dev/null || \
+    (cat /rootfs/usr/share/ca-certificates/mozilla/*.crt > /rootfs/etc/ssl/cert.pem 2>/dev/null && \
+     ln -sf /etc/ssl/cert.pem /rootfs/etc/ssl/certs/ca-certificates.crt) || true
+
+# Create /sbin/init script (identical across all variants)
+RUN rm -f /rootfs/sbin/init && cat > /rootfs/sbin/init <<'INITEOF'
+#!/bin/sh
+# Firecracker VM init script
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts /dev/shm
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t tmpfs tmpfs /dev/shm
+mount -t tmpfs tmpfs /run
+mount -t tmpfs tmpfs /tmp
+
+# Try to remount root read-write
+mount -o remount,rw / 2>/dev/null
+
+# Set hostname
+hostname emergent-vm 2>/dev/null || true
+
+# Bring up loopback
+ip link set lo up
+
+# Bring up eth0
+ip link set eth0 up
+sleep 0.3
+
+# Configure DNS with tmpfs overlay if rootfs is read-only
+if ! echo "nameserver 8.8.8.8" > /etc/resolv.conf 2>/dev/null; then
+    mkdir -p /tmp/etc-overlay
+    cp -a /etc/* /tmp/etc-overlay/ 2>/dev/null || true
+    mount -t tmpfs tmpfs /etc
+    cp -a /tmp/etc-overlay/* /etc/ 2>/dev/null || true
+    rm -rf /tmp/etc-overlay
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+else
+    echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+fi
+
+# Mount data disk
+if [ -e /dev/vdb ]; then
+    mkdir -p /workspace 2>/dev/null || true
+    mount /dev/vdb /workspace
+fi
+
+# Start vm-agent
+echo "Starting Emergent VM agent..."
+exec /usr/bin/vm-agent
+INITEOF
+
+RUN chmod +x /rootfs/sbin/init
+
+# Create resolv.conf, passwd, group
+RUN echo "nameserver 8.8.8.8" > /rootfs/etc/resolv.conf && \
+    echo "nameserver 8.8.4.4" >> /rootfs/etc/resolv.conf && \
+    echo "root:x:0:0:root:/root:/bin/bash" > /rootfs/etc/passwd && \
+    echo "root:x:0:" > /rootfs/etc/group && \
+    mkdir -p /rootfs/workspace && chmod 777 /rootfs/workspace
+
+# ──────────────────────────────────────────────────────────────────────
+# Variant: BASE (minimal, for warm pool)
+# ──────────────────────────────────────────────────────────────────────
+FROM rootfs-base-setup AS rootfs-base-variant
+
+# No additional packages — just the base setup
+
+# Create ext4 image
+RUN truncate -s 512M /rootfs-base.ext4 && \
+    mkfs.ext4 -F -L rootfs-base -d /rootfs /rootfs-base.ext4
+
+# ──────────────────────────────────────────────────────────────────────
+# Variant: CODER (Python, Go, Node.js, build tools)
+# ──────────────────────────────────────────────────────────────────────
+FROM rootfs-base-setup AS rootfs-coder-variant
+
+# Install Python 3.12
+RUN apk add --no-cache --no-scripts --root /rootfs \
+    python3 \
+    py3-pip \
+    python3-dev || true
+
+# Create python3 symlinks if needed
+RUN if [ ! -e /rootfs/usr/bin/python ]; then \
+        ln -s /usr/bin/python3 /rootfs/usr/bin/python; \
+    fi
+
+# Install Node.js 22
+RUN apk add --no-cache --no-scripts --root /rootfs \
+    nodejs \
+    npm || true
+
+# Install Go 1.24 (Alpine 3.20 has go 1.22, need to download go1.24)
+# Download and extract Go to /rootfs/usr/local/go
+RUN mkdir -p /tmp/go-download && \
+    cd /tmp/go-download && \
+    wget -q https://go.dev/dl/go1.24.0.linux-amd64.tar.gz && \
+    mkdir -p /rootfs/usr/local && \
+    tar -C /rootfs/usr/local -xzf go1.24.0.linux-amd64.tar.gz && \
+    rm -rf /tmp/go-download
+
+# Create Go symlinks in /usr/bin
+RUN ln -s /usr/local/go/bin/go /rootfs/usr/bin/go && \
+    ln -s /usr/local/go/bin/gofmt /rootfs/usr/bin/gofmt
+
+# Install build tools
+RUN apk add --no-cache --no-scripts --root /rootfs \
+    gcc \
+    g++ \
+    musl-dev \
+    linux-headers \
+    build-base || true
+
+# Set environment in profile for Go
+RUN echo 'export PATH=$PATH:/usr/local/go/bin' >> /rootfs/etc/profile && \
+    echo 'export GOPATH=/workspace/go' >> /rootfs/etc/profile
+
+# Create ext4 image (1GB for coder — needs more space)
+RUN truncate -s 1G /rootfs-coder.ext4 && \
+    mkfs.ext4 -F -L rootfs-coder -d /rootfs /rootfs-coder.ext4
+
+# ──────────────────────────────────────────────────────────────────────
+# Variant: RESEARCHER (Python, jq, wget, text tools)
+# ──────────────────────────────────────────────────────────────────────
+FROM rootfs-base-setup AS rootfs-researcher-variant
+
+# Install Python 3.12
+RUN apk add --no-cache --no-scripts --root /rootfs \
+    python3 \
+    py3-pip || true
+
+# Create python3 symlinks
+RUN if [ ! -e /rootfs/usr/bin/python ]; then \
+        ln -s /usr/bin/python3 /rootfs/usr/bin/python; \
+    fi
+
+# Install research tools
+RUN apk add --no-cache --no-scripts --root /rootfs \
+    jq \
+    wget \
+    xmlstarlet \
+    yq || true
+
+# Create ext4 image (512MB)
+RUN truncate -s 512M /rootfs-researcher.ext4 && \
+    mkfs.ext4 -F -L rootfs-researcher -d /rootfs /rootfs-researcher.ext4
+
+# ──────────────────────────────────────────────────────────────────────
+# Variant: REVIEWER (Python, linters, static analysis)
+# ──────────────────────────────────────────────────────────────────────
+FROM rootfs-base-setup AS rootfs-reviewer-variant
+
+# Install Python 3.12
+RUN apk add --no-cache --no-scripts --root /rootfs \
+    python3 \
+    py3-pip || true
+
+# Create python3 symlinks
+RUN if [ ! -e /rootfs/usr/bin/python ]; then \
+        ln -s /usr/bin/python3 /rootfs/usr/bin/python; \
+    fi
+
+# Install linters and static analysis tools
+RUN apk add --no-cache --no-scripts --root /rootfs \
+    shellcheck || true
+
+# Install Python linters via pip (into rootfs)
+# Note: pip install in chroot environment
+RUN chroot /rootfs pip3 install --no-cache-dir --break-system-packages \
+    pylint \
+    mypy \
+    black \
+    ruff || true
+
+# Create ext4 image (768MB for reviewer — pip packages take space)
+RUN truncate -s 768M /rootfs-reviewer.ext4 && \
+    mkfs.ext4 -F -L rootfs-reviewer -d /rootfs /rootfs-reviewer.ext4
+
+# ──────────────────────────────────────────────────────────────────────
+# Export stages (for docker build --target)
+# ──────────────────────────────────────────────────────────────────────
+FROM scratch AS rootfs-base
+COPY --from=rootfs-base-variant /rootfs-base.ext4 /rootfs-base.ext4
+
+FROM scratch AS rootfs-coder
+COPY --from=rootfs-coder-variant /rootfs-coder.ext4 /rootfs-coder.ext4
+
+FROM scratch AS rootfs-researcher
+COPY --from=rootfs-researcher-variant /rootfs-researcher.ext4 /rootfs-researcher.ext4
+
+FROM scratch AS rootfs-reviewer
+COPY --from=rootfs-reviewer-variant /rootfs-reviewer.ext4 /rootfs-reviewer.ext4

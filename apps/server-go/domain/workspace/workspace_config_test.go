@@ -607,6 +607,129 @@ func TestToolRestrictionMiddleware_NonToolPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
+// --- IsDockerImageRef ---
+
+func TestIsDockerImageRef(t *testing.T) {
+	tests := []struct {
+		name      string
+		baseImage string
+		expected  bool
+	}{
+		// Firecracker variants (NOT Docker refs)
+		{"empty string", "", false},
+		{"base variant", "base", false},
+		{"coder variant", "coder", false},
+		{"researcher variant", "researcher", false},
+		{"reviewer variant", "reviewer", false},
+
+		// Docker image references
+		{"docker hub with tag", "python:3.12-slim", true},
+		{"docker hub no tag", "ubuntu", true},
+		{"docker hub latest", "node:latest", true},
+		{"ghcr registry", "ghcr.io/my-org/my-image:v1", true},
+		{"gcr registry", "gcr.io/project/image:latest", true},
+		{"docker hub with org", "library/python:3.12", true},
+		{"custom registry", "registry.example.com/team/image:v2", true},
+		{"multi-level path", "my-registry.io/org/sub/image:tag", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsDockerImageRef(tt.baseImage)
+			assert.Equal(t, tt.expected, result, "IsDockerImageRef(%q)", tt.baseImage)
+		})
+	}
+}
+
+// --- ResolveProviderType ---
+
+func TestResolveProviderType(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      *AgentWorkspaceConfig
+		expected ProviderType
+	}{
+		{
+			name:     "nil config auto-selects",
+			cfg:      nil,
+			expected: "",
+		},
+		{
+			name:     "empty config auto-selects",
+			cfg:      &AgentWorkspaceConfig{},
+			expected: "",
+		},
+		{
+			name:     "explicit provider takes priority",
+			cfg:      &AgentWorkspaceConfig{Provider: "firecracker", BaseImage: "python:3.12"},
+			expected: ProviderFirecracker,
+		},
+		{
+			name:     "explicit gvisor provider",
+			cfg:      &AgentWorkspaceConfig{Provider: "gvisor"},
+			expected: ProviderGVisor,
+		},
+		{
+			name:     "firecracker variant auto-selects",
+			cfg:      &AgentWorkspaceConfig{BaseImage: "coder"},
+			expected: "",
+		},
+		{
+			name:     "base variant auto-selects",
+			cfg:      &AgentWorkspaceConfig{BaseImage: "base"},
+			expected: "",
+		},
+		{
+			name:     "empty base_image auto-selects",
+			cfg:      &AgentWorkspaceConfig{BaseImage: ""},
+			expected: "",
+		},
+		{
+			name:     "docker image routes to gvisor",
+			cfg:      &AgentWorkspaceConfig{BaseImage: "python:3.12-slim"},
+			expected: ProviderGVisor,
+		},
+		{
+			name:     "docker hub image routes to gvisor",
+			cfg:      &AgentWorkspaceConfig{BaseImage: "ubuntu"},
+			expected: ProviderGVisor,
+		},
+		{
+			name:     "ghcr image routes to gvisor",
+			cfg:      &AgentWorkspaceConfig{BaseImage: "ghcr.io/org/image:v1"},
+			expected: ProviderGVisor,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ResolveProviderType(tt.cfg)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// --- Provider field roundtrip ---
+
+func TestParseAndToMap_ProviderField(t *testing.T) {
+	original := &AgentWorkspaceConfig{
+		Enabled:   true,
+		Provider:  "firecracker",
+		BaseImage: "coder",
+	}
+
+	m, err := original.ToMap()
+	require.NoError(t, err)
+	require.NotNil(t, m)
+
+	parsed, err := ParseAgentWorkspaceConfig(m)
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+
+	assert.Equal(t, "firecracker", parsed.Provider)
+	assert.Equal(t, "coder", parsed.BaseImage)
+}
+
 // --- extractToolFromPath ---
 
 func TestExtractToolFromPath(t *testing.T) {

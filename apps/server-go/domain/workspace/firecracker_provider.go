@@ -276,11 +276,8 @@ func (p *FirecrackerProvider) Create(ctx context.Context, req *CreateContainerRe
 	// Socket path for Firecracker API
 	socketPath := filepath.Join(p.config.DataDir, "sockets", vmID+".sock")
 
-	// Build Firecracker config
-	rootfsPath := p.config.RootfsPath
-	if rootfsPath == "" {
-		rootfsPath = filepath.Join(p.config.DataDir, "rootfs.ext4")
-	}
+	// Build Firecracker config — resolve rootfs path based on BaseImage
+	rootfsPath := p.resolveRootfsPath(req.BaseImage)
 
 	drives := []models.Drive{
 		{
@@ -686,10 +683,8 @@ func (p *FirecrackerProvider) CreateFromSnapshot(ctx context.Context, snapshotID
 
 	socketPath := filepath.Join(p.config.DataDir, "sockets", vmID+".sock")
 
-	rootfsPath := p.config.RootfsPath
-	if rootfsPath == "" {
-		rootfsPath = filepath.Join(p.config.DataDir, "rootfs.ext4")
-	}
+	// Resolve rootfs path based on BaseImage
+	rootfsPath := p.resolveRootfsPath(req.BaseImage)
 
 	// Build config for snapshot restoration
 	drives := []models.Drive{
@@ -1021,6 +1016,52 @@ func (p *FirecrackerProvider) setupIPTablesNAT(tapName, vmIP string) error {
 	}
 
 	return nil
+}
+
+// resolveRootfsPath maps a BaseImage string to the corresponding rootfs file path.
+// This allows different agent types to use specialized rootfs images with appropriate
+// tooling (e.g., coder with Python/Go/Node.js, researcher with jq/wget, etc.).
+//
+// BaseImage values:
+//   - ""          -> rootfs-base.ext4 (default, used by warm pool)
+//   - "base"      -> rootfs-base.ext4 (explicit base)
+//   - "coder"     -> rootfs-coder.ext4 (Python, Go, Node.js, build tools)
+//   - "researcher" -> rootfs-researcher.ext4 (Python, jq, wget, text tools)
+//   - "reviewer"  -> rootfs-reviewer.ext4 (Python, linters, static analysis)
+//
+// Falls back to default rootfs if variant is not recognized.
+func (p *FirecrackerProvider) resolveRootfsPath(baseImage string) string {
+	baseDir := p.config.DataDir
+	if baseDir == "" {
+		baseDir = "/var/lib/firecracker"
+	}
+
+	// Map baseImage to rootfs file
+	switch baseImage {
+	case "coder":
+		return filepath.Join(baseDir, "rootfs-coder.ext4")
+	case "researcher":
+		return filepath.Join(baseDir, "rootfs-researcher.ext4")
+	case "reviewer":
+		return filepath.Join(baseDir, "rootfs-reviewer.ext4")
+	case "base":
+		return filepath.Join(baseDir, "rootfs-base.ext4")
+	case "":
+		// Empty string means use default (base for warm pool)
+		if p.config.RootfsPath != "" {
+			return p.config.RootfsPath
+		}
+		return filepath.Join(baseDir, "rootfs-base.ext4")
+	default:
+		// Unknown variant — log warning and fall back to default
+		p.log.Warn("unknown rootfs baseImage, using default",
+			"baseImage", baseImage,
+			"defaultPath", p.config.RootfsPath)
+		if p.config.RootfsPath != "" {
+			return p.config.RootfsPath
+		}
+		return filepath.Join(baseDir, "rootfs-base.ext4")
+	}
 }
 
 // cleanupVMResources removes TAP device, block device, and socket file.
