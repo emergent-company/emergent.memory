@@ -16,14 +16,28 @@ type ProvisioningResult struct {
 	Error        error        // Non-nil if provisioning failed
 }
 
+// ResolvedImage contains the result of resolving a base_image name through the image catalog.
+type ResolvedImage struct {
+	Name      string       // The catalog name (e.g., "coder", "py-ml")
+	Provider  ProviderType // Which provider to route to
+	DockerRef string       // Docker image ref (empty for built-in Firecracker variants)
+}
+
+// ImageResolver resolves base_image names from the workspace image catalog.
+// This is implemented by the workspaceimages package and injected via fx.
+type ImageResolver interface {
+	ResolveImage(ctx context.Context, projectID, imageName string) (*ResolvedImage, error)
+}
+
 // AutoProvisioner handles automatic workspace provisioning for agent sessions.
 type AutoProvisioner struct {
-	service      *Service
-	orchestrator *Orchestrator
-	checkoutSvc  *CheckoutService
-	setupExec    *SetupExecutor
-	warmPool     *WarmPool
-	log          *slog.Logger
+	service       *Service
+	orchestrator  *Orchestrator
+	checkoutSvc   *CheckoutService
+	setupExec     *SetupExecutor
+	warmPool      *WarmPool
+	imageResolver ImageResolver // optional — if nil, falls back to ResolveProviderType()
+	log           *slog.Logger
 }
 
 // NewAutoProvisioner creates a new auto-provisioning service.
@@ -45,6 +59,12 @@ func NewAutoProvisioner(
 	}
 }
 
+// SetImageResolver injects the image catalog resolver.
+// Called by the workspaceimages module during fx startup.
+func (ap *AutoProvisioner) SetImageResolver(resolver ImageResolver) {
+	ap.imageResolver = resolver
+}
+
 // ProvisionForSession provisions a workspace based on an agent definition's workspace config.
 // This is called when an agent session starts.
 //
@@ -60,6 +80,7 @@ func NewAutoProvisioner(
 func (ap *AutoProvisioner) ProvisionForSession(
 	ctx context.Context,
 	agentDefID string,
+	projectID string,
 	workspaceConfig map[string]any,
 	taskMetadata map[string]any,
 ) (*ProvisioningResult, error) {
@@ -85,7 +106,7 @@ func (ap *AutoProvisioner) ProvisionForSession(
 	)
 
 	// Attempt provisioning (with one retry on fallback provider)
-	result, err := ap.attemptProvision(ctx, cfg, repoURL, branch, shouldCheckout)
+	result, err := ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout)
 	if err != nil {
 		ap.log.Warn("first provisioning attempt failed, retrying with fallback",
 			"agent_definition_id", agentDefID,
@@ -98,7 +119,7 @@ func (ap *AutoProvisioner) ProvisionForSession(
 		}
 
 		// Retry once with fallback
-		result, err = ap.attemptProvision(ctx, cfg, repoURL, branch, shouldCheckout)
+		result, err = ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout)
 		if err != nil {
 			ap.log.Error("workspace provisioning failed after retry, starting in degraded mode",
 				"agent_definition_id", agentDefID,
@@ -190,6 +211,7 @@ func (ap *AutoProvisioner) updateStatusBestEffort(ctx context.Context, workspace
 // attemptProvision performs a single provisioning attempt.
 func (ap *AutoProvisioner) attemptProvision(
 	ctx context.Context,
+	projectID string,
 	cfg *AgentWorkspaceConfig,
 	repoURL, branch string,
 	shouldCheckout bool,
@@ -201,12 +223,43 @@ func (ap *AutoProvisioner) attemptProvision(
 		"base_image", cfg.BaseImage,
 	)
 
-	// Select provider
-	ap.log.Info("selecting provider with fallback")
+	// Resolve base_image through image catalog if available
+	if ap.imageResolver != nil && cfg.BaseImage != "" && projectID != "" {
+		resolved, err := ap.imageResolver.ResolveImage(ctx, projectID, cfg.BaseImage)
+		if err != nil {
+			ap.log.Warn("image catalog resolution failed, falling back to direct routing",
+				"base_image", cfg.BaseImage,
+				"project_id", projectID,
+				"error", err,
+			)
+			// Fall through to ResolveProviderType below
+		} else if resolved != nil {
+			ap.log.Info("resolved image from catalog",
+				"name", resolved.Name,
+				"provider", resolved.Provider,
+				"docker_ref", resolved.DockerRef,
+			)
+			// If the catalog says it's a Docker image, override BaseImage with the docker ref
+			if resolved.DockerRef != "" {
+				cfg.BaseImage = resolved.DockerRef
+			}
+			// Override provider if catalog specifies one
+			if resolved.Provider != "" {
+				cfg.Provider = string(resolved.Provider)
+			}
+		}
+	}
+
+	// Select provider — use smart routing based on workspace config
+	requestedProvider := ResolveProviderType(cfg)
+	ap.log.Info("selecting provider with fallback",
+		"requested_provider", requestedProvider,
+		"base_image", cfg.BaseImage,
+	)
 	provider, providerType, err := ap.orchestrator.SelectProviderWithFallback(
 		ContainerTypeAgentWorkspace,
 		DeploymentSelfHosted,
-		"", // auto-select
+		requestedProvider,
 	)
 	if err != nil {
 		ap.log.Error("no provider available", "error", err)
@@ -223,14 +276,27 @@ func (ap *AutoProvisioner) attemptProvision(
 	}
 
 	// Try warm pool first, fall back to cold creation
+	// Note: warm pool only contains default (base) images, so skip it if a
+	// specific BaseImage is requested (e.g., "coder", "researcher", "reviewer")
 	var containerProviderID string
-	if wc := ap.warmPool.Acquire(providerType); wc != nil {
-		containerProviderID = wc.ProviderID()
-		ap.log.Info("acquired warm container",
-			"provider_type", providerType,
-			"provider_id", containerProviderID,
-		)
+	if cfg.BaseImage == "" {
+		// Only use warm pool for default/base image
+		if wc := ap.warmPool.Acquire(providerType); wc != nil {
+			containerProviderID = wc.ProviderID()
+			ap.log.Info("acquired warm container",
+				"provider_type", providerType,
+				"provider_id", containerProviderID,
+			)
+		}
 	} else {
+		ap.log.Info("skipping warm pool due to specific BaseImage",
+			"base_image", cfg.BaseImage,
+			"provider_type", providerType,
+		)
+	}
+
+	// Cold create if warm pool was skipped or had no available containers
+	if containerProviderID == "" {
 		result, err := provider.Create(ctx, containerReq)
 		if err != nil {
 			ap.log.Error("failed to create container", "provider_type", providerType, "error", err)

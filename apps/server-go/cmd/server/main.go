@@ -64,6 +64,7 @@ import (
 	"github.com/emergent-company/emergent/domain/userprofile"
 	"github.com/emergent-company/emergent/domain/users"
 	"github.com/emergent-company/emergent/domain/workspace"
+	"github.com/emergent-company/emergent/domain/workspaceimages"
 	"github.com/emergent-company/emergent/internal/config"
 	"github.com/emergent-company/emergent/internal/database"
 	"github.com/emergent-company/emergent/internal/server"
@@ -163,6 +164,9 @@ func main() {
 
 		// Agent workspace infrastructure (isolated execution environments)
 		workspace.Module,
+
+		// Workspace image catalog (built-in rootfs + custom Docker images)
+		workspaceimages.Module,
 
 		// GitHub App integration (repository access, credential management)
 		githubapp.Module,

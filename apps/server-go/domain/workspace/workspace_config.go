@@ -25,6 +25,7 @@ var ValidToolNames = []string{"bash", "read", "write", "edit", "glob", "grep", "
 // Stored as JSONB in kb.agent_definitions.workspace_config.
 type AgentWorkspaceConfig struct {
 	Enabled         bool              `json:"enabled"`
+	Provider        string            `json:"provider,omitempty"` // Explicit provider: "firecracker", "gvisor", "e2b", or "" (auto)
 	RepoSource      *RepoSourceConfig `json:"repo_source,omitempty"`
 	Tools           []string          `json:"tools,omitempty"`
 	ResourceLimits  *ResourceLimits   `json:"resource_limits,omitempty"`
@@ -261,4 +262,48 @@ func ResolveRepoSource(cfg *AgentWorkspaceConfig, taskCtx *TaskContext) (string,
 	default:
 		return "", "", false
 	}
+}
+
+// firecrackerVariants lists known Firecracker rootfs variant names.
+// Any BaseImage value NOT in this set is treated as a Docker image reference.
+var firecrackerVariants = map[string]bool{
+	"":           true, // empty = default base
+	"base":       true,
+	"coder":      true,
+	"researcher": true,
+	"reviewer":   true,
+}
+
+// IsDockerImageRef returns true if baseImage looks like a Docker image reference
+// (e.g. "python:3.12-slim", "ghcr.io/org/image:v1", "ubuntu") rather than a
+// known Firecracker rootfs variant name (e.g. "coder", "reviewer").
+func IsDockerImageRef(baseImage string) bool {
+	if baseImage == "" {
+		return false
+	}
+	return !firecrackerVariants[baseImage]
+}
+
+// ResolveProviderType determines which provider should handle a workspace based
+// on the workspace config. Resolution order:
+//  1. If Provider is explicitly set (e.g. "firecracker", "gvisor"), use that.
+//  2. If BaseImage is a Docker image ref (not a known Firecracker variant),
+//     route to gVisor since only gVisor can pull/run arbitrary Docker images.
+//  3. Otherwise, return "" to let the orchestrator auto-select.
+func ResolveProviderType(cfg *AgentWorkspaceConfig) ProviderType {
+	if cfg == nil {
+		return "" // auto-select
+	}
+
+	// Explicit provider takes priority
+	if cfg.Provider != "" {
+		return ProviderType(cfg.Provider)
+	}
+
+	// Docker image refs must go to gVisor (Firecracker only supports named rootfs variants)
+	if IsDockerImageRef(cfg.BaseImage) {
+		return ProviderGVisor
+	}
+
+	return "" // auto-select
 }
