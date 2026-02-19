@@ -305,6 +305,8 @@ type WorkspaceConfig struct {
 	NetworkName string `env:"WORKSPACE_NETWORK_NAME" envDefault:""`
 	// DefaultImage is the Docker image for workspace containers (e.g. ghcr.io/emergent-company/emergent-workspace:latest)
 	DefaultImage string `env:"WORKSPACE_DEFAULT_IMAGE" envDefault:""`
+	// FirecrackerDataDir is the directory containing Firecracker rootfs and kernel files
+	FirecrackerDataDir string `env:"WORKSPACE_FIRECRACKER_DATA_DIR" envDefault:"/var/lib/firecracker"`
 }
 
 // IsEnabled returns true if agent workspaces are enabled
