@@ -42,10 +42,10 @@ RUN ARCH=$(case "$TARGETARCH" in arm64) echo "aarch64";; *) echo "x86_64";; esac
     chmod +x /usr/local/bin/firecracker && \
     rm -rf /tmp/${TARBALL} /tmp/${TARBALL}.sha256.txt
 
-# Download compatible kernel
+# Download compatible kernel (6.1.102 from CI - supports virtio-rng and modern features)
 RUN ARCH=$(case "$TARGETARCH" in arm64) echo "aarch64";; *) echo "x86_64";; esac) && \
     curl -fsSL -o /vmlinux \
-    "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/${ARCH}/kernels/vmlinux.bin" && \
+    "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/${ARCH}/vmlinux-6.1.102" && \
     chmod +r /vmlinux
 
 # ──────────────────────────────────────────────────────────────────────
@@ -110,10 +110,17 @@ RUN chmod +x /rootfs/usr/bin/vm-agent
 # Install BusyBox symlinks (Alpine 3.20 doesn't create them with --no-scripts)
 RUN chroot /rootfs /bin/busybox --install -s
 
+# Set up CA certificates (--no-scripts skips the post-install hook that creates cert.pem)
+RUN chroot /rootfs /usr/sbin/update-ca-certificates 2>/dev/null || \
+    (cat /rootfs/usr/share/ca-certificates/mozilla/*.crt > /rootfs/etc/ssl/cert.pem 2>/dev/null && \
+     ln -sf /etc/ssl/cert.pem /rootfs/etc/ssl/certs/ca-certificates.crt) || true
+
 # Create /sbin/init script (BusyBox on Alpine 3.20 doesn't include init applet)
-RUN cat > /rootfs/sbin/init <<'INITEOF'
+# Remove any existing busybox symlink first to avoid "Text file busy" error
+RUN rm -f /rootfs/sbin/init && cat > /rootfs/sbin/init <<'INITEOF'
 #!/bin/sh
 # Firecracker VM init script
+# NOTE: rootfs may be mounted read-only (shared across VMs)
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
@@ -123,11 +130,11 @@ mount -t tmpfs tmpfs /dev/shm
 mount -t tmpfs tmpfs /run
 mount -t tmpfs tmpfs /tmp
 
-# Remount root read-write
-mount -o remount,rw / 2>/dev/null || true
+# Try to remount root read-write (works if disk is rw, harmless if not)
+mount -o remount,rw / 2>/dev/null
 
-# Set hostname
-hostname emergent-vm
+# Set hostname (may fail on read-only rootfs, non-fatal)
+hostname emergent-vm 2>/dev/null || true
 
 # Bring up loopback
 ip link set lo up
@@ -138,9 +145,23 @@ ip link set eth0 up
 # Wait briefly for network interface
 sleep 0.3
 
+# Configure DNS — use tmpfs overlay on /etc if rootfs is read-only
+if ! echo "nameserver 8.8.8.8" > /etc/resolv.conf 2>/dev/null; then
+    # Rootfs is read-only, create a tmpfs overlay for /etc
+    mkdir -p /tmp/etc-overlay
+    cp -a /etc/* /tmp/etc-overlay/ 2>/dev/null || true
+    mount -t tmpfs tmpfs /etc
+    cp -a /tmp/etc-overlay/* /etc/ 2>/dev/null || true
+    rm -rf /tmp/etc-overlay
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+else
+    echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+fi
+
 # Mount data disk if present
 if [ -e /dev/vdb ]; then
-    mkdir -p /workspace
+    mkdir -p /workspace 2>/dev/null || true
     mount /dev/vdb /workspace
 fi
 

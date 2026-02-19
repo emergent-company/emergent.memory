@@ -438,9 +438,15 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 	var agentDef *AgentDefinition
 	agentDef, _ = h.repo.FindDefinitionByName(c.Request().Context(), agent.ProjectID, agent.Name)
 
-	// Build the user message
+	// Parse optional request body for dynamic prompt
+	var triggerReq TriggerRequestDTO
+	_ = c.Bind(&triggerReq) // Ignore bind errors — body is optional
+
+	// Build the user message: request body prompt > agent stored prompt > fallback
 	userMessage := "Execute agent tasks"
-	if agent.Prompt != nil && *agent.Prompt != "" {
+	if triggerReq.Prompt != "" {
+		userMessage = triggerReq.Prompt
+	} else if agent.Prompt != nil && *agent.Prompt != "" {
 		userMessage = *agent.Prompt
 	}
 

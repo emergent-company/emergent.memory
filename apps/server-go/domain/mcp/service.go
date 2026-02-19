@@ -16,6 +16,7 @@ import (
 
 	"github.com/emergent-company/emergent/domain/graph"
 	"github.com/emergent-company/emergent/domain/search"
+	"github.com/emergent-company/emergent/internal/config"
 	"github.com/emergent-company/emergent/internal/database"
 	"github.com/emergent-company/emergent/pkg/logger"
 )
@@ -33,6 +34,10 @@ type Service struct {
 	// MCP registry tool handler (injected to break import cycle)
 	mcpRegistryToolHandler MCPRegistryToolHandler
 
+	// Brave Search API configuration
+	braveSearchAPIKey  string
+	braveSearchTimeout time.Duration
+
 	// Schema version caching
 	cacheMu       sync.RWMutex
 	cachedVersion string
@@ -40,12 +45,18 @@ type Service struct {
 }
 
 // NewService creates a new MCP service
-func NewService(db bun.IDB, graphService *graph.Service, searchSvc *search.Service, log *slog.Logger) *Service {
+func NewService(db bun.IDB, graphService *graph.Service, searchSvc *search.Service, cfg *config.Config, log *slog.Logger) *Service {
+	timeout := cfg.BraveSearch.Timeout
+	if timeout == 0 {
+		timeout = braveSearchDefaultTimeout
+	}
 	return &Service{
-		db:           db,
-		graphService: graphService,
-		searchSvc:    searchSvc,
-		log:          log.With(logger.Scope("mcp.svc")),
+		db:                 db,
+		graphService:       graphService,
+		searchSvc:          searchSvc,
+		braveSearchAPIKey:  cfg.BraveSearch.APIKey,
+		braveSearchTimeout: timeout,
+		log:                log.With(logger.Scope("mcp.svc")),
 	}
 }
 
@@ -730,6 +741,11 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 	}
 
+	// Conditionally add Brave Search tool if configured
+	if s.braveSearchAPIKey != "" {
+		tools = append(tools, getBraveSearchToolDefinition())
+	}
+
 	// Append agent tool definitions if handler is available
 	if s.agentToolHandler != nil {
 		tools = append(tools, s.agentToolHandler.GetAgentToolDefinitions()...)
@@ -931,6 +947,10 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeListMigrationArchives(ctx, projectID, args)
 	case "get_migration_archive":
 		return s.executeGetMigrationArchive(ctx, projectID, args)
+
+	// Web search tools
+	case "brave_web_search":
+		return s.executeBraveWebSearch(ctx, args)
 
 	// Agent Definition tools
 	case "list_agent_definitions":

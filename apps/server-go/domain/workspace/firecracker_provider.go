@@ -213,14 +213,13 @@ func (p *FirecrackerProvider) Create(ctx context.Context, req *CreateContainerRe
 	// Generate unique VM ID
 	vmID := fmt.Sprintf("fc-%d", time.Now().UnixNano())
 
-	// Assign unique IP addresses
+	// Assign unique IP addresses — each VM gets its own /24 subnet for clean routing.
+	// Without separate subnets, multiple TAPs sharing the same host gateway IP cause
+	// routing ambiguity (packets to VM2 route through fctap-1 instead of fctap-2).
 	counter := p.ipCounter.Add(1)
-	// Split counter into two octets for /16 subnet: 172.16.X.Y
-	// X = (counter / 254) + 1, Y = (counter % 254) + 2 (avoiding .0 and .255)
-	x := (counter/254)%254 + 1
-	y := counter%254 + 2
-	vmIP := fmt.Sprintf("%s.%d.%d", fcSubnetPrefix, x, y)
-	hostIP := fmt.Sprintf("%s.%d.1", fcSubnetPrefix, x)
+	subnetIdx := ((counter - 1) % 254) + 1 // 1-254, unique /24 per VM
+	vmIP := fmt.Sprintf("%s.%d.2", fcSubnetPrefix, subnetIdx)
+	hostIP := fmt.Sprintf("%s.%d.1", fcSubnetPrefix, subnetIdx)
 	tapName := fmt.Sprintf("fctap-%d", counter)
 
 	// Parse resource limits
@@ -336,6 +335,17 @@ func (p *FirecrackerProvider) Create(ctx context.Context, req *CreateContainerRe
 		p.cleanupVMResources(vmID, tapName, vmIP, dataDevicePath, socketPath)
 		return nil, fmt.Errorf("failed to create Firecracker machine: %w", err)
 	}
+
+	// Enable virtio-rng entropy device via the Firecracker API.
+	// This injects a handler after all config handlers but before the VM boots.
+	// Without this, the guest kernel's entropy pool is not seeded,
+	// causing OpenSSL/TLS to hang on getrandom() syscalls.
+	machine.Handlers.FcInit = machine.Handlers.FcInit.Append(firecracker.Handler{
+		Name: "custom.EnableEntropyDevice",
+		Fn: func(ctx context.Context, m *firecracker.Machine) error {
+			return p.enableEntropyDevice(m.Cfg.SocketPath)
+		},
+	})
 
 	if err := machine.Start(ctx); err != nil {
 		p.cleanupVMResources(vmID, tapName, vmIP, dataDevicePath, socketPath)
@@ -649,12 +659,11 @@ func (p *FirecrackerProvider) CreateFromSnapshot(ctx context.Context, snapshotID
 	// Generate unique VM ID
 	vmID := fmt.Sprintf("fc-%d", time.Now().UnixNano())
 
-	// Assign unique IP
+	// Assign unique IP — each VM gets its own /24 subnet
 	counter := p.ipCounter.Add(1)
-	x := (counter/254)%254 + 1
-	y := counter%254 + 2
-	vmIP := fmt.Sprintf("%s.%d.%d", fcSubnetPrefix, x, y)
-	hostIP := fmt.Sprintf("%s.%d.1", fcSubnetPrefix, x)
+	subnetIdx := ((counter - 1) % 254) + 1
+	vmIP := fmt.Sprintf("%s.%d.2", fcSubnetPrefix, subnetIdx)
+	hostIP := fmt.Sprintf("%s.%d.1", fcSubnetPrefix, subnetIdx)
 	tapName := fmt.Sprintf("fctap-%d", counter)
 
 	// Copy data device from snapshot
@@ -802,6 +811,43 @@ func (p *FirecrackerProvider) Health(_ context.Context) (*HealthStatus, error) {
 
 // --- Internal Helpers ---
 
+// enableEntropyDevice enables the virtio-rng entropy device on a Firecracker VM
+// by making a raw PUT /entropy call to the Firecracker API socket.
+// This provides the guest kernel with a high-quality entropy source from the host,
+// preventing OpenSSL/TLS hangs caused by getrandom() blocking on an empty entropy pool.
+func (p *FirecrackerProvider) enableEntropyDevice(socketPath string) error {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return net.Dial("unix", socketPath)
+		},
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   5 * time.Second,
+	}
+
+	req, err := http.NewRequest(http.MethodPut, "http://localhost/entropy", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return fmt.Errorf("failed to create entropy device request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to enable entropy device: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to enable entropy device (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	p.log.Debug("virtio-rng entropy device enabled", "socket", socketPath)
+	return nil
+}
+
 // getVM retrieves a VM by provider ID, returning an error if not found or stopped.
 func (p *FirecrackerProvider) getVM(providerID string) (*firecrackerVM, error) {
 	p.mu.RLock()
@@ -940,9 +986,15 @@ func (p *FirecrackerProvider) setupTAPDevice(tapName, hostIP string) error {
 
 // setupIPTablesNAT configures iptables rules for outbound NAT from the VM.
 func (p *FirecrackerProvider) setupIPTablesNAT(tapName, vmIP string) error {
-	// Enable IP forwarding
+	// Enable IP forwarding (may fail in containers where /proc/sys is read-only;
+	// in that case the host must have ip_forward=1 already)
 	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644); err != nil {
-		return fmt.Errorf("failed to enable IP forwarding: %w", err)
+		// Check if forwarding is already enabled
+		data, readErr := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
+		if readErr != nil || len(data) == 0 || data[0] != '1' {
+			return fmt.Errorf("failed to enable IP forwarding: %w", err)
+		}
+		p.log.Debug("IP forwarding already enabled (read-only /proc/sys)")
 	}
 
 	// Add NAT masquerade rule
