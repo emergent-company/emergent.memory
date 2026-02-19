@@ -271,14 +271,15 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		"workdir", workspaceDir,
 	)
 
-	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, nil, "")
+	containerName := fmt.Sprintf("emergent-ws-%d", time.Now().UnixNano())
+	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, nil, containerName)
 	if err != nil {
 		p.log.Error("failed to create Docker container", "image", image, "error", err)
 		// Clean up volume on failure
 		_ = p.client.VolumeRemove(ctx, volumeName, true)
 		return nil, fmt.Errorf("failed to create container: %w", err)
 	}
-	p.log.Info("Docker container created successfully", "container_id", resp.ID[:12])
+	p.log.Info("Docker container created successfully", "container_id", resp.ID[:12], "name", containerName)
 
 	// Start container
 	p.log.Info("starting Docker container", "container_id", resp.ID[:12])
@@ -394,7 +395,8 @@ func (p *GVisorProvider) Snapshot(ctx context.Context, providerID string) (strin
 		},
 	}
 
-	copyResp, err := p.client.ContainerCreate(ctx, copyConfig, copyHostConfig, nil, nil, "")
+	snapCopyName := fmt.Sprintf("emergent-ws-snap-%d", time.Now().UnixNano())
+	copyResp, err := p.client.ContainerCreate(ctx, copyConfig, copyHostConfig, nil, nil, snapCopyName)
 	if err != nil {
 		_ = p.client.VolumeRemove(ctx, snapshotID, true)
 		return "", fmt.Errorf("failed to create snapshot copy container: %w", err)
@@ -479,7 +481,8 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 		},
 	}
 
-	copyResp, err := p.client.ContainerCreate(ctx, copyConfig, copyHostConfig, nil, nil, "")
+	restoreCopyName := fmt.Sprintf("emergent-ws-restore-%d", time.Now().UnixNano())
+	copyResp, err := p.client.ContainerCreate(ctx, copyConfig, copyHostConfig, nil, nil, restoreCopyName)
 	if err != nil {
 		_ = p.client.VolumeRemove(ctx, volumeName, true)
 		return nil, fmt.Errorf("failed to create restore copy container: %w", err)
@@ -554,7 +557,8 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 		p.applyResourceLimits(hostConfig, req.ResourceLimits)
 	}
 
-	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
+	containerName := fmt.Sprintf("emergent-ws-%d", time.Now().UnixNano())
+	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, containerName)
 	if err != nil {
 		_ = p.client.VolumeRemove(ctx, volumeName, true)
 		return nil, fmt.Errorf("failed to create container from snapshot: %w", err)
