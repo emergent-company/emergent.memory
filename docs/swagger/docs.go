@@ -1095,6 +1095,168 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/admin/workspace-images": {
+            "get": {
+                "description": "Returns all registered workspace images (built-in and custom) for the project",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "workspace-images"
+                ],
+                "summary": "List workspace images",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspaceimages.ListResponse-domain_workspaceimages_WorkspaceImageDTO"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Registers a new workspace image. For Docker refs, triggers background pull.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "workspace-images"
+                ],
+                "summary": "Create workspace image",
+                "parameters": [
+                    {
+                        "description": "Image details",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspaceimages.CreateWorkspaceImageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspaceimages.APIResponse-domain_workspaceimages_WorkspaceImageDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/workspace-images/{id}": {
+            "get": {
+                "description": "Returns details of a specific workspace image",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "workspace-images"
+                ],
+                "summary": "Get workspace image",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Image ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_workspaceimages.APIResponse-domain_workspaceimages_WorkspaceImageDTO"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Removes a custom workspace image. Built-in images cannot be deleted.",
+                "tags": [
+                    "workspace-images"
+                ],
+                "summary": "Delete workspace image",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Image ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/auth/me": {
             "get": {
                 "security": [
@@ -22023,6 +22185,78 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_workspaceimages.APIResponse-domain_workspaceimages_WorkspaceImageDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_workspaceimages.WorkspaceImageDTO"
+                }
+            }
+        },
+        "domain_workspaceimages.CreateWorkspaceImageRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "docker_ref": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "defaults based on docker_ref presence",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_workspaceimages.ListResponse-domain_workspaceimages_WorkspaceImageDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_workspaceimages.WorkspaceImageDTO"
+                    }
+                }
+            }
+        },
+        "domain_workspaceimages.WorkspaceImageDTO": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "docker_ref": {
+                    "type": "string"
+                },
+                "error_msg": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_emergent-company_emergent_domain_workspace.AgentWorkspaceConfig": {
             "type": "object",
             "properties": {
@@ -22034,6 +22268,10 @@ const docTemplate = `{
                 },
                 "enabled": {
                     "type": "boolean"
+                },
+                "provider": {
+                    "description": "Explicit provider: \"firecracker\", \"gvisor\", \"e2b\", or \"\" (auto)",
+                    "type": "string"
                 },
                 "repo_source": {
                     "$ref": "#/definitions/github_com_emergent-company_emergent_domain_workspace.RepoSourceConfig"
@@ -22149,7 +22387,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.16.9",
+	Version:          "0.17.0",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
