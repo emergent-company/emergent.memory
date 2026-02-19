@@ -56,6 +56,8 @@ type projectToolCache struct {
 	toolDefs map[string]mcp.ToolDefinition
 	// toolNames is the ordered list of tool names (for deterministic iteration)
 	toolNames []string
+	// builtinTools tracks which tools came from builtin MCP service (not external servers)
+	builtinTools map[string]bool
 }
 
 // NewToolPool creates a new ToolPool.
@@ -101,7 +103,8 @@ func (tp *ToolPool) getOrBuildCache(projectID string) *projectToolCache {
 // buildCache creates the tool cache for a project by combining all tool sources.
 func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 	cache := &projectToolCache{
-		toolDefs: make(map[string]mcp.ToolDefinition),
+		toolDefs:     make(map[string]mcp.ToolDefinition),
+		builtinTools: make(map[string]bool),
 	}
 
 	// 1. Built-in MCP tools from domain/mcp/service.go
@@ -110,6 +113,7 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 		for _, td := range builtinDefs {
 			cache.toolDefs[td.Name] = td
 			cache.toolNames = append(cache.toolNames, td.Name)
+			cache.builtinTools[td.Name] = true
 		}
 		tp.log.Debug("loaded built-in MCP tools into pool",
 			slog.String("project_id", projectID),
@@ -382,10 +386,11 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 	// Capture for closure
 	toolName := td.Name
 
-	// Check if this is an external tool (has server name prefix)
-	isExternal := mcpregistry.IsExternalTool(toolName)
+	// Check if this is a builtin tool by looking at the project cache
+	cache := tp.getOrBuildCache(projectID)
+	isBuiltin := cache.builtinTools[toolName]
 
-	if isExternal && tp.registryService != nil {
+	if !isBuiltin && tp.registryService != nil {
 		// External tool: route through proxy
 		regSvc := tp.registryService
 		pid := projectID

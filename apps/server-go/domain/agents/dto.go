@@ -108,6 +108,11 @@ type BatchTriggerResponseDTO struct {
 	} `json:"skippedDetails"`
 }
 
+// TriggerRequestDTO is the request body for triggering an agent
+type TriggerRequestDTO struct {
+	Prompt string `json:"prompt"`
+}
+
 // TriggerResponseDTO is the response for triggering an agent
 type TriggerResponseDTO struct {
 	Success bool    `json:"success"`

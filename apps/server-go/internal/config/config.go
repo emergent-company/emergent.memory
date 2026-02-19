@@ -49,6 +49,9 @@ type Config struct {
 	// Agent workspace configuration
 	Workspace WorkspaceConfig
 
+	// Brave Search API configuration
+	BraveSearch BraveSearchConfig
+
 	// Server timeouts
 	ReadTimeout     time.Duration `env:"SERVER_READ_TIMEOUT" envDefault:"5s"`
 	WriteTimeout    time.Duration `env:"SERVER_WRITE_TIMEOUT" envDefault:"28800s"` // 8 hours for SSE
@@ -307,6 +310,19 @@ type WorkspaceConfig struct {
 // IsEnabled returns true if agent workspaces are enabled
 func (w *WorkspaceConfig) IsEnabled() bool {
 	return w.Enabled
+}
+
+// BraveSearchConfig holds Brave Search API configuration
+type BraveSearchConfig struct {
+	// APIKey is the Brave Search API subscription token
+	APIKey string `env:"BRAVE_SEARCH_API_KEY" envDefault:""`
+	// Timeout is the HTTP request timeout for Brave Search API calls
+	Timeout time.Duration `env:"BRAVE_SEARCH_TIMEOUT" envDefault:"15s"`
+}
+
+// IsConfigured returns true if Brave Search API key is set
+func (b *BraveSearchConfig) IsConfigured() bool {
+	return b.APIKey != ""
 }
 
 // StandaloneConfig holds configuration for standalone minimal deployment mode
