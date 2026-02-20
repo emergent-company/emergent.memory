@@ -21,6 +21,34 @@ import (
 	"github.com/emergent-company/emergent/pkg/logger"
 )
 
+// StreamEventType identifies the kind of streaming event.
+type StreamEventType int
+
+const (
+	// StreamEventTextDelta is emitted for each partial text token from the LLM.
+	StreamEventTextDelta StreamEventType = iota
+	// StreamEventToolCallStart is emitted before a tool is executed.
+	StreamEventToolCallStart
+	// StreamEventToolCallEnd is emitted after a tool finishes executing.
+	StreamEventToolCallEnd
+	// StreamEventError is emitted when an error occurs during execution.
+	StreamEventError
+)
+
+// StreamEvent is a single event emitted during agent execution via StreamCallback.
+type StreamEvent struct {
+	Type   StreamEventType
+	Text   string         // For TextDelta: the incremental text token
+	Tool   string         // For ToolCallStart/End: the tool name
+	Input  map[string]any // For ToolCallStart: the tool arguments
+	Output map[string]any // For ToolCallEnd: the tool result
+	Error  string         // For Error/ToolCallEnd: error message
+}
+
+// StreamCallback is an optional function invoked for each streaming event during execution.
+// When set on ExecuteRequest, it enables real-time streaming of text tokens and tool calls.
+type StreamCallback func(event StreamEvent)
+
 // ExecuteRequest defines the parameters for executing an agent.
 type ExecuteRequest struct {
 	Agent           *Agent
@@ -34,6 +62,7 @@ type ExecuteRequest struct {
 	MaxDepth        int
 	TriggerSource   *string
 	TriggerMetadata map[string]any
+	StreamCallback  StreamCallback // Optional: enables streaming of text deltas and tool call events
 }
 
 // ExecuteResult is the outcome of an agent execution.
@@ -497,6 +526,18 @@ func (ae *AgentExecutor) runPipeline(
 		return nil, nil
 	}
 
+	// Set up before-tool callback for streaming ToolCallStart events
+	beforeToolCb := func(tCtx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
+		if req.StreamCallback != nil {
+			req.StreamCallback(StreamEvent{
+				Type:  StreamEventToolCallStart,
+				Tool:  t.Name(),
+				Input: args,
+			})
+		}
+		return args, nil
+	}
+
 	// Set up after-tool callback for doom loop detection and state persistence
 	afterToolCb := func(tCtx tool.Context, t tool.Tool, args, result map[string]any, toolErr error) (map[string]any, error) {
 		toolName := t.Name()
@@ -551,6 +592,19 @@ func (ae *AgentExecutor) runPipeline(
 			}, nil
 		}
 
+		// Emit ToolCallEnd streaming event
+		if req.StreamCallback != nil {
+			evt := StreamEvent{
+				Type:   StreamEventToolCallEnd,
+				Tool:   toolName,
+				Output: output,
+			}
+			if toolErr != nil {
+				evt.Error = toolErr.Error()
+			}
+			req.StreamCallback(evt)
+		}
+
 		return result, toolErr
 	}
 
@@ -562,6 +616,7 @@ func (ae *AgentExecutor) runPipeline(
 		Tools:                 resolvedTools,
 		GenerateContentConfig: genConfig,
 		BeforeModelCallbacks:  []llmagent.BeforeModelCallback{beforeModelCb},
+		BeforeToolCallbacks:   []llmagent.BeforeToolCallback{beforeToolCb},
 		AfterToolCallbacks:    []llmagent.AfterToolCallback{afterToolCb},
 	})
 	if err != nil {
@@ -626,6 +681,12 @@ func (ae *AgentExecutor) runPipeline(
 	for event, eventErr := range r.Run(ctx, "system", sess.ID(), userContent, agent.RunConfig{}) {
 		if eventErr != nil {
 			steps := tracker.current()
+			if req.StreamCallback != nil {
+				req.StreamCallback(StreamEvent{
+					Type:  StreamEventError,
+					Error: eventErr.Error(),
+				})
+			}
 			_ = ae.repo.FailRunWithSteps(ctx, run.ID, eventErr.Error(), steps)
 			return &ExecuteResult{
 				RunID:    run.ID,
@@ -638,6 +699,18 @@ func (ae *AgentExecutor) runPipeline(
 
 		if event == nil {
 			continue
+		}
+
+		// Stream partial text deltas to the callback
+		if event.Partial && event.Content != nil && req.StreamCallback != nil {
+			for _, part := range event.Content.Parts {
+				if part != nil && part.Text != "" {
+					req.StreamCallback(StreamEvent{
+						Type: StreamEventTextDelta,
+						Text: part.Text,
+					})
+				}
+			}
 		}
 
 		// Persist assistant messages from events

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/emergent-company/emergent/pkg/adk/session/bunsession"
 	"github.com/uptrace/bun"
 )
 
@@ -905,4 +906,82 @@ func (r *Repository) UpdateNotificationActionStatus(ctx context.Context, notific
 		Where("id = ?", notificationID).
 		Exec(ctx)
 	return err
+}
+
+// --- ADK Sessions ---
+
+// FindADKSessionsByProject returns ADK sessions associated with a specific project
+// by joining against the agent_runs and agents tables.
+func (r *Repository) FindADKSessionsByProject(ctx context.Context, projectID string, limit, offset int) ([]*bunsession.ADKSession, int, error) {
+	var sessions []*bunsession.ADKSession
+
+	// To enforce tenant isolation, we only return sessions where the session ID matches an agent run ID
+	// or where there is a path from the run to the project.
+	// We'll use an EXISTS subquery to check if there's a matching run for this project.
+
+	q := r.db.NewSelect().
+		Model(&sessions).
+		Where("EXISTS (SELECT 1 FROM kb.agent_runs ar JOIN kb.agents a ON ar.agent_id = a.id WHERE ar.id::text = \"as\".id AND a.project_id = ?)", projectID).
+		Order("update_time DESC")
+
+	count, err := q.Limit(limit).Offset(offset).ScanAndCount(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return sessions, count, nil
+}
+
+// FindADKSessionByIDForProject returns a specific ADK session and its events,
+// ensuring the session belongs to the given project.
+func (r *Repository) FindADKSessionByIDForProject(ctx context.Context, sessionID string, projectID string) (*bunsession.ADKSession, []*bunsession.ADKEvent, error) {
+	// First verify the session belongs to the project
+	var exists bool
+	err := r.db.NewSelect().
+		TableExpr("kb.agent_runs AS ar").
+		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
+		Where("ar.id::text = ?", sessionID).
+		Where("a.project_id = ?", projectID).
+		ColumnExpr("1").
+		Limit(1).
+		Scan(ctx, &exists)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil // Not found or no access
+		}
+		return nil, nil, err
+	}
+
+	if !exists {
+		return nil, nil, nil
+	}
+
+	// Fetch the session
+	session := new(bunsession.ADKSession)
+	err = r.db.NewSelect().
+		Model(session).
+		Where("id = ?", sessionID).
+		Scan(ctx)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+
+	// Fetch events
+	var events []*bunsession.ADKEvent
+	err = r.db.NewSelect().
+		Model(&events).
+		Where("session_id = ?", sessionID).
+		Order("timestamp ASC").
+		Scan(ctx)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return session, events, nil
 }

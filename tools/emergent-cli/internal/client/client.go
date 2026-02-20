@@ -71,3 +71,6 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.cfg.OrgID = orgID
 	c.cfg.ProjectID = projectID
 }
+func (c *Client) ProjectID() string {
+	return c.cfg.ProjectID
+}

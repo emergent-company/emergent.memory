@@ -198,6 +198,11 @@ func (s *Service) buildContextSummary(history []Message) string {
 	return summary
 }
 
+// SetAgentDefinitionID sets the agent_definition_id on a conversation.
+func (s *Service) SetAgentDefinitionID(ctx context.Context, projectID string, conversationID uuid.UUID, agentDefID *uuid.UUID) error {
+	return s.repo.SetAgentDefinitionID(ctx, projectID, conversationID, agentDefID)
+}
+
 // GetOrCreateConversation gets an existing conversation by canonical ID or creates a new one
 func (s *Service) GetOrCreateConversation(ctx context.Context, projectID, ownerUserID string, canonicalID string, title string) (*Conversation, bool, error) {
 	projectUUID, err := uuid.Parse(projectID)
