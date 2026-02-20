@@ -1095,6 +1095,61 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/admin/projects/{projectId}/install-default-agents": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates the default graph-query-agent definition for the project. Idempotent - returns existing if already installed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Install default agent definitions for a project",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Default agent definition (existing or created)",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentDefinitionDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid project ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/admin/workspace-images": {
             "get": {
                 "description": "Returns all registered workspace images (built-in and custom) for the project",
@@ -14985,6 +15040,35 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "domain_agents.ACPConfig": {
+            "type": "object",
+            "properties": {
+                "capabilities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "inputModes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "outputModes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "domain_agents.APIResponse-any": {
             "type": "object",
             "properties": {
@@ -15065,6 +15149,23 @@ const docTemplate = `{
             "properties": {
                 "data": {
                     "$ref": "#/definitions/domain_agents.AgentDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_agents.APIResponse-domain_agents_AgentDefinitionDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.AgentDefinitionDTO"
                 },
                 "error": {
                     "type": "string"
@@ -15259,6 +15360,70 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.AgentDefinitionDTO": {
+            "type": "object",
+            "properties": {
+                "acpConfig": {
+                    "$ref": "#/definitions/domain_agents.ACPConfig"
+                },
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "defaultTimeout": {
+                    "type": "integer"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "flowType": {
+                    "$ref": "#/definitions/domain_agents.AgentFlowType"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isDefault": {
+                    "type": "boolean"
+                },
+                "maxSteps": {
+                    "type": "integer"
+                },
+                "model": {
+                    "$ref": "#/definitions/domain_agents.ModelConfig"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "productId": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "systemPrompt": {
+                    "type": "string"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "visibility": {
+                    "$ref": "#/definitions/domain_agents.AgentVisibility"
+                },
+                "workspaceConfig": {
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
         "domain_agents.AgentExecutionMode": {
             "type": "string",
             "enum": [
@@ -15270,6 +15435,29 @@ const docTemplate = `{
                 "ExecutionModeSuggest",
                 "ExecutionModeExecute",
                 "ExecutionModeHybrid"
+            ]
+        },
+        "domain_agents.AgentFlowType": {
+            "type": "string",
+            "enum": [
+                "single",
+                "sequential",
+                "loop"
+            ],
+            "x-enum-comments": {
+                "FlowTypeLoop": "Loop until condition met",
+                "FlowTypeSequential": "Sequential pipeline of steps",
+                "FlowTypeSingle": "Single LLM agent"
+            },
+            "x-enum-descriptions": [
+                "Single LLM agent",
+                "Sequential pipeline of steps",
+                "Loop until condition met"
+            ],
+            "x-enum-varnames": [
+                "FlowTypeSingle",
+                "FlowTypeSequential",
+                "FlowTypeLoop"
             ]
         },
         "domain_agents.AgentQuestionDTO": {
@@ -15431,6 +15619,29 @@ const docTemplate = `{
                 "TriggerTypeWebhook"
             ]
         },
+        "domain_agents.AgentVisibility": {
+            "type": "string",
+            "enum": [
+                "external",
+                "project",
+                "internal"
+            ],
+            "x-enum-comments": {
+                "VisibilityExternal": "Discoverable via ACP and admin UI",
+                "VisibilityInternal": "Only visible to other agents",
+                "VisibilityProject": "Visible in admin UI, not via ACP"
+            },
+            "x-enum-descriptions": [
+                "Discoverable via ACP and admin UI",
+                "Visible in admin UI, not via ACP",
+                "Only visible to other agents"
+            ],
+            "x-enum-varnames": [
+                "VisibilityExternal",
+                "VisibilityProject",
+                "VisibilityInternal"
+            ]
+        },
         "domain_agents.BatchTriggerDTO": {
             "type": "object",
             "required": [
@@ -15528,6 +15739,20 @@ const docTemplate = `{
                 },
                 "triggerType": {
                     "$ref": "#/definitions/domain_agents.AgentTriggerType"
+                }
+            }
+        },
+        "domain_agents.ModelConfig": {
+            "type": "object",
+            "properties": {
+                "maxTokens": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "temperature": {
+                    "type": "number"
                 }
             }
         },
@@ -16073,6 +16298,10 @@ const docTemplate = `{
         "domain_chat.Conversation": {
             "type": "object",
             "properties": {
+                "agentDefinitionId": {
+                    "description": "Agent-backed chat: links conversation to an agent definition for tool-calling capabilities",
+                    "type": "string"
+                },
                 "canonicalId": {
                     "type": "string"
                 },
@@ -16124,6 +16353,10 @@ const docTemplate = `{
         "domain_chat.ConversationWithMessages": {
             "type": "object",
             "properties": {
+                "agentDefinitionId": {
+                    "description": "Agent-backed chat: links conversation to an agent definition for tool-calling capabilities",
+                    "type": "string"
+                },
                 "canonicalId": {
                     "type": "string"
                 },
@@ -16247,6 +16480,9 @@ const docTemplate = `{
                 "message"
             ],
             "properties": {
+                "agentDefinitionId": {
+                    "type": "string"
+                },
                 "canonicalId": {
                     "type": "string"
                 },
@@ -22725,7 +22961,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.19.0",
+	Version:          "0.20.0",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
