@@ -397,6 +397,120 @@ func runGetAgentRuns(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+var questionsCmd = &cobra.Command{
+	Use:   "questions",
+	Short: "Manage agent questions",
+	Long:  "Commands for listing and responding to agent questions",
+}
+
+var listQuestionsCmd = &cobra.Command{
+	Use:   "list [run-id]",
+	Short: "List questions for a run",
+	Long:  "List all questions for a specific agent run",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runListQuestions,
+}
+
+var listProjectQuestionsCmd = &cobra.Command{
+	Use:   "list-project",
+	Short: "List questions for a project",
+	Long:  "List all questions for a project with optional status filter",
+	RunE:  runListProjectQuestions,
+}
+
+var respondToQuestionCmd = &cobra.Command{
+	Use:   "respond [question-id] [response]",
+	Short: "Respond to a question",
+	Long:  "Respond to a pending agent question and resume the paused run",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runRespondToQuestion,
+}
+
+// Flags for questions
+var (
+	questionStatus string
+)
+
+func runListQuestions(cmd *cobra.Command, args []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	runID := args[0]
+	projectID, err := resolveAgentProjectID(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to resolve project ID: %w", err)
+	}
+
+	result, err := c.SDK.Agents.GetRunQuestions(context.Background(), projectID, runID)
+	if err != nil {
+		return fmt.Errorf("failed to list questions: %w", err)
+	}
+
+	out, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal response: %w", err)
+	}
+	fmt.Println(string(out))
+	return nil
+}
+
+func runListProjectQuestions(cmd *cobra.Command, args []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	projectID, err := resolveAgentProjectID(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to resolve project ID: %w", err)
+	}
+
+	result, err := c.SDK.Agents.ListProjectQuestions(context.Background(), projectID, questionStatus)
+	if err != nil {
+		return fmt.Errorf("failed to list project questions: %w", err)
+	}
+
+	out, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal response: %w", err)
+	}
+	fmt.Println(string(out))
+	return nil
+}
+
+func runRespondToQuestion(cmd *cobra.Command, args []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	questionID := args[0]
+	response := args[1]
+
+	projectID, err := resolveAgentProjectID(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to resolve project ID: %w", err)
+	}
+
+	req := &agents.RespondToQuestionRequest{
+		Response: response,
+	}
+
+	result, err := c.SDK.Agents.RespondToQuestion(context.Background(), projectID, questionID, req)
+	if err != nil {
+		return fmt.Errorf("failed to respond to question: %w", err)
+	}
+
+	out, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal response: %w", err)
+	}
+	fmt.Println(string(out))
+	return nil
+}
+
 // resolveAgentProjectID resolves the project ID from --project-id flag or config.
 // Accepts both project names and IDs.
 func resolveAgentProjectID(cmd *cobra.Command) (string, error) {
@@ -443,6 +557,14 @@ func init() {
 	// Runs limit flag
 	runsAgentCmd.Flags().IntVar(&agentRunsLimit, "limit", 10, "Maximum number of runs to return")
 
+	// Questions flags
+	listProjectQuestionsCmd.Flags().StringVar(&questionStatus, "status", "", "Filter by status (pending, answered, cancelled, expired)")
+
+	// Register questions subcommands
+	questionsCmd.AddCommand(listQuestionsCmd)
+	questionsCmd.AddCommand(listProjectQuestionsCmd)
+	questionsCmd.AddCommand(respondToQuestionCmd)
+
 	// Register subcommands
 	agentsCmd.AddCommand(listAgentsCmd)
 	agentsCmd.AddCommand(getAgentCmd)
@@ -451,5 +573,6 @@ func init() {
 	agentsCmd.AddCommand(deleteAgentCmd)
 	agentsCmd.AddCommand(triggerAgentCmd)
 	agentsCmd.AddCommand(runsAgentCmd)
+	agentsCmd.AddCommand(questionsCmd)
 	rootCmd.AddCommand(agentsCmd)
 }

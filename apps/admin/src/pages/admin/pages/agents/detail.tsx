@@ -1,9 +1,10 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { Icon } from '@/components/atoms/Icon';
 import { Spinner } from '@/components/atoms/Spinner';
 import { PageContainer } from '@/components/organisms';
 import { Modal } from '@/components/organisms/Modal/Modal';
+import { AgentRunQAHistory } from '@/components/organisms/AgentRunQAHistory';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -176,6 +177,11 @@ export default function AgentDetailPage() {
   // Expanded sections
   const [configExpanded, setConfigExpanded] = useState(false);
   const [reactionExpanded, setReactionExpanded] = useState(false);
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [runQuestions, setRunQuestions] = useState<
+    Record<string, import('@/api/agents').AgentQuestion[]>
+  >({});
+  const [loadingQuestions, setLoadingQuestions] = useState<string | null>(null);
 
   // Load agent data
   const loadAgent = useCallback(async () => {
@@ -207,6 +213,49 @@ export default function AgentDetailPage() {
   useEffect(() => {
     loadAgent();
   }, [loadAgent]);
+
+  // Toggle expanded run and fetch questions
+  const toggleRunExpand = useCallback(
+    async (runId: string) => {
+      if (expandedRunId === runId) {
+        setExpandedRunId(null);
+        return;
+      }
+      setExpandedRunId(runId);
+
+      // Only fetch if we don't already have them
+      if (!runQuestions[runId] && agent) {
+        setLoadingQuestions(runId);
+        try {
+          const questions = await client.getRunQuestions(
+            agent.projectId,
+            runId
+          );
+          setRunQuestions((prev) => ({ ...prev, [runId]: questions }));
+        } catch {
+          // Silently fail - no questions to show
+          setRunQuestions((prev) => ({ ...prev, [runId]: [] }));
+        } finally {
+          setLoadingQuestions(null);
+        }
+      }
+    },
+    [expandedRunId, runQuestions, agent, client]
+  );
+
+  // Refetch questions for a run after responding
+  const refetchRunQuestions = useCallback(
+    async (runId: string) => {
+      if (!agent) return;
+      try {
+        const questions = await client.getRunQuestions(agent.projectId, runId);
+        setRunQuestions((prev) => ({ ...prev, [runId]: questions }));
+      } catch {
+        // Silently fail
+      }
+    },
+    [agent, client]
+  );
 
   // Update agent
   const updateAgent = async (payload: UpdateAgentPayload) => {
@@ -909,38 +958,76 @@ export default function AgentDetailPage() {
                   </thead>
                   <tbody>
                     {runs.slice(0, 20).map((run) => (
-                      <tr key={run.id}>
-                        <td>
-                          <StatusBadge status={run.status} />
-                        </td>
-                        <td className="text-base-content/70">
-                          {formatRelativeTime(run.startedAt)}
-                        </td>
-                        <td className="text-base-content/70">
-                          {formatDuration(run.durationMs)}
-                        </td>
-                        <td className="max-w-xs text-base-content/70 truncate">
-                          {run.status === 'skipped' && run.skipReason}
-                          {(run.status === 'failed' ||
-                            run.status === 'error') && (
-                            <span className="text-error">
-                              {run.errorMessage}
-                            </span>
-                          )}
-                          {(run.status === 'completed' ||
-                            run.status === 'success') &&
-                            run.summary && (
-                              <span>
-                                {Object.entries(run.summary)
-                                  .filter(
-                                    ([, v]) => v !== null && v !== undefined
-                                  )
-                                  .map(([k, v]) => `${k}: ${v}`)
-                                  .join(' | ')}
+                      <React.Fragment key={run.id}>
+                        <tr
+                          className={`cursor-pointer hover:bg-base-200/50 transition-colors ${
+                            expandedRunId === run.id ? 'bg-base-200/30' : ''
+                          }`}
+                          onClick={() => toggleRunExpand(run.id)}
+                        >
+                          <td>
+                            <div className="flex items-center gap-1.5">
+                              <Icon
+                                icon={
+                                  expandedRunId === run.id
+                                    ? 'lucide--chevron-down'
+                                    : 'lucide--chevron-right'
+                                }
+                                className="size-3.5 text-base-content/40"
+                              />
+                              <StatusBadge status={run.status} />
+                            </div>
+                          </td>
+                          <td className="text-base-content/70">
+                            {formatRelativeTime(run.startedAt)}
+                          </td>
+                          <td className="text-base-content/70">
+                            {formatDuration(run.durationMs)}
+                          </td>
+                          <td className="max-w-xs text-base-content/70 truncate">
+                            {run.status === 'skipped' && run.skipReason}
+                            {(run.status === 'failed' ||
+                              run.status === 'error') && (
+                              <span className="text-error">
+                                {run.errorMessage}
                               </span>
                             )}
-                        </td>
-                      </tr>
+                            {(run.status === 'completed' ||
+                              run.status === 'success') &&
+                              run.summary && (
+                                <span>
+                                  {Object.entries(run.summary)
+                                    .filter(
+                                      ([, v]) => v !== null && v !== undefined
+                                    )
+                                    .map(([k, v]) => `${k}: ${v}`)
+                                    .join(' | ')}
+                                </span>
+                              )}
+                          </td>
+                        </tr>
+                        {expandedRunId === run.id && (
+                          <tr>
+                            <td colSpan={4} className="bg-base-200/20 p-4">
+                              <AgentRunQAHistory
+                                questions={runQuestions[run.id] || []}
+                                isLoading={loadingQuestions === run.id}
+                                projectId={agent?.projectId}
+                                onQuestionResponded={() =>
+                                  refetchRunQuestions(run.id)
+                                }
+                              />
+                              {!loadingQuestions &&
+                                (!runQuestions[run.id] ||
+                                  runQuestions[run.id].length === 0) && (
+                                  <div className="text-center text-sm text-base-content/50 py-4">
+                                    No questions for this run
+                                  </div>
+                                )}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>

@@ -99,6 +99,18 @@ const AGENT_TEMPLATES: AgentTemplate[] = [
     cronSchedule: '0 * * * *',
     config: {},
   },
+  {
+    id: 'webhook-handler',
+    name: 'Webhook Agent',
+    description:
+      'Agent that runs in response to incoming webhook calls from external systems',
+    icon: 'lucide--webhook',
+    strategyType: 'webhook-handler',
+    triggerType: 'webhook',
+    executionMode: 'execute',
+    cronSchedule: '0 * * * *',
+    config: {},
+  },
 ];
 
 type Step = 'template' | 'configure';
