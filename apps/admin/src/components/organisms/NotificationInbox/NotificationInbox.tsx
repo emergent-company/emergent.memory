@@ -22,6 +22,7 @@ export interface NotificationInboxProps {
   onTabChange?: (tab: NotificationTab) => void;
   onNotificationClick?: (notification: Notification) => void;
   onResolve?: (notificationId: string, status: 'accepted' | 'rejected') => void;
+  onResponded?: () => void;
   onFilterClick?: () => void;
   onClearAll?: () => void;
   onCustomizeClick?: () => void;
@@ -40,6 +41,7 @@ export const NotificationInbox: React.FC<NotificationInboxProps> = ({
   onTabChange,
   onNotificationClick,
   onResolve,
+  onResponded,
   onFilterClick,
   onClearAll,
   onCustomizeClick,
@@ -172,6 +174,7 @@ export const NotificationInbox: React.FC<NotificationInboxProps> = ({
                   notification={notification}
                   onClick={onNotificationClick}
                   onResolve={onResolve}
+                  onResponded={onResponded}
                 />
               ))}
             </div>

@@ -9,8 +9,9 @@
  * - 'schedule': Agent runs automatically on cron schedule
  * - 'manual': Agent only runs when manually triggered
  * - 'reaction': Agent runs in response to graph object events
+ * - 'webhook': Agent runs in response to an external webhook call
  */
-export type AgentTriggerType = 'schedule' | 'manual' | 'reaction';
+export type AgentTriggerType = 'schedule' | 'manual' | 'reaction' | 'webhook';
 
 /**
  * Execution mode for reaction agents
@@ -62,6 +63,31 @@ export interface AgentCapabilities {
   canCreateRelationships?: boolean;
   /** Restrict to specific object types (null = all types allowed) */
   allowedObjectTypes?: string[] | null;
+}
+
+/**
+ * Webhook Hook configuration
+ */
+export interface WebhookRateLimitConfig {
+  requestsPerMinute: number;
+  burstSize: number;
+}
+
+export interface AgentWebhookHook {
+  id: string;
+  agentId: string;
+  projectId: string;
+  label: string;
+  enabled: boolean;
+  rateLimitConfig: WebhookRateLimitConfig | null;
+  createdAt: string;
+  updatedAt: string;
+  token?: string; // Only present on creation
+}
+
+export interface CreateAgentWebhookHookPayload {
+  label: string;
+  rateLimitConfig?: WebhookRateLimitConfig | null;
 }
 
 /**
@@ -147,6 +173,34 @@ export interface AgentRunToolCall {
   durationMs: number;
   stepNumber: number;
   createdAt: string;
+}
+
+/**
+ * Agent question option for structured choices
+ */
+export interface AgentQuestionOption {
+  label: string;
+  value: string;
+  description?: string;
+}
+
+/**
+ * Agent question posed during a run
+ */
+export interface AgentQuestion {
+  id: string;
+  runId: string;
+  agentId: string;
+  projectId: string;
+  question: string;
+  options: AgentQuestionOption[];
+  response?: string;
+  respondedBy?: string;
+  respondedAt?: string;
+  status: 'pending' | 'answered' | 'expired' | 'cancelled';
+  notificationId?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
@@ -372,6 +426,20 @@ export interface AgentsClient {
   ): Promise<AgentRunToolCall[]>;
 
   /**
+   * Get questions for a run
+   */
+  getRunQuestions(projectId: string, runId: string): Promise<AgentQuestion[]>;
+
+  /**
+   * Respond to an agent question
+   */
+  respondToQuestion(
+    projectId: string,
+    questionId: string,
+    response: string
+  ): Promise<AgentQuestion>;
+
+  /**
    * Cancel a running agent run
    */
   cancelRun(agentId: string, runId: string): Promise<void>;
@@ -419,6 +487,24 @@ export interface AgentsClient {
       status?: AgentRun['status'];
     }
   ): Promise<PaginatedResponse<AgentRun>>;
+
+  /**
+   * List webhook hooks for an agent
+   */
+  listWebhookHooks(agentId: string): Promise<AgentWebhookHook[]>;
+
+  /**
+   * Create a webhook hook for an agent
+   */
+  createWebhookHook(
+    agentId: string,
+    payload: CreateAgentWebhookHookPayload
+  ): Promise<AgentWebhookHook>;
+
+  /**
+   * Delete a webhook hook
+   */
+  deleteWebhookHook(agentId: string, hookId: string): Promise<void>;
 }
 
 /**
@@ -538,6 +624,31 @@ export function createAgentsClient(
       return response.data || [];
     },
 
+    async getRunQuestions(projectId: string, runId: string) {
+      const response = await fetchJson<AgentApiResponse<AgentQuestion[]>>(
+        `${apiBase}/api/projects/${projectId}/agent-runs/${runId}/questions`
+      );
+      return response.data || [];
+    },
+
+    async respondToQuestion(
+      projectId: string,
+      questionId: string,
+      response: string
+    ) {
+      const res = await fetchJson<AgentApiResponse<AgentQuestion>>(
+        `${apiBase}/api/projects/${projectId}/agent-questions/${questionId}/respond`,
+        {
+          method: 'POST',
+          body: { response },
+        }
+      );
+      if (!res.success || !res.data) {
+        throw new Error(res.error || 'Failed to respond to question');
+      }
+      return res.data;
+    },
+
     async cancelRun(agentId: string, runId: string) {
       const response = await fetchJson<AgentApiResponse<void>>(
         `${baseUrl}/${agentId}/runs/${runId}/cancel`,
@@ -634,6 +745,42 @@ export function createAgentsClient(
         throw new Error(response.error || 'Failed to list project runs');
       }
       return response.data;
+    },
+
+    async listWebhookHooks(agentId: string) {
+      const response = await fetchJson<AgentApiResponse<AgentWebhookHook[]>>(
+        `${baseUrl}/${agentId}/hooks`
+      );
+      return response.data || [];
+    },
+
+    async createWebhookHook(
+      agentId: string,
+      payload: CreateAgentWebhookHookPayload
+    ) {
+      const response = await fetchJson<AgentApiResponse<AgentWebhookHook>>(
+        `${baseUrl}/${agentId}/hooks`,
+        {
+          method: 'POST',
+          body: payload,
+        }
+      );
+      if (!response.success || !response.data) {
+        throw new Error(response.error || 'Failed to create webhook hook');
+      }
+      return response.data;
+    },
+
+    async deleteWebhookHook(agentId: string, hookId: string) {
+      const response = await fetchJson<AgentApiResponse<void>>(
+        `${baseUrl}/${agentId}/hooks/${hookId}`,
+        {
+          method: 'DELETE',
+        }
+      );
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to delete webhook hook');
+      }
     },
   };
 }

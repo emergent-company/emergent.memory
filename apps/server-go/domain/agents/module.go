@@ -6,6 +6,7 @@ import (
 
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent/domain/events"
 	"github.com/emergent-company/emergent/domain/mcp"
 	"github.com/emergent-company/emergent/domain/mcpregistry"
 	"github.com/emergent-company/emergent/domain/scheduler"
@@ -23,6 +24,7 @@ var Module = fx.Module("agents",
 		provideHandler,
 		provideTriggerService,
 		provideMCPToolHandler,
+		provideWebhookRateLimiter,
 	),
 	fx.Invoke(
 		RegisterRoutes,
@@ -31,6 +33,11 @@ var Module = fx.Module("agents",
 		registerToolPoolInvalidator,
 	),
 )
+
+// provideWebhookRateLimiter creates a WebhookRateLimiter
+func provideWebhookRateLimiter() *WebhookRateLimiter {
+	return NewWebhookRateLimiter()
+}
 
 // provideToolPool creates a ToolPool from fx dependencies.
 func provideToolPool(mcpService *mcp.Service, registryService *mcpregistry.Service, log *slog.Logger) *ToolPool {
@@ -54,8 +61,8 @@ func provideAgentExecutor(
 }
 
 // provideHandler creates a Handler with both repo and executor.
-func provideHandler(repo *Repository, executor *AgentExecutor) *Handler {
-	return NewHandler(repo, executor)
+func provideHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter) *Handler {
+	return NewHandler(repo, executor, rateLimiter)
 }
 
 // provideTriggerService creates a TriggerService from fx dependencies.
@@ -63,9 +70,10 @@ func provideTriggerService(
 	sched *scheduler.Scheduler,
 	executor *AgentExecutor,
 	repo *Repository,
+	eventService *events.Service,
 	log *slog.Logger,
 ) *TriggerService {
-	return NewTriggerService(sched, executor, repo, log)
+	return NewTriggerService(sched, executor, repo, eventService, log)
 }
 
 // provideMCPToolHandler creates an MCPToolHandler from fx dependencies.

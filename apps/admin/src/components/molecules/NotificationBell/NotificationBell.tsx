@@ -18,6 +18,7 @@ import {
   useNotifications,
   useNotificationMutations,
 } from '@/hooks/useNotifications';
+import { AgentQuestionNotification } from '@/components/organisms/AgentQuestionNotification';
 import type { Notification, NotificationAction } from '@/types/notification';
 
 export interface NotificationBellProps {
@@ -289,8 +290,9 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                         )}
                       </div>
 
-                      {/* Action buttons */}
-                      {notification.actions &&
+                      {/* Action buttons (non-agent-question only) */}
+                      {notification.type !== 'agent_question' &&
+                        notification.actions &&
                         notification.actions.length > 0 && (
                           <div className="flex flex-wrap gap-2 mt-3">
                             {notification.actions.map((action, idx) => (
@@ -308,6 +310,18 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                             ))}
                           </div>
                         )}
+
+                      {/* Agent question response controls */}
+                      {notification.type === 'agent_question' && (
+                        <AgentQuestionNotification
+                          notification={notification}
+                          onResponded={() => {
+                            refetchStats();
+                            refetchNotifications();
+                          }}
+                          compact
+                        />
+                      )}
 
                       {/* Timestamp */}
                       <div className="mt-2 text-xs text-base-content/40">

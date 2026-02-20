@@ -19,6 +19,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	readGroup.GET("/:id", h.GetAgent)
 	readGroup.GET("/:id/runs", h.GetAgentRuns)
 	readGroup.GET("/:id/pending-events", h.GetPendingEvents)
+	readGroup.GET("/:id/hooks", h.ListWebhookHooks)
 
 	// Write operations - require admin:write
 	writeGroup := admin.Group("")
@@ -29,6 +30,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.POST("/:id/trigger", h.TriggerAgent)
 	writeGroup.POST("/:id/batch-trigger", h.BatchTrigger)
 	writeGroup.POST("/:id/runs/:runId/cancel", h.CancelRun)
+	writeGroup.POST("/:id/hooks", h.CreateWebhookHook)
+	writeGroup.DELETE("/:id/hooks/:hookId", h.DeleteWebhookHook)
 
 	// --- Admin Agent Definition routes (configuration/manifest) ---
 	defAdmin := e.Group("/api/admin/agent-definitions")
@@ -55,10 +58,22 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	runs.GET("/:runId", h.GetProjectRun)
 	runs.GET("/:runId/messages", h.GetRunMessages)
 	runs.GET("/:runId/tool-calls", h.GetRunToolCalls)
+	runs.GET("/:runId/questions", h.HandleListQuestionsByRun)
+
+	// --- Project-scoped agent question routes ---
+	questions := e.Group("/api/projects/:projectId/agent-questions")
+	questions.Use(authMiddleware.RequireAuth())
+	questions.GET("", h.HandleListQuestionsByProject)
+	questions.POST("/:questionId/respond", h.HandleRespondToQuestion)
 
 	// --- Agent session status routes ---
 	sessions := e.Group("/api/v1/agent/sessions")
 	sessions.Use(authMiddleware.RequireAuth())
 	sessions.Use(authMiddleware.RequireScopes("project:read"))
 	sessions.GET("/:id", h.GetSession)
+
+	// --- Public Webhook Receiver routes ---
+	// NOTE: Does not use RequireAuth; authentication is handled internally via Bearer token
+	webhooks := e.Group("/api/webhooks/agents")
+	webhooks.POST("/:hookId", h.ReceiveWebhook)
 }

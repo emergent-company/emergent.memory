@@ -98,6 +98,11 @@ const InboxPage = () => {
     await notificationMutations.resolve(notificationId, status);
   };
 
+  const handleQuestionResponded = () => {
+    refetchNotifications();
+    refetchNotificationCounts();
+  };
+
   const handleCustomizeClick = () => {
     // TODO: Navigate to notification settings
     console.log('Navigate to notification settings');
@@ -197,6 +202,7 @@ const InboxPage = () => {
         onTabChange={handleTabChange}
         onNotificationClick={handleNotificationClick}
         onResolve={handleNotificationResolve}
+        onResponded={handleQuestionResponded}
         onFilterClick={handleFilterClick}
         onClearAll={handleClearAll}
         onCustomizeClick={handleCustomizeClick}

@@ -207,6 +207,7 @@ CREATE TABLE kb.agent_definitions (
     visibility character varying(50) DEFAULT 'project'::character varying NOT NULL,
     acp_config jsonb,
     config jsonb DEFAULT '{}'::jsonb,
+    workspace_config jsonb,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
@@ -259,7 +260,10 @@ CREATE TABLE kb.agent_runs (
     parent_run_id uuid,
     step_count integer DEFAULT 0 NOT NULL,
     max_steps integer,
-    resumed_from uuid
+    resumed_from uuid,
+    trigger_source text,
+    trigger_metadata jsonb,
+    session_status text DEFAULT 'active'::text NOT NULL
 );
 CREATE TABLE kb.agents (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -280,7 +284,33 @@ CREATE TABLE kb.agents (
     capabilities jsonb,
     project_id uuid NOT NULL,
     CONSTRAINT chk_agents_execution_mode CHECK ((execution_mode = ANY (ARRAY['suggest'::text, 'execute'::text, 'hybrid'::text]))),
-    CONSTRAINT chk_agents_trigger_type CHECK ((trigger_type = ANY (ARRAY['schedule'::text, 'manual'::text, 'reaction'::text])))
+    CONSTRAINT chk_agents_trigger_type CHECK ((trigger_type = ANY (ARRAY['schedule'::text, 'manual'::text, 'reaction'::text, 'webhook'::text])))
+);
+CREATE TABLE kb.agent_webhook_hooks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    agent_id uuid NOT NULL,
+    project_id text NOT NULL,
+    label text NOT NULL,
+    token_hash text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    rate_limit_config jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE TABLE kb.agent_questions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    question text NOT NULL,
+    options jsonb DEFAULT '[]'::jsonb NOT NULL,
+    response text,
+    responded_by uuid,
+    responded_at timestamp with time zone,
+    status text DEFAULT 'pending'::text NOT NULL,
+    notification_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 CREATE TABLE kb.audit_log (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
@@ -1274,7 +1304,11 @@ ALTER TABLE ONLY kb.agent_run_tool_calls
 ALTER TABLE ONLY kb.agent_runs
     ADD CONSTRAINT agent_runs_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY kb.agents
-    ADD CONSTRAINT agents_pkey PRIMARY KEY (id);
+     ADD CONSTRAINT agents_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY kb.agent_webhook_hooks
+     ADD CONSTRAINT agent_webhook_hooks_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY kb.agent_questions
+     ADD CONSTRAINT agent_questions_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY kb.agents
     ADD CONSTRAINT agents_role_key UNIQUE (strategy_type);
 ALTER TABLE ONLY kb.backups
@@ -1417,10 +1451,14 @@ CREATE INDEX idx_agent_run_messages_run_step ON kb.agent_run_messages USING btre
 CREATE INDEX idx_agent_run_tool_calls_run_step ON kb.agent_run_tool_calls USING btree (run_id, step_number);
 CREATE INDEX idx_agent_run_tool_calls_run_tool ON kb.agent_run_tool_calls USING btree (run_id, tool_name);
 CREATE INDEX idx_agent_runs_agent_id ON kb.agent_runs USING btree (agent_id);
+CREATE INDEX idx_agent_webhook_hooks_agent_id ON kb.agent_webhook_hooks USING btree (agent_id);
 CREATE INDEX idx_agent_runs_parent_run_id ON kb.agent_runs USING btree (parent_run_id) WHERE (parent_run_id IS NOT NULL);
 CREATE INDEX idx_agent_runs_resumed_from ON kb.agent_runs USING btree (resumed_from) WHERE (resumed_from IS NOT NULL);
 CREATE INDEX idx_agent_runs_started_at ON kb.agent_runs USING btree (started_at);
 CREATE INDEX idx_agent_runs_status ON kb.agent_runs USING btree (status);
+CREATE INDEX idx_agent_questions_run_id ON kb.agent_questions USING btree (run_id);
+CREATE INDEX idx_agent_questions_agent_id ON kb.agent_questions USING btree (agent_id);
+CREATE INDEX idx_agent_questions_project_status ON kb.agent_questions USING btree (project_id, status);
 CREATE INDEX idx_agents_enabled ON kb.agents USING btree (enabled);
 CREATE INDEX idx_agents_project_id ON kb.agents USING btree (project_id);
 CREATE INDEX idx_agents_role ON kb.agents USING btree (strategy_type);
@@ -1595,6 +1633,12 @@ ALTER TABLE ONLY kb.agent_runs
     ADD CONSTRAINT agent_runs_parent_run_id_fkey FOREIGN KEY (parent_run_id) REFERENCES kb.agent_runs(id) ON DELETE SET NULL;
 ALTER TABLE ONLY kb.agent_runs
     ADD CONSTRAINT agent_runs_resumed_from_fkey FOREIGN KEY (resumed_from) REFERENCES kb.agent_runs(id) ON DELETE SET NULL;
+ALTER TABLE ONLY kb.agent_webhook_hooks
+    ADD CONSTRAINT agent_webhook_hooks_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES kb.agents(id) ON DELETE CASCADE;
+ALTER TABLE ONLY kb.agent_questions
+    ADD CONSTRAINT agent_questions_run_id_fkey FOREIGN KEY (run_id) REFERENCES kb.agent_runs(id) ON DELETE CASCADE;
+ALTER TABLE ONLY kb.agent_questions
+    ADD CONSTRAINT agent_questions_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES kb.agents(id) ON DELETE CASCADE;
 ALTER TABLE ONLY kb.backups
     ADD CONSTRAINT backups_baseline_backup_id_fkey FOREIGN KEY (baseline_backup_id) REFERENCES kb.backups(id);
 ALTER TABLE ONLY kb.backups

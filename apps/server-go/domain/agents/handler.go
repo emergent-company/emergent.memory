@@ -1,6 +1,9 @@
 package agents
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,13 +17,14 @@ import (
 
 // Handler handles HTTP requests for agents
 type Handler struct {
-	repo     *Repository
-	executor *AgentExecutor // may be nil in tests
+	repo        *Repository
+	executor    *AgentExecutor // may be nil in tests
+	rateLimiter *WebhookRateLimiter
 }
 
 // NewHandler creates a new agents handler
-func NewHandler(repo *Repository, executor *AgentExecutor) *Handler {
-	return &Handler{repo: repo, executor: executor}
+func NewHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter) *Handler {
+	return &Handler{repo: repo, executor: executor, rateLimiter: rateLimiter}
 }
 
 // ListAgents handles GET /api/admin/agents
@@ -727,6 +731,258 @@ func (h *Handler) BatchTrigger(c echo.Context) error {
 	}))
 }
 
+// --- Admin Webhook Hook Handlers ---
+
+// CreateWebhookHook handles POST /api/admin/agents/:id/hooks
+func (h *Handler) CreateWebhookHook(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.NewBadRequest("agent id is required")
+	}
+
+	var dto CreateAgentWebhookHookDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	if dto.Label == "" {
+		return apperror.NewBadRequest("label is required")
+	}
+
+	var projectID *string
+	if user.ProjectID != "" {
+		projectID = &user.ProjectID
+	}
+	agent, err := h.repo.FindByID(c.Request().Context(), id, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent", err)
+	}
+	if agent == nil {
+		return apperror.NewNotFound("Agent", id)
+	}
+
+	rawToken, err := GenerateWebhookToken()
+	if err != nil {
+		return apperror.NewInternal("failed to generate token", err)
+	}
+
+	hashedToken, err := HashWebhookToken(rawToken)
+	if err != nil {
+		return apperror.NewInternal("failed to hash token", err)
+	}
+
+	hook := &AgentWebhookHook{
+		AgentID:         agent.ID,
+		ProjectID:       agent.ProjectID,
+		Label:           dto.Label,
+		TokenHash:       hashedToken,
+		Enabled:         true,
+		RateLimitConfig: dto.RateLimitConfig,
+	}
+
+	if err := h.repo.CreateWebhookHook(c.Request().Context(), hook); err != nil {
+		return apperror.NewInternal("failed to create webhook hook", err)
+	}
+
+	hook.Token = &rawToken
+	return c.JSON(http.StatusCreated, SuccessResponse(hook.ToDTO()))
+}
+
+// ListWebhookHooks handles GET /api/admin/agents/:id/hooks
+func (h *Handler) ListWebhookHooks(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.NewBadRequest("agent id is required")
+	}
+
+	var projectID *string
+	if user.ProjectID != "" {
+		projectID = &user.ProjectID
+	}
+	agent, err := h.repo.FindByID(c.Request().Context(), id, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent", err)
+	}
+	if agent == nil {
+		return apperror.NewNotFound("Agent", id)
+	}
+
+	hooks, err := h.repo.FindWebhookHooksByAgent(c.Request().Context(), agent.ID, agent.ProjectID)
+	if err != nil {
+		return apperror.NewInternal("failed to list webhook hooks", err)
+	}
+
+	dtos := make([]*AgentWebhookHookDTO, len(hooks))
+	for i, hook := range hooks {
+		dtos[i] = hook.ToDTO()
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dtos))
+}
+
+// DeleteWebhookHook handles DELETE /api/admin/agents/:id/hooks/:hookId
+func (h *Handler) DeleteWebhookHook(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	agentID := c.Param("id")
+	hookID := c.Param("hookId")
+	if agentID == "" || hookID == "" {
+		return apperror.NewBadRequest("agent id and hook id are required")
+	}
+
+	var projectID *string
+	if user.ProjectID != "" {
+		projectID = &user.ProjectID
+	}
+	agent, err := h.repo.FindByID(c.Request().Context(), agentID, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent", err)
+	}
+	if agent == nil {
+		return apperror.NewNotFound("Agent", agentID)
+	}
+
+	if err := h.repo.DeleteWebhookHook(c.Request().Context(), hookID, agent.ProjectID); err != nil {
+		return apperror.NewInternal("failed to delete webhook hook", err)
+	}
+
+	if h.rateLimiter != nil {
+		h.rateLimiter.RemoveLimiter(hookID)
+	}
+
+	return c.JSON(http.StatusOK, APIResponse[any]{Success: true})
+}
+
+// --- Public Webhook Receiver ---
+
+// ReceiveWebhook handles POST /api/webhooks/agents/:hookId
+func (h *Handler) ReceiveWebhook(c echo.Context) error {
+	hookID := c.Param("hookId")
+	if hookID == "" {
+		return apperror.NewBadRequest("hookId is required")
+	}
+
+	// Extract Bearer token
+	authHeader := c.Request().Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		return apperror.ErrUnauthorized.WithMessage("missing or invalid authorization header")
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+
+	// Find the webhook hook
+	hook, err := h.repo.FindWebhookHookByID(c.Request().Context(), hookID)
+	if err != nil {
+		return apperror.NewInternal("failed to retrieve hook", err)
+	}
+	if hook == nil || !hook.Enabled {
+		return apperror.ErrUnauthorized.WithMessage("invalid or disabled hook")
+	}
+
+	// Verify the token
+	if !VerifyWebhookToken(token, hook.TokenHash) {
+		return apperror.ErrUnauthorized.WithMessage("invalid token")
+	}
+
+	// Enforce rate limiting
+	if h.rateLimiter != nil {
+		if !h.rateLimiter.CheckRateLimit(c.Request().Context(), hook.ID, hook.RateLimitConfig) {
+			return apperror.New(http.StatusTooManyRequests, "rate_limit_exceeded", "too many requests")
+		}
+	}
+
+	// Find the associated agent
+	agent, err := h.repo.FindByID(c.Request().Context(), hook.AgentID, nil)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent", err)
+	}
+	if agent == nil || !agent.Enabled {
+		return apperror.NewBadRequest("agent not found or disabled")
+	}
+
+	// Look up the agent definition
+	var agentDef *AgentDefinition
+	agentDef, _ = h.repo.FindDefinitionByName(c.Request().Context(), agent.ProjectID, agent.Name)
+
+	// Parse payload
+	var payload WebhookTriggerPayloadDTO
+	if err := c.Bind(&payload); err != nil {
+		// Ignore bind errors — body is optional
+	}
+
+	// Build metadata
+	metadata := map[string]any{
+		"hookId": hook.ID,
+		"label":  hook.Label,
+	}
+	if payload.Context != nil {
+		metadata["context"] = payload.Context
+	}
+
+	triggerSource := "webhook:" + hook.ID
+
+	if h.executor == nil {
+		// Fallback for tests/stub mode — use CreateRunWithOptions to persist trigger fields
+		run, err := h.repo.CreateRunWithOptions(c.Request().Context(), CreateRunOptions{
+			AgentID:         agent.ID,
+			TriggerSource:   &triggerSource,
+			TriggerMetadata: metadata,
+		})
+		if err != nil {
+			return apperror.NewInternal("failed to create run", err)
+		}
+
+		_ = h.repo.SkipRun(c.Request().Context(), run.ID, "Executor not available")
+		msg := "Agent triggered (stub mode)"
+		return c.JSON(http.StatusOK, TriggerResponseDTO{
+			Success: true,
+			RunID:   &run.ID,
+			Message: &msg,
+		})
+	}
+
+	// Build user message
+	userMessage := "Execute agent tasks"
+	if payload.Prompt != "" {
+		userMessage = payload.Prompt
+	} else if agent.Prompt != nil && *agent.Prompt != "" {
+		userMessage = *agent.Prompt
+	}
+
+	// Execute
+	req := ExecuteRequest{
+		Agent:           agent,
+		AgentDefinition: agentDef,
+		ProjectID:       agent.ProjectID,
+		UserMessage:     userMessage,
+		TriggerSource:   &triggerSource,
+		TriggerMetadata: metadata,
+	}
+
+	result, err := h.executor.Execute(c.Request().Context(), req)
+	if err != nil {
+		return apperror.NewInternal("failed to execute agent", err)
+	}
+
+	msg := "Agent triggered successfully"
+	return c.JSON(http.StatusOK, TriggerResponseDTO{
+		Success: true,
+		RunID:   &result.RunID,
+		Message: &msg,
+	})
+}
+
 // --- Agent Definition Handlers ---
 
 // ListDefinitions handles GET /api/admin/agent-definitions
@@ -1286,4 +1542,237 @@ func (h *Handler) UpdateWorkspaceConfig(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(&cfg))
+}
+
+// --- Agent Question Handlers ---
+
+// HandleRespondToQuestion handles POST /api/projects/:projectId/agent-questions/:questionId/respond
+// @Summary      Respond to an agent question
+// @Description  Responds to a pending agent question and resumes the paused agent run
+// @Tags         agent-questions
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        questionId path string true "Question ID (UUID)"
+// @Param        body body RespondToQuestionRequest true "Response body"
+// @Success      202 {object} APIResponse[AgentQuestionDTO] "Question answered, agent resuming"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Question not found"
+// @Failure      409 {object} apperror.Error "Question already answered or run not paused"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/agent-questions/{questionId}/respond [post]
+// @Security     bearerAuth
+func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	questionID := c.Param("questionId")
+	if questionID == "" {
+		return apperror.NewBadRequest("questionId is required")
+	}
+
+	// Parse request body
+	var req RespondToQuestionRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	if req.Response == "" {
+		return apperror.NewBadRequest("response is required")
+	}
+
+	// Look up the question
+	question, err := h.repo.FindQuestionByID(c.Request().Context(), questionID)
+	if err != nil {
+		return apperror.NewInternal("failed to get question", err)
+	}
+	if question == nil {
+		return apperror.NewNotFound("AgentQuestion", questionID)
+	}
+
+	// Verify question belongs to this project
+	if question.ProjectID != projectID {
+		return apperror.NewNotFound("AgentQuestion", questionID)
+	}
+
+	// Verify question is still pending
+	if question.Status != QuestionStatusPending {
+		return apperror.ErrConflict.WithMessage(fmt.Sprintf("question is already %s", question.Status))
+	}
+
+	// Look up the run and verify it's paused
+	run, err := h.repo.FindRunByID(c.Request().Context(), question.RunID)
+	if err != nil {
+		return apperror.NewInternal("failed to get run", err)
+	}
+	if run == nil {
+		return apperror.NewInternal("associated run not found", nil)
+	}
+	if run.Status != RunStatusPaused {
+		return apperror.ErrConflict.WithMessage(fmt.Sprintf("run is %s, expected paused", run.Status))
+	}
+
+	// Update the question with the response
+	if err := h.repo.AnswerQuestion(c.Request().Context(), questionID, req.Response, user.ID); err != nil {
+		return apperror.NewInternal("failed to answer question", err)
+	}
+
+	// Update notification action status if notification was created (non-fatal)
+	if question.NotificationID != nil {
+		_ = h.repo.UpdateNotificationActionStatus(c.Request().Context(), *question.NotificationID, "completed", user.ID)
+	}
+
+	// Resume the agent in a background goroutine
+	if h.executor != nil {
+		// Look up the agent to build the resume request
+		agent, err := h.repo.FindByID(c.Request().Context(), run.AgentID, nil)
+		if err != nil || agent == nil {
+			return apperror.NewInternal("failed to find agent for resume", err)
+		}
+
+		// Look up the agent definition (optional, may be nil)
+		agentDef, _ := h.repo.FindDefinitionByName(c.Request().Context(), agent.ProjectID, agent.Name)
+
+		// Build the resume user message with Q&A context (task 5.4)
+		userMessage := fmt.Sprintf(
+			"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
+			question.Question, req.Response,
+		)
+
+		go func() {
+			ctx := context.Background()
+			_, err := h.executor.Resume(ctx, run, ExecuteRequest{
+				Agent:           agent,
+				AgentDefinition: agentDef,
+				ProjectID:       agent.ProjectID,
+				UserMessage:     userMessage,
+			})
+			if err != nil {
+				slog.Error("failed to resume agent after question response",
+					slog.String("run_id", run.ID),
+					slog.String("question_id", questionID),
+					slog.String("error", err.Error()),
+				)
+			}
+		}()
+	}
+
+	// Re-fetch the question to return the updated state
+	updatedQuestion, err := h.repo.FindQuestionByID(c.Request().Context(), questionID)
+	if err != nil || updatedQuestion == nil {
+		// Fall back to returning what we know with the answer applied
+		return c.JSON(http.StatusAccepted, SuccessResponse(question.ToDTO()))
+	}
+
+	return c.JSON(http.StatusAccepted, SuccessResponse(updatedQuestion.ToDTO()))
+}
+
+// HandleListQuestionsByRun handles GET /api/projects/:projectId/agent-runs/:runId/questions
+// @Summary      List questions for an agent run
+// @Description  Returns all questions for a specific agent run, ordered by creation time
+// @Tags         agent-questions
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        runId path string true "Run ID (UUID)"
+// @Success      200 {object} APIResponse[[]AgentQuestionDTO] "List of questions"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Run not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/agent-runs/{runId}/questions [get]
+// @Security     bearerAuth
+func (h *Handler) HandleListQuestionsByRun(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	runID := c.Param("runId")
+	if runID == "" {
+		return apperror.NewBadRequest("runId is required")
+	}
+
+	// Verify the run belongs to this project
+	run, err := h.repo.FindRunByIDForProject(c.Request().Context(), runID, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent run", err)
+	}
+	if run == nil {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	questions, err := h.repo.ListQuestionsByRunID(c.Request().Context(), runID)
+	if err != nil {
+		return apperror.NewInternal("failed to list questions", err)
+	}
+
+	dtos := make([]*AgentQuestionDTO, len(questions))
+	for i, q := range questions {
+		dtos[i] = q.ToDTO()
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dtos))
+}
+
+// HandleListQuestionsByProject handles GET /api/projects/:projectId/agent-questions
+// @Summary      List questions for a project
+// @Description  Returns agent questions for a project with optional status filter
+// @Tags         agent-questions
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        status query string false "Filter by status (pending, answered, expired, cancelled)"
+// @Success      200 {object} APIResponse[[]AgentQuestionDTO] "List of questions"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/agent-questions [get]
+// @Security     bearerAuth
+func (h *Handler) HandleListQuestionsByProject(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	// Parse optional status filter
+	var statusFilter *AgentQuestionStatus
+	if statusStr := c.QueryParam("status"); statusStr != "" {
+		s := AgentQuestionStatus(statusStr)
+		switch s {
+		case QuestionStatusPending, QuestionStatusAnswered, QuestionStatusExpired, QuestionStatusCancelled:
+			statusFilter = &s
+		default:
+			return apperror.NewBadRequest("invalid status filter: must be pending, answered, expired, or cancelled")
+		}
+	}
+
+	questions, err := h.repo.ListQuestionsByProject(c.Request().Context(), projectID, statusFilter)
+	if err != nil {
+		return apperror.NewInternal("failed to list questions", err)
+	}
+
+	dtos := make([]*AgentQuestionDTO, len(questions))
+	for i, q := range questions {
+		dtos[i] = q.ToDTO()
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dtos))
 }

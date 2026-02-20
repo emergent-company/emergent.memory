@@ -50,9 +50,15 @@ export interface NotificationAction {
   url?: string;
   action?: 'accept' | 'reject'; // For actionable notifications
   style?: 'primary' | 'secondary' | 'warning' | 'danger' | 'success' | 'ghost';
+  value?: string; // For agent question option buttons
 }
 
-export type ActionStatus = 'pending' | 'accepted' | 'rejected' | null;
+export type ActionStatus =
+  | 'pending'
+  | 'accepted'
+  | 'rejected'
+  | 'completed'
+  | null;
 
 export interface Notification {
   id: string;
