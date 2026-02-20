@@ -1,6 +1,3 @@
-// Package agents provides the Agents service client for the Emergent API SDK.
-// Agents are background automation workers that run on schedules or react to events.
-// Requires authentication with admin:read and/or admin:write scopes.
 package agents
 
 import (
@@ -1054,4 +1051,100 @@ func (c *Client) DeleteWebhookHook(ctx context.Context, agentID, hookID string) 
 
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
+}
+
+// --- ADK Sessions ---
+
+// ADKEvent represents an event within an ADK session.
+type ADKEvent struct {
+	ID                     string         `json:"id"`
+	SessionID              string         `json:"sessionId"`
+	InvocationID           string         `json:"invocationId,omitempty"`
+	Author                 string         `json:"author,omitempty"`
+	Timestamp              time.Time      `json:"timestamp"`
+	Branch                 *string        `json:"branch,omitempty"`
+	Actions                map[string]any `json:"actions,omitempty"`
+	LongRunningToolIDsJSON map[string]any `json:"longRunningToolIds,omitempty"`
+	Content                map[string]any `json:"content,omitempty"`
+	Partial                *bool          `json:"partial,omitempty"`
+	TurnComplete           *bool          `json:"turnComplete,omitempty"`
+	ErrorCode              *string        `json:"errorCode,omitempty"`
+	ErrorMessage           *string        `json:"errorMessage,omitempty"`
+	Interrupted            *bool          `json:"interrupted,omitempty"`
+}
+
+// ADKSession represents an ADK session.
+type ADKSession struct {
+	ID         string         `json:"id"`
+	AppName    string         `json:"appName"`
+	UserID     string         `json:"userId"`
+	State      map[string]any `json:"state,omitempty"`
+	CreateTime time.Time      `json:"createTime"`
+	UpdateTime time.Time      `json:"updateTime"`
+	Events     []*ADKEvent    `json:"events,omitempty"`
+}
+
+// ListADKSessions returns all ADK sessions for the given project.
+func (c *Client) ListADKSessions(ctx context.Context, projectID string) ([]*ADKSession, error) {
+	if projectID == "" {
+		projectID = c.projectID
+	}
+	if projectID == "" {
+		return nil, fmt.Errorf("projectID is required")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/projects/%s/adk-sessions", projectID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var res struct {
+		Data       []*ADKSession `json:"items"`
+		TotalCount int           `json:"totalCount"`
+	}
+
+	if err := doRequest(c, req, &res); err != nil {
+		return nil, err
+	}
+
+	return res.Data, nil
+}
+
+// GetADKSession returns a specific ADK session and its events.
+func (c *Client) GetADKSession(ctx context.Context, projectID, sessionID string) (*ADKSession, error) {
+	if projectID == "" {
+		projectID = c.projectID
+	}
+	if projectID == "" {
+		return nil, fmt.Errorf("projectID is required")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/projects/%s/adk-sessions/%s", projectID, sessionID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var res struct {
+		Data *ADKSession `json:"data"`
+	}
+
+	if err := doRequest(c, req, &res); err != nil {
+		return nil, err
+	}
+
+	return res.Data, nil
+}
+func doRequest(c *Client, req *http.Request, v interface{}) error {
+	if err := c.setHeaders(req); err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("API error: %d", resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(v)
 }

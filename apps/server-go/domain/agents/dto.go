@@ -446,3 +446,36 @@ func (q *AgentQuestion) ToDTO() *AgentQuestionDTO {
 type RespondToQuestionRequest struct {
 	Response string `json:"response" validate:"required"`
 }
+
+// ADKEventDTO represents an event within an ADK session.
+type ADKEventDTO struct {
+	ID                     string         `json:"id"`
+	SessionID              string         `json:"sessionId"`
+	InvocationID           string         `json:"invocationId,omitempty"`
+	Author                 string         `json:"author,omitempty"`
+	Timestamp              time.Time      `json:"timestamp"`
+	Branch                 *string        `json:"branch,omitempty"`
+	Actions                map[string]any `json:"actions,omitempty"`
+	LongRunningToolIDsJSON map[string]any `json:"longRunningToolIds,omitempty"`
+	Content                map[string]any `json:"content,omitempty"`
+	GroundingMetadata      map[string]any `json:"groundingMetadata,omitempty"`
+	CustomMetadata         map[string]any `json:"customMetadata,omitempty"`
+	UsageMetadata          map[string]any `json:"usageMetadata,omitempty"`
+	CitationMetadata       map[string]any `json:"citationMetadata,omitempty"`
+	Partial                *bool          `json:"partial,omitempty"`
+	TurnComplete           *bool          `json:"turnComplete,omitempty"`
+	ErrorCode              *string        `json:"errorCode,omitempty"`
+	ErrorMessage           *string        `json:"errorMessage,omitempty"`
+	Interrupted            *bool          `json:"interrupted,omitempty"`
+}
+
+// ADKSessionDTO represents an ADK session.
+type ADKSessionDTO struct {
+	ID         string         `json:"id"`
+	AppName    string         `json:"appName"`
+	UserID     string         `json:"userId"`
+	State      map[string]any `json:"state,omitempty"`
+	CreateTime time.Time      `json:"createTime"`
+	UpdateTime time.Time      `json:"updateTime"`
+	Events     []*ADKEventDTO `json:"events,omitempty"`
+}
