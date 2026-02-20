@@ -365,3 +365,84 @@ func (tc *AgentRunToolCall) ToDTO() *AgentRunToolCallDTO {
 		CreatedAt:  tc.CreatedAt,
 	}
 }
+
+// --- Webhook Hooks DTOs ---
+
+type AgentWebhookHookDTO struct {
+	ID              string           `json:"id"`
+	AgentID         string           `json:"agentId"`
+	ProjectID       string           `json:"projectId"`
+	Label           string           `json:"label"`
+	Enabled         bool             `json:"enabled"`
+	RateLimitConfig *RateLimitConfig `json:"rateLimitConfig"`
+	CreatedAt       time.Time        `json:"createdAt"`
+	UpdatedAt       time.Time        `json:"updatedAt"`
+	Token           *string          `json:"token,omitempty"` // Only present on creation
+}
+
+func (h *AgentWebhookHook) ToDTO() *AgentWebhookHookDTO {
+	return &AgentWebhookHookDTO{
+		ID:              h.ID,
+		AgentID:         h.AgentID,
+		ProjectID:       h.ProjectID,
+		Label:           h.Label,
+		Enabled:         h.Enabled,
+		RateLimitConfig: h.RateLimitConfig,
+		CreatedAt:       h.CreatedAt,
+		UpdatedAt:       h.UpdatedAt,
+		Token:           h.Token,
+	}
+}
+
+type CreateAgentWebhookHookDTO struct {
+	Label           string           `json:"label" validate:"required"`
+	RateLimitConfig *RateLimitConfig `json:"rateLimitConfig"`
+}
+
+type WebhookTriggerPayloadDTO struct {
+	Prompt  string         `json:"prompt"`
+	Context map[string]any `json:"context"`
+}
+
+// --- Agent Question DTOs ---
+
+// AgentQuestionDTO is the response DTO for an agent question.
+type AgentQuestionDTO struct {
+	ID             string                `json:"id"`
+	RunID          string                `json:"runId"`
+	AgentID        string                `json:"agentId"`
+	ProjectID      string                `json:"projectId"`
+	Question       string                `json:"question"`
+	Options        []AgentQuestionOption `json:"options"`
+	Response       *string               `json:"response,omitempty"`
+	RespondedBy    *string               `json:"respondedBy,omitempty"`
+	RespondedAt    *time.Time            `json:"respondedAt,omitempty"`
+	Status         AgentQuestionStatus   `json:"status"`
+	NotificationID *string               `json:"notificationId,omitempty"`
+	CreatedAt      time.Time             `json:"createdAt"`
+	UpdatedAt      time.Time             `json:"updatedAt"`
+}
+
+// ToDTO converts an AgentQuestion entity to a DTO.
+func (q *AgentQuestion) ToDTO() *AgentQuestionDTO {
+	return &AgentQuestionDTO{
+		ID:             q.ID,
+		RunID:          q.RunID,
+		AgentID:        q.AgentID,
+		ProjectID:      q.ProjectID,
+		Question:       q.Question,
+		Options:        q.Options,
+		Response:       q.Response,
+		RespondedBy:    q.RespondedBy,
+		RespondedAt:    q.RespondedAt,
+		Status:         q.Status,
+		NotificationID: q.NotificationID,
+		CreatedAt:      q.CreatedAt,
+		UpdatedAt:      q.UpdatedAt,
+	}
+}
+
+// RespondToQuestionRequest is the request body for responding to an agent question.
+type RespondToQuestionRequest struct {
+	Response string `json:"response" validate:"required"`
+}

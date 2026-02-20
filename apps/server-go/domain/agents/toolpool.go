@@ -19,6 +19,7 @@ import (
 const (
 	ToolNameSpawnAgents         = "spawn_agents"
 	ToolNameListAvailableAgents = "list_available_agents"
+	ToolNameAskUser             = "ask_user"
 )
 
 // coordinationTools is the set of tools denied to sub-agents by default.

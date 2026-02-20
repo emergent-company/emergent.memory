@@ -32,6 +32,8 @@ type ExecuteRequest struct {
 	Timeout         *time.Duration
 	Depth           int
 	MaxDepth        int
+	TriggerSource   *string
+	TriggerMetadata map[string]any
 }
 
 // ExecuteResult is the outcome of an agent execution.
@@ -104,9 +106,11 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 
 	// Create the run record
 	run, err := ae.repo.CreateRunWithOptions(ctx, CreateRunOptions{
-		AgentID:     ae.resolveAgentID(req),
-		ParentRunID: req.ParentRunID,
-		MaxSteps:    &maxSteps,
+		AgentID:         ae.resolveAgentID(req),
+		ParentRunID:     req.ParentRunID,
+		MaxSteps:        &maxSteps,
+		TriggerSource:   req.TriggerSource,
+		TriggerMetadata: req.TriggerMetadata,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent run: %w", err)
@@ -148,7 +152,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	}
 
 	// Build and run the pipeline
-	result, err := ae.runPipeline(ctx, run, req, maxSteps, 0, startTime, wsResult)
+	result, err := ae.runPipeline(ctx, run, req, maxSteps, 0, startTime, wsResult, nil)
 	if err != nil {
 		// Mark run as failed
 		_ = ae.repo.FailRunWithSteps(ctx, run.ID, err.Error(), 0)
@@ -229,7 +233,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	}
 
 	// Build and run the pipeline with accumulated step count
-	result, err := ae.runPipeline(ctx, newRun, req, maxSteps, priorRun.StepCount, startTime, wsResult)
+	result, err := ae.runPipeline(ctx, newRun, req, maxSteps, priorRun.StepCount, startTime, wsResult, nil)
 	if err != nil {
 		_ = ae.repo.FailRunWithSteps(ctx, newRun.ID, err.Error(), priorRun.StepCount)
 		return &ExecuteResult{
@@ -324,6 +328,7 @@ func (ae *AgentExecutor) runPipeline(
 	initialSteps int,
 	startTime time.Time,
 	wsResult *workspace.ProvisioningResult,
+	askPauseState *AskPauseState,
 ) (*ExecuteResult, error) {
 	// Apply timeout if specified
 	if req.Timeout != nil && *req.Timeout > 0 {
@@ -386,6 +391,22 @@ func (ae *AgentExecutor) runPipeline(
 		}
 	}
 
+	// Add ask_user tool if opted in via agent definition
+	if askPauseState == nil {
+		askPauseState = &AskPauseState{}
+	}
+	askUserTool, askErr := ae.buildAskUserTool(req, run.ID, askPauseState)
+	if askErr != nil {
+		ae.log.Warn("failed to build ask_user tool, continuing without it",
+			slog.String("error", askErr.Error()),
+		)
+	} else if askUserTool != nil {
+		resolvedTools = append(resolvedTools, askUserTool)
+		ae.log.Info("ask_user tool added to agent pipeline",
+			slog.String("run_id", run.ID),
+		)
+	}
+
 	// Build the LLM agent
 	agentName := ae.resolveAgentName(req)
 	instruction := ae.resolveInstruction(req)
@@ -435,6 +456,19 @@ func (ae *AgentExecutor) runPipeline(
 			_ = ae.repo.PauseRun(ctx, run.ID, currentStep)
 			return &model.LLMResponse{
 				Content: genai.NewContentFromText("Step limit reached. Run has been paused.", genai.RoleModel),
+			}, nil
+		}
+
+		// Check if ask_user requested a pause
+		if askPauseState != nil && askPauseState.ShouldPause() {
+			ae.log.Info("ask_user pause requested, pausing agent",
+				slog.String("run_id", run.ID),
+				slog.String("question_id", askPauseState.QuestionID()),
+				slog.Int("step", currentStep),
+			)
+			_ = ae.repo.PauseRun(ctx, run.ID, currentStep)
+			return &model.LLMResponse{
+				Content: genai.NewContentFromText("Execution paused. Waiting for user response to your question.", genai.RoleModel),
 			}, nil
 		}
 
@@ -607,13 +641,20 @@ func (ae *AgentExecutor) runPipeline(
 	duration := time.Since(startTime)
 	durationMs := int(duration.Milliseconds())
 
-	// Check if we were paused by the step limit callback
+	// Check if we were paused by the step limit callback or ask_user tool
 	currentRun, _ := ae.repo.FindRunByID(ctx, run.ID)
 	if currentRun != nil && currentRun.Status == RunStatusPaused {
+		pauseReason := "step_limit_reached"
+		pauseSummary := map[string]any{"reason": pauseReason, "steps": steps}
+		if askPauseState != nil && askPauseState.ShouldPause() {
+			pauseReason = "awaiting_user_input"
+			pauseSummary["reason"] = pauseReason
+			pauseSummary["question_id"] = askPauseState.QuestionID()
+		}
 		return &ExecuteResult{
 			RunID:    run.ID,
 			Status:   RunStatusPaused,
-			Summary:  map[string]any{"reason": "step_limit_reached", "steps": steps},
+			Summary:  pauseSummary,
 			Steps:    steps,
 			Duration: duration,
 		}, nil
@@ -764,6 +805,39 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 	tools = append(tools, spawnTool)
 
 	return tools, nil
+}
+
+// buildAskUserTool creates the ask_user tool if the agent definition opts in.
+// Returns nil if the agent doesn't have ask_user in its tools list.
+func (ae *AgentExecutor) buildAskUserTool(req ExecuteRequest, runID string, pauseState *AskPauseState) (tool.Tool, error) {
+	if req.AgentDefinition == nil {
+		return nil, nil
+	}
+
+	// Check if ask_user is in the agent definition's tools list
+	hasAskUser := false
+	for _, t := range req.AgentDefinition.Tools {
+		if t == ToolNameAskUser {
+			hasAskUser = true
+			break
+		}
+	}
+	if !hasAskUser {
+		return nil, nil
+	}
+
+	agentID := ae.resolveAgentID(req)
+
+	deps := AskUserToolDeps{
+		Repo:       ae.repo,
+		Logger:     ae.log,
+		ProjectID:  req.ProjectID,
+		AgentID:    agentID,
+		RunID:      runID,
+		PauseState: pauseState,
+	}
+
+	return BuildAskUserTool(deps)
 }
 
 // resolveAgentID returns the agent ID for the run record.

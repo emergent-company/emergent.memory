@@ -492,14 +492,16 @@ func (r *Repository) UpdateSessionStatus(ctx context.Context, runID string, stat
 // CreateRunWithOptions creates a new agent run with coordination options.
 func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
 	run := &AgentRun{
-		AgentID:     opts.AgentID,
-		Status:      RunStatusRunning,
-		StartedAt:   time.Now(),
-		Summary:     make(map[string]any),
-		ParentRunID: opts.ParentRunID,
-		MaxSteps:    opts.MaxSteps,
-		ResumedFrom: opts.ResumedFrom,
-		StepCount:   opts.InitialStepCount,
+		AgentID:         opts.AgentID,
+		Status:          RunStatusRunning,
+		StartedAt:       time.Now(),
+		Summary:         make(map[string]any),
+		ParentRunID:     opts.ParentRunID,
+		MaxSteps:        opts.MaxSteps,
+		ResumedFrom:     opts.ResumedFrom,
+		StepCount:       opts.InitialStepCount,
+		TriggerSource:   opts.TriggerSource,
+		TriggerMetadata: opts.TriggerMetadata,
 	}
 	_, err := r.db.NewInsert().
 		Model(run).
@@ -719,4 +721,188 @@ func (r *Repository) FindRunByIDForProject(ctx context.Context, runID, projectID
 		return nil, err
 	}
 	return run, nil
+}
+
+// --- Agent Webhook Hooks ---
+
+// CreateWebhookHook creates a new webhook hook for an agent
+func (r *Repository) CreateWebhookHook(ctx context.Context, hook *AgentWebhookHook) error {
+	_, err := r.db.NewInsert().
+		Model(hook).
+		Returning("*").
+		Exec(ctx)
+	return err
+}
+
+// FindWebhookHooksByAgent returns all webhook hooks for a specific agent
+func (r *Repository) FindWebhookHooksByAgent(ctx context.Context, agentID string, projectID string) ([]*AgentWebhookHook, error) {
+	var hooks []*AgentWebhookHook
+	err := r.db.NewSelect().
+		Model(&hooks).
+		Where("agent_id = ?", agentID).
+		Where("project_id = ?", projectID).
+		Order("created_at DESC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return hooks, nil
+}
+
+// FindWebhookHookByID returns a webhook hook by its ID
+func (r *Repository) FindWebhookHookByID(ctx context.Context, id string) (*AgentWebhookHook, error) {
+	hook := new(AgentWebhookHook)
+	err := r.db.NewSelect().
+		Model(hook).
+		Where("id = ?", id).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return hook, nil
+}
+
+// DeleteWebhookHook deletes a webhook hook
+func (r *Repository) DeleteWebhookHook(ctx context.Context, id string, projectID string) error {
+	res, err := r.db.NewDelete().
+		Model((*AgentWebhookHook)(nil)).
+		Where("id = ?", id).
+		Where("project_id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		return errors.New("webhook hook not found or not authorized")
+	}
+	return nil
+}
+
+// --- Agent Questions ---
+
+// CreateQuestion inserts a new agent question record.
+func (r *Repository) CreateQuestion(ctx context.Context, q *AgentQuestion) error {
+	_, err := r.db.NewInsert().Model(q).Exec(ctx)
+	return err
+}
+
+// FindQuestionByID returns a question by ID.
+func (r *Repository) FindQuestionByID(ctx context.Context, id string) (*AgentQuestion, error) {
+	question := new(AgentQuestion)
+	err := r.db.NewSelect().
+		Model(question).
+		Where("id = ?", id).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return question, nil
+}
+
+// FindPendingQuestionsByRunID returns all pending questions for a run.
+func (r *Repository) FindPendingQuestionsByRunID(ctx context.Context, runID string) ([]*AgentQuestion, error) {
+	var questions []*AgentQuestion
+	err := r.db.NewSelect().
+		Model(&questions).
+		Where("run_id = ?", runID).
+		Where("status = ?", QuestionStatusPending).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return questions, nil
+}
+
+// CancelPendingQuestionsForRun cancels all pending questions for a run.
+func (r *Repository) CancelPendingQuestionsForRun(ctx context.Context, runID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentQuestion)(nil)).
+		Set("status = ?", QuestionStatusCancelled).
+		Set("updated_at = ?", time.Now()).
+		Where("run_id = ?", runID).
+		Where("status = ?", QuestionStatusPending).
+		Exec(ctx)
+	return err
+}
+
+// AnswerQuestion updates a question with the user's response.
+func (r *Repository) AnswerQuestion(ctx context.Context, id string, response string, respondedBy string) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*AgentQuestion)(nil)).
+		Set("response = ?", response).
+		Set("responded_by = ?", respondedBy).
+		Set("responded_at = ?", now).
+		Set("status = ?", QuestionStatusAnswered).
+		Set("updated_at = ?", now).
+		Where("id = ?", id).
+		Where("status = ?", QuestionStatusPending).
+		Exec(ctx)
+	return err
+}
+
+// ListQuestionsByRunID returns all questions for a run, ordered by creation time.
+func (r *Repository) ListQuestionsByRunID(ctx context.Context, runID string) ([]*AgentQuestion, error) {
+	var questions []*AgentQuestion
+	err := r.db.NewSelect().
+		Model(&questions).
+		Where("run_id = ?", runID).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return questions, nil
+}
+
+// ListQuestionsByProject returns questions for a project with optional status filter.
+func (r *Repository) ListQuestionsByProject(ctx context.Context, projectID string, status *AgentQuestionStatus) ([]*AgentQuestion, error) {
+	var questions []*AgentQuestion
+	q := r.db.NewSelect().
+		Model(&questions).
+		Where("project_id = ?", projectID)
+
+	if status != nil {
+		q = q.Where("status = ?", *status)
+	}
+
+	err := q.Order("created_at DESC").Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return questions, nil
+}
+
+// UpdateQuestionNotificationID sets the notification_id on a question record.
+func (r *Repository) UpdateQuestionNotificationID(ctx context.Context, questionID string, notificationID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentQuestion)(nil)).
+		Set("notification_id = ?", notificationID).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", questionID).
+		Exec(ctx)
+	return err
+}
+
+// UpdateNotificationActionStatus updates the action_status fields on a notification.
+// This is a cross-domain update used when a user responds to an agent question.
+func (r *Repository) UpdateNotificationActionStatus(ctx context.Context, notificationID string, status string, userID string) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.notifications").
+		Set("action_status = ?", status).
+		Set("action_status_at = ?", now).
+		Set("action_status_by = ?", userID).
+		Set("updated_at = ?", now).
+		Where("id = ?", notificationID).
+		Exec(ctx)
+	return err
 }

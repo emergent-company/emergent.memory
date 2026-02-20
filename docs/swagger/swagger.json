@@ -8528,6 +8528,218 @@
                 }
             }
         },
+        "/api/projects/{projectId}/agent-questions": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns agent questions for a project with optional status filter",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-questions"
+                ],
+                "summary": "List questions for a project",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (pending, answered, expired, cancelled)",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of questions",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-array_domain_agents_AgentQuestionDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/agent-questions/{questionId}/respond": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Responds to a pending agent question and resumes the paused agent run",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-questions"
+                ],
+                "summary": "Respond to an agent question",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Question ID (UUID)",
+                        "name": "questionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Response body",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.RespondToQuestionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Question answered, agent resuming",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentQuestionDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Question not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Question already answered or run not paused",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/agent-runs/{runId}/questions": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns all questions for a specific agent run, ordered by creation time",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-questions"
+                ],
+                "summary": "List questions for an agent run",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Run ID (UUID)",
+                        "name": "runId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of questions",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-array_domain_agents_AgentQuestionDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Run not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/projects/{projectId}/invites": {
             "get": {
                 "security": [
@@ -14806,6 +15018,26 @@
                 }
             }
         },
+        "domain_agents.APIResponse-array_domain_agents_AgentQuestionDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentQuestionDTO"
+                    }
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_agents.APIResponse-array_domain_agents_AgentRunDTO": {
             "type": "object",
             "properties": {
@@ -14831,6 +15063,23 @@
             "properties": {
                 "data": {
                     "$ref": "#/definitions/domain_agents.AgentDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_agents.APIResponse-domain_agents_AgentQuestionDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.AgentQuestionDTO"
                 },
                 "error": {
                     "type": "string"
@@ -15021,6 +15270,82 @@
                 "ExecutionModeHybrid"
             ]
         },
+        "domain_agents.AgentQuestionDTO": {
+            "type": "object",
+            "properties": {
+                "agentId": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "notificationId": {
+                    "type": "string"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentQuestionOption"
+                    }
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "question": {
+                    "type": "string"
+                },
+                "respondedAt": {
+                    "type": "string"
+                },
+                "respondedBy": {
+                    "type": "string"
+                },
+                "response": {
+                    "type": "string"
+                },
+                "runId": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/domain_agents.AgentQuestionStatus"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.AgentQuestionOption": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.AgentQuestionStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "answered",
+                "expired",
+                "cancelled"
+            ],
+            "x-enum-varnames": [
+                "QuestionStatusPending",
+                "QuestionStatusAnswered",
+                "QuestionStatusExpired",
+                "QuestionStatusCancelled"
+            ]
+        },
         "domain_agents.AgentRunDTO": {
             "type": "object",
             "properties": {
@@ -15094,12 +15419,14 @@
             "enum": [
                 "schedule",
                 "manual",
-                "reaction"
+                "reaction",
+                "webhook"
             ],
             "x-enum-varnames": [
                 "TriggerTypeSchedule",
                 "TriggerTypeManual",
-                "TriggerTypeReaction"
+                "TriggerTypeReaction",
+                "TriggerTypeWebhook"
             ]
         },
         "domain_agents.BatchTriggerDTO": {
@@ -15294,6 +15621,17 @@
                 "EventTypeUpdated",
                 "EventTypeDeleted"
             ]
+        },
+        "domain_agents.RespondToQuestionRequest": {
+            "type": "object",
+            "required": [
+                "response"
+            ],
+            "properties": {
+                "response": {
+                    "type": "string"
+                }
+            }
         },
         "domain_agents.SessionStatus": {
             "type": "string",

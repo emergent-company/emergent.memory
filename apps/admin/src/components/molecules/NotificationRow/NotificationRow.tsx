@@ -6,24 +6,28 @@ import React from 'react';
 import { NotificationDot } from '@/components/atoms/NotificationDot';
 import { Icon } from '@/components/atoms/Icon';
 import { Button } from '@/components/atoms/Button';
+import { AgentQuestionNotification } from '@/components/organisms/AgentQuestionNotification';
 import type { Notification, NotificationAction } from '@/types/notification';
 
 export interface NotificationRowProps {
   notification: Notification;
   onClick?: (notification: Notification) => void;
   onResolve?: (notificationId: string, status: 'accepted' | 'rejected') => void;
+  onResponded?: () => void;
 }
 
 export const NotificationRow: React.FC<NotificationRowProps> = ({
   notification,
   onClick,
   onResolve,
+  onResponded,
 }) => {
   const hasUnread = !notification.readAt;
   const isActionable = notification.actionStatus === 'pending';
   const isResolved =
     notification.actionStatus === 'accepted' ||
     notification.actionStatus === 'rejected';
+  const isAgentQuestion = notification.type === 'agent_question';
 
   const handleClick = () => {
     onClick?.(notification);
@@ -88,8 +92,16 @@ export const NotificationRow: React.FC<NotificationRowProps> = ({
           {notification.message}
         </div>
 
-        {/* Action buttons for pending actionable notifications */}
-        {isActionable && actionButtons.length > 0 && (
+        {/* Agent question response controls */}
+        {isAgentQuestion && (
+          <AgentQuestionNotification
+            notification={notification}
+            onResponded={onResponded}
+          />
+        )}
+
+        {/* Action buttons for pending actionable notifications (non-agent-question) */}
+        {!isAgentQuestion && isActionable && actionButtons.length > 0 && (
           <div className="flex gap-2 mt-2">
             {actionButtons.map((action, index) => (
               <Button
@@ -104,8 +116,8 @@ export const NotificationRow: React.FC<NotificationRowProps> = ({
           </div>
         )}
 
-        {/* Show resolved status badge */}
-        {isResolved && (
+        {/* Show resolved status badge (non-agent-question) */}
+        {!isAgentQuestion && isResolved && (
           <div className="mt-2">
             <span
               className={`badge badge-sm ${

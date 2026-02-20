@@ -13,6 +13,7 @@ const (
 	TriggerTypeSchedule AgentTriggerType = "schedule"
 	TriggerTypeManual   AgentTriggerType = "manual"
 	TriggerTypeReaction AgentTriggerType = "reaction"
+	TriggerTypeWebhook  AgentTriggerType = "webhook"
 )
 
 // AgentExecutionMode defines how the agent executes its actions
@@ -97,6 +98,31 @@ type AgentCapabilities struct {
 	AllowedObjectTypes     []string `json:"allowedObjectTypes,omitempty"`
 }
 
+// RateLimitConfig configures rate limiting for an agent webhook hook
+type RateLimitConfig struct {
+	RequestsPerMinute int `json:"requestsPerMinute"`
+	BurstSize         int `json:"burstSize"`
+}
+
+// AgentWebhookHook represents a configurable webhook endpoint for triggering an agent
+// Table: kb.agent_webhook_hooks
+type AgentWebhookHook struct {
+	bun.BaseModel `bun:"table:kb.agent_webhook_hooks,alias:awh"`
+
+	ID              string           `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	AgentID         string           `bun:"agent_id,type:uuid,notnull" json:"agentId"`
+	ProjectID       string           `bun:"project_id,type:text,notnull" json:"projectId"`
+	Label           string           `bun:"label,notnull" json:"label"`
+	TokenHash       string           `bun:"token_hash,notnull" json:"-"` // Never expose hash in JSON
+	Enabled         bool             `bun:"enabled,notnull,default:true" json:"enabled"`
+	RateLimitConfig *RateLimitConfig `bun:"rate_limit_config,type:jsonb" json:"rateLimitConfig"`
+	CreatedAt       time.Time        `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt       time.Time        `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+
+	// Transient field for returning a newly generated token (never persisted)
+	Token *string `bun:"-" json:"token,omitempty"`
+}
+
 // Agent represents a configurable background agent that runs periodically
 // Table: kb.agents
 type Agent struct {
@@ -137,6 +163,10 @@ type AgentRun struct {
 	SkipReason   *string        `bun:"skip_reason" json:"skipReason"`
 	CreatedAt    time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 
+	// Trigger Source Tracking
+	TriggerSource   *string        `bun:"trigger_source" json:"triggerSource"`
+	TriggerMetadata map[string]any `bun:"trigger_metadata,type:jsonb" json:"triggerMetadata"`
+
 	// Workspace session lifecycle tracking (distinct from run execution status)
 	SessionStatus SessionStatus `bun:"session_status,notnull,default:'active'" json:"sessionStatus"`
 
@@ -158,6 +188,8 @@ type CreateRunOptions struct {
 	MaxSteps         *int
 	ResumedFrom      *string
 	InitialStepCount int // for resumed runs, start from prior run's step_count
+	TriggerSource    *string
+	TriggerMetadata  map[string]any
 }
 
 // AgentProcessingLog tracks which graph objects have been processed by reaction agents
@@ -277,4 +309,45 @@ type AgentRunToolCall struct {
 	// Relations
 	Run     *AgentRun        `bun:"rel:belongs-to,join:run_id=id" json:"-"`
 	Message *AgentRunMessage `bun:"rel:belongs-to,join:message_id=id" json:"-"`
+}
+
+// AgentQuestionStatus defines the lifecycle status of an agent question
+type AgentQuestionStatus string
+
+const (
+	QuestionStatusPending   AgentQuestionStatus = "pending"
+	QuestionStatusAnswered  AgentQuestionStatus = "answered"
+	QuestionStatusExpired   AgentQuestionStatus = "expired"
+	QuestionStatusCancelled AgentQuestionStatus = "cancelled"
+)
+
+// AgentQuestionOption represents a structured choice option for a question
+type AgentQuestionOption struct {
+	Label       string `json:"label"`
+	Value       string `json:"value"`
+	Description string `json:"description,omitempty"`
+}
+
+// AgentQuestion represents a question posed by an agent to a user during execution.
+// Table: kb.agent_questions
+type AgentQuestion struct {
+	bun.BaseModel `bun:"table:kb.agent_questions,alias:aq"`
+
+	ID             string                `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	RunID          string                `bun:"run_id,type:uuid,notnull" json:"runId"`
+	AgentID        string                `bun:"agent_id,type:uuid,notnull" json:"agentId"`
+	ProjectID      string                `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	Question       string                `bun:"question,notnull" json:"question"`
+	Options        []AgentQuestionOption `bun:"options,type:jsonb,notnull,default:'[]'" json:"options"`
+	Response       *string               `bun:"response" json:"response,omitempty"`
+	RespondedBy    *string               `bun:"responded_by,type:uuid" json:"respondedBy,omitempty"`
+	RespondedAt    *time.Time            `bun:"responded_at" json:"respondedAt,omitempty"`
+	Status         AgentQuestionStatus   `bun:"status,notnull,default:'pending'" json:"status"`
+	NotificationID *string               `bun:"notification_id,type:uuid" json:"notificationId,omitempty"`
+	CreatedAt      time.Time             `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt      time.Time             `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+
+	// Relations
+	Run   *AgentRun `bun:"rel:belongs-to,join:run_id=id" json:"-"`
+	Agent *Agent    `bun:"rel:belongs-to,join:agent_id=id" json:"-"`
 }

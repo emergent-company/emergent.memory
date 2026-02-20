@@ -133,6 +133,35 @@ type AgentRunToolCall struct {
 	CreatedAt  time.Time      `json:"createdAt"`
 }
 
+// AgentQuestion represents a question posed by an agent to a user during execution.
+type AgentQuestion struct {
+	ID             string                `json:"id"`
+	RunID          string                `json:"runId"`
+	AgentID        string                `json:"agentId"`
+	ProjectID      string                `json:"projectId"`
+	Question       string                `json:"question"`
+	Options        []AgentQuestionOption `json:"options"`
+	Response       *string               `json:"response,omitempty"`
+	RespondedBy    *string               `json:"respondedBy,omitempty"`
+	RespondedAt    *time.Time            `json:"respondedAt,omitempty"`
+	Status         string                `json:"status"`
+	NotificationID *string               `json:"notificationId,omitempty"`
+	CreatedAt      time.Time             `json:"createdAt"`
+	UpdatedAt      time.Time             `json:"updatedAt"`
+}
+
+// AgentQuestionOption represents a structured choice for an agent question.
+type AgentQuestionOption struct {
+	Label       string `json:"label"`
+	Value       string `json:"value"`
+	Description string `json:"description,omitempty"`
+}
+
+// RespondToQuestionRequest is the request body for responding to an agent question.
+type RespondToQuestionRequest struct {
+	Response string `json:"response"`
+}
+
 // PaginatedResponse wraps paginated API responses.
 type PaginatedResponse[T any] struct {
 	Items      []T `json:"items"`
@@ -281,11 +310,16 @@ func (c *Client) List(ctx context.Context) (*APIResponse[[]Agent], error) {
 	return &result, nil
 }
 
-// Get returns an agent by ID.
+// Get retrieves a single agent by ID.
 // GET /api/admin/agents/:id
 // Requires admin:read scope.
 func (c *Client) Get(ctx context.Context, agentID string) (*APIResponse[Agent], error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/admin/agents/"+url.PathEscape(agentID), nil)
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"GET",
+		c.base+"/api/admin/agents/"+url.PathEscape(agentID),
+		nil,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -305,6 +339,126 @@ func (c *Client) Get(ctx context.Context, agentID string) (*APIResponse[Agent], 
 	}
 
 	var result APIResponse[Agent]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetRunQuestions gets questions for a run.
+// GET /api/projects/:projectId/agent-runs/:runId/questions
+// Requires project:read scope.
+func (c *Client) GetRunQuestions(ctx context.Context, projectID, runID string) (*APIResponse[[]AgentQuestion], error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"GET",
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-runs/"+url.PathEscape(runID)+"/questions",
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[[]AgentQuestion]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// ListProjectQuestions lists agent questions for a project with optional status filter.
+// GET /api/projects/:projectId/agent-questions
+// Requires project:read scope.
+func (c *Client) ListProjectQuestions(ctx context.Context, projectID, status string) (*APIResponse[[]AgentQuestion], error) {
+	u, err := url.Parse(c.base + "/api/projects/" + url.PathEscape(projectID) + "/agent-questions")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	if status != "" {
+		q := u.Query()
+		q.Set("status", status)
+		u.RawQuery = q.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[[]AgentQuestion]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// RespondToQuestion responds to a pending agent question and resumes the paused run.
+// POST /api/projects/:projectId/agent-questions/:questionId/respond
+// Returns 202 Accepted on success.
+func (c *Client) RespondToQuestion(ctx context.Context, projectID, questionID string, respondReq *RespondToQuestionRequest) (*APIResponse[AgentQuestion], error) {
+	body, err := json.Marshal(respondReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"POST",
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-questions/"+url.PathEscape(questionID)+"/respond",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[AgentQuestion]
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
@@ -571,9 +725,9 @@ func (c *Client) BatchTrigger(ctx context.Context, agentID string, batchReq *Bat
 // Requires admin:write scope.
 func (c *Client) CancelRun(ctx context.Context, agentID, runID string) error {
 	req, err := http.NewRequestWithContext(
-		ctx, 
-		"POST", 
-		c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/runs/"+url.PathEscape(runID)+"/cancel", 
+		ctx,
+		"POST",
+		c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/runs/"+url.PathEscape(runID)+"/cancel",
 		nil,
 	)
 	if err != nil {
@@ -656,9 +810,9 @@ func (c *Client) ListProjectRuns(ctx context.Context, projectID string, opts *Li
 // Requires project:read scope.
 func (c *Client) GetProjectRun(ctx context.Context, projectID, runID string) (*APIResponse[AgentRun], error) {
 	req, err := http.NewRequestWithContext(
-		ctx, 
-		"GET", 
-		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-runs/"+url.PathEscape(runID), 
+		ctx,
+		"GET",
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-runs/"+url.PathEscape(runID),
 		nil,
 	)
 	if err != nil {
@@ -692,9 +846,9 @@ func (c *Client) GetProjectRun(ctx context.Context, projectID, runID string) (*A
 // Requires project:read scope.
 func (c *Client) GetRunMessages(ctx context.Context, projectID, runID string) (*APIResponse[[]AgentRunMessage], error) {
 	req, err := http.NewRequestWithContext(
-		ctx, 
-		"GET", 
-		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-runs/"+url.PathEscape(runID)+"/messages", 
+		ctx,
+		"GET",
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-runs/"+url.PathEscape(runID)+"/messages",
 		nil,
 	)
 	if err != nil {
@@ -728,9 +882,9 @@ func (c *Client) GetRunMessages(ctx context.Context, projectID, runID string) (*
 // Requires project:read scope.
 func (c *Client) GetRunToolCalls(ctx context.Context, projectID, runID string) (*APIResponse[[]AgentRunToolCall], error) {
 	req, err := http.NewRequestWithContext(
-		ctx, 
-		"GET", 
-		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-runs/"+url.PathEscape(runID)+"/tool-calls", 
+		ctx,
+		"GET",
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-runs/"+url.PathEscape(runID)+"/tool-calls",
 		nil,
 	)
 	if err != nil {

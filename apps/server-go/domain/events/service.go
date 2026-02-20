@@ -33,7 +33,8 @@ func NewService(log *slog.Logger) *Service {
 	}
 }
 
-// Subscribe registers a callback for events on a specific project
+// Subscribe registers a callback for events on a specific project.
+// If projectID is "*", it subscribes to events across all projects.
 // Returns an unsubscribe function
 func (s *Service) Subscribe(projectID string, callback Subscriber) func() {
 	s.mu.Lock()
@@ -64,10 +65,20 @@ func (s *Service) Subscribe(projectID string, callback Subscriber) func() {
 	}
 }
 
-// Emit broadcasts an event to all subscribers for the project
+// Emit broadcasts an event to all subscribers for the project, and to global subscribers.
 func (s *Service) Emit(event EntityEvent) {
 	s.mu.RLock()
-	subs := s.subscribers[event.ProjectID]
+	projectSubs := s.subscribers[event.ProjectID]
+	globalSubs := s.subscribers["*"]
+
+	// Create a combined list of subscribers
+	var subs []subscriberEntry
+	if len(projectSubs) > 0 {
+		subs = append(subs, projectSubs...)
+	}
+	if len(globalSubs) > 0 {
+		subs = append(subs, globalSubs...)
+	}
 	s.mu.RUnlock()
 
 	if len(subs) == 0 {
