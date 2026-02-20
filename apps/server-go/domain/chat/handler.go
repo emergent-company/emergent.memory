@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent/domain/agents"
 	"github.com/emergent-company/emergent/domain/search"
 	"github.com/emergent-company/emergent/pkg/apperror"
 	"github.com/emergent-company/emergent/pkg/auth"
@@ -21,19 +23,23 @@ import (
 
 // Handler handles chat HTTP requests
 type Handler struct {
-	svc       *Service
-	llmClient *vertex.Client
-	searchSvc *search.Service
-	log       *slog.Logger
+	svc           *Service
+	llmClient     *vertex.Client
+	searchSvc     *search.Service
+	agentExecutor *agents.AgentExecutor
+	agentRepo     *agents.Repository
+	log           *slog.Logger
 }
 
 // NewHandler creates a new chat handler
-func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, log *slog.Logger) *Handler {
+func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, log *slog.Logger) *Handler {
 	return &Handler{
-		svc:       svc,
-		llmClient: llmClient,
-		searchSvc: searchSvc,
-		log:       log.With(logger.Scope("chat.handler")),
+		svc:           svc,
+		llmClient:     llmClient,
+		searchSvc:     searchSvc,
+		agentExecutor: agentExecutor,
+		agentRepo:     agentRepo,
+		log:           log.With(logger.Scope("chat.handler")),
 	}
 }
 
@@ -372,6 +378,11 @@ func validateStreamRequest(req *StreamRequest) error {
 			return apperror.ErrBadRequest.WithMessage("invalid canonicalId format")
 		}
 	}
+	if req.AgentDefinitionID != nil {
+		if _, err := uuid.Parse(*req.AgentDefinitionID); err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid agentDefinitionId format")
+		}
+	}
 	return nil
 }
 
@@ -413,19 +424,33 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	ctx := c.Request().Context()
 	message := strings.TrimSpace(req.Message)
 
+	// If agentDefinitionId is provided on a new conversation, validate it exists
+	var agentDefID *uuid.UUID
+	if req.AgentDefinitionID != nil && req.ConversationID == nil {
+		parsed, _ := uuid.Parse(*req.AgentDefinitionID) // Already validated format
+		def, err := h.agentRepo.FindDefinitionByID(ctx, parsed.String(), &user.ProjectID)
+		if err != nil {
+			return apperror.ErrInternal.WithMessage("failed to look up agent definition")
+		}
+		if def == nil {
+			return apperror.ErrBadRequest.WithMessage("agent definition not found")
+		}
+		agentDefID = &parsed
+	}
+
 	// Get or create conversation
-	var convID uuid.UUID
+	var conv *Conversation
 	if req.ConversationID != nil {
-		// Use existing conversation
+		// Use existing conversation — ignore agentDefinitionId from request body
 		parsed, _ := uuid.Parse(*req.ConversationID) // Already validated
-		conv, err := h.svc.GetConversation(ctx, user.ProjectID, parsed)
+		var err error
+		conv, err = h.svc.GetConversation(ctx, user.ProjectID, parsed)
 		if err != nil {
 			return err
 		}
-		convID = conv.ID
 
 		// Persist the user message
-		_, err = h.svc.AddMessage(ctx, user.ProjectID, convID, AddMessageRequest{
+		_, err = h.svc.AddMessage(ctx, user.ProjectID, conv.ID, AddMessageRequest{
 			Role:    RoleUser,
 			Content: message,
 		})
@@ -444,11 +469,22 @@ func (h *Handler) StreamChat(c echo.Context) error {
 			Message:     message,
 			CanonicalID: req.CanonicalID,
 		}
-		conv, err := h.svc.CreateConversation(ctx, user.ProjectID, user.ID, createReq)
+		var err error
+		conv, err = h.svc.CreateConversation(ctx, user.ProjectID, user.ID, createReq)
 		if err != nil {
 			return err
 		}
-		convID = conv.ID
+
+		// Set agent_definition_id on the new conversation if requested
+		if agentDefID != nil {
+			conv.AgentDefinitionID = agentDefID
+			if err := h.svc.SetAgentDefinitionID(ctx, user.ProjectID, conv.ID, agentDefID); err != nil {
+				h.log.Warn("failed to set agent_definition_id on conversation",
+					slog.String("conversation_id", conv.ID.String()),
+					slog.String("error", err.Error()),
+				)
+			}
+		}
 	}
 
 	// Now that validation is done and conversation is ready, start SSE streaming
@@ -459,9 +495,17 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	}
 
 	// Emit meta event first
-	metaEvent := sse.NewMetaEvent(convID.String())
+	metaEvent := sse.NewMetaEvent(conv.ID.String())
 	if err := sseWriter.WriteData(metaEvent); err != nil {
 		// SSE already started, can't return error - just log and continue
+		return nil
+	}
+
+	// Branch: agent-backed vs direct-LLM flow
+	if conv.AgentDefinitionID != nil {
+		h.streamAgentChat(ctx, conv, message, user.ProjectID, sseWriter)
+		sseWriter.WriteData(sse.NewDoneEvent())
+		sseWriter.Close()
 		return nil
 	}
 
@@ -542,7 +586,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		// Persist assistant response
 		go func() {
 			// Use a background context since the request context may be cancelled
-			_, _ = h.svc.AddMessage(ctx, user.ProjectID, convID, AddMessageRequest{
+			_, _ = h.svc.AddMessage(ctx, user.ProjectID, conv.ID, AddMessageRequest{
 				Role:             RoleAssistant,
 				Content:          fullResponse.String(),
 				RetrievalContext: retrievalCtx,
@@ -624,5 +668,112 @@ func formatFieldValue(v any) string {
 			return s[:100] + "…"
 		}
 		return s
+	}
+}
+
+// streamAgentChat handles the agent-backed chat flow. It loads the agent definition,
+// builds conversation history, calls the agent executor with a StreamCallback, and
+// maps streaming events to SSE events. Final assistant text is persisted to kb.chat_messages.
+func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, message, projectID string, sseWriter *sse.Writer) {
+	agentDefID := conv.AgentDefinitionID.String()
+
+	// Load the agent definition
+	def, err := h.agentRepo.FindDefinitionByID(ctx, agentDefID, &projectID)
+	if err != nil || def == nil {
+		h.log.Error("failed to load agent definition for chat",
+			slog.String("agent_definition_id", agentDefID),
+			slog.String("conversation_id", conv.ID.String()),
+		)
+		sseWriter.WriteData(sse.NewErrorEvent("Failed to load agent definition"))
+		return
+	}
+
+	// Load conversation history (last 10 messages for context)
+	history, err := h.svc.repo.GetConversationHistory(ctx, conv.ID, 10)
+	if err != nil {
+		h.log.Warn("failed to load conversation history for agent chat",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("error", err.Error()),
+		)
+		// Continue without history — agent will still work
+	}
+
+	// Build the user message with history prefix for multi-turn context
+	userMessage := message
+	if len(history) > 0 {
+		var historyBuf strings.Builder
+		historyBuf.WriteString("## Prior conversation context\n")
+		for _, msg := range history {
+			// Skip the current user message (already the last in history if persisted before)
+			historyBuf.WriteString(msg.Role)
+			historyBuf.WriteString(": ")
+			content := msg.Content
+			if len(content) > 2000 {
+				content = content[:2000] + "..."
+			}
+			historyBuf.WriteString(content)
+			historyBuf.WriteString("\n\n")
+		}
+		historyBuf.WriteString("## Current user message\n")
+		historyBuf.WriteString(message)
+		userMessage = historyBuf.String()
+	}
+
+	// Collect the full response text for persistence
+	var fullResponse strings.Builder
+
+	// Build the StreamCallback that maps executor events to SSE events
+	streamCallback := func(event agents.StreamEvent) {
+		switch event.Type {
+		case agents.StreamEventTextDelta:
+			fullResponse.WriteString(event.Text)
+			sseWriter.WriteData(sse.NewTokenEvent(event.Text))
+		case agents.StreamEventToolCallStart:
+			sseWriter.WriteData(sse.NewMCPToolEvent(event.Tool, "started", event.Input, ""))
+		case agents.StreamEventToolCallEnd:
+			status := "completed"
+			if event.Error != "" {
+				status = "error"
+			}
+			sseWriter.WriteData(sse.NewMCPToolEvent(event.Tool, status, event.Output, event.Error))
+		case agents.StreamEventError:
+			sseWriter.WriteData(sse.NewErrorEvent(event.Error))
+		}
+	}
+
+	// Execute the agent
+	result, err := h.agentExecutor.Execute(ctx, agents.ExecuteRequest{
+		AgentDefinition: def,
+		ProjectID:       projectID,
+		UserMessage:     userMessage,
+		StreamCallback:  streamCallback,
+	})
+
+	if err != nil {
+		h.log.Error("agent execution failed",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("agent_definition_id", agentDefID),
+			slog.String("error", err.Error()),
+		)
+		sseWriter.WriteData(sse.NewErrorEvent("Agent execution failed: " + err.Error()))
+		return
+	}
+
+	// Persist assistant response to kb.chat_messages with agent_run_id reference
+	responseText := fullResponse.String()
+	if responseText != "" {
+		var retrievalCtx json.RawMessage
+		if result != nil {
+			rc, _ := json.Marshal(map[string]string{"agent_run_id": result.RunID})
+			retrievalCtx = rc
+		}
+
+		go func() {
+			_, _ = h.svc.AddMessage(ctx, projectID, conv.ID, AddMessageRequest{
+				Role:             RoleAssistant,
+				Content:          responseText,
+				RetrievalContext: retrievalCtx,
+			})
+		}()
 	}
 }
