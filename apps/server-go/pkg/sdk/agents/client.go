@@ -107,6 +107,10 @@ type AgentRun struct {
 	// Multi-agent coordination
 	ParentRunID *string `json:"parentRunId,omitempty"`
 	ResumedFrom *string `json:"resumedFrom,omitempty"`
+
+	// Trigger tracking
+	TriggerSource   *string        `json:"triggerSource,omitempty"`
+	TriggerMetadata map[string]any `json:"triggerMetadata,omitempty"`
 }
 
 // AgentRunMessage represents a message in the agent conversation.
@@ -234,6 +238,7 @@ type BatchTriggerResponse struct {
 // TriggerResponse is the response for triggering an agent.
 type TriggerResponse struct {
 	Success bool    `json:"success"`
+	RunID   *string `json:"runId,omitempty"`
 	Message *string `json:"message,omitempty"`
 	Error   *string `json:"error,omitempty"`
 }
@@ -256,6 +261,31 @@ type PendingEventsResponse struct {
 		ObjectTypes []string `json:"objectTypes"`
 		Events      []string `json:"events"`
 	} `json:"reactionConfig"`
+}
+
+// WebhookHook represents a webhook hook for triggering an agent.
+type WebhookHook struct {
+	ID              string           `json:"id"`
+	AgentID         string           `json:"agentId"`
+	ProjectID       string           `json:"projectId"`
+	Label           string           `json:"label"`
+	Enabled         bool             `json:"enabled"`
+	RateLimitConfig *RateLimitConfig `json:"rateLimitConfig"`
+	CreatedAt       time.Time        `json:"createdAt"`
+	UpdatedAt       time.Time        `json:"updatedAt"`
+	Token           *string          `json:"token,omitempty"` // Only present on creation
+}
+
+// RateLimitConfig configures rate limiting for a webhook hook.
+type RateLimitConfig struct {
+	RequestsPerMinute int `json:"requestsPerMinute"`
+	BurstSize         int `json:"burstSize"`
+}
+
+// CreateWebhookHookRequest is the request body for creating a webhook hook.
+type CreateWebhookHookRequest struct {
+	Label           string           `json:"label"`
+	RateLimitConfig *RateLimitConfig `json:"rateLimitConfig,omitempty"`
 }
 
 // --- Internal helpers ---
@@ -911,4 +941,117 @@ func (c *Client) GetRunToolCalls(ctx context.Context, projectID, runID string) (
 	}
 
 	return &result, nil
+}
+
+// --- Webhook Hook Methods ---
+
+// CreateWebhookHook creates a new webhook hook for an agent.
+// POST /api/admin/agents/:id/hooks
+// Returns 201 on success. The plaintext token is only returned once.
+// Requires admin:write scope.
+func (c *Client) CreateWebhookHook(ctx context.Context, agentID string, createReq *CreateWebhookHookRequest) (*APIResponse[WebhookHook], error) {
+	body, err := json.Marshal(createReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"POST",
+		c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/hooks",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[WebhookHook]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// ListWebhookHooks lists all webhook hooks for an agent.
+// GET /api/admin/agents/:id/hooks
+// Requires admin:read scope.
+func (c *Client) ListWebhookHooks(ctx context.Context, agentID string) (*APIResponse[[]WebhookHook], error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"GET",
+		c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/hooks",
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[[]WebhookHook]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// DeleteWebhookHook deletes a webhook hook.
+// DELETE /api/admin/agents/:id/hooks/:hookId
+// Requires admin:write scope.
+func (c *Client) DeleteWebhookHook(ctx context.Context, agentID, hookID string) error {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"DELETE",
+		c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/hooks/"+url.PathEscape(hookID),
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
 }

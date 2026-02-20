@@ -13,6 +13,9 @@ import (
 	"github.com/emergent-company/emergent/domain/workspace"
 	"github.com/emergent-company/emergent/internal/config"
 	"github.com/emergent-company/emergent/pkg/adk"
+	"github.com/emergent-company/emergent/pkg/adk/session/bunsession"
+	"github.com/uptrace/bun"
+	"google.golang.org/adk/session"
 )
 
 // Module provides the agents domain
@@ -20,6 +23,7 @@ var Module = fx.Module("agents",
 	fx.Provide(
 		NewRepository,
 		provideToolPool,
+		provideSessionService,
 		provideAgentExecutor,
 		provideHandler,
 		provideTriggerService,
@@ -33,6 +37,10 @@ var Module = fx.Module("agents",
 		registerToolPoolInvalidator,
 	),
 )
+
+func provideSessionService(db *bun.DB) session.Service {
+	return bunsession.NewService(db)
+}
 
 // provideWebhookRateLimiter creates a WebhookRateLimiter
 func provideWebhookRateLimiter() *WebhookRateLimiter {
@@ -55,9 +63,10 @@ func provideAgentExecutor(
 	repo *Repository,
 	provisioner *workspace.AutoProvisioner,
 	cfg *config.Config,
+	sessionService session.Service,
 	log *slog.Logger,
 ) *AgentExecutor {
-	return NewAgentExecutor(modelFactory, toolPool, repo, provisioner, cfg, log)
+	return NewAgentExecutor(modelFactory, toolPool, repo, provisioner, cfg, sessionService, log)
 }
 
 // provideHandler creates a Handler with both repo and executor.

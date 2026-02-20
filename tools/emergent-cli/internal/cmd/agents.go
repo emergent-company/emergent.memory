@@ -431,6 +431,141 @@ var (
 	questionStatus string
 )
 
+// --- Webhook Hooks Commands ---
+
+var hooksCmd = &cobra.Command{
+	Use:   "hooks",
+	Short: "Manage agent webhook hooks",
+	Long:  "Commands for managing webhook hooks on agents (create, list, delete)",
+}
+
+var listHooksCmd = &cobra.Command{
+	Use:   "list [agent-id]",
+	Short: "List webhook hooks",
+	Long:  "List all webhook hooks configured for an agent",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runListHooks,
+}
+
+var createHookCmd = &cobra.Command{
+	Use:   "create [agent-id]",
+	Short: "Create a webhook hook",
+	Long: `Create a new webhook hook for an agent. The plaintext token is only shown once.
+
+Examples:
+  emergent-cli agents hooks create <agent-id> --label "CI/CD Pipeline"
+  emergent-cli agents hooks create <agent-id> --label "Staging" --rate-limit 30 --burst-size 5`,
+	Args: cobra.ExactArgs(1),
+	RunE: runCreateHook,
+}
+
+var deleteHookCmd = &cobra.Command{
+	Use:   "delete [agent-id] [hook-id]",
+	Short: "Delete a webhook hook",
+	Long:  "Delete a webhook hook from an agent",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runDeleteHook,
+}
+
+// Flags for hooks
+var (
+	hookLabel     string
+	hookRateLimit int
+	hookBurstSize int
+)
+
+func runListHooks(cmd *cobra.Command, args []string) error {
+	agentID := args[0]
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	result, err := c.SDK.Agents.ListWebhookHooks(context.Background(), agentID)
+	if err != nil {
+		return fmt.Errorf("failed to list webhook hooks: %w", err)
+	}
+
+	hooks := result.Data
+	if len(hooks) == 0 {
+		fmt.Println("No webhook hooks found for this agent.")
+		return nil
+	}
+
+	fmt.Printf("Found %d webhook hook(s):\n\n", len(hooks))
+	for i, h := range hooks {
+		fmt.Printf("%d. %s\n", i+1, h.Label)
+		fmt.Printf("   ID:        %s\n", h.ID)
+		fmt.Printf("   Enabled:   %v\n", h.Enabled)
+		if h.RateLimitConfig != nil {
+			fmt.Printf("   Rate Limit: %d req/min (burst: %d)\n", h.RateLimitConfig.RequestsPerMinute, h.RateLimitConfig.BurstSize)
+		}
+		fmt.Printf("   Created:   %s\n", h.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Println()
+	}
+
+	return nil
+}
+
+func runCreateHook(cmd *cobra.Command, args []string) error {
+	agentID := args[0]
+
+	if hookLabel == "" {
+		return fmt.Errorf("hook label is required. Use --label flag")
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	createReq := &agents.CreateWebhookHookRequest{
+		Label: hookLabel,
+	}
+
+	if hookRateLimit > 0 || hookBurstSize > 0 {
+		createReq.RateLimitConfig = &agents.RateLimitConfig{
+			RequestsPerMinute: hookRateLimit,
+			BurstSize:         hookBurstSize,
+		}
+	}
+
+	result, err := c.SDK.Agents.CreateWebhookHook(context.Background(), agentID, createReq)
+	if err != nil {
+		return fmt.Errorf("failed to create webhook hook: %w", err)
+	}
+
+	h := result.Data
+	fmt.Println("Webhook hook created successfully!")
+	fmt.Printf("  ID:    %s\n", h.ID)
+	fmt.Printf("  Label: %s\n", h.Label)
+	if h.Token != nil {
+		fmt.Printf("\n  Token: %s\n", *h.Token)
+		fmt.Println("\n  WARNING: Save this token now. It will not be shown again.")
+	}
+
+	return nil
+}
+
+func runDeleteHook(cmd *cobra.Command, args []string) error {
+	agentID := args[0]
+	hookID := args[1]
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	err = c.SDK.Agents.DeleteWebhookHook(context.Background(), agentID, hookID)
+	if err != nil {
+		return fmt.Errorf("failed to delete webhook hook: %w", err)
+	}
+
+	fmt.Printf("Webhook hook %s deleted successfully.\n", hookID)
+	return nil
+}
+
 func runListQuestions(cmd *cobra.Command, args []string) error {
 	c, err := getClient(cmd)
 	if err != nil {
@@ -538,7 +673,7 @@ func init() {
 	createAgentCmd.Flags().StringVar(&agentPrompt, "prompt", "", "Agent prompt")
 	createAgentCmd.Flags().StringVar(&agentCronSchedule, "cron", "", "Cron schedule (e.g., '0 */5 * * * *')")
 	createAgentCmd.Flags().StringVar(&agentEnabled, "enabled", "", "Enable agent (true/false)")
-	createAgentCmd.Flags().StringVar(&agentTriggerType, "trigger-type", "", "Trigger type (manual, schedule, reaction)")
+	createAgentCmd.Flags().StringVar(&agentTriggerType, "trigger-type", "", "Trigger type (manual, schedule, reaction, webhook)")
 	createAgentCmd.Flags().StringVar(&agentExecutionMode, "execution-mode", "", "Execution mode")
 	createAgentCmd.Flags().StringVar(&agentDescription, "description", "", "Agent description")
 	createAgentCmd.Flags().StringVar(&agentReactionEvents, "reaction-events", "", "Comma-separated reaction event types (e.g., created,updated)")
@@ -565,6 +700,15 @@ func init() {
 	questionsCmd.AddCommand(listProjectQuestionsCmd)
 	questionsCmd.AddCommand(respondToQuestionCmd)
 
+	// Webhook hooks flags
+	createHookCmd.Flags().StringVar(&hookLabel, "label", "", "Hook label (required)")
+	createHookCmd.Flags().IntVar(&hookRateLimit, "rate-limit", 0, "Rate limit in requests per minute (0 = server default)")
+	createHookCmd.Flags().IntVar(&hookBurstSize, "burst-size", 0, "Burst size for rate limiting (0 = server default)")
+	_ = createHookCmd.MarkFlagRequired("label")
+
+	// Register hooks subcommands
+	hooksCmd.AddCommand(listHooksCmd, createHookCmd, deleteHookCmd)
+
 	// Register subcommands
 	agentsCmd.AddCommand(listAgentsCmd)
 	agentsCmd.AddCommand(getAgentCmd)
@@ -574,5 +718,6 @@ func init() {
 	agentsCmd.AddCommand(triggerAgentCmd)
 	agentsCmd.AddCommand(runsAgentCmd)
 	agentsCmd.AddCommand(questionsCmd)
+	agentsCmd.AddCommand(hooksCmd)
 	rootCmd.AddCommand(agentsCmd)
 }
