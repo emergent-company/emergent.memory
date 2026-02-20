@@ -292,7 +292,7 @@ func (s *AgentsWebhooksSuite) TestReceiveWebhook_Success() {
 		testutil.WithJSONBody(map[string]any{}),
 	)
 
-	s.Equal(http.StatusOK, rec.StatusCode)
+	s.Equal(http.StatusAccepted, rec.StatusCode)
 
 	var response agents.TriggerResponseDTO
 	err := json.Unmarshal(rec.Body, &response)
@@ -317,7 +317,7 @@ func (s *AgentsWebhooksSuite) TestReceiveWebhook_WithPayload() {
 		}),
 	)
 
-	s.Equal(http.StatusOK, rec.StatusCode)
+	s.Equal(http.StatusAccepted, rec.StatusCode)
 
 	var response agents.TriggerResponseDTO
 	err := json.Unmarshal(rec.Body, &response)
@@ -373,7 +373,7 @@ func (s *AgentsWebhooksSuite) TestReceiveWebhook_TokenNotReusableAfterDelete() {
 		testutil.WithRawAuth("Bearer "+token),
 		testutil.WithJSONBody(map[string]any{}),
 	)
-	s.Equal(http.StatusOK, rec.StatusCode)
+	s.Equal(http.StatusAccepted, rec.StatusCode)
 
 	// Delete the hook
 	delRec := s.Client.DELETE(
@@ -403,14 +403,14 @@ func (s *AgentsWebhooksSuite) TestReceiveWebhook_MultipleHooksIndependent() {
 		testutil.WithRawAuth("Bearer "+token1),
 		testutil.WithJSONBody(map[string]any{}),
 	)
-	s.Equal(http.StatusOK, rec1.StatusCode)
+	s.Equal(http.StatusAccepted, rec1.StatusCode)
 
 	rec2 := s.Client.POST(
 		fmt.Sprintf("/api/webhooks/agents/%s", hookID2),
 		testutil.WithRawAuth("Bearer "+token2),
 		testutil.WithJSONBody(map[string]any{}),
 	)
-	s.Equal(http.StatusOK, rec2.StatusCode)
+	s.Equal(http.StatusAccepted, rec2.StatusCode)
 
 	// Cross-using tokens should fail
 	recCross := s.Client.POST(

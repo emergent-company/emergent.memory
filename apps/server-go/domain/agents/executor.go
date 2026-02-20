@@ -54,12 +54,13 @@ type ExecuteResult struct {
 // workspace_config, the executor automatically provisions a sandboxed
 // container before the run starts and tears it down after the run completes.
 type AgentExecutor struct {
-	modelFactory *adk.ModelFactory
-	toolPool     *ToolPool
-	repo         *Repository
-	provisioner  *workspace.AutoProvisioner // nil if workspaces are disabled
-	wsEnabled    bool                       // cached feature flag
-	log          *slog.Logger
+	modelFactory   *adk.ModelFactory
+	toolPool       *ToolPool
+	repo           *Repository
+	provisioner    *workspace.AutoProvisioner // nil if workspaces are disabled
+	wsEnabled      bool                       // cached feature flag
+	sessionService session.Service
+	log            *slog.Logger
 }
 
 // NewAgentExecutor creates a new AgentExecutor.
@@ -69,6 +70,7 @@ func NewAgentExecutor(
 	repo *Repository,
 	provisioner *workspace.AutoProvisioner,
 	cfg *config.Config,
+	sessionService session.Service,
 	log *slog.Logger,
 ) *AgentExecutor {
 	wsEnabled := cfg.Workspace.IsEnabled()
@@ -76,12 +78,13 @@ func NewAgentExecutor(
 		log.Info("agent executor: workspace provisioning enabled")
 	}
 	return &AgentExecutor{
-		modelFactory: modelFactory,
-		toolPool:     toolPool,
-		repo:         repo,
-		provisioner:  provisioner,
-		wsEnabled:    wsEnabled,
-		log:          log.With(logger.Scope("agents.executor")),
+		modelFactory:   modelFactory,
+		toolPool:       toolPool,
+		repo:           repo,
+		provisioner:    provisioner,
+		wsEnabled:      wsEnabled,
+		sessionService: sessionService,
+		log:            log.With(logger.Scope("agents.executor")),
 	}
 }
 
@@ -318,6 +321,18 @@ func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *workspac
 	ae.provisioner.TeardownWorkspace(teardownCtx, result.Workspace)
 }
 
+func (ae *AgentExecutor) getRootRunID(ctx context.Context, run *AgentRun) string {
+	current := run
+	for current.ResumedFrom != nil {
+		prev, err := ae.repo.FindRunByID(ctx, *current.ResumedFrom)
+		if err != nil || prev == nil {
+			break
+		}
+		current = prev
+	}
+	return current.ID
+}
+
 // runPipeline builds the ADK agent, resolves tools, creates the runner, and
 // iterates over events until the agent is done or a safety limit is reached.
 func (ae *AgentExecutor) runPipeline(
@@ -330,6 +345,8 @@ func (ae *AgentExecutor) runPipeline(
 	wsResult *workspace.ProvisioningResult,
 	askPauseState *AskPauseState,
 ) (*ExecuteResult, error) {
+	// Identify the root session ID
+	sessionID := ae.getRootRunID(ctx, run)
 	// Apply timeout if specified
 	if req.Timeout != nil && *req.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -551,16 +568,43 @@ func (ae *AgentExecutor) runPipeline(
 		return nil, fmt.Errorf("failed to create LLM agent: %w", err)
 	}
 
-	// Create in-memory session and runner
-	sessionService := session.InMemoryService()
-	createResp, err := sessionService.Create(ctx, &session.CreateRequest{
-		AppName: "agents",
-		UserID:  "system",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
+	// Retrieve or create the persistent session
+	sessionService := ae.sessionService
+	var sess session.Session
+
+	if sessionID != run.ID {
+		// It's a resumed run, attempt to load the existing session
+		getResp, err := sessionService.Get(ctx, &session.GetRequest{
+			AppName:   "agents",
+			UserID:    "system",
+			SessionID: sessionID,
+		})
+		if err == nil && getResp != nil && getResp.Session != nil {
+			sess = getResp.Session
+			ae.log.Info("resumed ADK session from database",
+				slog.String("session_id", sessionID),
+				slog.Int("history_events", sess.Events().Len()),
+			)
+		} else {
+			ae.log.Warn("failed to load existing ADK session, falling back to new session",
+				slog.String("session_id", sessionID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
-	sess := createResp.Session
+
+	if sess == nil {
+		// Create a new session
+		createResp, err := sessionService.Create(ctx, &session.CreateRequest{
+			AppName:   "agents",
+			UserID:    "system",
+			SessionID: sessionID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create session: %w", err)
+		}
+		sess = createResp.Session
+	}
 
 	r, err := runner.New(runner.Config{
 		Agent:          llmAgent,

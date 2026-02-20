@@ -886,8 +886,11 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 	if err != nil {
 		return apperror.NewInternal("failed to retrieve hook", err)
 	}
-	if hook == nil || !hook.Enabled {
-		return apperror.ErrUnauthorized.WithMessage("invalid or disabled hook")
+	if hook == nil {
+		return apperror.ErrUnauthorized.WithMessage("invalid hook")
+	}
+	if !hook.Enabled {
+		return apperror.NewForbidden("hook is disabled")
 	}
 
 	// Verify the token
@@ -945,7 +948,7 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 
 		_ = h.repo.SkipRun(c.Request().Context(), run.ID, "Executor not available")
 		msg := "Agent triggered (stub mode)"
-		return c.JSON(http.StatusOK, TriggerResponseDTO{
+		return c.JSON(http.StatusAccepted, TriggerResponseDTO{
 			Success: true,
 			RunID:   &run.ID,
 			Message: &msg,
@@ -976,7 +979,7 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 	}
 
 	msg := "Agent triggered successfully"
-	return c.JSON(http.StatusOK, TriggerResponseDTO{
+	return c.JSON(http.StatusAccepted, TriggerResponseDTO{
 		Success: true,
 		RunID:   &result.RunID,
 		Message: &msg,

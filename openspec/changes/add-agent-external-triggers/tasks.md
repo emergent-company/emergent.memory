@@ -44,4 +44,4 @@
 
 - [x] 7.1 Write Go E2E tests for the webhook hook CRUD endpoints and token visibility logic.
 - [x] 7.2 Write Go E2E tests for the public webhook receiver endpoint (valid token, invalid token, rate limiting).
-- [ ] 7.3 Write integration tests for the Event Bridge to ensure reaction agents trigger appropriately without loops.
+- [x] 7.3 Write integration tests for the Event Bridge to ensure reaction agents trigger appropriately without loops.
