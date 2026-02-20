@@ -23,6 +23,19 @@ definitions:
       success:
         type: boolean
     type: object
+  domain_agents.APIResponse-array_domain_agents_AgentQuestionDTO:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/domain_agents.AgentQuestionDTO'
+        type: array
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
   domain_agents.APIResponse-array_domain_agents_AgentRunDTO:
     properties:
       data:
@@ -40,6 +53,17 @@ definitions:
     properties:
       data:
         $ref: '#/definitions/domain_agents.AgentDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  domain_agents.APIResponse-domain_agents_AgentQuestionDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_agents.AgentQuestionDTO'
       error:
         type: string
       message:
@@ -165,6 +189,58 @@ definitions:
     - ExecutionModeSuggest
     - ExecutionModeExecute
     - ExecutionModeHybrid
+  domain_agents.AgentQuestionDTO:
+    properties:
+      agentId:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      notificationId:
+        type: string
+      options:
+        items:
+          $ref: '#/definitions/domain_agents.AgentQuestionOption'
+        type: array
+      projectId:
+        type: string
+      question:
+        type: string
+      respondedAt:
+        type: string
+      respondedBy:
+        type: string
+      response:
+        type: string
+      runId:
+        type: string
+      status:
+        $ref: '#/definitions/domain_agents.AgentQuestionStatus'
+      updatedAt:
+        type: string
+    type: object
+  domain_agents.AgentQuestionOption:
+    properties:
+      description:
+        type: string
+      label:
+        type: string
+      value:
+        type: string
+    type: object
+  domain_agents.AgentQuestionStatus:
+    enum:
+    - pending
+    - answered
+    - expired
+    - cancelled
+    type: string
+    x-enum-varnames:
+    - QuestionStatusPending
+    - QuestionStatusAnswered
+    - QuestionStatusExpired
+    - QuestionStatusCancelled
   domain_agents.AgentRunDTO:
     properties:
       agentId:
@@ -219,11 +295,13 @@ definitions:
     - schedule
     - manual
     - reaction
+    - webhook
     type: string
     x-enum-varnames:
     - TriggerTypeSchedule
     - TriggerTypeManual
     - TriggerTypeReaction
+    - TriggerTypeWebhook
   domain_agents.BatchTriggerDTO:
     properties:
       objectIds:
@@ -354,6 +432,13 @@ definitions:
     - EventTypeCreated
     - EventTypeUpdated
     - EventTypeDeleted
+  domain_agents.RespondToQuestionRequest:
+    properties:
+      response:
+        type: string
+    required:
+    - response
+    type: object
   domain_agents.SessionStatus:
     enum:
     - provisioning
@@ -10678,6 +10763,145 @@ paths:
       summary: Remove project member
       tags:
       - projects
+  /api/projects/{projectId}/agent-questions:
+    get:
+      consumes:
+      - application/json
+      description: Returns agent questions for a project with optional status filter
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Filter by status (pending, answered, expired, cancelled)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of questions
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-array_domain_agents_AgentQuestionDTO'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List questions for a project
+      tags:
+      - agent-questions
+  /api/projects/{projectId}/agent-questions/{questionId}/respond:
+    post:
+      consumes:
+      - application/json
+      description: Responds to a pending agent question and resumes the paused agent
+        run
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Question ID (UUID)
+        in: path
+        name: questionId
+        required: true
+        type: string
+      - description: Response body
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_agents.RespondToQuestionRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Question answered, agent resuming
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_AgentQuestionDTO'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "404":
+          description: Question not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "409":
+          description: Question already answered or run not paused
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Respond to an agent question
+      tags:
+      - agent-questions
+  /api/projects/{projectId}/agent-runs/{runId}/questions:
+    get:
+      consumes:
+      - application/json
+      description: Returns all questions for a specific agent run, ordered by creation
+        time
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Run ID (UUID)
+        in: path
+        name: runId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of questions
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-array_domain_agents_AgentQuestionDTO'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "404":
+          description: Run not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List questions for an agent run
+      tags:
+      - agent-questions
   /api/projects/{projectId}/invites:
     get:
       description: Returns all invitations (pending, accepted, declined, revoked)

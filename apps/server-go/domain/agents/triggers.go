@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/emergent-company/emergent/domain/events"
 	"github.com/emergent-company/emergent/domain/scheduler"
 	"github.com/emergent-company/emergent/pkg/logger"
 )
@@ -17,6 +18,7 @@ type TriggerService struct {
 	scheduler *scheduler.Scheduler
 	executor  *AgentExecutor
 	repo      *Repository
+	events    *events.Service
 	log       *slog.Logger
 
 	// mu protects eventListeners
@@ -29,14 +31,78 @@ func NewTriggerService(
 	sched *scheduler.Scheduler,
 	executor *AgentExecutor,
 	repo *Repository,
+	eventService *events.Service,
 	log *slog.Logger,
 ) *TriggerService {
-	return &TriggerService{
+	ts := &TriggerService{
 		scheduler:      sched,
 		executor:       executor,
 		repo:           repo,
+		events:         eventService,
 		log:            log.With(logger.Scope("agents.triggers")),
 		eventListeners: make(map[string][]*Agent),
+	}
+
+	// Subscribe to all events
+	if ts.events != nil {
+		ts.events.Subscribe("*", ts.onEntityEvent)
+	}
+
+	return ts
+}
+
+// onEntityEvent handles incoming events from the global event bus
+func (ts *TriggerService) onEntityEvent(evt events.EntityEvent) {
+	// Ignore events caused by agents to prevent infinite loops (Task 5.3)
+	if evt.Actor != nil && evt.Actor.ActorType == events.ActorAgent {
+		return
+	}
+
+	// Map entity event type to reaction event type
+	var reactionType ReactionEventType
+	switch evt.Type {
+	case events.EventTypeCreated:
+		reactionType = EventTypeCreated
+	case events.EventTypeUpdated:
+		reactionType = EventTypeUpdated
+	case events.EventTypeDeleted:
+		reactionType = EventTypeDeleted
+	default:
+		return // Unsupported event type
+	}
+
+	// Determine object type. Fallback to the entity type string
+	objType := string(evt.Entity)
+	if evt.ObjectType != "" {
+		objType = evt.ObjectType
+	}
+
+	// For single entity events
+	if evt.ID != nil {
+		input := map[string]any{
+			"id": *evt.ID,
+		}
+		if evt.Version != nil {
+			input["version"] = *evt.Version
+		}
+		if evt.Data != nil {
+			input["data"] = evt.Data
+		}
+
+		ts.HandleEvent(context.Background(), objType, reactionType, evt.ProjectID, input)
+	}
+
+	// For batch entity events
+	if len(evt.IDs) > 0 {
+		for _, id := range evt.IDs {
+			input := map[string]any{
+				"id": id,
+			}
+			if evt.Data != nil {
+				input["data"] = evt.Data
+			}
+			ts.HandleEvent(context.Background(), objType, reactionType, evt.ProjectID, input)
+		}
 	}
 }
 
