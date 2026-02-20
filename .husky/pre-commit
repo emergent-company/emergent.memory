@@ -82,7 +82,14 @@ else
   IMPORT_ERRORS=0
   for imp in $ALL_IMPORTS; do
     # Convert import path to local directory relative to repo root
-    local_dir="apps/server-go/${imp#github.com/emergent-company/emergent/}"
+    # Strip the module prefix to get the package-relative path
+    rel_path="${imp#github.com/emergent-company/emergent/}"
+    # SDK modules (under apps/server-go/pkg/sdk/) already have apps/server-go/ in
+    # their import path, so don't prepend it again
+    case "$rel_path" in
+      apps/server-go/*) local_dir="$rel_path" ;;
+      *) local_dir="apps/server-go/$rel_path" ;;
+    esac
 
     # Check if any .go files are tracked in git index (committed + staged) for this package
     tracked_count=$(git ls-files --cached -- "$local_dir" 2>/dev/null | grep '\.go$' | wc -l)

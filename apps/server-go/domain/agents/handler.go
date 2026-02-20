@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -1778,4 +1779,197 @@ func (h *Handler) HandleListQuestionsByProject(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(dtos))
+}
+
+// GetADKSessions handles GET /api/projects/:projectId/adk-sessions
+func (h *Handler) GetADKSessions(c echo.Context) error {
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("project ID is required")
+	}
+
+	limit := 50
+	offset := 0
+
+	sessions, count, err := h.repo.FindADKSessionsByProject(c.Request().Context(), projectID, limit, offset)
+	if err != nil {
+		return apperror.NewInternal("failed to list adk sessions", err)
+	}
+
+	dtos := make([]*ADKSessionDTO, len(sessions))
+	for i, s := range sessions {
+		dtos[i] = &ADKSessionDTO{
+			ID:         s.ID,
+			AppName:    s.AppName,
+			UserID:     s.UserID,
+			State:      s.State,
+			CreateTime: s.CreateTime,
+			UpdateTime: s.UpdateTime,
+		}
+	}
+
+	return c.JSON(http.StatusOK, PaginatedResponse[*ADKSessionDTO]{
+		Items:      dtos,
+		TotalCount: count,
+		Limit:      limit,
+		Offset:     offset,
+	})
+}
+
+// GetADKSessionByID handles GET /api/projects/:projectId/adk-sessions/:sessionId
+func (h *Handler) GetADKSessionByID(c echo.Context) error {
+	projectID := c.Param("projectId")
+	sessionID := c.Param("sessionId")
+	if projectID == "" || sessionID == "" {
+		return apperror.NewBadRequest("project ID and session ID are required")
+	}
+
+	session, events, err := h.repo.FindADKSessionByIDForProject(c.Request().Context(), sessionID, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get adk session", err)
+	}
+	if session == nil {
+		return apperror.NewNotFound("adk_session", sessionID)
+	}
+
+	dto := &ADKSessionDTO{
+		ID:         session.ID,
+		AppName:    session.AppName,
+		UserID:     session.UserID,
+		State:      session.State,
+		CreateTime: session.CreateTime,
+		UpdateTime: session.UpdateTime,
+	}
+
+	eventDTOs := make([]*ADKEventDTO, len(events))
+	for i, e := range events {
+
+		var content map[string]any
+		if len(e.Content) > 0 {
+			_ = json.Unmarshal(e.Content, &content)
+		}
+
+		var actions map[string]any
+		if len(e.Actions) > 0 {
+			_ = json.Unmarshal(e.Actions, &actions)
+		}
+
+		var longRunningToolIDs map[string]any
+		if len(e.LongRunningToolIDsJSON) > 0 {
+			_ = json.Unmarshal(e.LongRunningToolIDsJSON, &longRunningToolIDs)
+		}
+
+		eventDTOs[i] = &ADKEventDTO{
+			ID:                     e.ID,
+			SessionID:              e.SessionID,
+			InvocationID:           e.InvocationID,
+			Author:                 e.Author,
+			Timestamp:              e.Timestamp,
+			Branch:                 e.Branch,
+			Actions:                actions,
+			LongRunningToolIDsJSON: longRunningToolIDs,
+			Content:                content,
+			Partial:                e.Partial,
+			TurnComplete:           e.TurnComplete,
+			ErrorCode:              e.ErrorCode,
+			ErrorMessage:           e.ErrorMessage,
+			Interrupted:            e.Interrupted,
+		}
+	}
+
+	dto.Events = eventDTOs
+
+	return c.JSON(http.StatusOK, APIResponse[*ADKSessionDTO]{
+		Data: dto,
+	})
+}
+
+// graphQueryAgentSystemPrompt is the default system prompt for the graph-query-agent.
+const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. Your role is to help users explore and understand the data in their knowledge graph.
+
+## Rules
+1. ALWAYS use the provided tools to look up data. Never answer from your training data or fabricate entities, relationships, or facts.
+2. When you retrieve results, cite specific entity names, types, and relationship types in your response.
+3. If a tool returns no results, clearly state that no matching data was found. Do not fabricate or hallucinate results.
+4. For complex questions, chain multiple tool calls (e.g., search first, then traverse relationships).
+5. Format responses using markdown for clarity. Use tables for structured data when appropriate.
+6. Keep responses concise and factual. Focus on what the data shows.`
+
+// InstallDefaultAgents handles POST /api/admin/projects/:projectId/install-default-agents
+// @Summary      Install default agent definitions for a project
+// @Description  Creates the default graph-query-agent definition for the project. Idempotent - returns existing if already installed.
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {object} APIResponse[AgentDefinitionDTO] "Default agent definition (existing or created)"
+// @Failure      400 {object} apperror.Error "Invalid project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/admin/projects/{projectId}/install-default-agents [post]
+// @Security     bearerAuth
+func (h *Handler) InstallDefaultAgents(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	ctx := c.Request().Context()
+
+	// Check if graph-query-agent already exists for this project (idempotent)
+	existing, err := h.repo.FindDefinitionByName(ctx, projectID, "graph-query-agent")
+	if err != nil {
+		return apperror.NewInternal("failed to check for existing definition", err)
+	}
+	if existing != nil {
+		return c.JSON(http.StatusOK, SuccessResponse(existing.ToDTO()))
+	}
+
+	// Create the default graph-query-agent definition
+	temperature := float32(0.1)
+	maxSteps := 15
+	systemPrompt := graphQueryAgentSystemPrompt
+
+	def := &AgentDefinition{
+		ProjectID:    projectID,
+		Name:         "graph-query-agent",
+		Description:  strPtr("Knowledge graph query assistant with access to search, entity, and relationship tools"),
+		SystemPrompt: &systemPrompt,
+		Model: &ModelConfig{
+			Name:        "gemini-2.0-flash",
+			Temperature: &temperature,
+		},
+		Tools: []string{
+			"hybrid_search",
+			"query_entities",
+			"search_entities",
+			"semantic_search",
+			"find_similar",
+			"get_entity_edges",
+			"traverse_graph",
+			"list_entity_types",
+			"schema_version",
+			"list_relationships",
+		},
+		FlowType:   FlowTypeSingle,
+		IsDefault:  true,
+		MaxSteps:   &maxSteps,
+		Visibility: VisibilityProject,
+		Config:     map[string]any{},
+	}
+
+	if err := h.repo.CreateDefinition(ctx, def); err != nil {
+		return apperror.NewInternal("failed to create graph-query-agent definition", err)
+	}
+
+	return c.JSON(http.StatusCreated, SuccessResponse(def.ToDTO()))
+}
+
+func strPtr(s string) *string {
+	return &s
 }

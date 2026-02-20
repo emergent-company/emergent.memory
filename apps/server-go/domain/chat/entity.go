@@ -26,6 +26,9 @@ type Conversation struct {
 	// Tool configuration
 	EnabledTools []string `bun:"enabled_tools,array" json:"enabledTools,omitempty"`
 
+	// Agent-backed chat: links conversation to an agent definition for tool-calling capabilities
+	AgentDefinitionID *uuid.UUID `bun:"agent_definition_id,type:uuid" json:"agentDefinitionId,omitempty"`
+
 	// Timestamps
 	CreatedAt time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
@@ -109,7 +112,8 @@ type Citation struct {
 
 // StreamRequest is the request body for starting a stream
 type StreamRequest struct {
-	ConversationID *string `json:"conversationId,omitempty" validate:"omitempty,uuid"`
-	Message        string  `json:"message" validate:"required,max=100000"`
-	CanonicalID    *string `json:"canonicalId,omitempty" validate:"omitempty,uuid"`
+	ConversationID    *string `json:"conversationId,omitempty" validate:"omitempty,uuid"`
+	Message           string  `json:"message" validate:"required,max=100000"`
+	CanonicalID       *string `json:"canonicalId,omitempty" validate:"omitempty,uuid"`
+	AgentDefinitionID *string `json:"agentDefinitionId,omitempty" validate:"omitempty,uuid"`
 }

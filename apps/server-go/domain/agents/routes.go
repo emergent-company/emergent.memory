@@ -50,6 +50,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	defWrite.DELETE("/:id", h.DeleteDefinition)
 	defWrite.PUT("/:id/workspace-config", h.UpdateWorkspaceConfig)
 
+	// --- Admin Project-level operations ---
+	projectAdmin := e.Group("/api/admin/projects/:projectId")
+	projectAdmin.Use(authMiddleware.RequireAuth())
+	projectAdmin.Use(authMiddleware.RequireScopes("admin:write"))
+	projectAdmin.POST("/install-default-agents", h.InstallDefaultAgents)
+
 	// --- Project-scoped run history routes ---
 	runs := e.Group("/api/projects/:projectId/agent-runs")
 	runs.Use(authMiddleware.RequireAuth())
@@ -71,6 +77,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	sessions.Use(authMiddleware.RequireAuth())
 	sessions.Use(authMiddleware.RequireScopes("project:read"))
 	sessions.GET("/:id", h.GetSession)
+
+	// --- Project-scoped ADK session routes ---
+	adkSessions := e.Group("/api/projects/:projectId/adk-sessions")
+	adkSessions.Use(authMiddleware.RequireAuth())
+	adkSessions.Use(authMiddleware.RequireScopes("project:read"))
+	adkSessions.GET("", h.GetADKSessions)
+	adkSessions.GET("/:sessionId", h.GetADKSessionByID)
 
 	// --- Public Webhook Receiver routes ---
 	// NOTE: Does not use RequireAuth; authentication is handled internally via Bearer token
