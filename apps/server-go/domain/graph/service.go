@@ -1378,6 +1378,17 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 		return nil, err
 	}
 
+	// Copy embedding from previous version to new version.
+	// Triplet text (src_name + type + dst_name) doesn't change on patch (only
+	// properties/weight change), so the embedding is still valid.
+	// If the previous version had no embedding, the sweep worker will generate one.
+	_, _ = tx.Tx.NewRaw(`UPDATE kb.graph_relationships
+		SET embedding = prev.embedding, embedding_updated_at = prev.embedding_updated_at
+		FROM kb.graph_relationships prev
+		WHERE kb.graph_relationships.id = ? AND prev.id = ?
+		  AND prev.embedding IS NOT NULL`,
+		newVersion.ID, current.ID).Exec(ctx)
+
 	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
