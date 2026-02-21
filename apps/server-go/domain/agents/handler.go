@@ -1941,7 +1941,7 @@ func (h *Handler) InstallDefaultAgents(c echo.Context) error {
 		Description:  strPtr("Knowledge graph query assistant with access to search, entity, and relationship tools"),
 		SystemPrompt: &systemPrompt,
 		Model: &ModelConfig{
-			Name:        "gemini-2.0-flash",
+			Name:        "gemini-2.5-flash",
 			Temperature: &temperature,
 		},
 		Tools: []string{
