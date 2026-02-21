@@ -13,9 +13,9 @@ import (
 
 const (
 	// DefaultModel is the default embedding model
-	DefaultModel = "text-embedding-004"
+	DefaultModel = "gemini-embedding-001"
 
-	// DefaultDimension is the embedding dimension for text-embedding-004
+	// DefaultDimension is the embedding dimension (gemini-embedding-001 supports MRL, we use 768 to match DB column)
 	DefaultDimension = 768
 
 	// DefaultMaxRetries is the default number of retries
@@ -194,6 +194,7 @@ func (c *Client) embedWithRetry(ctx context.Context, texts []string, taskType st
 
 func (c *Client) embedBatch(ctx context.Context, texts []string, taskType string) ([][]float32, error) {
 	embeddings := make([][]float32, 0, len(texts))
+	outputDim := int32(DefaultDimension)
 
 	for _, text := range texts {
 		result, err := c.client.Models.EmbedContent(
@@ -201,7 +202,8 @@ func (c *Client) embedBatch(ctx context.Context, texts []string, taskType string
 			c.model,
 			genai.Text(text),
 			&genai.EmbedContentConfig{
-				TaskType: taskType,
+				TaskType:             taskType,
+				OutputDimensionality: &outputDim,
 			},
 		)
 		if err != nil {

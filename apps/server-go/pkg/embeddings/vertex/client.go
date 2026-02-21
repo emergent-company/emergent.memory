@@ -17,9 +17,9 @@ import (
 
 const (
 	// DefaultModel is the default embedding model
-	DefaultModel = "text-embedding-004"
+	DefaultModel = "gemini-embedding-001"
 
-	// DefaultDimension is the embedding dimension for text-embedding-004
+	// DefaultDimension is the embedding dimension (gemini-embedding-001 supports MRL, we use 768 to match DB column)
 	DefaultDimension = 768
 
 	// DefaultMaxRetries is the default number of retries
@@ -136,7 +136,12 @@ func NewClient(ctx context.Context, cfg Config, opts ...ClientOption) (*Client, 
 
 // predictRequest is the request body for the predict API
 type predictRequest struct {
-	Instances []instance `json:"instances"`
+	Instances  []instance         `json:"instances"`
+	Parameters *predictParameters `json:"parameters,omitempty"`
+}
+
+type predictParameters struct {
+	OutputDimensionality int `json:"outputDimensionality"`
 }
 
 type instance struct {
@@ -267,7 +272,12 @@ func (c *Client) embedBatch(ctx context.Context, documents []string) ([][]float3
 		}
 	}
 
-	reqBody := predictRequest{Instances: instances}
+	reqBody := predictRequest{
+		Instances: instances,
+		Parameters: &predictParameters{
+			OutputDimensionality: DefaultDimension,
+		},
+	}
 	reqBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to marshal request: %w", err)
