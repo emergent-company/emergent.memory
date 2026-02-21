@@ -9,7 +9,7 @@ This project provides a minimal ingestion server aligned with the spec. It store
 SPA/server integration
 
 - Frontend issuer: set to `http://localhost:8100` (see `apps/admin/.env.example`).
-- Server-side validation: set the same issuer and fetch JWKS from `http://localhost:8100` (see `apps/server/.env.example`).
+- Server-side validation: set the same issuer and fetch JWKS from `http://localhost:8100` (see `apps/server-go/.env.example`).
 
 Prereqs
 
@@ -148,7 +148,7 @@ Common errors and fixes
 SPA/server integration
 
 - Frontend issuer: set to `http://localhost:8080` (see `apps/admin/.env.example`).
-- Server-side validation: set the same issuer and fetch JWKS from `http://localhost:8080` (see `apps/server/.env.example`).
+- Server-side validation: set the same issuer and fetch JWKS from `http://localhost:8080` (see `apps/server-go/.env.example`).
 
 More details
 

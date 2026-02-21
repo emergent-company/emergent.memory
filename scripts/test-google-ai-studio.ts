@@ -21,7 +21,7 @@ const __dirname = dirname(__filename);
 
 // Load environment variables
 config({ path: resolve(__dirname, '../.env') });
-config({ path: resolve(__dirname, '../apps/server/.env') });
+config({ path: resolve(__dirname, '../apps/server-go/.env') });
 
 import { GoogleGenAI, Type } from '@google/genai';
 

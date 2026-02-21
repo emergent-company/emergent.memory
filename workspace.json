@@ -5,46 +5,24 @@
     "admin": {
       "root": "apps/admin",
       "projectType": "application",
-      "tags": [
-        "scope:admin"
-      ],
-      "implicitDependencies": [
-        "workspace-cli"
-      ]
-    },
-    "server-nest": {
-      "root": "apps/server-nest",
-      "projectType": "application",
-      "tags": [
-        "scope:server"
-      ],
-      "implicitDependencies": [
-        "workspace-cli"
-      ]
+      "tags": ["scope:admin"],
+      "implicitDependencies": ["workspace-cli"]
     },
     "workspace-cli": {
       "root": "tools/workspace-cli",
       "projectType": "library",
-      "tags": [
-        "scope:workspace"
-      ],
-      "implicitDependencies": [
-        "docker"
-      ]
+      "tags": ["scope:workspace"],
+      "implicitDependencies": ["docker"]
     },
     "repo-scripts": {
       "root": "scripts",
       "projectType": "library",
-      "tags": [
-        "scope:scripts"
-      ]
+      "tags": ["scope:scripts"]
     },
     "docker": {
       "root": "docker",
       "projectType": "library",
-      "tags": [
-        "scope:dependency"
-      ]
+      "tags": ["scope:dependency"]
     }
   }
 }

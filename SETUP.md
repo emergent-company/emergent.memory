@@ -204,7 +204,7 @@ To enable LLM trace debugging:
 - Local Auth deep-dive: [Zitadel Setup Guide](docs/setup/ZITADEL_SETUP_GUIDE.md)
 - Docker Compose: `docker/docker-compose.yml`
 - Admin SPA quickstart: `apps/admin/README.md`
-- Server quickstart: `apps/server-nest/README.md`
+- Server quickstart: `apps/server-go/README.md`
 
 ## Selected Environment Variables
 

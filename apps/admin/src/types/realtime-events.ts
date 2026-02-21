@@ -2,7 +2,7 @@
  * Real-time event types for SSE updates
  *
  * These types mirror the backend event types in:
- * apps/server/src/modules/events/events.types.ts
+ * apps/server-go/domain/ (Go event types)
  */
 
 /**

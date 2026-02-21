@@ -224,10 +224,12 @@ async function main() {
     console.log(
       `\n✅ Successfully created ${PROMPT_NAME} v${result.version} (tuned-v2)`
     );
-    console.log('\nTo run an experiment with this prompt:');
-    console.log('  npx tsx apps/server/src/cli/run-experiment.cli.ts \\');
-    console.log('    --dataset extraction-golden \\');
-    console.log('    --name "tuned-v2-experiment" \\');
+    console.log('\\nTo run an experiment with this prompt:');
+    console.log(
+      '  # Run experiment via Go server CLI (see apps/server-go for details)'
+    );
+    console.log('    --dataset extraction-golden');
+    console.log('    --name "tuned-v2-experiment"');
     console.log('    --prompt-label tuned-v2');
     console.log('\nView prompts in Langfuse UI at:');
     console.log(`  ${baseUrl}/prompts`);

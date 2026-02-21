@@ -25,13 +25,11 @@ services:
       retries: 15
       start_period: 15s
 
-  # NestJS Backend API
+  # Go Backend API
   server:
     build:
       context: . # EXPLICIT: Build from repository root
-      dockerfile: apps/server/Dockerfile # EXPLICIT: Path to Dockerfile
-      args:
-        NODE_ENV: production
+      dockerfile: deploy/minimal/Dockerfile.server-with-cli
     expose:
       - '3002'
     labels:
@@ -69,15 +67,12 @@ services:
 
       # Server
       PORT: 3002
-      NODE_ENV: production
+      GO_ENV: production
       CORS_ORIGIN: ${CORS_ORIGIN}
 
       # Google AI
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1536}
-
-      # Security
-      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY}
 
       # Features
       DB_AUTOINIT: ${DB_AUTOINIT:-true}

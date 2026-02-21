@@ -175,7 +175,7 @@ if (cliOptions.help) {
 
 // Load environment variables
 config({ path: resolve(__dirname, '../.env') });
-config({ path: resolve(__dirname, '../apps/server/.env') });
+config({ path: resolve(__dirname, '../apps/server-go/.env') });
 
 // Set GOOGLE_APPLICATION_CREDENTIALS for Vertex AI
 const serviceAccountPath = resolve(
