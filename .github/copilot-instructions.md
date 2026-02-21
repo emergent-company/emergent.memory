@@ -10,8 +10,7 @@ Before implementing new features, **always check** these domain-specific AGENT.m
 | ------------------------------------ | ------------------- | ----------------------------------------------------------------------------------- |
 | `apps/admin/src/components/AGENT.md` | Frontend Components | Atomic design (atoms/molecules/organisms), DaisyUI + Tailwind, available components |
 | `apps/admin/src/hooks/AGENT.md`      | Frontend Hooks      | `useApi` (MUST use for all API calls), all 33+ hooks categorized                    |
-| `apps/server/src/modules/AGENT.md`   | Backend NestJS      | Module/Controller/Service/Repository pattern, Guards, DTOs, RLS                     |
-| `apps/server/src/entities/AGENT.md`  | TypeORM Entities    | Schema usage (kb/core), column types, relations, indexes                            |
+| `apps/server-go/AGENT.md`            | Go Backend          | fx modules, Echo handlers, Bun ORM, job queues                                      |
 
 **When to read these files:**
 
@@ -126,18 +125,18 @@ For comprehensive testing guidance, refer to **`docs/testing/AI_AGENT_GUIDE.md`*
 - **Run server unit tests:**
 
   ```bash
-  nx run server:test
+  nx run server-go:test
   ```
 
 - **Run server integration tests:**
 
   ```bash
-  nx run server:test -- --testPathPattern=tests/integration
+  nx run server-go:test -- --testPathPattern=tests/integration
   ```
 
 - **Run server API e2e tests:**
   ```bash
-  nx run server:test-e2e
+  nx run server-go:test-e2e
   ```
 
 ## 4. EPF Working Directory

@@ -28,14 +28,14 @@ var Module = fx.Module("email",
 func NewTemplateServiceFromConfig(log *slog.Logger) *TemplateService {
 	// Default template directory relative to the server binary
 	// In production, templates are typically at ./templates/email
-	// In development, they might be at apps/server/templates/email
+	// In development, they might be at apps/server-go/templates/email
 	templateDir := os.Getenv("EMAIL_TEMPLATE_DIR")
 	if templateDir == "" {
 		// Try common paths
 		candidates := []string{
 			"templates/email",
-			"../server/templates/email",
-			"../../apps/server/templates/email",
+			"apps/server-go/templates/email",
+			"../../apps/server-go/templates/email",
 		}
 		for _, candidate := range candidates {
 			if _, err := os.Stat(candidate); err == nil {
@@ -81,7 +81,7 @@ func (s *noOpSender) Send(ctx context.Context, opts SendOptions) (*SendResult, e
 	s.log.Info("email send (no-op)",
 		slog.String("to", opts.To),
 		slog.String("subject", opts.Subject))
-	
+
 	return &SendResult{
 		Success:   true,
 		MessageID: "noop-" + opts.To,

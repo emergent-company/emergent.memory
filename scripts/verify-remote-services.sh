@@ -140,35 +140,35 @@ fi
 echo ""
 
 # Check server .env.local
-if [ -f "apps/server/.env.local" ]; then
-    echo -e "${GREEN}✅ apps/server/.env.local exists${NC}"
+if [ -f "apps/server-go/.env.local" ]; then
+    echo -e "${GREEN}✅ apps/server-go/.env.local exists${NC}"
     
-    if grep -q "POSTGRES_HOST=94.130.12.194" apps/server/.env.local; then
+    if grep -q "POSTGRES_HOST=94.130.12.194" apps/server-go/.env.local; then
         echo -e "${GREEN}✅ Server POSTGRES_HOST configured for remote${NC}"
     else
         echo -e "${YELLOW}⚠️  Server POSTGRES_HOST not set to remote${NC}"
     fi
     
-    if grep -q "ZITADEL_ISSUER=http://zitadel.dev.emergent-company.ai:8100" apps/server/.env.local; then
+    if grep -q "ZITADEL_ISSUER=http://zitadel.dev.emergent-company.ai:8100" apps/server-go/.env.local; then
         echo -e "${GREEN}✅ Server ZITADEL_ISSUER configured for remote${NC}"
     else
         echo -e "${YELLOW}⚠️  Server ZITADEL_ISSUER not set to remote${NC}"
     fi
     
-    if grep -q "ZITADEL_ORG_ID=347883699234147332" apps/server/.env.local; then
+    if grep -q "ZITADEL_ORG_ID=347883699234147332" apps/server-go/.env.local; then
         echo -e "${GREEN}✅ Server ZITADEL_ORG_ID configured${NC}"
     else
         echo -e "${YELLOW}⚠️  Server ZITADEL_ORG_ID not set${NC}"
     fi
     
-    if grep -q "ZITADEL_PROJECT_ID=347883699653577732" apps/server/.env.local; then
+    if grep -q "ZITADEL_PROJECT_ID=347883699653577732" apps/server-go/.env.local; then
         echo -e "${GREEN}✅ Server ZITADEL_PROJECT_ID configured${NC}"
     else
         echo -e "${YELLOW}⚠️  Server ZITADEL_PROJECT_ID not set${NC}"
     fi
 else
-    echo -e "${RED}❌ apps/server/.env.local not found${NC}"
-    echo "   Create from template: cp apps/server/.env.local.remote apps/server/.env.local"
+    echo -e "${RED}❌ apps/server-go/.env.local not found${NC}"
+    echo "   Create from template: cp apps/server-go/.env.local.remote apps/server-go/.env.local"
 fi
 
 echo ""
@@ -187,9 +187,9 @@ echo ""
 echo "Quick Setup:"
 echo "  1. Copy configuration templates:"
 echo "     cp .env.local.remote .env.local"
-echo "     cp apps/server/.env.local.remote apps/server/.env.local"
+echo "     cp apps/server-go/.env.local.remote apps/server-go/.env.local"
 echo ""
-echo "  2. Update secrets in apps/server/.env.local:"
+echo "  2. Update secrets in apps/server-go/.env.local:"
 echo "     - ZITADEL_CLIENT_JWT (service account)"
 echo "     - ZITADEL_API_JWT (API service account)"
 echo "     - GOOGLE_API_KEY (for AI features)"

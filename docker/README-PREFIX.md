@@ -54,7 +54,7 @@ ZITADEL_LOGIN_PORT=8201
 
 After changing Docker ports, update your application's `.env` file to match:
 
-**For `apps/server/.env`:**
+**For `apps/server-go/.env`:**
 
 ```bash
 # Match the POSTGRES_PORT from docker/.env

@@ -47,7 +47,7 @@ tests/
 
 ## Automation Entry Points
 
-- **Nx Targets (canonical):** Always prefer `nx run <project>:<target>` to execute tasks. Examples: `nx run admin:test`, `nx run server:test`, `nx run workspace-cli:workspace:start`.
+- **Nx Targets (canonical):** Always prefer `nx run <project>:<target>` to execute tasks. Examples: `nx run admin:test`, `nx run server-go:test`, `nx run workspace-cli:workspace:start`.
 - **Workspace CLI shorthands:** The `npm run workspace:<action>` aliases still exist but simply call the Nx targets above. Use them only when automation requires npm scripts specifically.
 - **Direct npm scripts:** Only fall back to `npm --prefix apps/<project> run <script>` when no Nx target exists yet (track any gaps and add a target).
 
@@ -70,13 +70,13 @@ Fallback aliases: `npm --prefix apps/admin run <script>` remain available if you
 
 ### Server Backend (`apps/server`)
 
-- **Unit tests:** `nx run server:test`
-- **E2E integration:** `nx run server:test-e2e`
-- **Coverage:** `nx run server:test-coverage`
-- **Type check / build:** `nx run server:build`
-- **Watch mode:** `nx run server:test-watch`
-- **Scenario suite:** `nx run server:test-scenarios`
-- **E2E coverage:** `nx run server:test-coverage-e2e`
+- **Unit tests:** `nx run server-go:test`
+- **E2E integration:** `nx run server-go:test-e2e`
+- **Coverage:** `nx run server-go:test-coverage`
+- **Type check / build:** `nx run server-go:build`
+- **Watch mode:** `nx run server-go:test-watch`
+- **Scenario suite:** `nx run server-go:test-scenarios`
+- **E2E coverage:** `nx run server-go:test-coverage-e2e`
 
 Fallback aliases: `npm --prefix apps/server run <script>` should only be used when introducing new scripts and before wiring an Nx target.
 
@@ -127,20 +127,20 @@ nx run workspace-cli:workspace:start        # Launch API + Admin services under 
 
 ```bash
 # Unit tests
-nx run server:test
+nx run server-go:test
 
 # E2E tests
-nx run server:test-e2e
+nx run server-go:test-e2e
 
 # Continuous watch (local only)
-nx run server:test-watch
+nx run server-go:test-watch
 ```
 
 ### Combined Regression Loop
 
 ```bash
-nx run server:test
-nx run server:test-e2e
+nx run server-go:test
+nx run server-go:test-e2e
 nx run admin:test
 E2E_FORCE_TOKEN=1 nx run admin:e2e
 ```
@@ -148,7 +148,7 @@ E2E_FORCE_TOKEN=1 nx run admin:e2e
 ## Coverage Reports
 
 - **Admin:** `nx run admin:test-coverage` → `apps/admin/coverage/`
-- **Server:** `nx run server:test-coverage` → `apps/server/coverage/`
+- **Server:** `nx run server-go:test` (Go coverage is inline)
 - **Aggregate helper:** `nx run repo-scripts:test-coverage-all`
 
 Open coverage locally with `open apps/<project>/coverage/lcov-report/index.html` (macOS).
@@ -272,18 +272,18 @@ Additional debugging:
 
 ## Locating Tests
 
-| Area               | Pattern                                      |
-| ------------------ | -------------------------------------------- |
-| Server unit        | `apps/server/tests/unit/**/*.spec.ts`        |
-| Server integration | `apps/server/tests/integration/**/*.spec.ts` |
-| Server e2e         | `apps/server/tests/e2e/**/*.spec.ts`         |
-| Admin unit         | `apps/admin/tests/unit/**/*.test.{ts,tsx}`   |
-| Admin e2e          | `apps/admin/tests/e2e/specs/**/*.spec.ts`    |
+| Area               | Pattern                                         |
+| ------------------ | ----------------------------------------------- |
+| Server unit (Go)   | `apps/server-go/tests/**/*_test.go`             |
+| Server integration | `apps/server-go/tests/integration/**/*_test.go` |
+| Server e2e (Go)    | `apps/server-go/tests/e2e/**/*_test.go`         |
+| Admin unit         | `apps/admin/tests/unit/**/*.test.{ts,tsx}`      |
+| Admin e2e          | `apps/admin/tests/e2e/specs/**/*.spec.ts`       |
 
 Search helpers:
 
 ```bash
-find apps/server/tests -name "*.spec.ts"
+find apps/server-go -name "*_test.go"
 find apps/admin/tests/unit -name "*.test.ts" -o -name "*.test.tsx"
 find apps/admin/tests/e2e/specs -name "*.spec.ts"
 ```
@@ -295,9 +295,9 @@ find apps/admin/tests/e2e/specs -name "*.spec.ts"
 | Admin unit tests  | `nx run admin:test`                     | `npm --prefix apps/admin run test`                                                   | Append `-- -t "name"` for focused run        |
 | Admin coverage    | `nx run admin:test-coverage`            | `npm --prefix apps/admin run test:coverage`                                          | Coverage report under `apps/admin/coverage/` |
 | Admin E2E         | `E2E_FORCE_TOKEN=1 nx run admin:e2e`    | `E2E_FORCE_TOKEN=1 npx playwright test -c apps/admin/tests/e2e/playwright.config.ts` | Start deps/services first                    |
-| Server unit tests | `nx run server:test`                    | `npm --prefix apps/server run test`                                                  | Use `-- --testNamePattern` to filter         |
-| Server E2E        | `nx run server:test-e2e`                | `npm --prefix apps/server run test:e2e`                                              | Requires Postgres + Zitadel running          |
-| Server coverage   | `nx run server:test-coverage`           | `npm --prefix apps/server run test:coverage`                                         | Generates `apps/server/coverage/`            |
+| Server unit tests | `nx run server-go:test`                 | `cd apps/server-go && go test ./...`                                                 | Use `-run TestName` to filter                |
+| Server E2E        | `nx run server-go:test-e2e`             | `cd apps/server-go && go test ./tests/e2e/...`                                       | Requires Postgres + Zitadel running          |
+| Server coverage   | `nx run server-go:test`                 | `cd apps/server-go && go test -cover ./...`                                          | Go coverage is inline                        |
 | Workspace status  | `nx run workspace-cli:workspace:status` | `npm run workspace:status`                                                           | Reports Docker + PM2 health                  |
 
 Common loop:
@@ -305,8 +305,8 @@ Common loop:
 ```bash
 nx run workspace-cli:workspace:deps:start
 nx run workspace-cli:workspace:start
-nx run server:test
-nx run server:test-e2e
+nx run server-go:test
+nx run server-go:test-e2e
 nx run admin:test
 E2E_FORCE_TOKEN=1 nx run admin:e2e
 nx run workspace-cli:workspace:stop

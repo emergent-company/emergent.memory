@@ -214,7 +214,7 @@ func runMigrations(migrator *migrate.Migrator) error {
 
 ## Transition from TypeORM
 
-The Go server now owns database migrations. The NestJS server's TypeORM migrations in `apps/server/src/migrations/` are frozen and will not be used for new changes.
+The Go server now owns database migrations. The legacy NestJS server's TypeORM migrations have been removed as part of the NestJS backend removal.
 
 ### Migration Ownership
 

@@ -33,26 +33,18 @@ services:
     # restart: unless-stopped
 
   migrate-e2e:
-    image: node:20-alpine
+    build:
+      context: ..
+      dockerfile: deploy/minimal/Dockerfile.server-with-cli
     container_name: spec-e2e-migrations
-    working_dir: /app
-    volumes:
-      - ../:/app:ro # Mount entire project as read-only
-      - /app/node_modules # Use container's node_modules
     environment:
       POSTGRES_HOST: db-e2e
-      POSTGRES_PORT: 5432 # Internal Docker network port
+      POSTGRES_PORT: 5432
       POSTGRES_USER: spec
       POSTGRES_PASSWORD: spec
       POSTGRES_DB: spec_e2e
-      NODE_ENV: test
     depends_on:
       db-e2e:
         condition: service_healthy
-    command: >
-      sh -c "
-      npm install &&
-      cd apps/server-nest &&
-      NODE_OPTIONS='--import tsx' npx typeorm migration:run -d src/typeorm.config.ts
-      "
+    entrypoint: ['/app/emergent-migrate', '-c', 'up']
     restart: 'no' # Run once and exit

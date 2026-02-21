@@ -12,7 +12,7 @@ Execute the complete test suite across all applications in this monorepo. This p
 This is a monorepo with the following testable applications:
 
 1. **Admin Frontend** (`apps/admin/`) - React + Vite + Vitest (unit) + Playwright (E2E)
-2. **Server Backend** (`apps/server/`) - NestJS + Jest (unit & E2E)
+2. **Server Backend** (`apps/server-go/`) - Go + testify (unit & E2E)
 
 ## Test Execution Order
 
@@ -21,16 +21,25 @@ Follow this sequence to run all tests:
 ### 1. Server Backend Tests
 
 #### Unit Tests
+
 ```bash
-npm --prefix apps/server run test
+nx run server-go:test
 ```
 
 #### E2E Tests
+
+```bash
+nx run server-go:test-e2e
+```
+
+#### E2E Tests
+
 ```bash
 npm --prefix apps/server run test:e2e
 ```
 
 #### Coverage Report
+
 ```bash
 npm --prefix apps/server run test:coverage
 ```
@@ -38,11 +47,13 @@ npm --prefix apps/server run test:coverage
 ### 2. Admin Frontend Tests
 
 #### Unit Tests
+
 ```bash
 npm --prefix apps/admin run test
 ```
 
 #### E2E Tests
+
 ```bash
 npm --prefix apps/admin run e2e
 # Or target specific suites
@@ -51,6 +62,7 @@ npm --prefix apps/admin run e2e:chat
 ```
 
 #### Coverage Report
+
 ```bash
 npm --prefix apps/admin run test:coverage
 ```
@@ -98,12 +110,12 @@ echo "🧪 Starting Complete Test Suite..."
 echo ""
 
 echo "1️⃣ Running Server Unit Tests..."
-npm --prefix apps/server run test
+nx run server-go:test
 echo "✅ Server unit tests passed"
 echo ""
 
 echo "2️⃣ Running Server E2E Tests..."
-npm --prefix apps/server run test:e2e
+nx run server-go:test-e2e
 echo "✅ Server E2E tests passed"
 echo ""
 
@@ -116,7 +128,6 @@ echo "✅ Admin E2E tests passed"
 echo ""
 
 echo "5️⃣ Running Coverage Reports..."
-npm --prefix apps/server run test:coverage
 npm --prefix apps/admin run test:coverage
 echo "✅ Coverage reports generated"
 echo ""
@@ -129,11 +140,14 @@ echo "🎉 All tests passed successfully!"
 After running tests with coverage, view the HTML reports:
 
 ### Server Coverage
+
 ```bash
-open apps/server/coverage/lcov-report/index.html
+# Go coverage is generated inline during test runs
+nx run server-go:test  # Coverage included in output
 ```
 
 ### Admin Coverage
+
 ```bash
 open apps/admin/coverage/lcov-report/index.html
 ```
@@ -145,36 +159,49 @@ open apps/admin/coverage/lcov-report/index.html
 When Playwright tests fail, check these artifacts in `apps/admin/test-results/<test-name>/`:
 
 1. **error-context.md** - Page URL, console errors, accessibility snapshot
-2. **test-failed-*.png** - Screenshot at failure
+2. **test-failed-\*.png** - Screenshot at failure
 3. **video.webm** - Video recording of the test
 
-### Jest/Vitest Failures
+### Go Test Failures
 
 Run failed tests with verbose output:
 
 ```bash
-# Server (Jest)
-npm --prefix apps/server run test -- --verbose --testNamePattern="failing test name"
-
-# Admin (Vitest)
-npm --prefix apps/admin run test -- -t "failing test name"
+# Server (Go)
+cd apps/server-go && go test ./... -v -run "TestFailingName"
 ```
 
 ## Quick Commands
 
 ### Run Only Unit Tests
+
 ```bash
-npm --prefix apps/server run test
+nx run server-go:test
 npm --prefix apps/admin run test
 ```
 
 ### Run Only E2E Tests
+
+```bash
+nx run server-go:test-e2e
+npm --prefix apps/admin run e2e
+```
+
+### Generate All Coverage Reports
+
+```bash
+npm --prefix apps/admin run test:coverage
+```
+
+### Run Only E2E Tests
+
 ```bash
 npm --prefix apps/server run test:e2e
 npm --prefix apps/admin run e2e
 ```
 
 ### Generate All Coverage Reports
+
 ```bash
 npm --prefix apps/server run test:coverage
 npm --prefix apps/admin run test:coverage
@@ -193,6 +220,7 @@ npm --prefix apps/admin run test:coverage
 ## Related Documentation
 
 For more details, see:
+
 - [Testing Infrastructure Instructions](../../.github/instructions/testing.instructions.md)
 - [Admin Build & Test Loop](../../.github/instructions/admin.instructions.md)
 - [E2E Dependency Checker](../../docs/E2E_DEPENDENCY_CHECKER.md)
