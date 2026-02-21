@@ -6,6 +6,7 @@ import type { UIMessage } from '@ai-sdk/react';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { useConfig } from '@/contexts/config';
+import { AgentChatTransport } from '@/lib/agent-chat-transport';
 import {
   ObjectPreviewProvider,
   useObjectPreview,
@@ -163,6 +164,10 @@ function ChatSdkPageContent() {
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false);
   const [oldestMessageId, setOldestMessageId] = useState<string | null>(null);
+  /** Agent definition ID for agent-backed conversations */
+  const [agentDefinitionId, setAgentDefinitionId] = useState<string | null>(
+    null
+  );
   const { apiBase, buildHeaders } = useApi();
   const { showToast } = useToast();
   const { config } = useConfig();
@@ -170,33 +175,52 @@ function ChatSdkPageContent() {
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasInitialized = useRef(false);
 
-  // Create transport with projectId, conversationId, and enabledTools in body
-  const transport = useMemo(
-    () =>
-      new DefaultChatTransport({
-        api: '/api/chat-sdk',
-        fetch: async (url, options) => {
-          // Add projectId, conversationId, and enabledTools to the request body
-          const body = JSON.parse((options?.body as string) || '{}');
-          body.projectId = config.activeProjectId;
-          body.conversationId = activeConversationId; // Pass conversation ID to backend
-          body.enabledTools = enabledTools; // Pass enabled tools to backend
-
-          console.log('[ChatSDK] Sending request with:', {
-            projectId: body.projectId,
-            conversationId: body.conversationId,
-            messagesCount: body.messages?.length,
-            enabledTools: body.enabledTools,
-          });
-
-          return fetch(url, {
-            ...options,
-            body: JSON.stringify(body),
-          });
+  // Create transport — switches between DefaultChatTransport (normal chat) and
+  // AgentChatTransport (agent-backed chat via /api/chat/stream)
+  const transport = useMemo(() => {
+    if (agentDefinitionId) {
+      // Agent-backed conversation — use our custom SSE transport
+      return new AgentChatTransport({
+        buildHeaders,
+        projectId: config.activeProjectId || '',
+        conversationId: activeConversationId,
+        agentDefinitionId,
+        onConversationCreated: (conversationId) => {
+          console.log('[ChatSDK] Agent conversation created:', conversationId);
+          setActiveConversationId(conversationId);
         },
-      }),
-    [config.activeProjectId, activeConversationId, enabledTools]
-  );
+      });
+    }
+    // Normal chat — use the existing AI SDK transport
+    return new DefaultChatTransport({
+      api: '/api/chat-sdk',
+      fetch: async (url, options) => {
+        // Add projectId, conversationId, and enabledTools to the request body
+        const body = JSON.parse((options?.body as string) || '{}');
+        body.projectId = config.activeProjectId;
+        body.conversationId = activeConversationId; // Pass conversation ID to backend
+        body.enabledTools = enabledTools; // Pass enabled tools to backend
+
+        console.log('[ChatSDK] Sending request with:', {
+          projectId: body.projectId,
+          conversationId: body.conversationId,
+          messagesCount: body.messages?.length,
+          enabledTools: body.enabledTools,
+        });
+
+        return fetch(url, {
+          ...options,
+          body: JSON.stringify(body),
+        });
+      },
+    });
+  }, [
+    config.activeProjectId,
+    activeConversationId,
+    enabledTools,
+    agentDefinitionId,
+    buildHeaders,
+  ]);
 
   const { messages, sendMessage, status, error, stop, setMessages } = useChat({
     transport,
@@ -229,14 +253,16 @@ function ChatSdkPageContent() {
   // Fetch conversations from server
   const fetchConversations = useCallback(async () => {
     try {
-      const response = await fetch(`${apiBase}/api/chat-ui/conversations`, {
+      const response = await fetch(`${apiBase}/api/chat/conversations`, {
         headers: buildHeaders({ json: false }),
       });
       if (response.ok) {
-        const data: Conversation[] = await response.json();
+        const data = await response.json();
+        // Go API returns { conversations: [...], total: ... }
+        const convs = data.conversations || [];
         // Filter out empty conversations (e.g., refinement chats created but never used)
-        const nonEmptyConversations = data.filter(
-          (conv) => conv.messages && conv.messages.length > 0
+        const nonEmptyConversations = convs.filter(
+          (conv: Conversation) => conv.messages && conv.messages.length > 0
         );
         setConversations(nonEmptyConversations);
       }
@@ -275,28 +301,33 @@ function ChatSdkPageContent() {
       setEnabledTools(null); // Reset enabled tools when loading new conversation
       setHasMoreMessages(false); // Reset pagination state
       setOldestMessageId(null);
+      setAgentDefinitionId(null); // Reset agent definition ID
       closePreview(); // Close object preview drawer when switching conversations
 
       try {
-        // Fetch conversation metadata (for objectId, enabledTools, draftText, etc.)
+        // Fetch conversation metadata (for objectId, enabledTools, draftText, agentDefinitionId, etc.)
         const metaResponse = await fetch(
-          `${apiBase}/api/chat-ui/conversations/${conversationId}`,
+          `${apiBase}/api/chat/${conversationId}`,
           {
             headers: buildHeaders({ json: false }),
           }
         );
 
-        // Fetch paginated messages (load 2 pages worth = 100 messages initially)
-        const messagesResponse = await fetch(
-          `${apiBase}/api/chat-ui/conversations/${conversationId}/messages?limit=30`,
-          {
-            headers: buildHeaders({ json: false }),
-          }
-        );
-
-        if (metaResponse.ok && messagesResponse.ok) {
+        if (metaResponse.ok) {
           const metaData = await metaResponse.json();
-          const messagesData = await messagesResponse.json();
+          const messagesData = {
+            messages: metaData.messages || [],
+            hasMore: false,
+          }; // Go API returns messages with conversation
+
+          // Set agent definition ID if present
+          if (metaData.agentDefinitionId) {
+            console.log(
+              '[ChatSDK] Conversation uses agent:',
+              metaData.agentDefinitionId
+            );
+            setAgentDefinitionId(metaData.agentDefinitionId);
+          }
 
           // Transform backend messages to AI SDK UIMessage format
           const formattedMessages: UIMessage[] = messagesData.messages.map(
@@ -544,12 +575,13 @@ function ChatSdkPageContent() {
       // If we already have an ID in the URL, the sync effect will handle loading.
       // We only need to handle the default case (no ID).
       if (!urlConversationId) {
-        const response = await fetch(`${apiBase}/api/chat-ui/conversations`, {
+        const response = await fetch(`${apiBase}/api/chat/conversations`, {
           headers: buildHeaders({ json: false }),
         });
 
         if (response.ok) {
-          const convos = await response.json();
+          const data = await response.json();
+          const convos = data.conversations || [];
 
           if (convos.length > 0) {
             // Load the most recent conversation
@@ -568,12 +600,13 @@ function ChatSdkPageContent() {
             );
 
             const createResponse = await fetch(
-              `${apiBase}/api/chat-sdk/conversations`,
+              `${apiBase}/api/chat/conversations`,
               {
                 method: 'POST',
                 headers: buildHeaders({ json: true }),
                 body: JSON.stringify({
                   title: 'New conversation',
+                  message: 'Hello', // Required by Go endpoint
                   projectId: config.activeProjectId,
                 }),
               }
@@ -902,11 +935,12 @@ function ChatSdkPageContent() {
 
     try {
       // Always create a new conversation when user clicks "New Chat"
-      const response = await fetch(`${apiBase}/api/chat-sdk/conversations`, {
+      const response = await fetch(`${apiBase}/api/chat/conversations`, {
         method: 'POST',
         headers: buildHeaders({ json: true }),
         body: JSON.stringify({
           title: 'New conversation',
+          message: 'Hello', // Go endpoint requires message field
           projectId: config.activeProjectId,
         }),
       });
@@ -942,13 +976,10 @@ function ChatSdkPageContent() {
     if (!window.confirm('Delete this conversation?')) return;
 
     try {
-      const response = await fetch(
-        `${apiBase}/api/chat-ui/conversations/${convId}`,
-        {
-          method: 'DELETE',
-          headers: buildHeaders({ json: false }),
-        }
-      );
+      const response = await fetch(`${apiBase}/api/chat/${convId}`, {
+        method: 'DELETE',
+        headers: buildHeaders({ json: false }),
+      });
       if (response.ok) {
         fetchConversations();
         if (activeConversationId === convId) {

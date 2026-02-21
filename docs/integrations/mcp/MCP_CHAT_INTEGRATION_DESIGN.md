@@ -1,8 +1,9 @@
 # MCP Chat Integration Design
 
-**Date**: October 20, 2025  
-**Phase**: Post-Phase 4 (Authentication Complete)  
-**Goal**: Integrate MCP schema tools into the built-in chat system to enable natural language queries about the knowledge graph structure
+> **DEPRECATION NOTICE**: Phases 2 and 3 of this document have been superseded by the Agent-Backed Chat architecture (`nl-to-graph-query`). Instead of building a custom tool executor pipeline for chat, we are reusing the existing `AgentExecutor` from `server-go/domain/agents` to handle tool calls.
+> **Date**: October 20, 2025  
+> **Phase**: Post-Phase 4 (Authentication Complete)  
+> **Goal**: Integrate MCP schema tools into the built-in chat system to enable natural language queries about the knowledge graph structure
 
 ---
 
@@ -11,6 +12,7 @@
 Enable users to ask questions about their knowledge graph schema through the chat interface. The AI assistant will use MCP tools to discover schema information, explain relationships, and help users understand their data model.
 
 **Example User Interactions**:
+
 - "What types of objects are in my knowledge base?"
 - "Show me the recent changes to the schema"
 - "What relationships can I create between Documents and Projects?"
@@ -33,6 +35,7 @@ User Input → Chat Controller → Chat Service → Chat Generation Service
 **Key Components**:
 
 1. **ChatController** (`chat.controller.ts`):
+
    - `POST /chat/stream` - Main streaming endpoint
    - `POST /chat/conversations` - Create conversation
    - `GET /chat/{id}/stream` - Stream existing conversation
@@ -40,6 +43,7 @@ User Input → Chat Controller → Chat Service → Chat Generation Service
    - SSE (Server-Sent Events) streaming
 
 2. **ChatService** (`chat.service.ts`):
+
    - Conversation CRUD
    - Message persistence
    - ⚠️ **Citation retrieval** (hybrid search: vector + full-text) - **TO BE DISABLED**
@@ -52,6 +56,7 @@ User Input → Chat Controller → Chat Service → Chat Generation Service
    - Model configured through `AppConfigService.vertexAiModel`
 
 **Current Generation Flow** (DEPRECATED):
+
 ```typescript
 1. User sends message
 2. Controller retrieves citations via hybrid search (RRF: vector similarity + full-text)
@@ -72,6 +77,7 @@ The current `retrieveCitations()` method uses hybrid search (RRF) to find releva
 3. **Cleaner Integration**: Avoid confusion between document-based RAG and graph-based knowledge
 
 **Migration Plan**:
+
 - Phase 1: Disable citation retrieval, rely only on MCP schema context
 - Phase 2: Keep disabled while building graph query capabilities
 - Phase 3: Replace with graph search when MCP data tools are ready
@@ -91,6 +97,7 @@ User Question → Chat Controller → MCP Tool Detector → Tool Router
 ```
 
 **Changes from Current System**:
+
 1. ❌ **Remove**: `retrieveCitations()` calls (hybrid search disabled)
 2. ✅ **Add**: MCP tool detection and routing
 3. ✅ **Add**: Schema context injection into prompts
@@ -99,24 +106,42 @@ User Question → Chat Controller → MCP Tool Detector → Tool Router
 ### New Components
 
 #### 1. MCP Tool Detector
+
 **Purpose**: Analyze user message to determine if MCP tools should be invoked
 
 **Location**: `apps/server/src/modules/chat/mcp-tool-detector.service.ts`
 
 **Logic**:
+
 ```typescript
 interface ToolDetectionResult {
-    shouldUseMcp: boolean;
-    detectedIntent: 'schema-version' | 'schema-changes' | 'type-info' | 'relationship-info' | 'none';
-    confidence: number;
+  shouldUseMcp: boolean;
+  detectedIntent:
+    | 'schema-version'
+    | 'schema-changes'
+    | 'type-info'
+    | 'relationship-info'
+    | 'none';
+  confidence: number;
 }
 
 // Keyword-based detection (Phase 1 - Simple)
 const schemaKeywords = [
-    'schema', 'structure', 'types', 'objects', 'relationships',
-    'what types', 'show types', 'list types', 'available types',
-    'recent changes', 'changelog', 'updates', 'what changed',
-    'version', 'schema version'
+  'schema',
+  'structure',
+  'types',
+  'objects',
+  'relationships',
+  'what types',
+  'show types',
+  'list types',
+  'available types',
+  'recent changes',
+  'changelog',
+  'updates',
+  'what changed',
+  'version',
+  'schema version',
 ];
 
 // LLM-based detection (Phase 2 - Advanced)
@@ -124,11 +149,13 @@ const schemaKeywords = [
 ```
 
 #### 2. MCP Tool Router
+
 **Purpose**: Execute appropriate MCP tool based on detected intent
 
 **Location**: `apps/server/src/modules/chat/mcp-tool-router.service.ts`
 
 **Methods**:
+
 ```typescript
 async getSchemaVersion(projectId: string, orgId: string): Promise<SchemaVersionInfo>
 async getSchemaChangelog(projectId: string, orgId: string, since?: string): Promise<ChangelogEntry[]>
@@ -137,6 +164,7 @@ async searchTypes(projectId: string, orgId: string, query: string): Promise<Type
 ```
 
 #### 3. Enhanced Chat Generation
+
 **Modify**: `apps/server/src/modules/chat/chat-generation.service.ts`
 
 **Configuration Note**: The service uses `this.config.vertexAiModel` which reads from `VERTEX_AI_MODEL` environment variable. This can be any Vertex AI model (e.g., `gemini-1.5-flash-latest`, `gemini-1.5-pro-002`, `gemini-2.0-flash-exp`).
@@ -157,15 +185,15 @@ async generateWithTools(
 ): Promise<string> {
     // Assemble enhanced prompt with tool results
     const systemPrompt = `You are a helpful assistant with access to the user's knowledge graph schema.
-    
+
 Schema Version: ${toolContext.schemaVersion || 'unknown'}
 Available Types: ${(toolContext.availableTypes || []).join(', ')}
 Recent Changes: ${JSON.stringify(toolContext.recentChanges || [])}
 
 Answer the user's question using this schema information.`;
-    
+
     const fullPrompt = `${systemPrompt}\n\nUser: ${userMessage}`;
-    
+
     return this.generateStreaming(fullPrompt, onToken);
 }
 ```
@@ -177,6 +205,7 @@ Answer the user's question using this schema information.`;
 ### Phase 1: Schema Query Integration (Week 1)
 
 #### Step 1.0: Disable Citation Retrieval (30 minutes) ⭐ NEW
+
 - Comment out all `retrieveCitations()` calls in ChatController
 - Remove citation context from prompt assembly
 - Update SSE events to not include citations
@@ -184,8 +213,17 @@ Answer the user's question using this schema information.`;
 
 ```typescript
 // Before (line ~248 in chat.controller.ts)
-citations = await this.chat.retrieveCitations(userQuestion, 4, orgId, projectId, null);
-const contextSnippet = citations.slice(0, 3).map(c => c.text).join('\n---\n');
+citations = await this.chat.retrieveCitations(
+  userQuestion,
+  4,
+  orgId,
+  projectId,
+  null
+);
+const contextSnippet = citations
+  .slice(0, 3)
+  .map((c) => c.text)
+  .join('\n---\n');
 const prompt = `Context:\n${contextSnippet}\n\nQuestion: ${userQuestion}`;
 
 // After
@@ -195,17 +233,20 @@ const prompt = `You are a helpful assistant for querying knowledge graphs. Answe
 ```
 
 #### Step 1.1: Create MCP Tool Detector (2 hours)
+
 - Keyword-based intent detection
 - Confidence scoring
 - Unit tests
 
 #### Step 1.2: Create MCP Tool Router (2 hours)
+
 - Inject `McpService` (already exists from Phase 4)
 - Implement routing logic
 - Handle authentication (pass through user token)
 - Error handling
 
 #### Step 1.3: Modify Chat Controller (3 hours)
+
 - Add MCP tool detection step before generation
 - Invoke tool router if MCP intent detected
 - Inject tool results into generation context
@@ -214,20 +255,22 @@ const prompt = `You are a helpful assistant for querying knowledge graphs. Answe
 ```typescript
 // New SSE event types
 interface MCPToolInvocationEvent {
-    type: 'mcp_tool';
-    tool: 'schema-version' | 'schema-changelog' | 'type-info';
-    status: 'started' | 'completed' | 'error';
-    result?: any;
-    error?: string;
+  type: 'mcp_tool';
+  tool: 'schema-version' | 'schema-changelog' | 'type-info';
+  status: 'started' | 'completed' | 'error';
+  result?: any;
+  error?: string;
 }
 ```
 
 #### Step 1.4: Update Chat Generation Service (2 hours)
+
 - Add `generateWithTools()` method
 - Enhance prompt with schema context
 - Maintain backward compatibility
 
 #### Step 1.5: Testing (3 hours)
+
 - Unit tests for detector
 - Unit tests for router
 - E2E tests for chat with MCP tools
@@ -236,32 +279,37 @@ interface MCPToolInvocationEvent {
 ### Phase 2: UI Integration (Week 2)
 
 #### Step 2.1: Update Chat UI (Admin) (4 hours)
+
 - Display MCP tool invocation status
 - Show "Checking schema..." loading state
 - Render structured schema responses (tables, lists)
 - Handle tool errors gracefully
 
 **UI States**:
+
 ```typescript
 interface MCPToolState {
-    isInvoking: boolean;
-    toolName: string | null;
-    result: any;
-    error: string | null;
+  isInvoking: boolean;
+  toolName: string | null;
+  result: any;
+  error: string | null;
 }
 ```
 
 **Visual Design**:
+
 - Inline tool status: "🔍 Checking schema version..."
 - Success badge: "✅ Found 12 object types"
 - Error badge: "⚠️ Schema access failed"
 
 #### Step 2.2: Add Chat Examples (2 hours)
+
 - Pre-fill example questions in chat UI
 - "Try asking" section with MCP-enabled queries
 - Tooltips explaining schema features
 
 #### Step 2.3: Enhanced Message Rendering (2 hours)
+
 - Syntax highlighting for schema JSON
 - Collapsible schema sections
 - Copy-to-clipboard for schema definitions
@@ -269,26 +317,31 @@ interface MCPToolState {
 ### Phase 3: Advanced Features (Week 3)
 
 #### Step 3.1: LLM-Based Intent Detection (4 hours)
+
 - Replace keyword detection with lightweight classifier
 - Use configurable Vertex AI model (via `VERTEX_AI_MODEL` env var) for fast intent classification
 - Consider using a faster model like `gemini-1.5-flash-latest` for intent detection
 - Reduce false positives
 
 #### Step 3.2: Multi-Turn Schema Conversations (3 hours)
+
 - Maintain schema context across conversation
 - Cache schema version to avoid repeated calls
 - Update cache on schema changes
 
 #### Step 3.3: Graph Data Querying (5 hours) 🔮 FUTURE VISION
+
 **Context**: Replace the old citation retrieval system with graph-based search
 
 **Vision**:
+
 - User asks: "Show me all Projects related to Document X"
 - System translates natural language → graph query
 - Execute query against graph database
 - LLM formats results with object details + relationships
 
 **Implementation Strategy**:
+
 1. Wait for MCP data tools to be implemented (Phase 5+ of MCP roadmap)
 2. Create graph query translator service
 3. Execute queries respecting user permissions
@@ -296,19 +349,36 @@ interface MCPToolState {
 5. LLM generates natural language response from structured data
 
 **Example Response Format**:
+
 ```json
 {
   "objects": [
-    { "id": "proj-123", "type": "Project", "name": "Q4 Planning", "status": "active" },
-    { "id": "doc-456", "type": "Document", "title": "Product Roadmap", "created_at": "2025-10-15" }
+    {
+      "id": "proj-123",
+      "type": "Project",
+      "name": "Q4 Planning",
+      "status": "active"
+    },
+    {
+      "id": "doc-456",
+      "type": "Document",
+      "title": "Product Roadmap",
+      "created_at": "2025-10-15"
+    }
   ],
   "relationships": [
-    { "from": "doc-456", "to": "proj-123", "type": "belongs_to", "properties": { "role": "planning_doc" } }
+    {
+      "from": "doc-456",
+      "to": "proj-123",
+      "type": "belongs_to",
+      "properties": { "role": "planning_doc" }
+    }
   ]
 }
 ```
 
 **Benefits Over Old Citation System**:
+
 - ✅ Structured data instead of unstructured text chunks
 - ✅ Relationship context (not just content similarity)
 - ✅ Object-level permissions (not document chunks)
@@ -322,6 +392,7 @@ interface MCPToolState {
 ### Current System (To Be Disabled)
 
 **Hybrid Search (RRF - Reciprocal Rank Fusion)**:
+
 ```sql
 WITH vec AS (
     -- Vector similarity ranking (embedding <=> query_embedding)
@@ -344,6 +415,7 @@ GROUP BY id ORDER BY SUM(rrf) DESC
 ```
 
 **Problems**:
+
 1. Returns **unstructured text chunks** (not objects)
 2. No **relationship context** (just content similarity)
 3. **Document-centric** (not knowledge graph oriented)
@@ -352,6 +424,7 @@ GROUP BY id ORDER BY SUM(rrf) DESC
 ### Future System (Graph Search)
 
 **Natural Language → Graph Query**:
+
 ```typescript
 User: "Show me Projects related to the Product Roadmap document"
 
@@ -394,6 +467,7 @@ Would you like to explore any of these relationships further?"
 ```
 
 **Benefits**:
+
 - ✅ **Structured**: Objects with types, properties, relationships
 - ✅ **Contextual**: Relationship semantics (not just "similar content")
 - ✅ **Graph-aware**: Multi-hop traversal, path finding
@@ -403,6 +477,7 @@ Would you like to explore any of these relationships further?"
 ### Transition Strategy
 
 **Phase 1 (Week 1)**: Disable citations, add schema context only
+
 ```typescript
 // No document chunks
 // Only schema information (types, relationships, version)
@@ -410,11 +485,13 @@ const prompt = `Schema: ${schemaContext}\n\nQuestion: ${userQuestion}`;
 ```
 
 **Phase 2 (Week 2-3)**: Build graph query infrastructure
+
 - Design natural language → query translator
 - Implement permission-aware graph queries
 - Test with simple queries ("find objects of type X")
 
 **Phase 3 (Week 4+)**: Replace citations with graph results
+
 ```typescript
 // Graph-based context (structured)
 const graphResults = await this.graphSearch.execute(query, userId);
@@ -423,6 +500,7 @@ const prompt = `Graph Results: ${structuredContext}\n\nQuestion: ${userQuestion}
 ```
 
 **Phase 4 (Future)**: Advanced graph reasoning
+
 - Multi-hop traversal ("Projects → Documents → Tags")
 - Path finding ("How is X related to Y?")
 - Aggregation ("Count all Documents in Project Z")
@@ -433,12 +511,12 @@ const prompt = `Graph Results: ${structuredContext}\n\nQuestion: ${userQuestion}
 
 ### Scope Requirements
 
-| User Action | Required Scopes | MCP Tool Called |
-|-------------|-----------------|-----------------|
-| Ask about schema version | `chat:use`, `schema:read` | `GET /mcp/schema/version` |
-| Ask about schema changes | `chat:use`, `schema:read` | `GET /mcp/schema/changelog` |
-| Query graph data (future) | `chat:use`, `data:read` | `GET /mcp/data/query` |
-| Modify graph (future) | `chat:use`, `data:write` | `POST /mcp/data/create` |
+| User Action               | Required Scopes           | MCP Tool Called             |
+| ------------------------- | ------------------------- | --------------------------- |
+| Ask about schema version  | `chat:use`, `schema:read` | `GET /mcp/schema/version`   |
+| Ask about schema changes  | `chat:use`, `schema:read` | `GET /mcp/schema/changelog` |
+| Query graph data (future) | `chat:use`, `data:read`   | `GET /mcp/data/query`       |
+| Modify graph (future)     | `chat:use`, `data:write`  | `POST /mcp/data/create`     |
 
 ### Token Forwarding
 
@@ -448,18 +526,18 @@ const userToken = req.headers.authorization; // "Bearer <token>"
 
 // Pass to MCP Tool Router
 const schemaVersion = await mcpRouter.getSchemaVersion(
-    projectId,
-    orgId,
-    userToken // Forward user's token
+  projectId,
+  orgId,
+  userToken // Forward user's token
 );
 
 // MCP Tool Router calls MCP endpoints with user's token
 const response = await fetch('/mcp/schema/version', {
-    headers: {
-        'Authorization': userToken,
-        'X-Org-ID': orgId,
-        'X-Project-ID': projectId
-    }
+  headers: {
+    Authorization: userToken,
+    'X-Org-ID': orgId,
+    'X-Project-ID': projectId,
+  },
 });
 ```
 
@@ -470,6 +548,7 @@ const response = await fetch('/mcp/schema/version', {
 ## SSE Event Flow
 
 ### Current Events
+
 ```typescript
 { type: 'meta', conversationId: string, citations: Citation[] }
 { type: 'token', token: string }
@@ -478,6 +557,7 @@ const response = await fetch('/mcp/schema/version', {
 ```
 
 ### New Events (Phase 1)
+
 ```typescript
 // Tool invocation started
 {
@@ -527,6 +607,7 @@ const response = await fetch('/mcp/schema/version', {
 **User**: "What version of the schema am I using?"
 
 **System Flow**:
+
 ```
 1. MCP Tool Detector: shouldUseMcp=true, intent='schema-version', confidence=0.95
 2. MCP Tool Router: getSchemaVersion(projectId, orgId, userToken)
@@ -540,6 +621,7 @@ const response = await fetch('/mcp/schema/version', {
 ```
 
 **Assistant Response**:
+
 > You're currently using schema version `57c52257693ae983`, which was last updated on October 20, 2025. This version includes 12 object types and 25 relationship types. Would you like to see what changed in the latest version?
 
 ### Example 2: Recent Changes Query
@@ -547,6 +629,7 @@ const response = await fetch('/mcp/schema/version', {
 **User**: "What changed in the schema recently?"
 
 **System Flow**:
+
 ```
 1. MCP Tool Detector: shouldUseMcp=true, intent='schema-changes', confidence=0.90
 2. MCP Tool Router: getSchemaChangelog(projectId, orgId, userToken, since='7d')
@@ -557,17 +640,21 @@ const response = await fetch('/mcp/schema/version', {
 ```
 
 **Assistant Response**:
+
 > Here are the recent changes to your schema (past 7 days):
 
 > **Added**:
+>
 > - Team object type (Oct 18)
 > - Document → Team relationship (Oct 19)
 
 > **Modified**:
+>
 > - Document: Added `status` property (Oct 17)
 > - Project: Updated description field length (Oct 15)
 
 > **Removed**:
+>
 > - Legacy `Task` type (Oct 16 - deprecated)
 
 ### Example 3: Type Information Query
@@ -575,6 +662,7 @@ const response = await fetch('/mcp/schema/version', {
 **User**: "Tell me about the Document type"
 
 **System Flow**:
+
 ```
 1. MCP Tool Detector: shouldUseMcp=true, intent='type-info'
 2. Extract type name: "Document"
@@ -585,15 +673,18 @@ const response = await fetch('/mcp/schema/version', {
 ```
 
 **Assistant Response**:
+
 > The **Document** type represents files and content in your knowledge base.
 
 > **Properties**:
+>
 > - `title` (string, required) - Document title
 > - `content` (text) - Full document content
 > - `created_at` (datetime) - When document was created
 > - `status` (enum) - One of: draft, published, archived
 
 > **Relationships**:
+>
 > - Can be related to: Project, Team, Tag
 > - Can contain: Section, Paragraph
 
@@ -654,10 +745,12 @@ MCP Call: GET /mcp/types/InvalidType/schema → 404
 ### Caching Strategy
 
 1. **Schema Version** - Cache for 5 minutes
+
    - Key: `schema:version:${projectId}`
    - Invalidate on schema changes
 
 2. **Type Definitions** - Cache for 15 minutes
+
    - Key: `schema:type:${projectId}:${typeName}`
    - Invalidate on type modifications
 
@@ -667,14 +760,15 @@ MCP Call: GET /mcp/types/InvalidType/schema → 404
 
 ### Latency Budget
 
-| Operation | Target | Max Acceptable |
-|-----------|--------|----------------|
-| MCP Tool Detection | < 10ms | 50ms |
-| MCP Tool Invocation | < 100ms | 500ms |
-| Schema Version Call | < 50ms | 200ms |
-| Total Chat Latency | < 500ms | 2s |
+| Operation           | Target  | Max Acceptable |
+| ------------------- | ------- | -------------- |
+| MCP Tool Detection  | < 10ms  | 50ms           |
+| MCP Tool Invocation | < 100ms | 500ms          |
+| Schema Version Call | < 50ms  | 200ms          |
+| Total Chat Latency  | < 500ms | 2s             |
 
 **Optimization**:
+
 - Parallel tool calls when possible
 - Fail fast on MCP errors (don't block generation)
 - Stream tool results as they arrive
@@ -686,6 +780,7 @@ MCP Call: GET /mcp/types/InvalidType/schema → 404
 ### Unit Tests
 
 1. **MCP Tool Detector** (`mcp-tool-detector.service.spec.ts`):
+
    - Test keyword matching
    - Test confidence scoring
    - Test edge cases (ambiguous queries)
@@ -698,6 +793,7 @@ MCP Call: GET /mcp/types/InvalidType/schema → 404
 ### E2E Tests
 
 1. **Chat with MCP Tools** (`chat-mcp-integration.e2e.spec.ts`):
+
    - User asks schema question → MCP tool invoked
    - Verify SSE events sent
    - Verify generation includes schema context
@@ -713,17 +809,20 @@ MCP Call: GET /mcp/types/InvalidType/schema → 404
 ## Migration Path
 
 ### Phase 1 (Week 1) - Foundation
+
 - ✅ No breaking changes
 - ✅ Backward compatible with existing chat
 - ✅ MCP tools optional (only if detected)
 - ✅ Existing chat functionality unchanged
 
 ### Phase 2 (Week 2) - UI Enhancements
+
 - Opt-in for users (feature flag)
 - Gradual rollout
 - Collect feedback
 
 ### Phase 3 (Week 3) - Advanced Features
+
 - Enable by default
 - Add more tool types (data querying)
 - Performance optimizations
