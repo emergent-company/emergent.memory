@@ -535,7 +535,10 @@ func (ae *AgentExecutor) runPipeline(
 				Input: args,
 			})
 		}
-		return args, nil
+		// Return nil to let the ADK framework proceed with actual tool execution.
+		// Returning a non-nil result tells the framework the callback already handled
+		// the tool call and skips tool.Run() entirely (Bug 6 fix).
+		return nil, nil
 	}
 
 	// Set up after-tool callback for doom loop detection and state persistence
