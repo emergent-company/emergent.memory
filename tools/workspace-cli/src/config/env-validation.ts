@@ -157,7 +157,7 @@ function detectMisplacedVariables(
   const misplaced: string[] = [];
 
   if (scope === 'root') {
-    // Server variables that should be in apps/server/.env
+    // Server variables that should be in apps/server-go/.env
     const serverVars = [
       'POSTGRES_HOST',
       'POSTGRES_PORT',
@@ -206,14 +206,14 @@ export function validateEnvOrganization(): EnvOrganizationResult {
   }
 
   // Check server .env for secrets
-  const serverEnvPath = resolve(repoRoot, 'apps/server/.env');
+  const serverEnvPath = resolve(repoRoot, 'apps/server-go/.env');
   const secretsInServerEnv = detectSecretsInFile(serverEnvPath);
   for (const secret of secretsInServerEnv) {
     issues.push({
       type: 'error',
-      file: 'apps/server/.env',
+      file: 'apps/server-go/.env',
       variable: secret,
-      message: 'Secret detected - should be in apps/server/.env.local',
+      message: 'Secret detected - should be in apps/server-go/.env.local',
     });
   }
 
@@ -224,13 +224,14 @@ export function validateEnvOrganization(): EnvOrganizationResult {
       type: 'warning',
       file: '.env',
       variable: varPrefix,
-      message: 'Server variable in root .env - should be in apps/server/.env',
+      message:
+        'Server variable in root .env - should be in apps/server-go/.env',
     });
   }
 
   // Check if .env.local exists and recommend it for secrets
   const rootEnvLocalPath = resolve(repoRoot, '.env.local');
-  const serverEnvLocalPath = resolve(repoRoot, 'apps/server/.env.local');
+  const serverEnvLocalPath = resolve(repoRoot, 'apps/server-go/.env.local');
 
   if (!existsSync(rootEnvLocalPath) && !existsSync(serverEnvLocalPath)) {
     issues.push({

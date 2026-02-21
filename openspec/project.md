@@ -136,9 +136,9 @@ Spec Server is a minimal ingestion and knowledge management system that provides
 
 ```bash
 # Backend
-nx run server:test              # Unit tests
-nx run server:test-e2e          # E2E tests
-nx run server:test-coverage     # Coverage report
+nx run server-go:test              # Unit tests
+nx run server-go:test-e2e          # E2E tests
+nx run server-go:test-coverage     # Coverage report
 
 # Frontend
 nx run admin:test                    # Unit tests

@@ -114,10 +114,10 @@ nx run server:lint
 
 # Test a specific project
 nx run admin:test
-nx run server:test
+nx run server-go:test
 
 # Run E2E tests
-nx run server:test-e2e
+nx run server-go:test-e2e
 
 # Run a single test file
 nx test admin --testFile=path/to/test.spec.ts

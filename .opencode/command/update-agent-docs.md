@@ -16,13 +16,9 @@ Review and update AGENT.md documentation files to ensure they stay synchronized 
 
 ### Backend (Server App)
 
-| File                                     | Lines | Domain    | Key Patterns                           |
-| ---------------------------------------- | ----- | --------- | -------------------------------------- |
-| `apps/server/src/common/AGENT.md`        | 587   | Utilities | Decorators, guards, filters, pipes     |
-| `apps/server/src/entities/AGENT.md`      | 524   | Entities  | TypeORM, schemas (kb/core), relations  |
-| `apps/server/src/modules/AGENT.md`       | 367   | Modules   | NestJS patterns, Controllers, Services |
-| `apps/server/src/modules/graph/AGENT.md` | 796   | Graph     | Graph module (most complex), traversal |
-| `apps/server/tests/AGENT.md`             | 718   | Testing   | Test patterns, FakeGraphDb, E2E        |
+| File                      | Lines | Domain    | Key Patterns                       |
+| ------------------------- | ----- | --------- | ---------------------------------- |
+| `apps/server-go/AGENT.md` | ~500  | Go Server | fx modules, Echo handlers, Bun ORM |
 
 ## Review Procedure
 
@@ -40,7 +36,7 @@ ls apps/admin/src/components/organisms/
 ls apps/admin/src/hooks/
 
 # Example: Check if documented modules exist
-ls apps/server/src/modules/
+ls apps/server-go/domain/
 ```
 
 ### Step 2: Review Checklist
@@ -53,13 +49,12 @@ ls apps/server/src/modules/
 - [ ] DaisyUI class names are current (v5 syntax)
 - [ ] Example code compiles without errors
 
-#### Backend Files (common, entities, modules, graph)
+#### Backend Files (Go server)
 
 - [ ] All documented modules/services/entities exist
 - [ ] New modules/services/entities are documented
-- [ ] TypeORM decorators match current schema
-- [ ] Guard/decorator usage is accurate
-- [ ] RLS patterns are documented
+- [ ] Bun models match current schema
+- [ ] Middleware/guard usage is accurate
 
 #### Testing Files
 
@@ -113,8 +108,7 @@ find . -name "AGENT.md" -type f | sort
 # Check git history for recent changes to documented directories
 git log --oneline -10 -- apps/admin/src/components/
 git log --oneline -10 -- apps/admin/src/hooks/
-git log --oneline -10 -- apps/server/src/modules/
-git log --oneline -10 -- apps/server/src/entities/
+git log --oneline -10 -- apps/server-go/domain/
 ```
 
 ## When to Run This Command
