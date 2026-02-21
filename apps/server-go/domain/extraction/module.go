@@ -75,6 +75,7 @@ var Module = fx.Module("extraction",
 		provideAdminHandler,
 		provideParsingJobCreator,
 		provideEmbeddingEnqueuer,
+		provideEmbeddingSweepWorker,
 	),
 	fx.Invoke(
 		RegisterAdminRoutes,
@@ -82,6 +83,7 @@ var Module = fx.Module("extraction",
 		RegisterChunkEmbeddingWorkerLifecycle,
 		RegisterDocumentParsingWorkerLifecycle,
 		RegisterObjectExtractionWorkerLifecycle,
+		RegisterEmbeddingSweepWorkerLifecycle,
 	),
 )
 
@@ -96,6 +98,7 @@ type ExtractionConfig struct {
 	ChunkEmbedding   *ChunkEmbeddingConfig
 	DocumentParsing  *DocumentParsingConfig
 	ObjectExtraction *ObjectExtractionConfig
+	EmbeddingSweep   *EmbeddingSweepConfig
 }
 
 // NewExtractionConfig creates extraction configuration from app config
@@ -105,6 +108,7 @@ func NewExtractionConfig(cfg *config.Config) *ExtractionConfig {
 		ChunkEmbedding:   DefaultChunkEmbeddingConfig(),
 		DocumentParsing:  DefaultDocumentParsingConfig(),
 		ObjectExtraction: DefaultObjectExtractionConfig(),
+		EmbeddingSweep:   DefaultEmbeddingSweepConfig(),
 	}
 }
 
@@ -243,6 +247,29 @@ func RegisterDocumentParsingWorkerLifecycle(lc fx.Lifecycle, worker *DocumentPar
 		OnStop: func(ctx context.Context) error {
 			worker.Stop()
 			return nil
+		},
+	})
+}
+
+// provideEmbeddingSweepWorker creates the embedding sweep worker with fx
+func provideEmbeddingSweepWorker(
+	jobs *GraphEmbeddingJobsService,
+	embeds *embeddings.Service,
+	db bun.IDB,
+	cfg *ExtractionConfig,
+	log *slog.Logger,
+) *EmbeddingSweepWorker {
+	return NewEmbeddingSweepWorker(jobs, embeds, db, cfg.EmbeddingSweep, log)
+}
+
+// RegisterEmbeddingSweepWorkerLifecycle registers the sweep worker with fx lifecycle
+func RegisterEmbeddingSweepWorkerLifecycle(lc fx.Lifecycle, worker *EmbeddingSweepWorker) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			return worker.Start(context.Background())
+		},
+		OnStop: func(ctx context.Context) error {
+			return worker.Stop(ctx)
 		},
 	})
 }
