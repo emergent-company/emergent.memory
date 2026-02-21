@@ -389,7 +389,8 @@ CREATE TABLE kb.chat_conversations (
     object_id uuid,
     draft_text text,
     canonical_id uuid,
-    enabled_tools text[]
+    enabled_tools text[],
+    agent_definition_id uuid
 );
 CREATE TABLE kb.chat_messages (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
@@ -1651,6 +1652,8 @@ ALTER TABLE ONLY kb.backups
     ADD CONSTRAINT backups_project_id_fkey FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
 ALTER TABLE ONLY kb.chat_conversations
     ADD CONSTRAINT chat_conversations_object_id_fkey FOREIGN KEY (object_id) REFERENCES kb.graph_objects(id) ON DELETE CASCADE;
+ALTER TABLE ONLY kb.chat_conversations
+    ADD CONSTRAINT chat_conversations_agent_definition_id_fkey FOREIGN KEY (agent_definition_id) REFERENCES kb.agent_definitions(id) ON DELETE SET NULL;
 ALTER TABLE ONLY kb.chunk_embedding_jobs
     ADD CONSTRAINT chunk_embedding_jobs_chunk_id_fkey FOREIGN KEY (chunk_id) REFERENCES kb.chunks(id) ON DELETE CASCADE;
 ALTER TABLE ONLY kb.data_source_integrations

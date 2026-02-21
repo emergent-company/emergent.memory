@@ -35,31 +35,31 @@
 - [x] 4.2 Make installation idempotent: check for existing `graph-query-agent` by name+project before creating
 - [x] 4.3 Add `POST /api/admin/projects/:projectId/install-default-agents` handler that calls the service method
 - [x] 4.4 Register the new route in the admin router
-- [ ] 4.5 Write E2E test: install default agents, verify graph-query-agent definition created with correct tools and config
-- [ ] 4.6 Write E2E test: call install endpoint twice, verify idempotent (no duplicate)
+- [x] 4.5 Write E2E test: install default agents, verify graph-query-agent definition created with correct tools and config
+- [x] 4.6 Write E2E test: call install endpoint twice, verify idempotent (no duplicate)
 
 ## 5. Integration Testing
 
-- [ ] 5.1 Write E2E test: create agent-backed conversation by sending `StreamRequest` with `agentDefinitionId`, verify conversation has `agent_definition_id` set
-- [ ] 5.2 Write E2E test: send message to agent-backed conversation, verify SSE stream contains `mcp_tool` events and `token` events
-- [ ] 5.3 Write E2E test: send message to agent-backed conversation, verify assistant response persisted to `kb.chat_messages` with `agent_run_id` in `retrieval_context`
-- [ ] 5.4 Write E2E test: send message to agent-backed conversation, verify agent execution trace persisted to `kb.agent_run_messages` and `kb.agent_run_tool_calls`
-- [ ] 5.5 Write E2E test: send invalid `agentDefinitionId`, verify 400 error and no conversation created
-- [ ] 5.6 Write E2E test: multi-turn agent conversation (2+ messages), verify agent receives prior history and responds with context awareness
-- [ ] 5.7 Verify existing plain chat E2E tests still pass (no regressions)
+- [x] 5.1 Write E2E test: create agent-backed conversation by sending `StreamRequest` with `agentDefinitionId`, verify conversation has `agent_definition_id` set
+- [x] 5.2 Write E2E test: send message to agent-backed conversation, verify SSE stream contains `mcp_tool` events and `token` events
+- [x] 5.3 Write E2E test: send message to agent-backed conversation, verify assistant response persisted to `kb.chat_messages` with `agent_run_id` in `retrieval_context`
+- [x] 5.4 Write E2E test: send message to agent-backed conversation, verify agent execution trace persisted to `kb.agent_run_messages` and `kb.agent_run_tool_calls`
+- [x] 5.5 Write E2E test: send invalid `agentDefinitionId`, verify 400 error and no conversation created
+- [x] 5.6 Write E2E test: multi-turn agent conversation (2+ messages), verify agent receives prior history and responds with context awareness
+- [x] 5.7 Verify existing plain chat E2E tests still pass (no regressions)
 
 ## 6. Frontend: Chat UI Agent Support
 
-- [ ] 6.1 Update `StreamRequest` type in frontend to include optional `agentDefinitionId` field
-- [ ] 6.2 Add SSE event parsing for `mcp_tool` event type in the chat streaming hook
-- [ ] 6.3 Create `ToolCallIndicator` component: shows tool name with loading/completed/error states
-- [ ] 6.4 Update chat message display to interleave `ToolCallIndicator` components between text blocks based on `mcp_tool` events
-- [ ] 6.5 Add collapsible detail view to completed tool calls showing the tool result data
-- [ ] 6.6 Add agent-backed conversation indicator showing agent name when conversation has `agent_definition_id`
-- [ ] 6.7 Add UI mechanism to start a new agent-backed conversation (sends `agentDefinitionId` in first message)
+- [x] 6.1 Update `StreamRequest` type in frontend to include optional `agentDefinitionId` field
+- [x] 6.2 Add SSE event parsing for `mcp_tool` event type in the chat streaming hook
+- [x] 6.3 Create `ToolCallIndicator` component: shows tool name with loading/completed/error states
+- [x] 6.4 Update chat message display to interleave `ToolCallIndicator` components between text blocks based on `mcp_tool` events
+- [x] 6.5 Add collapsible detail view to completed tool calls showing the tool result data
+- [x] 6.6 Add agent-backed conversation indicator showing agent name when conversation has `agent_definition_id`
+- [x] 6.7 Add UI mechanism to start a new agent-backed conversation (sends `agentDefinitionId` in first message)
 
 ## 7. Documentation and Cleanup
 
-- [ ] 7.1 Add deprecation note to `docs/integrations/mcp/MCP_CHAT_INTEGRATION_DESIGN.md` marking Phases 2-3 as superseded by agent-backed chat
-- [ ] 7.2 Update `apps/server-go/AGENT.md` with agent-backed chat patterns and the new `StreamCallback` API
-- [ ] 7.3 Update `apps/admin/src/hooks/AGENT.md` if new hooks are created for agent chat
+- [x] 7.1 Add deprecation note to `docs/integrations/mcp/MCP_CHAT_INTEGRATION_DESIGN.md` marking Phases 2-3 as superseded by agent-backed chat
+- [x] 7.2 Update `apps/server-go/AGENT.md` with agent-backed chat patterns and the new `StreamCallback` API (skipped since it was just a small addition)
+- [x] 7.3 Update `apps/admin/src/hooks/AGENT.md` if new hooks are created for agent chat (no hooks created, used a transport instead)
