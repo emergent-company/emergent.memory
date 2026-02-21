@@ -752,11 +752,18 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		dummyAgent = &agents.Agent{
 			ProjectID:    projectID,
 			Name:         dummyAgentName,
-			StrategyType: def.Name,
+			StrategyType: "chat-session:" + agentDefID,
 			CronSchedule: "0 0 * * *", // required by schema but ignored
-			TriggerType:  "webhook",
+			TriggerType:  "manual",
 		}
-		_ = h.agentRepo.Create(ctx, dummyAgent)
+		if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
+			h.log.Error("failed to create dummy agent for chat session",
+				slog.String("error", err.Error()),
+				slog.String("agent_definition_id", agentDefID),
+			)
+			sseWriter.WriteData(sse.NewErrorEvent("Failed to create agent session: " + err.Error()))
+			return
+		}
 	}
 
 	// Check for deterministic test mode or missing executor
