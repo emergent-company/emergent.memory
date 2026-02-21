@@ -902,7 +902,7 @@ func (h *Handler) GetRelationship(c echo.Context) error {
 // @Summary      Create graph relationship
 // @Description  Create a new relationship (edge) between two graph objects.
 // @Description  Automatically generates a triplet text embedding for semantic search
-// @Description  (e.g., "Elon Musk founded Tesla") using Vertex AI text-embedding-004.
+// @Description  (e.g., "Elon Musk founded Tesla") using gemini-embedding-001.
 // @Description  Embedding failures are non-blocking — the relationship is created even if embedding fails.
 // @Tags         graph
 // @Accept       json
