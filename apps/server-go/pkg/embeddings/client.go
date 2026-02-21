@@ -5,7 +5,7 @@ import (
 	"context"
 )
 
-// EmbeddingDimension is the default embedding dimension for text-embedding-004
+// EmbeddingDimension is the default embedding dimension (768 for gemini-embedding-001 with MRL)
 const EmbeddingDimension = 768
 
 // Client provides embedding generation functionality
