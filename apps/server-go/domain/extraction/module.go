@@ -45,6 +45,20 @@ func provideParsingJobCreator(svc *DocumentParsingJobsService) documents.Parsing
 	return &ParsingJobCreatorAdapter{svc: svc}
 }
 
+// embeddingEnqueuerAdapter adapts GraphEmbeddingJobsService to graph.EmbeddingEnqueuer.
+type embeddingEnqueuerAdapter struct {
+	svc *GraphEmbeddingJobsService
+}
+
+func (a *embeddingEnqueuerAdapter) EnqueueEmbedding(ctx context.Context, objectID string) error {
+	_, err := a.svc.Enqueue(ctx, EnqueueOptions{ObjectID: objectID})
+	return err
+}
+
+func provideEmbeddingEnqueuer(svc *GraphEmbeddingJobsService) graph.EmbeddingEnqueuer {
+	return &embeddingEnqueuerAdapter{svc: svc}
+}
+
 // Module provides extraction functionality including job queues and workers
 var Module = fx.Module("extraction",
 	fx.Provide(
@@ -60,6 +74,7 @@ var Module = fx.Module("extraction",
 		provideObjectExtractionWorker,
 		provideAdminHandler,
 		provideParsingJobCreator,
+		provideEmbeddingEnqueuer,
 	),
 	fx.Invoke(
 		RegisterAdminRoutes,
