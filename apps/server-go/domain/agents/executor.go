@@ -678,7 +678,11 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Run the agent
 	var lastEvent *session.Event
-	for event, eventErr := range r.Run(ctx, "system", sess.ID(), userContent, agent.RunConfig{}) {
+	runCfg := agent.RunConfig{}
+	if req.StreamCallback != nil {
+		runCfg.StreamingMode = agent.StreamingModeSSE
+	}
+	for event, eventErr := range r.Run(ctx, "system", sess.ID(), userContent, runCfg) {
 		if eventErr != nil {
 			steps := tracker.current()
 			if req.StreamCallback != nil {
