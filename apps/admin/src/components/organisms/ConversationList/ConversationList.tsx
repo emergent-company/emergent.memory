@@ -17,7 +17,7 @@ interface ConversationListProps {
   activeId?: string;
   onSelect: (conversation: Conversation) => void;
   onDelete: (id: string) => void;
-  onNew: () => void;
+  onNew: (agentDefId?: string) => void;
   header?: ReactNode;
 }
 
@@ -204,7 +204,7 @@ export function ConversationList({
         {/* New Conversation Button */}
         <button
           className="btn btn-primary w-full gap-2 mb-2"
-          onClick={onNew}
+          onClick={() => onNew()}
           aria-label="New conversation"
         >
           <span>+</span> New Conversation
