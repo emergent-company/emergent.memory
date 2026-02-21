@@ -135,9 +135,9 @@ type EmbeddingsConfig struct {
 	VertexAILocation string `env:"VERTEX_AI_LOCATION" envDefault:"us-central1"`
 
 	// Embedding model name
-	Model string `env:"EMBEDDING_MODEL" envDefault:"text-embedding-004"`
+	Model string `env:"EMBEDDING_MODEL" envDefault:"gemini-embedding-001"`
 
-	// Embedding dimension (768 for text-embedding-004)
+	// Embedding dimension (768 for gemini-embedding-001 with MRL)
 	Dimension int `env:"EMBEDDING_DIMENSION" envDefault:"768"`
 
 	// Google API Key for Generative AI (development)

@@ -123,8 +123,8 @@ func TestRetryableError(t *testing.T) {
 
 func TestConstants(t *testing.T) {
 	// Verify constants have sensible values
-	if DefaultModel != "text-embedding-004" {
-		t.Errorf("DefaultModel = %q, want text-embedding-004", DefaultModel)
+	if DefaultModel != "gemini-embedding-001" {
+		t.Errorf("DefaultModel = %q, want gemini-embedding-001", DefaultModel)
 	}
 	if DefaultDimension != 768 {
 		t.Errorf("DefaultDimension = %d, want 768", DefaultDimension)
@@ -168,7 +168,7 @@ func TestConfig(t *testing.T) {
 		cfg := Config{
 			ProjectID: "my-project",
 			Location:  "us-central1",
-			Model:     "text-embedding-004",
+			Model:     "gemini-embedding-001",
 			Timeout:   60 * time.Second,
 		}
 
@@ -178,8 +178,8 @@ func TestConfig(t *testing.T) {
 		if cfg.Location != "us-central1" {
 			t.Errorf("Location = %q, want us-central1", cfg.Location)
 		}
-		if cfg.Model != "text-embedding-004" {
-			t.Errorf("Model = %q, want text-embedding-004", cfg.Model)
+		if cfg.Model != "gemini-embedding-001" {
+			t.Errorf("Model = %q, want gemini-embedding-001", cfg.Model)
 		}
 		if cfg.Timeout != 60*time.Second {
 			t.Errorf("Timeout = %v, want 60s", cfg.Timeout)

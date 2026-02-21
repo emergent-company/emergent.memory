@@ -185,7 +185,7 @@ func main() {
 
 // newEmbeddingClient creates an embeddings.Client based on environment variables.
 func newEmbeddingClient(ctx context.Context, log *slog.Logger) (embeddings.Client, error) {
-	model := getEnvDefault("EMBEDDING_MODEL", "text-embedding-004")
+	model := getEnvDefault("EMBEDDING_MODEL", "gemini-embedding-001")
 	gcpProject := os.Getenv("GCP_PROJECT_ID")
 	vertexLocation := getEnvDefault("VERTEX_AI_LOCATION", "us-central1")
 	googleAPIKey := os.Getenv("GOOGLE_API_KEY")
