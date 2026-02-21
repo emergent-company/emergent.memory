@@ -1,8 +1,5 @@
-# environment-configuration Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change reorganize-environment-variables. Update Purpose after archive.
-## Requirements
 ### Requirement: The system SHALL organize environment variables by application scope
 
 Variables SHALL be located in the appropriate configuration file based on their usage:
@@ -23,7 +20,7 @@ Variables SHALL be located in the appropriate configuration file based on their 
 - Any workspace variable override for local development
 - User-specific secrets that should not be committed
 
-**`apps/server-go/.env`** - Server application variables:
+**`apps/server-go/.env`** - Go Server application variables:
 
 - `PORT` - Server listen port (defaults to SERVER_PORT if not set)
 - `POSTGRES_HOST` - Database host
@@ -117,7 +114,7 @@ Variables SHALL be located in the appropriate configuration file based on their 
 #### Scenario: Server application loads configuration
 
 **Given** the server application is starting  
-**When** configuration is loaded via `config.module.ts`  
+**When** configuration is loaded via `internal/config/config.go`  
 **Then** server SHALL load files in this order:
 
 1. `apps/server-go/.env.local` (user overrides, highest priority)
@@ -150,64 +147,9 @@ Variables SHALL be located in the appropriate configuration file based on their 
    **And** workspace-cli SHALL NOT load application-specific variables  
    **And** services SHALL inherit environment variables from their respective `.env` files
 
-### Requirement: The system SHALL provide clear documentation for environment variable organization
-
-Each `.env.example` file SHALL include:
-
-- Clear comments explaining the purpose of each section
-- Indication of which variables are required vs optional
-- Cross-references to related configuration in other files
-- Migration notes for existing deployments
-
-#### Scenario: Developer consults documentation
-
-**Given** a developer needs to understand environment configuration  
-**When** they review `.env.example` files  
-**Then** comments SHALL clearly explain the purpose of each variable  
-**And** required vs optional status SHALL be indicated  
-**And** cross-references to related files SHALL be provided
-
-### Requirement: The system SHALL separate committed defaults from user-specific overrides
-
-The system SHALL enforce separation between committed defaults and user-specific overrides:
-
-**Committed files** (`.env`, tracked in git):
-
-- SHALL contain safe default values suitable for development
-- SHALL NOT contain secrets, API keys, or sensitive credentials
-- SHALL be documented in corresponding `.env.example` files
-- SHALL provide working defaults that can be overridden locally
-
-**Gitignored files** (`.env.local`, not tracked):
-
-- SHALL be listed in `.gitignore` to prevent accidental commits
-- SHALL be used for user-specific overrides of default values
-- SHALL be the only place for secrets, API keys, and sensitive credentials
-- SHALL take precedence over `.env` files when both exist
-- MAY be created by developers as needed (not required if defaults work)
-
-#### Scenario: Secret protection check
-
-**Given** the system starts up  
-**When** environment files are loaded  
-**Then** the system SHALL warn if secrets are found in committed `.env` files  
-**And** `.env.local` files SHALL NOT be tracked in git  
-**And** user-specific overrides SHALL take precedence over defaults
+## REMOVED Requirements
 
 ### Requirement: The system SHALL maintain backward compatibility during migration
 
-During the migration period, the system SHALL:
-
-- Server SHALL check both `apps/server-go/.env` and root `.env` for variables
-- Clear deprecation warnings SHALL be logged for variables in incorrect locations
-- Migration guide SHALL document step-by-step process for updating configurations
-
-#### Scenario: Existing deployment upgrades to new structure
-
-**Given** an existing deployment with variables in root `.env`  
-**When** the system is updated to new version  
-**Then** server SHALL still read variables from root `.env` as fallback  
-**And** deprecation warnings SHALL be logged for misplaced variables  
-**And** system SHALL continue to function correctly  
-**And** migration guide SHALL provide clear instructions for moving variables
-
+**Reason**: The NestJS server has been completely removed in favor of the Go server, so backward compatibility for `apps/server/.env` is no longer needed.
+**Migration**: Update any deployments to only use `apps/server-go/.env`.

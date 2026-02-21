@@ -2,11 +2,7 @@ node_modules/
 dist/
 .next/
 
-# Ignore build outputs in all packages (explicit paths to avoid accidental root-level patterns issues)
-apps/server-nest/dist/
-apps/server-nest/dist-openapi/
-
-# Generic patterns (keep after explicit so intent is clear)
+# Ignore build outputs in all packages
 **/dist-openapi/
 
 # Environment files with secrets (never commit)
@@ -69,9 +65,6 @@ lcov.info
 *.log
 *.tsbuildinfo
 
-# Server runtime logs (Nest error log output)
-apps/server-nest/logs/
-
 # Development PID files
 .dev-pids/
 apps/pids/
@@ -81,7 +74,6 @@ apps/pids/
 
 storybook-static
 logs
-apps/server-nest/migrations/_archive_*/
 
 # Duplicate detection reports
 /reports/jscpd/

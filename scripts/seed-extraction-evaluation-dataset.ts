@@ -18,11 +18,34 @@
 import { config } from 'dotenv';
 import { Langfuse } from 'langfuse-node';
 import { parseArgs } from 'util';
-import type {
-  ExtractionDatasetInput,
-  ExtractionExpectedOutput,
-  ExtractionDatasetMetadata,
-} from '../apps/server/src/modules/extraction-jobs/evaluation/types';
+// Types inlined from the former NestJS extraction-jobs module
+interface ExtractionDatasetInput {
+  document_text: string;
+  object_schemas: Record<string, unknown>;
+  relationship_schemas: Record<string, unknown>;
+  allowed_types: string[];
+}
+
+interface ExtractionExpectedOutput {
+  entities: Array<{
+    name: string;
+    type: string;
+    description: string;
+    properties?: Record<string, unknown>;
+  }>;
+  relationships: Array<{
+    source_name: string;
+    target_name: string;
+    relationship_type: string;
+  }>;
+}
+
+interface ExtractionDatasetMetadata {
+  document_category: string;
+  difficulty: string;
+  notes: string;
+  tags: string[];
+}
 
 // Load environment variables
 config();

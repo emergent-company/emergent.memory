@@ -2,7 +2,7 @@
 /**
  * Seed Email Templates
  *
- * Populates kb.email_templates with default templates from apps/server/templates/email/
+ * Populates kb.email_templates with default templates from apps/server-go/templates/email/
  *
  * Usage: npx tsx scripts/seed-email-templates.ts [--force] [--dry-run]
  */
@@ -36,7 +36,7 @@ const dryRun = args.includes('--dry-run');
 
 const TEMPLATES_DIR = path.resolve(
   process.cwd(),
-  'apps/server/templates/email'
+  'apps/server-go/templates/email'
 );
 
 interface TemplateVariable {

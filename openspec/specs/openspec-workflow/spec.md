@@ -60,8 +60,8 @@ Before starting implementation of an approved change proposal, agents SHALL run 
 #### Scenario: Run tests before implementation starts
 
 - **WHEN** an agent is ready to begin implementing an approved change
-- **THEN** the agent SHALL run unit tests for the affected project (e.g., `nx run server:test` or `nx run admin:test`)
-- **AND** the agent SHALL run E2E tests if the change affects user-facing functionality (e.g., `nx run server:test-e2e` or `nx run admin:e2e`)
+- **THEN** the agent SHALL run unit tests for the affected project (e.g., `nx run server-go:test` or `nx run admin:test`)
+- **AND** the agent SHALL run E2E tests if the change affects user-facing functionality (e.g., `nx run server-go:test-e2e` or `nx run admin:e2e`)
 - **AND** the agent SHALL report the test results to the user
 
 #### Scenario: All tests pass before implementation
@@ -85,7 +85,7 @@ Before starting implementation of an approved change proposal, agents SHALL run 
 #### Scenario: Change only affects specific project
 
 - **WHEN** a change only affects the backend server
-- **THEN** the agent SHALL run `nx run server:test` and `nx run server:test-e2e`
+- **THEN** the agent SHALL run `nx run server-go:test` and `nx run server-go:test-e2e`
 - **AND** the agent MAY skip frontend tests unless there are cross-cutting concerns
 
 #### Scenario: Change affects multiple projects
@@ -101,8 +101,8 @@ After completing implementation of a change, agents SHALL run build, lint, and t
 #### Scenario: Run verification after implementation completes
 
 - **WHEN** an agent completes all implementation tasks
-- **THEN** the agent SHALL run the build command for affected projects (e.g., `npm run build`, `nx run server:build`, or `nx run admin:build`)
-- **AND** the agent SHALL run the lint command for affected projects (e.g., `nx run server:lint` or `nx run admin:lint`)
+- **THEN** the agent SHALL run the build command for affected projects (e.g., `npm run build`, `nx run server-go:build`, or `nx run admin:build`)
+- **AND** the agent SHALL run the lint command for affected projects (e.g., `nx run server-go:lint` or `nx run admin:lint`)
 - **AND** the agent SHALL run unit and E2E tests for affected projects
 - **AND** the agent SHALL report all results to the user
 
@@ -145,7 +145,7 @@ After completing implementation of a change, agents SHALL run build, lint, and t
 #### Scenario: Backend-only change verification
 
 - **WHEN** a change only affects the backend server
-- **THEN** the agent SHALL run `nx run server:build`, `nx run server:lint`, `nx run server:test`, and `nx run server:test-e2e`
+- **THEN** the agent SHALL run `nx run server-go:build`, `nx run server-go:lint`, `nx run server-go:test`, and `nx run server-go:test-e2e`
 - **AND** the agent MAY skip frontend build and tests
 
 #### Scenario: Frontend-only change verification

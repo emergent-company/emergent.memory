@@ -269,7 +269,7 @@ function checkVariablePlacement(loadedFiles, varSpecs) {
       if (context === 'root' && varSpecs.server.required.includes(varName)) {
         addWarning(
           `Server variable ${varName} found in root file ${fileName}`,
-          'Server-specific variables should be in apps/server/.env or apps/server/.env.local'
+          'Server-specific variables should be in apps/server-go/.env or apps/server-go/.env.local'
         );
       }
 
