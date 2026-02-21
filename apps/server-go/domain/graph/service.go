@@ -43,6 +43,13 @@ type EmbeddingService interface {
 	EmbedQuery(ctx context.Context, query string) ([]float32, error)
 }
 
+// EmbeddingEnqueuer enqueues graph objects for asynchronous embedding generation.
+// This is satisfied by extraction.GraphEmbeddingJobsService via an adapter in module.go
+// to avoid a circular dependency (graph -> extraction -> graph).
+type EmbeddingEnqueuer interface {
+	EnqueueEmbedding(ctx context.Context, objectID string) error
+}
+
 // Service handles business logic for graph operations.
 type Service struct {
 	repo                *Repository
@@ -50,6 +57,7 @@ type Service struct {
 	schemaProvider      SchemaProvider
 	inverseTypeProvider InverseTypeProvider
 	embeddings          EmbeddingService
+	embeddingEnqueuer   EmbeddingEnqueuer
 
 	// Metrics
 	metricsMu          sync.RWMutex
@@ -59,13 +67,27 @@ type Service struct {
 }
 
 // NewService creates a new graph service.
-func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService) *Service {
+func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer) *Service {
 	return &Service{
 		repo:                repo,
 		log:                 log.With(logger.Scope("graph.svc")),
 		schemaProvider:      schemaProvider,
 		inverseTypeProvider: inverseTypeProvider,
 		embeddings:          embeddings,
+		embeddingEnqueuer:   embeddingEnqueuer,
+	}
+}
+
+// enqueueEmbedding enqueues a graph object for async embedding generation.
+// Logs and swallows errors — embedding is best-effort and must never block CRUD.
+func (s *Service) enqueueEmbedding(ctx context.Context, objectID string) {
+	if s.embeddingEnqueuer == nil {
+		return
+	}
+	if err := s.embeddingEnqueuer.EnqueueEmbedding(ctx, objectID); err != nil {
+		s.log.Warn("failed to enqueue embedding job",
+			slog.String("object_id", objectID),
+			slog.String("error", err.Error()))
 	}
 }
 
@@ -268,6 +290,8 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		return nil, err
 	}
 
+	s.enqueueEmbedding(ctx, obj.ID.String())
+
 	return obj.ToResponse(), nil
 }
 
@@ -346,6 +370,8 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			return nil, false, apperror.ErrDatabase.WithInternal(err)
 		}
 
+		s.enqueueEmbedding(ctx, obj.ID.String())
+
 		return obj.ToResponse(), true, nil
 	}
 
@@ -371,6 +397,8 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		if err := tx.Commit(); err != nil {
 			return nil, false, apperror.ErrDatabase.WithInternal(err)
 		}
+
+		s.enqueueEmbedding(ctx, newVersion.ID.String())
 
 		return newVersion.ToResponse(), false, nil
 	}
@@ -448,6 +476,8 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	if err := tx.Commit(); err != nil {
 		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
+
+	s.enqueueEmbedding(ctx, newVersion.ID.String())
 
 	return newVersion.ToResponse(), false, nil
 }
@@ -598,6 +628,8 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
+
+	s.enqueueEmbedding(ctx, newVersion.ID.String())
 
 	return newVersion.ToResponse(), nil
 }
