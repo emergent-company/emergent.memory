@@ -82,7 +82,8 @@ func (s *bunService) Get(ctx context.Context, req *session.GetRequest) (*session
 	}
 
 	// Fetch events
-	q := s.db.NewSelect().Model((*ADKEvent)(nil)).
+	var events []*ADKEvent
+	q := s.db.NewSelect().Model(&events).
 		Where("session_id = ? AND app_name = ? AND user_id = ?", req.SessionID, req.AppName, req.UserID).
 		Order("timestamp ASC")
 
@@ -90,7 +91,6 @@ func (s *bunService) Get(ctx context.Context, req *session.GetRequest) (*session
 		q = q.Where("timestamp >= ?", req.After)
 	}
 
-	var events []*ADKEvent
 	err = q.Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events: %w", err)
