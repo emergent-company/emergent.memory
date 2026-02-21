@@ -246,9 +246,9 @@ func (s *RelationshipSearchSuite) TestRelationshipSearch_VectorSearchReturnsMatc
 	queryVector := pgutils.FormatVector(makeFakeEmbedding(42)) // Same direction = high similarity
 	rows, err := s.DB().QueryContext(s.Ctx, `
 		SELECT r.id, r.type,
-			COALESCE(src.name, src.key, src.id::text) || ' ' ||
+			COALESCE(src.properties->>'name', src.key, src.id::text) || ' ' ||
 				LOWER(REPLACE(r.type, '_', ' ')) || ' ' ||
-				COALESCE(dst.name, dst.key, dst.id::text) AS triplet_text,
+				COALESCE(dst.properties->>'name', dst.key, dst.id::text) AS triplet_text,
 			(1 - (r.embedding <=> ?::vector)) AS score
 		FROM kb.graph_relationships r
 		JOIN kb.graph_objects src ON src.id = r.src_id
