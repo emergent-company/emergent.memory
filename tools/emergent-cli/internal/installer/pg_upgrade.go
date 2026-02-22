@@ -186,6 +186,21 @@ func (i *Installer) RunPostgresUpgrade(docker *DockerManager, volumeName string)
 	i.output.Step("Running pg_upgrade (this may take a minute)...")
 	i.output.Info("Data volume: %s", volumeName)
 
+	// Remove any stale lock file left by a previously interrupted upgrade
+	// attempt.  pgautoupgrade refuses to start if upgrade_in_progress.lock
+	// exists at the data-directory root, even if the previous run failed
+	// midway.  We remove it unconditionally here — if a genuine concurrent
+	// upgrade were running we would have failed to stop the db container above.
+	i.output.Info("Clearing any stale upgrade lock file...")
+	rmLockCmd := exec.Command("docker", "run", "--rm",
+		"-v", volumeName+":/pgdata",
+		"alpine:3.21",
+		"sh", "-c", "rm -f /pgdata/upgrade_in_progress.lock && echo 'lock cleared'",
+	)
+	if out, err := rmLockCmd.CombinedOutput(); err != nil {
+		i.output.Warn("Could not clear lock file (continuing anyway): %s", strings.TrimSpace(string(out)))
+	}
+
 	// Read POSTGRES_USER and POSTGRES_PASSWORD from .env.local so pg_upgrade
 	// uses the correct superuser. The pgautoupgrade image defaults to "postgres"
 	// which fails when the installation uses a custom superuser (e.g. "emergent").
