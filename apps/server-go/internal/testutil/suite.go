@@ -60,6 +60,16 @@ func (s *BaseSuite) SetupSuite() {
 		s.T().Logf("Using external server: %s", serverURL)
 		s.externalServer = true
 		s.Client = NewExternalHTTPClient(serverURL)
+		
+		// Create DB connection for direct DB assertions if env vars are present
+		if os.Getenv("POSTGRES_PORT") != "" {
+			db, err := SetupTestDB(s.Ctx, "emergent")
+			if err == nil {
+				s.TestDB = db
+			} else {
+				s.T().Logf("Failed to setup external DB connection: %v", err)
+			}
+		}
 	} else {
 		s.T().Log("Using in-process test server")
 
