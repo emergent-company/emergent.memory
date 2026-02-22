@@ -512,13 +512,16 @@ export interface AgentsClient {
  *
  * @param apiBase - Base API URL from useApi hook
  * @param fetchJson - Fetch function from useApi hook
+ * @param projectId - Active project ID (required for all agent operations)
  * @returns Agents client
  */
 export function createAgentsClient(
   apiBase: string,
-  fetchJson: <T>(url: string, init?: any) => Promise<T>
+  fetchJson: <T>(url: string, init?: any) => Promise<T>,
+  projectId: string
 ): AgentsClient {
-  const baseUrl = `${apiBase}/api/admin/agents`;
+  const baseUrl = `${apiBase}/api/projects/${projectId}/agents`;
+  const defsBaseUrl = `${apiBase}/api/projects/${projectId}/agent-definitions`;
 
   return {
     async listAgents() {
@@ -610,34 +613,34 @@ export function createAgentsClient(
       return response.data;
     },
 
-    async getRunMessages(projectId: string, runId: string) {
+    async getRunMessages(runProjectId: string, runId: string) {
       const response = await fetchJson<AgentApiResponse<AgentRunMessage[]>>(
-        `${apiBase}/api/projects/${projectId}/agent-runs/${runId}/messages`
+        `${apiBase}/api/projects/${runProjectId}/agent-runs/${runId}/messages`
       );
       return response.data || [];
     },
 
-    async getRunToolCalls(projectId: string, runId: string) {
+    async getRunToolCalls(runProjectId: string, runId: string) {
       const response = await fetchJson<AgentApiResponse<AgentRunToolCall[]>>(
-        `${apiBase}/api/projects/${projectId}/agent-runs/${runId}/tool-calls`
+        `${apiBase}/api/projects/${runProjectId}/agent-runs/${runId}/tool-calls`
       );
       return response.data || [];
     },
 
-    async getRunQuestions(projectId: string, runId: string) {
+    async getRunQuestions(runProjectId: string, runId: string) {
       const response = await fetchJson<AgentApiResponse<AgentQuestion[]>>(
-        `${apiBase}/api/projects/${projectId}/agent-runs/${runId}/questions`
+        `${apiBase}/api/projects/${runProjectId}/agent-runs/${runId}/questions`
       );
       return response.data || [];
     },
 
     async respondToQuestion(
-      projectId: string,
+      runProjectId: string,
       questionId: string,
       response: string
     ) {
       const res = await fetchJson<AgentApiResponse<AgentQuestion>>(
-        `${apiBase}/api/projects/${projectId}/agent-questions/${questionId}/respond`,
+        `${apiBase}/api/projects/${runProjectId}/agent-questions/${questionId}/respond`,
         {
           method: 'POST',
           body: { response },
@@ -661,31 +664,34 @@ export function createAgentsClient(
       }
     },
 
-    async listDefinitions(projectId: string) {
+    async listDefinitions(defProjectId: string) {
+      const url = defProjectId
+        ? `${apiBase}/api/projects/${defProjectId}/agent-definitions`
+        : defsBaseUrl;
       const response = await fetchJson<AgentApiResponse<AgentDefinition[]>>(
-        `${apiBase}/api/admin/agent-definitions?projectId=${projectId}`
+        url
       );
       return response.data || [];
     },
 
     async getDefinition(id: string) {
       const response = await fetchJson<AgentApiResponse<AgentDefinition>>(
-        `${apiBase}/api/admin/agent-definitions/${id}`
+        `${defsBaseUrl}/${id}`
       );
       return response.data || null;
     },
 
     async createDefinition(
-      projectId: string,
+      defProjectId: string,
       payload: CreateAgentDefinitionPayload
     ) {
-      const response = await fetchJson<AgentApiResponse<AgentDefinition>>(
-        `${apiBase}/api/admin/agent-definitions`,
-        {
-          method: 'POST',
-          body: { ...payload, projectId },
-        }
-      );
+      const url = defProjectId
+        ? `${apiBase}/api/projects/${defProjectId}/agent-definitions`
+        : defsBaseUrl;
+      const response = await fetchJson<AgentApiResponse<AgentDefinition>>(url, {
+        method: 'POST',
+        body: payload,
+      });
       if (!response.success || !response.data) {
         throw new Error(response.error || 'Failed to create agent definition');
       }
@@ -694,7 +700,7 @@ export function createAgentsClient(
 
     async updateDefinition(id: string, payload: UpdateAgentDefinitionPayload) {
       const response = await fetchJson<AgentApiResponse<AgentDefinition>>(
-        `${apiBase}/api/admin/agent-definitions/${id}`,
+        `${defsBaseUrl}/${id}`,
         {
           method: 'PATCH',
           body: payload,
@@ -708,7 +714,7 @@ export function createAgentsClient(
 
     async deleteDefinition(id: string) {
       const response = await fetchJson<AgentApiResponse<void>>(
-        `${apiBase}/api/admin/agent-definitions/${id}`,
+        `${defsBaseUrl}/${id}`,
         {
           method: 'DELETE',
         }
@@ -719,7 +725,7 @@ export function createAgentsClient(
     },
 
     async listProjectRuns(
-      projectId: string,
+      runProjectId: string,
       options?: {
         limit?: number;
         offset?: number;
@@ -734,7 +740,7 @@ export function createAgentsClient(
       if (options?.status) params.set('status', options.status);
 
       const queryString = params.toString();
-      const url = `${apiBase}/api/projects/${projectId}/agent-runs${
+      const url = `${apiBase}/api/projects/${runProjectId}/agent-runs${
         queryString ? `?${queryString}` : ''
       }`;
 

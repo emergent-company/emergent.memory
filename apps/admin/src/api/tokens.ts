@@ -15,7 +15,12 @@ export interface CreateApiTokenResponse extends ApiToken {
   token: string; // Raw token - only returned at creation time
 }
 
-export type ApiTokenScope = 'schema:read' | 'data:read' | 'data:write';
+export type ApiTokenScope =
+  | 'schema:read'
+  | 'data:read'
+  | 'data:write'
+  | 'agents:read'
+  | 'agents:write';
 
 export interface CreateApiTokenRequest {
   name: string;
@@ -42,5 +47,16 @@ export const API_TOKEN_SCOPES: {
     value: 'data:write',
     label: 'Data Write',
     description: 'Create and update graph objects and relationships',
+  },
+  {
+    value: 'agents:read',
+    label: 'Agents Read',
+    description: 'List and view agents, agent definitions, and run history',
+  },
+  {
+    value: 'agents:write',
+    label: 'Agents Write',
+    description:
+      'Create, update, delete, and trigger agents and agent definitions',
   },
 ];
