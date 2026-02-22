@@ -19,8 +19,8 @@ export function useAgentRunQuestions(
 ): UseAgentRunQuestionsReturn {
   const { apiBase, fetchJson } = useApi();
   const client = useMemo(
-    () => createAgentsClient(apiBase, fetchJson),
-    [apiBase, fetchJson]
+    () => createAgentsClient(apiBase, fetchJson, projectId || ''),
+    [apiBase, fetchJson, projectId]
   );
 
   const [questions, setQuestions] = useState<AgentQuestion[]>([]);

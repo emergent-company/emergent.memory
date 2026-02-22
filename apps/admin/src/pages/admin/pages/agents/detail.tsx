@@ -7,6 +7,7 @@ import { Modal } from '@/components/organisms/Modal/Modal';
 import { AgentRunQAHistory } from '@/components/organisms/AgentRunQAHistory';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
+import { useConfig } from '@/contexts/config';
 import {
   createAgentsClient,
   type Agent,
@@ -144,10 +145,11 @@ export default function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { apiBase, fetchJson } = useApi();
   const { showToast } = useToast();
+  const { config } = useConfig();
 
   const client = useMemo(
-    () => createAgentsClient(apiBase, fetchJson),
-    [apiBase, fetchJson]
+    () => createAgentsClient(apiBase, fetchJson, config.activeProjectId || ''),
+    [apiBase, fetchJson, config.activeProjectId]
   );
 
   const [agent, setAgent] = useState<Agent | null>(null);

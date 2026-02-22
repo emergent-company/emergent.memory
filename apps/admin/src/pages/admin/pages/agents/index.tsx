@@ -6,6 +6,7 @@ import { PageContainer } from '@/components/organisms';
 import { Modal } from '@/components/organisms/Modal/Modal';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
+import { useConfig } from '@/contexts/config';
 import { createAgentsClient, type Agent, type AgentRun } from '@/api/agents';
 
 /**
@@ -87,6 +88,7 @@ export default function AgentsPage() {
   const navigate = useNavigate();
   const { apiBase, fetchJson } = useApi();
   const { showToast } = useToast();
+  const { config } = useConfig();
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [runsMap, setRunsMap] = useState<Record<string, AgentRun[]>>({});
@@ -103,8 +105,8 @@ export default function AgentsPage() {
   const [deleting, setDeleting] = useState(false);
 
   const client = useMemo(
-    () => createAgentsClient(apiBase, fetchJson),
-    [apiBase, fetchJson]
+    () => createAgentsClient(apiBase, fetchJson, config.activeProjectId || ''),
+    [apiBase, fetchJson, config.activeProjectId]
   );
 
   // Load agents and their latest run
