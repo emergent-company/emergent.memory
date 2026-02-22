@@ -1413,6 +1413,12 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 		return nil, fmt.Errorf("invalid entity_id: %w", err)
 	}
 
+	// Resolve the canonical ID for relationship traversal
+	canonicalID, err := s.resolveCanonicalID(ctx, projectUUID, entityID)
+	if err == nil && canonicalID != uuid.Nil {
+		entityID = canonicalID
+	}
+
 	edges, err := s.graphService.GetEdges(ctx, projectUUID, entityID, graph.GetEdgesParams{})
 	if err != nil {
 		return nil, fmt.Errorf("get entity edges: %w", err)
@@ -1491,6 +1497,21 @@ func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uu
 // =============================================================================
 // NEW MCP Tool Execution Methods
 // =============================================================================
+
+// resolveCanonicalID looks up the canonical ID for a given entity version ID.
+func (s *Service) resolveCanonicalID(ctx context.Context, projectID, entityID uuid.UUID) (uuid.UUID, error) {
+	var canonicalID uuid.UUID
+	err := s.db.NewRaw(`
+		SELECT canonical_id FROM kb.graph_objects 
+		WHERE (id = ? OR canonical_id = ?) AND project_id = ? 
+		LIMIT 1
+	`, entityID, entityID, projectID).Scan(ctx, &canonicalID)
+
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return canonicalID, nil
+}
 
 // executeRestoreEntity restores a soft-deleted entity
 func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
@@ -1808,6 +1829,12 @@ func (s *Service) executeTraverseGraph(ctx context.Context, projectID string, ar
 	startEntityID, err := uuid.Parse(startEntityIDStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid start_entity_id: %w", err)
+	}
+
+	// Resolve the canonical ID for relationship traversal
+	canonicalID, err := s.resolveCanonicalID(ctx, projectUUID, startEntityID)
+	if err == nil && canonicalID != uuid.Nil {
+		startEntityID = canonicalID
 	}
 
 	maxDepth := 2
