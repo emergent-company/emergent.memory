@@ -1,9 +1,11 @@
 package installer
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -14,10 +16,10 @@ const (
 	// It handles the full pg_upgrade orchestration from pg16 → pg17 automatically.
 	pgUpgradeImage = "pgautoupgrade/pgautoupgrade:17-bookworm"
 
-	// postgresVolumeName is the Docker Compose-generated volume name.
-	// Docker Compose prefixes volumes with the project name, which defaults
-	// to the directory name containing docker-compose.yml ("docker").
-	postgresVolumeName = "docker_postgres_data"
+	// pgVolumeBaseName is the logical volume name declared in docker-compose.yml.
+	// Docker Compose prepends the project name to produce the real Docker volume name,
+	// e.g. "<project>_postgres_data".
+	pgVolumeBaseName = "postgres_data"
 
 	// pgVersionFile is the path inside the data volume that stores the major version.
 	pgVersionFile = "/var/lib/postgresql/data/PG_VERSION"
@@ -35,26 +37,114 @@ type pgTuningConfig struct {
 	MaxParallelWorkers int
 }
 
+// resolvePostgresVolumeName returns the actual Docker volume name for the
+// postgres data volume.  Docker Compose prefixes logical volume names with
+// the project name.  The project name defaults to the directory that contains
+// docker-compose.yml but can be overridden by COMPOSE_PROJECT_NAME or the
+// top-level `name:` key in the compose file.
+//
+// Strategy (first match wins):
+//  1. Ask `docker compose ls --format json` — find the project whose
+//     ConfigFiles share a directory with composePath, then build
+//     "<projectName>_postgres_data".  This works even when the project name
+//     differs from the directory name (e.g. project "minimal" in dir "minimal").
+//  2. Scan `docker volume ls` for any volume ending in "_postgres_data" — only
+//     trusted when exactly one such volume exists.
+//  3. Fall back to "<dir>_postgres_data" derived from the compose file path.
+func resolvePostgresVolumeName(composePath string) string {
+	// Strategy 1: find the running compose project that owns this compose file
+	if name := volumeFromComposeLs(composePath); name != "" {
+		return name
+	}
+
+	// Strategy 2: scan existing Docker volumes for exactly one "*_postgres_data"
+	if name := volumeFromDockerLS(); name != "" {
+		return name
+	}
+
+	// Strategy 3: derive from the directory name of the compose file
+	dir := filepath.Base(filepath.Dir(composePath))
+	return dir + "_" + pgVolumeBaseName
+}
+
+// volumeFromComposeLs uses `docker compose ls --all --format json` to find the
+// compose project whose config files live in the same directory as composePath,
+// then returns "<projectName>_postgres_data".
+func volumeFromComposeLs(composePath string) string {
+	composeDir := filepath.Dir(composePath)
+
+	cmd := exec.Command("docker", "compose", "ls", "--all", "--format", "json")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	type composeProject struct {
+		Name        string `json:"Name"`
+		ConfigFiles string `json:"ConfigFiles"`
+	}
+	var projects []composeProject
+	if err := json.Unmarshal(out, &projects); err != nil {
+		return ""
+	}
+
+	for _, p := range projects {
+		// ConfigFiles is a comma-separated list of absolute paths.
+		for _, cfgFile := range strings.Split(p.ConfigFiles, ",") {
+			cfgFile = strings.TrimSpace(cfgFile)
+			if filepath.Dir(cfgFile) == composeDir {
+				return p.Name + "_" + pgVolumeBaseName
+			}
+		}
+	}
+	return ""
+}
+
+// volumeFromDockerLS scans `docker volume ls` for a volume whose name ends
+// with "_postgres_data". Only returns a result when exactly one such volume
+// exists (to avoid ambiguity in multi-project environments).
+func volumeFromDockerLS() string {
+	cmd := exec.Command("docker", "volume", "ls", "--format", "{{.Name}}")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	var matches []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasSuffix(line, "_"+pgVolumeBaseName) {
+			matches = append(matches, line)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	return ""
+}
+
 // detectPostgresVersion reads the PG_VERSION file from the postgres data volume
 // by running a short-lived alpine container. Returns the major version integer
-// (e.g. 16) or 0 if the volume does not exist / is not readable.
-func detectPostgresVersion() (int, error) {
+// (e.g. 16), the resolved volume name, or 0 if the volume does not exist.
+// composePath is used to derive the correct volume name dynamically.
+func detectPostgresVersion(composePath string) (int, string, error) {
+	volumeName := resolvePostgresVolumeName(composePath)
+
 	cmd := exec.Command("docker", "run", "--rm",
-		"-v", postgresVolumeName+":/data:ro",
+		"-v", volumeName+":/data:ro",
 		"alpine:3.21",
-		"cat", pgVersionFile,
+		"cat", "/data/PG_VERSION",
 	)
 	out, err := cmd.Output()
 	if err != nil {
 		// Volume may not exist yet (fresh install path) — that's fine.
-		return 0, nil
+		return 0, volumeName, nil
 	}
 	versionStr := strings.TrimSpace(string(out))
 	version, err := strconv.Atoi(versionStr)
 	if err != nil {
-		return 0, fmt.Errorf("unexpected PG_VERSION content %q: %w", versionStr, err)
+		return 0, volumeName, fmt.Errorf("unexpected PG_VERSION content %q: %w", versionStr, err)
 	}
-	return version, nil
+	return version, volumeName, nil
 }
 
 // RunPostgresUpgrade performs an in-place major-version upgrade of the
@@ -67,7 +157,7 @@ func detectPostgresVersion() (int, error) {
 //  4. Streams progress to the output writer
 //
 // The caller (Upgrade) is responsible for starting services back up afterwards.
-func (i *Installer) RunPostgresUpgrade(docker *DockerManager) error {
+func (i *Installer) RunPostgresUpgrade(docker *DockerManager, volumeName string) error {
 	i.output.Step("Stopping database for upgrade...")
 	// Stop only the db service to avoid disrupting minio/kreuzberg unnecessarily.
 	stopCmd := exec.Command("docker", "compose",
@@ -75,7 +165,7 @@ func (i *Installer) RunPostgresUpgrade(docker *DockerManager) error {
 		"--env-file", docker.envPath(),
 		"stop", "db",
 	)
-	stopCmd.Dir = docker.composePath()
+	stopCmd.Dir = filepath.Dir(docker.composePath())
 	if out, err := stopCmd.CombinedOutput(); err != nil {
 		// Non-fatal: container might already be stopped.
 		i.output.Warn("Could not stop db container (may already be stopped): %s", strings.TrimSpace(string(out)))
@@ -93,10 +183,10 @@ func (i *Installer) RunPostgresUpgrade(docker *DockerManager) error {
 	i.output.Success("Upgrade image ready")
 
 	i.output.Step("Running pg_upgrade (this may take a minute)...")
-	i.output.Info("Data volume: %s", postgresVolumeName)
+	i.output.Info("Data volume: %s", volumeName)
 
 	upgradeCmd := exec.Command("docker", "run", "--rm",
-		"-v", postgresVolumeName+":/var/lib/postgresql/data",
+		"-v", volumeName+":/var/lib/postgresql/data",
 		"-e", "PGAUTO_ONESHOT=yes",
 		pgUpgradeImage,
 	)
