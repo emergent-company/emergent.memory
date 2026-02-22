@@ -185,11 +185,18 @@ func (h *Handler) Delete(c echo.Context) error {
 
 	id := c.Param("id")
 
-	if err := h.svc.Delete(c.Request().Context(), id, user.ID); err != nil {
+	// DeleteAsync validates access synchronously, then runs the cascade in the
+	// background. Returns immediately so the HTTP response is not blocked by
+	// PostgreSQL cascading through potentially millions of rows.
+	if err := h.svc.DeleteAsync(c.Request().Context(), id, user.ID); err != nil {
 		return err
 	}
 
-	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+	return c.JSON(http.StatusAccepted, map[string]string{
+		"status":    "deleting",
+		"projectId": id,
+		"message":   "Project deletion initiated. Data will be removed in the background.",
+	})
 }
 
 // ListMembers returns all members of a project
