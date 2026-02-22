@@ -1302,7 +1302,7 @@ func benchBulkUploadRelationships(ctx context.Context, client *sdkgraph.Client, 
 					succeeded.Add(int64(res.Success))
 					failed.Add(int64(res.Failed))
 				} else if err != nil {
-					failed.Add(int64(len(batch)))
+					fmt.Printf("Rel batch failed: %v\n", err); failed.Add(int64(len(batch)))
 				}
 			}
 		}()

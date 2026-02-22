@@ -1,8 +1,11 @@
 # environment-configuration Specification
 
 ## Purpose
+
 TBD - created by archiving change reorganize-environment-variables. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: The system SHALL organize environment variables by application scope
 
 Variables SHALL be located in the appropriate configuration file based on their usage:
@@ -23,7 +26,7 @@ Variables SHALL be located in the appropriate configuration file based on their 
 - Any workspace variable override for local development
 - User-specific secrets that should not be committed
 
-**`apps/server-go/.env`** - Server application variables:
+**`apps/server-go/.env`** - Go Server application variables:
 
 - `PORT` - Server listen port (defaults to SERVER_PORT if not set)
 - `POSTGRES_HOST` - Database host
@@ -117,7 +120,7 @@ Variables SHALL be located in the appropriate configuration file based on their 
 #### Scenario: Server application loads configuration
 
 **Given** the server application is starting  
-**When** configuration is loaded via `config.module.ts`  
+**When** configuration is loaded via `internal/config/config.go`  
 **Then** server SHALL load files in this order:
 
 1. `apps/server-go/.env.local` (user overrides, highest priority)
@@ -147,10 +150,8 @@ Variables SHALL be located in the appropriate configuration file based on their 
 1. Root `.env.local` (user overrides, highest priority)
 2. Root `.env` (workspace defaults, lowest priority)
    **And** workspace-cli SHALL read `NAMESPACE`, `ADMIN_PORT`, `SERVER_PORT` from loaded environment  
-   **And** workspace-cli SHALL NOT load application-specific variables  
+    **And** workspace-cli SHALL NOT load application-specific variables  
    **And** services SHALL inherit environment variables from their respective `.env` files
-
-### Requirement: The system SHALL provide clear documentation for environment variable organization
 
 Each `.env.example` file SHALL include:
 
@@ -210,4 +211,3 @@ During the migration period, the system SHALL:
 **And** deprecation warnings SHALL be logged for misplaced variables  
 **And** system SHALL continue to function correctly  
 **And** migration guide SHALL provide clear instructions for moving variables
-

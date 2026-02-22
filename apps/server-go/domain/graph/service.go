@@ -710,7 +710,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 	}
 
 	// Re-fetch the new HEAD to return
-	restored, err := s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, current.BranchID)
+	restored, err := s.repo.GetHeadByCanonicalID(ctx, s.repo.DB(), projectID, current.CanonicalID, current.BranchID)
 	if err != nil {
 		return nil, err
 	}
@@ -1137,7 +1137,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		}
 
 		// Return the new version (use canonical IDs for lookup)
-		newHead, _ := s.repo.GetRelationshipHead(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+		newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
 		return newHead.ToResponse(), nil
 	}
 
@@ -1183,7 +1183,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	}
 
 	// Return the new version
-	newHead, _ := s.repo.GetRelationshipHead(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+	newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
 	return newHead.ToResponse(), nil
 }
 
