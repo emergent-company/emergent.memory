@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,17 +15,20 @@ import (
 	"github.com/emergent-company/emergent/internal/storage"
 	"github.com/emergent-company/emergent/pkg/kreuzberg"
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/whisper"
 )
 
 // DocumentParsingWorker processes document parsing jobs.
 // It polls for pending jobs, downloads documents from storage,
-// sends them to Kreuzberg for text extraction, and stores the results.
+// routes them to the appropriate extraction service (Whisper for audio,
+// Kreuzberg for binary documents), and stores the results.
 type DocumentParsingWorker struct {
 	log             *slog.Logger
 	jobsService     *DocumentParsingJobsService
 	documentsRepo   *documents.Repository
 	chunkingService *chunking.Service
 	kreuzbergClient *kreuzberg.Client
+	whisperClient   *whisper.Client
 	storageService  *storage.Service
 
 	// Polling configuration
@@ -48,6 +53,7 @@ func NewDocumentParsingWorker(
 	documentsRepo *documents.Repository,
 	chunkingService *chunking.Service,
 	kreuzbergClient *kreuzberg.Client,
+	whisperClient *whisper.Client,
 	storageService *storage.Service,
 	cfg *DocumentParsingWorkerConfig,
 	log *slog.Logger,
@@ -69,6 +75,7 @@ func NewDocumentParsingWorker(
 		documentsRepo:   documentsRepo,
 		chunkingService: chunkingService,
 		kreuzbergClient: kreuzbergClient,
+		whisperClient:   whisperClient,
 		storageService:  storageService,
 		interval:        interval,
 		batchSize:       batchSize,
@@ -178,7 +185,8 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 
 	// Check processing path
 	isEmail := kreuzberg.IsEmailFile(mimeType, filename)
-	useKreuzberg := !isEmail && kreuzberg.ShouldUseKreuzberg(mimeType, filename)
+	isAudio := !isEmail && isAudioFile(mimeType, filename)
+	useKreuzberg := !isEmail && !isAudio && kreuzberg.ShouldUseKreuzberg(mimeType, filename)
 
 	var parsedContent string
 	var extractionMethod string
@@ -191,6 +199,10 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 		jobLog.Warn("email parsing not implemented", slog.String("mime_type", mimeType))
 		w.markFailed(ctx, job, err)
 		return
+	} else if isAudio {
+		// Audio files - use Whisper for transcription
+		parsedContent, err = w.extractWithWhisper(ctx, storageKey, filename, mimeType)
+		extractionMethod = "whisper"
 	} else if useKreuzberg {
 		// Binary document - use Kreuzberg for extraction
 		parsedContent, err = w.extractWithKreuzberg(ctx, storageKey, filename, mimeType)
@@ -268,6 +280,53 @@ func (w *DocumentParsingWorker) extractWithKreuzberg(ctx context.Context, storag
 	}
 
 	return result.Content, nil
+}
+
+// audioExtensions is the set of file extensions treated as audio regardless of MIME type
+var audioExtensions = map[string]bool{
+	".mp3":  true,
+	".wav":  true,
+	".m4a":  true,
+	".ogg":  true,
+	".flac": true,
+	".aac":  true,
+	".opus": true,
+	".webm": true,
+}
+
+// isAudioFile returns true if the file should be treated as audio.
+// It checks the MIME type prefix first, then falls back to the file extension.
+func isAudioFile(mimeType, filename string) bool {
+	if strings.HasPrefix(mimeType, "audio/") {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	return audioExtensions[ext]
+}
+
+// extractWithWhisper downloads an audio file and sends it to Whisper for transcription
+func (w *DocumentParsingWorker) extractWithWhisper(ctx context.Context, storageKey, filename, mimeType string) (string, error) {
+	if !w.whisperClient.IsEnabled() {
+		return "", fmt.Errorf("whisper transcription service is disabled")
+	}
+
+	content, err := w.downloadFile(ctx, storageKey)
+	if err != nil {
+		return "", fmt.Errorf("download file: %w", err)
+	}
+
+	// Check file size against configured limit
+	maxBytes := w.whisperClient.MaxFileSizeBytes()
+	if maxBytes > 0 && int64(len(content)) > maxBytes {
+		return "", fmt.Errorf("audio file exceeds maximum size of %d MB", maxBytes/(1024*1024))
+	}
+
+	transcript, err := w.whisperClient.Transcribe(ctx, content, filename, mimeType)
+	if err != nil {
+		return "", fmt.Errorf("whisper transcription: %w", err)
+	}
+
+	return transcript, nil
 }
 
 // extractPlainText downloads a plain text file directly
