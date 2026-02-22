@@ -51,18 +51,20 @@ const benchVersion = "1.0.0"
 // ─── flags ────────────────────────────────────────────────────────────────────
 
 var dbBenchFlags struct {
-	seed       int
-	workers    int
-	batch      int
-	cleanup    bool
-	logFile    string
-	dsn        string
-	server     string
-	projectID  string
-	skipDelete bool
-	slowMS     int
-	verbose    bool
-	configPath string
+	seed          int
+	offset        int
+	workers       int
+	batch         int
+	cleanup       bool
+	logFile       string
+	dsn           string
+	server        string
+	projectID     string
+	appendProject string
+	skipDelete    bool
+	slowMS        int
+	verbose       bool
+	configPath    string
 }
 
 // ─── command definition ───────────────────────────────────────────────────────
@@ -105,7 +107,8 @@ Examples:
 }
 
 func init() {
-	dbBenchCmd.Flags().IntVar(&dbBenchFlags.seed, "seed", 100, "number of IMDb titles to seed")
+	dbBenchCmd.Flags().IntVar(&dbBenchFlags.seed, "seed", 100, "number of IMDb titles to seed (the chunk size)")
+	dbBenchCmd.Flags().IntVar(&dbBenchFlags.offset, "offset", 0, "skip the first N qualifying IMDb titles (for chunked seeding)")
 	dbBenchCmd.Flags().IntVar(&dbBenchFlags.workers, "workers", 20, "number of parallel upload workers")
 	dbBenchCmd.Flags().IntVar(&dbBenchFlags.batch, "batch", 100, "batch size for bulk API calls")
 	dbBenchCmd.Flags().BoolVar(&dbBenchFlags.cleanup, "cleanup", false, "delete the bench project after the run")
@@ -113,6 +116,7 @@ func init() {
 	dbBenchCmd.Flags().StringVar(&dbBenchFlags.dsn, "dsn", "", "PostgreSQL DSN for EXPLAIN checks (overrides auto-detect)")
 	dbBenchCmd.Flags().StringVar(&dbBenchFlags.server, "server", "", "Emergent server URL (overrides config)")
 	dbBenchCmd.Flags().StringVar(&dbBenchFlags.projectID, "project-id", "", "delete this project ID before creating a new bench project")
+	dbBenchCmd.Flags().StringVar(&dbBenchFlags.appendProject, "append-project", "", "append to existing project ID instead of creating a new one")
 	dbBenchCmd.Flags().BoolVar(&dbBenchFlags.skipDelete, "skip-delete", false, "skip deleting --project-id even if set")
 	dbBenchCmd.Flags().IntVar(&dbBenchFlags.slowMS, "slow", 200, "flag EXPLAIN queries slower than this many ms")
 	dbBenchCmd.Flags().BoolVarP(&dbBenchFlags.verbose, "verbose", "v", false, "print full EXPLAIN output for every query")
@@ -133,6 +137,7 @@ type benchReport struct {
 	ServerURL     string    `json:"server_url"`
 	ProjectID     string    `json:"project_id"`
 	SeedLimit     int       `json:"seed_limit"`
+	SeedOffset    int       `json:"seed_offset"`
 	GitCommit     string    `json:"git_commit"`
 	GoVersion     string    `json:"go_version"`
 	GOOS          string    `json:"goos"`
@@ -245,6 +250,7 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 		ServerVersion: benchFetchServerVersion(svrURL),
 		ServerURL:     svrURL,
 		SeedLimit:     dbBenchFlags.seed,
+		SeedOffset:    dbBenchFlags.offset,
 		GitCommit:     benchGitCommit(),
 		GoVersion:     runtime.Version(),
 		GOOS:          runtime.GOOS,
@@ -254,8 +260,8 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	}
 
 	fmt.Printf("\n%s%sEmergent db bench v%s%s\n", diagBold, diagCyan, benchVersion, diagReset)
-	fmt.Printf("server=%s (%s)  git=%s  seed=%d\n\n",
-		svrURL, report.ServerVersion, report.GitCommit, dbBenchFlags.seed)
+	fmt.Printf("server=%s (%s)  git=%s  seed=%d  offset=%d\n\n",
+		svrURL, report.ServerVersion, report.GitCommit, dbBenchFlags.seed, dbBenchFlags.offset)
 
 	// ── SDK base client (project-agnostic) ────────────────────────────────────
 	baseClient, err := benchNewSDK(svrURL, "", apiKey)
@@ -273,20 +279,28 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 		done0(fmt.Sprintf("project=%s", dbBenchFlags.projectID))
 	}
 
-	// ── Phase 1: Create project ───────────────────────────────────────────────
-	fmt.Println("Phase 1: Creating fresh benchmark project ...")
-	done1 := report.begin("create_project")
-	proj, err := baseClient.Projects.Create(ctx, &projects.CreateProjectRequest{
-		Name:  fmt.Sprintf("Bench %s", time.Now().Format("2006-01-02T15:04:05")),
-		OrgID: orgID,
-	})
-	if err != nil {
-		return fmt.Errorf("create project failed: %w", err)
+	// ── Phase 1: Create project (or reuse existing) ───────────────────────────
+	var projectID string
+	if dbBenchFlags.appendProject != "" {
+		// Append mode: write into existing project, skip creation
+		projectID = dbBenchFlags.appendProject
+		report.ProjectID = projectID
+		fmt.Printf("Phase 1: Appending to existing project %s ...\n", projectID)
+	} else {
+		fmt.Println("Phase 1: Creating fresh benchmark project ...")
+		done1 := report.begin("create_project")
+		proj, err := baseClient.Projects.Create(ctx, &projects.CreateProjectRequest{
+			Name:  fmt.Sprintf("Bench %s", time.Now().Format("2006-01-02T15:04:05")),
+			OrgID: orgID,
+		})
+		if err != nil {
+			return fmt.Errorf("create project failed: %w", err)
+		}
+		projectID = proj.ID
+		report.ProjectID = projectID
+		fmt.Printf("  Created project: %s (%s)\n", proj.Name, projectID)
+		done1(fmt.Sprintf("id=%s", projectID))
 	}
-	projectID := proj.ID
-	report.ProjectID = projectID
-	fmt.Printf("  Created project: %s (%s)\n", proj.Name, projectID)
-	done1(fmt.Sprintf("id=%s", projectID))
 
 	// Project-scoped client
 	projClient, err := benchNewSDK(svrURL, projectID, apiKey)
@@ -295,7 +309,7 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	}
 
 	// ── Phase 2: Load IMDb data ───────────────────────────────────────────────
-	fmt.Printf("Phase 2: Loading IMDb data (limit=%d titles) ...\n", dbBenchFlags.seed)
+	fmt.Printf("Phase 2: Loading IMDb data (limit=%d offset=%d titles) ...\n", dbBenchFlags.seed, dbBenchFlags.offset)
 	done2 := report.begin("load_imdb_data")
 
 	var (
@@ -310,15 +324,15 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 		people         map[string]benchPerson
 	)
 
-	if cached := benchLoadParsedCache(dbBenchFlags.seed); cached != nil {
-		fmt.Printf("  Using parsed cache for seed=%d\n", dbBenchFlags.seed)
+	if cached := benchLoadParsedCache(dbBenchFlags.seed, dbBenchFlags.offset); cached != nil {
+		fmt.Printf("  Using parsed cache for seed=%d offset=%d\n", dbBenchFlags.seed, dbBenchFlags.offset)
 		titles, titleGenres = cached.Titles, cached.TitleGenres
 		episodes, seasons = cached.Episodes, cached.Seasons
 		roles, crewRoles = cached.Roles, cached.CrewRoles
 		characterNames, titleAKAs = cached.CharNames, cached.TitleAKAs
 		people = cached.People
 	} else {
-		filteredRatings, filteredVotes := benchGetFilteredTitleIDs(dbBenchFlags.seed)
+		filteredRatings, filteredVotes := benchGetFilteredTitleIDs(dbBenchFlags.seed, dbBenchFlags.offset)
 		titles, titleGenres = benchGetTitleMetadata(filteredRatings, filteredVotes)
 		episodes, seasons = benchGetEpisodes(titles)
 		roles, targetPersonIDs, charNames := benchGetPrincipals(titles)
@@ -334,7 +348,7 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 			titleAKAs[a.titleID] = append(titleAKAs[a.titleID], a.localizedTitle)
 		}
 		benchSaveParsedCache(&benchParsedCache{
-			Seed: dbBenchFlags.seed, Titles: titles, TitleGenres: titleGenres,
+			Seed: dbBenchFlags.seed, Offset: dbBenchFlags.offset, Titles: titles, TitleGenres: titleGenres,
 			Episodes: episodes, Seasons: seasons, Roles: roles, CrewRoles: crewRoles,
 			CharNames: characterNames, TitleAKAs: titleAKAs, People: people,
 		})
@@ -597,6 +611,7 @@ type benchPerson struct {
 
 type benchParsedCache struct {
 	Seed        int                     `json:"seed"`
+	Offset      int                     `json:"offset"`
 	Titles      map[string]benchTitle   `json:"titles"`
 	TitleGenres map[string][]string     `json:"title_genres"`
 	Episodes    map[string]benchEpisode `json:"episodes"`
@@ -608,12 +623,15 @@ type benchParsedCache struct {
 	People      map[string]benchPerson  `json:"people"`
 }
 
-func benchParsedCachePath(seed int) string {
-	return fmt.Sprintf("/tmp/imdb_data/parsed_%d.json.gz", seed)
+func benchParsedCachePath(seed, offset int) string {
+	if offset == 0 {
+		return fmt.Sprintf("/tmp/imdb_data/parsed_%d.json.gz", seed)
+	}
+	return fmt.Sprintf("/tmp/imdb_data/parsed_%d_off%d.json.gz", seed, offset)
 }
 
-func benchLoadParsedCache(seed int) *benchParsedCache {
-	path := benchParsedCachePath(seed)
+func benchLoadParsedCache(seed, offset int) *benchParsedCache {
+	path := benchParsedCachePath(seed, offset)
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -628,7 +646,7 @@ func benchLoadParsedCache(seed int) *benchParsedCache {
 	if err := json.NewDecoder(gz).Decode(&c); err != nil {
 		return nil
 	}
-	if c.Seed != seed {
+	if c.Seed != seed || c.Offset != offset {
 		return nil
 	}
 	return &c
@@ -636,7 +654,7 @@ func benchLoadParsedCache(seed int) *benchParsedCache {
 
 func benchSaveParsedCache(c *benchParsedCache) {
 	os.MkdirAll("/tmp/imdb_data", 0755)
-	path := benchParsedCachePath(c.Seed)
+	path := benchParsedCachePath(c.Seed, c.Offset)
 	f, err := os.Create(path)
 	if err != nil {
 		return
@@ -673,7 +691,7 @@ func benchStreamIMDB(url string) (io.ReadCloser, *gzip.Reader, error) {
 	return f, reader, nil
 }
 
-func benchGetFilteredTitleIDs(limit int) (map[string]float64, map[string]int) {
+func benchGetFilteredTitleIDs(limit, offset int) (map[string]float64, map[string]int) {
 	closer, reader, _ := benchStreamIMDB("https://datasets.imdbws.com/title.ratings.tsv.gz")
 	defer closer.Close()
 	defer reader.Close()
@@ -681,6 +699,7 @@ func benchGetFilteredTitleIDs(limit int) (map[string]float64, map[string]int) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Scan() // header
 	ratings, votes := make(map[string]float64), make(map[string]int)
+	skipped := 0
 
 	for scanner.Scan() {
 		parts := strings.Split(scanner.Text(), "\t")
@@ -688,6 +707,10 @@ func benchGetFilteredTitleIDs(limit int) (map[string]float64, map[string]int) {
 			continue
 		}
 		if v, _ := strconv.Atoi(parts[2]); v > 5000 {
+			if skipped < offset {
+				skipped++
+				continue
+			}
 			r, _ := strconv.ParseFloat(parts[1], 64)
 			ratings[parts[0]], votes[parts[0]] = r, v
 			if limit > 0 && len(ratings) >= limit {
@@ -1190,7 +1213,8 @@ func benchBulkUploadObjects(ctx context.Context, client *sdkgraph.Client, items 
 				res, err := client.BulkCreateObjects(ctx, &sdkgraph.BulkCreateObjectsRequest{Items: batch})
 				if err != nil {
 					time.Sleep(500 * time.Millisecond)
-					fmt.Printf("Error: %v\n", err); res, _ = client.BulkCreateObjects(ctx, &sdkgraph.BulkCreateObjectsRequest{Items: batch})
+					fmt.Printf("Error: %v\n", err)
+					res, _ = client.BulkCreateObjects(ctx, &sdkgraph.BulkCreateObjectsRequest{Items: batch})
 				}
 				results <- batchResult{batch, res}
 			}
@@ -1302,7 +1326,8 @@ func benchBulkUploadRelationships(ctx context.Context, client *sdkgraph.Client, 
 					succeeded.Add(int64(res.Success))
 					failed.Add(int64(res.Failed))
 				} else if err != nil {
-					fmt.Printf("Rel batch failed: %v\n", err); failed.Add(int64(len(batch)))
+					fmt.Printf("Rel batch failed: %v\n", err)
+					failed.Add(int64(len(batch)))
 				}
 			}
 		}()
