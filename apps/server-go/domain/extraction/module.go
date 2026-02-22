@@ -60,12 +60,28 @@ func provideEmbeddingEnqueuer(svc *GraphEmbeddingJobsService) graph.EmbeddingEnq
 	return &embeddingEnqueuerAdapter{svc: svc}
 }
 
+// relEmbeddingEnqueuerAdapter adapts GraphRelationshipEmbeddingJobsService to graph.RelationshipEmbeddingEnqueuer.
+type relEmbeddingEnqueuerAdapter struct {
+	svc *GraphRelationshipEmbeddingJobsService
+}
+
+func (a *relEmbeddingEnqueuerAdapter) EnqueueRelationshipEmbedding(ctx context.Context, relationshipID string) error {
+	_, err := a.svc.Enqueue(ctx, relationshipID)
+	return err
+}
+
+func provideRelEmbeddingEnqueuer(svc *GraphRelationshipEmbeddingJobsService) graph.RelationshipEmbeddingEnqueuer {
+	return &relEmbeddingEnqueuerAdapter{svc: svc}
+}
+
 // Module provides extraction functionality including job queues and workers
 var Module = fx.Module("extraction",
 	fx.Provide(
 		NewExtractionConfig,
 		provideGraphEmbeddingJobsService,
 		provideGraphEmbeddingWorker,
+		provideGraphRelationshipEmbeddingJobsService,
+		provideGraphRelationshipEmbeddingWorker,
 		provideChunkEmbeddingJobsService,
 		provideChunkEmbeddingWorker,
 		provideDocumentParsingJobsService,
@@ -74,13 +90,17 @@ var Module = fx.Module("extraction",
 		provideTemplatePackSchemaProvider,
 		provideObjectExtractionWorker,
 		provideAdminHandler,
+		provideEmbeddingControlHandler,
 		provideParsingJobCreator,
 		provideEmbeddingEnqueuer,
+		provideRelEmbeddingEnqueuer,
 		provideEmbeddingSweepWorker,
 	),
 	fx.Invoke(
 		RegisterAdminRoutes,
+		RegisterEmbeddingControlRoutes,
 		RegisterGraphEmbeddingWorkerLifecycle,
+		RegisterGraphRelationshipEmbeddingWorkerLifecycle,
 		RegisterChunkEmbeddingWorkerLifecycle,
 		RegisterDocumentParsingWorkerLifecycle,
 		RegisterObjectExtractionWorkerLifecycle,
@@ -274,4 +294,41 @@ func RegisterEmbeddingSweepWorkerLifecycle(lc fx.Lifecycle, worker *EmbeddingSwe
 			return worker.Stop(ctx)
 		},
 	})
+}
+
+// provideGraphRelationshipEmbeddingJobsService creates the relationship embedding jobs service.
+func provideGraphRelationshipEmbeddingJobsService(db bun.IDB, log *slog.Logger, cfg *ExtractionConfig) *GraphRelationshipEmbeddingJobsService {
+	return NewGraphRelationshipEmbeddingJobsService(db, log, cfg.GraphEmbedding)
+}
+
+// provideGraphRelationshipEmbeddingWorker creates the relationship embedding worker.
+func provideGraphRelationshipEmbeddingWorker(
+	jobs *GraphRelationshipEmbeddingJobsService,
+	embeds *embeddings.Service,
+	db bun.IDB,
+	cfg *ExtractionConfig,
+	log *slog.Logger,
+) *GraphRelationshipEmbeddingWorker {
+	return NewGraphRelationshipEmbeddingWorker(jobs, embeds, db, cfg.GraphEmbedding, log)
+}
+
+// RegisterGraphRelationshipEmbeddingWorkerLifecycle registers the relationship embedding worker with fx lifecycle.
+func RegisterGraphRelationshipEmbeddingWorkerLifecycle(lc fx.Lifecycle, worker *GraphRelationshipEmbeddingWorker) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			return worker.Start(context.Background())
+		},
+		OnStop: func(ctx context.Context) error {
+			return worker.Stop(ctx)
+		},
+	})
+}
+
+// provideEmbeddingControlHandler creates the embedding control handler.
+func provideEmbeddingControlHandler(
+	objectWorker *GraphEmbeddingWorker,
+	relWorker *GraphRelationshipEmbeddingWorker,
+	sweepWorker *EmbeddingSweepWorker,
+) *EmbeddingControlHandler {
+	return NewEmbeddingControlHandler(objectWorker, relWorker, sweepWorker)
 }

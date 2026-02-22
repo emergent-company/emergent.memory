@@ -28,16 +28,17 @@ type EmbeddingService interface {
 // - Stale job recovery on startup
 // - Metrics tracking
 type GraphEmbeddingWorker struct {
-	jobs    *GraphEmbeddingJobsService
-	embeds  EmbeddingService
-	db      bun.IDB
-	cfg     *GraphEmbeddingConfig
-	log     *slog.Logger
-	stopCh  chan struct{}
+	jobs      *GraphEmbeddingJobsService
+	embeds    EmbeddingService
+	db        bun.IDB
+	cfg       *GraphEmbeddingConfig
+	log       *slog.Logger
+	stopCh    chan struct{}
 	stoppedCh chan struct{}
-	running bool
-	mu      sync.Mutex
-	wg      sync.WaitGroup
+	running   bool
+	paused    bool
+	mu        sync.Mutex
+	wg        sync.WaitGroup
 
 	// Metrics
 	processedCount int64
@@ -165,6 +166,14 @@ func (w *GraphEmbeddingWorker) processBatch(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
+	}
+
+	// Check if paused
+	w.mu.Lock()
+	paused := w.paused
+	w.mu.Unlock()
+	if paused {
+		return nil
 	}
 
 	jobs, err := w.jobs.Dequeue(ctx, w.cfg.WorkerBatchSize)
@@ -404,4 +413,27 @@ func (w *GraphEmbeddingWorker) IsRunning() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.running
+}
+
+// Pause suspends job processing without stopping the worker goroutine.
+func (w *GraphEmbeddingWorker) Pause() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.paused = true
+	w.log.Info("graph embedding worker paused")
+}
+
+// Resume resumes job processing after a Pause.
+func (w *GraphEmbeddingWorker) Resume() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.paused = false
+	w.log.Info("graph embedding worker resumed")
+}
+
+// IsPaused returns whether the worker is currently paused.
+func (w *GraphEmbeddingWorker) IsPaused() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.paused
 }

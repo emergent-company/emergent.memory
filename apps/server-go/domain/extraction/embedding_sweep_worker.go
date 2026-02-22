@@ -53,6 +53,7 @@ type EmbeddingSweepWorker struct {
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
 	running   bool
+	paused    bool
 	mu        sync.Mutex
 
 	// Metrics
@@ -150,6 +151,29 @@ func (w *EmbeddingSweepWorker) run(ctx context.Context) {
 	}
 }
 
+// Pause suspends sweep processing without stopping the worker goroutine.
+func (w *EmbeddingSweepWorker) Pause() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.paused = true
+	w.log.Info("embedding sweep worker paused")
+}
+
+// Resume resumes sweep processing after a Pause.
+func (w *EmbeddingSweepWorker) Resume() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.paused = false
+	w.log.Info("embedding sweep worker resumed")
+}
+
+// IsPaused returns whether the sweep worker is currently paused.
+func (w *EmbeddingSweepWorker) IsPaused() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.paused
+}
+
 // sweep runs one sweep cycle: objects first, then relationships.
 func (w *EmbeddingSweepWorker) sweep(ctx context.Context) {
 	select {
@@ -158,6 +182,14 @@ func (w *EmbeddingSweepWorker) sweep(ctx context.Context) {
 	case <-ctx.Done():
 		return
 	default:
+	}
+
+	// Check if paused
+	w.mu.Lock()
+	paused := w.paused
+	w.mu.Unlock()
+	if paused {
+		return
 	}
 
 	w.incrementSweepCount()
