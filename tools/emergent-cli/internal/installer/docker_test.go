@@ -42,7 +42,7 @@ func TestGetDockerComposeTemplate(t *testing.T) {
 	requiredStrings := []string{
 		"services:",
 		"db:",
-		"pgvector/pgvector:pg16",
+		"pgvector/pgvector:pg17",
 		"kreuzberg:",
 		"minio:",
 		"minio-init:",
