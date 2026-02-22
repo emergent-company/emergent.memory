@@ -154,6 +154,7 @@ func detectPostgresVersion(composePath string) (int, string, error) {
 //  1. Stops the db service so no writes occur during upgrade
 //  2. Pulls the pgautoupgrade image
 //  3. Runs the upgrade container against the data volume
+//     — passes POSTGRES_USER/PASSWORD so pg_upgrade uses the correct superuser
 //  4. Streams progress to the output writer
 //
 // The caller (Upgrade) is responsible for starting services back up afterwards.
@@ -185,9 +186,17 @@ func (i *Installer) RunPostgresUpgrade(docker *DockerManager, volumeName string)
 	i.output.Step("Running pg_upgrade (this may take a minute)...")
 	i.output.Info("Data volume: %s", volumeName)
 
+	// Read POSTGRES_USER and POSTGRES_PASSWORD from .env.local so pg_upgrade
+	// uses the correct superuser. The pgautoupgrade image defaults to "postgres"
+	// which fails when the installation uses a custom superuser (e.g. "emergent").
+	pgUser, pgPass := readPgCredsFromEnv(docker.envPath())
+	i.output.Info("PostgreSQL superuser: %s", pgUser)
+
 	upgradeCmd := exec.Command("docker", "run", "--rm",
 		"-v", volumeName+":/var/lib/postgresql/data",
 		"-e", "PGAUTO_ONESHOT=yes",
+		"-e", "POSTGRES_USER="+pgUser,
+		"-e", "POSTGRES_PASSWORD="+pgPass,
 		pgUpgradeImage,
 	)
 	upgradeCmd.Stdout = os.Stdout
@@ -199,6 +208,38 @@ func (i *Installer) RunPostgresUpgrade(docker *DockerManager, volumeName string)
 
 	i.output.Success("pg_upgrade completed — database upgraded to PostgreSQL 17")
 	return nil
+}
+
+// readPgCredsFromEnv parses POSTGRES_USER and POSTGRES_PASSWORD from the
+// .env.local file at envPath. Falls back to ("postgres", "") if not found,
+// which matches the pgautoupgrade image's own default.
+func readPgCredsFromEnv(envPath string) (user, password string) {
+	user = "postgres"
+	password = ""
+
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		switch parts[0] {
+		case "POSTGRES_USER":
+			if parts[1] != "" {
+				user = parts[1]
+			}
+		case "POSTGRES_PASSWORD":
+			password = parts[1]
+		}
+	}
+	return
 }
 
 // computePgTuning calculates optimal PostgreSQL configuration parameters
