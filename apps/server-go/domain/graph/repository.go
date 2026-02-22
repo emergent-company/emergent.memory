@@ -28,6 +28,10 @@ type Repository struct {
 	log *slog.Logger
 }
 
+func (r *Repository) DB() bun.IDB {
+	return r.db
+}
+
 // NewRepository creates a new graph repository.
 func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	return &Repository{
@@ -406,9 +410,9 @@ func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*Gra
 }
 
 // GetHeadByCanonicalID returns the HEAD version of a graph object by canonical ID.
-func (r *Repository) GetHeadByCanonicalID(ctx context.Context, projectID, canonicalID uuid.UUID, branchID *uuid.UUID) (*GraphObject, error) {
+func (r *Repository) GetHeadByCanonicalID(ctx context.Context, db bun.IDB, projectID, canonicalID uuid.UUID, branchID *uuid.UUID) (*GraphObject, error) {
 	var obj GraphObject
-	q := r.db.NewSelect().
+	q := db.NewSelect().
 		Model(&obj).
 		Where("canonical_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
@@ -656,9 +660,9 @@ func (r *Repository) AcquireObjectLock(ctx context.Context, tx bun.Tx, canonical
 
 // FindHeadByTypeAndKey returns the HEAD version of an object identified by (project_id, type, key).
 // Returns nil, nil if not found (not an error).
-func (r *Repository) FindHeadByTypeAndKey(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID, objType string, key string) (*GraphObject, error) {
+func (r *Repository) FindHeadByTypeAndKey(ctx context.Context, db bun.IDB, projectID uuid.UUID, branchID *uuid.UUID, objType string, key string) (*GraphObject, error) {
 	var obj GraphObject
-	q := r.db.NewSelect().
+	q := db.NewSelect().
 		Model(&obj).
 		Where("project_id = ?", projectID).
 		Where("type = ?", objType).
@@ -949,9 +953,9 @@ func (r *Repository) GetRelationshipByID(ctx context.Context, projectID, id uuid
 }
 
 // GetRelationshipHead returns the HEAD version of a relationship by type, src, dst.
-func (r *Repository) GetRelationshipHead(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID, relType string, srcID, dstID uuid.UUID) (*GraphRelationship, error) {
+func (r *Repository) GetRelationshipHead(ctx context.Context, db bun.IDB, projectID uuid.UUID, branchID *uuid.UUID, relType string, srcID, dstID uuid.UUID) (*GraphRelationship, error) {
 	var rel GraphRelationship
-	q := r.db.NewSelect().
+	q := db.NewSelect().
 		Model(&rel).
 		Where("project_id = ?", projectID).
 		Where("type = ?", relType).

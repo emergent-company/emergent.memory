@@ -217,12 +217,18 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 		svrURL = "http://localhost:3002"
 	}
 
-	// ── Resolve API key ───────────────────────────────────────────────────────
+	// ── Resolve API key + org ID ──────────────────────────────────────────────
 	apiKey := os.Getenv("EMERGENT_API_KEY")
-	if apiKey == "" {
+	orgID := os.Getenv("EMERGENT_ORG_ID")
+	if apiKey == "" || orgID == "" {
 		cfgPath := config.DiscoverPath(dbBenchFlags.configPath)
 		if cfg, err := config.LoadWithEnv(cfgPath); err == nil {
-			apiKey = cfg.APIKey
+			if apiKey == "" {
+				apiKey = cfg.APIKey
+			}
+			if orgID == "" {
+				orgID = cfg.OrgID
+			}
 		}
 	}
 
@@ -271,7 +277,8 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	fmt.Println("Phase 1: Creating fresh benchmark project ...")
 	done1 := report.begin("create_project")
 	proj, err := baseClient.Projects.Create(ctx, &projects.CreateProjectRequest{
-		Name: fmt.Sprintf("Bench %s", time.Now().Format("2006-01-02T15:04:05")),
+		Name:  fmt.Sprintf("Bench %s", time.Now().Format("2006-01-02T15:04:05")),
+		OrgID: orgID,
 	})
 	if err != nil {
 		return fmt.Errorf("create project failed: %w", err)
@@ -291,20 +298,46 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	fmt.Printf("Phase 2: Loading IMDb data (limit=%d titles) ...\n", dbBenchFlags.seed)
 	done2 := report.begin("load_imdb_data")
 
-	filteredRatings, filteredVotes := benchGetFilteredTitleIDs(dbBenchFlags.seed)
-	titles, titleGenres := benchGetTitleMetadata(filteredRatings, filteredVotes)
-	episodes, seasons := benchGetEpisodes(titles)
-	roles, targetPersonIDs, characterNames := benchGetPrincipals(titles)
-	crewRoles, crewTargetIDs := benchGetCrew(titles)
-	for id := range crewTargetIDs {
-		targetPersonIDs[id] = true
-	}
-	akas := benchGetAKAs(titles)
-	people := benchGetPeopleMetadata(targetPersonIDs)
+	var (
+		titles         map[string]benchTitle
+		titleGenres    map[string][]string
+		episodes       map[string]benchEpisode
+		seasons        map[string]string
+		roles          []benchRole
+		crewRoles      []benchCrewRel
+		characterNames map[string]bool
+		titleAKAs      map[string][]string
+		people         map[string]benchPerson
+	)
 
-	titleAKAs := make(map[string][]string)
-	for _, a := range akas {
-		titleAKAs[a.titleID] = append(titleAKAs[a.titleID], a.localizedTitle)
+	if cached := benchLoadParsedCache(dbBenchFlags.seed); cached != nil {
+		fmt.Printf("  Using parsed cache for seed=%d\n", dbBenchFlags.seed)
+		titles, titleGenres = cached.Titles, cached.TitleGenres
+		episodes, seasons = cached.Episodes, cached.Seasons
+		roles, crewRoles = cached.Roles, cached.CrewRoles
+		characterNames, titleAKAs = cached.CharNames, cached.TitleAKAs
+		people = cached.People
+	} else {
+		filteredRatings, filteredVotes := benchGetFilteredTitleIDs(dbBenchFlags.seed)
+		titles, titleGenres = benchGetTitleMetadata(filteredRatings, filteredVotes)
+		episodes, seasons = benchGetEpisodes(titles)
+		roles, targetPersonIDs, charNames := benchGetPrincipals(titles)
+		crewRoles, crewTargetIDs := benchGetCrew(titles)
+		for id := range crewTargetIDs {
+			targetPersonIDs[id] = true
+		}
+		akas := benchGetAKAs(titles)
+		people = benchGetPeopleMetadata(targetPersonIDs)
+		characterNames = charNames
+		titleAKAs = make(map[string][]string)
+		for _, a := range akas {
+			titleAKAs[a.titleID] = append(titleAKAs[a.titleID], a.localizedTitle)
+		}
+		benchSaveParsedCache(&benchParsedCache{
+			Seed: dbBenchFlags.seed, Titles: titles, TitleGenres: titleGenres,
+			Episodes: episodes, Seasons: seasons, Roles: roles, CrewRoles: crewRoles,
+			CharNames: characterNames, TitleAKAs: titleAKAs, People: people,
+		})
 	}
 
 	estObjects := benchEstimateObjectCount(titles, episodes, seasons, people, titleGenres, characterNames)
@@ -313,9 +346,14 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 		len(titles), len(people), estObjects, estRels))
 
 	// ── Phase 3: Ingest objects ───────────────────────────────────────────────
-	fmt.Printf("Phase 3: Ingesting objects (~%d) ...\n", estObjects)
+	fmt.Printf("Phase 3: Ingesting objects (~%d) ...\\n", estObjects)
 	done3 := report.begin("ingest_objects")
-	idMap := benchIngestObjects(ctx, projClient.Graph, titles, episodes, seasons, people, titleGenres, characterNames, titleAKAs, dbBenchFlags.batch, dbBenchFlags.workers)
+	objBatch := dbBenchFlags.batch
+	if objBatch > 100 {
+		fmt.Printf("  Note: server max batch size for objects is 100; capping --batch from %d to 100\\n", objBatch)
+		objBatch = 100
+	}
+	idMap := benchIngestObjects(ctx, projClient.Graph, titles, episodes, seasons, people, titleGenres, characterNames, titleAKAs, objBatch, dbBenchFlags.workers)
 	done3(fmt.Sprintf("mapped=%d", len(idMap)))
 
 	// ── Phase 3b: Count objects ───────────────────────────────────────────────
@@ -325,9 +363,14 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	done3b(fmt.Sprintf("live=%d", objCount))
 
 	// ── Phase 4: Ingest relationships ─────────────────────────────────────────
-	fmt.Printf("Phase 4: Ingesting relationships (~%d) ...\n", estRels)
+	fmt.Printf("Phase 4: Ingesting relationships (~%d) ...\\n", estRels)
 	done4 := report.begin("ingest_relationships")
-	relSucceeded, relFailed := benchIngestRelationships(ctx, projClient.Graph, roles, crewRoles, titleGenres, titles, episodes, seasons, people, idMap, dbBenchFlags.batch, dbBenchFlags.workers)
+	relBatch := dbBenchFlags.batch
+	if relBatch > 200 {
+		fmt.Printf("  Note: server max batch size for relationships is 200; capping --batch from %d to 200\\n", relBatch)
+		relBatch = 200
+	}
+	relSucceeded, relFailed := benchIngestRelationships(ctx, projClient.Graph, roles, crewRoles, titleGenres, titles, episodes, seasons, people, idMap, relBatch, dbBenchFlags.workers)
 	report.RelErrors = relFailed
 	done4(fmt.Sprintf("succeeded=%d failed=%d", relSucceeded, relFailed))
 
@@ -548,6 +591,60 @@ type benchPerson struct {
 	ID, Name              string
 	Birth, Death          int
 	Professions, KnownFor []string
+}
+
+// ─── parsed-data cache ────────────────────────────────────────────────────────
+
+type benchParsedCache struct {
+	Seed        int                     `json:"seed"`
+	Titles      map[string]benchTitle   `json:"titles"`
+	TitleGenres map[string][]string     `json:"title_genres"`
+	Episodes    map[string]benchEpisode `json:"episodes"`
+	Seasons     map[string]string       `json:"seasons"`
+	Roles       []benchRole             `json:"roles"`
+	CrewRoles   []benchCrewRel          `json:"crew_roles"`
+	CharNames   map[string]bool         `json:"char_names"`
+	TitleAKAs   map[string][]string     `json:"title_akas"`
+	People      map[string]benchPerson  `json:"people"`
+}
+
+func benchParsedCachePath(seed int) string {
+	return fmt.Sprintf("/tmp/imdb_data/parsed_%d.json.gz", seed)
+}
+
+func benchLoadParsedCache(seed int) *benchParsedCache {
+	path := benchParsedCachePath(seed)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil
+	}
+	defer gz.Close()
+	var c benchParsedCache
+	if err := json.NewDecoder(gz).Decode(&c); err != nil {
+		return nil
+	}
+	if c.Seed != seed {
+		return nil
+	}
+	return &c
+}
+
+func benchSaveParsedCache(c *benchParsedCache) {
+	os.MkdirAll("/tmp/imdb_data", 0755)
+	path := benchParsedCachePath(c.Seed)
+	f, err := os.Create(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	gz := gzip.NewWriter(f)
+	defer gz.Close()
+	json.NewEncoder(gz).Encode(c) //nolint:errcheck
 }
 
 // ─── IMDb download + parse ────────────────────────────────────────────────────
@@ -1093,7 +1190,7 @@ func benchBulkUploadObjects(ctx context.Context, client *sdkgraph.Client, items 
 				res, err := client.BulkCreateObjects(ctx, &sdkgraph.BulkCreateObjectsRequest{Items: batch})
 				if err != nil {
 					time.Sleep(500 * time.Millisecond)
-					res, _ = client.BulkCreateObjects(ctx, &sdkgraph.BulkCreateObjectsRequest{Items: batch})
+					fmt.Printf("Error: %v\n", err); res, _ = client.BulkCreateObjects(ctx, &sdkgraph.BulkCreateObjectsRequest{Items: batch})
 				}
 				results <- batchResult{batch, res}
 			}
