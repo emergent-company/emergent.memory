@@ -74,6 +74,7 @@ import (
 	"github.com/emergent-company/emergent/pkg/embeddings"
 	"github.com/emergent-company/emergent/pkg/kreuzberg"
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/whisper"
 )
 
 func main() {
@@ -107,6 +108,9 @@ func main() {
 
 		// Kreuzberg module (document extraction service client)
 		kreuzberg.Module,
+
+		// Whisper module (audio transcription service client)
+		whisper.Module,
 
 		// ADK module (Google Agent Development Kit for AI orchestration)
 		adk.Module,

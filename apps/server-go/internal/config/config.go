@@ -40,6 +40,9 @@ type Config struct {
 	// Kreuzberg document parsing configuration
 	Kreuzberg KreuzbergConfig
 
+	// Whisper audio transcription configuration
+	Whisper WhisperConfig
+
 	// Storage configuration
 	Storage StorageConfig
 
@@ -252,6 +255,27 @@ func (k *KreuzbergConfig) Timeout() time.Duration {
 // WorkerInterval returns the worker interval as a Duration
 func (k *KreuzbergConfig) WorkerInterval() time.Duration {
 	return time.Duration(k.WorkerIntervalMs) * time.Millisecond
+}
+
+// WhisperConfig holds Whisper audio transcription service configuration
+type WhisperConfig struct {
+	// Enabled determines if Whisper transcription is enabled
+	Enabled bool `env:"WHISPER_ENABLED" envDefault:"false"`
+	// ServiceURL is the Whisper service URL
+	ServiceURL string `env:"WHISPER_SERVICE_URL" envDefault:"http://localhost:9000"`
+	// TimeoutMs is the request timeout in milliseconds (default: 600000 = 10 minutes)
+	TimeoutMs int `env:"WHISPER_SERVICE_TIMEOUT" envDefault:"600000"`
+	// Model is the Whisper model to use (e.g., "base", "medium", "large-v3")
+	Model string `env:"WHISPER_MODEL" envDefault:"base"`
+	// Language is the language hint for transcription (empty = auto-detect)
+	Language string `env:"WHISPER_LANGUAGE" envDefault:""`
+	// MaxFileSizeMB is the maximum audio file size for transcription
+	MaxFileSizeMB int `env:"WHISPER_MAX_FILE_SIZE_MB" envDefault:"500"`
+}
+
+// Timeout returns the request timeout as a Duration
+func (w *WhisperConfig) Timeout() time.Duration {
+	return time.Duration(w.TimeoutMs) * time.Millisecond
 }
 
 // StorageConfig holds storage (MinIO/S3) configuration
