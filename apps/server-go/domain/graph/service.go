@@ -1983,30 +1983,49 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 }
 
 // BulkCreateObjects creates multiple objects in a single batch.
-// Each object is created independently — failures do not roll back other successes.
+// Each object is created independently and concurrently — failures do not roll back other successes.
 func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, req *BulkCreateObjectsRequest, actorID *uuid.UUID) (*BulkCreateObjectsResponse, error) {
 	results := make([]BulkCreateObjectResult, len(req.Items))
-	successCount := 0
-	failedCount := 0
 
+	type work struct {
+		i    int
+		item CreateGraphObjectRequest
+	}
+	jobs := make(chan work, len(req.Items))
 	for i, item := range req.Items {
-		itemCopy := item // avoid loop variable capture
-		resp, err := s.Create(ctx, projectID, &itemCopy, actorID)
-		if err != nil {
-			errMsg := err.Error()
-			results[i] = BulkCreateObjectResult{
-				Index:   i,
-				Success: false,
-				Error:   &errMsg,
+		jobs <- work{i, item}
+	}
+	close(jobs)
+
+	workers := len(req.Items)
+	if workers > 20 {
+		workers = 20
+	}
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				resp, err := s.Create(ctx, projectID, &j.item, actorID)
+				if err != nil {
+					errMsg := err.Error()
+					results[j.i] = BulkCreateObjectResult{Index: j.i, Success: false, Error: &errMsg}
+				} else {
+					results[j.i] = BulkCreateObjectResult{Index: j.i, Success: true, Object: resp}
+				}
 			}
-			failedCount++
-		} else {
-			results[i] = BulkCreateObjectResult{
-				Index:   i,
-				Success: true,
-				Object:  resp,
-			}
+		}()
+	}
+	wg.Wait()
+
+	successCount, failedCount := 0, 0
+	for _, r := range results {
+		if r.Success {
 			successCount++
+		} else {
+			failedCount++
 		}
 	}
 
@@ -2018,31 +2037,50 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 }
 
 // BulkCreateRelationships creates multiple relationships in a single batch.
-// Each relationship is created independently — failures do not roll back other successes.
+// Each relationship is created independently and concurrently — failures do not roll back other successes.
 // Inverse relationships are auto-created per template pack inverseType declarations.
 func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UUID, req *BulkCreateRelationshipsRequest) (*BulkCreateRelationshipsResponse, error) {
 	results := make([]BulkCreateRelationshipResult, len(req.Items))
-	successCount := 0
-	failedCount := 0
 
+	type work struct {
+		i    int
+		item CreateGraphRelationshipRequest
+	}
+	jobs := make(chan work, len(req.Items))
 	for i, item := range req.Items {
-		itemCopy := item // avoid loop variable capture
-		resp, err := s.CreateRelationship(ctx, projectID, &itemCopy)
-		if err != nil {
-			errMsg := err.Error()
-			results[i] = BulkCreateRelationshipResult{
-				Index:   i,
-				Success: false,
-				Error:   &errMsg,
+		jobs <- work{i, item}
+	}
+	close(jobs)
+
+	workers := len(req.Items)
+	if workers > 20 {
+		workers = 20
+	}
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				resp, err := s.CreateRelationship(ctx, projectID, &j.item)
+				if err != nil {
+					errMsg := err.Error()
+					results[j.i] = BulkCreateRelationshipResult{Index: j.i, Success: false, Error: &errMsg}
+				} else {
+					results[j.i] = BulkCreateRelationshipResult{Index: j.i, Success: true, Relationship: resp}
+				}
 			}
-			failedCount++
-		} else {
-			results[i] = BulkCreateRelationshipResult{
-				Index:        i,
-				Success:      true,
-				Relationship: resp,
-			}
+		}()
+	}
+	wg.Wait()
+
+	successCount, failedCount := 0, 0
+	for _, r := range results {
+		if r.Success {
 			successCount++
+		} else {
+			failedCount++
 		}
 	}
 
