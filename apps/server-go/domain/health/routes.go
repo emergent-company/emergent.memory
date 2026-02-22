@@ -11,6 +11,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, m *MetricsHandler) {
 	e.GET("/ready", h.Ready)
 	e.GET("/debug", h.Debug)
 	e.GET("/api/health", h.Health)
+	e.GET("/api/diagnostics", h.Diagnose)
 
 	e.GET("/api/metrics/jobs", m.JobMetrics)
 	e.GET("/api/metrics/scheduler", m.SchedulerMetrics)

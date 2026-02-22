@@ -1,6 +1,7 @@
 package health
 
 import (
+	"encoding/json"
 	"context"
 	"net/http"
 	"runtime"
@@ -166,4 +167,74 @@ func (h *Handler) Debug(c echo.Context) error {
 			"pool_in_use": h.pool.Stat().AcquiredConns(),
 		},
 	})
+}
+
+// Diagnose returns detailed DB and server diagnostics
+// @Router       /api/diagnostics [get]
+func (h *Handler) Diagnose(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
+	defer cancel()
+
+	result := map[string]any{
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"uptime":    time.Since(h.startAt).String(),
+		"server":    make(map[string]any),
+		"database":  make(map[string]any),
+	}
+
+	// Server Stats
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	result["server"] = map[string]any{
+		"goroutines":   runtime.NumGoroutine(),
+		"memory_alloc": mem.Alloc / 1024 / 1024,
+		"memory_sys":   mem.Sys / 1024 / 1024,
+		"num_cpu":      runtime.NumCPU(),
+		"go_version":   runtime.Version(),
+	}
+
+	// DB Pool Stats
+	stats := h.pool.Stat()
+	result["database"].(map[string]any)["pool"] = map[string]any{
+		"total_conns":       stats.TotalConns(),
+		"acquired_conns":    stats.AcquiredConns(),
+		"idle_conns":        stats.IdleConns(),
+		"max_conns":         stats.MaxConns(),
+		"canceled_acquires": stats.CanceledAcquireCount(),
+		"empty_acquires":    stats.EmptyAcquireCount(),
+	}
+
+	// DB Connections from pg_stat_activity
+	var connStatesJSON []byte
+	err := h.pool.QueryRow(ctx, "SELECT COALESCE(json_agg(json_build_object('state', COALESCE(state, 'unknown'), 'count', count)), '[]'::json) FROM (SELECT state, count(*) as count FROM pg_stat_activity GROUP BY state) s").Scan(&connStatesJSON)
+	if err != nil {
+		result["database"].(map[string]any)["error"] = err.Error()
+		return c.JSON(http.StatusOK, result)
+	}
+	var connStates []map[string]any
+	_ = json.Unmarshal(connStatesJSON, &connStates)
+	result["database"].(map[string]any)["connections"] = connStates
+
+	// DB Long Running Queries
+	var longQueriesJSON []byte
+	_ = h.pool.QueryRow(ctx, "SELECT COALESCE(json_agg(json_build_object('pid', pid, 'query', left(query, 100), 'duration', age(clock_timestamp(), query_start), 'state', state)), '[]'::json) FROM pg_stat_activity WHERE state != 'idle' AND query_start < clock_timestamp() - interval '2 seconds' AND pid <> pg_backend_pid()").Scan(&longQueriesJSON)
+	var longQueries []map[string]any
+	_ = json.Unmarshal(longQueriesJSON, &longQueries)
+	result["database"].(map[string]any)["long_queries"] = longQueries
+
+	// DB Settings
+	var dbSettingsJSON []byte
+	_ = h.pool.QueryRow(ctx, "SELECT json_agg(json_build_object('name', name, 'setting', setting)) FROM pg_settings WHERE name IN ('max_connections', 'shared_buffers', 'work_mem', 'idle_in_transaction_session_timeout', 'statement_timeout')").Scan(&dbSettingsJSON)
+	var dbSettings []map[string]any
+	_ = json.Unmarshal(dbSettingsJSON, &dbSettings)
+	result["database"].(map[string]any)["settings"] = dbSettings
+
+	// DB Table Sizes
+	var tableStatsJSON []byte
+	_ = h.pool.QueryRow(ctx, "SELECT COALESCE(json_agg(json_build_object('table', c.relname, 'size', pg_size_pretty(pg_total_relation_size(c.oid)), 'rows', COALESCE(s.n_live_tup,0))), '[]'::json) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_stat_user_tables s ON s.relname = c.relname AND s.schemaname = n.nspname WHERE n.nspname IN ('kb', 'core') AND c.relkind = 'r' ORDER BY pg_total_relation_size(c.oid) DESC LIMIT 10").Scan(&tableStatsJSON)
+	var tableStats []map[string]any
+	_ = json.Unmarshal(tableStatsJSON, &tableStats)
+	result["database"].(map[string]any)["tables"] = tableStats
+
+	return c.JSON(http.StatusOK, result)
 }
