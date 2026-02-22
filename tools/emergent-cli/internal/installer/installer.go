@@ -376,14 +376,14 @@ func (i *Installer) Upgrade(version string) error {
 	// If it is older than what the new template expects, run pg_upgrade in-place
 	// before bringing up the new containers. This is fully transparent to the user.
 	i.output.Step("Checking PostgreSQL data volume version...")
-	currentPgVersion, err := detectPostgresVersion()
+	currentPgVersion, pgVolumeName, err := detectPostgresVersion(composePath)
 	if err != nil {
 		i.output.Warn("Could not detect PostgreSQL version: %v — skipping automatic upgrade", err)
 	} else if currentPgVersion > 0 && currentPgVersion < PostgresMajorVersion {
-		i.output.Info("Detected PostgreSQL %d on disk, target is PostgreSQL %d", currentPgVersion, PostgresMajorVersion)
+		i.output.Info("Detected PostgreSQL %d on disk (volume: %s), target is PostgreSQL %d", currentPgVersion, pgVolumeName, PostgresMajorVersion)
 		i.output.Step("Performing automatic PostgreSQL major-version upgrade...")
 		fmt.Println()
-		if err := i.RunPostgresUpgrade(docker); err != nil {
+		if err := i.RunPostgresUpgrade(docker, pgVolumeName); err != nil {
 			// Restore the old compose file so the user can still start their
 			// original pg16 instance and nothing is broken.
 			if restoreErr := copyFile(backupPath, composePath); restoreErr == nil {
@@ -393,9 +393,9 @@ func (i *Installer) Upgrade(version string) error {
 		}
 		fmt.Println()
 	} else if currentPgVersion == PostgresMajorVersion {
-		i.output.Success("PostgreSQL %d already up to date", currentPgVersion)
+		i.output.Success("PostgreSQL %d already up to date (volume: %s)", currentPgVersion, pgVolumeName)
 	} else {
-		i.output.Info("No existing PostgreSQL data volume found — fresh database will be created")
+		i.output.Info("No existing PostgreSQL data volume found (checked: %s) — fresh database will be created", pgVolumeName)
 	}
 	// --- end PostgreSQL upgrade ---
 
