@@ -371,6 +371,34 @@ func (i *Installer) Upgrade(version string) error {
 
 	docker := NewDockerManager(i.config.InstallDir, i.output)
 
+	// --- PostgreSQL major-version upgrade ---
+	// Detect the current on-disk PostgreSQL major version from the data volume.
+	// If it is older than what the new template expects, run pg_upgrade in-place
+	// before bringing up the new containers. This is fully transparent to the user.
+	i.output.Step("Checking PostgreSQL data volume version...")
+	currentPgVersion, err := detectPostgresVersion()
+	if err != nil {
+		i.output.Warn("Could not detect PostgreSQL version: %v — skipping automatic upgrade", err)
+	} else if currentPgVersion > 0 && currentPgVersion < PostgresMajorVersion {
+		i.output.Info("Detected PostgreSQL %d on disk, target is PostgreSQL %d", currentPgVersion, PostgresMajorVersion)
+		i.output.Step("Performing automatic PostgreSQL major-version upgrade...")
+		fmt.Println()
+		if err := i.RunPostgresUpgrade(docker); err != nil {
+			// Restore the old compose file so the user can still start their
+			// original pg16 instance and nothing is broken.
+			if restoreErr := copyFile(backupPath, composePath); restoreErr == nil {
+				i.output.Warn("Restored docker-compose.yml from backup after failed pg_upgrade")
+			}
+			return fmt.Errorf("PostgreSQL upgrade failed: %w", err)
+		}
+		fmt.Println()
+	} else if currentPgVersion == PostgresMajorVersion {
+		i.output.Success("PostgreSQL %d already up to date", currentPgVersion)
+	} else {
+		i.output.Info("No existing PostgreSQL data volume found — fresh database will be created")
+	}
+	// --- end PostgreSQL upgrade ---
+
 	i.output.Step("Pulling Docker images...")
 	if err := docker.Pull(); err != nil {
 		// Restore backup on pull failure so the user isn't left with a compose
