@@ -459,7 +459,7 @@ echo -e "${CYAN}Generating Docker Compose file...${NC}"
 cat > "${INSTALL_DIR}/docker/docker-compose.yml" <<EOF
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg17
     container_name: emergent-db
     restart: unless-stopped
     environment:

@@ -8,10 +8,18 @@ import (
 const (
 	// ServerImageRepo is the Docker image repository for the Emergent server
 	ServerImageRepo = "ghcr.io/emergent-company/emergent-server-with-cli"
+
+	// PostgresImage is the pgvector-enabled PostgreSQL image used for all deployments.
+	// Bumping this constant is the single source of truth for the postgres version.
+	PostgresImage = "pgvector/pgvector:pg17"
+
+	// PostgresMajorVersion is the expected major version after install/upgrade.
+	// Used by the upgrade flow to decide whether pg_upgrade is needed.
+	PostgresMajorVersion = 17
 )
 
 // GetDockerComposeTemplate returns the docker-compose template with :latest tag.
-// Used for fresh installs.
+// Used for fresh installs. RAM-based PostgreSQL tuning is applied automatically.
 func GetDockerComposeTemplate() string {
 	return GetDockerComposeTemplateWithVersion("latest")
 }
@@ -25,15 +33,37 @@ func GetDockerComposeTemplate() string {
 //   - New environment variables
 //   - Changed healthchecks, resource limits, volume mounts
 //   - Corrected image names/repos
+//   - PostgreSQL major version bumps
+//   - RAM-tuned PostgreSQL configuration for the host machine
 func GetDockerComposeTemplateWithVersion(version string) string {
 	imageTag := strings.TrimPrefix(version, "v")
 	serverImage := fmt.Sprintf("%s:%s", ServerImageRepo, imageTag)
 
+	tuning := computePgTuning()
+
 	return `services:
   db:
-    image: pgvector/pgvector:pg16
+    image: ` + PostgresImage + `
     container_name: emergent-db
     restart: unless-stopped
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=` + tuning.SharedBuffers + `"
+      - "-c"
+      - "effective_cache_size=` + tuning.EffectiveCacheSize + `"
+      - "-c"
+      - "maintenance_work_mem=` + tuning.MaintenanceWorkMem + `"
+      - "-c"
+      - "work_mem=` + tuning.WorkMem + `"
+      - "-c"
+      - "max_wal_size=` + tuning.MaxWalSize + `"
+      - "-c"
+      - "checkpoint_timeout=` + tuning.CheckpointTimeout + `"
+      - "-c"
+      - "max_parallel_workers=` + fmt.Sprintf("%d", tuning.MaxParallelWorkers) + `"
+      - "-c"
+      - "max_parallel_workers_per_gather=` + fmt.Sprintf("%d", tuning.MaxParallelWorkers/2) + `"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-emergent}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
