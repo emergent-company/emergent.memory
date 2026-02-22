@@ -22,7 +22,7 @@ type Handler struct {
 const defaultListLimit = 20
 
 // maxBatchObjects is the maximum number of objects allowed in a single batch operation
-const maxBatchObjects = 100
+const maxBatchObjects = 200
 
 // maxBatchRelationships is the maximum number of relationships allowed in a single batch operation
 const maxBatchRelationships = 200
@@ -1806,8 +1806,8 @@ func (h *Handler) BulkCreateObjects(c echo.Context) error {
 	if len(req.Items) == 0 {
 		return apperror.ErrBadRequest.WithMessage("items is required and must not be empty")
 	}
-	if len(req.Items) > 100 {
-		return apperror.ErrBadRequest.WithMessage("items must not exceed 100")
+	if len(req.Items) > maxBatchObjects {
+		return apperror.ErrBadRequest.WithMessage("items must not exceed " + strconv.Itoa(maxBatchObjects))
 	}
 
 	actorID, _ := getUserID(c)
@@ -1851,8 +1851,8 @@ func (h *Handler) BulkCreateRelationships(c echo.Context) error {
 	if len(req.Items) == 0 {
 		return apperror.ErrBadRequest.WithMessage("items is required and must not be empty")
 	}
-	if len(req.Items) > 100 {
-		return apperror.ErrBadRequest.WithMessage("items must not exceed 100")
+	if len(req.Items) > maxBatchRelationships {
+		return apperror.ErrBadRequest.WithMessage("items must not exceed " + strconv.Itoa(maxBatchRelationships))
 	}
 
 	result, err := h.svc.BulkCreateRelationships(c.Request().Context(), projectID, &req)
@@ -1896,10 +1896,10 @@ func (h *Handler) CreateSubgraph(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("objects is required and must not be empty")
 	}
 	if len(req.Objects) > maxBatchObjects {
-		return apperror.ErrBadRequest.WithMessage("objects must not exceed 100")
+		return apperror.ErrBadRequest.WithMessage("objects must not exceed " + strconv.Itoa(maxBatchObjects))
 	}
 	if len(req.Relationships) > maxBatchRelationships {
-		return apperror.ErrBadRequest.WithMessage("relationships must not exceed 200")
+		return apperror.ErrBadRequest.WithMessage("relationships must not exceed " + strconv.Itoa(maxBatchRelationships))
 	}
 
 	actorID, _ := getUserID(c)
