@@ -363,9 +363,9 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	fmt.Printf("Phase 3: Ingesting objects (~%d) ...\\n", estObjects)
 	done3 := report.begin("ingest_objects")
 	objBatch := dbBenchFlags.batch
-	if objBatch > 100 {
-		fmt.Printf("  Note: server max batch size for objects is 100; capping --batch from %d to 100\\n", objBatch)
-		objBatch = 100
+	if objBatch > 200 {
+		fmt.Printf("  Note: server max batch size for objects is 200; capping --batch from %d to 200\\\n", objBatch)
+		objBatch = 200
 	}
 	idMap := benchIngestObjects(ctx, projClient.Graph, titles, episodes, seasons, people, titleGenres, characterNames, titleAKAs, objBatch, dbBenchFlags.workers)
 	done3(fmt.Sprintf("mapped=%d", len(idMap)))
