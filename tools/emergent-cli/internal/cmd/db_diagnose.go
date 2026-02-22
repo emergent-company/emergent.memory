@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,16 +74,42 @@ type diagResult struct {
 
 // ── entry point ───────────────────────────────────────────────────────────────
 
-func runDbDiagnose(_ *cobra.Command, _ []string) error {
+func runDbDiagnose(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("\n%s%sEmergent Database Diagnostics%s\n", diagBold, diagCyan, diagReset)
 	fmt.Println("═══════════════════════════════════════════════════════")
 	fmt.Println()
 
 	dsn, err := resolveDiagDSN()
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// Get server URL correctly from parent flags
+	serverURL, _ := cmd.Flags().GetString("server")
+	if serverURL == "" {
+		serverURL = "http://localhost:3002" // default fallback
+	}
+	url := fmt.Sprintf("%s/api/diagnostics", serverURL)
+
+	fmt.Printf("Fetching server diagnostics from %s ... ", url)
+	resp, err := client.Get(url)
+	if err == nil && resp.StatusCode == http.StatusOK {
+		fmt.Printf("%sOK%s\n", diagGreen, diagReset)
+		var apiRes map[string]any
+		if json.NewDecoder(resp.Body).Decode(&apiRes) == nil {
+			b, _ := json.MarshalIndent(apiRes, "", "  ")
+			fmt.Println(string(b))
+		}
+		resp.Body.Close()
+	} else {
+		fmt.Printf("%sFAILED%s (err: %v)\n", diagRed, diagReset, err)
+		if resp != nil {
+			resp.Body.Close()
+		}
+	}
+	fmt.Println()
 	if err != nil || dsn == "" {
-		fmt.Printf("%s✗ Could not find a PostgreSQL connection string%s\n\n", diagRed, diagReset)
-		fmt.Println("Set one via --dsn or the EMERGENT_DATABASE_URL environment variable.")
-		return fmt.Errorf("no connection string")
+		fmt.Printf("%s✗ PostgreSQL connection string not available (skipping EXPLAIN checks)%s\n", diagYellow, diagReset)
+		fmt.Println("Set one via --dsn or the EMERGENT_DATABASE_URL environment variable to run query planner checks.")
+		return nil
 	}
 
 	// Quick ping to fail fast with a clear error
