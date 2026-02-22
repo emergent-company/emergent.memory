@@ -50,14 +50,21 @@ type EmbeddingEnqueuer interface {
 	EnqueueEmbedding(ctx context.Context, objectID string) error
 }
 
+// RelationshipEmbeddingEnqueuer enqueues graph relationships for asynchronous embedding generation.
+// This is satisfied by extraction.GraphRelationshipEmbeddingJobsService via an adapter in module.go.
+type RelationshipEmbeddingEnqueuer interface {
+	EnqueueRelationshipEmbedding(ctx context.Context, relationshipID string) error
+}
+
 // Service handles business logic for graph operations.
 type Service struct {
-	repo                *Repository
-	log                 *slog.Logger
-	schemaProvider      SchemaProvider
-	inverseTypeProvider InverseTypeProvider
-	embeddings          EmbeddingService
-	embeddingEnqueuer   EmbeddingEnqueuer
+	repo                 *Repository
+	log                  *slog.Logger
+	schemaProvider       SchemaProvider
+	inverseTypeProvider  InverseTypeProvider
+	embeddings           EmbeddingService
+	embeddingEnqueuer    EmbeddingEnqueuer
+	relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer
 
 	// Metrics
 	metricsMu          sync.RWMutex
@@ -67,14 +74,15 @@ type Service struct {
 }
 
 // NewService creates a new graph service.
-func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer) *Service {
+func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer) *Service {
 	return &Service{
-		repo:                repo,
-		log:                 log.With(logger.Scope("graph.svc")),
-		schemaProvider:      schemaProvider,
-		inverseTypeProvider: inverseTypeProvider,
-		embeddings:          embeddings,
-		embeddingEnqueuer:   embeddingEnqueuer,
+		repo:                 repo,
+		log:                  log.With(logger.Scope("graph.svc")),
+		schemaProvider:       schemaProvider,
+		inverseTypeProvider:  inverseTypeProvider,
+		embeddings:           embeddings,
+		embeddingEnqueuer:    embeddingEnqueuer,
+		relEmbeddingEnqueuer: relEmbeddingEnqueuer,
 	}
 }
 
@@ -87,6 +95,19 @@ func (s *Service) enqueueEmbedding(ctx context.Context, objectID string) {
 	if err := s.embeddingEnqueuer.EnqueueEmbedding(ctx, objectID); err != nil {
 		s.log.Warn("failed to enqueue embedding job",
 			slog.String("object_id", objectID),
+			slog.String("error", err.Error()))
+	}
+}
+
+// enqueueRelationshipEmbedding enqueues a graph relationship for async embedding generation.
+// Logs and swallows errors — embedding is best-effort and must never block CRUD.
+func (s *Service) enqueueRelationshipEmbedding(ctx context.Context, relationshipID string) {
+	if s.relEmbeddingEnqueuer == nil {
+		return
+	}
+	if err := s.relEmbeddingEnqueuer.EnqueueRelationshipEmbedding(ctx, relationshipID); err != nil {
+		s.log.Warn("failed to enqueue relationship embedding job",
+			slog.String("relationship_id", relationshipID),
 			slog.String("error", err.Error()))
 	}
 }
@@ -1065,33 +1086,21 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 			return nil, err
 		}
 
-		tripletText := generateTripletText(srcObj, dstObj, req.Type)
-		embedding, embeddingTimestamp, embedErr := s.embedTripletText(ctx, tripletText)
-		if embedErr != nil {
-			s.log.Warn("failed to generate embedding for relationship, continuing without embedding",
-				slog.String("relationship_id", rel.ID.String()),
-				slog.String("triplet", tripletText),
-				slog.String("error", embedErr.Error()))
-		} else if embedding != nil {
-			_, updateErr := tx.Tx.NewRaw(`UPDATE kb.graph_relationships 
-				SET embedding = ?::vector, embedding_updated_at = ? 
-				WHERE id = ?`,
-				vectorToString(embedding), embeddingTimestamp, rel.ID).Exec(ctx)
-			if updateErr != nil {
-				s.log.Warn("failed to store embedding for relationship, continuing without embedding",
-					slog.String("relationship_id", rel.ID.String()),
-					slog.String("error", updateErr.Error()))
-			}
-		}
-
 		// Auto-create inverse relationship if template pack declares inverseType
 		var inverseResponse *GraphRelationshipResponse
+		var inverseRelID string
 		if s.inverseTypeProvider != nil {
-			inverseResponse = s.maybeCreateInverse(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj, dstObj, req.Properties, req.Weight)
+			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj, dstObj, req.Properties, req.Weight)
 		}
 
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		// Enqueue async embeddings after commit — never block the response.
+		s.enqueueRelationshipEmbedding(ctx, rel.ID.String())
+		if inverseRelID != "" {
+			s.enqueueRelationshipEmbedding(ctx, inverseRelID)
 		}
 
 		resp := rel.ToResponse()
@@ -1113,28 +1122,12 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 			return nil, err
 		}
 
-		tripletText := generateTripletText(srcObj, dstObj, req.Type)
-		embedding, embeddingTimestamp, embedErr := s.embedTripletText(ctx, tripletText)
-		if embedErr != nil {
-			s.log.Warn("failed to generate embedding for relationship, continuing without embedding",
-				slog.String("relationship_id", newVersion.ID.String()),
-				slog.String("triplet", tripletText),
-				slog.String("error", embedErr.Error()))
-		} else if embedding != nil {
-			_, updateErr := tx.Tx.NewRaw(`UPDATE kb.graph_relationships 
-				SET embedding = ?::vector, embedding_updated_at = ? 
-				WHERE id = ?`,
-				vectorToString(embedding), embeddingTimestamp, newVersion.ID).Exec(ctx)
-			if updateErr != nil {
-				s.log.Warn("failed to store embedding for relationship, continuing without embedding",
-					slog.String("relationship_id", newVersion.ID.String()),
-					slog.String("error", updateErr.Error()))
-			}
-		}
-
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
+
+		// Enqueue async embedding after commit.
+		s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
 
 		// Return the new version (use canonical IDs for lookup)
 		newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
@@ -1159,28 +1152,12 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		return nil, err
 	}
 
-	tripletText := generateTripletText(srcObj, dstObj, req.Type)
-	embedding, embeddingTimestamp, embedErr := s.embedTripletText(ctx, tripletText)
-	if embedErr != nil {
-		s.log.Warn("failed to generate embedding for relationship, continuing without embedding",
-			slog.String("relationship_id", newVersion.ID.String()),
-			slog.String("triplet", tripletText),
-			slog.String("error", embedErr.Error()))
-	} else if embedding != nil {
-		_, updateErr := tx.Tx.NewRaw(`UPDATE kb.graph_relationships 
-			SET embedding = ?::vector, embedding_updated_at = ? 
-			WHERE id = ?`,
-			vectorToString(embedding), embeddingTimestamp, newVersion.ID).Exec(ctx)
-		if updateErr != nil {
-			s.log.Warn("failed to store embedding for relationship, continuing without embedding",
-				slog.String("relationship_id", newVersion.ID.String()),
-				slog.String("error", updateErr.Error()))
-		}
-	}
-
 	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
+
+	// Enqueue async embedding after commit.
+	s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
 
 	// Return the new version
 	newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
@@ -1189,8 +1166,8 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 
 // maybeCreateInverse checks if the template pack declares an inverseType for the given
 // relationship type, and if so, creates the inverse relationship (swapped src/dst) within
-// the same transaction. Returns the inverse response or nil if no inverse was created.
-// Errors are logged but do not fail the primary relationship creation.
+// the same transaction. Returns the inverse response (or nil) and the inverse relationship ID
+// (empty string if none created). Errors are logged but do not fail the primary relationship creation.
 func (s *Service) maybeCreateInverse(
 	ctx context.Context,
 	tx bun.Tx,
@@ -1200,10 +1177,10 @@ func (s *Service) maybeCreateInverse(
 	srcObj, dstObj *GraphObject,
 	properties map[string]any,
 	weight *float32,
-) *GraphRelationshipResponse {
+) (*GraphRelationshipResponse, string) {
 	inverseType, ok := s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), relType)
 	if !ok || inverseType == "" {
-		return nil
+		return nil, ""
 	}
 
 	s.log.Debug("creating inverse relationship",
@@ -1222,7 +1199,7 @@ func (s *Service) maybeCreateInverse(
 			s.log.Debug("skipping inverse creation: inverse type is primary side",
 				slog.String("rel_type", relType),
 				slog.String("inverse_type", inverseType))
-			return nil
+			return nil, ""
 		}
 	}
 
@@ -1231,7 +1208,7 @@ func (s *Service) maybeCreateInverse(
 		s.log.Warn("failed to acquire lock for inverse relationship, skipping",
 			slog.String("inverse_type", inverseType),
 			slog.String("error", err.Error()))
-		return nil
+		return nil, ""
 	}
 
 	// Check if inverse already exists (using canonical IDs)
@@ -1240,14 +1217,14 @@ func (s *Service) maybeCreateInverse(
 		s.log.Warn("failed to check existing inverse relationship, skipping",
 			slog.String("inverse_type", inverseType),
 			slog.String("error", err.Error()))
-		return nil
+		return nil, ""
 	}
 
 	if existingInverse != nil && existingInverse.DeletedAt == nil {
-		// Inverse already exists and is not deleted — return it as-is
+		// Inverse already exists and is not deleted — return it as-is (no new embedding needed)
 		s.log.Debug("inverse relationship already exists",
 			slog.String("inverse_id", existingInverse.ID.String()))
-		return existingInverse.ToResponse()
+		return existingInverse.ToResponse(), ""
 	}
 
 	if existingInverse != nil && existingInverse.DeletedAt != nil {
@@ -1263,20 +1240,11 @@ func (s *Service) maybeCreateInverse(
 			s.log.Warn("failed to restore inverse relationship, skipping",
 				slog.String("inverse_type", inverseType),
 				slog.String("error", err.Error()))
-			return nil
+			return nil, ""
 		}
 
-		// Generate embedding for the restored inverse
-		inverseTripletText := generateTripletText(dstObj, srcObj, inverseType)
-		invEmbedding, invEmbedTimestamp, invEmbedErr := s.embedTripletText(ctx, inverseTripletText)
-		if invEmbedErr == nil && invEmbedding != nil {
-			_, _ = tx.NewRaw(`UPDATE kb.graph_relationships 
-				SET embedding = ?::vector, embedding_updated_at = ? 
-				WHERE id = ?`,
-				vectorToString(invEmbedding), invEmbedTimestamp, newVersion.ID).Exec(ctx)
-		}
-
-		return newVersion.ToResponse()
+		// Embedding will be enqueued async by caller after commit.
+		return newVersion.ToResponse(), newVersion.ID.String()
 	}
 
 	// Create brand new inverse relationship (store canonical IDs)
@@ -1295,26 +1263,7 @@ func (s *Service) maybeCreateInverse(
 		s.log.Warn("failed to create inverse relationship, skipping",
 			slog.String("inverse_type", inverseType),
 			slog.String("error", err.Error()))
-		return nil
-	}
-
-	// Generate embedding for the inverse triplet
-	inverseTripletText := generateTripletText(dstObj, srcObj, inverseType)
-	invEmbedding, invEmbedTimestamp, invEmbedErr := s.embedTripletText(ctx, inverseTripletText)
-	if invEmbedErr != nil {
-		s.log.Warn("failed to generate embedding for inverse relationship, continuing without",
-			slog.String("relationship_id", inverseRel.ID.String()),
-			slog.String("error", invEmbedErr.Error()))
-	} else if invEmbedding != nil {
-		_, updateErr := tx.NewRaw(`UPDATE kb.graph_relationships 
-			SET embedding = ?::vector, embedding_updated_at = ? 
-			WHERE id = ?`,
-			vectorToString(invEmbedding), invEmbedTimestamp, inverseRel.ID).Exec(ctx)
-		if updateErr != nil {
-			s.log.Warn("failed to store embedding for inverse relationship, continuing without",
-				slog.String("relationship_id", inverseRel.ID.String()),
-				slog.String("error", updateErr.Error()))
-		}
+		return nil, ""
 	}
 
 	s.log.Info("auto-created inverse relationship",
@@ -1322,7 +1271,8 @@ func (s *Service) maybeCreateInverse(
 		slog.String("inverse_type", inverseType),
 		slog.String("inverse_id", inverseRel.ID.String()))
 
-	return inverseRel.ToResponse()
+	// Embedding will be enqueued async by caller after commit.
+	return inverseRel.ToResponse(), inverseRel.ID.String()
 }
 
 // PatchRelationship updates a relationship by creating a new version.
@@ -3050,6 +3000,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 
 	// Phase 2: Create all relationships
 	relResponses := make([]*GraphRelationshipResponse, 0, len(req.Relationships))
+	relEmbedIDs := make([]string, 0, len(req.Relationships)*2) // IDs to enqueue for embedding after commit
 	for i, relReq := range req.Relationships {
 		// Validate type is non-empty
 		if relReq.Type == "" {
@@ -3081,39 +3032,32 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			return nil, apperror.ErrDatabase.WithMessage(fmt.Sprintf("relationships[%d] (%s->%s): %s", i, relReq.SrcRef, relReq.DstRef, err.Error()))
 		}
 
-		// Generate triplet embedding (best-effort, don't fail the transaction)
-		tripletText := generateTripletText(srcObj, dstObj, relReq.Type)
-		embedding, embeddingTimestamp, embedErr := s.embedTripletText(ctx, tripletText)
-		if embedErr != nil {
-			s.log.Warn("subgraph: failed to generate embedding for relationship, continuing",
-				slog.String("relationship_id", rel.ID.String()),
-				slog.String("error", embedErr.Error()))
-		} else if embedding != nil {
-			_, updateErr := tx.Tx.NewRaw(`UPDATE kb.graph_relationships 
-				SET embedding = ?::vector, embedding_updated_at = ? 
-				WHERE id = ?`,
-				vectorToString(embedding), embeddingTimestamp, rel.ID).Exec(ctx)
-			if updateErr != nil {
-				s.log.Warn("subgraph: failed to store embedding, continuing",
-					slog.String("relationship_id", rel.ID.String()),
-					slog.String("error", updateErr.Error()))
-			}
-		}
-
 		// Auto-create inverse relationship if template pack declares inverseType
 		var inverseResponse *GraphRelationshipResponse
+		var inverseRelID string
 		if s.inverseTypeProvider != nil {
-			inverseResponse = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relReq.Type, srcObj, dstObj, relReq.Properties, relReq.Weight)
+			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relReq.Type, srcObj, dstObj, relReq.Properties, relReq.Weight)
 		}
 
 		resp := rel.ToResponse()
 		resp.InverseRelationship = inverseResponse
 		relResponses = append(relResponses, resp)
+
+		// Collect IDs for async embedding enqueue after commit.
+		relEmbedIDs = append(relEmbedIDs, rel.ID.String())
+		if inverseRelID != "" {
+			relEmbedIDs = append(relEmbedIDs, inverseRelID)
+		}
 	}
 
 	// Commit the transaction
 	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Enqueue async embeddings for all created/updated relationships.
+	for _, relID := range relEmbedIDs {
+		s.enqueueRelationshipEmbedding(ctx, relID)
 	}
 
 	return &CreateSubgraphResponse{
