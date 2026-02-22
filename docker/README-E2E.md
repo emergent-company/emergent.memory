@@ -72,7 +72,7 @@ npm run db:e2e:clean
 
 ### Database Configuration
 
-- **Image**: `pgvector/pgvector:pg16`
+- **Image**: `pgvector/pgvector:pg17`
 - **Port**: 5439 (host) → 5432 (container)
 - **Database**: `spec_e2e`
 - **User/Pass**: `spec/spec`

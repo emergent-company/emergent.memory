@@ -2,7 +2,7 @@
 # Embeds init scripts directly in image for portability
 #
 # NOTE: Zitadel is managed externally via emergent-infra/zitadel
-FROM pgvector/pgvector:pg16
+FROM pgvector/pgvector:pg17
 
 # Copy initialization scripts
 # These run automatically on first database startup via docker-entrypoint-initdb.d

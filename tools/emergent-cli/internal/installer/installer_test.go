@@ -205,7 +205,7 @@ func TestWriteDockerCompose(t *testing.T) {
 		"emergent-db",
 		"emergent-minio",
 		"emergent-kreuzberg",
-		"pgvector/pgvector:pg16",
+		"pgvector/pgvector:pg17",
 	}
 
 	for _, check := range checks {
