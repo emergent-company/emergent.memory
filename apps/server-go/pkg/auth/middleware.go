@@ -679,5 +679,7 @@ func GetAllScopes() []string {
 		"discovery:write",
 		"admin:read",
 		"admin:write",
+		"agents:read",
+		"agents:write",
 	}
 }

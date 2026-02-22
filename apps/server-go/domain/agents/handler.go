@@ -47,11 +47,16 @@ func (h *Handler) ListAgents(c echo.Context) error {
 		return apperror.ErrUnauthorized
 	}
 
-	if user.ProjectID == "" {
-		return apperror.NewBadRequest("X-Project-ID header is required")
+	// Prefer URL :projectId param (project-scoped routes), fall back to header
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
 	}
 
-	agents, err := h.repo.FindAll(c.Request().Context(), user.ProjectID)
+	agents, err := h.repo.FindAll(c.Request().Context(), projectID)
 	if err != nil {
 		return apperror.NewInternal("failed to list agents", err)
 	}
@@ -191,6 +196,11 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 	var dto CreateAgentDTO
 	if err := c.Bind(&dto); err != nil {
 		return apperror.NewBadRequest("invalid request body")
+	}
+
+	// Allow projectId from URL param to override or supplement the body field
+	if urlProjectID := c.Param("projectId"); urlProjectID != "" {
+		dto.ProjectID = urlProjectID
 	}
 
 	// Validate required fields
@@ -989,18 +999,23 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 
 // --- Agent Definition Handlers ---
 
-// ListDefinitions handles GET /api/admin/agent-definitions
+// ListDefinitions handles GET /api/projects/:projectId/agent-definitions
 func (h *Handler) ListDefinitions(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
 		return apperror.ErrUnauthorized
 	}
 
-	if user.ProjectID == "" {
-		return apperror.NewBadRequest("X-Project-ID header is required")
+	// Prefer URL :projectId param (project-scoped routes), fall back to header
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
 	}
 
-	definitions, err := h.repo.FindAllDefinitions(c.Request().Context(), user.ProjectID, false)
+	definitions, err := h.repo.FindAllDefinitions(c.Request().Context(), projectID, false)
 	if err != nil {
 		return apperror.NewInternal("failed to list agent definitions", err)
 	}
@@ -1041,15 +1056,20 @@ func (h *Handler) GetDefinition(c echo.Context) error {
 	return c.JSON(http.StatusOK, SuccessResponse(def.ToDTO()))
 }
 
-// CreateDefinition handles POST /api/admin/agent-definitions
+// CreateDefinition handles POST /api/projects/:projectId/agent-definitions
 func (h *Handler) CreateDefinition(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
 		return apperror.ErrUnauthorized
 	}
 
-	if user.ProjectID == "" {
-		return apperror.NewBadRequest("X-Project-ID header is required")
+	// Prefer URL :projectId param (project-scoped routes), fall back to header
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	var dto CreateAgentDefinitionDTO
@@ -1088,7 +1108,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 	}
 
 	def := &AgentDefinition{
-		ProjectID:       user.ProjectID,
+		ProjectID:       projectID,
 		Name:            dto.Name,
 		Description:     dto.Description,
 		SystemPrompt:    dto.SystemPrompt,

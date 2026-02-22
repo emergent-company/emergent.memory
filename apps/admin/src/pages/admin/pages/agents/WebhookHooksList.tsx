@@ -7,12 +7,16 @@ import { createAgentsClient, type AgentWebhookHook } from '@/api/agents';
 
 interface WebhookHooksListProps {
   agentId: string;
+  projectId: string;
 }
 
-export function WebhookHooksList({ agentId }: WebhookHooksListProps) {
+export function WebhookHooksList({
+  agentId,
+  projectId,
+}: WebhookHooksListProps) {
   const { apiBase, fetchJson } = useApi();
   const { showToast } = useToast();
-  const client = createAgentsClient(apiBase, fetchJson);
+  const client = createAgentsClient(apiBase, fetchJson, projectId);
 
   const [hooks, setHooks] = useState<AgentWebhookHook[]>([]);
   const [loading, setLoading] = useState(true);
