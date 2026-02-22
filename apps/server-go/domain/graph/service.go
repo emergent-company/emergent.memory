@@ -236,7 +236,7 @@ func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveH
 	// Note: When a canonical_id is passed, the repo already returns HEAD. This only
 	// matters when a physical ID of an old version is passed directly.
 	if resolveHead && obj.SupersedesID != nil {
-		headObj, err := s.repo.GetHeadByCanonicalID(ctx, projectID, obj.CanonicalID, obj.BranchID)
+		headObj, err := s.repo.GetHeadByCanonicalID(ctx, s.repo.DB(), projectID, obj.CanonicalID, obj.BranchID)
 		if err != nil {
 			s.log.Warn("could not find HEAD version for resolveHead",
 				slog.String("canonical_id", obj.CanonicalID.String()),
@@ -341,7 +341,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	// Check if object already exists
-	existing, err := s.repo.FindHeadByTypeAndKey(ctx, projectID, req.BranchID, req.Type, *req.Key)
+	existing, err := s.repo.FindHeadByTypeAndKey(ctx, tx.Tx, projectID, req.BranchID, req.Type, *req.Key)
 	if err != nil {
 		return nil, false, err
 	}
@@ -495,6 +495,17 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		return nil, apperror.ErrBadRequest.WithMessage("cannot patch deleted object")
 	}
 
+	// Fetch schemas BEFORE transaction to avoid deadlock
+	var schemas *ExtractionSchemas
+	if s.schemaProvider != nil {
+		schemas, err = s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if err != nil {
+			s.log.Warn("failed to load schemas, skipping validation",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", err.Error()))
+		}
+	}
+
 	// Start transaction
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
@@ -508,7 +519,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 	}
 
 	// Re-fetch to ensure we have the latest after acquiring lock
-	current, err = s.repo.GetHeadByCanonicalID(ctx, projectID, current.CanonicalID, current.BranchID)
+	current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, current.BranchID)
 	if err != nil {
 		return nil, err
 	}
@@ -527,13 +538,8 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 	}
 
 	// Validate merged properties
-	if s.schemaProvider != nil {
-		schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
-		if err != nil {
-			s.log.Warn("failed to load schemas, skipping validation",
-				slog.String("project_id", projectID.String()),
-				slog.String("error", err.Error()))
-		} else if schema, ok := schemas.ObjectSchemas[current.Type]; ok {
+	if schemas != nil {
+		if schema, ok := schemas.ObjectSchemas[current.Type]; ok {
 			start := time.Now()
 			validated, err := validateProperties(newProps, schema)
 			duration := time.Since(start)
@@ -656,7 +662,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 	}
 
 	// Re-fetch HEAD after lock
-	current, err = s.repo.GetHeadByCanonicalID(ctx, projectID, current.CanonicalID, current.BranchID)
+	current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, current.BranchID)
 	if err != nil {
 		return err
 	}
@@ -690,7 +696,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 	}
 
 	// Re-fetch HEAD after lock
-	current, err = s.repo.GetHeadByCanonicalID(ctx, projectID, current.CanonicalID, current.BranchID)
+	current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, current.BranchID)
 	if err != nil {
 		return nil, err
 	}
@@ -704,7 +710,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 	}
 
 	// Re-fetch the new HEAD to return
-	restored, err := s.repo.GetHeadByCanonicalID(ctx, projectID, current.CanonicalID, current.BranchID)
+	restored, err := s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, current.BranchID)
 	if err != nil {
 		return nil, err
 	}
@@ -993,6 +999,12 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		return nil, apperror.ErrBadRequest.WithMessage("self_loop_not_allowed")
 	}
 
+	// Pre-load inverse map to avoid mutex deadlock with DB connection pool
+	// If the cache is empty, this fetches from DB before we hold a transaction.
+	if s.inverseTypeProvider != nil {
+		_, _ = s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), req.Type)
+	}
+
 	// Start transaction
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
@@ -1028,7 +1040,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	}
 
 	// Check if relationship already exists (using canonical IDs)
-	existing, err := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+	existing, err := s.repo.GetRelationshipHead(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
 	if err != nil {
 		return nil, err
 	}
@@ -1125,7 +1137,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		}
 
 		// Return the new version (use canonical IDs for lookup)
-		newHead, _ := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+		newHead, _ := s.repo.GetRelationshipHead(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
 		return newHead.ToResponse(), nil
 	}
 
@@ -1171,7 +1183,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	}
 
 	// Return the new version
-	newHead, _ := s.repo.GetRelationshipHead(ctx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+	newHead, _ := s.repo.GetRelationshipHead(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
 	return newHead.ToResponse(), nil
 }
 
@@ -1223,7 +1235,7 @@ func (s *Service) maybeCreateInverse(
 	}
 
 	// Check if inverse already exists (using canonical IDs)
-	existingInverse, err := s.repo.GetRelationshipHead(ctx, projectID, branchID, inverseType, dstObj.CanonicalID, srcObj.CanonicalID)
+	existingInverse, err := s.repo.GetRelationshipHead(ctx, tx, projectID, branchID, inverseType, dstObj.CanonicalID, srcObj.CanonicalID)
 	if err != nil {
 		s.log.Warn("failed to check existing inverse relationship, skipping",
 			slog.String("inverse_type", inverseType),
@@ -1987,6 +1999,13 @@ func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req
 func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, req *BulkCreateObjectsRequest, actorID *uuid.UUID) (*BulkCreateObjectsResponse, error) {
 	results := make([]BulkCreateObjectResult, len(req.Items))
 
+	workerCtx := context.WithoutCancel(ctx)
+
+	// Pre-warm schema cache for this project to avoid lock contention
+	if s.schemaProvider != nil {
+		_, _ = s.schemaProvider.GetProjectSchemas(workerCtx, projectID.String())
+	}
+
 	type work struct {
 		i    int
 		item CreateGraphObjectRequest
@@ -2008,7 +2027,7 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				resp, err := s.Create(ctx, projectID, &j.item, actorID)
+				resp, err := s.Create(workerCtx, projectID, &j.item, actorID)
 				if err != nil {
 					errMsg := err.Error()
 					results[j.i] = BulkCreateObjectResult{Index: j.i, Success: false, Error: &errMsg}
@@ -2042,6 +2061,14 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UUID, req *BulkCreateRelationshipsRequest) (*BulkCreateRelationshipsResponse, error) {
 	results := make([]BulkCreateRelationshipResult, len(req.Items))
 
+	workerCtx := context.WithoutCancel(ctx)
+
+	// Pre-warm inverse type cache for this project to avoid lock contention
+	if s.inverseTypeProvider != nil {
+		// Just querying an empty type is enough to populate the whole map for the project
+		_, _ = s.inverseTypeProvider.GetInverseType(workerCtx, projectID.String(), "")
+	}
+
 	type work struct {
 		i    int
 		item CreateGraphRelationshipRequest
@@ -2063,7 +2090,7 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				resp, err := s.CreateRelationship(ctx, projectID, &j.item)
+				resp, err := s.CreateRelationship(workerCtx, projectID, &j.item)
 				if err != nil {
 					errMsg := err.Error()
 					results[j.i] = BulkCreateRelationshipResult{Index: j.i, Success: false, Error: &errMsg}
