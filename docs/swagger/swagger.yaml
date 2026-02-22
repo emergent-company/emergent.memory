@@ -5302,7 +5302,7 @@ info:
   license:
     name: Proprietary
   title: Emergent API
-  version: 0.21.10
+  version: 0.22.0
 paths:
   /api/admin/agent-definitions/{id}/workspace-config:
     get:
