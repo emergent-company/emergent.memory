@@ -125,8 +125,8 @@ export default function NewAgentPage() {
   const { config } = useConfig();
 
   const client = useMemo(
-    () => createAgentsClient(apiBase, fetchJson),
-    [apiBase, fetchJson]
+    () => createAgentsClient(apiBase, fetchJson, config.activeProjectId || ''),
+    [apiBase, fetchJson, config.activeProjectId]
   );
 
   const [step, setStep] = useState<Step>('template');

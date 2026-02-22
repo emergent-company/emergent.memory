@@ -55,7 +55,7 @@ type ApiTokenListResponseDTO struct {
 // CreateApiTokenRequest is the request body for creating a token
 type CreateApiTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read data:read data:write"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read data:read data:write agents:read agents:write"`
 }
 
 // Available scopes for API tokens
@@ -63,6 +63,8 @@ var ValidApiTokenScopes = []string{
 	"schema:read",
 	"data:read",
 	"data:write",
+	"agents:read",
+	"agents:write",
 }
 
 // ToDTO converts an ApiToken entity to ApiTokenDTO
