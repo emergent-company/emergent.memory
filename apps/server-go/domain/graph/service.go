@@ -1967,8 +1967,8 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 	close(jobs)
 
 	workers := len(req.Items)
-	if workers > 20 {
-		workers = 20
+	if workers > 50 {
+		workers = 50
 	}
 
 	var wg sync.WaitGroup
@@ -2030,8 +2030,8 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 	close(jobs)
 
 	workers := len(req.Items)
-	if workers > 20 {
-		workers = 20
+	if workers > 50 {
+		workers = 50
 	}
 
 	var wg sync.WaitGroup
