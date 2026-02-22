@@ -103,6 +103,24 @@ func GetDockerComposeTemplateWithVersion(version string) string {
     networks:
       - emergent
 
+  whisper-server:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: emergent-whisper
+    restart: unless-stopped
+    ports:
+      - '${WHISPER_PORT:-9000}:9000'
+    environment:
+      - ASR_MODEL=${WHISPER_MODEL:-base}
+      - ASR_ENGINE=faster_whisper
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+    networks:
+      - emergent
+
   minio:
     image: minio/minio:latest
     container_name: emergent-minio
@@ -165,6 +183,12 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       GO_ENV: production
       KREUZBERG_SERVICE_URL: http://kreuzberg:8000
       KREUZBERG_ENABLED: 'true'
+      WHISPER_ENABLED: ${WHISPER_ENABLED:-false}
+      WHISPER_SERVICE_URL: http://whisper-server:9000
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-}
+      WHISPER_SERVICE_TIMEOUT: ${WHISPER_SERVICE_TIMEOUT:-600000}
+      WHISPER_MAX_FILE_SIZE_MB: ${WHISPER_MAX_FILE_SIZE_MB:-500}
       STORAGE_PROVIDER: minio
       STORAGE_ENDPOINT: http://minio:9000
       STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}

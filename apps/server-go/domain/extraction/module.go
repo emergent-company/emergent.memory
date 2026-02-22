@@ -16,6 +16,7 @@ import (
 	"github.com/emergent-company/emergent/pkg/adk"
 	"github.com/emergent-company/emergent/pkg/embeddings"
 	"github.com/emergent-company/emergent/pkg/kreuzberg"
+	"github.com/emergent-company/emergent/pkg/whisper"
 )
 
 // ParsingJobCreatorAdapter adapts DocumentParsingJobsService to documents.ParsingJobCreator
@@ -226,6 +227,7 @@ func provideDocumentParsingWorker(
 	documentsRepo *documents.Repository,
 	chunkingService *chunking.Service,
 	kreuzbergClient *kreuzberg.Client,
+	whisperClient *whisper.Client,
 	storageService *storage.Service,
 	cfg *ExtractionConfig,
 	log *slog.Logger,
@@ -234,7 +236,7 @@ func provideDocumentParsingWorker(
 		Interval:  time.Duration(cfg.DocumentParsing.WorkerIntervalMs) * time.Millisecond,
 		BatchSize: cfg.DocumentParsing.WorkerBatchSize,
 	}
-	return NewDocumentParsingWorker(jobs, documentsRepo, chunkingService, kreuzbergClient, storageService, workerConfig, log)
+	return NewDocumentParsingWorker(jobs, documentsRepo, chunkingService, kreuzbergClient, whisperClient, storageService, workerConfig, log)
 }
 
 // RegisterDocumentParsingWorkerLifecycle registers the document parsing worker with fx lifecycle
