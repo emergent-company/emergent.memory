@@ -42,9 +42,8 @@ type Model struct {
 	extractionsList list.Model
 
 	// Search
-	searchMode    bool
-	searchInput   textinput.Model
-	searchResults string
+	searchMode  bool
+	searchInput textinput.Model
 
 	// Help
 	help     help.Model

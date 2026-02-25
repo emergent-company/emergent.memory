@@ -668,7 +668,7 @@ func benchLoadMasterCache() *benchMasterCache {
 }
 
 func benchSaveMasterCache(c *benchMasterCache) {
-	os.MkdirAll("/tmp/imdb_data", 0755)
+	os.MkdirAll("/tmp/imdb_data", 0755) //nolint:errcheck
 	f, err := os.Create(benchMasterCachePath)
 	if err != nil {
 		return
@@ -1036,7 +1036,7 @@ func benchLoadParsedCache(seed, offset int) *benchParsedCache {
 }
 
 func benchSaveParsedCache(c *benchParsedCache) {
-	os.MkdirAll("/tmp/imdb_data", 0755)
+	os.MkdirAll("/tmp/imdb_data", 0755) //nolint:errcheck
 	path := benchParsedCachePath(c.Seed, c.Offset)
 	f, err := os.Create(path)
 	if err != nil {
@@ -1053,7 +1053,7 @@ func benchSaveParsedCache(c *benchParsedCache) {
 func benchStreamIMDB(url string) (io.ReadCloser, *gzip.Reader, error) {
 	filename := url[strings.LastIndex(url, "/")+1:]
 	cacheDir := "/tmp/imdb_data"
-	os.MkdirAll(cacheDir, 0755)
+	os.MkdirAll(cacheDir, 0755) //nolint:errcheck
 	localPath := filepath.Join(cacheDir, filename)
 
 	if _, err := os.Stat(localPath); os.IsNotExist(err) {
@@ -1063,7 +1063,7 @@ func benchStreamIMDB(url string) (io.ReadCloser, *gzip.Reader, error) {
 			return nil, nil, err
 		}
 		outFile, _ := os.Create(localPath)
-		io.Copy(outFile, resp.Body)
+		io.Copy(outFile, resp.Body) //nolint:errcheck
 		outFile.Close()
 		resp.Body.Close()
 	} else {
@@ -1192,7 +1192,7 @@ func benchGetPrincipals(titles map[string]benchTitle) ([]benchRole, map[string]b
 		peopleIDs[parts[2]] = true
 		var chars []string
 		if parts[5] != "\\N" {
-			json.Unmarshal([]byte(parts[5]), &chars)
+			json.Unmarshal([]byte(parts[5]), &chars) //nolint:errcheck
 			for _, c := range chars {
 				characters[c] = true
 			}
@@ -1635,10 +1635,7 @@ func benchBulkUploadObjects(ctx context.Context, client *sdkgraph.Client, items 
 				if result.Object != nil {
 					id := result.Object.EntityID
 					if id == "" {
-						id = result.Object.CanonicalID
-					}
-					if id == "" {
-						id = result.Object.ID
+						id = result.Object.VersionID
 					}
 					idMap[*key] = id
 					uploaded.Add(1)
@@ -1677,10 +1674,7 @@ func benchBulkUploadObjects(ctx context.Context, client *sdkgraph.Client, items 
 					obj := resp.Items[0]
 					id := obj.EntityID
 					if id == "" {
-						id = obj.CanonicalID
-					}
-					if id == "" {
-						id = obj.ID
+						id = obj.VersionID
 					}
 					mu.Lock()
 					idMap[key] = id
@@ -1810,7 +1804,7 @@ func benchAppendLog(logFile string, report *benchReport) {
 		fmt.Printf("%sWARN: cannot marshal log entry: %v%s\n", diagYellow, err, diagReset)
 		return
 	}
-	f.Write(data)
-	f.Write([]byte("\n"))
+	f.Write(data)         //nolint:errcheck
+	f.Write([]byte("\n")) //nolint:errcheck
 	fmt.Printf("Run appended to log: %s\n", logFile)
 }
