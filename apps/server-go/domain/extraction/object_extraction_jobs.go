@@ -192,10 +192,12 @@ func (s *ObjectExtractionJobsService) DequeueBatch(ctx context.Context, batchSiz
 			jobIDs = append(jobIDs, job.ID)
 		}
 
-		// Update the claimed jobs
+		// Update the claimed jobs individually (Bun requires CTE+VALUES for bulk updates)
 		_, err = tx.NewUpdate().
-			Model(&jobs).
-			Column("status", "started_at", "updated_at").
+			Model((*ObjectExtractionJob)(nil)).
+			Set("status = ?", JobStatusProcessing).
+			Set("started_at = ?", now).
+			Set("updated_at = ?", now).
 			Where("id IN (?)", bun.In(jobIDs)).
 			Exec(ctx)
 

@@ -19,10 +19,162 @@ definitions:
           type: string
         type: array
     type: object
+  agents.APIResponse-agents_AgentDTO:
+    properties:
+      data:
+        $ref: '#/definitions/agents.AgentDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.APIResponse-agents_AgentDefinitionDTO:
+    properties:
+      data:
+        $ref: '#/definitions/agents.AgentDefinitionDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.APIResponse-agents_AgentQuestionDTO:
+    properties:
+      data:
+        $ref: '#/definitions/agents.AgentQuestionDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.APIResponse-agents_AgentRunDTO:
+    properties:
+      data:
+        $ref: '#/definitions/agents.AgentRunDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.APIResponse-agents_BatchTriggerResponseDTO:
+    properties:
+      data:
+        $ref: '#/definitions/agents.BatchTriggerResponseDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.APIResponse-agents_PendingEventsResponseDTO:
+    properties:
+      data:
+        $ref: '#/definitions/agents.PendingEventsResponseDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.APIResponse-any:
+    properties:
+      data: {}
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.APIResponse-array_agents_AgentDTO:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/agents.AgentDTO'
+        type: array
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.APIResponse-array_agents_AgentQuestionDTO:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/agents.AgentQuestionDTO'
+        type: array
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.APIResponse-array_agents_AgentRunDTO:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/agents.AgentRunDTO'
+        type: array
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.APIResponse-map_string_string:
+    properties:
+      data:
+        $ref: '#/definitions/map_string_string'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.APIResponse-workspace_AgentWorkspaceConfig:
+    properties:
+      data:
+        $ref: '#/definitions/workspace.AgentWorkspaceConfig'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  agents.AgentCapabilities:
+    properties:
+      allowedObjectTypes:
+        items:
+          type: string
+        type: array
+      canCreateObjects:
+        type: boolean
+      canCreateRelationships:
+        type: boolean
+      canDeleteObjects:
+        type: boolean
+      canUpdateObjects:
+        type: boolean
+    type: object
   agents.AgentDTO:
     properties:
       capabilities:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.AgentCapabilities'
+        $ref: '#/definitions/agents.AgentCapabilities'
       config:
         additionalProperties: {}
         type: object
@@ -49,7 +201,7 @@ definitions:
       prompt:
         type: string
       reactionConfig:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.ReactionConfig'
+        $ref: '#/definitions/agents.ReactionConfig'
       strategyType:
         type: string
       triggerType:
@@ -140,7 +292,7 @@ definitions:
         type: string
       options:
         items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.AgentQuestionOption'
+          $ref: '#/definitions/agents.AgentQuestionOption'
         type: array
       projectId:
         type: string
@@ -157,6 +309,15 @@ definitions:
       status:
         $ref: '#/definitions/agents.AgentQuestionStatus'
       updatedAt:
+        type: string
+    type: object
+  agents.AgentQuestionOption:
+    properties:
+      description:
+        type: string
+      label:
+        type: string
+      value:
         type: string
     type: object
   agents.AgentQuestionStatus:
@@ -288,7 +449,7 @@ definitions:
   agents.CreateAgentDTO:
     properties:
       capabilities:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.AgentCapabilities'
+        $ref: '#/definitions/agents.AgentCapabilities'
       config:
         additionalProperties: {}
         type: object
@@ -307,7 +468,7 @@ definitions:
       prompt:
         type: string
       reactionConfig:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.ReactionConfig'
+        $ref: '#/definitions/agents.ReactionConfig'
       strategyType:
         type: string
       triggerType:
@@ -362,6 +523,23 @@ definitions:
       totalCount:
         type: integer
     type: object
+  agents.ReactionConfig:
+    properties:
+      concurrencyStrategy:
+        $ref: '#/definitions/agents.ConcurrencyStrategy'
+      events:
+        items:
+          $ref: '#/definitions/agents.ReactionEventType'
+        type: array
+      ignoreAgentTriggered:
+        type: boolean
+      ignoreSelfTriggered:
+        type: boolean
+      objectTypes:
+        items:
+          type: string
+        type: array
+    type: object
   agents.ReactionEventType:
     enum:
     - created
@@ -372,6 +550,13 @@ definitions:
     - EventTypeCreated
     - EventTypeUpdated
     - EventTypeDeleted
+  agents.RespondToQuestionRequest:
+    properties:
+      response:
+        type: string
+    required:
+    - response
+    type: object
   agents.SessionStatus:
     enum:
     - provisioning
@@ -408,7 +593,7 @@ definitions:
   agents.UpdateAgentDTO:
     properties:
       capabilities:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.AgentCapabilities'
+        $ref: '#/definitions/agents.AgentCapabilities'
       config:
         additionalProperties: {}
         type: object
@@ -425,7 +610,7 @@ definitions:
       prompt:
         type: string
       reactionConfig:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.ReactionConfig'
+        $ref: '#/definitions/agents.ReactionConfig'
       triggerType:
         $ref: '#/definitions/agents.AgentTriggerType'
     type: object
@@ -647,14 +832,204 @@ definitions:
       project_id:
         type: string
     type: object
+  branches.CreateBranchRequest:
+    properties:
+      name:
+        type: string
+      parent_branch_id:
+        type: string
+      project_id:
+        type: string
+    type: object
+  branches.UpdateBranchRequest:
+    properties:
+      name:
+        type: string
+    type: object
+  chat.AddMessageRequest:
+    properties:
+      content:
+        maxLength: 100000
+        type: string
+      retrievalContext:
+        items:
+          type: integer
+        type: array
+      role:
+        enum:
+        - user
+        - assistant
+        - system
+        type: string
+    required:
+    - content
+    - role
+    type: object
+  chat.Conversation:
+    properties:
+      agentDefinitionId:
+        description: 'Agent-backed chat: links conversation to an agent definition
+          for tool-calling capabilities'
+        type: string
+      canonicalId:
+        type: string
+      createdAt:
+        description: Timestamps
+        type: string
+      draftText:
+        type: string
+      enabledTools:
+        description: Tool configuration
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      isPrivate:
+        type: boolean
+      messages:
+        description: Relations (for eager loading)
+        items:
+          $ref: '#/definitions/chat.Message'
+        type: array
+      objectId:
+        description: Object reference for refinement chats
+        type: string
+      ownerUserId:
+        type: string
+      projectId:
+        type: string
+      title:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  chat.ConversationWithMessages:
+    properties:
+      agentDefinitionId:
+        description: 'Agent-backed chat: links conversation to an agent definition
+          for tool-calling capabilities'
+        type: string
+      canonicalId:
+        type: string
+      createdAt:
+        description: Timestamps
+        type: string
+      draftText:
+        type: string
+      enabledTools:
+        description: Tool configuration
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      isPrivate:
+        type: boolean
+      messages:
+        items:
+          $ref: '#/definitions/chat.Message'
+        type: array
+      objectId:
+        description: Object reference for refinement chats
+        type: string
+      ownerUserId:
+        type: string
+      projectId:
+        type: string
+      title:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  chat.CreateConversationRequest:
+    properties:
+      canonicalId:
+        type: string
+      message:
+        maxLength: 100000
+        type: string
+      title:
+        maxLength: 512
+        type: string
+    required:
+    - message
+    - title
+    type: object
   chat.ListConversationsResult:
     properties:
       conversations:
         items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_chat.Conversation'
+          $ref: '#/definitions/chat.Conversation'
         type: array
       total:
         type: integer
+    type: object
+  chat.Message:
+    properties:
+      citations:
+        items:
+          type: integer
+        type: array
+      content:
+        type: string
+      contextSummary:
+        type: string
+      conversationId:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      retrievalContext:
+        items:
+          type: integer
+        type: array
+      role:
+        description: user, assistant, system
+        type: string
+    type: object
+  chat.StreamRequest:
+    properties:
+      agentDefinitionId:
+        type: string
+      canonicalId:
+        type: string
+      conversationId:
+        type: string
+      message:
+        maxLength: 100000
+        type: string
+    required:
+    - message
+    type: object
+  chat.UpdateConversationRequest:
+    properties:
+      draftText:
+        maxLength: 100000
+        type: string
+      title:
+        maxLength: 512
+        type: string
+    type: object
+  chunking.RecreateChunksResponse:
+    properties:
+      status:
+        type: string
+      summary:
+        $ref: '#/definitions/chunking.RecreateChunksSummary'
+    type: object
+  chunking.RecreateChunksSummary:
+    properties:
+      config:
+        additionalProperties: {}
+        type: object
+      newChunks:
+        type: integer
+      oldChunks:
+        type: integer
+      strategy:
+        type: string
     type: object
   chunks.BulkDeleteByDocumentsRequest:
     properties:
@@ -675,6 +1050,30 @@ definitions:
         type: array
     required:
     - ids
+    type: object
+  chunks.BulkDeletionSummary:
+    properties:
+      results:
+        items:
+          $ref: '#/definitions/chunks.DeletionResult'
+        type: array
+      totalDeleted:
+        type: integer
+      totalFailed:
+        type: integer
+      totalRequested:
+        type: integer
+    type: object
+  chunks.BulkDocumentChunksDeletionSummary:
+    properties:
+      results:
+        items:
+          $ref: '#/definitions/chunks.DocumentChunksDeletionResult'
+        type: array
+      totalChunks:
+        type: integer
+      totalDocuments:
+        type: integer
     type: object
   chunks.ChunkDTO:
     properties:
@@ -697,7 +1096,7 @@ definitions:
       index:
         type: integer
       metadata:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_chunks.ChunkMetadata'
+        $ref: '#/definitions/chunks.ChunkMetadata'
       size:
         description: Size in characters
         type: integer
@@ -706,6 +1105,41 @@ definitions:
       totalChars:
         description: Total chars across all doc chunks
         type: integer
+    type: object
+  chunks.ChunkMetadata:
+    properties:
+      boundaryType:
+        description: sentence, paragraph, character, section
+        type: string
+      endOffset:
+        description: Character offset in original document
+        type: integer
+      startOffset:
+        description: Character offset in original document
+        type: integer
+      strategy:
+        description: character, sentence, paragraph
+        type: string
+    type: object
+  chunks.DeletionResult:
+    properties:
+      error:
+        type: string
+      id:
+        type: string
+      success:
+        type: boolean
+    type: object
+  chunks.DocumentChunksDeletionResult:
+    properties:
+      chunksDeleted:
+        type: integer
+      documentId:
+        type: string
+      error:
+        type: string
+      success:
+        type: boolean
     type: object
   chunks.ListChunksResponse:
     properties:
@@ -892,12 +1326,339 @@ definitions:
       syncMode:
         type: string
     type: object
+  discoveryjobs.CancelJobResponse:
+    properties:
+      message:
+        type: string
+    type: object
+  discoveryjobs.FinalizeDiscoveryRequest:
+    properties:
+      existingPackId:
+        type: string
+      includedRelationships:
+        items:
+          $ref: '#/definitions/discoveryjobs.IncludedRelationship'
+        type: array
+      includedTypes:
+        items:
+          $ref: '#/definitions/discoveryjobs.IncludedType'
+        minItems: 1
+        type: array
+      mode:
+        enum:
+        - create
+        - extend
+        type: string
+      packName:
+        type: string
+    required:
+    - includedTypes
+    - mode
+    - packName
+    type: object
+  discoveryjobs.FinalizeDiscoveryResponse:
+    properties:
+      message:
+        type: string
+      template_pack_id:
+        type: string
+    type: object
+  discoveryjobs.IncludedRelationship:
+    properties:
+      cardinality:
+        type: string
+      description:
+        type: string
+      relation_type:
+        type: string
+      source_type:
+        type: string
+      target_type:
+        type: string
+    type: object
+  discoveryjobs.IncludedType:
+    properties:
+      description:
+        type: string
+      example_instances:
+        items: {}
+        type: array
+      frequency:
+        type: integer
+      properties:
+        additionalProperties: {}
+        type: object
+      required_properties:
+        items:
+          type: string
+        type: array
+      type_name:
+        type: string
+    type: object
+  discoveryjobs.JSONMap:
+    additionalProperties: {}
+    type: object
+  discoveryjobs.JobListItem:
+    properties:
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      discovered_relationships:
+        items: {}
+        type: array
+      discovered_types:
+        items: {}
+        type: array
+      id:
+        type: string
+      progress:
+        $ref: '#/definitions/discoveryjobs.JSONMap'
+      status:
+        type: string
+      template_pack_id:
+        type: string
+    type: object
+  discoveryjobs.JobStatusResponse:
+    properties:
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      discovered_relationships:
+        items: {}
+        type: array
+      discovered_types:
+        items: {}
+        type: array
+      error_message:
+        type: string
+      id:
+        type: string
+      progress:
+        $ref: '#/definitions/discoveryjobs.JSONMap'
+      started_at:
+        type: string
+      status:
+        type: string
+      template_pack_id:
+        type: string
+    type: object
+  discoveryjobs.StartDiscoveryRequest:
+    properties:
+      batch_size:
+        maximum: 50
+        minimum: 1
+        type: integer
+      document_ids:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      include_relationships:
+        type: boolean
+      max_iterations:
+        maximum: 10
+        minimum: 1
+        type: integer
+      min_confidence:
+        maximum: 1
+        minimum: 0
+        type: number
+    required:
+    - document_ids
+    type: object
+  discoveryjobs.StartDiscoveryResponse:
+    properties:
+      job_id:
+        type: string
+    type: object
+  documents.BulkDeleteRequest:
+    properties:
+      ids:
+        items:
+          type: string
+        minItems: 1
+        type: array
+    required:
+    - ids
+    type: object
+  documents.BulkDeletionImpact:
+    properties:
+      documents:
+        items:
+          $ref: '#/definitions/documents.DeletionImpact'
+        type: array
+      impact:
+        $ref: '#/definitions/documents.ImpactSummary'
+      totalDocuments:
+        type: integer
+    type: object
+  documents.BulkDeletionImpactRequest:
+    properties:
+      ids:
+        items:
+          type: string
+        minItems: 1
+        type: array
+    required:
+    - ids
+    type: object
+  documents.ContentResponse:
+    properties:
+      content:
+        type: string
+    type: object
   documents.CreateDocumentRequest:
     properties:
       content:
         type: string
       filename:
         maxLength: 512
+        type: string
+    type: object
+  documents.DeleteResponse:
+    properties:
+      deleted:
+        description: Count of deleted documents (for bulk)
+        type: integer
+      notFound:
+        items:
+          type: string
+        type: array
+      status:
+        description: '"deleted" or "partial"'
+        type: string
+      summary:
+        $ref: '#/definitions/documents.DeleteSummary'
+    type: object
+  documents.DeleteSummary:
+    properties:
+      chunks:
+        type: integer
+      extractionJobs:
+        type: integer
+      graphObjects:
+        type: integer
+      graphRelationships:
+        type: integer
+      notifications:
+        type: integer
+    type: object
+  documents.DeletionImpact:
+    properties:
+      document:
+        $ref: '#/definitions/documents.DocumentInfo'
+      impact:
+        $ref: '#/definitions/documents.ImpactSummary'
+    type: object
+  documents.Document:
+    properties:
+      chunks:
+        description: Computed fields (populated via JOIN/subquery, not stored in documents
+          table)
+        type: integer
+      content:
+        description: Content
+        type: string
+      contentHash:
+        type: string
+      conversionCompletedAt:
+        type: string
+      conversionError:
+        type: string
+      conversionStatus:
+        description: Conversion status
+        type: string
+      createdAt:
+        description: Timestamps
+        type: string
+      dataSourceIntegrationId:
+        type: string
+      embeddedChunks:
+        type: integer
+      externalSourceId:
+        type: string
+      extractionStatus:
+        type: string
+      fileHash:
+        type: string
+      fileSizeBytes:
+        type: integer
+      filename:
+        description: Basic metadata
+        type: string
+      id:
+        type: string
+      integrationMetadata:
+        additionalProperties: {}
+        description: Metadata
+        type: object
+      metadata:
+        additionalProperties: {}
+        type: object
+      mimeType:
+        type: string
+      parentDocumentId:
+        description: Hierarchy
+        type: string
+      projectId:
+        type: string
+      sourceType:
+        description: Data source
+        type: string
+      sourceUrl:
+        type: string
+      storageKey:
+        description: Storage
+        type: string
+      storageUrl:
+        type: string
+      syncVersion:
+        type: integer
+      totalChars:
+        type: integer
+      updatedAt:
+        type: string
+    type: object
+  documents.DocumentInfo:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  documents.ImpactSummary:
+    properties:
+      chunks:
+        type: integer
+      extractionJobs:
+        type: integer
+      graphObjects:
+        type: integer
+      graphRelationships:
+        type: integer
+      notifications:
+        type: integer
+    type: object
+  documents.ListResult:
+    properties:
+      documents:
+        items:
+          $ref: '#/definitions/documents.Document'
+        type: array
+      next_cursor:
+        type: string
+      total:
+        type: integer
+    type: object
+  documents.SourceTypeWithCount:
+    properties:
+      count:
+        type: integer
+      sourceType:
         type: string
     type: object
   embeddingpolicies.CreateRequest:
@@ -988,768 +1749,7 @@ definitions:
           type: string
         type: array
     type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-agents_AgentDTO:
-    properties:
-      data:
-        $ref: '#/definitions/agents.AgentDTO'
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-agents_AgentDefinitionDTO:
-    properties:
-      data:
-        $ref: '#/definitions/agents.AgentDefinitionDTO'
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-agents_AgentQuestionDTO:
-    properties:
-      data:
-        $ref: '#/definitions/agents.AgentQuestionDTO'
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-agents_AgentRunDTO:
-    properties:
-      data:
-        $ref: '#/definitions/agents.AgentRunDTO'
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-agents_BatchTriggerResponseDTO:
-    properties:
-      data:
-        $ref: '#/definitions/agents.BatchTriggerResponseDTO'
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-agents_PendingEventsResponseDTO:
-    properties:
-      data:
-        $ref: '#/definitions/agents.PendingEventsResponseDTO'
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-any:
-    properties:
-      data: {}
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-array_agents_AgentDTO:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/agents.AgentDTO'
-        type: array
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-array_agents_AgentQuestionDTO:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/agents.AgentQuestionDTO'
-        type: array
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-array_agents_AgentRunDTO:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/agents.AgentRunDTO'
-        type: array
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-map_string_string:
-    properties:
-      data:
-        $ref: '#/definitions/map_string_string'
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.APIResponse-workspace_AgentWorkspaceConfig:
-    properties:
-      data:
-        $ref: '#/definitions/workspace.AgentWorkspaceConfig'
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.AgentCapabilities:
-    properties:
-      allowedObjectTypes:
-        items:
-          type: string
-        type: array
-      canCreateObjects:
-        type: boolean
-      canCreateRelationships:
-        type: boolean
-      canDeleteObjects:
-        type: boolean
-      canUpdateObjects:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_agents.AgentQuestionOption:
-    properties:
-      description:
-        type: string
-      label:
-        type: string
-      value:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_agents.ReactionConfig:
-    properties:
-      concurrencyStrategy:
-        $ref: '#/definitions/agents.ConcurrencyStrategy'
-      events:
-        items:
-          $ref: '#/definitions/agents.ReactionEventType'
-        type: array
-      ignoreAgentTriggered:
-        type: boolean
-      ignoreSelfTriggered:
-        type: boolean
-      objectTypes:
-        items:
-          type: string
-        type: array
-    type: object
-  github_com_emergent-company_emergent_domain_agents.RespondToQuestionRequest:
-    properties:
-      response:
-        type: string
-    required:
-    - response
-    type: object
-  github_com_emergent-company_emergent_domain_branches.CreateBranchRequest:
-    properties:
-      name:
-        type: string
-      parent_branch_id:
-        type: string
-      project_id:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_branches.UpdateBranchRequest:
-    properties:
-      name:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_chat.AddMessageRequest:
-    properties:
-      content:
-        maxLength: 100000
-        type: string
-      retrievalContext:
-        items:
-          type: integer
-        type: array
-      role:
-        enum:
-        - user
-        - assistant
-        - system
-        type: string
-    required:
-    - content
-    - role
-    type: object
-  github_com_emergent-company_emergent_domain_chat.Conversation:
-    properties:
-      agentDefinitionId:
-        description: 'Agent-backed chat: links conversation to an agent definition
-          for tool-calling capabilities'
-        type: string
-      canonicalId:
-        type: string
-      createdAt:
-        description: Timestamps
-        type: string
-      draftText:
-        type: string
-      enabledTools:
-        description: Tool configuration
-        items:
-          type: string
-        type: array
-      id:
-        type: string
-      isPrivate:
-        type: boolean
-      messages:
-        description: Relations (for eager loading)
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_chat.Message'
-        type: array
-      objectId:
-        description: Object reference for refinement chats
-        type: string
-      ownerUserId:
-        type: string
-      projectId:
-        type: string
-      title:
-        type: string
-      updatedAt:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_chat.ConversationWithMessages:
-    properties:
-      agentDefinitionId:
-        description: 'Agent-backed chat: links conversation to an agent definition
-          for tool-calling capabilities'
-        type: string
-      canonicalId:
-        type: string
-      createdAt:
-        description: Timestamps
-        type: string
-      draftText:
-        type: string
-      enabledTools:
-        description: Tool configuration
-        items:
-          type: string
-        type: array
-      id:
-        type: string
-      isPrivate:
-        type: boolean
-      messages:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_chat.Message'
-        type: array
-      objectId:
-        description: Object reference for refinement chats
-        type: string
-      ownerUserId:
-        type: string
-      projectId:
-        type: string
-      title:
-        type: string
-      updatedAt:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_chat.CreateConversationRequest:
-    properties:
-      canonicalId:
-        type: string
-      message:
-        maxLength: 100000
-        type: string
-      title:
-        maxLength: 512
-        type: string
-    required:
-    - message
-    - title
-    type: object
-  github_com_emergent-company_emergent_domain_chat.Message:
-    properties:
-      citations:
-        items:
-          type: integer
-        type: array
-      content:
-        type: string
-      contextSummary:
-        type: string
-      conversationId:
-        type: string
-      createdAt:
-        type: string
-      id:
-        type: string
-      retrievalContext:
-        items:
-          type: integer
-        type: array
-      role:
-        description: user, assistant, system
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_chat.StreamRequest:
-    properties:
-      agentDefinitionId:
-        type: string
-      canonicalId:
-        type: string
-      conversationId:
-        type: string
-      message:
-        maxLength: 100000
-        type: string
-    required:
-    - message
-    type: object
-  github_com_emergent-company_emergent_domain_chat.UpdateConversationRequest:
-    properties:
-      draftText:
-        maxLength: 100000
-        type: string
-      title:
-        maxLength: 512
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_chunking.RecreateChunksResponse:
-    properties:
-      status:
-        type: string
-      summary:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_chunking.RecreateChunksSummary'
-    type: object
-  github_com_emergent-company_emergent_domain_chunking.RecreateChunksSummary:
-    properties:
-      config:
-        additionalProperties: {}
-        type: object
-      newChunks:
-        type: integer
-      oldChunks:
-        type: integer
-      strategy:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_chunks.BulkDeletionSummary:
-    properties:
-      results:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_chunks.DeletionResult'
-        type: array
-      totalDeleted:
-        type: integer
-      totalFailed:
-        type: integer
-      totalRequested:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_chunks.BulkDocumentChunksDeletionSummary:
-    properties:
-      results:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_chunks.DocumentChunksDeletionResult'
-        type: array
-      totalChunks:
-        type: integer
-      totalDocuments:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_chunks.ChunkMetadata:
-    properties:
-      boundaryType:
-        description: sentence, paragraph, character, section
-        type: string
-      endOffset:
-        description: Character offset in original document
-        type: integer
-      startOffset:
-        description: Character offset in original document
-        type: integer
-      strategy:
-        description: character, sentence, paragraph
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_chunks.DeletionResult:
-    properties:
-      error:
-        type: string
-      id:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_chunks.DocumentChunksDeletionResult:
-    properties:
-      chunksDeleted:
-        type: integer
-      documentId:
-        type: string
-      error:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_discoveryjobs.CancelJobResponse:
-    properties:
-      message:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_discoveryjobs.FinalizeDiscoveryRequest:
-    properties:
-      existingPackId:
-        type: string
-      includedRelationships:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_discoveryjobs.IncludedRelationship'
-        type: array
-      includedTypes:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_discoveryjobs.IncludedType'
-        minItems: 1
-        type: array
-      mode:
-        enum:
-        - create
-        - extend
-        type: string
-      packName:
-        type: string
-    required:
-    - includedTypes
-    - mode
-    - packName
-    type: object
-  github_com_emergent-company_emergent_domain_discoveryjobs.FinalizeDiscoveryResponse:
-    properties:
-      message:
-        type: string
-      template_pack_id:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_discoveryjobs.IncludedRelationship:
-    properties:
-      cardinality:
-        type: string
-      description:
-        type: string
-      relation_type:
-        type: string
-      source_type:
-        type: string
-      target_type:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_discoveryjobs.IncludedType:
-    properties:
-      description:
-        type: string
-      example_instances:
-        items: {}
-        type: array
-      frequency:
-        type: integer
-      properties:
-        additionalProperties: {}
-        type: object
-      required_properties:
-        items:
-          type: string
-        type: array
-      type_name:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_discoveryjobs.JSONMap:
-    additionalProperties: {}
-    type: object
-  github_com_emergent-company_emergent_domain_discoveryjobs.JobListItem:
-    properties:
-      completed_at:
-        type: string
-      created_at:
-        type: string
-      discovered_relationships:
-        items: {}
-        type: array
-      discovered_types:
-        items: {}
-        type: array
-      id:
-        type: string
-      progress:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_discoveryjobs.JSONMap'
-      status:
-        type: string
-      template_pack_id:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_discoveryjobs.JobStatusResponse:
-    properties:
-      completed_at:
-        type: string
-      created_at:
-        type: string
-      discovered_relationships:
-        items: {}
-        type: array
-      discovered_types:
-        items: {}
-        type: array
-      error_message:
-        type: string
-      id:
-        type: string
-      progress:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_discoveryjobs.JSONMap'
-      started_at:
-        type: string
-      status:
-        type: string
-      template_pack_id:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_discoveryjobs.StartDiscoveryRequest:
-    properties:
-      batch_size:
-        maximum: 50
-        minimum: 1
-        type: integer
-      document_ids:
-        items:
-          type: string
-        minItems: 1
-        type: array
-      include_relationships:
-        type: boolean
-      max_iterations:
-        maximum: 10
-        minimum: 1
-        type: integer
-      min_confidence:
-        maximum: 1
-        minimum: 0
-        type: number
-    required:
-    - document_ids
-    type: object
-  github_com_emergent-company_emergent_domain_discoveryjobs.StartDiscoveryResponse:
-    properties:
-      job_id:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_documents.BulkDeleteRequest:
-    properties:
-      ids:
-        items:
-          type: string
-        minItems: 1
-        type: array
-    required:
-    - ids
-    type: object
-  github_com_emergent-company_emergent_domain_documents.BulkDeletionImpact:
-    properties:
-      documents:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.DeletionImpact'
-        type: array
-      impact:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.ImpactSummary'
-      totalDocuments:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_documents.BulkDeletionImpactRequest:
-    properties:
-      ids:
-        items:
-          type: string
-        minItems: 1
-        type: array
-    required:
-    - ids
-    type: object
-  github_com_emergent-company_emergent_domain_documents.ContentResponse:
-    properties:
-      content:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_documents.DeleteResponse:
-    properties:
-      deleted:
-        description: Count of deleted documents (for bulk)
-        type: integer
-      notFound:
-        items:
-          type: string
-        type: array
-      status:
-        description: '"deleted" or "partial"'
-        type: string
-      summary:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.DeleteSummary'
-    type: object
-  github_com_emergent-company_emergent_domain_documents.DeleteSummary:
-    properties:
-      chunks:
-        type: integer
-      extractionJobs:
-        type: integer
-      graphObjects:
-        type: integer
-      graphRelationships:
-        type: integer
-      notifications:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_documents.DeletionImpact:
-    properties:
-      document:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.DocumentInfo'
-      impact:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.ImpactSummary'
-    type: object
-  github_com_emergent-company_emergent_domain_documents.Document:
-    properties:
-      chunks:
-        description: Computed fields (populated via JOIN/subquery, not stored in documents
-          table)
-        type: integer
-      content:
-        description: Content
-        type: string
-      contentHash:
-        type: string
-      conversionCompletedAt:
-        type: string
-      conversionError:
-        type: string
-      conversionStatus:
-        description: Conversion status
-        type: string
-      createdAt:
-        description: Timestamps
-        type: string
-      dataSourceIntegrationId:
-        type: string
-      embeddedChunks:
-        type: integer
-      externalSourceId:
-        type: string
-      extractionStatus:
-        type: string
-      fileHash:
-        type: string
-      fileSizeBytes:
-        type: integer
-      filename:
-        description: Basic metadata
-        type: string
-      id:
-        type: string
-      integrationMetadata:
-        additionalProperties: {}
-        description: Metadata
-        type: object
-      metadata:
-        additionalProperties: {}
-        type: object
-      mimeType:
-        type: string
-      parentDocumentId:
-        description: Hierarchy
-        type: string
-      projectId:
-        type: string
-      sourceType:
-        description: Data source
-        type: string
-      sourceUrl:
-        type: string
-      storageKey:
-        description: Storage
-        type: string
-      storageUrl:
-        type: string
-      syncVersion:
-        type: integer
-      totalChars:
-        type: integer
-      updatedAt:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_documents.DocumentInfo:
-    properties:
-      createdAt:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_documents.ImpactSummary:
-    properties:
-      chunks:
-        type: integer
-      extractionJobs:
-        type: integer
-      graphObjects:
-        type: integer
-      graphRelationships:
-        type: integer
-      notifications:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_documents.ListResult:
-    properties:
-      documents:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.Document'
-        type: array
-      next_cursor:
-        type: string
-      total:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_documents.SourceTypeWithCount:
-    properties:
-      count:
-        type: integer
-      sourceType:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_graph.AnalyticsObjectItem:
+  graph.AnalyticsObjectItem:
     properties:
       access_count:
         type: integer
@@ -1775,7 +1775,7 @@ definitions:
       type:
         type: string
     type: object
-  github_com_emergent-company_emergent_domain_graph.BranchMergeRequest:
+  graph.BranchMergeRequest:
     properties:
       execute:
         type: boolean
@@ -1787,7 +1787,7 @@ definitions:
     required:
     - sourceBranchId
     type: object
-  github_com_emergent-company_emergent_domain_graph.BulkCreateObjectResult:
+  graph.BulkCreateObjectResult:
     properties:
       error:
         type: string
@@ -1798,7 +1798,7 @@ definitions:
       success:
         type: boolean
     type: object
-  github_com_emergent-company_emergent_domain_graph.BulkCreateObjectsRequest:
+  graph.BulkCreateObjectsRequest:
     properties:
       items:
         items:
@@ -1809,18 +1809,18 @@ definitions:
     required:
     - items
     type: object
-  github_com_emergent-company_emergent_domain_graph.BulkCreateObjectsResponse:
+  graph.BulkCreateObjectsResponse:
     properties:
       failed:
         type: integer
       results:
         items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.BulkCreateObjectResult'
+          $ref: '#/definitions/graph.BulkCreateObjectResult'
         type: array
       success:
         type: integer
     type: object
-  github_com_emergent-company_emergent_domain_graph.BulkCreateRelationshipResult:
+  graph.BulkCreateRelationshipResult:
     properties:
       error:
         type: string
@@ -1831,7 +1831,7 @@ definitions:
       success:
         type: boolean
     type: object
-  github_com_emergent-company_emergent_domain_graph.BulkCreateRelationshipsRequest:
+  graph.BulkCreateRelationshipsRequest:
     properties:
       items:
         items:
@@ -1842,18 +1842,18 @@ definitions:
     required:
     - items
     type: object
-  github_com_emergent-company_emergent_domain_graph.BulkCreateRelationshipsResponse:
+  graph.BulkCreateRelationshipsResponse:
     properties:
       failed:
         type: integer
       results:
         items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.BulkCreateRelationshipResult'
+          $ref: '#/definitions/graph.BulkCreateRelationshipResult'
         type: array
       success:
         type: integer
     type: object
-  github_com_emergent-company_emergent_domain_graph.BulkUpdateStatusRequest:
+  graph.BulkUpdateStatusRequest:
     properties:
       ids:
         items:
@@ -1868,7 +1868,83 @@ definitions:
     - ids
     - status
     type: object
-  github_com_emergent-company_emergent_domain_graph.EdgePhase:
+  graph.CreateGraphObjectRequest:
+    properties:
+      branch_id:
+        type: string
+      key:
+        maxLength: 128
+        type: string
+      labels:
+        items:
+          type: string
+        maxItems: 32
+        type: array
+      properties:
+        additionalProperties: {}
+        type: object
+      status:
+        maxLength: 64
+        type: string
+      type:
+        maxLength: 64
+        type: string
+    required:
+    - type
+    type: object
+  graph.CreateGraphRelationshipRequest:
+    properties:
+      branch_id:
+        type: string
+      dst_id:
+        type: string
+      properties:
+        additionalProperties: {}
+        type: object
+      src_id:
+        type: string
+      type:
+        maxLength: 64
+        type: string
+      weight:
+        type: number
+    required:
+    - dst_id
+    - src_id
+    - type
+    type: object
+  graph.CreateSubgraphRequest:
+    properties:
+      objects:
+        items:
+          $ref: '#/definitions/graph.SubgraphObjectRequest'
+        maxItems: 100
+        minItems: 1
+        type: array
+      relationships:
+        items:
+          $ref: '#/definitions/graph.SubgraphRelationshipRequest'
+        maxItems: 200
+        type: array
+    required:
+    - objects
+    type: object
+  graph.CreateSubgraphResponse:
+    properties:
+      objects:
+        items:
+          $ref: '#/definitions/graph.GraphObjectResponse'
+        type: array
+      ref_map:
+        additionalProperties:
+          type: string
+        type: object
+      relationships:
+        items:
+          $ref: '#/definitions/graph.GraphRelationshipResponse'
+        type: array
+    type: object
+  graph.EdgePhase:
     properties:
       direction:
         enum:
@@ -1896,7 +1972,7 @@ definitions:
     - direction
     - maxDepth
     type: object
-  github_com_emergent-company_emergent_domain_graph.GraphExpandProjection:
+  graph.GraphExpandProjection:
     properties:
       exclude_object_properties:
         items:
@@ -1907,7 +1983,7 @@ definitions:
           type: string
         type: array
     type: object
-  github_com_emergent-company_emergent_domain_graph.GraphExpandRequest:
+  graph.GraphExpandRequest:
     properties:
       direction:
         description: '"out", "in", "both" (default: "both")'
@@ -1932,7 +2008,7 @@ definitions:
           type: string
         type: array
       projection:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphExpandProjection'
+        $ref: '#/definitions/graph.GraphExpandProjection'
       query_context:
         description: Optional query for relevance-based edge ordering during expansion
         type: string
@@ -1948,7 +2024,7 @@ definitions:
     required:
     - root_ids
     type: object
-  github_com_emergent-company_emergent_domain_graph.GraphObject:
+  graph.GraphObject:
     properties:
       actor_id:
         type: string
@@ -2035,1137 +2111,6 @@ definitions:
       version:
         type: integer
     type: object
-  github_com_emergent-company_emergent_domain_graph.GraphRelationship:
-    properties:
-      branch_id:
-        type: string
-      canonical_id:
-        type: string
-      change_summary:
-        additionalProperties: {}
-        type: object
-      created_at:
-        description: Timestamps
-        type: string
-      deleted_at:
-        type: string
-      dst:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphObject'
-      dst_id:
-        type: string
-      id:
-        type: string
-      project_id:
-        type: string
-      properties:
-        additionalProperties: {}
-        type: object
-      src:
-        allOf:
-        - $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphObject'
-        description: Populated by joins — src_id/dst_id store canonical_id values
-      src_id:
-        type: string
-      supersedes_id:
-        type: string
-      type:
-        type: string
-      valid_from:
-        description: Temporal validity
-        type: string
-      valid_to:
-        type: string
-      version:
-        type: integer
-      weight:
-        type: number
-    type: object
-  github_com_emergent-company_emergent_domain_graph.HybridSearchRequest:
-    properties:
-      branchId:
-        type: string
-      includeDebug:
-        description: Can also use ?debug=true query param
-        type: boolean
-      includeDeleted:
-        type: boolean
-      labels:
-        items:
-          type: string
-        type: array
-      lexicalWeight:
-        type: number
-      limit:
-        type: integer
-      offset:
-        type: integer
-      query:
-        type: string
-      status:
-        type: string
-      types:
-        items:
-          type: string
-        type: array
-      vector:
-        items:
-          type: number
-        type: array
-      vectorWeight:
-        type: number
-    required:
-    - query
-    type: object
-  github_com_emergent-company_emergent_domain_graph.MostAccessedResponse:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.AnalyticsObjectItem'
-        type: array
-      meta:
-        additionalProperties: true
-        type: object
-      total:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_graph.Predicate:
-    properties:
-      operator:
-        enum:
-        - equals
-        - notEquals
-        - contains
-        - greaterThan
-        - lessThan
-        - greaterThanOrEqual
-        - lessThanOrEqual
-        - in
-        - notIn
-        - matches
-        - exists
-        - notExists
-        type: string
-      path:
-        description: JSON Pointer path
-        type: string
-      value: {}
-    required:
-    - operator
-    - path
-    type: object
-  github_com_emergent-company_emergent_domain_graph.SearchWithNeighborsRequest:
-    properties:
-      branchId:
-        type: string
-      includeNeighbors:
-        type: boolean
-      labels:
-        items:
-          type: string
-        type: array
-      limit:
-        type: integer
-      maxDistance:
-        type: number
-      maxNeighbors:
-        type: integer
-      query:
-        type: string
-      types:
-        items:
-          type: string
-        type: array
-    required:
-    - query
-    type: object
-  github_com_emergent-company_emergent_domain_graph.TemporalFilter:
-    properties:
-      asOf:
-        description: ISO 8601 timestamp
-        type: string
-      field:
-        description: '"valid_from", "created_at", "updated_at" (default: "valid_from")'
-        type: string
-    required:
-    - asOf
-    type: object
-  github_com_emergent-company_emergent_domain_graph.TraverseGraphRequest:
-    properties:
-      cursor:
-        type: string
-      direction:
-        description: '"out", "in", "both" (default: "both")'
-        type: string
-      edgeFilter:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.Predicate'
-      edgePhases:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.EdgePhase'
-        type: array
-      fieldStrategy:
-        description: '"full", "compact", "minimal"'
-        type: string
-      labels:
-        items:
-          type: string
-        type: array
-      limit:
-        description: 'page size, default: 50, max: 200'
-        type: integer
-      max_depth:
-        description: 'default: 2, max: 8'
-        type: integer
-      max_edges:
-        description: 'default: 400, max: 10000'
-        type: integer
-      max_nodes:
-        description: 'default: 200, max: 5000'
-        type: integer
-      maxPathsPerNode:
-        type: integer
-      nodeFilter:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.Predicate'
-      object_types:
-        items:
-          type: string
-        type: array
-      page_direction:
-        description: '"forward" or "backward"'
-        type: string
-      query_context:
-        description: 'Optional: query text for relevance-based edge ordering during
-          BFS'
-        type: string
-      relationship_types:
-        items:
-          type: string
-        type: array
-      returnPaths:
-        type: boolean
-      root_ids:
-        items:
-          type: string
-        maxItems: 50
-        type: array
-      temporalFilter:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.TemporalFilter'
-    required:
-    - root_ids
-    type: object
-  github_com_emergent-company_emergent_domain_graph.UnusedObjectsResponse:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.AnalyticsObjectItem'
-        type: array
-      meta:
-        additionalProperties: true
-        type: object
-      total:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_graph.VectorSearchRequest:
-    properties:
-      branchId:
-        type: string
-      includeDeleted:
-        type: boolean
-      labels:
-        items:
-          type: string
-        type: array
-      limit:
-        type: integer
-      maxDistance:
-        type: number
-      offset:
-        type: integer
-      status:
-        type: string
-      types:
-        items:
-          type: string
-        type: array
-      vector:
-        items:
-          type: number
-        type: array
-    required:
-    - vector
-    type: object
-  github_com_emergent-company_emergent_domain_health.Check:
-    properties:
-      message:
-        type: string
-      status:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_health.HealthResponse:
-    properties:
-      checks:
-        additionalProperties:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_health.Check'
-        type: object
-      status:
-        type: string
-      timestamp:
-        type: string
-      uptime:
-        type: string
-      version:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_mcp.Request:
-    properties:
-      id:
-        description: Can be string, number, or null
-        items:
-          type: integer
-        type: array
-      jsonrpc:
-        type: string
-      method:
-        type: string
-      params:
-        items:
-          type: integer
-        type: array
-    type: object
-  github_com_emergent-company_emergent_domain_mcpregistry.APIResponse-array_mcpregistry_MCPServerDTO:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/mcpregistry.MCPServerDTO'
-        type: array
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_mcpregistry.APIResponse-mcpregistry_MCPServerDTO:
-    properties:
-      data:
-        $ref: '#/definitions/mcpregistry.MCPServerDTO'
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_mcpregistry.APIResponse-mcpregistry_MCPServerDetailDTO:
-    properties:
-      data:
-        $ref: '#/definitions/mcpregistry.MCPServerDetailDTO'
-      error:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_mcpregistry.MCPServerType:
-    enum:
-    - builtin
-    - stdio
-    - sse
-    - http
-    type: string
-    x-enum-varnames:
-    - ServerTypeBuiltin
-    - ServerTypeStdio
-    - ServerTypeSSE
-    - ServerTypeHTTP
-  github_com_emergent-company_emergent_domain_notifications.Notification:
-    properties:
-      actionLabel:
-        type: string
-      actionStatus:
-        type: string
-      actionStatusAt:
-        type: string
-      actionStatusBy:
-        type: string
-      actionUrl:
-        type: string
-      actions:
-        items:
-          type: integer
-        type: array
-      category:
-        type: string
-      clearedAt:
-        type: string
-      createdAt:
-        type: string
-      details:
-        items:
-          type: integer
-        type: array
-      dismissed:
-        type: boolean
-      dismissedAt:
-        type: string
-      expiresAt:
-        type: string
-      groupKey:
-        type: string
-      id:
-        type: string
-      importance:
-        type: string
-      message:
-        type: string
-      projectId:
-        type: string
-      read:
-        type: boolean
-      readAt:
-        type: string
-      relatedResourceId:
-        type: string
-      relatedResourceType:
-        type: string
-      severity:
-        type: string
-      snoozedUntil:
-        type: string
-      sourceId:
-        type: string
-      sourceType:
-        type: string
-      taskId:
-        type: string
-      title:
-        type: string
-      type:
-        type: string
-      updatedAt:
-        type: string
-      userId:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_notifications.NotificationCounts:
-    properties:
-      all:
-        type: integer
-      cleared:
-        type: integer
-      important:
-        type: integer
-      other:
-        type: integer
-      snoozed:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_notifications.NotificationCountsResponse:
-    properties:
-      data:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_notifications.NotificationCounts'
-    type: object
-  github_com_emergent-company_emergent_domain_notifications.NotificationListResponse:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_notifications.Notification'
-        type: array
-    type: object
-  github_com_emergent-company_emergent_domain_notifications.NotificationStats:
-    properties:
-      dismissed:
-        type: integer
-      total:
-        type: integer
-      unread:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_projects.CreateProjectRequest:
-    properties:
-      name:
-        minLength: 1
-        type: string
-      orgId:
-        type: string
-    required:
-    - name
-    - orgId
-    type: object
-  github_com_emergent-company_emergent_domain_projects.Project:
-    properties:
-      allow_parallel_extraction:
-        type: boolean
-      auto_extract_config:
-        additionalProperties: {}
-        type: object
-      auto_extract_objects:
-        type: boolean
-      chat_prompt_template:
-        type: string
-      chunking_config:
-        additionalProperties: {}
-        description: Additional columns added in later migrations
-        type: object
-      createdAt:
-        type: string
-      deleted_at:
-        type: string
-      deleted_by:
-        type: string
-      extraction_config:
-        additionalProperties: {}
-        type: object
-      id:
-        type: string
-      kb_purpose:
-        type: string
-      name:
-        type: string
-      organizationId:
-        type: string
-      stats:
-        allOf:
-        - $ref: '#/definitions/github_com_emergent-company_emergent_domain_projects.ProjectStats'
-        description: Populated only when requested
-      updatedAt:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_projects.ProjectStats:
-    properties:
-      documentCount:
-        type: integer
-      objectCount:
-        type: integer
-      queuedJobs:
-        type: integer
-      relationshipCount:
-        type: integer
-      runningJobs:
-        type: integer
-      templatePacks:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_projects.TemplatePack'
-        type: array
-      totalJobs:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_projects.TemplatePack:
-    properties:
-      name:
-        type: string
-      objectTypes:
-        items:
-          type: string
-        type: array
-      relationshipTypes:
-        items:
-          type: string
-        type: array
-      version:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_projects.UpdateProjectRequest:
-    properties:
-      auto_extract_config:
-        additionalProperties: {}
-        type: object
-      auto_extract_objects:
-        type: boolean
-      chat_prompt_template:
-        type: string
-      kb_purpose:
-        type: string
-      name:
-        minLength: 1
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.CancelJobsRequest:
-    properties:
-      ids:
-        items:
-          type: string
-        minItems: 1
-        type: array
-    required:
-    - ids
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.CancelJobsResponse:
-    properties:
-      cancelledCount:
-        type: integer
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.CleanupOrphansResponse:
-    properties:
-      deletedCount:
-        type: integer
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.DeleteJobsRequest:
-    properties:
-      ids:
-        items:
-          type: string
-        minItems: 1
-        type: array
-      type:
-        description: 'For embedding jobs: "graph" or "chunk"'
-        type: string
-    required:
-    - ids
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.DeleteJobsResponse:
-    properties:
-      deletedCount:
-        type: integer
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.EmailJobPreviewResponse:
-    properties:
-      html:
-        type: string
-      subject:
-        type: string
-      toEmail:
-        type: string
-      toName:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.ListDocumentParsingJobsResponse:
-    properties:
-      jobs:
-        items:
-          $ref: '#/definitions/superadmin.DocumentParsingJobDTO'
-        type: array
-      meta:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.PaginationMeta'
-      stats:
-        $ref: '#/definitions/superadmin.DocumentParsingJobStatsDTO'
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.ListEmailJobsResponse:
-    properties:
-      emailJobs:
-        items:
-          $ref: '#/definitions/superadmin.SuperadminEmailJobDTO'
-        type: array
-      meta:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.PaginationMeta'
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.ListEmbeddingJobsResponse:
-    properties:
-      jobs:
-        items:
-          $ref: '#/definitions/superadmin.EmbeddingJobDTO'
-        type: array
-      meta:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.PaginationMeta'
-      stats:
-        $ref: '#/definitions/superadmin.EmbeddingJobStatsDTO'
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.ListExtractionJobsResponse:
-    properties:
-      jobs:
-        items:
-          $ref: '#/definitions/superadmin.ExtractionJobDTO'
-        type: array
-      meta:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.PaginationMeta'
-      stats:
-        $ref: '#/definitions/superadmin.ExtractionJobStatsDTO'
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.ListOrganizationsResponse:
-    properties:
-      meta:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.PaginationMeta'
-      organizations:
-        items:
-          $ref: '#/definitions/superadmin.SuperadminOrgDTO'
-        type: array
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.ListProjectsResponse:
-    properties:
-      meta:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.PaginationMeta'
-      projects:
-        items:
-          $ref: '#/definitions/superadmin.SuperadminProjectDTO'
-        type: array
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.ListSyncJobsResponse:
-    properties:
-      jobs:
-        items:
-          $ref: '#/definitions/superadmin.SyncJobDTO'
-        type: array
-      meta:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.PaginationMeta'
-      stats:
-        $ref: '#/definitions/superadmin.SyncJobStatsDTO'
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.ListUsersResponse:
-    properties:
-      meta:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.PaginationMeta'
-      users:
-        items:
-          $ref: '#/definitions/superadmin.SuperadminUserDTO'
-        type: array
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.PaginationMeta:
-    properties:
-      hasNext:
-        type: boolean
-      hasPrev:
-        type: boolean
-      limit:
-        type: integer
-      page:
-        type: integer
-      total:
-        type: integer
-      totalPages:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.RetryJobsRequest:
-    properties:
-      ids:
-        items:
-          type: string
-        minItems: 1
-        type: array
-    required:
-    - ids
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.RetryJobsResponse:
-    properties:
-      message:
-        type: string
-      retriedCount:
-        type: integer
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.SuccessResponse:
-    properties:
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.SuperadminMeResponse:
-    properties:
-      isSuperadmin:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_superadmin.SyncJobLogsResponse:
-    properties:
-      completedAt:
-        type: string
-      createdAt:
-        type: string
-      errorMessage:
-        type: string
-      id:
-        type: string
-      logs: {}
-      startedAt:
-        type: string
-      status:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_tasks.ResolveTaskRequest:
-    properties:
-      resolution:
-        description: '"accepted" or "rejected"'
-        type: string
-      resolutionNotes:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_tasks.Task:
-    properties:
-      createdAt:
-        type: string
-      description:
-        type: string
-      id:
-        type: string
-      metadata:
-        items:
-          type: integer
-        type: array
-      projectId:
-        type: string
-      resolutionNotes:
-        type: string
-      resolvedAt:
-        type: string
-      resolvedBy:
-        type: string
-      sourceId:
-        type: string
-      sourceType:
-        type: string
-      status:
-        type: string
-      title:
-        type: string
-      type:
-        type: string
-      updatedAt:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_tasks.TaskListResponse:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_tasks.Task'
-        type: array
-      total:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_tasks.TaskResponse:
-    properties:
-      data:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_tasks.Task'
-    type: object
-  github_com_emergent-company_emergent_domain_templatepacks.AssignPackRequest:
-    properties:
-      customizations:
-        additionalProperties: true
-        type: object
-      template_pack_id:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_templatepacks.CompiledTypesResponse:
-    properties:
-      objectTypes:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_templatepacks.ObjectTypeSchema'
-        type: array
-      relationshipTypes:
-        items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_templatepacks.RelationshipTypeSchema'
-        type: array
-    type: object
-  github_com_emergent-company_emergent_domain_templatepacks.CreatePackRequest:
-    properties:
-      author:
-        type: string
-      description:
-        type: string
-      documentation_url:
-        type: string
-      extraction_prompts:
-        items:
-          type: integer
-        type: array
-      license:
-        type: string
-      name:
-        type: string
-      object_type_schemas:
-        items:
-          type: integer
-        type: array
-      relationship_type_schemas:
-        items:
-          type: integer
-        type: array
-      repository_url:
-        type: string
-      ui_configs:
-        items:
-          type: integer
-        type: array
-      version:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_templatepacks.InstalledPackItem:
-    properties:
-      active:
-        type: boolean
-      customizations:
-        additionalProperties: true
-        type: object
-      description:
-        type: string
-      id:
-        description: assignment ID
-        type: string
-      installedAt:
-        type: string
-      name:
-        type: string
-      templatePackId:
-        type: string
-      version:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_templatepacks.ObjectTypeSchema:
-    properties:
-      description:
-        type: string
-      label:
-        type: string
-      name:
-        type: string
-      packId:
-        type: string
-      packName:
-        type: string
-      properties:
-        items:
-          type: integer
-        type: array
-    type: object
-  github_com_emergent-company_emergent_domain_templatepacks.ProjectTemplatePack:
-    properties:
-      active:
-        type: boolean
-      createdAt:
-        type: string
-      id:
-        type: string
-      installedAt:
-        type: string
-      projectId:
-        type: string
-      templatePack:
-        allOf:
-        - $ref: '#/definitions/templatepacks.GraphTemplatePack'
-        description: Joined template pack
-      templatePackId:
-        type: string
-      updatedAt:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_templatepacks.RelationshipTypeSchema:
-    properties:
-      description:
-        type: string
-      label:
-        type: string
-      name:
-        type: string
-      packId:
-        type: string
-      packName:
-        type: string
-      sourceType:
-        type: string
-      targetType:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_templatepacks.TemplatePackListItem:
-    properties:
-      author:
-        type: string
-      description:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-      version:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_templatepacks.UpdateAssignmentRequest:
-    properties:
-      active:
-        type: boolean
-    type: object
-  github_com_emergent-company_emergent_domain_typeregistry.CreateTypeRequest:
-    properties:
-      description:
-        type: string
-      enabled:
-        description: defaults to true
-        type: boolean
-      extraction_config:
-        items:
-          type: integer
-        type: array
-      json_schema:
-        items:
-          type: integer
-        type: array
-      type_name:
-        type: string
-      ui_config:
-        items:
-          type: integer
-        type: array
-    type: object
-  github_com_emergent-company_emergent_domain_typeregistry.RelationshipTypeInfo:
-    properties:
-      description:
-        type: string
-      inverse_label:
-        type: string
-      inverse_type:
-        description: When set, creating this relationship auto-creates the inverse
-        type: string
-      label:
-        type: string
-      source_types:
-        description: 'For incoming: types this relationship can come from'
-        items:
-          type: string
-        type: array
-      target_types:
-        description: 'For outgoing: types this relationship can connect to'
-        items:
-          type: string
-        type: array
-      type:
-        type: string
-    type: object
-  github_com_emergent-company_emergent_domain_typeregistry.TypeRegistryStats:
-    properties:
-      custom_types:
-        type: integer
-      discovered_types:
-        type: integer
-      enabled_types:
-        type: integer
-      template_types:
-        type: integer
-      total_objects:
-        type: integer
-      total_types:
-        type: integer
-      types_with_objects:
-        type: integer
-    type: object
-  github_com_emergent-company_emergent_domain_typeregistry.UpdateTypeRequest:
-    properties:
-      description:
-        type: string
-      enabled:
-        type: boolean
-      extraction_config:
-        items:
-          type: integer
-        type: array
-      json_schema:
-        items:
-          type: integer
-        type: array
-      ui_config:
-        items:
-          type: integer
-        type: array
-    type: object
-  github_com_emergent-company_emergent_domain_useractivity.RecentItemsResponse:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/useractivity.RecentItemResponse'
-        type: array
-    type: object
-  github_com_emergent-company_emergent_domain_useractivity.RecordActivityRequest:
-    properties:
-      actionType:
-        type: string
-      resourceId:
-        type: string
-      resourceName:
-        type: string
-      resourceSubtype:
-        type: string
-      resourceType:
-        type: string
-    required:
-    - actionType
-    - resourceId
-    - resourceType
-    type: object
-  graph.CreateGraphObjectRequest:
-    properties:
-      branch_id:
-        type: string
-      key:
-        maxLength: 128
-        type: string
-      labels:
-        items:
-          type: string
-        maxItems: 32
-        type: array
-      properties:
-        additionalProperties: {}
-        type: object
-      status:
-        maxLength: 64
-        type: string
-      type:
-        maxLength: 64
-        type: string
-    required:
-    - type
-    type: object
-  graph.CreateGraphRelationshipRequest:
-    properties:
-      branch_id:
-        type: string
-      dst_id:
-        type: string
-      properties:
-        additionalProperties: {}
-        type: object
-      src_id:
-        type: string
-      type:
-        maxLength: 64
-        type: string
-      weight:
-        type: number
-    required:
-    - dst_id
-    - src_id
-    - type
-    type: object
-  graph.CreateSubgraphRequest:
-    properties:
-      objects:
-        items:
-          $ref: '#/definitions/graph.SubgraphObjectRequest'
-        maxItems: 100
-        minItems: 1
-        type: array
-      relationships:
-        items:
-          $ref: '#/definitions/graph.SubgraphRelationshipRequest'
-        maxItems: 200
-        type: array
-    required:
-    - objects
-    type: object
-  graph.CreateSubgraphResponse:
-    properties:
-      objects:
-        items:
-          $ref: '#/definitions/graph.GraphObjectResponse'
-        type: array
-      ref_map:
-        additionalProperties:
-          type: string
-        type: object
-      relationships:
-        items:
-          $ref: '#/definitions/graph.GraphRelationshipResponse'
-        type: array
-    type: object
   graph.GraphObjectResponse:
     properties:
       branch_id:
@@ -3224,6 +2169,51 @@ definitions:
       version:
         type: integer
     type: object
+  graph.GraphRelationship:
+    properties:
+      branch_id:
+        type: string
+      canonical_id:
+        type: string
+      change_summary:
+        additionalProperties: {}
+        type: object
+      created_at:
+        description: Timestamps
+        type: string
+      deleted_at:
+        type: string
+      dst:
+        $ref: '#/definitions/graph.GraphObject'
+      dst_id:
+        type: string
+      id:
+        type: string
+      project_id:
+        type: string
+      properties:
+        additionalProperties: {}
+        type: object
+      src:
+        allOf:
+        - $ref: '#/definitions/graph.GraphObject'
+        description: Populated by joins — src_id/dst_id store canonical_id values
+      src_id:
+        type: string
+      supersedes_id:
+        type: string
+      type:
+        type: string
+      valid_from:
+        description: Temporal validity
+        type: string
+      valid_to:
+        type: string
+      version:
+        type: integer
+      weight:
+        type: number
+    type: object
   graph.GraphRelationshipResponse:
     properties:
       branch_id:
@@ -3263,6 +2253,54 @@ definitions:
       weight:
         type: number
     type: object
+  graph.HybridSearchRequest:
+    properties:
+      branchId:
+        type: string
+      includeDebug:
+        description: Can also use ?debug=true query param
+        type: boolean
+      includeDeleted:
+        type: boolean
+      labels:
+        items:
+          type: string
+        type: array
+      lexicalWeight:
+        type: number
+      limit:
+        type: integer
+      offset:
+        type: integer
+      query:
+        type: string
+      status:
+        type: string
+      types:
+        items:
+          type: string
+        type: array
+      vector:
+        items:
+          type: number
+        type: array
+      vectorWeight:
+        type: number
+    required:
+    - query
+    type: object
+  graph.MostAccessedResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/graph.AnalyticsObjectItem'
+        type: array
+      meta:
+        additionalProperties: true
+        type: object
+      total:
+        type: integer
+    type: object
   graph.PatchGraphObjectRequest:
     properties:
       labels:
@@ -3284,6 +2322,56 @@ definitions:
         type: object
       weight:
         type: number
+    type: object
+  graph.Predicate:
+    properties:
+      operator:
+        enum:
+        - equals
+        - notEquals
+        - contains
+        - greaterThan
+        - lessThan
+        - greaterThanOrEqual
+        - lessThanOrEqual
+        - in
+        - notIn
+        - matches
+        - exists
+        - notExists
+        type: string
+      path:
+        description: JSON Pointer path
+        type: string
+      value: {}
+    required:
+    - operator
+    - path
+    type: object
+  graph.SearchWithNeighborsRequest:
+    properties:
+      branchId:
+        type: string
+      includeNeighbors:
+        type: boolean
+      labels:
+        items:
+          type: string
+        type: array
+      limit:
+        type: integer
+      maxDistance:
+        type: number
+      maxNeighbors:
+        type: integer
+      query:
+        type: string
+      types:
+        items:
+          type: string
+        type: array
+    required:
+    - query
     type: object
   graph.SubgraphObjectRequest:
     properties:
@@ -3333,6 +2421,143 @@ definitions:
     - dst_ref
     - src_ref
     - type
+    type: object
+  graph.TemporalFilter:
+    properties:
+      asOf:
+        description: ISO 8601 timestamp
+        type: string
+      field:
+        description: '"valid_from", "created_at", "updated_at" (default: "valid_from")'
+        type: string
+    required:
+    - asOf
+    type: object
+  graph.TraverseGraphRequest:
+    properties:
+      cursor:
+        type: string
+      direction:
+        description: '"out", "in", "both" (default: "both")'
+        type: string
+      edgeFilter:
+        $ref: '#/definitions/graph.Predicate'
+      edgePhases:
+        items:
+          $ref: '#/definitions/graph.EdgePhase'
+        type: array
+      fieldStrategy:
+        description: '"full", "compact", "minimal"'
+        type: string
+      labels:
+        items:
+          type: string
+        type: array
+      limit:
+        description: 'page size, default: 50, max: 200'
+        type: integer
+      max_depth:
+        description: 'default: 2, max: 8'
+        type: integer
+      max_edges:
+        description: 'default: 400, max: 10000'
+        type: integer
+      max_nodes:
+        description: 'default: 200, max: 5000'
+        type: integer
+      maxPathsPerNode:
+        type: integer
+      nodeFilter:
+        $ref: '#/definitions/graph.Predicate'
+      object_types:
+        items:
+          type: string
+        type: array
+      page_direction:
+        description: '"forward" or "backward"'
+        type: string
+      query_context:
+        description: 'Optional: query text for relevance-based edge ordering during
+          BFS'
+        type: string
+      relationship_types:
+        items:
+          type: string
+        type: array
+      returnPaths:
+        type: boolean
+      root_ids:
+        items:
+          type: string
+        maxItems: 50
+        type: array
+      temporalFilter:
+        $ref: '#/definitions/graph.TemporalFilter'
+    required:
+    - root_ids
+    type: object
+  graph.UnusedObjectsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/graph.AnalyticsObjectItem'
+        type: array
+      meta:
+        additionalProperties: true
+        type: object
+      total:
+        type: integer
+    type: object
+  graph.VectorSearchRequest:
+    properties:
+      branchId:
+        type: string
+      includeDeleted:
+        type: boolean
+      labels:
+        items:
+          type: string
+        type: array
+      limit:
+        type: integer
+      maxDistance:
+        type: number
+      offset:
+        type: integer
+      status:
+        type: string
+      types:
+        items:
+          type: string
+        type: array
+      vector:
+        items:
+          type: number
+        type: array
+    required:
+    - vector
+    type: object
+  health.Check:
+    properties:
+      message:
+        type: string
+      status:
+        type: string
+    type: object
+  health.HealthResponse:
+    properties:
+      checks:
+        additionalProperties:
+          $ref: '#/definitions/health.Check'
+        type: object
+      status:
+        type: string
+      timestamp:
+        type: string
+      uptime:
+        type: string
+      version:
+        type: string
     type: object
   integrations.AvailableIntegrationDTO:
     properties:
@@ -3572,6 +2797,22 @@ definitions:
       message:
         type: string
     type: object
+  mcp.Request:
+    properties:
+      id:
+        description: Can be string, number, or null
+        items:
+          type: integer
+        type: array
+      jsonrpc:
+        type: string
+      method:
+        type: string
+      params:
+        items:
+          type: integer
+        type: array
+    type: object
   mcp.Response:
     properties:
       error:
@@ -3583,6 +2824,41 @@ definitions:
       jsonrpc:
         type: string
       result: {}
+    type: object
+  mcpregistry.APIResponse-array_mcpregistry_MCPServerDTO:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/mcpregistry.MCPServerDTO'
+        type: array
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  mcpregistry.APIResponse-mcpregistry_MCPServerDTO:
+    properties:
+      data:
+        $ref: '#/definitions/mcpregistry.MCPServerDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  mcpregistry.APIResponse-mcpregistry_MCPServerDetailDTO:
+    properties:
+      data:
+        $ref: '#/definitions/mcpregistry.MCPServerDetailDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
     type: object
   mcpregistry.CreateMCPServerDTO:
     properties:
@@ -3604,7 +2880,7 @@ definitions:
         type: string
       type:
         allOf:
-        - $ref: '#/definitions/github_com_emergent-company_emergent_domain_mcpregistry.MCPServerType'
+        - $ref: '#/definitions/mcpregistry.MCPServerType'
         enum:
         - stdio
         - sse
@@ -3642,7 +2918,7 @@ definitions:
       toolCount:
         type: integer
       type:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_mcpregistry.MCPServerType'
+        $ref: '#/definitions/mcpregistry.MCPServerType'
       updatedAt:
         type: string
       url:
@@ -3679,7 +2955,7 @@ definitions:
           $ref: '#/definitions/mcpregistry.MCPServerToolDTO'
         type: array
       type:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_mcpregistry.MCPServerType'
+        $ref: '#/definitions/mcpregistry.MCPServerType'
       updatedAt:
         type: string
       url:
@@ -3703,6 +2979,18 @@ definitions:
       toolName:
         type: string
     type: object
+  mcpregistry.MCPServerType:
+    enum:
+    - builtin
+    - stdio
+    - sse
+    - http
+    type: string
+    x-enum-varnames:
+    - ServerTypeBuiltin
+    - ServerTypeStdio
+    - ServerTypeSSE
+    - ServerTypeHTTP
   mcpregistry.UpdateMCPServerDTO:
     properties:
       args:
@@ -3875,6 +3163,109 @@ definitions:
           $ref: '#/definitions/monitoring.ProcessLogDTO'
         type: array
     type: object
+  notifications.Notification:
+    properties:
+      actionLabel:
+        type: string
+      actionStatus:
+        type: string
+      actionStatusAt:
+        type: string
+      actionStatusBy:
+        type: string
+      actionUrl:
+        type: string
+      actions:
+        items:
+          type: integer
+        type: array
+      category:
+        type: string
+      clearedAt:
+        type: string
+      createdAt:
+        type: string
+      details:
+        items:
+          type: integer
+        type: array
+      dismissed:
+        type: boolean
+      dismissedAt:
+        type: string
+      expiresAt:
+        type: string
+      groupKey:
+        type: string
+      id:
+        type: string
+      importance:
+        type: string
+      message:
+        type: string
+      projectId:
+        type: string
+      read:
+        type: boolean
+      readAt:
+        type: string
+      relatedResourceId:
+        type: string
+      relatedResourceType:
+        type: string
+      severity:
+        type: string
+      snoozedUntil:
+        type: string
+      sourceId:
+        type: string
+      sourceType:
+        type: string
+      taskId:
+        type: string
+      title:
+        type: string
+      type:
+        type: string
+      updatedAt:
+        type: string
+      userId:
+        type: string
+    type: object
+  notifications.NotificationCounts:
+    properties:
+      all:
+        type: integer
+      cleared:
+        type: integer
+      important:
+        type: integer
+      other:
+        type: integer
+      snoozed:
+        type: integer
+    type: object
+  notifications.NotificationCountsResponse:
+    properties:
+      data:
+        $ref: '#/definitions/notifications.NotificationCounts'
+    type: object
+  notifications.NotificationListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/notifications.Notification'
+        type: array
+    type: object
+  notifications.NotificationStats:
+    properties:
+      dismissed:
+        type: integer
+      total:
+        type: integer
+      unread:
+        type: integer
+    type: object
   orgs.CreateOrgRequest:
     properties:
       name:
@@ -3906,6 +3297,56 @@ definitions:
       name:
         type: string
     type: object
+  projects.CreateProjectRequest:
+    properties:
+      name:
+        minLength: 1
+        type: string
+      orgId:
+        type: string
+    required:
+    - name
+    - orgId
+    type: object
+  projects.Project:
+    properties:
+      allow_parallel_extraction:
+        type: boolean
+      auto_extract_config:
+        additionalProperties: {}
+        type: object
+      auto_extract_objects:
+        type: boolean
+      chat_prompt_template:
+        type: string
+      chunking_config:
+        additionalProperties: {}
+        description: Additional columns added in later migrations
+        type: object
+      createdAt:
+        type: string
+      deleted_at:
+        type: string
+      deleted_by:
+        type: string
+      extraction_config:
+        additionalProperties: {}
+        type: object
+      id:
+        type: string
+      kb_purpose:
+        type: string
+      name:
+        type: string
+      organizationId:
+        type: string
+      stats:
+        allOf:
+        - $ref: '#/definitions/projects.ProjectStats'
+        description: Populated only when requested
+      updatedAt:
+        type: string
+    type: object
   projects.ProjectDTO:
     properties:
       auto_extract_config:
@@ -3924,7 +3365,7 @@ definitions:
       orgId:
         type: string
       stats:
-        $ref: '#/definitions/github_com_emergent-company_emergent_domain_projects.ProjectStats'
+        $ref: '#/definitions/projects.ProjectStats'
     type: object
   projects.ProjectMemberDTO:
     properties:
@@ -3943,6 +3384,55 @@ definitions:
       lastName:
         type: string
       role:
+        type: string
+    type: object
+  projects.ProjectStats:
+    properties:
+      documentCount:
+        type: integer
+      objectCount:
+        type: integer
+      queuedJobs:
+        type: integer
+      relationshipCount:
+        type: integer
+      runningJobs:
+        type: integer
+      templatePacks:
+        items:
+          $ref: '#/definitions/projects.TemplatePack'
+        type: array
+      totalJobs:
+        type: integer
+    type: object
+  projects.TemplatePack:
+    properties:
+      name:
+        type: string
+      objectTypes:
+        items:
+          type: string
+        type: array
+      relationshipTypes:
+        items:
+          type: string
+        type: array
+      version:
+        type: string
+    type: object
+  projects.UpdateProjectRequest:
+    properties:
+      auto_extract_config:
+        additionalProperties: {}
+        type: object
+      auto_extract_objects:
+        type: boolean
+      chat_prompt_template:
+        type: string
+      kb_purpose:
+        type: string
+      name:
+        minLength: 1
         type: string
     type: object
   search.PreFusionCounts:
@@ -4183,6 +3673,56 @@ definitions:
       textWeight:
         type: number
     type: object
+  superadmin.CancelJobsRequest:
+    properties:
+      ids:
+        items:
+          type: string
+        minItems: 1
+        type: array
+    required:
+    - ids
+    type: object
+  superadmin.CancelJobsResponse:
+    properties:
+      cancelledCount:
+        type: integer
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  superadmin.CleanupOrphansResponse:
+    properties:
+      deletedCount:
+        type: integer
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  superadmin.DeleteJobsRequest:
+    properties:
+      ids:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      type:
+        description: 'For embedding jobs: "graph" or "chunk"'
+        type: string
+    required:
+    - ids
+    type: object
+  superadmin.DeleteJobsResponse:
+    properties:
+      deletedCount:
+        type: integer
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
   superadmin.DocumentParsingJobDTO:
     properties:
       completedAt:
@@ -4249,6 +3789,17 @@ definitions:
         type: integer
       withErrors:
         type: integer
+    type: object
+  superadmin.EmailJobPreviewResponse:
+    properties:
+      html:
+        type: string
+      subject:
+        type: string
+      toEmail:
+        type: string
+      toName:
+        type: string
     type: object
   superadmin.EmbeddingJobDTO:
     properties:
@@ -4371,6 +3922,127 @@ definitions:
       withErrors:
         type: integer
     type: object
+  superadmin.ListDocumentParsingJobsResponse:
+    properties:
+      jobs:
+        items:
+          $ref: '#/definitions/superadmin.DocumentParsingJobDTO'
+        type: array
+      meta:
+        $ref: '#/definitions/superadmin.PaginationMeta'
+      stats:
+        $ref: '#/definitions/superadmin.DocumentParsingJobStatsDTO'
+    type: object
+  superadmin.ListEmailJobsResponse:
+    properties:
+      emailJobs:
+        items:
+          $ref: '#/definitions/superadmin.SuperadminEmailJobDTO'
+        type: array
+      meta:
+        $ref: '#/definitions/superadmin.PaginationMeta'
+    type: object
+  superadmin.ListEmbeddingJobsResponse:
+    properties:
+      jobs:
+        items:
+          $ref: '#/definitions/superadmin.EmbeddingJobDTO'
+        type: array
+      meta:
+        $ref: '#/definitions/superadmin.PaginationMeta'
+      stats:
+        $ref: '#/definitions/superadmin.EmbeddingJobStatsDTO'
+    type: object
+  superadmin.ListExtractionJobsResponse:
+    properties:
+      jobs:
+        items:
+          $ref: '#/definitions/superadmin.ExtractionJobDTO'
+        type: array
+      meta:
+        $ref: '#/definitions/superadmin.PaginationMeta'
+      stats:
+        $ref: '#/definitions/superadmin.ExtractionJobStatsDTO'
+    type: object
+  superadmin.ListOrganizationsResponse:
+    properties:
+      meta:
+        $ref: '#/definitions/superadmin.PaginationMeta'
+      organizations:
+        items:
+          $ref: '#/definitions/superadmin.SuperadminOrgDTO'
+        type: array
+    type: object
+  superadmin.ListProjectsResponse:
+    properties:
+      meta:
+        $ref: '#/definitions/superadmin.PaginationMeta'
+      projects:
+        items:
+          $ref: '#/definitions/superadmin.SuperadminProjectDTO'
+        type: array
+    type: object
+  superadmin.ListSyncJobsResponse:
+    properties:
+      jobs:
+        items:
+          $ref: '#/definitions/superadmin.SyncJobDTO'
+        type: array
+      meta:
+        $ref: '#/definitions/superadmin.PaginationMeta'
+      stats:
+        $ref: '#/definitions/superadmin.SyncJobStatsDTO'
+    type: object
+  superadmin.ListUsersResponse:
+    properties:
+      meta:
+        $ref: '#/definitions/superadmin.PaginationMeta'
+      users:
+        items:
+          $ref: '#/definitions/superadmin.SuperadminUserDTO'
+        type: array
+    type: object
+  superadmin.PaginationMeta:
+    properties:
+      hasNext:
+        type: boolean
+      hasPrev:
+        type: boolean
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
+      totalPages:
+        type: integer
+    type: object
+  superadmin.RetryJobsRequest:
+    properties:
+      ids:
+        items:
+          type: string
+        minItems: 1
+        type: array
+    required:
+    - ids
+    type: object
+  superadmin.RetryJobsResponse:
+    properties:
+      message:
+        type: string
+      retriedCount:
+        type: integer
+      success:
+        type: boolean
+    type: object
+  superadmin.SuccessResponse:
+    properties:
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
   superadmin.SuperadminEmailJobDTO:
     properties:
       attempts:
@@ -4403,6 +4075,11 @@ definitions:
         type: string
       toName:
         type: string
+    type: object
+  superadmin.SuperadminMeResponse:
+    properties:
+      isSuperadmin:
+        type: boolean
     type: object
   superadmin.SuperadminOrgDTO:
     properties:
@@ -4500,6 +4177,22 @@ definitions:
       triggerType:
         type: string
     type: object
+  superadmin.SyncJobLogsResponse:
+    properties:
+      completedAt:
+        type: string
+      createdAt:
+        type: string
+      errorMessage:
+        type: string
+      id:
+        type: string
+      logs: {}
+      startedAt:
+        type: string
+      status:
+        type: string
+    type: object
   superadmin.SyncJobStatsDTO:
     properties:
       cancelled:
@@ -4530,6 +4223,47 @@ definitions:
       role:
         type: string
     type: object
+  tasks.ResolveTaskRequest:
+    properties:
+      resolution:
+        description: '"accepted" or "rejected"'
+        type: string
+      resolutionNotes:
+        type: string
+    type: object
+  tasks.Task:
+    properties:
+      createdAt:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      metadata:
+        items:
+          type: integer
+        type: array
+      projectId:
+        type: string
+      resolutionNotes:
+        type: string
+      resolvedAt:
+        type: string
+      resolvedBy:
+        type: string
+      sourceId:
+        type: string
+      sourceType:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
+      type:
+        type: string
+      updatedAt:
+        type: string
+    type: object
   tasks.TaskCountsResponse:
     properties:
       accepted:
@@ -4540,6 +4274,72 @@ definitions:
         type: integer
       rejected:
         type: integer
+    type: object
+  tasks.TaskListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/tasks.Task'
+        type: array
+      total:
+        type: integer
+    type: object
+  tasks.TaskResponse:
+    properties:
+      data:
+        $ref: '#/definitions/tasks.Task'
+    type: object
+  templatepacks.AssignPackRequest:
+    properties:
+      customizations:
+        additionalProperties: true
+        type: object
+      template_pack_id:
+        type: string
+    type: object
+  templatepacks.CompiledTypesResponse:
+    properties:
+      objectTypes:
+        items:
+          $ref: '#/definitions/templatepacks.ObjectTypeSchema'
+        type: array
+      relationshipTypes:
+        items:
+          $ref: '#/definitions/templatepacks.RelationshipTypeSchema'
+        type: array
+    type: object
+  templatepacks.CreatePackRequest:
+    properties:
+      author:
+        type: string
+      description:
+        type: string
+      documentation_url:
+        type: string
+      extraction_prompts:
+        items:
+          type: integer
+        type: array
+      license:
+        type: string
+      name:
+        type: string
+      object_type_schemas:
+        items:
+          type: integer
+        type: array
+      relationship_type_schemas:
+        items:
+          type: integer
+        type: array
+      repository_url:
+        type: string
+      ui_configs:
+        items:
+          type: integer
+        type: array
+      version:
+        type: string
     type: object
   templatepacks.GraphTemplatePack:
     properties:
@@ -4589,6 +4389,122 @@ definitions:
         type: string
       version:
         type: string
+    type: object
+  templatepacks.InstalledPackItem:
+    properties:
+      active:
+        type: boolean
+      customizations:
+        additionalProperties: true
+        type: object
+      description:
+        type: string
+      id:
+        description: assignment ID
+        type: string
+      installedAt:
+        type: string
+      name:
+        type: string
+      templatePackId:
+        type: string
+      version:
+        type: string
+    type: object
+  templatepacks.ObjectTypeSchema:
+    properties:
+      description:
+        type: string
+      label:
+        type: string
+      name:
+        type: string
+      packId:
+        type: string
+      packName:
+        type: string
+      properties:
+        items:
+          type: integer
+        type: array
+    type: object
+  templatepacks.ProjectTemplatePack:
+    properties:
+      active:
+        type: boolean
+      createdAt:
+        type: string
+      id:
+        type: string
+      installedAt:
+        type: string
+      projectId:
+        type: string
+      templatePack:
+        allOf:
+        - $ref: '#/definitions/templatepacks.GraphTemplatePack'
+        description: Joined template pack
+      templatePackId:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  templatepacks.RelationshipTypeSchema:
+    properties:
+      description:
+        type: string
+      label:
+        type: string
+      name:
+        type: string
+      packId:
+        type: string
+      packName:
+        type: string
+      sourceType:
+        type: string
+      targetType:
+        type: string
+    type: object
+  templatepacks.TemplatePackListItem:
+    properties:
+      author:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      version:
+        type: string
+    type: object
+  templatepacks.UpdateAssignmentRequest:
+    properties:
+      active:
+        type: boolean
+    type: object
+  typeregistry.CreateTypeRequest:
+    properties:
+      description:
+        type: string
+      enabled:
+        description: defaults to true
+        type: boolean
+      extraction_config:
+        items:
+          type: integer
+        type: array
+      json_schema:
+        items:
+          type: integer
+        type: array
+      type_name:
+        type: string
+      ui_config:
+        items:
+          type: integer
+        type: array
     type: object
   typeregistry.GraphTemplatePack:
     properties:
@@ -4653,6 +4569,30 @@ definitions:
       updatedAt:
         type: string
     type: object
+  typeregistry.RelationshipTypeInfo:
+    properties:
+      description:
+        type: string
+      inverse_label:
+        type: string
+      inverse_type:
+        description: When set, creating this relationship auto-creates the inverse
+        type: string
+      label:
+        type: string
+      source_types:
+        description: 'For incoming: types this relationship can come from'
+        items:
+          type: string
+        type: array
+      target_types:
+        description: 'For outgoing: types this relationship can connect to'
+        items:
+          type: string
+        type: array
+      type:
+        type: string
+    type: object
   typeregistry.TypeRegistryEntryDTO:
     properties:
       created_at:
@@ -4670,7 +4610,7 @@ definitions:
         type: string
       incoming_relationships:
         items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_typeregistry.RelationshipTypeInfo'
+          $ref: '#/definitions/typeregistry.RelationshipTypeInfo'
         type: array
       json_schema:
         items:
@@ -4680,7 +4620,7 @@ definitions:
         type: integer
       outgoing_relationships:
         items:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_typeregistry.RelationshipTypeInfo'
+          $ref: '#/definitions/typeregistry.RelationshipTypeInfo'
         type: array
       schema_version:
         type: integer
@@ -4698,6 +4638,42 @@ definitions:
         type: object
       updated_at:
         type: string
+    type: object
+  typeregistry.TypeRegistryStats:
+    properties:
+      custom_types:
+        type: integer
+      discovered_types:
+        type: integer
+      enabled_types:
+        type: integer
+      template_types:
+        type: integer
+      total_objects:
+        type: integer
+      total_types:
+        type: integer
+      types_with_objects:
+        type: integer
+    type: object
+  typeregistry.UpdateTypeRequest:
+    properties:
+      description:
+        type: string
+      enabled:
+        type: boolean
+      extraction_config:
+        items:
+          type: integer
+        type: array
+      json_schema:
+        items:
+          type: integer
+        type: array
+      ui_config:
+        items:
+          type: integer
+        type: array
     type: object
   useraccess.OrgWithProjects:
     properties:
@@ -4746,6 +4722,30 @@ definitions:
         type: string
       resourceType:
         type: string
+    type: object
+  useractivity.RecentItemsResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/useractivity.RecentItemResponse'
+        type: array
+    type: object
+  useractivity.RecordActivityRequest:
+    properties:
+      actionType:
+        type: string
+      resourceId:
+        type: string
+      resourceName:
+        type: string
+      resourceSubtype:
+        type: string
+      resourceType:
+        type: string
+    required:
+    - actionType
+    - resourceId
+    - resourceType
     type: object
   userprofile.ProfileDTO:
     properties:
@@ -5355,7 +5355,7 @@ info:
   license:
     name: Proprietary
   title: Emergent API
-  version: 0.26.0
+  version: 0.26.1
 paths:
   /api/admin/agent-definitions/{id}/workspace-config:
     get:
@@ -5375,7 +5375,7 @@ paths:
         "200":
           description: Workspace config
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-workspace_AgentWorkspaceConfig'
+            $ref: '#/definitions/agents.APIResponse-workspace_AgentWorkspaceConfig'
         "400":
           description: Invalid definition ID
           schema:
@@ -5419,7 +5419,7 @@ paths:
         "200":
           description: Updated workspace config
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-workspace_AgentWorkspaceConfig'
+            $ref: '#/definitions/agents.APIResponse-workspace_AgentWorkspaceConfig'
         "400":
           description: Invalid definition ID, request body, or validation error
           schema:
@@ -5458,7 +5458,7 @@ paths:
         "200":
           description: List of agents
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-array_agents_AgentDTO'
+            $ref: '#/definitions/agents.APIResponse-array_agents_AgentDTO'
         "400":
           description: X-Project-ID header required
           schema:
@@ -5493,7 +5493,7 @@ paths:
         "201":
           description: Created agent
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-agents_AgentDTO'
+            $ref: '#/definitions/agents.APIResponse-agents_AgentDTO'
         "400":
           description: Invalid request body or validation error
           schema:
@@ -5532,7 +5532,7 @@ paths:
         "200":
           description: Agent deleted successfully
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-any'
+            $ref: '#/definitions/agents.APIResponse-any'
         "400":
           description: Invalid agent ID
           schema:
@@ -5574,7 +5574,7 @@ paths:
         "200":
           description: Agent details
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-agents_AgentDTO'
+            $ref: '#/definitions/agents.APIResponse-agents_AgentDTO'
         "400":
           description: Invalid agent ID
           schema:
@@ -5622,7 +5622,7 @@ paths:
         "200":
           description: Updated agent
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-agents_AgentDTO'
+            $ref: '#/definitions/agents.APIResponse-agents_AgentDTO'
         "400":
           description: Invalid agent ID or request body
           schema:
@@ -5672,7 +5672,7 @@ paths:
         "200":
           description: Batch trigger result (queued/skipped counts)
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-agents_BatchTriggerResponseDTO'
+            $ref: '#/definitions/agents.APIResponse-agents_BatchTriggerResponseDTO'
         "400":
           description: Invalid agent ID, not a reaction agent, or invalid request
           schema:
@@ -5723,7 +5723,7 @@ paths:
         "200":
           description: Pending events
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-agents_PendingEventsResponseDTO'
+            $ref: '#/definitions/agents.APIResponse-agents_PendingEventsResponseDTO'
         "400":
           description: Invalid agent ID or not a reaction agent
           schema:
@@ -5773,7 +5773,7 @@ paths:
         "200":
           description: List of agent runs
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-array_agents_AgentRunDTO'
+            $ref: '#/definitions/agents.APIResponse-array_agents_AgentRunDTO'
         "400":
           description: Invalid agent ID
           schema:
@@ -5821,7 +5821,7 @@ paths:
         "200":
           description: Run cancelled successfully
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-map_string_string'
+            $ref: '#/definitions/agents.APIResponse-map_string_string'
         "400":
           description: Invalid agent ID or run ID
           schema:
@@ -5895,7 +5895,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_mcpregistry.APIResponse-array_mcpregistry_MCPServerDTO'
+            $ref: '#/definitions/mcpregistry.APIResponse-array_mcpregistry_MCPServerDTO'
         "401":
           description: Unauthorized
           schema:
@@ -5926,7 +5926,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_mcpregistry.APIResponse-mcpregistry_MCPServerDTO'
+            $ref: '#/definitions/mcpregistry.APIResponse-mcpregistry_MCPServerDTO'
         "400":
           description: Bad Request
           schema:
@@ -5989,7 +5989,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_mcpregistry.APIResponse-mcpregistry_MCPServerDetailDTO'
+            $ref: '#/definitions/mcpregistry.APIResponse-mcpregistry_MCPServerDetailDTO'
         "401":
           description: Unauthorized
           schema:
@@ -6029,7 +6029,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_mcpregistry.APIResponse-mcpregistry_MCPServerDTO'
+            $ref: '#/definitions/mcpregistry.APIResponse-mcpregistry_MCPServerDTO'
         "400":
           description: Bad Request
           schema:
@@ -6069,7 +6069,7 @@ paths:
         "200":
           description: Default agent definition (existing or created)
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-agents_AgentDefinitionDTO'
+            $ref: '#/definitions/agents.APIResponse-agents_AgentDefinitionDTO'
         "400":
           description: Invalid project ID
           schema:
@@ -6279,7 +6279,7 @@ paths:
         "200":
           description: Conversation with messages
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_chat.ConversationWithMessages'
+            $ref: '#/definitions/chat.ConversationWithMessages'
         "400":
           description: Invalid conversation ID
           schema:
@@ -6321,14 +6321,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_chat.UpdateConversationRequest'
+          $ref: '#/definitions/chat.UpdateConversationRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Updated conversation
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_chat.Conversation'
+            $ref: '#/definitions/chat.Conversation'
         "400":
           description: Invalid request
           schema:
@@ -6371,14 +6371,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_chat.AddMessageRequest'
+          $ref: '#/definitions/chat.AddMessageRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Message created
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_chat.Message'
+            $ref: '#/definitions/chat.Message'
         "400":
           description: Invalid request
           schema:
@@ -6460,14 +6460,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_chat.CreateConversationRequest'
+          $ref: '#/definitions/chat.CreateConversationRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Conversation created
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_chat.Conversation'
+            $ref: '#/definitions/chat.Conversation'
         "400":
           description: Invalid request body
           schema:
@@ -6502,7 +6502,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_chat.StreamRequest'
+          $ref: '#/definitions/chat.StreamRequest'
       produces:
       - text/event-stream
       responses:
@@ -7201,14 +7201,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.BulkDeleteRequest'
+          $ref: '#/definitions/documents.BulkDeleteRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.DeleteResponse'
+            $ref: '#/definitions/documents.DeleteResponse'
         "400":
           description: Bad Request
           schema:
@@ -7265,7 +7265,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.ListResult'
+            $ref: '#/definitions/documents.ListResult'
         "400":
           description: Bad Request
           schema:
@@ -7302,11 +7302,11 @@ paths:
         "200":
           description: Existing document returned (deduplicated)
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.Document'
+            $ref: '#/definitions/documents.Document'
         "201":
           description: Document created
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.Document'
+            $ref: '#/definitions/documents.Document'
         "400":
           description: Bad Request
           schema:
@@ -7343,7 +7343,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.DeleteResponse'
+            $ref: '#/definitions/documents.DeleteResponse'
         "400":
           description: Bad Request
           schema:
@@ -7382,7 +7382,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.Document'
+            $ref: '#/definitions/documents.Document'
         "400":
           description: Bad Request
           schema:
@@ -7422,7 +7422,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.ContentResponse'
+            $ref: '#/definitions/documents.ContentResponse'
         "400":
           description: Bad Request
           schema:
@@ -7463,7 +7463,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.DeletionImpact'
+            $ref: '#/definitions/documents.DeletionImpact'
         "400":
           description: Bad Request
           schema:
@@ -7547,7 +7547,7 @@ paths:
         "200":
           description: Chunking result
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_chunking.RecreateChunksResponse'
+            $ref: '#/definitions/chunking.RecreateChunksResponse'
         "400":
           description: Bad request
           schema:
@@ -7585,14 +7585,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.BulkDeletionImpactRequest'
+          $ref: '#/definitions/documents.BulkDeletionImpactRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.BulkDeletionImpact'
+            $ref: '#/definitions/documents.BulkDeletionImpact'
         "400":
           description: Bad Request
           schema:
@@ -7619,7 +7619,7 @@ paths:
           schema:
             additionalProperties:
               items:
-                $ref: '#/definitions/github_com_emergent-company_emergent_domain_documents.SourceTypeWithCount'
+                $ref: '#/definitions/documents.SourceTypeWithCount'
               type: array
             type: object
         "401":
@@ -7775,7 +7775,7 @@ paths:
         "200":
           description: Most accessed objects
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.MostAccessedResponse'
+            $ref: '#/definitions/graph.MostAccessedResponse'
         "400":
           description: Invalid parameters
           schema:
@@ -7813,7 +7813,7 @@ paths:
         "200":
           description: Unused objects
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.UnusedObjectsResponse'
+            $ref: '#/definitions/graph.UnusedObjectsResponse'
         "400":
           description: Invalid parameters
           schema:
@@ -7873,7 +7873,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_branches.CreateBranchRequest'
+          $ref: '#/definitions/branches.CreateBranchRequest'
       produces:
       - application/json
       responses:
@@ -7988,7 +7988,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_branches.UpdateBranchRequest'
+          $ref: '#/definitions/branches.UpdateBranchRequest'
       produces:
       - application/json
       responses:
@@ -8033,7 +8033,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.BranchMergeRequest'
+          $ref: '#/definitions/graph.BranchMergeRequest'
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -8268,7 +8268,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphExpandRequest'
+          $ref: '#/definitions/graph.GraphExpandRequest'
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -8319,7 +8319,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphObject'
+            $ref: '#/definitions/graph.GraphObject'
         "400":
           description: Invalid request
           schema:
@@ -8397,7 +8397,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphObject'
+            $ref: '#/definitions/graph.GraphObject'
         "400":
           description: Invalid ID
           schema:
@@ -8443,7 +8443,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphObject'
+            $ref: '#/definitions/graph.GraphObject'
         "400":
           description: Invalid request
           schema:
@@ -8534,7 +8534,7 @@ paths:
           description: Version history
           schema:
             items:
-              $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphObject'
+              $ref: '#/definitions/graph.GraphObject'
             type: array
         "400":
           description: Invalid ID
@@ -8573,7 +8573,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphObject'
+            $ref: '#/definitions/graph.GraphObject'
         "400":
           description: Invalid ID
           schema:
@@ -8677,7 +8677,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.BulkCreateObjectsRequest'
+          $ref: '#/definitions/graph.BulkCreateObjectsRequest'
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -8689,7 +8689,7 @@ paths:
         "200":
           description: Create results
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.BulkCreateObjectsResponse'
+            $ref: '#/definitions/graph.BulkCreateObjectsResponse'
         "400":
           description: Invalid request
           schema:
@@ -8715,7 +8715,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.BulkUpdateStatusRequest'
+          $ref: '#/definitions/graph.BulkUpdateStatusRequest'
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -9081,7 +9081,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.VectorSearchRequest'
+          $ref: '#/definitions/graph.VectorSearchRequest'
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -9135,7 +9135,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphRelationship'
+            $ref: '#/definitions/graph.GraphRelationship'
         "400":
           description: Invalid request
           schema:
@@ -9207,7 +9207,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphRelationship'
+            $ref: '#/definitions/graph.GraphRelationship'
         "400":
           description: Invalid ID
           schema:
@@ -9253,7 +9253,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphRelationship'
+            $ref: '#/definitions/graph.GraphRelationship'
         "400":
           description: Invalid request
           schema:
@@ -9292,7 +9292,7 @@ paths:
           description: Version history
           schema:
             items:
-              $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphRelationship'
+              $ref: '#/definitions/graph.GraphRelationship'
             type: array
         "400":
           description: Invalid ID
@@ -9331,7 +9331,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.GraphRelationship'
+            $ref: '#/definitions/graph.GraphRelationship'
         "400":
           description: Invalid ID
           schema:
@@ -9361,7 +9361,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.BulkCreateRelationshipsRequest'
+          $ref: '#/definitions/graph.BulkCreateRelationshipsRequest'
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -9373,7 +9373,7 @@ paths:
         "200":
           description: Create results
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.BulkCreateRelationshipsResponse'
+            $ref: '#/definitions/graph.BulkCreateRelationshipsResponse'
         "400":
           description: Invalid request
           schema:
@@ -9462,7 +9462,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.HybridSearchRequest'
+          $ref: '#/definitions/graph.HybridSearchRequest'
       - description: Include debug timing and statistics (requires scope)
         in: query
         name: debug
@@ -9509,7 +9509,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.SearchWithNeighborsRequest'
+          $ref: '#/definitions/graph.SearchWithNeighborsRequest'
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -9586,7 +9586,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_graph.TraverseGraphRequest'
+          $ref: '#/definitions/graph.TraverseGraphRequest'
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -10135,7 +10135,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_mcp.Request'
+          $ref: '#/definitions/mcp.Request'
       produces:
       - application/json
       responses:
@@ -10435,7 +10435,7 @@ paths:
         "200":
           description: Filtered notification list
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_notifications.NotificationListResponse'
+            $ref: '#/definitions/notifications.NotificationListResponse'
         "401":
           description: Unauthorized
           schema:
@@ -10527,7 +10527,7 @@ paths:
         "200":
           description: Counts by notification tab
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_notifications.NotificationCountsResponse'
+            $ref: '#/definitions/notifications.NotificationCountsResponse'
         "401":
           description: Unauthorized
           schema:
@@ -10568,7 +10568,7 @@ paths:
         "200":
           description: Notification statistics
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_notifications.NotificationStats'
+            $ref: '#/definitions/notifications.NotificationStats'
         "401":
           description: Unauthorized
           schema:
@@ -10754,14 +10754,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_projects.CreateProjectRequest'
+          $ref: '#/definitions/projects.CreateProjectRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Project created
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_projects.Project'
+            $ref: '#/definitions/projects.Project'
         "400":
           description: Invalid request body
           schema:
@@ -10832,7 +10832,7 @@ paths:
         "200":
           description: Project details
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_projects.Project'
+            $ref: '#/definitions/projects.Project'
         "400":
           description: Invalid project ID
           schema:
@@ -10870,14 +10870,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_projects.UpdateProjectRequest'
+          $ref: '#/definitions/projects.UpdateProjectRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Updated project
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_projects.Project'
+            $ref: '#/definitions/projects.Project'
         "400":
           description: Invalid request body or project ID
           schema:
@@ -11004,7 +11004,7 @@ paths:
         "200":
           description: List of questions
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-array_agents_AgentQuestionDTO'
+            $ref: '#/definitions/agents.APIResponse-array_agents_AgentQuestionDTO'
         "400":
           description: Invalid request
           schema:
@@ -11044,14 +11044,14 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.RespondToQuestionRequest'
+          $ref: '#/definitions/agents.RespondToQuestionRequest'
       produces:
       - application/json
       responses:
         "202":
           description: Question answered, agent resuming
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-agents_AgentQuestionDTO'
+            $ref: '#/definitions/agents.APIResponse-agents_AgentQuestionDTO'
         "400":
           description: Invalid request
           schema:
@@ -11100,7 +11100,7 @@ paths:
         "200":
           description: List of questions
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-array_agents_AgentQuestionDTO'
+            $ref: '#/definitions/agents.APIResponse-array_agents_AgentQuestionDTO'
         "400":
           description: Invalid request
           schema:
@@ -11350,7 +11350,7 @@ paths:
         "200":
           description: Document parsing job list with stats and pagination
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.ListDocumentParsingJobsResponse'
+            $ref: '#/definitions/superadmin.ListDocumentParsingJobsResponse'
         "401":
           description: Unauthorized
           schema:
@@ -11375,14 +11375,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.DeleteJobsRequest'
+          $ref: '#/definitions/superadmin.DeleteJobsRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Deletion summary
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.DeleteJobsResponse'
+            $ref: '#/definitions/superadmin.DeleteJobsResponse'
         "400":
           description: Invalid request body
           schema:
@@ -11411,14 +11411,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.RetryJobsRequest'
+          $ref: '#/definitions/superadmin.RetryJobsRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Retry summary
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.RetryJobsResponse'
+            $ref: '#/definitions/superadmin.RetryJobsResponse'
         "400":
           description: Invalid request body
           schema:
@@ -11474,7 +11474,7 @@ paths:
         "200":
           description: Email job list with pagination
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.ListEmailJobsResponse'
+            $ref: '#/definitions/superadmin.ListEmailJobsResponse'
         "401":
           description: Unauthorized
           schema:
@@ -11504,7 +11504,7 @@ paths:
         "200":
           description: Email job preview data
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.EmailJobPreviewResponse'
+            $ref: '#/definitions/superadmin.EmailJobPreviewResponse'
         "400":
           description: Invalid job ID
           schema:
@@ -11565,7 +11565,7 @@ paths:
         "200":
           description: Embedding job list with stats and pagination
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.ListEmbeddingJobsResponse'
+            $ref: '#/definitions/superadmin.ListEmbeddingJobsResponse'
         "401":
           description: Unauthorized
           schema:
@@ -11589,7 +11589,7 @@ paths:
         "200":
           description: Cleanup summary
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.CleanupOrphansResponse'
+            $ref: '#/definitions/superadmin.CleanupOrphansResponse'
         "401":
           description: Unauthorized
           schema:
@@ -11615,14 +11615,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.DeleteJobsRequest'
+          $ref: '#/definitions/superadmin.DeleteJobsRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Deletion summary
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.DeleteJobsResponse'
+            $ref: '#/definitions/superadmin.DeleteJobsResponse'
         "400":
           description: Invalid request body
           schema:
@@ -11679,7 +11679,7 @@ paths:
         "200":
           description: Extraction job list with stats and pagination
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.ListExtractionJobsResponse'
+            $ref: '#/definitions/superadmin.ListExtractionJobsResponse'
         "401":
           description: Unauthorized
           schema:
@@ -11704,14 +11704,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.CancelJobsRequest'
+          $ref: '#/definitions/superadmin.CancelJobsRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Cancellation summary
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.CancelJobsResponse'
+            $ref: '#/definitions/superadmin.CancelJobsResponse'
         "400":
           description: Invalid request body
           schema:
@@ -11740,14 +11740,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.DeleteJobsRequest'
+          $ref: '#/definitions/superadmin.DeleteJobsRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Deletion summary
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.DeleteJobsResponse'
+            $ref: '#/definitions/superadmin.DeleteJobsResponse'
         "400":
           description: Invalid request body
           schema:
@@ -11775,7 +11775,7 @@ paths:
         "200":
           description: Superadmin status (or null if not superadmin)
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.SuperadminMeResponse'
+            $ref: '#/definitions/superadmin.SuperadminMeResponse'
         "401":
           description: Unauthorized
           schema:
@@ -11807,7 +11807,7 @@ paths:
         "200":
           description: Organization list with pagination
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.ListOrganizationsResponse'
+            $ref: '#/definitions/superadmin.ListOrganizationsResponse'
         "401":
           description: Unauthorized
           schema:
@@ -11837,7 +11837,7 @@ paths:
         "200":
           description: Organization deleted successfully
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.SuccessResponse'
+            $ref: '#/definitions/superadmin.SuccessResponse'
         "400":
           description: Invalid organization ID
           schema:
@@ -11885,7 +11885,7 @@ paths:
         "200":
           description: Project list with pagination
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.ListProjectsResponse'
+            $ref: '#/definitions/superadmin.ListProjectsResponse'
         "401":
           description: Unauthorized
           schema:
@@ -11915,7 +11915,7 @@ paths:
         "200":
           description: Project deleted successfully
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.SuccessResponse'
+            $ref: '#/definitions/superadmin.SuccessResponse'
         "400":
           description: Invalid project ID
           schema:
@@ -11972,7 +11972,7 @@ paths:
         "200":
           description: Sync job list with stats and pagination
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.ListSyncJobsResponse'
+            $ref: '#/definitions/superadmin.ListSyncJobsResponse'
         "401":
           description: Unauthorized
           schema:
@@ -12002,7 +12002,7 @@ paths:
         "200":
           description: Sync job logs and metadata
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.SyncJobLogsResponse'
+            $ref: '#/definitions/superadmin.SyncJobLogsResponse'
         "400":
           description: Invalid job ID
           schema:
@@ -12035,14 +12035,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.CancelJobsRequest'
+          $ref: '#/definitions/superadmin.CancelJobsRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Cancellation summary
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.CancelJobsResponse'
+            $ref: '#/definitions/superadmin.CancelJobsResponse'
         "400":
           description: Invalid request body
           schema:
@@ -12071,14 +12071,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.DeleteJobsRequest'
+          $ref: '#/definitions/superadmin.DeleteJobsRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Deletion summary
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.DeleteJobsResponse'
+            $ref: '#/definitions/superadmin.DeleteJobsResponse'
         "400":
           description: Invalid request body
           schema:
@@ -12126,7 +12126,7 @@ paths:
         "200":
           description: User list with pagination
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.ListUsersResponse'
+            $ref: '#/definitions/superadmin.ListUsersResponse'
         "401":
           description: Unauthorized
           schema:
@@ -12156,7 +12156,7 @@ paths:
         "200":
           description: User deleted successfully
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_superadmin.SuccessResponse'
+            $ref: '#/definitions/superadmin.SuccessResponse'
         "400":
           description: Invalid user ID
           schema:
@@ -12216,7 +12216,7 @@ paths:
         "200":
           description: Paginated task list
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_tasks.TaskListResponse'
+            $ref: '#/definitions/tasks.TaskListResponse'
         "400":
           description: Missing project_id
           schema:
@@ -12253,7 +12253,7 @@ paths:
         "200":
           description: Task details
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_tasks.TaskResponse'
+            $ref: '#/definitions/tasks.TaskResponse'
         "400":
           description: Missing task ID or project_id
           schema:
@@ -12333,7 +12333,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_tasks.ResolveTaskRequest'
+          $ref: '#/definitions/tasks.ResolveTaskRequest'
       - description: Project ID (alternative to X-Project-ID header)
         in: query
         name: project_id
@@ -12398,7 +12398,7 @@ paths:
         "200":
           description: Paginated task list
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_tasks.TaskListResponse'
+            $ref: '#/definitions/tasks.TaskListResponse'
         "401":
           description: Unauthorized
           schema:
@@ -12473,7 +12473,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_templatepacks.CreatePackRequest'
+          $ref: '#/definitions/templatepacks.CreatePackRequest'
       produces:
       - application/json
       responses:
@@ -12591,14 +12591,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_templatepacks.AssignPackRequest'
+          $ref: '#/definitions/templatepacks.AssignPackRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created assignment
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_templatepacks.ProjectTemplatePack'
+            $ref: '#/definitions/templatepacks.ProjectTemplatePack'
         "400":
           description: Bad request
           schema:
@@ -12678,7 +12678,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_templatepacks.UpdateAssignmentRequest'
+          $ref: '#/definitions/templatepacks.UpdateAssignmentRequest'
       produces:
       - application/json
       responses:
@@ -12728,7 +12728,7 @@ paths:
           description: Available template packs
           schema:
             items:
-              $ref: '#/definitions/github_com_emergent-company_emergent_domain_templatepacks.TemplatePackListItem'
+              $ref: '#/definitions/templatepacks.TemplatePackListItem'
             type: array
         "400":
           description: Bad request
@@ -12765,7 +12765,7 @@ paths:
         "200":
           description: Compiled type definitions
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_templatepacks.CompiledTypesResponse'
+            $ref: '#/definitions/templatepacks.CompiledTypesResponse'
         "400":
           description: Bad request
           schema:
@@ -12801,7 +12801,7 @@ paths:
           description: Installed template packs
           schema:
             items:
-              $ref: '#/definitions/github_com_emergent-company_emergent_domain_templatepacks.InstalledPackItem'
+              $ref: '#/definitions/templatepacks.InstalledPackItem'
             type: array
         "400":
           description: Bad request
@@ -12894,7 +12894,7 @@ paths:
         "200":
           description: Type statistics
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_typeregistry.TypeRegistryStats'
+            $ref: '#/definitions/typeregistry.TypeRegistryStats'
         "400":
           description: Bad request
           schema:
@@ -12929,7 +12929,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_typeregistry.CreateTypeRequest'
+          $ref: '#/definitions/typeregistry.CreateTypeRequest'
       produces:
       - application/json
       responses:
@@ -13065,7 +13065,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_typeregistry.UpdateTypeRequest'
+          $ref: '#/definitions/typeregistry.UpdateTypeRequest'
       produces:
       - application/json
       responses:
@@ -13139,7 +13139,7 @@ paths:
         "200":
           description: Recent items
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_useractivity.RecentItemsResponse'
+            $ref: '#/definitions/useractivity.RecentItemsResponse'
         "401":
           description: Unauthorized
           schema:
@@ -13177,7 +13177,7 @@ paths:
         "200":
           description: Recent items
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_useractivity.RecentItemsResponse'
+            $ref: '#/definitions/useractivity.RecentItemsResponse'
         "400":
           description: Bad request
           schema:
@@ -13254,7 +13254,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_useractivity.RecordActivityRequest'
+          $ref: '#/definitions/useractivity.RecordActivityRequest'
       produces:
       - application/json
       responses:
@@ -13397,7 +13397,7 @@ paths:
         "200":
           description: Session/run details with session status
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_agents.APIResponse-agents_AgentRunDTO'
+            $ref: '#/definitions/agents.APIResponse-agents_AgentRunDTO'
         "400":
           description: Invalid run ID
           schema:
@@ -14598,7 +14598,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_chunks.BulkDeletionSummary'
+            $ref: '#/definitions/chunks.BulkDeletionSummary'
         "400":
           description: Bad Request
           schema:
@@ -14698,7 +14698,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_chunks.DocumentChunksDeletionResult'
+            $ref: '#/definitions/chunks.DocumentChunksDeletionResult'
         "400":
           description: Bad Request
           schema:
@@ -14732,7 +14732,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_chunks.BulkDocumentChunksDeletionSummary'
+            $ref: '#/definitions/chunks.BulkDocumentChunksDeletionSummary'
         "400":
           description: Bad Request
           schema:
@@ -14834,7 +14834,7 @@ paths:
         "200":
           description: Job cancelled
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_discoveryjobs.CancelJobResponse'
+            $ref: '#/definitions/discoveryjobs.CancelJobResponse'
         "400":
           description: Bad request
           schema:
@@ -14873,7 +14873,7 @@ paths:
         "200":
           description: Job status details
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_discoveryjobs.JobStatusResponse'
+            $ref: '#/definitions/discoveryjobs.JobStatusResponse'
         "400":
           description: Bad request
           schema:
@@ -14921,14 +14921,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_discoveryjobs.FinalizeDiscoveryRequest'
+          $ref: '#/definitions/discoveryjobs.FinalizeDiscoveryRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Template pack created
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_discoveryjobs.FinalizeDiscoveryResponse'
+            $ref: '#/definitions/discoveryjobs.FinalizeDiscoveryResponse'
         "400":
           description: Bad request
           schema:
@@ -14968,7 +14968,7 @@ paths:
           description: List of jobs
           schema:
             items:
-              $ref: '#/definitions/github_com_emergent-company_emergent_domain_discoveryjobs.JobListItem'
+              $ref: '#/definitions/discoveryjobs.JobListItem'
             type: array
         "400":
           description: Bad request
@@ -15009,14 +15009,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_emergent-company_emergent_domain_discoveryjobs.StartDiscoveryRequest'
+          $ref: '#/definitions/discoveryjobs.StartDiscoveryRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Discovery job started
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_discoveryjobs.StartDiscoveryResponse'
+            $ref: '#/definitions/discoveryjobs.StartDiscoveryResponse'
         "400":
           description: Bad request
           schema:
@@ -15083,11 +15083,11 @@ paths:
         "200":
           description: Service is healthy
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_health.HealthResponse'
+            $ref: '#/definitions/health.HealthResponse'
         "503":
           description: Service is unhealthy
           schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_domain_health.HealthResponse'
+            $ref: '#/definitions/health.HealthResponse'
       summary: Get service health
       tags:
       - health
