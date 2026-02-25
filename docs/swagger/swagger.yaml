@@ -2494,6 +2494,8 @@ definitions:
     type: object
   github_com_emergent-company_emergent_domain_projects.Project:
     properties:
+      allow_parallel_extraction:
+        type: boolean
       auto_extract_config:
         additionalProperties: {}
         type: object
@@ -2501,8 +2503,19 @@ definitions:
         type: boolean
       chat_prompt_template:
         type: string
+      chunking_config:
+        additionalProperties: {}
+        description: Additional columns added in later migrations
+        type: object
       createdAt:
         type: string
+      deleted_at:
+        type: string
+      deleted_by:
+        type: string
+      extraction_config:
+        additionalProperties: {}
+        type: object
       id:
         type: string
       kb_purpose:
@@ -5342,7 +5355,7 @@ info:
   license:
     name: Proprietary
   title: Emergent API
-  version: 0.25.0
+  version: 0.25.1
 paths:
   /api/admin/agent-definitions/{id}/workspace-config:
     get:
