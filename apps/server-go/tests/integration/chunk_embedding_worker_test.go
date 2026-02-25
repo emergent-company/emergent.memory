@@ -135,7 +135,7 @@ func (s *ChunkEmbeddingWorkerTestSuite) getChunkEmbedding(chunkID string) []floa
 
 func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_StartStop() {
 	mockEmbeds := newMockEmbeddingService(true)
-	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 
 	// Start worker
 	err := worker.Start(s.ctx)
@@ -152,7 +152,7 @@ func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_StartStop() {
 
 func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_NotStartedWhenEmbeddingsDisabled() {
 	mockEmbeds := newMockEmbeddingService(false) // Disabled
-	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 
 	// Start worker - should not actually start
 	err := worker.Start(s.ctx)
@@ -175,7 +175,7 @@ func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_ProcessesJob() {
 
 	// Create and start worker
 	mockEmbeds := newMockEmbeddingService(true)
-	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 	err = worker.Start(s.ctx)
 	s.NoError(err)
 
@@ -230,7 +230,7 @@ func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_ProcessesMultipleJobs() {
 
 	// Create and start worker
 	mockEmbeds := newMockEmbeddingService(true)
-	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 	err := worker.Start(s.ctx)
 	s.NoError(err)
 
@@ -279,7 +279,7 @@ func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_HandlesEmbeddingFailure() {
 	mockEmbeds.shouldFail = true
 	mockEmbeds.failError = errors.New("embedding API rate limit exceeded")
 
-	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewChunkEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 	err = worker.Start(s.ctx)
 	s.NoError(err)
 
@@ -371,7 +371,7 @@ func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_ProcessesHighPriorityFirst() 
 	}
 	mockEmbeds := newMockEmbeddingService(true)
 	jobsService := extraction.NewChunkEmbeddingJobsService(s.testDB.DB, s.log, smallBatchCfg)
-	worker := extraction.NewChunkEmbeddingWorker(jobsService, mockEmbeds, s.testDB.DB, smallBatchCfg, s.log)
+	worker := extraction.NewChunkEmbeddingWorker(jobsService, mockEmbeds, s.testDB.DB, smallBatchCfg, s.log, nil)
 	err = worker.Start(s.ctx)
 	s.NoError(err)
 
