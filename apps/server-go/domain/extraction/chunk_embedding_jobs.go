@@ -58,9 +58,9 @@ func DefaultChunkEmbeddingConfig() *ChunkEmbeddingConfig {
 		WorkerIntervalMs:      5000,
 		WorkerBatchSize:       10,
 		WorkerConcurrency:     10,
-		EnableAdaptiveScaling: false,
-		MinConcurrency:        1,
-		MaxConcurrency:        10,
+		EnableAdaptiveScaling: true,
+		MinConcurrency:        5,
+		MaxConcurrency:        50,
 	}
 }
 

@@ -68,9 +68,9 @@ func DefaultDocumentParsingConfig() *DocumentParsingConfig {
 		WorkerBatchSize:       5,
 		WorkerConcurrency:     5,
 		StaleThresholdMinutes: 10,
-		EnableAdaptiveScaling: false,
-		MinConcurrency:        1,
-		MaxConcurrency:        5,
+		EnableAdaptiveScaling: true,
+		MinConcurrency:        2,
+		MaxConcurrency:        10,
 	}
 }
 
@@ -527,6 +527,22 @@ func ptrToString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// HasLargePendingJob returns true if any pending job has file_size_bytes >= thresholdBytes.
+// Used by the worker to decide whether to use single-job mode.
+func (s *DocumentParsingJobsService) HasLargePendingJob(ctx context.Context, thresholdBytes int64) (bool, error) {
+	var exists bool
+	err := s.db.NewRaw(`SELECT EXISTS(
+		SELECT 1 FROM kb.document_parsing_jobs
+		WHERE status IN ('pending','retry_pending')
+		AND (next_retry_at IS NULL OR next_retry_at <= now())
+		AND file_size_bytes >= ?
+	)`, thresholdBytes).Scan(ctx, &exists)
+	if err != nil {
+		return false, fmt.Errorf("has large pending job: %w", err)
+	}
+	return exists, nil
 }
 
 // RetryPendingStatus is the status value for jobs waiting for retry

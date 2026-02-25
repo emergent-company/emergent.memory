@@ -40,9 +40,9 @@ func DefaultObjectExtractionConfig() *ObjectExtractionConfig {
 		WorkerBatchSize:       5,
 		WorkerConcurrency:     5,
 		StaleThresholdMinutes: 30,
-		EnableAdaptiveScaling: false,
-		MinConcurrency:        1,
-		MaxConcurrency:        5,
+		EnableAdaptiveScaling: true,
+		MinConcurrency:        2,
+		MaxConcurrency:        10,
 	}
 }
 
