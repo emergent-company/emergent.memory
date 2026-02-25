@@ -23,6 +23,9 @@ type Project struct {
 	AutoExtractConfig  map[string]any `bun:"auto_extract_config,type:jsonb,default:'{}'" json:"auto_extract_config,omitempty"`
 	CreatedAt          time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
 	UpdatedAt          time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+
+	// Populated only when requested
+	Stats *ProjectStats `bun:"-" json:"stats,omitempty"`
 }
 
 // ChunkingConfig represents the chunking configuration for a project
@@ -64,6 +67,25 @@ const (
 	RoleProjectUser  = "project_user"
 )
 
+// TemplatePack represents an installed template pack for a project
+type TemplatePack struct {
+	Name              string   `json:"name"`
+	Version           string   `json:"version"`
+	ObjectTypes       []string `json:"objectTypes"`
+	RelationshipTypes []string `json:"relationshipTypes"`
+}
+
+// ProjectStats represents aggregated statistics for a project
+type ProjectStats struct {
+	DocumentCount     int            `json:"documentCount"`
+	ObjectCount       int            `json:"objectCount"`
+	RelationshipCount int            `json:"relationshipCount"`
+	TotalJobs         int            `json:"totalJobs"`
+	RunningJobs       int            `json:"runningJobs"`
+	QueuedJobs        int            `json:"queuedJobs"`
+	TemplatePacks     []TemplatePack `json:"templatePacks"`
+}
+
 // ProjectDTO is the response DTO for project endpoints
 type ProjectDTO struct {
 	ID                 string         `json:"id"`
@@ -73,6 +95,7 @@ type ProjectDTO struct {
 	ChatPromptTemplate *string        `json:"chat_prompt_template,omitempty"`
 	AutoExtractObjects *bool          `json:"auto_extract_objects,omitempty"`
 	AutoExtractConfig  map[string]any `json:"auto_extract_config,omitempty"`
+	Stats              *ProjectStats  `json:"stats,omitempty"`
 }
 
 // ProjectMemberDTO is the response DTO for project member endpoints
@@ -103,6 +126,7 @@ type UpdateProjectRequest struct {
 }
 
 // ToDTO converts a Project entity to ProjectDTO
+// Note: Stats are not populated here, they must be set separately after querying
 func (p *Project) ToDTO() ProjectDTO {
 	dto := ProjectDTO{
 		ID:                 p.ID,
@@ -110,6 +134,7 @@ func (p *Project) ToDTO() ProjectDTO {
 		OrgID:              p.OrganizationID,
 		KBPurpose:          p.KBPurpose,
 		ChatPromptTemplate: p.ChatPromptTemplate,
+		Stats:              p.Stats,
 	}
 
 	// Only include boolean fields if they are true (to match NestJS behavior)

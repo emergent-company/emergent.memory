@@ -40,15 +40,27 @@ type ChunkEmbeddingConfig struct {
 	WorkerIntervalMs int
 	// WorkerBatchSize is the number of jobs to process per poll (default: 10)
 	WorkerBatchSize int
+	// WorkerConcurrency is the static concurrency level, defaults to 10
+	WorkerConcurrency int
+	// EnableAdaptiveScaling enables dynamic concurrency adjustment based on system health
+	EnableAdaptiveScaling bool
+	// MinConcurrency is the minimum concurrency when adaptive scaling is enabled (default: 1)
+	MinConcurrency int
+	// MaxConcurrency is the maximum concurrency when adaptive scaling is enabled (default: 10)
+	MaxConcurrency int
 }
 
 // DefaultChunkEmbeddingConfig returns default configuration
 func DefaultChunkEmbeddingConfig() *ChunkEmbeddingConfig {
 	return &ChunkEmbeddingConfig{
-		BaseRetryDelaySec: 60,
-		MaxRetryDelaySec:  3600,
-		WorkerIntervalMs:  5000,
-		WorkerBatchSize:   10,
+		BaseRetryDelaySec:     60,
+		MaxRetryDelaySec:      3600,
+		WorkerIntervalMs:      5000,
+		WorkerBatchSize:       10,
+		WorkerConcurrency:     10,
+		EnableAdaptiveScaling: false,
+		MinConcurrency:        1,
+		MaxConcurrency:        10,
 	}
 }
 

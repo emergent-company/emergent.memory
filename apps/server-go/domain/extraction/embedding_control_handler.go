@@ -40,10 +40,15 @@ type EmbeddingWorkerStatus struct {
 
 // EmbeddingConfigResponse describes the current dynamic config.
 type EmbeddingConfigResponse struct {
-	BatchSize    int `json:"batch_size"`
-	Concurrency  int `json:"concurrency"`
-	IntervalMs   int `json:"interval_ms"`
-	StaleMinutes int `json:"stale_minutes"`
+	BatchSize             int  `json:"batch_size"`
+	Concurrency           int  `json:"concurrency"`
+	IntervalMs            int  `json:"interval_ms"`
+	StaleMinutes          int  `json:"stale_minutes"`
+	EnableAdaptiveScaling bool `json:"enable_adaptive_scaling"`
+	MinConcurrency        int  `json:"min_concurrency"`
+	MaxConcurrency        int  `json:"max_concurrency"`
+	CurrentConcurrency    int  `json:"current_concurrency"`
+	HealthScore           int  `json:"health_score"`
 }
 
 // EmbeddingStatusResponse is the response for GET /api/embeddings/status.
@@ -74,10 +79,13 @@ func (h *EmbeddingControlHandler) currentStatus() EmbeddingStatusResponse {
 			Paused:  h.sweepWorker.IsPaused(),
 		},
 		Config: EmbeddingConfigResponse{
-			BatchSize:    cfg.WorkerBatchSize,
-			Concurrency:  cfg.WorkerConcurrency,
-			IntervalMs:   cfg.WorkerIntervalMs,
-			StaleMinutes: staleMinutes,
+			BatchSize:             cfg.WorkerBatchSize,
+			Concurrency:           cfg.WorkerConcurrency,
+			IntervalMs:            cfg.WorkerIntervalMs,
+			StaleMinutes:          staleMinutes,
+			EnableAdaptiveScaling: cfg.EnableAdaptiveScaling,
+			MinConcurrency:        cfg.MinConcurrency,
+			MaxConcurrency:        cfg.MaxConcurrency,
 		},
 	}
 }
@@ -114,10 +122,13 @@ func (h *EmbeddingControlHandler) Resume(c echo.Context) error {
 
 // EmbeddingConfigRequest is the body for PATCH /api/embeddings/config.
 type EmbeddingConfigRequest struct {
-	BatchSize    *int `json:"batch_size"`
-	Concurrency  *int `json:"concurrency"`
-	IntervalMs   *int `json:"interval_ms"`
-	StaleMinutes *int `json:"stale_minutes"`
+	BatchSize             *int  `json:"batch_size"`
+	Concurrency           *int  `json:"concurrency"`
+	IntervalMs            *int  `json:"interval_ms"`
+	StaleMinutes          *int  `json:"stale_minutes"`
+	EnableAdaptiveScaling *bool `json:"enable_adaptive_scaling"`
+	MinConcurrency        *int  `json:"min_concurrency"`
+	MaxConcurrency        *int  `json:"max_concurrency"`
 }
 
 // Config updates embedding worker configuration at runtime.
@@ -138,12 +149,43 @@ func (h *EmbeddingControlHandler) Config(c echo.Context) error {
 		relCfg.WorkerBatchSize = *req.BatchSize
 	}
 	if req.Concurrency != nil {
-		objCfg.WorkerConcurrency = *req.Concurrency
-		relCfg.WorkerConcurrency = *req.Concurrency
+		if objCfg.EnableAdaptiveScaling {
+			objCfg.MaxConcurrency = *req.Concurrency
+			relCfg.MaxConcurrency = *req.Concurrency
+		} else {
+			objCfg.WorkerConcurrency = *req.Concurrency
+			relCfg.WorkerConcurrency = *req.Concurrency
+		}
 	}
 	if req.IntervalMs != nil {
 		objCfg.WorkerIntervalMs = *req.IntervalMs
 		relCfg.WorkerIntervalMs = *req.IntervalMs
+	}
+	if req.EnableAdaptiveScaling != nil {
+		objCfg.EnableAdaptiveScaling = *req.EnableAdaptiveScaling
+		relCfg.EnableAdaptiveScaling = *req.EnableAdaptiveScaling
+	}
+	if req.MinConcurrency != nil {
+		objCfg.MinConcurrency = *req.MinConcurrency
+		relCfg.MinConcurrency = *req.MinConcurrency
+	}
+	if req.MaxConcurrency != nil {
+		objCfg.MaxConcurrency = *req.MaxConcurrency
+		relCfg.MaxConcurrency = *req.MaxConcurrency
+	}
+
+	// Validation (Task 8.4)
+	if objCfg.MinConcurrency < 1 {
+		objCfg.MinConcurrency = 1
+		relCfg.MinConcurrency = 1
+	}
+	if objCfg.MaxConcurrency < objCfg.MinConcurrency {
+		objCfg.MaxConcurrency = objCfg.MinConcurrency
+		relCfg.MaxConcurrency = objCfg.MinConcurrency
+	}
+	if objCfg.MaxConcurrency > 50 {
+		objCfg.MaxConcurrency = 50
+		relCfg.MaxConcurrency = 50
 	}
 
 	h.objectWorker.SetConfig(objCfg)

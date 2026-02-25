@@ -10,6 +10,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/pkg/logger"
 )
 
@@ -25,6 +26,7 @@ type ChunkEmbeddingWorker struct {
 	db        bun.IDB
 	cfg       *ChunkEmbeddingConfig
 	log       *slog.Logger
+	scaler    *syshealth.ConcurrencyScaler
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
 	running   bool
@@ -45,6 +47,7 @@ func NewChunkEmbeddingWorker(
 	db bun.IDB,
 	cfg *ChunkEmbeddingConfig,
 	log *slog.Logger,
+	scaler *syshealth.ConcurrencyScaler,
 ) *ChunkEmbeddingWorker {
 	return &ChunkEmbeddingWorker{
 		jobs:   jobs,
@@ -52,6 +55,7 @@ func NewChunkEmbeddingWorker(
 		db:     db,
 		cfg:    cfg,
 		log:    log.With(logger.Scope("chunk.embedding.worker")),
+		scaler: scaler,
 	}
 }
 
@@ -168,13 +172,30 @@ func (w *ChunkEmbeddingWorker) processBatch(ctx context.Context) error {
 		return nil
 	}
 
-	for _, job := range jobs {
-		if err := w.processJob(ctx, job); err != nil {
-			w.log.Warn("process job failed",
-				slog.String("job_id", job.ID),
-				slog.String("error", err.Error()))
-		}
+	concurrency := w.cfg.WorkerConcurrency
+	if w.scaler != nil {
+		concurrency = w.scaler.GetConcurrency(w.cfg.WorkerConcurrency)
 	}
+	if concurrency <= 0 {
+		concurrency = 10
+	}
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	for _, job := range jobs {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(j *ChunkEmbeddingJob) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := w.processJob(ctx, j); err != nil {
+				w.log.Warn("process job failed",
+					slog.String("job_id", j.ID),
+					slog.String("error", err.Error()))
+			}
+		}(job)
+	}
+	wg.Wait()
 
 	return nil
 }

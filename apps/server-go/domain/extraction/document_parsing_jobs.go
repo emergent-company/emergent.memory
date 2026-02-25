@@ -45,8 +45,16 @@ type DocumentParsingConfig struct {
 	WorkerIntervalMs int
 	// WorkerBatchSize is the number of jobs to process per poll (default: 5)
 	WorkerBatchSize int
+	// WorkerConcurrency is the static concurrency level, defaults to 5
+	WorkerConcurrency int
 	// StaleThresholdMinutes is the threshold for considering a job stale (default: 10)
 	StaleThresholdMinutes int
+	// EnableAdaptiveScaling enables dynamic concurrency adjustment based on system health
+	EnableAdaptiveScaling bool
+	// MinConcurrency is the minimum concurrency when adaptive scaling is enabled (default: 1)
+	MinConcurrency int
+	// MaxConcurrency is the maximum concurrency when adaptive scaling is enabled (default: 5)
+	MaxConcurrency int
 }
 
 // DefaultDocumentParsingConfig returns default configuration
@@ -58,7 +66,11 @@ func DefaultDocumentParsingConfig() *DocumentParsingConfig {
 		DefaultMaxRetries:     3,
 		WorkerIntervalMs:      5000,
 		WorkerBatchSize:       5,
+		WorkerConcurrency:     5,
 		StaleThresholdMinutes: 10,
+		EnableAdaptiveScaling: false,
+		MinConcurrency:        1,
+		MaxConcurrency:        5,
 	}
 }
 

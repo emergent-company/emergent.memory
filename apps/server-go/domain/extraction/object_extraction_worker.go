@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/domain/documents"
 	"github.com/emergent-company/emergent/domain/extraction/agents"
 	"github.com/emergent-company/emergent/domain/graph"
@@ -22,6 +23,9 @@ type ObjectExtractionWorkerConfig struct {
 	// PollInterval is how often to check for new jobs. Default: 5 seconds.
 	PollInterval time.Duration
 
+	// Concurrency is the maximum number of jobs to process concurrently
+	Concurrency int
+
 	// OrphanThreshold is the max acceptable orphan rate (0.0-1.0). Default: 0.3.
 	OrphanThreshold float64
 
@@ -33,6 +37,7 @@ type ObjectExtractionWorkerConfig struct {
 func DefaultObjectExtractionWorkerConfig() *ObjectExtractionWorkerConfig {
 	return &ObjectExtractionWorkerConfig{
 		PollInterval:    5 * time.Second,
+		Concurrency:     5,
 		OrphanThreshold: 0.3,
 		MaxRetries:      3,
 	}
@@ -60,6 +65,7 @@ type ObjectExtractionWorker struct {
 	modelFactory   *adk.ModelFactory
 	config         *ObjectExtractionWorkerConfig
 	log            *slog.Logger
+	scaler         *syshealth.ConcurrencyScaler
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -74,6 +80,7 @@ func NewObjectExtractionWorker(
 	modelFactory *adk.ModelFactory,
 	config *ObjectExtractionWorkerConfig,
 	log *slog.Logger,
+	scaler *syshealth.ConcurrencyScaler,
 ) *ObjectExtractionWorker {
 	if config == nil {
 		config = DefaultObjectExtractionWorkerConfig()
@@ -86,6 +93,7 @@ func NewObjectExtractionWorker(
 		modelFactory:   modelFactory,
 		config:         config,
 		log:            log.With(logger.Scope("object-extraction-worker")),
+		scaler:         scaler,
 		stopCh:         make(chan struct{}),
 	}
 }
@@ -119,23 +127,48 @@ func (w *ObjectExtractionWorker) run(ctx context.Context) {
 		case <-w.stopCh:
 			return
 		case <-ticker.C:
-			if err := w.processNextJob(ctx); err != nil {
-				w.log.Error("error processing job", logger.Error(err))
+			// Just fetch jobs and launch goroutines up to concurrency
+			jobs, err := w.jobsService.DequeueBatch(ctx, w.config.Concurrency)
+			if err != nil {
+				w.log.Error("error dequeuing jobs", logger.Error(err))
+				continue
 			}
+			if len(jobs) == 0 {
+				continue
+			}
+
+			w.log.Info("processing extraction jobs", slog.Int("count", len(jobs)))
+
+			concurrency := w.config.Concurrency
+			if w.scaler != nil {
+				concurrency = w.scaler.GetConcurrency(w.config.Concurrency)
+			}
+			if concurrency <= 0 {
+				concurrency = 5
+			}
+			sem := make(chan struct{}, concurrency)
+			var batchWg sync.WaitGroup
+
+			for _, job := range jobs {
+				sem <- struct{}{}
+				batchWg.Add(1)
+				go func(j *ObjectExtractionJob) {
+					defer batchWg.Done()
+					defer func() { <-sem }()
+					if err := w.processSingleJob(ctx, j); err != nil {
+						w.log.Error("job failed",
+							slog.String("job_id", j.ID),
+							logger.Error(err))
+					}
+				}(job)
+			}
+			batchWg.Wait()
 		}
 	}
 }
 
-// processNextJob dequeues and processes the next available job.
-func (w *ObjectExtractionWorker) processNextJob(ctx context.Context) error {
-	job, err := w.jobsService.Dequeue(ctx)
-	if err != nil {
-		return fmt.Errorf("dequeue job: %w", err)
-	}
-	if job == nil {
-		return nil // No jobs available
-	}
-
+// processSingleJob processes a single job after it's dequeued
+func (w *ObjectExtractionWorker) processSingleJob(ctx context.Context, job *ObjectExtractionJob) error {
 	w.log.Info("processing extraction job",
 		slog.String("job_id", job.ID),
 		slog.String("project_id", job.ProjectID),
