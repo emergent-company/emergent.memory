@@ -2,8 +2,10 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -11,6 +13,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
 )
 
@@ -198,12 +202,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case projectsLoadedMsg:
 		m.statusMsg = fmt.Sprintf("Loaded %d projects", len(msg.projects))
-		// Convert to list items and update projectsList
+		// Convert to list items
+		items := make([]list.Item, len(msg.projects))
+		for i, p := range msg.projects {
+			items[i] = p.(list.Item)
+		}
+		m.projectsList.SetItems(items)
 		return m, nil
 
 	case documentsLoadedMsg:
 		m.statusMsg = fmt.Sprintf("Loaded %d documents", len(msg.documents))
-		// Convert to list items and update documentsList
+		// Convert to list items
+		items := make([]list.Item, len(msg.documents))
+		for i, d := range msg.documents {
+			items[i] = d.(list.Item)
+		}
+		m.documentsList.SetItems(items)
 		return m, nil
 
 	case errMsg:
@@ -281,7 +295,13 @@ func (m Model) View() string {
 	}
 
 	if m.width < 80 || m.height < 24 {
-		return m.err.Error()
+		style := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("9")).
+			Bold(true).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("9")).
+			Padding(1, 2)
+		return style.Render(fmt.Sprintf("Terminal too small\nMinimum: 80x24\nCurrent: %dx%d\n\nPress q to quit", m.width, m.height))
 	}
 
 	var content strings.Builder
@@ -317,8 +337,6 @@ func (m Model) View() string {
 	// Render help
 	if m.showHelp {
 		content.WriteString("\n")
-		content.WriteString(m.help.View(m.keyMap))
-	} else {
 		content.WriteString(m.help.View(m.keyMap))
 	}
 
@@ -403,12 +421,21 @@ func New(client *client.Client) Model {
 	// Create lists
 	projectsList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	projectsList.Title = "Projects"
+	projectsList.SetShowHelp(false)         // Disable list's default help
+	projectsList.SetShowStatusBar(false)    // Disable list's status bar
+	projectsList.SetFilteringEnabled(false) // We'll handle filtering ourselves
 
 	documentsList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	documentsList.Title = "Documents"
+	documentsList.SetShowHelp(false)
+	documentsList.SetShowStatusBar(false)
+	documentsList.SetFilteringEnabled(false)
 
 	extractionsList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	extractionsList.Title = "Extractions"
+	extractionsList.SetShowHelp(false)
+	extractionsList.SetShowStatusBar(false)
+	extractionsList.SetFilteringEnabled(false)
 
 	// Create search input
 	searchInput := textinput.New()
@@ -426,6 +453,7 @@ func New(client *client.Client) Model {
 		help:            help.New(),
 		keyMap:          DefaultKeyMap(),
 		showHelp:        false,
+		statusMsg:       "Loading projects...",
 	}
 }
 
@@ -447,15 +475,74 @@ type errMsg struct {
 
 func loadProjects(client *client.Client) tea.Cmd {
 	return func() tea.Msg {
-		// TODO: Load projects from API
-		return projectsLoadedMsg{projects: []interface{}{}}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		projects, err := client.SDK.Projects.List(ctx, &projects.ListOptions{
+			IncludeStats: true,
+		})
+		if err != nil {
+			return errMsg{err: fmt.Errorf("failed to load projects: %w", err)}
+		}
+
+		// Convert to list items
+		items := make([]interface{}, len(projects))
+		for i, p := range projects {
+			desc := fmt.Sprintf("ID: %s", p.ID)
+			if p.Stats != nil {
+				desc = fmt.Sprintf("%d docs, %d objects, %d relationships",
+					p.Stats.DocumentCount,
+					p.Stats.ObjectCount,
+					p.Stats.RelationshipCount)
+			}
+			items[i] = projectItem{
+				id:   p.ID,
+				name: p.Name,
+				desc: desc,
+			}
+		}
+
+		return projectsLoadedMsg{projects: items}
 	}
 }
 
 func loadDocuments(client *client.Client, projectID string) tea.Cmd {
 	return func() tea.Msg {
-		// TODO: Load documents from API
-		return documentsLoadedMsg{documents: []interface{}{}}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// Set the project context
+		client.SDK.Documents.SetContext("", projectID)
+
+		// Fetch documents
+		result, err := client.SDK.Documents.List(ctx, &documents.ListOptions{
+			Limit: 100,
+		})
+		if err != nil {
+			return errMsg{err: fmt.Errorf("failed to load documents: %w", err)}
+		}
+
+		// Convert to list items
+		items := make([]interface{}, len(result.Documents))
+		for i, d := range result.Documents {
+			filename := "Untitled"
+			if d.Filename != nil && *d.Filename != "" {
+				filename = *d.Filename
+			}
+
+			status := "Unknown"
+			if d.ConversionStatus != nil {
+				status = *d.ConversionStatus
+			}
+
+			items[i] = documentItem{
+				id:       d.ID,
+				filename: filename,
+				status:   fmt.Sprintf("Status: %s | Chunks: %d", status, d.Chunks),
+			}
+		}
+
+		return documentsLoadedMsg{documents: items}
 	}
 }
 
