@@ -2511,7 +2511,45 @@ definitions:
         type: string
       organizationId:
         type: string
+      stats:
+        allOf:
+        - $ref: '#/definitions/github_com_emergent-company_emergent_domain_projects.ProjectStats'
+        description: Populated only when requested
       updatedAt:
+        type: string
+    type: object
+  github_com_emergent-company_emergent_domain_projects.ProjectStats:
+    properties:
+      documentCount:
+        type: integer
+      objectCount:
+        type: integer
+      queuedJobs:
+        type: integer
+      relationshipCount:
+        type: integer
+      runningJobs:
+        type: integer
+      templatePacks:
+        items:
+          $ref: '#/definitions/github_com_emergent-company_emergent_domain_projects.TemplatePack'
+        type: array
+      totalJobs:
+        type: integer
+    type: object
+  github_com_emergent-company_emergent_domain_projects.TemplatePack:
+    properties:
+      name:
+        type: string
+      objectTypes:
+        items:
+          type: string
+        type: array
+      relationshipTypes:
+        items:
+          type: string
+        type: array
+      version:
         type: string
     type: object
   github_com_emergent-company_emergent_domain_projects.UpdateProjectRequest:
@@ -3872,6 +3910,8 @@ definitions:
         type: string
       orgId:
         type: string
+      stats:
+        $ref: '#/definitions/github_com_emergent-company_emergent_domain_projects.ProjectStats'
     type: object
   projects.ProjectMemberDTO:
     properties:
@@ -5302,7 +5342,7 @@ info:
   license:
     name: Proprietary
   title: Emergent API
-  version: 0.22.0
+  version: 0.25.0
 paths:
   /api/admin/agent-definitions/{id}/workspace-config:
     get:
@@ -7129,6 +7169,9 @@ paths:
       summary: Test provider configuration
       tags:
       - datasource
+  /api/diagnostics:
+    get:
+      responses: {}
   /api/documents:
     delete:
       consumes:
@@ -7629,6 +7672,18 @@ paths:
       summary: Upload document
       tags:
       - documents
+  /api/embeddings/config:
+    patch:
+      responses: {}
+  /api/embeddings/pause:
+    post:
+      responses: {}
+  /api/embeddings/resume:
+    post:
+      responses: {}
+  /api/embeddings/status:
+    get:
+      responses: {}
   /api/events/connections/count:
     get:
       description: Returns the current number of active SSE connections to the events

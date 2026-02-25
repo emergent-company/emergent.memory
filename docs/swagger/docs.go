@@ -2825,6 +2825,11 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/diagnostics": {
+            "get": {
+                "responses": {}
+            }
+        },
         "/api/documents": {
             "get": {
                 "security": [
@@ -3587,6 +3592,26 @@ const docTemplate = `{
                         }
                     }
                 }
+            }
+        },
+        "/api/embeddings/config": {
+            "patch": {
+                "responses": {}
+            }
+        },
+        "/api/embeddings/pause": {
+            "post": {
+                "responses": {}
+            }
+        },
+        "/api/embeddings/resume": {
+            "post": {
+                "responses": {}
+            }
+        },
+        "/api/embeddings/status": {
+            "get": {
+                "responses": {}
             }
         },
         "/api/events/connections/count": {
@@ -18750,7 +18775,67 @@ const docTemplate = `{
                 "organizationId": {
                     "type": "string"
                 },
+                "stats": {
+                    "description": "Populated only when requested",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_domain_projects.ProjectStats"
+                        }
+                    ]
+                },
                 "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_domain_projects.ProjectStats": {
+            "type": "object",
+            "properties": {
+                "documentCount": {
+                    "type": "integer"
+                },
+                "objectCount": {
+                    "type": "integer"
+                },
+                "queuedJobs": {
+                    "type": "integer"
+                },
+                "relationshipCount": {
+                    "type": "integer"
+                },
+                "runningJobs": {
+                    "type": "integer"
+                },
+                "templatePacks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_emergent-company_emergent_domain_projects.TemplatePack"
+                    }
+                },
+                "totalJobs": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_domain_projects.TemplatePack": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "objectTypes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "relationshipTypes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "version": {
                     "type": "string"
                 }
             }
@@ -20798,6 +20883,9 @@ const docTemplate = `{
                 },
                 "orgId": {
                     "type": "string"
+                },
+                "stats": {
+                    "$ref": "#/definitions/github_com_emergent-company_emergent_domain_projects.ProjectStats"
                 }
             }
         },
@@ -22944,7 +23032,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.22.0",
+	Version:          "0.25.0",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
