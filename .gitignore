@@ -142,3 +142,4 @@ tools/niezatapialni-scraper/niezatapialni-scraper
 # Large data files
 *.jsonl
 *.log
+.claude/settings.local.json
