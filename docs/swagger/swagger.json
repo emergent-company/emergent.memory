@@ -15,7 +15,7 @@
         "license": {
             "name": "Proprietary"
         },
-        "version": "0.22.0"
+        "version": "0.25.0"
     },
     "host": "localhost:5300",
     "basePath": "/",
@@ -2823,6 +2823,11 @@
                 }
             }
         },
+        "/api/diagnostics": {
+            "get": {
+                "responses": {}
+            }
+        },
         "/api/documents": {
             "get": {
                 "security": [
@@ -3585,6 +3590,26 @@
                         }
                     }
                 }
+            }
+        },
+        "/api/embeddings/config": {
+            "patch": {
+                "responses": {}
+            }
+        },
+        "/api/embeddings/pause": {
+            "post": {
+                "responses": {}
+            }
+        },
+        "/api/embeddings/resume": {
+            "post": {
+                "responses": {}
+            }
+        },
+        "/api/embeddings/status": {
+            "get": {
+                "responses": {}
             }
         },
         "/api/events/connections/count": {
@@ -18748,7 +18773,67 @@
                 "organizationId": {
                     "type": "string"
                 },
+                "stats": {
+                    "description": "Populated only when requested",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_domain_projects.ProjectStats"
+                        }
+                    ]
+                },
                 "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_domain_projects.ProjectStats": {
+            "type": "object",
+            "properties": {
+                "documentCount": {
+                    "type": "integer"
+                },
+                "objectCount": {
+                    "type": "integer"
+                },
+                "queuedJobs": {
+                    "type": "integer"
+                },
+                "relationshipCount": {
+                    "type": "integer"
+                },
+                "runningJobs": {
+                    "type": "integer"
+                },
+                "templatePacks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_emergent-company_emergent_domain_projects.TemplatePack"
+                    }
+                },
+                "totalJobs": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_domain_projects.TemplatePack": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "objectTypes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "relationshipTypes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "version": {
                     "type": "string"
                 }
             }
@@ -20796,6 +20881,9 @@
                 },
                 "orgId": {
                     "type": "string"
+                },
+                "stats": {
+                    "$ref": "#/definitions/github_com_emergent-company_emergent_domain_projects.ProjectStats"
                 }
             }
         },
