@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -137,6 +138,7 @@ type StaleJobCleanupTask struct {
 	db           *bun.DB
 	log          *slog.Logger
 	staleMinutes int
+	mu           sync.RWMutex
 }
 
 // NewStaleJobCleanupTask creates a new stale job cleanup task
@@ -151,12 +153,26 @@ func NewStaleJobCleanupTask(db *bun.DB, log *slog.Logger, staleMinutes int) *Sta
 	}
 }
 
+// SetStaleMinutes updates the stale threshold at runtime.
+func (t *StaleJobCleanupTask) SetStaleMinutes(minutes int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.staleMinutes = minutes
+}
+
+// GetStaleMinutes returns the current stale threshold.
+func (t *StaleJobCleanupTask) GetStaleMinutes() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.staleMinutes
+}
+
 // jobTableConfig holds the configuration for cleaning up a specific job table
 type jobTableConfig struct {
-	table         string
-	hasStartedAt  bool
+	table          string
+	hasStartedAt   bool
 	hasCompletedAt bool
-	errorColumn   string
+	errorColumn    string
 }
 
 // Run executes the stale job cleanup
@@ -164,7 +180,11 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 	start := time.Now()
 	t.log.Debug("cleaning up stale jobs")
 
-	cutoff := time.Now().Add(-time.Duration(t.staleMinutes) * time.Minute)
+	t.mu.RLock()
+	staleMinutes := t.staleMinutes
+	t.mu.RUnlock()
+
+	cutoff := time.Now().Add(-time.Duration(staleMinutes) * time.Minute)
 	totalCleaned := int64(0)
 
 	// Clean up stale extraction jobs (multiple tables with different schemas)
@@ -203,7 +223,7 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 // cleanupTable cleans up stale jobs in a specific table
 func (t *StaleJobCleanupTask) cleanupTable(ctx context.Context, cfg jobTableConfig, cutoff time.Time) (int64, error) {
 	var query string
-	
+
 	if cfg.hasStartedAt && cfg.hasCompletedAt {
 		// Tables with started_at and completed_at columns
 		query = `
@@ -212,8 +232,8 @@ func (t *StaleJobCleanupTask) cleanupTable(ctx context.Context, cfg jobTableConf
 				` + cfg.errorColumn + ` = 'Job marked as stale during cleanup',
 				completed_at = NOW(),
 				updated_at = NOW()
-			WHERE status IN ('pending', 'processing', 'running')
-			AND (started_at < ? OR (started_at IS NULL AND created_at < ?))
+		WHERE status IN ('processing', 'running')
+		AND started_at < ?
 		`
 	} else {
 		// Tables without started_at (like email_jobs) - use created_at only
@@ -225,19 +245,19 @@ func (t *StaleJobCleanupTask) cleanupTable(ctx context.Context, cfg jobTableConf
 			AND created_at < ?
 		`
 	}
-	
+
 	var result sql.Result
 	var err error
-	
+
 	if cfg.hasStartedAt {
-		result, err = t.db.ExecContext(ctx, query, cutoff, cutoff)
+		result, err = t.db.ExecContext(ctx, query, cutoff)
 	} else {
 		result, err = t.db.ExecContext(ctx, query, cutoff)
 	}
-	
+
 	if err != nil {
 		return 0, err
 	}
-	
+
 	return result.RowsAffected()
 }

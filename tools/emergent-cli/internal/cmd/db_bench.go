@@ -325,33 +325,55 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	)
 
 	if cached := benchLoadParsedCache(dbBenchFlags.seed, dbBenchFlags.offset); cached != nil {
-		fmt.Printf("  Using parsed cache for seed=%d offset=%d\n", dbBenchFlags.seed, dbBenchFlags.offset)
+		fmt.Printf("  Using per-chunk cache for seed=%d offset=%d\n", dbBenchFlags.seed, dbBenchFlags.offset)
 		titles, titleGenres = cached.Titles, cached.TitleGenres
 		episodes, seasons = cached.Episodes, cached.Seasons
 		roles, crewRoles = cached.Roles, cached.CrewRoles
 		characterNames, titleAKAs = cached.CharNames, cached.TitleAKAs
 		people = cached.People
+	} else if master := benchLoadMasterCache(); master != nil {
+		fmt.Printf("  Slicing from master cache for seed=%d offset=%d\n", dbBenchFlags.seed, dbBenchFlags.offset)
+		sliced := benchSliceFromMaster(master, dbBenchFlags.seed, dbBenchFlags.offset)
+		if sliced != nil {
+			titles, titleGenres = sliced.Titles, sliced.TitleGenres
+			episodes, seasons = sliced.Episodes, sliced.Seasons
+			roles, crewRoles = sliced.Roles, sliced.CrewRoles
+			characterNames, titleAKAs = sliced.CharNames, sliced.TitleAKAs
+			people = sliced.People
+		}
 	} else {
-		filteredRatings, filteredVotes := benchGetFilteredTitleIDs(dbBenchFlags.seed, dbBenchFlags.offset)
-		titles, titleGenres = benchGetTitleMetadata(filteredRatings, filteredVotes)
-		episodes, seasons = benchGetEpisodes(titles)
-		roles, targetPersonIDs, charNames := benchGetPrincipals(titles)
-		crewRoles, crewTargetIDs := benchGetCrew(titles)
-		for id := range crewTargetIDs {
-			targetPersonIDs[id] = true
+		fmt.Println("  No cache found — building master cache (one-time, ~10 min)...")
+		master := benchBuildMasterCache()
+		sliced := benchSliceFromMaster(master, dbBenchFlags.seed, dbBenchFlags.offset)
+		if sliced != nil {
+			titles, titleGenres = sliced.Titles, sliced.TitleGenres
+			episodes, seasons = sliced.Episodes, sliced.Seasons
+			roles, crewRoles = sliced.Roles, sliced.CrewRoles
+			characterNames, titleAKAs = sliced.CharNames, sliced.TitleAKAs
+			people = sliced.People
+		} else {
+			// Fallback: old per-chunk parse (e.g. offset beyond master range)
+			filteredRatings, filteredVotes := benchGetFilteredTitleIDs(dbBenchFlags.seed, dbBenchFlags.offset)
+			titles, titleGenres = benchGetTitleMetadata(filteredRatings, filteredVotes)
+			episodes, seasons = benchGetEpisodes(titles)
+			roles, targetPersonIDs, charNames := benchGetPrincipals(titles)
+			crewRoles, crewTargetIDs := benchGetCrew(titles)
+			for id := range crewTargetIDs {
+				targetPersonIDs[id] = true
+			}
+			akas := benchGetAKAs(titles)
+			people = benchGetPeopleMetadata(targetPersonIDs)
+			characterNames = charNames
+			titleAKAs = make(map[string][]string)
+			for _, a := range akas {
+				titleAKAs[a.titleID] = append(titleAKAs[a.titleID], a.localizedTitle)
+			}
+			benchSaveParsedCache(&benchParsedCache{
+				Seed: dbBenchFlags.seed, Offset: dbBenchFlags.offset, Titles: titles, TitleGenres: titleGenres,
+				Episodes: episodes, Seasons: seasons, Roles: roles, CrewRoles: crewRoles,
+				CharNames: characterNames, TitleAKAs: titleAKAs, People: people,
+			})
 		}
-		akas := benchGetAKAs(titles)
-		people = benchGetPeopleMetadata(targetPersonIDs)
-		characterNames = charNames
-		titleAKAs = make(map[string][]string)
-		for _, a := range akas {
-			titleAKAs[a.titleID] = append(titleAKAs[a.titleID], a.localizedTitle)
-		}
-		benchSaveParsedCache(&benchParsedCache{
-			Seed: dbBenchFlags.seed, Offset: dbBenchFlags.offset, Titles: titles, TitleGenres: titleGenres,
-			Episodes: episodes, Seasons: seasons, Roles: roles, CrewRoles: crewRoles,
-			CharNames: characterNames, TitleAKAs: titleAKAs, People: people,
-		})
 	}
 
 	estObjects := benchEstimateObjectCount(titles, episodes, seasons, people, titleGenres, characterNames)
@@ -608,6 +630,367 @@ type benchPerson struct {
 }
 
 // ─── parsed-data cache ────────────────────────────────────────────────────────
+
+// benchMasterCache holds the complete parsed IMDb dataset in title-ID order.
+// Built once from the TSV files; every chunk slices the relevant window from it.
+// Stored at /tmp/imdb_data/parsed_master.json.gz
+type benchMasterCache struct {
+	TitleIDs    []string                `json:"title_ids"` // ordered; defines chunk windows
+	Titles      map[string]benchTitle   `json:"titles"`
+	TitleGenres map[string][]string     `json:"title_genres"`
+	Episodes    map[string]benchEpisode `json:"episodes"`
+	Seasons     map[string]string       `json:"seasons"`
+	Roles       []benchRole             `json:"roles"`
+	CrewRoles   []benchCrewRel          `json:"crew_roles"`
+	CharNames   map[string]bool         `json:"char_names"`
+	TitleAKAs   map[string][]string     `json:"title_akas"`
+	People      map[string]benchPerson  `json:"people"`
+}
+
+const benchMasterCachePath = "/tmp/imdb_data/parsed_master.json.gz"
+
+func benchLoadMasterCache() *benchMasterCache {
+	f, err := os.Open(benchMasterCachePath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil
+	}
+	defer gz.Close()
+	var c benchMasterCache
+	if err := json.NewDecoder(gz).Decode(&c); err != nil {
+		return nil
+	}
+	return &c
+}
+
+func benchSaveMasterCache(c *benchMasterCache) {
+	os.MkdirAll("/tmp/imdb_data", 0755)
+	f, err := os.Create(benchMasterCachePath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	gz := gzip.NewWriter(f)
+	defer gz.Close()
+	json.NewEncoder(gz).Encode(c) //nolint:errcheck
+}
+
+// benchSliceFromMaster extracts the (seed, offset) window from the master cache,
+// returning a chunk-scoped benchParsedCache ready for ingestion.
+func benchSliceFromMaster(master *benchMasterCache, seed, offset int) *benchParsedCache {
+	if offset >= len(master.TitleIDs) {
+		return nil
+	}
+	end := offset + seed
+	if end > len(master.TitleIDs) {
+		end = len(master.TitleIDs)
+	}
+	chunkIDs := master.TitleIDs[offset:end]
+	idSet := make(map[string]bool, len(chunkIDs))
+	for _, id := range chunkIDs {
+		idSet[id] = true
+	}
+
+	titles := make(map[string]benchTitle, len(chunkIDs))
+	titleGenres := make(map[string][]string)
+	for _, id := range chunkIDs {
+		if t, ok := master.Titles[id]; ok {
+			titles[id] = t
+		}
+		if g, ok := master.TitleGenres[id]; ok {
+			titleGenres[id] = g
+		}
+	}
+
+	episodes := make(map[string]benchEpisode)
+	for id, ep := range master.Episodes {
+		if idSet[id] {
+			episodes[id] = ep
+		}
+	}
+	seasons := make(map[string]string)
+	for k, v := range master.Seasons {
+		// season key is "<parentID>_s<N>" — keep if any chunk title is the parent
+		// We stored the parent title ID; include season if parent is in this chunk.
+		if idSet[v] {
+			seasons[k] = v
+		}
+	}
+
+	var roles []benchRole
+	for _, r := range master.Roles {
+		if idSet[r.TitleID] {
+			roles = append(roles, r)
+		}
+	}
+	var crewRoles []benchCrewRel
+	for _, r := range master.CrewRoles {
+		if idSet[r.TitleID] {
+			crewRoles = append(crewRoles, r)
+		}
+	}
+
+	charNames := make(map[string]bool)
+	for _, r := range roles {
+		for _, c := range r.Characters {
+			charNames[c] = true
+		}
+	}
+
+	titleAKAs := make(map[string][]string)
+	for id, akas := range master.TitleAKAs {
+		if idSet[id] {
+			titleAKAs[id] = akas
+		}
+	}
+
+	// Collect people needed by this chunk
+	neededPeople := make(map[string]bool)
+	for _, r := range roles {
+		neededPeople[r.PersonID] = true
+	}
+	for _, r := range crewRoles {
+		neededPeople[r.PersonID] = true
+	}
+	people := make(map[string]benchPerson, len(neededPeople))
+	for id := range neededPeople {
+		if p, ok := master.People[id]; ok {
+			people[id] = p
+		}
+	}
+
+	return &benchParsedCache{
+		Seed: seed, Offset: offset,
+		Titles: titles, TitleGenres: titleGenres,
+		Episodes: episodes, Seasons: seasons,
+		Roles: roles, CrewRoles: crewRoles,
+		CharNames: charNames, TitleAKAs: titleAKAs,
+		People: people,
+	}
+}
+
+// benchBuildMasterCache parses all TSV files once and returns the master cache.
+func benchBuildMasterCache() *benchMasterCache {
+	fmt.Println("  Building master cache (one-time TSV parse for all chunks)...")
+
+	// 1. Ratings — establishes the ordered set of qualifying title IDs
+	closer, reader, _ := benchStreamIMDB("https://datasets.imdbws.com/title.ratings.tsv.gz")
+	defer closer.Close()
+	defer reader.Close()
+	scanner := bufio.NewScanner(reader)
+	scanner.Scan()
+	var titleIDs []string
+	type ratingEntry struct {
+		rating float64
+		votes  int
+	}
+	allRatings := make(map[string]ratingEntry)
+	for scanner.Scan() {
+		parts := strings.Split(scanner.Text(), "\t")
+		if len(parts) != 3 {
+			continue
+		}
+		v, _ := strconv.Atoi(parts[2])
+		if v > 5000 {
+			r, _ := strconv.ParseFloat(parts[1], 64)
+			titleIDs = append(titleIDs, parts[0])
+			allRatings[parts[0]] = ratingEntry{r, v}
+		}
+	}
+	closer.Close()
+
+	idSet := make(map[string]bool, len(titleIDs))
+	for _, id := range titleIDs {
+		idSet[id] = true
+	}
+
+	master := &benchMasterCache{
+		TitleIDs:    titleIDs,
+		Titles:      make(map[string]benchTitle),
+		TitleGenres: make(map[string][]string),
+		Episodes:    make(map[string]benchEpisode),
+		Seasons:     make(map[string]string),
+		CharNames:   make(map[string]bool),
+		TitleAKAs:   make(map[string][]string),
+		People:      make(map[string]benchPerson),
+	}
+
+	// 2. title.basics
+	validTypes := map[string]bool{
+		"movie": true, "tvSeries": true, "tvMiniSeries": true,
+		"videoGame": true, "tvEpisode": true, "tvMovie": true, "short": true,
+	}
+	{
+		c2, r2, _ := benchStreamIMDB("https://datasets.imdbws.com/title.basics.tsv.gz")
+		defer c2.Close()
+		defer r2.Close()
+		sc := bufio.NewScanner(r2)
+		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		sc.Scan()
+		for sc.Scan() {
+			parts := strings.Split(sc.Text(), "\t")
+			if len(parts) < 9 || !validTypes[parts[1]] || !idSet[parts[0]] {
+				continue
+			}
+			re := allRatings[parts[0]]
+			sy, _ := strconv.Atoi(parts[5])
+			ey, _ := strconv.Atoi(parts[6])
+			rt, _ := strconv.Atoi(parts[7])
+			master.Titles[parts[0]] = benchTitle{
+				ID: parts[0], Name: parts[2], OriginalName: parts[3], Type: parts[1],
+				StartYear: sy, EndYear: ey, Runtime: rt,
+				Rating: re.rating, Votes: re.votes, IsAdult: parts[4] == "1",
+			}
+			if parts[8] != `\N` {
+				for _, g := range strings.Split(parts[8], ",") {
+					if g != "" {
+						master.TitleGenres[parts[0]] = append(master.TitleGenres[parts[0]], g)
+					}
+				}
+			}
+		}
+		c2.Close()
+	}
+
+	// 3. title.episode
+	{
+		c3, r3, _ := benchStreamIMDB("https://datasets.imdbws.com/title.episode.tsv.gz")
+		defer c3.Close()
+		defer r3.Close()
+		sc := bufio.NewScanner(r3)
+		sc.Scan()
+		for sc.Scan() {
+			parts := strings.Split(sc.Text(), "\t")
+			if len(parts) < 4 || !idSet[parts[0]] {
+				continue
+			}
+			sn, _ := strconv.Atoi(parts[2])
+			en, _ := strconv.Atoi(parts[3])
+			master.Episodes[parts[0]] = benchEpisode{ID: parts[0], ParentID: parts[1], SeasonNumber: sn, EpNumber: en}
+			if sn > 0 {
+				master.Seasons[fmt.Sprintf("%s_s%d", parts[1], sn)] = parts[1]
+			}
+		}
+		c3.Close()
+	}
+
+	// 4. title.principals
+	allPeopleIDs := make(map[string]bool)
+	{
+		c4, r4, _ := benchStreamIMDB("https://datasets.imdbws.com/title.principals.tsv.gz")
+		defer c4.Close()
+		defer r4.Close()
+		sc := bufio.NewScanner(r4)
+		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		sc.Scan()
+		for sc.Scan() {
+			parts := strings.Split(sc.Text(), "\t")
+			if len(parts) < 6 || !idSet[parts[0]] {
+				continue
+			}
+			ordering, _ := strconv.Atoi(parts[1])
+			job := parts[4]
+			if job == `\N` {
+				job = ""
+			}
+			allPeopleIDs[parts[2]] = true
+			var chars []string
+			if parts[5] != `\N` {
+				json.Unmarshal([]byte(parts[5]), &chars) //nolint:errcheck
+				for _, ch := range chars {
+					master.CharNames[ch] = true
+				}
+			}
+			master.Roles = append(master.Roles, benchRole{
+				TitleID: parts[0], PersonID: parts[2], Category: parts[3],
+				Job: job, Characters: chars, Ordering: ordering,
+			})
+		}
+		c4.Close()
+	}
+
+	// 5. title.crew
+	{
+		c5, r5, _ := benchStreamIMDB("https://datasets.imdbws.com/title.crew.tsv.gz")
+		defer c5.Close()
+		defer r5.Close()
+		sc := bufio.NewScanner(r5)
+		sc.Scan()
+		for sc.Scan() {
+			parts := strings.Split(sc.Text(), "\t")
+			if len(parts) < 3 || !idSet[parts[0]] {
+				continue
+			}
+			if parts[1] != `\N` {
+				for _, dID := range strings.Split(parts[1], ",") {
+					allPeopleIDs[dID] = true
+					master.CrewRoles = append(master.CrewRoles, benchCrewRel{parts[0], dID, "DIRECTED"})
+				}
+			}
+			if parts[2] != `\N` {
+				for _, wID := range strings.Split(parts[2], ",") {
+					allPeopleIDs[wID] = true
+					master.CrewRoles = append(master.CrewRoles, benchCrewRel{parts[0], wID, "WROTE"})
+				}
+			}
+		}
+		c5.Close()
+	}
+
+	// 6. title.akas
+	{
+		c6, r6, _ := benchStreamIMDB("https://datasets.imdbws.com/title.akas.tsv.gz")
+		defer c6.Close()
+		defer r6.Close()
+		sc := bufio.NewScanner(r6)
+		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		sc.Scan()
+		for sc.Scan() {
+			parts := strings.Split(sc.Text(), "\t")
+			if len(parts) < 8 || !idSet[parts[0]] {
+				continue
+			}
+			master.TitleAKAs[parts[0]] = append(master.TitleAKAs[parts[0]], parts[2])
+		}
+		c6.Close()
+	}
+
+	// 7. name.basics
+	{
+		c7, r7, _ := benchStreamIMDB("https://datasets.imdbws.com/name.basics.tsv.gz")
+		defer c7.Close()
+		defer r7.Close()
+		sc := bufio.NewScanner(r7)
+		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		sc.Scan()
+		for sc.Scan() {
+			parts := strings.Split(sc.Text(), "\t")
+			if len(parts) < 6 || !allPeopleIDs[parts[0]] {
+				continue
+			}
+			b, _ := strconv.Atoi(parts[2])
+			d, _ := strconv.Atoi(parts[3])
+			var profs, kf []string
+			if parts[4] != `\N` {
+				profs = strings.Split(parts[4], ",")
+			}
+			if parts[5] != `\N` {
+				kf = strings.Split(parts[5], ",")
+			}
+			master.People[parts[0]] = benchPerson{parts[0], parts[1], b, d, profs, kf}
+		}
+		c7.Close()
+	}
+
+	fmt.Printf("  Master cache built: %d titles, %d people\n", len(master.Titles), len(master.People))
+	fmt.Printf("  Saving to %s ...\n", benchMasterCachePath)
+	benchSaveMasterCache(master)
+	return master
+}
 
 type benchParsedCache struct {
 	Seed        int                     `json:"seed"`
@@ -1274,7 +1657,14 @@ func benchBulkUploadObjects(ctx context.Context, client *sdkgraph.Client, items 
 
 	if len(missingKeys) > 0 {
 		fmt.Printf("  Resolving %d conflicting keys ...\n", len(missingKeys))
-		sem := make(chan struct{}, nWorkers)
+		// Use a lower concurrency for conflict resolution to avoid overwhelming the server.
+		// Each goroutine makes an individual ListObjects call; 99K+ calls at full concurrency
+		// can cause server overload.
+		resolveWorkers := nWorkers
+		if resolveWorkers > 8 {
+			resolveWorkers = 8
+		}
+		sem := make(chan struct{}, resolveWorkers)
 		var resolveWg sync.WaitGroup
 		for _, mk := range missingKeys {
 			sem <- struct{}{}
