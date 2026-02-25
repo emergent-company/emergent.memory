@@ -85,5 +85,60 @@ spec-server-dev-vertex-ai.json
 tools/emergent-cli/emergent-cli-*
 tools/emergent-cli/emergent-darwin-*
 tools/emergent-cli/emergent-linux-*
+tools/emergent-cli/emergent
 bin/
 apps/server-go/tmp/
+
+# Go build artifacts and temporary files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+server
+extraction-bench
+imdb-bench
+seed-imdb
+seed-lovdata
+imdb-benchmark-runner
+lovdata-benchmark-runner
+
+# Temporary Go scripts and patches
+fix_*.go
+patch*.go
+test_*.go
+setup_*.go
+run_*.go
+new_*.go
+old_*.go
+create_project.go
+clean_syntax.go
+
+# Temporary shell scripts
+*.sh.tmp
+test-*.sh
+run_*.sh
+get_*.sh
+
+# Benchmark and test runners
+apps/server-go/benchmark_script
+apps/server-go/extraction-bench
+apps/server-go/seed-imdb
+apps/server-go/seed-lovdata
+apps/server-go/main
+
+# Root level Go module files (should be in subdirectories)
+/go.mod
+/go.sum
+
+# MP3 and large media files
+*.mp3
+**/all_mp3s/
+**/sample_mp3s/
+
+# Binary executables in tools
+tools/niezatapialni-scraper/niezatapialni-scraper
+
+# Large data files
+*.jsonl
+*.log
