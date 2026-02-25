@@ -30,6 +30,25 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 	}
 }
 
+// TemplatePack represents an installed template pack for a project
+type TemplatePack struct {
+	Name              string   `json:"name"`
+	Version           string   `json:"version"`
+	ObjectTypes       []string `json:"objectTypes"`
+	RelationshipTypes []string `json:"relationshipTypes"`
+}
+
+// ProjectStats represents aggregated statistics for a project
+type ProjectStats struct {
+	DocumentCount     int            `json:"documentCount"`
+	ObjectCount       int            `json:"objectCount"`
+	RelationshipCount int            `json:"relationshipCount"`
+	TotalJobs         int            `json:"totalJobs"`
+	RunningJobs       int            `json:"runningJobs"`
+	QueuedJobs        int            `json:"queuedJobs"`
+	TemplatePacks     []TemplatePack `json:"templatePacks"`
+}
+
 // Project represents a project entity
 type Project struct {
 	ID                 string                 `json:"id"`
@@ -39,6 +58,7 @@ type Project struct {
 	ChatPromptTemplate *string                `json:"chat_prompt_template,omitempty"`
 	AutoExtractObjects *bool                  `json:"auto_extract_objects,omitempty"`
 	AutoExtractConfig  map[string]interface{} `json:"auto_extract_config,omitempty"`
+	Stats              *ProjectStats          `json:"stats,omitempty"`
 }
 
 // ProjectMember represents a project member
@@ -70,8 +90,9 @@ type UpdateProjectRequest struct {
 
 // ListOptions holds options for listing projects.
 type ListOptions struct {
-	Limit int
-	OrgID string
+	Limit        int
+	OrgID        string
+	IncludeStats bool
 }
 
 // List returns all projects the authenticated user is a member of.
@@ -88,6 +109,9 @@ func (c *Client) List(ctx context.Context, opts *ListOptions) ([]Project, error)
 		}
 		if opts.OrgID != "" {
 			q.Set("orgId", opts.OrgID)
+		}
+		if opts.IncludeStats {
+			q.Set("include_stats", "true")
 		}
 	}
 	u.RawQuery = q.Encode()
@@ -123,9 +147,25 @@ func (c *Client) List(ctx context.Context, opts *ListOptions) ([]Project, error)
 	return projects, nil
 }
 
+// GetOptions holds options for getting a project.
+type GetOptions struct {
+	IncludeStats bool
+}
+
 // Get retrieves a single project by ID.
-func (c *Client) Get(ctx context.Context, id string) (*Project, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+url.PathEscape(id), nil)
+func (c *Client) Get(ctx context.Context, id string, opts *GetOptions) (*Project, error) {
+	u, err := url.Parse(c.base + "/api/projects/" + url.PathEscape(id))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if opts != nil && opts.IncludeStats {
+		q.Set("include_stats", "true")
+	}
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

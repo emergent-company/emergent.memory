@@ -42,16 +42,25 @@ type GraphEmbeddingConfig struct {
 	WorkerBatchSize int
 	// WorkerConcurrency is the number of jobs processed concurrently per poll (default: 50)
 	WorkerConcurrency int
+	// EnableAdaptiveScaling enables dynamic concurrency adjustment based on system health
+	EnableAdaptiveScaling bool
+	// MinConcurrency is the minimum concurrency when adaptive scaling is enabled (default: 1)
+	MinConcurrency int
+	// MaxConcurrency is the maximum concurrency when adaptive scaling is enabled (default: 10)
+	MaxConcurrency int
 }
 
 // DefaultGraphEmbeddingConfig returns default configuration
 func DefaultGraphEmbeddingConfig() *GraphEmbeddingConfig {
 	return &GraphEmbeddingConfig{
-		BaseRetryDelaySec: 60,
-		MaxRetryDelaySec:  3600,
-		WorkerIntervalMs:  5000,
-		WorkerBatchSize:   200,
-		WorkerConcurrency: 200,
+		BaseRetryDelaySec:     60,
+		MaxRetryDelaySec:      3600,
+		WorkerIntervalMs:      5000,
+		WorkerBatchSize:       200,
+		WorkerConcurrency:     200,
+		EnableAdaptiveScaling: false,
+		MinConcurrency:        1,
+		MaxConcurrency:        10,
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/pkg/embeddings/vertex"
 	"github.com/emergent-company/emergent/pkg/logger"
 )
@@ -33,6 +34,7 @@ type GraphEmbeddingWorker struct {
 	db        bun.IDB
 	cfg       *GraphEmbeddingConfig
 	log       *slog.Logger
+	scaler    *syshealth.ConcurrencyScaler
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
 	running   bool
@@ -54,6 +56,7 @@ func NewGraphEmbeddingWorker(
 	db bun.IDB,
 	cfg *GraphEmbeddingConfig,
 	log *slog.Logger,
+	scaler *syshealth.ConcurrencyScaler,
 ) *GraphEmbeddingWorker {
 	return &GraphEmbeddingWorker{
 		jobs:   jobs,
@@ -61,6 +64,7 @@ func NewGraphEmbeddingWorker(
 		db:     db,
 		cfg:    cfg,
 		log:    log.With(logger.Scope("graph.embedding.worker")),
+		scaler: scaler,
 	}
 }
 
@@ -186,6 +190,9 @@ func (w *GraphEmbeddingWorker) processBatch(ctx context.Context) error {
 	}
 
 	concurrency := w.cfg.WorkerConcurrency
+	if w.scaler != nil {
+		concurrency = w.scaler.GetConcurrency(w.cfg.WorkerConcurrency)
+	}
 	if concurrency <= 0 {
 		concurrency = 10
 	}

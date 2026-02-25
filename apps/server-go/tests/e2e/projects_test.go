@@ -599,3 +599,66 @@ func (s *ProjectsTestSuite) TestRemoveMember_CannotRemoveLastAdmin() {
 	s.True(ok)
 	s.Equal("last-admin", errObj["code"])
 }
+
+// TestProjectStats verifies the ?include_stats parameter behavior for GET /api/projects and GET /api/projects/:id
+func (s *ProjectsTestSuite) TestProjectStats() {
+	orgID := s.createOrgViaAPI("Stats Test Org")
+	projectID := s.createProjectViaAPI(orgID, "Stats Test Project")
+
+	s.Run("GET /api/projects without include_stats omits stats field", func() {
+		resp := s.Client.GET("/api/projects", testutil.WithAuth("e2e-test-user"), testutil.WithJSON())
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+
+		var projects []map[string]any
+		err := json.Unmarshal(resp.Body, &projects)
+		s.Require().NoError(err)
+
+		// Find our project and verify stats field is omitted (null/missing)
+		found := false
+		for _, p := range projects {
+			if p["id"] == projectID {
+				found = true
+				s.Require().Nil(p["stats"], "stats should not be present without ?include_stats=true")
+			}
+		}
+		s.Require().True(found, "project should be in list")
+	})
+
+	s.Run("GET /api/projects?include_stats=true includes stats field", func() {
+		resp := s.Client.GET("/api/projects?include_stats=true", testutil.WithAuth("e2e-test-user"), testutil.WithJSON())
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+
+		var projects []map[string]any
+		err := json.Unmarshal(resp.Body, &projects)
+		s.Require().NoError(err)
+
+		found := false
+		for _, p := range projects {
+			if p["id"] == projectID {
+				found = true
+				s.Require().NotNil(p["stats"], "stats should be present with ?include_stats=true")
+				
+				stats := p["stats"].(map[string]any)
+				s.Require().Equal(float64(0), stats["documentCount"])
+				s.Require().Equal(float64(0), stats["objectCount"])
+				s.Require().Equal(float64(0), stats["relationshipCount"])
+				s.Require().NotNil(stats["templatePacks"])
+			}
+		}
+		s.Require().True(found, "project should be in list")
+	})
+
+	s.Run("GET /api/projects/:id?include_stats=true includes stats field", func() {
+		resp := s.Client.GET("/api/projects/"+projectID+"?include_stats=true", testutil.WithAuth("e2e-test-user"), testutil.WithJSON())
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+
+		var p map[string]any
+		err := json.Unmarshal(resp.Body, &p)
+		s.Require().NoError(err)
+		
+		s.Require().NotNil(p["stats"], "stats should be present for single GET with ?include_stats=true")
+		
+		stats := p["stats"].(map[string]any)
+		s.Require().Equal(float64(0), stats["documentCount"])
+	})
+}

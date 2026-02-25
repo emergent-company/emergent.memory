@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/domain/chunking"
 	"github.com/emergent-company/emergent/domain/documents"
 	"github.com/emergent-company/emergent/domain/projects"
@@ -32,10 +33,12 @@ type DocumentParsingWorker struct {
 	kreuzbergClient *kreuzberg.Client
 	whisperClient   *whisper.Client
 	storageService  *storage.Service
+	scaler          *syshealth.ConcurrencyScaler
 
 	// Polling configuration
-	interval  time.Duration
-	batchSize int
+	interval    time.Duration
+	batchSize   int
+	concurrency int
 
 	// Shutdown control
 	stopCh   chan struct{}
@@ -45,8 +48,9 @@ type DocumentParsingWorker struct {
 
 // DocumentParsingWorkerConfig contains configuration for the worker
 type DocumentParsingWorkerConfig struct {
-	Interval  time.Duration
-	BatchSize int
+	Interval    time.Duration
+	BatchSize   int
+	Concurrency int
 }
 
 // NewDocumentParsingWorker creates a new document parsing worker
@@ -60,15 +64,20 @@ func NewDocumentParsingWorker(
 	storageService *storage.Service,
 	cfg *DocumentParsingWorkerConfig,
 	log *slog.Logger,
+	scaler *syshealth.ConcurrencyScaler,
 ) *DocumentParsingWorker {
 	interval := 5 * time.Second
 	batchSize := 5
+	concurrency := 5
 	if cfg != nil {
 		if cfg.Interval > 0 {
 			interval = cfg.Interval
 		}
 		if cfg.BatchSize > 0 {
 			batchSize = cfg.BatchSize
+		}
+		if cfg.Concurrency > 0 {
+			concurrency = cfg.Concurrency
 		}
 	}
 
@@ -83,6 +92,8 @@ func NewDocumentParsingWorker(
 		storageService:  storageService,
 		interval:        interval,
 		batchSize:       batchSize,
+		concurrency:     concurrency,
+		scaler:          scaler,
 		stopCh:          make(chan struct{}),
 		doneCh:          make(chan struct{}),
 	}
@@ -154,14 +165,31 @@ func (w *DocumentParsingWorker) poll() {
 
 	w.log.Debug("processing document parsing jobs", slog.Int("count", len(jobs)))
 
-	for _, job := range jobs {
-		select {
-		case <-w.stopCh:
-			return
-		default:
-			w.processJob(ctx, job)
-		}
+	concurrency := w.concurrency
+	if w.scaler != nil {
+		concurrency = w.scaler.GetConcurrency(w.concurrency)
 	}
+	if concurrency <= 0 {
+		concurrency = 5
+	}
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	for _, job := range jobs {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(j *DocumentParsingJob) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			select {
+			case <-w.stopCh:
+				return
+			default:
+				w.processJob(ctx, j)
+			}
+		}(job)
+	}
+	wg.Wait()
 }
 
 // processJob handles a single document parsing job
@@ -209,7 +237,7 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 		// Look up per-project initial_prompt from auto_extract_config.
 		var initialPrompt string
 		if w.projectsRepo != nil {
-			project, pErr := w.projectsRepo.GetByID(ctx, job.ProjectID)
+			project, pErr := w.projectsRepo.GetByID(ctx, job.ProjectID, false)
 			if pErr != nil {
 				jobLog.Warn("failed to fetch project for whisper prompt", logger.Error(pErr))
 			} else if project != nil {
