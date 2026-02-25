@@ -18750,6 +18750,9 @@ const docTemplate = `{
         "github_com_emergent-company_emergent_domain_projects.Project": {
             "type": "object",
             "properties": {
+                "allow_parallel_extraction": {
+                    "type": "boolean"
+                },
                 "auto_extract_config": {
                     "type": "object",
                     "additionalProperties": {}
@@ -18760,8 +18763,23 @@ const docTemplate = `{
                 "chat_prompt_template": {
                     "type": "string"
                 },
+                "chunking_config": {
+                    "description": "Additional columns added in later migrations",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "createdAt": {
                     "type": "string"
+                },
+                "deleted_at": {
+                    "type": "string"
+                },
+                "deleted_by": {
+                    "type": "string"
+                },
+                "extraction_config": {
+                    "type": "object",
+                    "additionalProperties": {}
                 },
                 "id": {
                     "type": "string"
@@ -23032,7 +23050,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.25.0",
+	Version:          "0.25.1",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
