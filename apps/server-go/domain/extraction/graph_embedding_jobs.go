@@ -38,8 +38,10 @@ type GraphEmbeddingConfig struct {
 	MaxRetryDelaySec int
 	// WorkerIntervalMs is the polling interval in milliseconds (default: 5000)
 	WorkerIntervalMs int
-	// WorkerBatchSize is the number of jobs to process per poll (default: 10)
+	// WorkerBatchSize is the number of jobs to dequeue per poll (default: 50)
 	WorkerBatchSize int
+	// WorkerConcurrency is the number of jobs processed concurrently per poll (default: 50)
+	WorkerConcurrency int
 }
 
 // DefaultGraphEmbeddingConfig returns default configuration
@@ -48,7 +50,8 @@ func DefaultGraphEmbeddingConfig() *GraphEmbeddingConfig {
 		BaseRetryDelaySec: 60,
 		MaxRetryDelaySec:  3600,
 		WorkerIntervalMs:  5000,
-		WorkerBatchSize:   10,
+		WorkerBatchSize:   200,
+		WorkerConcurrency: 200,
 	}
 }
 
@@ -71,8 +74,8 @@ func NewGraphEmbeddingJobsService(db bun.IDB, log *slog.Logger, cfg *GraphEmbedd
 
 // EnqueueOptions contains options for enqueuing a graph embedding job
 type EnqueueOptions struct {
-	ObjectID   string // Required: the graph object ID to generate embedding for
-	Priority   int    // Optional: higher = more urgent (default: 0)
+	ObjectID   string     // Required: the graph object ID to generate embedding for
+	Priority   int        // Optional: higher = more urgent (default: 0)
 	ScheduleAt *time.Time // Optional: when to process (default: now)
 }
 
