@@ -113,6 +113,33 @@ else
 fi
 
 # ============================================================================
+# CLI Go Lint Check
+# Runs golangci-lint on the emergent-cli package when CLI Go files are staged.
+# ============================================================================
+echo ""
+echo "Checking CLI Go lint..."
+
+STAGED_CLI_GO_FILES=$(git diff --cached --name-only --diff-filter=ACMR | grep '^tools/emergent-cli/.*\.go$' || true)
+
+if [ -z "$STAGED_CLI_GO_FILES" ]; then
+  echo "  No CLI Go files to check"
+else
+  if ! command -v golangci-lint > /dev/null 2>&1; then
+    echo "  golangci-lint not found, skipping (install via: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)"
+  else
+    echo "  Running golangci-lint on tools/emergent-cli..."
+    if ! (cd tools/emergent-cli && golangci-lint run ./... 2>&1); then
+      echo ""
+      echo "ERROR: golangci-lint failed for tools/emergent-cli"
+      echo "  Fix the lint errors above before committing."
+      ERRORS=$((ERRORS + 1))
+    else
+      echo "  CLI lint OK"
+    fi
+  fi
+fi
+
+# ============================================================================
 # Swagger Annotation Check
 # Ensures handler files have @Router annotations for API documentation.
 # ============================================================================
