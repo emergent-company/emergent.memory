@@ -5355,7 +5355,7 @@ info:
   license:
     name: Proprietary
   title: Emergent API
-  version: 0.25.1
+  version: 0.26.0
 paths:
   /api/admin/agent-definitions/{id}/workspace-config:
     get:
