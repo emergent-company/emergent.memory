@@ -260,19 +260,19 @@ func runDbLovdata(_ *cobra.Command, _ []string) error {
 		if err != nil {
 			return fmt.Errorf("read cached docs: %w", err)
 		}
-		json.Unmarshal(bDocs, &allDocs)
+		json.Unmarshal(bDocs, &allDocs) //nolint:errcheck
 
 		bDir, err := os.ReadFile(cachePathDirectives)
 		if err != nil {
 			return fmt.Errorf("read cached directives: %w", err)
 		}
-		json.Unmarshal(bDir, &directives)
+		json.Unmarshal(bDir, &directives) //nolint:errcheck
 
 		bConc, err := os.ReadFile(cachePathConcepts)
 		if err != nil {
 			return fmt.Errorf("read cached concepts: %w", err)
 		}
-		json.Unmarshal(bConc, &concepts)
+		json.Unmarshal(bConc, &concepts) //nolint:errcheck
 
 		done2(fmt.Sprintf("docs=%d directives=%d concepts=%d", len(allDocs), len(directives), len(concepts)))
 	} else {
@@ -309,7 +309,7 @@ func runDbLovdata(_ *cobra.Command, _ []string) error {
 					directives = cached
 					fmt.Printf("Phase 3: Using cached EU directives from %s (count=%d, skipping re-fetch)\n", cachePathDirectives, len(directives))
 					if bConc, err2 := os.ReadFile(cachePathConcepts); err2 == nil && len(bConc) > 10 {
-						json.Unmarshal(bConc, &concepts)
+						json.Unmarshal(bConc, &concepts) //nolint:errcheck
 					}
 				}
 			}
@@ -325,15 +325,15 @@ func runDbLovdata(_ *cobra.Command, _ []string) error {
 
 		// Save to cache
 		fmt.Println("Saving parsed data to cache...")
-		os.MkdirAll(lovdataCacheDir, 0755)
+		os.MkdirAll(lovdataCacheDir, 0755) //nolint:errcheck
 		if bDocs, err := json.MarshalIndent(allDocs, "", "  "); err == nil {
-			os.WriteFile(cachePathDocs, bDocs, 0644)
+			os.WriteFile(cachePathDocs, bDocs, 0644) //nolint:errcheck
 		}
 		if bDir, err := json.MarshalIndent(directives, "", "  "); err == nil {
-			os.WriteFile(cachePathDirectives, bDir, 0644)
+			os.WriteFile(cachePathDirectives, bDir, 0644) //nolint:errcheck
 		}
 		if bConc, err := json.MarshalIndent(concepts, "", "  "); err == nil {
-			os.WriteFile(cachePathConcepts, bConc, 0644)
+			os.WriteFile(cachePathConcepts, bConc, 0644) //nolint:errcheck
 		}
 
 		if dbLovdataFlags.downloadOnly {
@@ -611,8 +611,7 @@ func lovExtractBody(main *html.Node) (fullMarkdown string, paragraphs []lovParag
 	}
 
 	// renderOL renders an <ol> list as numbered Markdown items.
-	var renderOL func(*html.Node) string
-	renderOL = func(ol *html.Node) string {
+	renderOL := func(ol *html.Node) string {
 		var olsb strings.Builder
 		i := 1
 		for c := ol.FirstChild; c != nil; c = c.NextSibling {
@@ -628,8 +627,7 @@ func lovExtractBody(main *html.Node) (fullMarkdown string, paragraphs []lovParag
 	}
 
 	// renderUL renders a <ul> list as bullet Markdown items.
-	var renderUL func(*html.Node) string
-	renderUL = func(ul *html.Node) string {
+	renderUL := func(ul *html.Node) string {
 		var ulsb strings.Builder
 		for c := ul.FirstChild; c != nil; c = c.NextSibling {
 			if c.Type == html.ElementNode && c.Data == "li" {
@@ -644,8 +642,7 @@ func lovExtractBody(main *html.Node) (fullMarkdown string, paragraphs []lovParag
 
 	// renderArticleContent renders the body of a <article class="legalArticle"> node
 	// (skipping the h3 header and changesToParent sub-articles).
-	var renderArticleContent func(*html.Node) string
-	renderArticleContent = func(n *html.Node) string {
+	renderArticleContent := func(n *html.Node) string {
 		var asb strings.Builder
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			if c.Type != html.ElementNode {
@@ -976,7 +973,7 @@ func lovParseDocument(content []byte, docType string) *lovDoc {
 // ─── Lovdata dataset loader ───────────────────────────────────────────────────
 
 func lovDownload(rawURL string) (string, error) {
-	os.MkdirAll(lovdataCacheDir, 0755)
+	os.MkdirAll(lovdataCacheDir, 0755) //nolint:errcheck
 	filename := rawURL[strings.LastIndex(rawURL, "/")+1:]
 	localPath := filepath.Join(lovdataCacheDir, filename)
 	if _, err := os.Stat(localPath); os.IsNotExist(err) {

@@ -91,17 +91,6 @@ func resolveEmbeddingsServerURL() string {
 
 // ─── shared HTTP helper ───────────────────────────────────────────────────────
 
-type embeddingWorkerStatus struct {
-	Running bool `json:"running"`
-	Paused  bool `json:"paused"`
-}
-
-type embeddingStatusResponse struct {
-	Objects       embeddingWorkerStatus `json:"objects"`
-	Relationships embeddingWorkerStatus `json:"relationships"`
-	Sweep         embeddingWorkerStatus `json:"sweep"`
-}
-
 func embeddingsDoRequest(method, path string) (map[string]any, error) {
 	svrURL := resolveEmbeddingsServerURL()
 	url := svrURL + path

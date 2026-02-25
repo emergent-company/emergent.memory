@@ -21,8 +21,6 @@ const (
 	// e.g. "<project>_postgres_data".
 	pgVolumeBaseName = "postgres_data"
 
-	// pgVersionFile is the path inside the data volume that stores the major version.
-	pgVersionFile = "/var/lib/postgresql/data/PG_VERSION"
 )
 
 // pgTuningConfig holds the computed PostgreSQL memory/WAL tuning parameters
