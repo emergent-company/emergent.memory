@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
   "npmScope": "spec",
-  "defaultBase": "master",
+  "defaultBase": "main",
   "namedInputs": {
     "sharedGlobals": [
       "{workspaceRoot}/package.json",

@@ -9,15 +9,17 @@ applyTo: '**'
 
 Before implementing new features, **always check** these domain-specific AGENT.md files to understand existing patterns and avoid recreating functionality:
 
-### Frontend
+### Frontend (repo: `/root/emergent.memory.ui`)
 
-| File                                                     | Domain              | Key Topics                                                                          |
-| -------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------- |
-| `apps/admin/src/components/AGENT.md`                     | Frontend Components | Atomic design (atoms/molecules/organisms), DaisyUI + Tailwind, available components |
-| `apps/admin/src/components/organisms/DataTable/AGENT.md` | DataTable Patterns  | Table configuration, columns, sorting, filtering, pagination                        |
-| `apps/admin/src/contexts/AGENT.md`                       | React Contexts      | Auth, Theme, Toast, Modal contexts and provider patterns                            |
-| `apps/admin/src/hooks/AGENT.md`                          | Frontend Hooks      | `useApi` (MUST use for all API calls), all 33+ hooks categorized                    |
-| `apps/admin/src/pages/AGENT.md`                          | Page Patterns       | Route structure, page layouts, data loading patterns                                |
+> The React admin UI is in a **separate repo** at `/root/emergent.memory.ui` (`emergent-company/emergent.memory.ui`).
+
+| File                                                                              | Domain              | Key Topics                                                                          |
+| --------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------- |
+| `/root/emergent.memory.ui/src/components/AGENT.md`                               | Frontend Components | Atomic design (atoms/molecules/organisms), DaisyUI + Tailwind, available components |
+| `/root/emergent.memory.ui/src/components/organisms/DataTable/AGENT.md`           | DataTable Patterns  | Table configuration, columns, sorting, filtering, pagination                        |
+| `/root/emergent.memory.ui/src/contexts/AGENT.md`                                 | React Contexts      | Auth, Theme, Toast, Modal contexts and provider patterns                            |
+| `/root/emergent.memory.ui/src/hooks/AGENT.md`                                    | Frontend Hooks      | `useApi` (MUST use for all API calls), all 33+ hooks categorized                    |
+| `/root/emergent.memory.ui/src/pages/AGENT.md`                                    | Page Patterns       | Route structure, page layouts, data loading patterns                                |
 
 ### Backend
 
@@ -65,7 +67,7 @@ Services use PID-based process management via workspace CLI or **Workspace MCP s
 
 **Both server (Go) and admin (Vite) have hot reload enabled.**
 
-⚠️ **IMPORTANT: Never restart services after making code changes.** Hot reload automatically picks up changes within 1-2 seconds. Restarting takes ~30 seconds (Go) or ~1.5 minutes (NestJS) and is unnecessary.
+⚠️ **IMPORTANT: Never restart services after making code changes.** Hot reload automatically picks up changes within 1-2 seconds. Restarting takes ~30 seconds (Go) or ~5 seconds (Vite) and is unnecessary.
 
 **When hot reload works (DO NOT restart):**
 
@@ -107,7 +109,7 @@ pnpm run workspace:stop      # Stop all services
 | ----------------------------------------------- | ------------------------------------------- |
 | Restarting after editing a service file         | Just save the file, hot reload handles it   |
 | Restarting to "make sure changes are picked up" | Check logs to confirm hot reload worked     |
-| `nx run server:build` then manually run         | Hot reload, or `pnpm run workspace:restart` |
+| `nx run server-go:build` then manually run      | Hot reload, or `pnpm run workspace:restart` |
 | Killing processes with `kill -9`                | `pnpm run workspace:stop`                   |
 
 ## 3. Testing
