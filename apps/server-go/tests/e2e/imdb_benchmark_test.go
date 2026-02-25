@@ -1,31 +1,26 @@
 package e2e
 
 import (
-	"context"
 	"bufio"
 	"compress/gzip"
-
+	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/stretchr/testify/suite"
-
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
 	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/stretchr/testify/suite"
 )
 
 type IMDBBenchmarkSuite struct {
 	suite.Suite
-	Client    *testutil.HTTPClient
-	Ctx       context.Context
-	db        *testutil.TestDB
-
+	Client     *testutil.HTTPClient
+	Ctx        context.Context
 	projectID  string
 	agentDefID string
 	apiKey     string
@@ -40,19 +35,28 @@ func (s *IMDBBenchmarkSuite) SetupSuite() {
 		s.T().Skip("Skipping IMDB benchmark test - set RUN_IMDB_BENCHMARK=true to run")
 	}
 
-	
-	
+	s.Ctx = context.Background()
 
-	s.Client = testutil.NewExternalHTTPClient("https://api.dev.emergent-company.ai")
-	s.projectID = "b04e0cd4-1800-4f42-a875-18172541d9fc"
+	serverURL := os.Getenv("BENCHMARK_SERVER_URL")
+	if serverURL == "" {
+		serverURL = "http://mcj-emergent:3002"
+	}
+	s.Client = testutil.NewExternalHTTPClient(serverURL)
 
-	// Configuration for the agent
-	s.apiKey = os.Getenv("TEST_API_KEY")
-	if s.apiKey == "" {
-		s.apiKey = "4334d35abf06be28271d7c5cd5a1cf02a6e9b4c2753db816e48419330e023060"
+	s.projectID = os.Getenv("BENCHMARK_PROJECT_ID")
+	if s.projectID == "" {
+		s.projectID = "956e3e88-07c5-462b-9076-50ea7e1e7951"
 	}
 
-	s.agentDefID = "70356e5f-2c97-4ce4-9754-ec14e15a2a13"
+	s.apiKey = os.Getenv("TEST_API_KEY")
+	if s.apiKey == "" {
+		s.apiKey = "emt_ec70233facfa29385abfef9bff015df72f08f7205be51f3034b42bf1484d0ec1"
+	}
+
+	s.agentDefID = os.Getenv("BENCHMARK_AGENT_DEF_ID")
+	if s.agentDefID == "" {
+		s.agentDefID = "70356e5f-2c97-4ce4-9754-ec14e15a2a13"
+	}
 }
 
 // streamIMDBFile downloads and decompresses an IMDB TSV export on the fly.
@@ -384,32 +388,62 @@ func (s *IMDBBenchmarkSuite) batchInsertEntities(movies map[string]MovieData, pe
 	}
 }
 
+// fetchCanonicalIDsByType pages through all objects of a given type via the API
+// and returns a map of key → canonical_id.
+func (s *IMDBBenchmarkSuite) fetchCanonicalIDsByType(objType string) map[string]string {
+	result := make(map[string]string)
+	cursor := ""
+	pageSize := 1000
+
+	for {
+		url := fmt.Sprintf("/api/graph/objects?type=%s&limit=%d", objType, pageSize)
+		if cursor != "" {
+			url += "&cursor=" + cursor
+		}
+
+		resp := s.Client.GET(url,
+			testutil.WithHeader("X-API-Key", s.apiKey),
+			testutil.WithProjectID(s.projectID),
+		)
+		s.Require().Equal(200, resp.StatusCode, "fetchCanonicalIDsByType(%s) failed: %s", objType, resp.String())
+
+		var page struct {
+			Items []struct {
+				Key         *string `json:"key"`
+				CanonicalID string  `json:"canonical_id"`
+				EntityID    string  `json:"entity_id"`
+			} `json:"items"`
+			NextCursor *string `json:"next_cursor"`
+		}
+		s.Require().NoError(json.Unmarshal(resp.Body, &page))
+
+		for _, item := range page.Items {
+			if item.Key == nil {
+				continue
+			}
+			id := item.CanonicalID
+			if id == "" {
+				id = item.EntityID
+			}
+			result[*item.Key] = id
+		}
+
+		if page.NextCursor == nil || *page.NextCursor == "" {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+
+	return result
+}
+
 func (s *IMDBBenchmarkSuite) batchInsertRelationships(roles []PrincipalRole) {
 	s.T().Logf("Inserting %d relationships via Go SDK...", len(roles))
 
-	// Get maps of canonical IDs for fast lookup (SDK only accepts Canonical IDs or Version IDs for relationships, not keys)
-	movieCanonicalIDs := make(map[string]string)
-
-	// We still use a quick SQL query just to map keys to IDs for the test's internal memory mapping
-	// to avoid issuing 10,000 individual GetObject calls over the SDK.
-	rows, err := s.db.GetDB().QueryContext(s.Ctx, "SELECT key, canonical_id::text FROM kb.graph_objects WHERE type = 'Movie' AND project_id = ?", s.projectID)
-	s.Require().NoError(err)
-	for rows.Next() {
-		var key, id string
-		rows.Scan(&key, &id)
-		movieCanonicalIDs[key] = id
-	}
-	rows.Close()
-
-	personCanonicalIDs := make(map[string]string)
-	rows, err = s.db.GetDB().QueryContext(s.Ctx, "SELECT key, canonical_id::text FROM kb.graph_objects WHERE type = 'Person' AND project_id = ?", s.projectID)
-	s.Require().NoError(err)
-	for rows.Next() {
-		var key, id string
-		rows.Scan(&key, &id)
-		personCanonicalIDs[key] = id
-	}
-	rows.Close()
+	// Build key→canonical_id maps via paginated API calls (no direct DB access).
+	movieCanonicalIDs := s.fetchCanonicalIDsByType("Movie")
+	personCanonicalIDs := s.fetchCanonicalIDsByType("Person")
+	s.T().Logf("Loaded %d movie IDs, %d person IDs from API", len(movieCanonicalIDs), len(personCanonicalIDs))
 
 	var items []graph.CreateRelationshipRequest
 
@@ -522,13 +556,9 @@ func (s *IMDBBenchmarkSuite) TestBenchmark_SeedAndQuery() {
 			count = int(countVal)
 		}
 	}
-	s.T().Logf("Running queries against pre-seeded DB")
-
-	// Since we are external, we can't easily poll the private queue table.
-	// We'll just wait 5 minutes if we just seeded.
+	s.T().Logf("Movie count in project: %d", count)
 	if count < 100 {
-		s.T().Log("Sleeping 5 minutes for remote background workers to process embeddings...")
-		time.Sleep(1 * time.Millisecond)
+		s.T().Skip("Project has fewer than 100 movies — run 'emergent db bench --server http://mcj-emergent:3002' first to seed data")
 	}
 
 	// 2. Query 1: Actor Intersection (Multi-hop)

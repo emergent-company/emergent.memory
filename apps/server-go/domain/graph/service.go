@@ -1055,38 +1055,26 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		effectiveBranchID = srcObj.BranchID
 	}
 
-	// Acquire lock for this relationship identity (use canonical IDs for stable locking)
-	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, projectID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID); err != nil {
-		return nil, err
+	// Attempt lock-free insert using ON CONFLICT DO NOTHING (protected by partial unique index).
+	// No advisory lock needed for the common "create new" path.
+	rel := &GraphRelationship{
+		ProjectID:  projectID,
+		BranchID:   effectiveBranchID,
+		Type:       req.Type,
+		SrcID:      srcObj.CanonicalID,
+		DstID:      dstObj.CanonicalID,
+		Properties: req.Properties,
+		Weight:     req.Weight,
 	}
+	rel.ChangeSummary = computeChangeSummary(nil, req.Properties)
 
-	// Check if relationship already exists (using canonical IDs)
-	existing, err := s.repo.GetRelationshipHead(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+	created, err := s.repo.CreateRelationship(ctx, tx.Tx, rel)
 	if err != nil {
 		return nil, err
 	}
 
-	if existing == nil {
-		// Create new relationship — store canonical_id values in src_id/dst_id
-		// so that relationships survive object versioning (CreateVersion generates new physical IDs).
-		rel := &GraphRelationship{
-			ProjectID:  projectID,
-			BranchID:   effectiveBranchID,
-			Type:       req.Type,
-			SrcID:      srcObj.CanonicalID,
-			DstID:      dstObj.CanonicalID,
-			Properties: req.Properties,
-			Weight:     req.Weight,
-		}
-
-		// Compute change summary
-		rel.ChangeSummary = computeChangeSummary(nil, req.Properties)
-
-		if err := s.repo.CreateRelationship(ctx, tx.Tx, rel); err != nil {
-			return nil, err
-		}
-
-		// Auto-create inverse relationship if template pack declares inverseType
+	if created {
+		// New relationship was inserted — auto-create inverse if configured.
 		var inverseResponse *GraphRelationshipResponse
 		var inverseRelID string
 		if s.inverseTypeProvider != nil {
@@ -1108,9 +1096,52 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		return resp, nil
 	}
 
-	// Relationship exists - check if properties differ
+	// Conflict: relationship HEAD already exists (another concurrent goroutine inserted it).
+	// Roll back the current tx — we don't need it for a read-only check.
+	tx.Rollback()
+
+	// Read HEAD outside any transaction (no lock needed — the row is stable).
+	existing, err := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		// Extremely rare race: HEAD was deleted between our failed insert and the read.
+		// Treat as "not found" — the caller can retry.
+		return nil, apperror.ErrNotFound.WithMessage("relationship_head_not_found_after_conflict")
+	}
+
+	// Fast path: no change needed (common during bulk seeding).
+	if existing.DeletedAt == nil {
+		diff := computeChangeSummary(existing.Properties, req.Properties)
+		if diff == nil {
+			return existing.ToResponse(), nil
+		}
+	}
+
+	// Slow path: we need to create a new version (deleted restore or property change).
+	// Open a fresh transaction, acquire advisory lock to prevent concurrent version racing.
+	tx2, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx2.Rollback()
+
+	if err := s.repo.AcquireRelationshipLock(ctx, tx2.Tx, projectID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID); err != nil {
+		return nil, err
+	}
+
+	// Re-fetch inside the locked tx to get the definitive current HEAD.
+	existing, err = s.repo.GetRelationshipHead(ctx, tx2.Tx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, apperror.ErrNotFound.WithMessage("relationship_head_not_found_after_lock")
+	}
+
 	if existing.DeletedAt != nil {
-		// Was deleted, create new version to "restore" with new properties
+		// Was deleted, restore with new properties.
 		newVersion := &GraphRelationship{
 			Properties: req.Properties,
 			Weight:     req.Weight,
@@ -1118,48 +1149,44 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		}
 		newVersion.ChangeSummary = computeChangeSummary(existing.Properties, req.Properties)
 
-		if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, existing, newVersion); err != nil {
+		if err := s.repo.CreateRelationshipVersion(ctx, tx2.Tx, existing, newVersion); err != nil {
 			return nil, err
 		}
 
-		if err := tx.Commit(); err != nil {
+		if err := tx2.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
 
-		// Enqueue async embedding after commit.
 		s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
 
-		// Return the new version (use canonical IDs for lookup)
 		newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
 		return newHead.ToResponse(), nil
 	}
 
-	// Check if properties changed
+	// Check if properties changed (re-read under lock).
 	diff := computeChangeSummary(existing.Properties, req.Properties)
 	if diff == nil {
-		// No change - return existing
+		// No change - return existing (no commit needed).
 		return existing.ToResponse(), nil
 	}
 
-	// Properties differ - create new version
+	// Properties differ - create new version.
 	newVersion := &GraphRelationship{
 		Properties:    req.Properties,
 		Weight:        req.Weight,
 		ChangeSummary: diff,
 	}
 
-	if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, existing, newVersion); err != nil {
+	if err := s.repo.CreateRelationshipVersion(ctx, tx2.Tx, existing, newVersion); err != nil {
 		return nil, err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := tx2.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	// Enqueue async embedding after commit.
 	s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
 
-	// Return the new version
 	newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
 	return newHead.ToResponse(), nil
 }
@@ -1259,7 +1286,7 @@ func (s *Service) maybeCreateInverse(
 	}
 	inverseRel.ChangeSummary = computeChangeSummary(nil, properties)
 
-	if err := s.repo.CreateRelationship(ctx, tx, inverseRel); err != nil {
+	if _, err := s.repo.CreateRelationship(ctx, tx, inverseRel); err != nil {
 		s.log.Warn("failed to create inverse relationship, skipping",
 			slog.String("inverse_type", inverseType),
 			slog.String("error", err.Error()))
@@ -2043,6 +2070,11 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 				resp, err := s.CreateRelationship(workerCtx, projectID, &j.item)
 				if err != nil {
 					errMsg := err.Error()
+					s.log.Debug("bulk relationship creation failed",
+						slog.String("type", j.item.Type),
+						slog.String("src_id", j.item.SrcID.String()),
+						slog.String("dst_id", j.item.DstID.String()),
+						slog.String("error", errMsg))
 					results[j.i] = BulkCreateRelationshipResult{Index: j.i, Success: false, Error: &errMsg}
 				} else {
 					results[j.i] = BulkCreateRelationshipResult{Index: j.i, Success: true, Relationship: resp}
@@ -3028,7 +3060,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		// Compute change summary
 		rel.ChangeSummary = computeChangeSummary(nil, relReq.Properties)
 
-		if err := s.repo.CreateRelationship(ctx, tx.Tx, rel); err != nil {
+		if _, err := s.repo.CreateRelationship(ctx, tx.Tx, rel); err != nil {
 			return nil, apperror.ErrDatabase.WithMessage(fmt.Sprintf("relationships[%d] (%s->%s): %s", i, relReq.SrcRef, relReq.DstRef, err.Error()))
 		}
 
