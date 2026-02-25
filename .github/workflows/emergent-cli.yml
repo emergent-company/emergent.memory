@@ -57,6 +57,8 @@ jobs:
 
       - name: Run tests
         working-directory: tools/emergent-cli
+        env:
+          GOWORK: off
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage
