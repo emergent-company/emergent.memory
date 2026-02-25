@@ -7,10 +7,6 @@ import (
 )
 
 // Project represents a project in the kb.projects table
-// Note: Only includes columns from the squashed initial migration.
-// Additional columns (chunking_config, allow_parallel_extraction, extraction_config,
-// deleted_at, deleted_by) are added in later migrations and should be added here
-// when needed with appropriate migration checks.
 type Project struct {
 	bun.BaseModel `bun:"table:kb.projects,alias:p"`
 
@@ -23,6 +19,13 @@ type Project struct {
 	AutoExtractConfig  map[string]any `bun:"auto_extract_config,type:jsonb,default:'{}'" json:"auto_extract_config,omitempty"`
 	CreatedAt          time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
 	UpdatedAt          time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+
+	// Additional columns added in later migrations
+	ChunkingConfig          map[string]any `bun:"chunking_config,type:jsonb" json:"chunking_config,omitempty"`
+	AllowParallelExtraction *bool          `bun:"allow_parallel_extraction" json:"allow_parallel_extraction,omitempty"`
+	ExtractionConfig        map[string]any `bun:"extraction_config,type:jsonb" json:"extraction_config,omitempty"`
+	DeletedAt               *time.Time     `bun:"deleted_at" json:"deleted_at,omitempty"`
+	DeletedBy               *string        `bun:"deleted_by,type:uuid" json:"deleted_by,omitempty"`
 
 	// Populated only when requested
 	Stats *ProjectStats `bun:"-" json:"stats,omitempty"`
