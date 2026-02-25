@@ -981,7 +981,11 @@ func (r *Repository) GetRelationshipHead(ctx context.Context, db bun.IDB, projec
 }
 
 // CreateRelationship inserts a new relationship (version 1).
-func (r *Repository) CreateRelationship(ctx context.Context, tx bun.Tx, rel *GraphRelationship) error {
+// Uses INSERT ... ON CONFLICT DO NOTHING to avoid advisory lock contention.
+// Returns (created=true) if a new row was inserted, (created=false) if the HEAD
+// already existed (conflict on the partial unique index). The caller must
+// re-fetch HEAD when created=false to get the existing relationship.
+func (r *Repository) CreateRelationship(ctx context.Context, tx bun.Tx, rel *GraphRelationship) (created bool, err error) {
 	// Set defaults
 	if rel.ID == uuid.Nil {
 		rel.ID = uuid.New()
@@ -997,13 +1001,21 @@ func (r *Repository) CreateRelationship(ctx context.Context, tx bun.Tx, rel *Gra
 		rel.Properties = make(map[string]any)
 	}
 
-	_, err := tx.NewInsert().Model(rel).Exec(ctx)
-	if err != nil {
-		r.log.Error("failed to create relationship", logger.Error(err))
-		return apperror.ErrDatabase.WithInternal(err)
+	// ON CONFLICT DO NOTHING uses the partial unique indexes:
+	//   uq_graph_relationships_head_main   (project_id, type, src_id, dst_id)       WHERE supersedes_id IS NULL AND branch_id IS NULL
+	//   uq_graph_relationships_head_branch (project_id, branch_id, type, src_id, dst_id) WHERE supersedes_id IS NULL AND branch_id IS NOT NULL
+	// No advisory lock needed — the unique index makes the insert atomic.
+	// Use Returning("") to suppress bun's auto-generated RETURNING clause so that
+	// when ON CONFLICT DO NOTHING fires (0 rows returned), bun uses exec() path
+	// and returns rowsAffected=0 without error.
+	res, insertErr := tx.NewInsert().Model(rel).On("CONFLICT DO NOTHING").Returning("").Exec(ctx)
+	if insertErr != nil {
+		r.log.Error("failed to create relationship", logger.Error(insertErr))
+		return false, apperror.ErrDatabase.WithInternal(insertErr)
 	}
 
-	return nil
+	rowsAffected, _ := res.RowsAffected()
+	return rowsAffected > 0, nil
 }
 
 // CreateRelationshipVersion creates a new version of an existing relationship.
@@ -1021,19 +1033,22 @@ func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, p
 	newVersion.ContentHash = computeContentHash(newVersion.Properties)
 	newVersion.CreatedAt = time.Now()
 
-	// Insert new version
-	_, err := tx.NewInsert().
-		Model(newVersion).
+	// Update previous HEAD first — set supersedes_id to point to the new version.
+	// This must happen BEFORE inserting the new version to avoid a momentary window
+	// where both the old and new versions have supersedes_id IS NULL simultaneously,
+	// which would violate the partial unique index uq_graph_relationships_head_main.
+	_, err := tx.NewUpdate().
+		Model((*GraphRelationship)(nil)).
+		Set("supersedes_id = ?", newVersion.ID).
+		Where("id = ?", prevHead.ID).
 		Exec(ctx)
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 
-	// Update previous HEAD to point to new version
-	_, err = tx.NewUpdate().
-		Model((*GraphRelationship)(nil)).
-		Set("supersedes_id = ?", newVersion.ID).
-		Where("id = ?", prevHead.ID).
+	// Now insert the new HEAD version — old version no longer has supersedes_id IS NULL.
+	_, err = tx.NewInsert().
+		Model(newVersion).
 		Exec(ctx)
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)

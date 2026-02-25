@@ -558,9 +558,9 @@ func (h *Handler) Upload(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("file required in multipart form")
 	}
 
-	maxSize := int64(100 * 1024 * 1024)
+	maxSize := int64(300 * 1024 * 1024)
 	if file.Size > maxSize {
-		return apperror.New(413, "file_too_large", "File size exceeds 100MB limit")
+		return apperror.New(413, "file_too_large", "File size exceeds 300MB limit")
 	}
 
 	src, err := file.Open()
