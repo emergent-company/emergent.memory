@@ -170,13 +170,26 @@ func (w *GraphRelationshipEmbeddingWorker) processBatch(ctx context.Context) err
 		return nil
 	}
 
-	for _, job := range jobs {
-		if err := w.processJob(ctx, job); err != nil {
-			w.log.Warn("rel embedding process job failed",
-				slog.String("job_id", job.ID),
-				slog.String("error", err.Error()))
-		}
+	concurrency := w.cfg.WorkerConcurrency
+	if concurrency <= 0 {
+		concurrency = 10
 	}
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for _, job := range jobs {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(j *GraphRelationshipEmbeddingJob) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := w.processJob(ctx, j); err != nil {
+				w.log.Warn("rel embedding process job failed",
+					slog.String("job_id", j.ID),
+					slog.String("error", err.Error()))
+			}
+		}(job)
+	}
+	wg.Wait()
 	return nil
 }
 
@@ -323,4 +336,24 @@ func (w *GraphRelationshipEmbeddingWorker) IsPaused() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.paused
+}
+
+// GetConfig returns a copy of the current worker configuration.
+func (w *GraphRelationshipEmbeddingWorker) GetConfig() GraphEmbeddingConfig {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return *w.cfg
+}
+
+// SetConfig updates the worker configuration at runtime.
+// Changes take effect on the next poll cycle.
+func (w *GraphRelationshipEmbeddingWorker) SetConfig(cfg GraphEmbeddingConfig) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	*w.cfg = cfg
+	w.log.Info("graph relationship embedding worker config updated",
+		slog.Int("batch_size", cfg.WorkerBatchSize),
+		slog.Int("concurrency", cfg.WorkerConcurrency),
+		slog.Int("interval_ms", cfg.WorkerIntervalMs),
+	)
 }

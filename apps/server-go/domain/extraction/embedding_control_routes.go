@@ -10,4 +10,5 @@ func RegisterEmbeddingControlRoutes(e *echo.Echo, h *EmbeddingControlHandler) {
 	e.GET("/api/embeddings/status", h.Status)
 	e.POST("/api/embeddings/pause", h.Pause)
 	e.POST("/api/embeddings/resume", h.Resume)
+	e.PATCH("/api/embeddings/config", h.Config)
 }
