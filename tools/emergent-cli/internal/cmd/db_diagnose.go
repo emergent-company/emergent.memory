@@ -79,7 +79,7 @@ func runDbDiagnose(cmd *cobra.Command, _ []string) error {
 	fmt.Println("═══════════════════════════════════════════════════════")
 	fmt.Println()
 
-	dsn, err := resolveDiagDSN()
+	dsn, _ := resolveDiagDSN()
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	// Get server URL correctly from parent flags
@@ -298,7 +298,7 @@ func checkDiagVersion(dsn string) diagResult {
 		return diagResult{name: "PostgreSQL version", status: "fail", message: out}
 	}
 	major := 0
-	fmt.Sscanf(out, "PostgreSQL %d", &major)
+	fmt.Sscanf(out, "PostgreSQL %d", &major) //nolint:errcheck
 	if major < 17 {
 		fmt.Println("WARN")
 		return diagResult{name: "PostgreSQL version", status: "warn",
@@ -486,7 +486,7 @@ func diagExplain(dsn, name, query string) diagResult {
 	actualMS := 0.0
 	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
 		if strings.HasPrefix(lines[i], "Execution Time:") {
-			fmt.Sscanf(lines[i], "Execution Time: %f ms", &actualMS)
+			fmt.Sscanf(lines[i], "Execution Time: %f ms", &actualMS) //nolint:errcheck
 			break
 		}
 	}
