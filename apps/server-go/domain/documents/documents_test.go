@@ -233,7 +233,7 @@ func TestDetermineConversionStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := determineConversionStatus(tt.mimeType)
+			got := determineConversionStatus(tt.mimeType, "")
 			assert.Equal(t, tt.want, got)
 		})
 	}

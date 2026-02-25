@@ -11,6 +11,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/syshealth"
 )
 
 // graphRelationshipRow holds the minimal fields needed to generate a relationship embedding.
@@ -31,6 +32,7 @@ type GraphRelationshipEmbeddingWorker struct {
 	db        bun.IDB
 	cfg       *GraphEmbeddingConfig
 	log       *slog.Logger
+	scaler    *syshealth.ConcurrencyScaler
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
 	running   bool
@@ -51,13 +53,23 @@ func NewGraphRelationshipEmbeddingWorker(
 	embeds EmbeddingService,
 	db bun.IDB,
 	cfg *GraphEmbeddingConfig,
+	monitor syshealth.Monitor,
 	log *slog.Logger,
 ) *GraphRelationshipEmbeddingWorker {
+	scaler := syshealth.NewConcurrencyScaler(
+		monitor,
+		"graph_relationship_embedding",
+		cfg.EnableAdaptiveScaling,
+		cfg.MinConcurrency,
+		cfg.MaxConcurrency,
+	)
+
 	return &GraphRelationshipEmbeddingWorker{
 		jobs:   jobs,
 		embeds: embeds,
 		db:     db,
 		cfg:    cfg,
+		scaler: scaler,
 		log:    log.With(logger.Scope("graph.rel.embedding.worker")),
 	}
 }
@@ -170,7 +182,8 @@ func (w *GraphRelationshipEmbeddingWorker) processBatch(ctx context.Context) err
 		return nil
 	}
 
-	concurrency := w.cfg.WorkerConcurrency
+	// Use adaptive scaler to determine concurrency based on system health
+	concurrency := w.scaler.GetConcurrency(w.cfg.WorkerConcurrency)
 	if concurrency <= 0 {
 		concurrency = 10
 	}

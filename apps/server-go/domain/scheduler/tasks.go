@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"sync"
 	"time"
@@ -135,21 +134,28 @@ func (t *CacheCleanupTask) Run(ctx context.Context) error {
 
 // StaleJobCleanupTask marks stale jobs as failed across all job queues
 type StaleJobCleanupTask struct {
-	db           *bun.DB
-	log          *slog.Logger
-	staleMinutes int
-	mu           sync.RWMutex
+	db                          *bun.DB
+	log                         *slog.Logger
+	staleMinutes                int
+	documentParsingStaleMinutes int
+	mu                          sync.RWMutex
 }
 
-// NewStaleJobCleanupTask creates a new stale job cleanup task
-func NewStaleJobCleanupTask(db *bun.DB, log *slog.Logger, staleMinutes int) *StaleJobCleanupTask {
+// NewStaleJobCleanupTask creates a new stale job cleanup task.
+// documentParsingStaleMinutes sets a longer stale threshold for document parsing jobs
+// (audio transcription can take hours); 0 falls back to staleMinutes.
+func NewStaleJobCleanupTask(db *bun.DB, log *slog.Logger, staleMinutes, documentParsingStaleMinutes int) *StaleJobCleanupTask {
 	if staleMinutes <= 0 {
 		staleMinutes = 30
 	}
+	if documentParsingStaleMinutes <= 0 {
+		documentParsingStaleMinutes = staleMinutes
+	}
 	return &StaleJobCleanupTask{
-		db:           db,
-		log:          log.With(logger.Scope("scheduler.stale_job_cleanup")),
-		staleMinutes: staleMinutes,
+		db:                          db,
+		log:                         log.With(logger.Scope("scheduler.stale_job_cleanup")),
+		staleMinutes:                staleMinutes,
+		documentParsingStaleMinutes: documentParsingStaleMinutes,
 	}
 }
 
@@ -169,10 +175,11 @@ func (t *StaleJobCleanupTask) GetStaleMinutes() int {
 
 // jobTableConfig holds the configuration for cleaning up a specific job table
 type jobTableConfig struct {
-	table          string
-	hasStartedAt   bool
-	hasCompletedAt bool
-	errorColumn    string
+	table                string
+	hasStartedAt         bool
+	hasCompletedAt       bool
+	errorColumn          string
+	staleMinutesOverride int // when non-zero, overrides the global stale threshold for this table
 }
 
 // Run executes the stale job cleanup
@@ -182,14 +189,14 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 
 	t.mu.RLock()
 	staleMinutes := t.staleMinutes
+	documentParsingStaleMinutes := t.documentParsingStaleMinutes
 	t.mu.RUnlock()
 
-	cutoff := time.Now().Add(-time.Duration(staleMinutes) * time.Minute)
 	totalCleaned := int64(0)
 
 	// Clean up stale extraction jobs (multiple tables with different schemas)
 	tables := []jobTableConfig{
-		{table: "kb.document_parsing_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "error_message"},
+		{table: "kb.document_parsing_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "error_message", staleMinutesOverride: documentParsingStaleMinutes},
 		{table: "kb.chunk_embedding_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "last_error"},
 		{table: "kb.graph_embedding_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "last_error"},
 		{table: "kb.object_extraction_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "error_message"},
@@ -198,7 +205,7 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 	}
 
 	for _, cfg := range tables {
-		count, err := t.cleanupTable(ctx, cfg, cutoff)
+		count, err := t.cleanupTable(ctx, cfg, staleMinutes)
 		if err != nil {
 			t.log.Warn("failed to clean up stale jobs in table",
 				slog.String("table", cfg.table),
@@ -220,8 +227,15 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 	return nil
 }
 
-// cleanupTable cleans up stale jobs in a specific table
-func (t *StaleJobCleanupTask) cleanupTable(ctx context.Context, cfg jobTableConfig, cutoff time.Time) (int64, error) {
+// cleanupTable cleans up stale jobs in a specific table.
+// globalStaleMinutes is the default threshold; cfg.staleMinutesOverride takes precedence when non-zero.
+func (t *StaleJobCleanupTask) cleanupTable(ctx context.Context, cfg jobTableConfig, globalStaleMinutes int) (int64, error) {
+	effectiveMinutes := globalStaleMinutes
+	if cfg.staleMinutesOverride > 0 {
+		effectiveMinutes = cfg.staleMinutesOverride
+	}
+	cutoff := time.Now().Add(-time.Duration(effectiveMinutes) * time.Minute)
+
 	var query string
 
 	if cfg.hasStartedAt && cfg.hasCompletedAt {
@@ -246,15 +260,7 @@ func (t *StaleJobCleanupTask) cleanupTable(ctx context.Context, cfg jobTableConf
 		`
 	}
 
-	var result sql.Result
-	var err error
-
-	if cfg.hasStartedAt {
-		result, err = t.db.ExecContext(ctx, query, cutoff)
-	} else {
-		result, err = t.db.ExecContext(ctx, query, cutoff)
-	}
-
+	result, err := t.db.ExecContext(ctx, query, cutoff)
 	if err != nil {
 		return 0, err
 	}

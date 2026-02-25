@@ -271,6 +271,12 @@ type WhisperConfig struct {
 	Language string `env:"WHISPER_LANGUAGE" envDefault:""`
 	// MaxFileSizeMB is the maximum audio file size for transcription
 	MaxFileSizeMB int `env:"WHISPER_MAX_FILE_SIZE_MB" envDefault:"500"`
+	// LargeFileThresholdMB - files above this are treated as "large" (default: 50)
+	LargeFileThresholdMB int `env:"WHISPER_LARGE_FILE_THRESHOLD_MB" envDefault:"50"`
+	// AudioBytesPerSecond - assumed bitrate for timeout estimation: 128kbps = 16000 B/s (default: 16000)
+	AudioBytesPerSecond int `env:"WHISPER_AUDIO_BYTES_PER_SECOND" envDefault:"16000"`
+	// TimeoutSafetyFactor - multiplier over estimated duration (default: 2.0)
+	TimeoutSafetyFactor float64 `env:"WHISPER_TIMEOUT_SAFETY_FACTOR" envDefault:"2.0"`
 }
 
 // Timeout returns the request timeout as a Duration

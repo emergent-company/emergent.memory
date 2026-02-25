@@ -91,7 +91,7 @@ func TestProjectsGet(t *testing.T) {
 		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
 	})
 
-	result, err := client.Projects.Get(context.Background(), "proj_test123")
+	result, err := client.Projects.Get(context.Background(), "proj_test123", nil)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -239,7 +239,7 @@ func TestProjectsGetNotFound(t *testing.T) {
 		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
 	})
 
-	_, err := client.Projects.Get(context.Background(), "invalid")
+	_, err := client.Projects.Get(context.Background(), "invalid", nil)
 	if err == nil {
 		t.Fatal("expected error for not found project")
 	}

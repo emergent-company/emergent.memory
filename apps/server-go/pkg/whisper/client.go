@@ -29,27 +29,33 @@ var Module = fx.Module("whisper",
 
 // Client is an HTTP client for the Whisper audio transcription service
 type Client struct {
-	httpClient    *http.Client
-	baseURL       string
-	timeout       time.Duration
-	enabled       bool
-	language      string
-	maxFileSizeMB int
-	log           *slog.Logger
+	httpClient             *http.Client
+	baseURL                string
+	timeout                time.Duration
+	enabled                bool
+	language               string
+	maxFileSizeMB          int
+	largeFileThresholdBytes int64
+	audioBytesPerSecond    int
+	timeoutSafetyFactor    float64
+	log                    *slog.Logger
 }
 
 // NewClient creates a new Whisper client
 func NewClient(cfg *config.Config, log *slog.Logger) *Client {
 	return &Client{
 		httpClient: &http.Client{
-			Timeout: cfg.Whisper.Timeout(),
+			Timeout: 0, // no client-level timeout; per-request context controls it
 		},
-		baseURL:       cfg.Whisper.ServiceURL,
-		timeout:       cfg.Whisper.Timeout(),
-		enabled:       cfg.Whisper.Enabled,
-		language:      cfg.Whisper.Language,
-		maxFileSizeMB: cfg.Whisper.MaxFileSizeMB,
-		log:           log.With(logger.Scope("whisper")),
+		baseURL:                 cfg.Whisper.ServiceURL,
+		timeout:                 cfg.Whisper.Timeout(),
+		enabled:                 cfg.Whisper.Enabled,
+		language:                cfg.Whisper.Language,
+		maxFileSizeMB:           cfg.Whisper.MaxFileSizeMB,
+		largeFileThresholdBytes: int64(cfg.Whisper.LargeFileThresholdMB) * 1024 * 1024,
+		audioBytesPerSecond:     cfg.Whisper.AudioBytesPerSecond,
+		timeoutSafetyFactor:     cfg.Whisper.TimeoutSafetyFactor,
+		log:                     log.With(logger.Scope("whisper")),
 	}
 }
 
@@ -63,11 +69,36 @@ func (c *Client) MaxFileSizeBytes() int64 {
 	return int64(c.maxFileSizeMB) * 1024 * 1024
 }
 
+// LargeFileThresholdBytes returns the large file threshold in bytes
+func (c *Client) LargeFileThresholdBytes() int64 {
+	return c.largeFileThresholdBytes
+}
+
+// IsLargeFile returns true if the file size meets or exceeds the large file threshold
+func (c *Client) IsLargeFile(sizeBytes int64) bool {
+	return sizeBytes >= c.largeFileThresholdBytes
+}
+
+// TimeoutForSize returns the appropriate timeout for a file of the given size.
+// It computes max(c.timeout, (sizeBytes / audioBytesPerSecond) * safetyFactor).
+func (c *Client) TimeoutForSize(sizeBytes int64) time.Duration {
+	if sizeBytes <= 0 || c.audioBytesPerSecond <= 0 {
+		return c.timeout
+	}
+	estimatedSecs := float64(sizeBytes) / float64(c.audioBytesPerSecond)
+	computed := time.Duration(estimatedSecs * c.timeoutSafetyFactor * float64(time.Second))
+	if computed > c.timeout {
+		return computed
+	}
+	return c.timeout
+}
+
 // Transcribe sends an audio file to the Whisper service and returns the plaintext transcript.
 // The audio data is sent as multipart/form-data with field name "audio_file".
 // The service endpoint is POST /asr?output=txt&task=transcribe.
 // initialPrompt optionally seeds the decoder with context (names, vocabulary, style hints).
-func (c *Client) Transcribe(ctx context.Context, data []byte, filename, mimeType, initialPrompt string) (string, error) {
+// timeout overrides the default client timeout when non-zero.
+func (c *Client) Transcribe(ctx context.Context, data []byte, filename, mimeType, initialPrompt string, timeout time.Duration) (string, error) {
 	if !c.enabled {
 		return "", fmt.Errorf("whisper transcription service is disabled")
 	}
@@ -79,8 +110,12 @@ func (c *Client) Transcribe(ctx context.Context, data []byte, filename, mimeType
 		slog.Int("size_bytes", len(data)),
 	)
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	// Create context with timeout — use provided timeout, fall back to default
+	effectiveTimeout := c.timeout
+	if timeout > 0 {
+		effectiveTimeout = timeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, effectiveTimeout)
 	defer cancel()
 
 	// Build multipart form body
@@ -126,7 +161,7 @@ func (c *Client) Transcribe(ctx context.Context, data []byte, filename, mimeType
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("whisper transcription timed out for %s after %s", filename, c.timeout)
+			return "", fmt.Errorf("whisper transcription timed out for %s after %s", filename, effectiveTimeout)
 		}
 		return "", fmt.Errorf("whisper service unavailable at %s: %w", c.baseURL, err)
 	}
