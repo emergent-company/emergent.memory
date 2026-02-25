@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/emergent-company/emergent/tools/emergent-cli/internal/completion"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -14,6 +15,7 @@ var (
 	output    string
 	debug     bool
 	noColor   bool
+	compact   bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -45,15 +47,20 @@ func init() {
 	// Global persistent flags (available to all subcommands)
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.emergent/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "", "Emergent server URL")
-	rootCmd.PersistentFlags().StringVar(&output, "output", "table", "output format (table, json, yaml)")
+	rootCmd.PersistentFlags().StringVar(&output, "output", "table", "output format (table, json, yaml, csv)")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "enable debug logging")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output")
+	rootCmd.PersistentFlags().BoolVar(&compact, "compact", false, "use compact output layout")
 
 	// Bind flags to viper for config file support
 	_ = viper.BindPFlag("server", rootCmd.PersistentFlags().Lookup("server"))
 	_ = viper.BindPFlag("output", rootCmd.PersistentFlags().Lookup("output"))
 	_ = viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
 	_ = viper.BindPFlag("no-color", rootCmd.PersistentFlags().Lookup("no-color"))
+	_ = viper.BindPFlag("ui.compact", rootCmd.PersistentFlags().Lookup("compact"))
+
+	// Register completion functions for flags
+	_ = rootCmd.RegisterFlagCompletionFunc("output", completion.OutputFormatCompletionFunc())
 }
 
 // initConfig reads in config file and ENV variables if set
@@ -78,6 +85,16 @@ func initConfig() {
 	// Environment variables
 	viper.SetEnvPrefix("EMERGENT")
 	viper.AutomaticEnv() // read in environment variables that match
+
+	// Set defaults for new config fields
+	viper.SetDefault("cache.ttl", "5m")
+	viper.SetDefault("cache.enabled", true)
+	viper.SetDefault("ui.compact", false)
+	viper.SetDefault("ui.color", "auto")
+	viper.SetDefault("ui.pager", true)
+	viper.SetDefault("query.default_limit", 50)
+	viper.SetDefault("query.default_sort", "updated_at:desc")
+	viper.SetDefault("completion.timeout", "2s")
 
 	// If a config file is found, read it in
 	if err := viper.ReadInConfig(); err == nil {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
+	"github.com/emergent-company/emergent/tools/emergent-cli/internal/completion"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -25,11 +26,12 @@ var listProjectsCmd = &cobra.Command{
 }
 
 var getProjectCmd = &cobra.Command{
-	Use:   "get [name-or-id]",
-	Short: "Get project details",
-	Long:  "Get details for a specific project by name or ID",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runGetProject,
+	Use:               "get [name-or-id]",
+	Short:             "Get project details",
+	Long:              "Get details for a specific project by name or ID",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
+	RunE:              runGetProject,
 }
 
 var createProjectCmd = &cobra.Command{
@@ -44,6 +46,12 @@ var (
 	projectDescription string
 	projectOrgID       string
 	projectStatsFlag   bool
+	// Query flags
+	filterFlag string
+	sortFlag   string
+	limitFlag  int
+	offsetFlag int
+	searchFlag string
 )
 
 func getClient(cmd *cobra.Command) (*client.Client, error) {
@@ -277,6 +285,12 @@ func init() {
 	_ = createProjectCmd.MarkFlagRequired("name")
 
 	listProjectsCmd.Flags().BoolVar(&projectStatsFlag, "stats", false, "Include project statistics (documents, objects, jobs, template packs)")
+	listProjectsCmd.Flags().StringVar(&filterFlag, "filter", "", "Filter results (e.g., 'name=MyProject,status=active')")
+	listProjectsCmd.Flags().StringVar(&sortFlag, "sort", "", "Sort results (e.g., 'name:asc' or 'updated_at:desc')")
+	listProjectsCmd.Flags().IntVar(&limitFlag, "limit", 0, "Maximum number of results (default from config)")
+	listProjectsCmd.Flags().IntVar(&offsetFlag, "offset", 0, "Number of results to skip")
+	listProjectsCmd.Flags().StringVar(&searchFlag, "search", "", "Search projects by name or description")
+
 	getProjectCmd.Flags().BoolVar(&projectStatsFlag, "stats", false, "Include project statistics (documents, objects, jobs, template packs)")
 
 	projectsCmd.AddCommand(listProjectsCmd)

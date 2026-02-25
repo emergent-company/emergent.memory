@@ -152,7 +152,29 @@ Location: `~/.emergent/config.yaml`
 server_url: https://api.emergent-company.ai
 org_id: org_abc123
 project_id: proj_xyz789
+
+# Cache configuration
+cache:
+  ttl: 5m # Cache TTL for shell completions (e.g., "5m", "1h")
+  enabled: true # Enable completion caching
+
+# UI preferences
+ui:
+  compact: false # Use compact output layout
+  color: auto # Color output: auto, always, never
+  pager: true # Use pager for large outputs
+
+# Query defaults
+query:
+  default_limit: 50 # Default number of results to show
+  default_sort: updated_at:desc # Default sort order
+
+# Completion settings
+completion:
+  timeout: 2s # Timeout for dynamic completions (e.g., "2s", "5s")
 ```
+
+**Configuration precedence**: Command flags > Environment variables > Config file > Defaults
 
 ## Commands
 
