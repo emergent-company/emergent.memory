@@ -166,15 +166,11 @@ func (s *ObjectExtractionJobsService) DequeueBatch(ctx context.Context, batchSiz
 
 	// Use a transaction to ensure atomic claiming
 	err := s.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		// Find up to N pending jobs (respecting schedule_at if set)
+		// Find up to N pending jobs
 		err := tx.NewSelect().
 			Model(&jobs).
 			Where("status = ?", JobStatusPending).
-			WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
-				return q.Where("schedule_at IS NULL").
-					WhereOr("schedule_at <= ?", time.Now().UTC())
-			}).
-			Order("priority DESC", "created_at ASC").
+			Order("created_at ASC").
 			Limit(batchSize).
 			For("UPDATE SKIP LOCKED").
 			Scan(ctx)
