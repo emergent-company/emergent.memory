@@ -6,4 +6,5 @@ use (
 	./apps/website
 	./tests/api
 	./tools/emergent-cli
+	./tools/huma-test-suite
 )

@@ -9,6 +9,7 @@
     "session_rename": "ctrl+r",
     "session_list": "ctrl+x l"
   },
+  "snapshot": false,
   "mcp": {
     // "figma": {
     //   "type": "remote",
