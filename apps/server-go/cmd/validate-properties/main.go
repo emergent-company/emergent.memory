@@ -106,7 +106,8 @@ func main() {
 	fmt.Printf("Scanned %d graph objects\n\n", len(objects))
 
 	if dryRun {
-		fmt.Println("=== DRY RUN MODE - No changes will be applied ===\n")
+		fmt.Println("=== DRY RUN MODE - No changes will be applied ===")
+		fmt.Println()
 	}
 
 	validated := 0
