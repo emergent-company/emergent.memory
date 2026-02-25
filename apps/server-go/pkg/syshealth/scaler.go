@@ -29,9 +29,8 @@ func NewConcurrencyScaler(monitor Monitor, workerType string, enabled bool, min,
 	if max < min {
 		max = min
 	}
-	if max > 50 {
-		max = 50
-	}
+	// Remove hardcoded max=50 cap to allow higher concurrency for embedding workers
+	// Each worker type should specify appropriate max values in their config
 
 	return &ConcurrencyScaler{
 		monitor:            monitor,
