@@ -11,6 +11,8 @@ import (
 	"github.com/emergent-company/emergent/domain/chunking"
 	"github.com/emergent-company/emergent/domain/documents"
 	"github.com/emergent-company/emergent/domain/graph"
+	"github.com/emergent-company/emergent/domain/projects"
+	"github.com/emergent-company/emergent/domain/scheduler"
 	"github.com/emergent-company/emergent/internal/config"
 	"github.com/emergent-company/emergent/internal/storage"
 	"github.com/emergent-company/emergent/pkg/adk"
@@ -245,6 +247,7 @@ func RegisterObjectExtractionWorkerLifecycle(lc fx.Lifecycle, worker *ObjectExtr
 func provideDocumentParsingWorker(
 	jobs *DocumentParsingJobsService,
 	documentsRepo *documents.Repository,
+	projectsRepo *projects.Repository,
 	chunkingService *chunking.Service,
 	kreuzbergClient *kreuzberg.Client,
 	whisperClient *whisper.Client,
@@ -256,7 +259,7 @@ func provideDocumentParsingWorker(
 		Interval:  time.Duration(cfg.DocumentParsing.WorkerIntervalMs) * time.Millisecond,
 		BatchSize: cfg.DocumentParsing.WorkerBatchSize,
 	}
-	return NewDocumentParsingWorker(jobs, documentsRepo, chunkingService, kreuzbergClient, whisperClient, storageService, workerConfig, log)
+	return NewDocumentParsingWorker(jobs, documentsRepo, projectsRepo, chunkingService, kreuzbergClient, whisperClient, storageService, workerConfig, log)
 }
 
 // RegisterDocumentParsingWorkerLifecycle registers the document parsing worker with fx lifecycle
@@ -329,6 +332,7 @@ func provideEmbeddingControlHandler(
 	objectWorker *GraphEmbeddingWorker,
 	relWorker *GraphRelationshipEmbeddingWorker,
 	sweepWorker *EmbeddingSweepWorker,
+	staleTask *scheduler.StaleJobCleanupTask,
 ) *EmbeddingControlHandler {
-	return NewEmbeddingControlHandler(objectWorker, relWorker, sweepWorker)
+	return NewEmbeddingControlHandler(objectWorker, relWorker, sweepWorker, staleTask)
 }

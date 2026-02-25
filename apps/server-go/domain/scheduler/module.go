@@ -14,6 +14,7 @@ var Module = fx.Module("scheduler",
 	fx.Provide(
 		NewConfig,
 		NewScheduler,
+		ProvideStaleJobCleanupTask,
 	),
 	fx.Invoke(
 		RegisterTasks,
@@ -21,13 +22,28 @@ var Module = fx.Module("scheduler",
 	),
 )
 
+// staleTaskParams are the minimal deps needed to build the stale cleanup task.
+type staleTaskParams struct {
+	fx.In
+	DB  *bun.DB
+	Log *slog.Logger
+	Cfg *Config
+}
+
+// ProvideStaleJobCleanupTask creates the stale job cleanup task and makes it
+// available for injection by other modules (e.g. embedding control handler).
+func ProvideStaleJobCleanupTask(p staleTaskParams) *StaleJobCleanupTask {
+	return NewStaleJobCleanupTask(p.DB, p.Log, p.Cfg.StaleJobMinutes)
+}
+
 // TaskParams contains dependencies for creating scheduled tasks
 type TaskParams struct {
 	fx.In
-	Scheduler *Scheduler
-	DB        *bun.DB
-	Log       *slog.Logger
-	Cfg       *Config
+	Scheduler    *Scheduler
+	DB           *bun.DB
+	Log          *slog.Logger
+	Cfg          *Config
+	StaleJobTask *StaleJobCleanupTask
 }
 
 // RegisterTasks registers all scheduled tasks
@@ -62,9 +78,8 @@ func RegisterTasks(p TaskParams) error {
 	}
 
 	// Register stale job cleanup task
-	staleJobTask := NewStaleJobCleanupTask(p.DB, p.Log, p.Cfg.StaleJobMinutes)
 	if err := addScheduledTask(p.Scheduler, p.Log, "stale_job_cleanup",
-		p.Cfg.StaleJobCleanupSchedule, p.Cfg.StaleJobCleanupInterval, staleJobTask.Run); err != nil {
+		p.Cfg.StaleJobCleanupSchedule, p.Cfg.StaleJobCleanupInterval, p.StaleJobTask.Run); err != nil {
 		p.Log.Error("failed to register stale job cleanup task",
 			slog.String("error", err.Error()))
 	}

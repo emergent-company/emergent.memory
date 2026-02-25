@@ -12,6 +12,7 @@ import (
 
 	"github.com/emergent-company/emergent/domain/chunking"
 	"github.com/emergent-company/emergent/domain/documents"
+	"github.com/emergent-company/emergent/domain/projects"
 	"github.com/emergent-company/emergent/internal/storage"
 	"github.com/emergent-company/emergent/pkg/kreuzberg"
 	"github.com/emergent-company/emergent/pkg/logger"
@@ -26,6 +27,7 @@ type DocumentParsingWorker struct {
 	log             *slog.Logger
 	jobsService     *DocumentParsingJobsService
 	documentsRepo   *documents.Repository
+	projectsRepo    *projects.Repository
 	chunkingService *chunking.Service
 	kreuzbergClient *kreuzberg.Client
 	whisperClient   *whisper.Client
@@ -51,6 +53,7 @@ type DocumentParsingWorkerConfig struct {
 func NewDocumentParsingWorker(
 	jobsService *DocumentParsingJobsService,
 	documentsRepo *documents.Repository,
+	projectsRepo *projects.Repository,
 	chunkingService *chunking.Service,
 	kreuzbergClient *kreuzberg.Client,
 	whisperClient *whisper.Client,
@@ -73,6 +76,7 @@ func NewDocumentParsingWorker(
 		log:             log.With(logger.Scope("document.parsing.worker")),
 		jobsService:     jobsService,
 		documentsRepo:   documentsRepo,
+		projectsRepo:    projectsRepo,
 		chunkingService: chunkingService,
 		kreuzbergClient: kreuzbergClient,
 		whisperClient:   whisperClient,
@@ -134,7 +138,8 @@ func (w *DocumentParsingWorker) Stop() {
 
 // poll dequeues and processes a batch of jobs
 func (w *DocumentParsingWorker) poll() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// 2-hour timeout: must exceed the longest possible job (e.g. large audio via Whisper on CPU)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 
 	jobs, err := w.jobsService.Dequeue(ctx, w.batchSize)
@@ -200,8 +205,22 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 		w.markFailed(ctx, job, err)
 		return
 	} else if isAudio {
-		// Audio files - use Whisper for transcription
-		parsedContent, err = w.extractWithWhisper(ctx, storageKey, filename, mimeType)
+		// Audio files - use Whisper for transcription.
+		// Look up per-project initial_prompt from auto_extract_config.
+		var initialPrompt string
+		if w.projectsRepo != nil {
+			project, pErr := w.projectsRepo.GetByID(ctx, job.ProjectID)
+			if pErr != nil {
+				jobLog.Warn("failed to fetch project for whisper prompt", logger.Error(pErr))
+			} else if project != nil {
+				if v, ok := project.AutoExtractConfig["whisper_initial_prompt"]; ok {
+					if s, ok := v.(string); ok {
+						initialPrompt = s
+					}
+				}
+			}
+		}
+		parsedContent, err = w.extractWithWhisper(ctx, storageKey, filename, mimeType, initialPrompt)
 		extractionMethod = "whisper"
 	} else if useKreuzberg {
 		// Binary document - use Kreuzberg for extraction
@@ -305,7 +324,7 @@ func isAudioFile(mimeType, filename string) bool {
 }
 
 // extractWithWhisper downloads an audio file and sends it to Whisper for transcription
-func (w *DocumentParsingWorker) extractWithWhisper(ctx context.Context, storageKey, filename, mimeType string) (string, error) {
+func (w *DocumentParsingWorker) extractWithWhisper(ctx context.Context, storageKey, filename, mimeType, initialPrompt string) (string, error) {
 	if !w.whisperClient.IsEnabled() {
 		return "", fmt.Errorf("whisper transcription service is disabled")
 	}
@@ -321,7 +340,7 @@ func (w *DocumentParsingWorker) extractWithWhisper(ctx context.Context, storageK
 		return "", fmt.Errorf("audio file exceeds maximum size of %d MB", maxBytes/(1024*1024))
 	}
 
-	transcript, err := w.whisperClient.Transcribe(ctx, content, filename, mimeType)
+	transcript, err := w.whisperClient.Transcribe(ctx, content, filename, mimeType, initialPrompt)
 	if err != nil {
 		return "", fmt.Errorf("whisper transcription: %w", err)
 	}
