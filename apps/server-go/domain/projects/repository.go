@@ -3,6 +3,7 @@ package projects
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log/slog"
 	"strings"
 
@@ -29,21 +30,75 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 
 // ListParams defines parameters for listing projects
 type ListParams struct {
-	UserID    string
-	OrgID     string // Optional filter by org
-	ProjectID string // Optional filter by specific project (for API token scope)
-	Limit     int
+	UserID       string
+	OrgID        string // Optional filter by org
+	ProjectID    string // Optional filter by specific project (for API token scope)
+	IncludeStats bool   // Whether to include aggregate statistics
+	Limit        int
+}
+
+// projectWithStats is used internally for scanning queries with stats
+type projectWithStats struct {
+	Project
+	DocumentCount     int    `bun:"document_count"`
+	ObjectCount       int    `bun:"object_count"`
+	RelationshipCount int    `bun:"relationship_count"`
+	TotalJobs         int    `bun:"total_jobs"`
+	RunningJobs       int    `bun:"running_jobs"`
+	QueuedJobs        int    `bun:"queued_jobs"`
+	TemplatePacks     []byte `bun:"template_packs"` // Raw JSON
+}
+
+func (p *projectWithStats) populateStats() {
+	if p.Project.ID == "" {
+		return
+	}
+	p.Project.Stats = &ProjectStats{
+		DocumentCount:     p.DocumentCount,
+		ObjectCount:       p.ObjectCount,
+		RelationshipCount: p.RelationshipCount,
+		TotalJobs:         p.TotalJobs,
+		RunningJobs:       p.RunningJobs,
+		QueuedJobs:        p.QueuedJobs,
+		TemplatePacks:     []TemplatePack{},
+	}
+	if len(p.TemplatePacks) > 0 {
+		_ = json.Unmarshal(p.TemplatePacks, &p.Project.Stats.TemplatePacks)
+	}
 }
 
 // List returns all projects the user is a member of
 func (r *Repository) List(ctx context.Context, params ListParams) ([]Project, error) {
-	var projects []Project
+	var dbProjects []projectWithStats
 
 	query := r.db.NewSelect().
-		Model(&projects).
+		Model(&dbProjects).
+		ModelTableExpr("kb.projects AS p").
 		Join("INNER JOIN kb.project_memberships AS pm ON pm.project_id = p.id").
 		Where("pm.user_id = ?", params.UserID).
 		Order("p.created_at DESC")
+
+	if params.IncludeStats {
+		query = query.
+			ColumnExpr("p.*").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.documents WHERE project_id = p.id) AS document_count").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = p.id AND deleted_at IS NULL) AS object_count").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.graph_relationships WHERE project_id = p.id) AS relationship_count").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.object_extraction_jobs WHERE project_id = p.id) AS total_jobs").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.object_extraction_jobs WHERE project_id = p.id AND status = 'running') AS running_jobs").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.object_extraction_jobs WHERE project_id = p.id AND status = 'pending') AS queued_jobs").
+			ColumnExpr(`(SELECT COALESCE(json_agg(json_build_object(
+			   'name', tp.name,
+			   'version', tp.version,
+			   'objectTypes', COALESCE(ARRAY(SELECT jsonb_object_keys(tp.object_type_schemas)), ARRAY[]::text[]),
+			   'relationshipTypes', COALESCE(ARRAY(SELECT jsonb_object_keys(tp.relationship_type_schemas)), ARRAY[]::text[])
+			 )), '[]'::json)
+			 FROM kb.project_template_packs ptp
+			 JOIN kb.graph_template_packs tp ON tp.id = ptp.template_pack_id
+			 WHERE ptp.project_id = p.id AND ptp.active = true) AS template_packs`)
+	} else {
+		query = query.ColumnExpr("p.*")
+	}
 
 	if params.OrgID != "" {
 		query = query.Where("p.organization_id = ?", params.OrgID)
@@ -63,17 +118,49 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Project, er
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
+	projects := make([]Project, len(dbProjects))
+	for i, dp := range dbProjects {
+		if params.IncludeStats {
+			dp.populateStats()
+		}
+		projects[i] = dp.Project
+	}
+
 	return projects, nil
 }
 
 // GetByID returns a project by ID
-func (r *Repository) GetByID(ctx context.Context, id string) (*Project, error) {
-	var project Project
+func (r *Repository) GetByID(ctx context.Context, id string, includeStats bool) (*Project, error) {
+	var dbProject projectWithStats
 
-	err := r.db.NewSelect().
-		Model(&project).
-		Where("id = ?", id).
-		Scan(ctx)
+	query := r.db.NewSelect().
+		Model(&dbProject).
+		ModelTableExpr("kb.projects AS p").
+		Where("p.id = ?", id)
+
+	if includeStats {
+		query = query.
+			ColumnExpr("p.*").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.documents WHERE project_id = p.id) AS document_count").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = p.id AND deleted_at IS NULL) AS object_count").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.graph_relationships WHERE project_id = p.id) AS relationship_count").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.object_extraction_jobs WHERE project_id = p.id) AS total_jobs").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.object_extraction_jobs WHERE project_id = p.id AND status = 'running') AS running_jobs").
+			ColumnExpr("(SELECT COUNT(*) FROM kb.object_extraction_jobs WHERE project_id = p.id AND status = 'pending') AS queued_jobs").
+			ColumnExpr(`(SELECT COALESCE(json_agg(json_build_object(
+			   'name', tp.name,
+			   'version', tp.version,
+			   'objectTypes', COALESCE(ARRAY(SELECT jsonb_object_keys(tp.object_type_schemas)), ARRAY[]::text[]),
+			   'relationshipTypes', COALESCE(ARRAY(SELECT jsonb_object_keys(tp.relationship_type_schemas)), ARRAY[]::text[])
+			 )), '[]'::json)
+			 FROM kb.project_template_packs ptp
+			 JOIN kb.graph_template_packs tp ON tp.id = ptp.template_pack_id
+			 WHERE ptp.project_id = p.id AND ptp.active = true) AS template_packs`)
+	} else {
+		query = query.ColumnExpr("p.*")
+	}
+
+	err := query.Scan(ctx)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -83,7 +170,11 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*Project, error) {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	return &project, nil
+	if includeStats {
+		dbProject.populateStats()
+	}
+
+	return &dbProject.Project, nil
 }
 
 // GetByIDWithLock returns a project by ID with a pessimistic lock (FOR UPDATE)

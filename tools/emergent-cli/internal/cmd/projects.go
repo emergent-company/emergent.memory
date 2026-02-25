@@ -43,6 +43,7 @@ var (
 	projectName        string
 	projectDescription string
 	projectOrgID       string
+	projectStatsFlag   bool
 )
 
 func getClient(cmd *cobra.Command) (*client.Client, error) {
@@ -63,13 +64,58 @@ func getClient(cmd *cobra.Command) (*client.Client, error) {
 	return client.New(cfg)
 }
 
+func printProjectStats(stats *projects.ProjectStats) {
+	if stats == nil {
+		return
+	}
+	fmt.Println("   Stats:")
+	fmt.Printf("     • Documents: %d\n", stats.DocumentCount)
+	fmt.Printf("     • Objects: %d\n", stats.ObjectCount)
+	fmt.Printf("     • Relationships: %d\n", stats.RelationshipCount)
+
+	jobsStr := fmt.Sprintf("%d total", stats.TotalJobs)
+	if stats.RunningJobs > 0 {
+		jobsStr += fmt.Sprintf(", %d running", stats.RunningJobs)
+	}
+	if stats.QueuedJobs > 0 {
+		jobsStr += fmt.Sprintf(", %d queued", stats.QueuedJobs)
+	}
+	fmt.Printf("     • Extraction jobs: %s\n", jobsStr)
+
+	if len(stats.TemplatePacks) == 0 {
+		fmt.Println("     • Template packs: none")
+	} else {
+		fmt.Println("     • Template packs:")
+		for _, pack := range stats.TemplatePacks {
+			fmt.Printf("       - %s@%s\n", pack.Name, pack.Version)
+
+			if len(pack.ObjectTypes) > 0 {
+				fmt.Printf("         Objects: %s\n", strings.Join(pack.ObjectTypes, ", "))
+			} else {
+				fmt.Println("         Objects: none")
+			}
+
+			if len(pack.RelationshipTypes) > 0 {
+				fmt.Printf("         Relationships: %s\n", strings.Join(pack.RelationshipTypes, ", "))
+			} else {
+				fmt.Println("         Relationships: none")
+			}
+		}
+	}
+}
+
 func runListProjects(cmd *cobra.Command, args []string) error {
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
 
-	projectList, err := c.SDK.Projects.List(context.Background(), nil)
+	opts := &projects.ListOptions{}
+	if projectStatsFlag {
+		opts.IncludeStats = true
+	}
+
+	projectList, err := c.SDK.Projects.List(context.Background(), opts)
 	if err != nil {
 		return fmt.Errorf("failed to list projects: %w", err)
 	}
@@ -85,6 +131,12 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 		if p.KBPurpose != nil && *p.KBPurpose != "" {
 			fmt.Printf("   KB Purpose: %s\n", *p.KBPurpose)
 		}
+
+		// Print stats if requested
+		if projectStatsFlag && p.Stats != nil {
+			printProjectStats(p.Stats)
+		}
+
 		fmt.Println()
 	}
 
@@ -102,15 +154,26 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	project, err := c.SDK.Projects.Get(context.Background(), projectID)
+	opts := &projects.GetOptions{}
+	if projectStatsFlag {
+		opts.IncludeStats = true
+	}
+
+	project, err := c.SDK.Projects.Get(context.Background(), projectID, opts)
 	if err != nil {
 		return fmt.Errorf("failed to get project: %w", err)
 	}
 
 	fmt.Printf("Project: %s (%s)\n", project.Name, project.ID)
-	fmt.Printf("  Org ID:      %s\n", project.OrgID)
+	fmt.Printf("  Org ID:     %s\n", project.OrgID)
 	if project.KBPurpose != nil && *project.KBPurpose != "" {
-		fmt.Printf("  KB Purpose:  %s\n", *project.KBPurpose)
+		fmt.Printf("  KB Purpose: %s\n", *project.KBPurpose)
+	}
+
+	// Print stats if requested
+	if projectStatsFlag && project.Stats != nil {
+		fmt.Println()
+		printProjectStats(project.Stats)
 	}
 
 	return nil
@@ -212,6 +275,9 @@ func init() {
 	createProjectCmd.Flags().StringVar(&projectDescription, "description", "", "Project description")
 	createProjectCmd.Flags().StringVar(&projectOrgID, "org-id", "", "Organization ID (auto-detected if not specified)")
 	_ = createProjectCmd.MarkFlagRequired("name")
+
+	listProjectsCmd.Flags().BoolVar(&projectStatsFlag, "stats", false, "Include project statistics (documents, objects, jobs, template packs)")
+	getProjectCmd.Flags().BoolVar(&projectStatsFlag, "stats", false, "Include project statistics (documents, objects, jobs, template packs)")
 
 	projectsCmd.AddCommand(listProjectsCmd)
 	projectsCmd.AddCommand(getProjectCmd)

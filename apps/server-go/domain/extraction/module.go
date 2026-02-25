@@ -8,6 +8,7 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/domain/chunking"
 	"github.com/emergent-company/emergent/domain/documents"
 	"github.com/emergent-company/emergent/domain/graph"
@@ -76,10 +77,29 @@ func provideRelEmbeddingEnqueuer(svc *GraphRelationshipEmbeddingJobsService) gra
 	return &relEmbeddingEnqueuerAdapter{svc: svc}
 }
 
+// provideSysHealthMonitor creates system health monitor with fx
+func provideSysHealthMonitor(db bun.IDB, log *slog.Logger) syshealth.Monitor {
+	cfg := syshealth.DefaultConfig()
+	return syshealth.NewMonitor(cfg, db, log)
+}
+
+// RegisterSysHealthMonitorLifecycle registers the monitor with fx lifecycle
+func RegisterSysHealthMonitorLifecycle(lc fx.Lifecycle, monitor syshealth.Monitor) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			return monitor.Start()
+		},
+		OnStop: func(ctx context.Context) error {
+			return monitor.Stop()
+		},
+	})
+}
+
 // Module provides extraction functionality including job queues and workers
 var Module = fx.Module("extraction",
 	fx.Provide(
 		NewExtractionConfig,
+		provideSysHealthMonitor,
 		provideGraphEmbeddingJobsService,
 		provideGraphEmbeddingWorker,
 		provideGraphRelationshipEmbeddingJobsService,
@@ -99,6 +119,7 @@ var Module = fx.Module("extraction",
 		provideEmbeddingSweepWorker,
 	),
 	fx.Invoke(
+		RegisterSysHealthMonitorLifecycle,
 		RegisterAdminRoutes,
 		RegisterEmbeddingControlRoutes,
 		RegisterGraphEmbeddingWorkerLifecycle,
@@ -147,8 +168,16 @@ func provideGraphEmbeddingWorker(
 	db bun.IDB,
 	cfg *ExtractionConfig,
 	log *slog.Logger,
+	monitor syshealth.Monitor,
 ) *GraphEmbeddingWorker {
-	return NewGraphEmbeddingWorker(jobs, embeds, db, cfg.GraphEmbedding, log)
+	scaler := syshealth.NewConcurrencyScaler(
+		monitor,
+		"graph_embedding",
+		cfg.GraphEmbedding.EnableAdaptiveScaling,
+		cfg.GraphEmbedding.MinConcurrency,
+		cfg.GraphEmbedding.MaxConcurrency,
+	)
+	return NewGraphEmbeddingWorker(jobs, embeds, db, cfg.GraphEmbedding, log, scaler)
 }
 
 // RegisterGraphEmbeddingWorkerLifecycle registers the worker with fx lifecycle
@@ -176,8 +205,16 @@ func provideChunkEmbeddingWorker(
 	db bun.IDB,
 	cfg *ExtractionConfig,
 	log *slog.Logger,
+	monitor syshealth.Monitor,
 ) *ChunkEmbeddingWorker {
-	return NewChunkEmbeddingWorker(jobs, embeds, db, cfg.ChunkEmbedding, log)
+	scaler := syshealth.NewConcurrencyScaler(
+		monitor,
+		"chunk_embedding",
+		cfg.ChunkEmbedding.EnableAdaptiveScaling,
+		cfg.ChunkEmbedding.MinConcurrency,
+		cfg.ChunkEmbedding.MaxConcurrency,
+	)
+	return NewChunkEmbeddingWorker(jobs, embeds, db, cfg.ChunkEmbedding, log, scaler)
 }
 
 // RegisterChunkEmbeddingWorkerLifecycle registers the chunk embedding worker with fx lifecycle
@@ -217,13 +254,22 @@ func provideObjectExtractionWorker(
 	modelFactory *adk.ModelFactory,
 	cfg *ExtractionConfig,
 	log *slog.Logger,
+	monitor syshealth.Monitor,
 ) *ObjectExtractionWorker {
 	workerConfig := &ObjectExtractionWorkerConfig{
 		PollInterval:    time.Duration(cfg.ObjectExtraction.WorkerIntervalMs) * time.Millisecond,
+		Concurrency:     cfg.ObjectExtraction.WorkerConcurrency,
 		OrphanThreshold: 0.3,
 		MaxRetries:      uint(cfg.ObjectExtraction.DefaultMaxRetries),
 	}
-	return NewObjectExtractionWorker(jobs, graphService, docService, schemaProvider, modelFactory, workerConfig, log)
+	scaler := syshealth.NewConcurrencyScaler(
+		monitor,
+		"object_extraction",
+		cfg.ObjectExtraction.EnableAdaptiveScaling,
+		cfg.ObjectExtraction.MinConcurrency,
+		cfg.ObjectExtraction.MaxConcurrency,
+	)
+	return NewObjectExtractionWorker(jobs, graphService, docService, schemaProvider, modelFactory, workerConfig, log, scaler)
 }
 
 // RegisterObjectExtractionWorkerLifecycle registers the object extraction worker with fx lifecycle
@@ -254,12 +300,21 @@ func provideDocumentParsingWorker(
 	storageService *storage.Service,
 	cfg *ExtractionConfig,
 	log *slog.Logger,
+	monitor syshealth.Monitor,
 ) *DocumentParsingWorker {
 	workerConfig := &DocumentParsingWorkerConfig{
-		Interval:  time.Duration(cfg.DocumentParsing.WorkerIntervalMs) * time.Millisecond,
-		BatchSize: cfg.DocumentParsing.WorkerBatchSize,
+		Interval:    time.Duration(cfg.DocumentParsing.WorkerIntervalMs) * time.Millisecond,
+		BatchSize:   cfg.DocumentParsing.WorkerBatchSize,
+		Concurrency: cfg.DocumentParsing.WorkerConcurrency,
 	}
-	return NewDocumentParsingWorker(jobs, documentsRepo, projectsRepo, chunkingService, kreuzbergClient, whisperClient, storageService, workerConfig, log)
+	scaler := syshealth.NewConcurrencyScaler(
+		monitor,
+		"document_parsing",
+		cfg.DocumentParsing.EnableAdaptiveScaling,
+		cfg.DocumentParsing.MinConcurrency,
+		cfg.DocumentParsing.MaxConcurrency,
+	)
+	return NewDocumentParsingWorker(jobs, documentsRepo, projectsRepo, chunkingService, kreuzbergClient, whisperClient, storageService, workerConfig, log, scaler)
 }
 
 // RegisterDocumentParsingWorkerLifecycle registers the document parsing worker with fx lifecycle

@@ -20,8 +20,16 @@ type ObjectExtractionConfig struct {
 	WorkerIntervalMs int
 	// WorkerBatchSize is the number of jobs to process in each batch (default: 5)
 	WorkerBatchSize int
+	// WorkerConcurrency is the static concurrency level, defaults to 5
+	WorkerConcurrency int
 	// StaleThresholdMinutes is how long a job can be 'processing' before recovery (default: 30)
 	StaleThresholdMinutes int
+	// EnableAdaptiveScaling enables dynamic concurrency adjustment based on system health
+	EnableAdaptiveScaling bool
+	// MinConcurrency is the minimum concurrency when adaptive scaling is enabled (default: 1)
+	MinConcurrency int
+	// MaxConcurrency is the maximum concurrency when adaptive scaling is enabled (default: 5)
+	MaxConcurrency int
 }
 
 // DefaultObjectExtractionConfig returns default configuration
@@ -30,7 +38,11 @@ func DefaultObjectExtractionConfig() *ObjectExtractionConfig {
 		DefaultMaxRetries:     3,
 		WorkerIntervalMs:      5000,
 		WorkerBatchSize:       5,
+		WorkerConcurrency:     5,
 		StaleThresholdMinutes: 30,
+		EnableAdaptiveScaling: false,
+		MinConcurrency:        1,
+		MaxConcurrency:        5,
 	}
 }
 
@@ -132,63 +144,76 @@ func (s *ObjectExtractionJobsService) CreateJob(ctx context.Context, opts Create
 }
 
 // Dequeue claims the next pending job for processing using FOR UPDATE SKIP LOCKED
-// Returns nil if no jobs are available
+// Deprecated: use DequeueBatch instead
 func (s *ObjectExtractionJobsService) Dequeue(ctx context.Context) (*ObjectExtractionJob, error) {
-	job := new(ObjectExtractionJob)
-	now := time.Now().UTC()
+	jobs, err := s.DequeueBatch(ctx, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+	return jobs[0], nil
+}
 
-	// Use a transaction for atomic read-and-update
-	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
-		// Find the oldest pending job and lock it
-		// Only one job per project can run at a time (unless allow_parallel_extraction)
+// DequeueBatch claims multiple pending jobs for processing using FOR UPDATE SKIP LOCKED
+func (s *ObjectExtractionJobsService) DequeueBatch(ctx context.Context, batchSize int) ([]*ObjectExtractionJob, error) {
+	if batchSize <= 0 {
+		batchSize = s.config.WorkerBatchSize
+	}
+
+	var jobs []*ObjectExtractionJob
+
+	// Use a transaction to ensure atomic claiming
+	err := s.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		// Find up to N pending jobs (respecting schedule_at if set)
 		err := tx.NewSelect().
-			Model(job).
+			Model(&jobs).
 			Where("status = ?", JobStatusPending).
-			Where(`NOT EXISTS (
-				SELECT 1 FROM kb.object_extraction_jobs running
-				WHERE running.project_id = oej.project_id
-				  AND running.status = 'processing'
-			)`).
-			OrderExpr("created_at ASC").
-			Limit(1).
+			WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+				return q.Where("schedule_at IS NULL").
+					WhereOr("schedule_at <= ?", time.Now().UTC())
+			}).
+			Order("priority DESC", "created_at ASC").
+			Limit(batchSize).
 			For("UPDATE SKIP LOCKED").
 			Scan(ctx)
+
 		if err != nil {
-			if err == sql.ErrNoRows {
-				return err // Will be handled below
-			}
-			return fmt.Errorf("select pending job: %w", err)
+			return err
 		}
 
-		// Update job to processing status
-		job.Status = JobStatusProcessing
-		job.StartedAt = &now
-		job.UpdatedAt = now
+		if len(jobs) == 0 {
+			return nil // No jobs available
+		}
 
+		now := time.Now().UTC()
+		var jobIDs []string
+		for _, job := range jobs {
+			job.Status = JobStatusProcessing
+			job.StartedAt = &now
+			job.UpdatedAt = now
+			jobIDs = append(jobIDs, job.ID)
+		}
+
+		// Update the claimed jobs
 		_, err = tx.NewUpdate().
-			Model(job).
+			Model(&jobs).
 			Column("status", "started_at", "updated_at").
-			WherePK().
+			Where("id IN (?)", bun.In(jobIDs)).
 			Exec(ctx)
-		if err != nil {
-			return fmt.Errorf("update job status: %w", err)
-		}
 
-		return nil
+		return err
 	})
 
 	if err == sql.ErrNoRows {
 		return nil, nil // No jobs available
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("dequeue batch: %w", err)
 	}
 
-	s.log.Debug("dequeued object extraction job",
-		slog.String("id", job.ID),
-		slog.String("projectId", job.ProjectID))
-
-	return job, nil
+	return jobs, nil
 }
 
 // MarkCompleted marks a job as completed with results

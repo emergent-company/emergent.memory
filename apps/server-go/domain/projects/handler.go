@@ -54,11 +54,14 @@ func (h *Handler) List(c echo.Context) error {
 		projectID = user.APITokenProjectID
 	}
 
+	includeStats := c.QueryParam("include_stats") == "true"
+
 	projects, err := h.svc.List(c.Request().Context(), ServiceListParams{
-		UserID:    user.ID,
-		OrgID:     orgID,
-		ProjectID: projectID,
-		Limit:     limit,
+		UserID:       user.ID,
+		OrgID:        orgID,
+		ProjectID:    projectID,
+		IncludeStats: includeStats,
+		Limit:        limit,
 	})
 	if err != nil {
 		return err
@@ -87,8 +90,9 @@ func (h *Handler) Get(c echo.Context) error {
 	}
 
 	id := c.Param("id")
+	includeStats := c.QueryParam("include_stats") == "true"
 
-	project, err := h.svc.GetByID(c.Request().Context(), id)
+	project, err := h.svc.GetByID(c.Request().Context(), id, includeStats)
 	if err != nil {
 		return err
 	}

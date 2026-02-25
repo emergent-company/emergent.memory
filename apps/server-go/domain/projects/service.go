@@ -38,10 +38,11 @@ func NewService(repo *Repository, log *slog.Logger) *Service {
 
 // ServiceListParams defines parameters for listing projects
 type ServiceListParams struct {
-	UserID    string
-	OrgID     string
-	ProjectID string // If set, restrict results to this single project (for API token scope)
-	Limit     int
+	UserID       string
+	OrgID        string
+	ProjectID    string // If set, restrict results to this single project (for API token scope)
+	IncludeStats bool   // Whether to include aggregate statistics
+	Limit        int
 }
 
 // List returns all projects the user is a member of
@@ -65,10 +66,11 @@ func (s *Service) List(ctx context.Context, params ServiceListParams) ([]Project
 	}
 
 	projects, err := s.repo.List(ctx, ListParams{
-		UserID:    params.UserID,
-		OrgID:     params.OrgID,
-		ProjectID: params.ProjectID,
-		Limit:     limit,
+		UserID:       params.UserID,
+		OrgID:        params.OrgID,
+		ProjectID:    params.ProjectID,
+		IncludeStats: params.IncludeStats,
+		Limit:        limit,
 	})
 	if err != nil {
 		return nil, err
@@ -82,12 +84,12 @@ func (s *Service) List(ctx context.Context, params ServiceListParams) ([]Project
 }
 
 // GetByID returns a project by ID
-func (s *Service) GetByID(ctx context.Context, id string) (*ProjectDTO, error) {
+func (s *Service) GetByID(ctx context.Context, id string, includeStats bool) (*ProjectDTO, error) {
 	if !isValidUUID(id) {
 		return nil, apperror.New(400, "invalid-uuid", "id must be a valid UUID")
 	}
 
-	project, err := s.repo.GetByID(ctx, id)
+	project, err := s.repo.GetByID(ctx, id, includeStats)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +190,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 	}
 
 	// Get existing project
-	project, err := s.repo.GetByID(ctx, id)
+	project, err := s.repo.GetByID(ctx, id, false)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +293,7 @@ func (s *Service) DeleteAsync(ctx context.Context, id string, userID string) err
 
 	// Check the project exists before returning 202 — caller gets a proper 404
 	// if the project is not found rather than a silent no-op.
-	project, err := s.repo.GetByID(ctx, id)
+	project, err := s.repo.GetByID(ctx, id, false)
 	if err != nil {
 		return err
 	}
@@ -322,7 +324,7 @@ func (s *Service) ListMembers(ctx context.Context, projectID string) ([]ProjectM
 	}
 
 	// Check project exists
-	project, err := s.repo.GetByID(ctx, projectID)
+	project, err := s.repo.GetByID(ctx, projectID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +345,7 @@ func (s *Service) RemoveMember(ctx context.Context, projectID, userID string) er
 	}
 
 	// Check project exists
-	project, err := s.repo.GetByID(ctx, projectID)
+	project, err := s.repo.GetByID(ctx, projectID, false)
 	if err != nil {
 		return err
 	}
