@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	// MaxUploadSize is the maximum file size for uploads (100MB)
-	MaxUploadSize = 100 * 1024 * 1024
+	// MaxUploadSize is the maximum file size for uploads (500MB)
+	MaxUploadSize = 500 * 1024 * 1024
 	// MaxBatchUploadSize is the maximum file size for batch uploads (10MB per file)
 	MaxBatchUploadSize = 10 * 1024 * 1024
 	// MaxBatchFiles is the maximum number of files in a batch upload
@@ -89,7 +89,7 @@ func (h *UploadHandler) Upload(c echo.Context) error {
 
 	// Validate file size
 	if file.Size > MaxUploadSize {
-		return apperror.ErrBadRequest.WithMessage("file size exceeds maximum of 100MB")
+		return apperror.ErrBadRequest.WithMessage("file size exceeds maximum of 500MB")
 	}
 
 	// Open the file
