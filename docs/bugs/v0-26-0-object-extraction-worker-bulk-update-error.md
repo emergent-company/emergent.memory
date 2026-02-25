@@ -129,7 +129,7 @@ _, err = tx.NewUpdate().
 ## Resolution
 
 **Fixed in:** v0.26.1  
-**Fix Commit:** [To be added after commit]  
+**Fix Commit:** 1e773f4  
 **Deployed:** 2026-02-25
 
 The fix simplifies the update query by using a standard UPDATE with WHERE IN clause, which is the appropriate pattern for updating multiple rows to the same values in Bun ORM.

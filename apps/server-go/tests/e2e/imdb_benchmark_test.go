@@ -45,7 +45,7 @@ func (s *IMDBBenchmarkSuite) SetupSuite() {
 
 	s.projectID = os.Getenv("BENCHMARK_PROJECT_ID")
 	if s.projectID == "" {
-		s.projectID = "956e3e88-07c5-462b-9076-50ea7e1e7951"
+		s.projectID = "dfe2febb-1971-4325-8f97-c816c6609f6d"
 	}
 
 	s.apiKey = os.Getenv("TEST_API_KEY")
@@ -380,7 +380,7 @@ func (s *IMDBBenchmarkSuite) batchInsertEntities(movies map[string]MovieData, pe
 		}
 
 		resp := s.Client.POST("/api/graph/objects/bulk",
-			testutil.WithHeader("X-API-Key", s.apiKey),
+			testutil.WithAuth(s.apiKey),
 			testutil.WithProjectID(s.projectID),
 			testutil.WithJSONBody(req),
 		)
@@ -402,7 +402,7 @@ func (s *IMDBBenchmarkSuite) fetchCanonicalIDsByType(objType string) map[string]
 		}
 
 		resp := s.Client.GET(url,
-			testutil.WithHeader("X-API-Key", s.apiKey),
+			testutil.WithAuth(s.apiKey),
 			testutil.WithProjectID(s.projectID),
 		)
 		s.Require().Equal(200, resp.StatusCode, "fetchCanonicalIDsByType(%s) failed: %s", objType, resp.String())
@@ -494,7 +494,7 @@ func (s *IMDBBenchmarkSuite) batchInsertRelationships(roles []PrincipalRole) {
 		}
 
 		resp := s.Client.POST("/api/graph/relationships/bulk",
-			testutil.WithHeader("X-API-Key", s.apiKey),
+			testutil.WithAuth(s.apiKey),
 			testutil.WithProjectID(s.projectID),
 			testutil.WithJSONBody(req),
 		)
@@ -514,11 +514,14 @@ func (s *IMDBBenchmarkSuite) runAgentQuery(query string) (string, []string) {
 	}
 
 	resp := s.Client.POST("/api/chat/stream",
-		testutil.WithHeader("X-API-Key", s.apiKey),
+		testutil.WithAuth(s.apiKey),
 		testutil.WithProjectID(s.projectID),
 		testutil.WithJSONBody(req),
 	)
 	s.Require().Equal(http.StatusOK, resp.StatusCode, "Agent query failed: %s", resp.String())
+
+	// Debug: print raw response
+	s.T().Logf("Raw SSE response:\n%s", resp.String())
 
 	events := parseSSEEvents(resp.String())
 
@@ -546,7 +549,7 @@ func (s *IMDBBenchmarkSuite) TestBenchmark_SeedAndQuery() {
 	// Check if seeded via API count
 	var count int
 	countResp := s.Client.GET("/api/graph/objects/count?type=Movie",
-		testutil.WithHeader("X-API-Key", s.apiKey),
+		testutil.WithAuth(s.apiKey),
 		testutil.WithProjectID(s.projectID),
 	)
 	if countResp.StatusCode == 200 {

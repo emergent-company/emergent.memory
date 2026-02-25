@@ -33,7 +33,7 @@ type staleTaskParams struct {
 // ProvideStaleJobCleanupTask creates the stale job cleanup task and makes it
 // available for injection by other modules (e.g. embedding control handler).
 func ProvideStaleJobCleanupTask(p staleTaskParams) *StaleJobCleanupTask {
-	return NewStaleJobCleanupTask(p.DB, p.Log, p.Cfg.StaleJobMinutes)
+	return NewStaleJobCleanupTask(p.DB, p.Log, p.Cfg.StaleJobMinutes, p.Cfg.DocumentParsingStaleMinutes)
 }
 
 // TaskParams contains dependencies for creating scheduled tasks

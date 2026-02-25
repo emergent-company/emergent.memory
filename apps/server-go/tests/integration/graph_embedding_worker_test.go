@@ -193,7 +193,7 @@ func (m *mockEmbeddingService) CallCount() int64 {
 
 func (s *GraphEmbeddingWorkerTestSuite) TestWorker_StartStop() {
 	mockEmbeds := newMockEmbeddingService(true)
-	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 
 	// Start worker
 	err := worker.Start(s.ctx)
@@ -210,7 +210,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_StartStop() {
 
 func (s *GraphEmbeddingWorkerTestSuite) TestWorker_NotStartedWhenEmbeddingsDisabled() {
 	mockEmbeds := newMockEmbeddingService(false) // Disabled
-	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 
 	// Start worker - should not actually start
 	err := worker.Start(s.ctx)
@@ -235,7 +235,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_ProcessesJob() {
 
 	// Create and start worker
 	mockEmbeds := newMockEmbeddingService(true)
-	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 	err = worker.Start(s.ctx)
 	s.NoError(err)
 
@@ -282,7 +282,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_ProcessesMultipleJobs() {
 
 	// Create and start worker
 	mockEmbeds := newMockEmbeddingService(true)
-	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 	err := worker.Start(s.ctx)
 	s.NoError(err)
 
@@ -326,7 +326,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_HandlesEmbeddingFailure() {
 	mockEmbeds.shouldFail = true
 	mockEmbeds.failError = errors.New("embedding API rate limit exceeded")
 
-	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 	err = worker.Start(s.ctx)
 	s.NoError(err)
 
@@ -362,7 +362,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_HandlesMissingObject() {
 
 	// Create and start worker
 	mockEmbeds := newMockEmbeddingService(true)
-	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 	err = worker.Start(s.ctx)
 	s.NoError(err)
 
@@ -419,7 +419,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_ExtractsTextFromProperties() 
 
 	// Create and start worker
 	mockEmbeds := newMockEmbeddingService(true)
-	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log)
+	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil)
 	err = worker.Start(s.ctx)
 	s.NoError(err)
 
@@ -470,7 +470,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_ProcessesHighPriorityFirst() 
 	}
 	mockEmbeds := newMockEmbeddingService(true)
 	jobsService := extraction.NewGraphEmbeddingJobsService(s.testDB.DB, s.log, smallBatchCfg)
-	worker := extraction.NewGraphEmbeddingWorker(jobsService, mockEmbeds, s.testDB.DB, smallBatchCfg, s.log)
+	worker := extraction.NewGraphEmbeddingWorker(jobsService, mockEmbeds, s.testDB.DB, smallBatchCfg, s.log, nil)
 	err = worker.Start(s.ctx)
 	s.NoError(err)
 
