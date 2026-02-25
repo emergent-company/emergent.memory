@@ -1,4 +1,35 @@
 services:
+  # Whisper Audio Transcription Service
+  # Based on openai-whisper-asr-webservice (https://github.com/onerahmet/openai-whisper-asr-webservice)
+  # Downloads model on first start (~150MB for base, ~1.5GB for large-v3)
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: emergent-whisper
+    restart: unless-stopped
+    ports:
+      - '${WHISPER_PORT:-9876}:9000'
+    environment:
+      ASR_MODEL: ${WHISPER_MODEL:-base}
+      ASR_ENGINE: ${WHISPER_ENGINE:-openai_whisper}
+    volumes:
+      - whisper_cache:/root/.cache/whisper
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'curl -s -o /dev/null -w "%{http_code}" http://localhost:9000/asr | grep -qE "405|422"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+
   # PostgreSQL Database with pgvector extension
   db:
     build:
@@ -99,6 +130,8 @@ services:
 
 volumes:
   pg_data:
+  whisper_cache:
+    driver: local
   # Persistent storage for agent workspace container volumes (gVisor/Docker)
   workspace_volumes:
     driver: local

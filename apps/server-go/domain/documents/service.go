@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -224,8 +225,8 @@ func (s *Service) CreateFromUpload(ctx context.Context, params UploadParams) (*U
 		}, nil
 	}
 
-	// Determine conversion status based on mime type
-	conversionStatus := determineConversionStatus(params.MimeType)
+	// Determine conversion status based on mime type and filename
+	conversionStatus := determineConversionStatus(params.MimeType, params.Filename)
 
 	// Create new document
 	now := time.Now().UTC()
@@ -300,8 +301,22 @@ func toDocumentSummary(doc *Document) *DocumentSummary {
 	}
 }
 
-// determineConversionStatus determines if a file needs conversion based on mime type
-func determineConversionStatus(mimeType string) string {
+// determineConversionStatus determines if a file needs conversion based on mime type and filename
+func determineConversionStatus(mimeType, filename string) string {
+	// Audio files need Whisper transcription
+	if strings.HasPrefix(mimeType, "audio/") {
+		return "pending"
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	audioExts := map[string]bool{
+		".mp3": true, ".wav": true, ".m4a": true, ".ogg": true,
+		".flac": true, ".aac": true, ".mp4": true, ".webm": true,
+		".weba": true, ".opus": true,
+	}
+	if audioExts[ext] {
+		return "pending"
+	}
+
 	// Plain text and markdown don't need conversion
 	if strings.HasPrefix(mimeType, "text/") {
 		return "not_required"

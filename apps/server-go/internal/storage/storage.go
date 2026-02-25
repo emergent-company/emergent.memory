@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -118,6 +119,8 @@ func NewService(cfg *Config, log *slog.Logger) (*Service, error) {
 				URL:               cfg.Endpoint,
 				HostnameImmutable: true,
 				SigningRegion:     cfg.Region,
+				// Disable HTTPS so http:// endpoints work correctly
+				Source: aws.EndpointSourceCustom,
 			}, nil
 		},
 	)
@@ -137,8 +140,19 @@ func NewService(cfg *Config, log *slog.Logger) (*Service, error) {
 	}
 
 	// Create S3 client with path-style addressing (required for MinIO)
+	// Use a custom HTTP client with a long timeout for large file uploads
+	// DisableHTTPS: endpoint scheme (http:// vs https://) controls this
+	httpClient := &http.Client{
+		Timeout: 2 * time.Hour,
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 60 * time.Second,
+		},
+	}
+	useHTTPS := strings.HasPrefix(cfg.Endpoint, "https://")
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.UsePathStyle = true
+		o.HTTPClient = httpClient
+		o.EndpointOptions.DisableHTTPS = !useHTTPS
 	})
 
 	// Create presign client for signed URLs
