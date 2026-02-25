@@ -438,7 +438,7 @@ func deleteProjectAsync(ctx context.Context, client *sdk.Client, serverURL, proj
 		deadline := time.Now().Add(pollTimeout)
 		for time.Now().Before(deadline) {
 			time.Sleep(2 * time.Second)
-			_, err := client.Projects.Get(ctx, projectID)
+			_, err := client.Projects.Get(ctx, projectID, nil)
 			if err != nil && (strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not_found")) {
 				log.Printf("  Project %s confirmed gone from API (%v after delete)", projectID, time.Since(deleteStart).Round(time.Second))
 				return nil

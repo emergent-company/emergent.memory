@@ -433,7 +433,7 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_Run() {
 	s.Require().NoError(err)
 
 	// Create the task with 30 minute stale threshold and run it
-	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 30)
+	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 30, 0)
 	err = task.Run(s.ctx)
 	s.Require().NoError(err)
 
@@ -468,7 +468,7 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_ProcessingJobs() {
 	s.Require().NoError(err)
 
 	// Run cleanup
-	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 30)
+	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 30, 0)
 	err = task.Run(s.ctx)
 	s.Require().NoError(err)
 
@@ -496,7 +496,7 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_CompletedJobsNotAffected() 
 	s.Require().NoError(err)
 
 	// Run cleanup
-	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 30)
+	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 30, 0)
 	err = task.Run(s.ctx)
 	s.Require().NoError(err)
 
@@ -523,7 +523,7 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_FailedJobsNotAffected() {
 	s.Require().NoError(err)
 
 	// Run cleanup
-	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 30)
+	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 30, 0)
 	err = task.Run(s.ctx)
 	s.Require().NoError(err)
 
@@ -551,7 +551,7 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_JobWithNoStartedAt() {
 	s.Require().NoError(err)
 
 	// Run cleanup with 30 minute threshold
-	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 30)
+	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 30, 0)
 	err = task.Run(s.ctx)
 	s.Require().NoError(err)
 
@@ -566,7 +566,7 @@ func (s *SchedulerTestSuite) TestStaleJobCleanupTask_JobWithNoStartedAt() {
 
 func (s *SchedulerTestSuite) TestStaleJobCleanupTask_DefaultMinutes() {
 	// Create task with 0 minutes - should default to 30
-	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 0)
+	task := scheduler.NewStaleJobCleanupTask(s.testDB.DB, s.log, 0, 0)
 	err := task.Run(s.ctx)
 	s.Require().NoError(err) // Should not error
 }

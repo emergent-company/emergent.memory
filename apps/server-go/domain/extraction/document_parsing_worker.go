@@ -149,11 +149,31 @@ func (w *DocumentParsingWorker) Stop() {
 
 // poll dequeues and processes a batch of jobs
 func (w *DocumentParsingWorker) poll() {
-	// 2-hour timeout: must exceed the longest possible job (e.g. large audio via Whisper on CPU)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	// Determine batch size, concurrency, and poll timeout based on whether large files are pending.
+	checkCtx, checkCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	hasLarge, err := w.jobsService.HasLargePendingJob(checkCtx, w.whisperClient.LargeFileThresholdBytes())
+	checkCancel()
+	if err != nil {
+		w.log.Warn("failed to check for large pending jobs, using normal batch mode", logger.Error(err))
+	}
+
+	effectiveBatchSize := w.batchSize
+	effectiveConcurrency := w.concurrency
+	pollTimeout := 2 * time.Hour
+
+	if hasLarge {
+		effectiveBatchSize = 1
+		effectiveConcurrency = 1
+		// Timeout = worst-case transcription time + 30 min headroom
+		pollTimeout = w.whisperClient.TimeoutForSize(w.whisperClient.MaxFileSizeBytes()) + 30*time.Minute
+		w.log.Debug("large file pending: switching to single-job mode",
+			slog.Duration("poll_timeout", pollTimeout))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), pollTimeout)
 	defer cancel()
 
-	jobs, err := w.jobsService.Dequeue(ctx, w.batchSize)
+	jobs, err := w.jobsService.Dequeue(ctx, effectiveBatchSize)
 	if err != nil {
 		w.log.Error("failed to dequeue jobs", logger.Error(err))
 		return
@@ -165,12 +185,12 @@ func (w *DocumentParsingWorker) poll() {
 
 	w.log.Debug("processing document parsing jobs", slog.Int("count", len(jobs)))
 
-	concurrency := w.concurrency
+	concurrency := effectiveConcurrency
 	if w.scaler != nil {
-		concurrency = w.scaler.GetConcurrency(w.concurrency)
+		concurrency = w.scaler.GetConcurrency(effectiveConcurrency)
 	}
 	if concurrency <= 0 {
-		concurrency = 5
+		concurrency = 1
 	}
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -225,6 +245,11 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 	var extractionMethod string
 	var err error
 
+	var fileSizeBytes int64
+	if job.FileSizeBytes != nil {
+		fileSizeBytes = *job.FileSizeBytes
+	}
+
 	if isEmail {
 		// Email files - use native email parser (not yet implemented in Go)
 		// For now, mark as failed with clear message
@@ -248,7 +273,7 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 				}
 			}
 		}
-		parsedContent, err = w.extractWithWhisper(ctx, storageKey, filename, mimeType, initialPrompt)
+		parsedContent, err = w.extractWithWhisper(ctx, storageKey, filename, mimeType, initialPrompt, fileSizeBytes)
 		extractionMethod = "whisper"
 	} else if useKreuzberg {
 		// Binary document - use Kreuzberg for extraction
@@ -351,8 +376,10 @@ func isAudioFile(mimeType, filename string) bool {
 	return audioExtensions[ext]
 }
 
-// extractWithWhisper downloads an audio file and sends it to Whisper for transcription
-func (w *DocumentParsingWorker) extractWithWhisper(ctx context.Context, storageKey, filename, mimeType, initialPrompt string) (string, error) {
+// extractWithWhisper downloads an audio file and sends it to Whisper for transcription.
+// fileSizeBytes is the known file size (from the job record); if 0, the actual downloaded
+// size is used as a fallback for computing the per-request timeout.
+func (w *DocumentParsingWorker) extractWithWhisper(ctx context.Context, storageKey, filename, mimeType, initialPrompt string, fileSizeBytes int64) (string, error) {
 	if !w.whisperClient.IsEnabled() {
 		return "", fmt.Errorf("whisper transcription service is disabled")
 	}
@@ -368,7 +395,14 @@ func (w *DocumentParsingWorker) extractWithWhisper(ctx context.Context, storageK
 		return "", fmt.Errorf("audio file exceeds maximum size of %d MB", maxBytes/(1024*1024))
 	}
 
-	transcript, err := w.whisperClient.Transcribe(ctx, content, filename, mimeType, initialPrompt)
+	// Use actual downloaded size when job record has no size
+	sizeForTimeout := fileSizeBytes
+	if sizeForTimeout == 0 {
+		sizeForTimeout = int64(len(content))
+	}
+	timeout := w.whisperClient.TimeoutForSize(sizeForTimeout)
+
+	transcript, err := w.whisperClient.Transcribe(ctx, content, filename, mimeType, initialPrompt, timeout)
 	if err != nil {
 		return "", fmt.Errorf("whisper transcription: %w", err)
 	}

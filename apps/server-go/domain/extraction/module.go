@@ -8,7 +8,6 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
-	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/domain/chunking"
 	"github.com/emergent-company/emergent/domain/documents"
 	"github.com/emergent-company/emergent/domain/graph"
@@ -19,6 +18,7 @@ import (
 	"github.com/emergent-company/emergent/pkg/adk"
 	"github.com/emergent-company/emergent/pkg/embeddings"
 	"github.com/emergent-company/emergent/pkg/kreuzberg"
+	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/pkg/whisper"
 )
 
@@ -365,9 +365,10 @@ func provideGraphRelationshipEmbeddingWorker(
 	embeds *embeddings.Service,
 	db bun.IDB,
 	cfg *ExtractionConfig,
+	monitor syshealth.Monitor,
 	log *slog.Logger,
 ) *GraphRelationshipEmbeddingWorker {
-	return NewGraphRelationshipEmbeddingWorker(jobs, embeds, db, cfg.GraphEmbedding, log)
+	return NewGraphRelationshipEmbeddingWorker(jobs, embeds, db, cfg.GraphEmbedding, monitor, log)
 }
 
 // RegisterGraphRelationshipEmbeddingWorkerLifecycle registers the relationship embedding worker with fx lifecycle.

@@ -26,6 +26,10 @@ type Config struct {
 	// StaleJobMinutes is how long a job can be running before it's considered stale
 	StaleJobMinutes int
 
+	// DocumentParsingStaleMinutes is the stale threshold specifically for document parsing jobs
+	// (audio transcription can take hours). Defaults to 480 (8 hours).
+	DocumentParsingStaleMinutes int
+
 	// Cron schedule overrides (take precedence over intervals when set)
 	// Standard cron format with seconds: "second minute hour day-of-month month day-of-week"
 	// Examples: "0 */5 * * * *" (every 5 min), "0 0 2 * * *" (daily at 2am)
@@ -44,6 +48,7 @@ func NewConfig() *Config {
 		CacheCleanupInterval:         getEnvDuration("CACHE_CLEANUP_INTERVAL", 15*time.Minute),
 		StaleJobCleanupInterval:      getEnvDuration("STALE_JOB_CLEANUP_INTERVAL_MS", 10*time.Minute),
 		StaleJobMinutes:              getEnvInt("STALE_JOB_MINUTES", 30),
+		DocumentParsingStaleMinutes:  getEnvInt("DOCUMENT_PARSING_STALE_MINUTES", 480),
 		// Cron schedule overrides (empty string means use interval)
 		RevisionCountRefreshSchedule: getEnvString("REVISION_COUNT_REFRESH_SCHEDULE", ""),
 		TagCleanupSchedule:           getEnvString("TAG_CLEANUP_SCHEDULE", ""),
