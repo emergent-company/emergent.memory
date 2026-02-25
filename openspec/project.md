@@ -7,7 +7,7 @@ Spec Server is a minimal ingestion and knowledge management system that provides
 - Document ingestion from URLs and file uploads with text extraction and chunking
 - Semantic search using Google Gemini embeddings (text-embedding-004) with pgvector
 - Full-text search capabilities with PostgreSQL
-- AI-powered chat with LangChain integration
+- AI-powered chat with streaming (SSE) and Google Gemini/Vertex AI integration
 - Graph-based knowledge management with objects, relationships, and template packs
 - Schema-aware chat using Model Context Protocol (MCP) for real-time database queries
 - OAuth 2.0/OIDC authentication via Zitadel with fine-grained scope-based authorization
@@ -16,16 +16,18 @@ Spec Server is a minimal ingestion and knowledge management system that provides
 
 ### Backend
 
-- **Runtime:** Node.js 20.19.0+
-- **Framework:** NestJS 10.3.0 (TypeScript)
+- **Runtime:** Go 1.25.6
+- **Framework:** Echo (HTTP), fx (dependency injection)
 - **Database:** PostgreSQL 16 with pgvector extension
-- **ORM:** TypeORM 0.3.27
-- **Authentication:** Passport.js with Zitadel OIDC (passport-zitadel)
-- **AI/ML:** LangChain, Google Gemini (text-embedding-004), Vertex AI
-- **API Documentation:** Swagger/OpenAPI 3.0
-- **MCP:** @rekog/mcp-nest for Model Context Protocol integration
+- **ORM:** Bun (with pgx driver)
+- **Authentication:** Zitadel OIDC (JWT introspection + API token)
+- **AI/ML:** Google ADK-Go (extraction pipeline), Google Gemini (text-embedding-004), Vertex AI
+- **Migrations:** Goose (SQL migrations)
+- **MCP:** Custom Echo handlers for Model Context Protocol integration
 
-### Frontend
+### Frontend (separate repo)
+
+> The admin UI lives in a **separate repository**: `emergent-company/emergent.memory.ui` (local: `/root/emergent.memory.ui`). It is not part of this monorepo.
 
 - **Framework:** React 19.1.1 with TypeScript
 - **Build Tool:** Vite 7.0.6
@@ -65,7 +67,7 @@ Spec Server is a minimal ingestion and knowledge management system that provides
   - `UPPER_SNAKE_CASE` for constants and environment variables
 - **Error Handling:**
   - Handle errors gracefully with meaningful error messages
-  - Use NestJS exception filters for API errors
+  - Use `pkg/apperror` error types (Go); the `HTTPErrorHandler` converts them to JSON automatically
   - Log errors with full context (user/org/project IDs, stack traces)
 - **Comments:** Use JSDoc for public APIs, inline comments for complex logic only
 - **General:** Follow existing patterns in the codebase. When in doubt, match nearby code.
@@ -74,20 +76,23 @@ Spec Server is a minimal ingestion and knowledge management system that provides
 
 #### Monorepo Structure
 
-- **apps/admin**: React frontend SPA (Vite + React Router)
-- **apps/server**: NestJS backend API
+- **apps/server-go**: Go backend API (Echo, Bun, fx, ADK-Go)
+- **apps/website**: Public website (Go)
 - **tools/workspace-cli**: PM2-based process management and lifecycle automation
-- **scripts/**: Shared automation scripts (database, deployment, testing)
+- **tools/emergent-cli**: CLI tool for workspace operations
 - **docs/**: Comprehensive documentation organized by category
+- *(Frontend)*: React admin SPA is in a separate repo — `emergent-company/emergent.memory.ui` (local: `/root/emergent.memory.ui`)
 
-#### Backend Architecture (NestJS)
+#### Backend Architecture (Go)
 
-- **Modular design:** Feature modules (documents, chat, extraction-jobs, monitoring, etc.)
-- **Layered architecture:** Controllers → Services → Repositories (TypeORM entities)
-- **DTOs:** Use class-validator and class-transformer for request/response validation
-- **Guards:** JWT authentication with scope-based authorization (@Scopes decorator)
-- **Entities:** TypeORM entities with proper relations, indexes, and constraints
-- **Database migrations:** TypeORM migrations in `src/migrations/`
+- **Modular design:** Domain modules under `apps/server-go/domain/` (documents, chat, extraction, graph, etc.)
+- **Layered architecture:** Handler → Service → Store (Bun ORM queries)
+- **Dependency injection:** Uber fx for explicit wiring; every module provides a `Module` variable
+- **HTTP:** Echo with middleware chain — `RequireAuth()` → `RequireScopes()` → `RequireProjectID()`
+- **Error handling:** `pkg/apperror` error types converted to JSON by `HTTPErrorHandler`
+- **Database migrations:** Goose SQL migrations in `apps/server-go/migrations/`
+- **Background jobs:** PostgreSQL-backed queues with `FOR UPDATE SKIP LOCKED`
+- **Extraction pipeline:** Google ADK-Go `SequentialAgent` / `LoopAgent` with `OutputSchema`
 
 #### Frontend Architecture (React)
 
@@ -103,7 +108,7 @@ Spec Server is a minimal ingestion and knowledge management system that provides
 - **Graph model:** Objects (graph_objects), Relationships (graph_relationships), Template Packs
 - **Embeddings:** Stored as pgvector vectors with configurable dimensions
 - **Full-text search:** PostgreSQL ts_vector with lexical + semantic fusion
-- **Migrations:** Run automatically via workspace-cli or manually with TypeORM CLI
+- **Migrations:** Goose SQL migrations run via `go run ./cmd/migrate -c up` or workspace-cli
 - **Cursor pagination:** Bidirectional, opaque Base64URL cursors for hybrid search results
 
 #### Authentication & Authorization
@@ -116,13 +121,13 @@ Spec Server is a minimal ingestion and knowledge management system that provides
 
 ### Testing Strategy
 
-#### Backend Tests (NestJS)
+#### Backend Tests (Go)
 
-- **Unit tests:** Vitest for services, with in-memory FakeGraphDb helper for graph logic
-- **E2E tests:** Supertest for HTTP endpoints, real PostgreSQL database
-- **Test helpers:** `tests/helpers/fake-graph-db.ts` for graph emulation, mock auth providers
-- **Coverage targets:** Run `npm run test:coverage:all` for combined coverage reports
-- **Benchmark tests:** Performance tests for graph operations (relationships, objects, traversal)
+- **E2E tests:** Go testify suites in `apps/server-go/tests/e2e/` (23 suites, 609+ tests) — HTTP API via Echo test server or external server
+- **Integration tests:** Go testify suites in `apps/server-go/tests/integration/` (8 suites) — service + DB tests, always in-process
+- **Test helpers:** `internal/testutil/` — `TestDB`, `TestServer`, `TestTokenBuilder`, request helpers
+- **Tasks CLI:** `go run ./cmd/tasks test:e2e`, `go run ./cmd/tasks test:unit` for running tests
+- **Build first:** Always run `go run ./cmd/tasks build` before running tests to catch compile errors
 
 #### Frontend Tests (React)
 
@@ -135,18 +140,20 @@ Spec Server is a minimal ingestion and knowledge management system that provides
 #### Test Commands
 
 ```bash
-# Backend
+# Backend (Go)
+nx run server-go:test-e2e          # E2E tests (23 suites)
+nx run server-go:test-integration  # Integration tests (8 suites)
 nx run server-go:test              # Unit tests
-nx run server-go:test-e2e          # E2E tests
-nx run server-go:test-coverage     # Coverage report
+
+# Or via tasks CLI (from apps/server-go/)
+go run ./cmd/tasks build           # Build first (~2s)
+go run ./cmd/tasks test:e2e        # All E2E tests
+go run ./cmd/tasks test:unit       # Unit tests only
 
 # Frontend
-nx run admin:test                    # Unit tests
-nx run admin:e2e                     # Playwright E2E
-nx run admin:test-coverage           # Coverage report
-
-# Combined
-npm run test:coverage:all            # All coverage reports
+nx run admin:test                   # Unit tests
+nx run admin:e2e                    # Playwright E2E
+nx run admin:test-coverage          # Coverage report
 ```
 
 **Test Development with DevTools MCP:**
@@ -162,7 +169,7 @@ When writing E2E or integration tests, use Chrome DevTools MCP to verify functio
 
 #### Branch Strategy
 
-- **Main branch:** `master` (production-ready)
+- **Main branch:** `main` (production-ready)
 - **Feature branches:** `feature/description` or `add-feature-name`
 - **Fix branches:** `fix/issue-description`
 - **Change branches:** When using OpenSpec proposals, branch name matches change-id
@@ -203,7 +210,7 @@ When writing E2E or integration tests, use Chrome DevTools MCP to verify functio
 
 1. **Input:** URL or file upload
 2. **Extraction:** HTML-to-text or direct text extraction
-3. **Chunking:** Semantic chunking with LangChain RecursiveCharacterTextSplitter
+3. **Chunking:** Semantic chunking (recursive character splitting)
 4. **Embedding:** Google Gemini text-embedding-004 (768 dimensions)
 5. **Storage:** Chunks + embeddings in PostgreSQL with pgvector indexes
 
