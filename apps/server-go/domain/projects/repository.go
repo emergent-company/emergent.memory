@@ -90,8 +90,16 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Project, er
 			ColumnExpr(`(SELECT COALESCE(json_agg(json_build_object(
 			   'name', tp.name,
 			   'version', tp.version,
-			   'objectTypes', COALESCE(ARRAY(SELECT jsonb_object_keys(tp.object_type_schemas)), ARRAY[]::text[]),
-			   'relationshipTypes', COALESCE(ARRAY(SELECT jsonb_object_keys(tp.relationship_type_schemas)), ARRAY[]::text[])
+			   'objectTypes', CASE 
+			     WHEN tp.object_type_schemas IS NOT NULL AND jsonb_typeof(tp.object_type_schemas) = 'object' 
+			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(tp.object_type_schemas)), ARRAY[]::text[])
+			     ELSE ARRAY[]::text[]
+			   END,
+			   'relationshipTypes', CASE
+			     WHEN tp.relationship_type_schemas IS NOT NULL AND jsonb_typeof(tp.relationship_type_schemas) = 'object'
+			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(tp.relationship_type_schemas)), ARRAY[]::text[])
+			     ELSE ARRAY[]::text[]
+			   END
 			 )), '[]'::json)
 			 FROM kb.project_template_packs ptp
 			 JOIN kb.graph_template_packs tp ON tp.id = ptp.template_pack_id
@@ -150,8 +158,16 @@ func (r *Repository) GetByID(ctx context.Context, id string, includeStats bool) 
 			ColumnExpr(`(SELECT COALESCE(json_agg(json_build_object(
 			   'name', tp.name,
 			   'version', tp.version,
-			   'objectTypes', COALESCE(ARRAY(SELECT jsonb_object_keys(tp.object_type_schemas)), ARRAY[]::text[]),
-			   'relationshipTypes', COALESCE(ARRAY(SELECT jsonb_object_keys(tp.relationship_type_schemas)), ARRAY[]::text[])
+			   'objectTypes', CASE 
+			     WHEN tp.object_type_schemas IS NOT NULL AND jsonb_typeof(tp.object_type_schemas) = 'object' 
+			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(tp.object_type_schemas)), ARRAY[]::text[])
+			     ELSE ARRAY[]::text[]
+			   END,
+			   'relationshipTypes', CASE
+			     WHEN tp.relationship_type_schemas IS NOT NULL AND jsonb_typeof(tp.relationship_type_schemas) = 'object'
+			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(tp.relationship_type_schemas)), ARRAY[]::text[])
+			     ELSE ARRAY[]::text[]
+			   END
 			 )), '[]'::json)
 			 FROM kb.project_template_packs ptp
 			 JOIN kb.graph_template_packs tp ON tp.id = ptp.template_pack_id
