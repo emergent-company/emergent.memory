@@ -66,7 +66,8 @@ func (c *Client) MaxFileSizeBytes() int64 {
 // Transcribe sends an audio file to the Whisper service and returns the plaintext transcript.
 // The audio data is sent as multipart/form-data with field name "audio_file".
 // The service endpoint is POST /asr?output=txt&task=transcribe.
-func (c *Client) Transcribe(ctx context.Context, data []byte, filename, mimeType string) (string, error) {
+// initialPrompt optionally seeds the decoder with context (names, vocabulary, style hints).
+func (c *Client) Transcribe(ctx context.Context, data []byte, filename, mimeType, initialPrompt string) (string, error) {
 	if !c.enabled {
 		return "", fmt.Errorf("whisper transcription service is disabled")
 	}
@@ -107,6 +108,9 @@ func (c *Client) Transcribe(ctx context.Context, data []byte, filename, mimeType
 	q.Set("task", "transcribe")
 	if c.language != "" {
 		q.Set("language", c.language)
+	}
+	if initialPrompt != "" {
+		q.Set("initial_prompt", initialPrompt)
 	}
 	endpoint.RawQuery = q.Encode()
 
