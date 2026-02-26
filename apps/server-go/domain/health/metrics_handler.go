@@ -42,6 +42,9 @@ type AllJobMetrics struct {
 func (h *MetricsHandler) JobMetrics(c echo.Context) error {
 	ctx := c.Request().Context()
 
+	// Get optional project_id filter from query parameter
+	projectID := c.QueryParam("project_id")
+
 	// Define job queue tables
 	queues := []struct {
 		name  string
@@ -58,7 +61,7 @@ func (h *MetricsHandler) JobMetrics(c echo.Context) error {
 	var allMetrics []JobQueueMetrics
 
 	for _, q := range queues {
-		metrics, err := h.getQueueMetrics(ctx, q.name, q.table)
+		metrics, err := h.getQueueMetrics(ctx, q.name, q.table, projectID)
 		if err != nil {
 			// Log error but continue with other queues
 			continue
@@ -73,8 +76,8 @@ func (h *MetricsHandler) JobMetrics(c echo.Context) error {
 }
 
 // getQueueMetrics retrieves metrics for a specific job queue
-func (h *MetricsHandler) getQueueMetrics(ctx context.Context, name, table string) (*JobQueueMetrics, error) {
-	// Use raw SQL since we need to query multiple tables with different schemas
+func (h *MetricsHandler) getQueueMetrics(ctx context.Context, name, table, projectID string) (*JobQueueMetrics, error) {
+	// Build base query
 	query := `
 		SELECT 
 			COUNT(*) FILTER (WHERE status = 'pending') as pending,
@@ -86,6 +89,13 @@ func (h *MetricsHandler) getQueueMetrics(ctx context.Context, name, table string
 			COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as last_24_hours
 		FROM ` + table
 
+	// Add project filter if provided
+	var args []interface{}
+	if projectID != "" {
+		query += ` WHERE project_id = ?`
+		args = append(args, projectID)
+	}
+
 	var metrics struct {
 		Pending     int64 `bun:"pending"`
 		Processing  int64 `bun:"processing"`
@@ -96,7 +106,7 @@ func (h *MetricsHandler) getQueueMetrics(ctx context.Context, name, table string
 		Last24Hours int64 `bun:"last_24_hours"`
 	}
 
-	err := h.db.NewRaw(query).Scan(ctx, &metrics)
+	err := h.db.NewRaw(query, args...).Scan(ctx, &metrics)
 	if err != nil {
 		return nil, err
 	}
