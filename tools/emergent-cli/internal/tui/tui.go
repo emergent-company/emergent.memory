@@ -72,8 +72,10 @@ type Model struct {
 	statusMsg string
 
 	// Selected items
-	selectedProjectID string
-	selectedDocID     string
+	selectedProjectID   string
+	selectedProjectName string
+	selectedOrgID       string
+	selectedDocID       string
 }
 
 // KeyMap defines keybindings
@@ -207,7 +209,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Load template packs when switching to that tab
 			if m.currentView == TemplatePacksView {
-				return m, loadTemplatePacks(m.client, m.selectedProjectID)
+				return m, loadTemplatePacks(m.client)
 			}
 			return m, nil
 
@@ -301,6 +303,10 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		// Get selected project
 		if item, ok := m.projectsList.SelectedItem().(projectItem); ok {
 			m.selectedProjectID = item.id
+			m.selectedProjectName = item.name
+			m.selectedOrgID = item.orgID
+			// Set the SDK client context for this project
+			m.client.SetContext(item.orgID, item.id)
 			m.currentView = DocumentsView
 			m.activeTab = 1 // Sync active tab to Documents
 			return m, loadDocuments(m.client, item.id)
@@ -444,9 +450,15 @@ func (m Model) renderStatusBar() string {
 		Foreground(lipgloss.Color("240")).
 		Padding(0, 1)
 
+	projectStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("12")).
+		Bold(true)
+
 	status := m.statusMsg
-	if m.selectedProjectID != "" {
-		status += fmt.Sprintf(" | Project: %s", m.selectedProjectID)
+	if m.selectedProjectName != "" {
+		status += " | Current Project: " + projectStyle.Render(m.selectedProjectName)
+	} else if m.currentView != ProjectsView {
+		status += " | " + lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("No project selected")
 	}
 
 	return style.Render(status)
@@ -543,7 +555,20 @@ func (m Model) renderWorkerStats() string {
 // renderTemplatePacks renders the template packs view with full details
 func (m Model) renderTemplatePacks() string {
 	if m.selectedProjectID == "" {
-		return "Please select a project first (Tab to Projects, select a project)"
+		style := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("11")).
+			Bold(true).
+			Padding(2, 4)
+
+		helpStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Padding(1, 4)
+
+		var content strings.Builder
+		content.WriteString(style.Render("⚠  No Project Selected"))
+		content.WriteString("\n\n")
+		content.WriteString(helpStyle.Render("To view template packs:\n1. Press Tab to go to Projects\n2. Press Enter on a project to select it\n3. Press Tab to return to Template Packs"))
+		return content.String()
 	}
 
 	if m.templatePacks == nil {
@@ -820,9 +845,10 @@ func loadProjects(client *client.Client) tea.Cmd {
 					p.Stats.RelationshipCount)
 			}
 			items[i] = projectItem{
-				id:   p.ID,
-				name: p.Name,
-				desc: desc,
+				id:    p.ID,
+				orgID: p.OrgID,
+				name:  p.Name,
+				desc:  desc,
 			}
 		}
 
@@ -835,10 +861,7 @@ func loadDocuments(client *client.Client, projectID string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// Set the project context
-		client.SDK.Documents.SetContext("", projectID)
-
-		// Fetch documents
+		// Fetch documents (context already set when project was selected)
 		result, err := client.SDK.Documents.List(ctx, &documents.ListOptions{
 			Limit: 100,
 		})
@@ -884,10 +907,15 @@ func loadWorkerStats(client *client.Client) tea.Cmd {
 	}
 }
 
-func loadTemplatePacks(client *client.Client, projectID string) tea.Cmd {
+func loadTemplatePacks(client *client.Client) tea.Cmd {
 	return func() tea.Msg {
-		if projectID == "" {
-			return errMsg{err: fmt.Errorf("no project selected")}
+		// Check if project context is set
+		if client.ProjectID() == "" {
+			// Don't return error, just return empty - UI will show "no project selected" message
+			return templatePacksLoadedMsg{
+				packs:         []templatepacks.InstalledPackItem{},
+				compiledTypes: &templatepacks.CompiledTypesResponse{},
+			}
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -929,9 +957,10 @@ func tickEvery(interval time.Duration) tea.Cmd {
 // List items
 
 type projectItem struct {
-	id   string
-	name string
-	desc string
+	id    string
+	orgID string
+	name  string
+	desc  string
 }
 
 func (p projectItem) FilterValue() string { return p.name }
