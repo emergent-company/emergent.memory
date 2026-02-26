@@ -128,6 +128,33 @@ services:
   #     timeout: 10s
   #     retries: 3
 
+  # ---------------------------------------------------------------------------
+  # Grafana Tempo — local OpenTelemetry trace backend (opt-in)
+  # Start: docker compose --profile observability up tempo -d
+  # Requires: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 in .env.local
+  # ---------------------------------------------------------------------------
+  tempo:
+    image: grafana/tempo:latest
+    container_name: emergent-tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    environment:
+      OTEL_RETENTION_HOURS: ${OTEL_RETENTION_HOURS:-720}
+    ports:
+      - '${TEMPO_OTLP_GRPC_PORT:-4317}:4317'  # OTLP gRPC
+      - '${TEMPO_OTLP_HTTP_PORT:-4318}:4318'  # OTLP HTTP
+      - '${TEMPO_HTTP_PORT:-3200}:3200'        # Query API
+    restart: unless-stopped
+    profiles: ['observability']
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q --spider http://localhost:3200/ready || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   pg_data:
   whisper_cache:
@@ -138,6 +165,9 @@ volumes:
   # Persistent storage for Firecracker microVM block devices (uncomment with firecracker-manager)
   # firecracker_data:
   #   driver: local
+  # Persistent storage for Grafana Tempo trace blocks
+  tempo_data:
+    driver: local
 
 # Isolated network for agent workspace containers
 # Restricts inter-container communication — workspaces cannot reach
