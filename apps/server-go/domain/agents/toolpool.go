@@ -8,6 +8,7 @@ import (
 	"path"
 	"sync"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 
@@ -378,6 +379,56 @@ func (tp *ToolPool) wrapTools(projectID string, defs []mcp.ToolDefinition) ([]to
 	return tools, nil
 }
 
+// convertMCPSchemaToADK converts an MCP InputSchema to an ADK jsonschema.Schema.
+// This ensures the LLM receives proper parameter names and types for tools.
+func convertMCPSchemaToADK(input mcp.InputSchema) *jsonschema.Schema {
+	if input.Type == "" {
+		return nil
+	}
+
+	schema := &jsonschema.Schema{
+		Type:       input.Type,
+		Required:   input.Required,
+		Properties: make(map[string]*jsonschema.Schema),
+	}
+
+	for propName, propSchema := range input.Properties {
+		prop := &jsonschema.Schema{
+			Type:        propSchema.Type,
+			Description: propSchema.Description,
+		}
+
+		// Convert enum values
+		if len(propSchema.Enum) > 0 {
+			enumValues := make([]any, len(propSchema.Enum))
+			for i, v := range propSchema.Enum {
+				enumValues[i] = v
+			}
+			prop.Enum = enumValues
+		}
+
+		// Convert numeric constraints
+		if propSchema.Minimum != nil {
+			min := float64(*propSchema.Minimum)
+			prop.Minimum = &min
+		}
+		if propSchema.Maximum != nil {
+			max := float64(*propSchema.Maximum)
+			prop.Maximum = &max
+		}
+
+		// Convert default value
+		if propSchema.Default != nil {
+			defaultJSON, _ := json.Marshal(propSchema.Default)
+			prop.Default = defaultJSON
+		}
+
+		schema.Properties[propName] = prop
+	}
+
+	return schema
+}
+
 // wrapSingleTool wraps a single MCP tool definition as an ADK tool.
 // For builtin tools, it delegates to mcp.Service.ExecuteTool().
 // For external tools (prefixed with server name), it delegates to
@@ -386,6 +437,9 @@ func (tp *ToolPool) wrapTools(projectID string, defs []mcp.ToolDefinition) ([]to
 func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (tool.Tool, error) {
 	// Capture for closure
 	toolName := td.Name
+
+	// Convert MCP InputSchema to ADK jsonschema for proper parameter typing
+	inputSchema := convertMCPSchemaToADK(td.InputSchema)
 
 	// Check if this is a builtin tool by looking at the project cache
 	cache := tp.getOrBuildCache(projectID)
@@ -399,6 +453,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 			functiontool.Config{
 				Name:        toolName,
 				Description: td.Description,
+				InputSchema: inputSchema,
 			},
 			func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 				result, err := regSvc.CallExternalTool(ctx, pid, toolName, args)
@@ -417,6 +472,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 		functiontool.Config{
 			Name:        toolName,
 			Description: td.Description,
+			InputSchema: inputSchema,
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			result, err := svc.ExecuteTool(ctx, pid, toolName, args)
