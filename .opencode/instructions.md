@@ -42,7 +42,7 @@ Before implementing new features, **always check** these domain-specific AGENT.m
 
 ## 1. Logging
 
-Logs are browsed using the **logs MCP server**. Log files are stored in `logs/` (root directory):
+Log files are stored in `logs/` (root directory):
 
 ```
 logs/
@@ -61,18 +61,17 @@ logs/
 
 ## 2. Process Management
 
-Services use PID-based process management via workspace CLI or **Workspace MCP server**.
+Services use PID-based process management via **Taskfile tasks**.
 
 ### Hot Reload (Default) — DO NOT RESTART AFTER CODE CHANGES
 
-**Both server (Go) and admin (Vite) have hot reload enabled.**
+**The Go server has hot reload enabled (air).**
 
-⚠️ **IMPORTANT: Never restart services after making code changes.** Hot reload automatically picks up changes within 1-2 seconds. Restarting takes ~30 seconds (Go) or ~5 seconds (Vite) and is unnecessary.
+⚠️ **IMPORTANT: Never restart services after making code changes.** Hot reload automatically picks up changes within 1-2 seconds.
 
 **When hot reload works (DO NOT restart):**
 
 - ✅ Editing Go files (handlers, services, stores, etc.)
-- ✅ Editing React components, hooks, styles
 - ✅ Modifying entities, utilities
 - ✅ Changing business logic
 
@@ -80,27 +79,27 @@ Services use PID-based process management via workspace CLI or **Workspace MCP s
 
 - ❌ Adding NEW fx modules to `cmd/server/main.go`
 - ❌ Changing environment variables
-- ❌ After `go mod tidy` / `pnpm install`
-- ❌ Server is not responding (check with `pnpm run workspace:status`)
+- ❌ After `go mod tidy`
+- ❌ Server is not responding (check with `task status`)
 
 ### Checking Service Health
 
 Before restarting, **always check if the server is actually down:**
 
 ```bash
-pnpm run workspace:status    # Check if services are running
-curl http://localhost:3002/health   # Direct health check
+task status                        # Check if server is running
+curl http://localhost:3002/health  # Direct health check
 ```
 
-Only restart if `workspace:status` shows the service is offline or unhealthy.
+Only restart if the server is offline or unhealthy.
 
 ### Commands
 
 ```bash
-pnpm run workspace:status    # Check status (USE THIS FIRST)
-pnpm run workspace:restart   # Restart all services (ONLY IF NEEDED)
-pnpm run workspace:start     # Start all services
-pnpm run workspace:stop      # Stop all services
+task status      # Check server status (USE THIS FIRST)
+task dev         # Start with hot reload (air, foreground)
+task start       # Build + start in background (writes PID)
+task stop        # Stop background server
 ```
 
 **Common mistakes:**
@@ -109,8 +108,8 @@ pnpm run workspace:stop      # Stop all services
 | ----------------------------------------------- | ------------------------------------------- |
 | Restarting after editing a service file         | Just save the file, hot reload handles it   |
 | Restarting to "make sure changes are picked up" | Check logs to confirm hot reload worked     |
-| `nx run server-go:build` then manually run      | Hot reload, or `pnpm run workspace:restart` |
-| Killing processes with `kill -9`                | `pnpm run workspace:stop`                   |
+| `nx run server-go:build` then manually run      | `task dev` (hot reload) or `task start`     |
+| Killing processes with `kill -9`                | `task stop`                                 |
 
 ## 3. Testing
 
@@ -119,11 +118,14 @@ See **`docs/testing/AI_AGENT_GUIDE.md`** for comprehensive guidance.
 **Quick commands:**
 
 ```bash
-nx run admin:test              # Frontend unit tests
-nx run admin:test-coverage     # With coverage
-nx run admin:e2e               # Browser e2e tests
-nx run server-go:test          # Backend unit tests (Go)
-nx run server-go:test-e2e      # API e2e tests (Go)
+# Backend (run from repo root or apps/server-go)
+task test                      # Backend unit tests (Go)
+task test:e2e                  # API e2e tests (Go)
+task test:integration          # Integration tests (Go)
+task test:coverage             # Tests with coverage report
+
+# Frontend (cd /root/emergent.memory.ui)
+pnpm run test                  # Frontend unit tests
 ```
 
 ## 4. Custom Tools
@@ -136,10 +138,7 @@ nx run server-go:test-e2e      # API e2e tests (Go)
 MCP tool documentation is available via tool introspection. Key servers:
 
 - **Postgres** - Database queries (use schema-qualified names: `kb.documents`, `core.user_profiles`)
-- **Chrome DevTools** - Browser debugging (start with `npm run chrome:debug` first)
-- **logs** - Log file browsing
-- **Workspace** - Health monitoring, Docker logs, config
-- **Langfuse** - AI trace browsing
+- **Chrome DevTools** - Browser debugging (start with `./scripts/start-chrome-debug.sh` first)
 - **SigNoz** - Observability (traces, logs, metrics, alerts)
 
 ## 6. Database Queries
