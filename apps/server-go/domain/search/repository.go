@@ -437,9 +437,9 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 			r.dst_id,
 			r.type,
 			r.properties,
-			COALESCE(src.name, src.key, src.id::text) || ' ' || 
+			COALESCE(src.key, src.id::text) || ' ' || 
 				LOWER(REPLACE(r.type, '_', ' ')) || ' ' || 
-				COALESCE(dst.name, dst.key, dst.id::text) AS triplet_text,
+				COALESCE(dst.key, dst.id::text) AS triplet_text,
 			(1 - (r.embedding <=> ?::vector)) AS score
 		FROM kb.graph_relationships r
 		JOIN kb.graph_objects src ON src.id = r.src_id
