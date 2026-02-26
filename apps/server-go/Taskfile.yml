@@ -1,9 +1,5 @@
 version: '3'
 
-dotenv:
-  - '../../.env'
-  - '../../.env.local'
-
 vars:
   GO_TEST_FLAGS: -v -count=1
 
@@ -67,3 +63,83 @@ tasks:
     desc: Show migration status
     cmds:
       - go run ./cmd/migrate status
+
+  swagger:
+    desc: Generate swagger docs
+    cmds:
+      - swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
+
+  swagger:check:
+    desc: Check swagger annotations
+    cmds:
+      - ./scripts/check-swagger-annotations.sh
+
+  dev:
+    desc: Start server with hot reload (air)
+    cmds:
+      - air
+    env:
+      PATH: /usr/local/go/bin:/usr/local/bin:{{.PATH}}
+
+  start:
+    desc: Build and start server in background (writes PID to pids/server.pid)
+    cmds:
+      - task: build
+      - mkdir -p ../../pids
+      - |
+        ./dist/server &
+        echo $! > ../../pids/server.pid
+        echo "Server started (PID $(cat ../../pids/server.pid))"
+
+  stop:
+    desc: Stop background server (reads PID from pids/server.pid)
+    cmds:
+      - |
+        PID_FILE="../../pids/server.pid"
+        if [ ! -f "$PID_FILE" ]; then
+          echo "No PID file found at $PID_FILE"
+          exit 1
+        fi
+        PID=$(cat "$PID_FILE")
+        if kill "$PID" 2>/dev/null; then
+          rm "$PID_FILE"
+          echo "Server stopped (PID $PID)"
+        else
+          echo "Process $PID not found, removing stale PID file"
+          rm "$PID_FILE"
+        fi
+
+  status:
+    desc: Check if server is running
+    cmds:
+      - |
+        PID_FILE="../../pids/server.pid"
+        if [ ! -f "$PID_FILE" ]; then
+          echo "Server: NOT RUNNING (no PID file)"
+          exit 1
+        fi
+        PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+          echo "Server: RUNNING (PID $PID)"
+          curl -sf http://localhost:3002/health && echo " health: OK" || echo " health: UNREACHABLE"
+        else
+          echo "Server: NOT RUNNING (stale PID $PID)"
+          exit 1
+        fi
+
+  test:integration:
+    desc: Run integration tests
+    cmds:
+      - go test ./tests/integration/... -v -count=1 {{.CLI_ARGS}}
+
+  test:coverage:
+    desc: Run tests with coverage report
+    cmds:
+      - go test ./... -coverprofile=coverage.out -covermode=atomic {{.CLI_ARGS}}
+      - go tool cover -html=coverage.out -o coverage.html
+      - go tool cover -func=coverage.out | tail -1
+
+  docker:build:
+    desc: Build Docker image for server
+    cmds:
+      - docker build -f Dockerfile -t emergent-server-go:latest ../.. {{.CLI_ARGS}}

@@ -140,20 +140,20 @@ Spec Server is a minimal ingestion and knowledge management system that provides
 #### Test Commands
 
 ```bash
-# Backend (Go)
-nx run server-go:test-e2e          # E2E tests (23 suites)
-nx run server-go:test-integration  # Integration tests (8 suites)
-nx run server-go:test              # Unit tests
+# Backend (Go) — from repo root or apps/server-go
+task test:e2e                      # E2E tests (23 suites)
+task test:integration              # Integration tests (8 suites)
+task test                          # Unit tests
+task test:coverage                 # Tests with coverage report
 
 # Or via tasks CLI (from apps/server-go/)
 go run ./cmd/tasks build           # Build first (~2s)
 go run ./cmd/tasks test:e2e        # All E2E tests
 go run ./cmd/tasks test:unit       # Unit tests only
 
-# Frontend
-nx run admin:test                   # Unit tests
-nx run admin:e2e                    # Playwright E2E
-nx run admin:test-coverage          # Coverage report
+# Frontend (cd /root/emergent.memory.ui)
+pnpm run test                      # Unit tests
+pnpm run test:coverage             # Coverage report
 ```
 
 **Test Development with DevTools MCP:**
@@ -263,7 +263,7 @@ When writing E2E or integration tests, use Chrome DevTools MCP to verify functio
 - **Migrations:** Run database migrations before starting server
 - **Dependencies:** Docker Compose for local dev (Postgres, Zitadel), managed services for production
 - **Logging:** All logs stored in `apps/logs/` directory, managed by workspace-cli
-- **Process management:** Use workspace-cli commands (`workspace:start`, `workspace:stop`, `workspace:logs`) instead of direct PM2
+- **Process management:** Use task commands (`task dev`, `task start`, `task stop`, `task status`) instead of direct process manipulation
 
 ### Business Constraints
 

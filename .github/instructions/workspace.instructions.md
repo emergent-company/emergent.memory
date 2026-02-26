@@ -8,63 +8,71 @@ This document provides instructions for interacting with the workspace, includin
 
 ## 1. Logging
 
-All service logs are managed by the workspace CLI. The primary command for accessing logs is `nx run workspace-cli:workspace:logs`.
+Log files are stored in `logs/` (root directory):
 
-### Viewing Logs
+```
+logs/
+├── server/
+│   ├── server.log          # Main server log (INFO+)
+│   ├── server.error.log    # Server errors only
+│   └── server.debug.log    # Debug output (dev only)
+```
 
-*   **Tail logs for default services (admin + server) and dependencies:**
+Read log files directly or use the **SigNoz MCP** for observability.
+
+## 2. Process Management
+
+Services are managed via **Taskfile tasks**.
+
+*   **Start server with hot reload (foreground):**
     ```bash
-    nx run workspace-cli:workspace:logs
+    task dev
     ```
 
-*   **Tail logs in real-time:**
+*   **Start server in background:**
     ```bash
-    nx run workspace-cli:workspace:logs -- --follow
+    task start
     ```
 
-*   **View logs for a specific service:**
+*   **Stop background server:**
     ```bash
-    nx run workspace-cli:workspace:logs -- --service=<service-id>
-    ```
-    *(Replace `<service-id>` with the service you want to inspect, e.g., `server`)*
-
-### Log File Locations
-
-Log files are stored in the `apps/logs/` directory.
-
-*   **Service logs:** `apps/logs/<serviceId>/out.log` (stdout) and `apps/logs/<serviceId>/error.log` (stderr)
-*   **Dependency logs:** `apps/logs/dependencies/<id>/out.log` and `apps/logs/dependencies/<id>/error.log`
-
-## 2. Process Management (PM2)
-
-Services are managed as processes by PM2, but you should interact with them through the workspace CLI.
-
-*   **Start all services:**
-    ```bash
-    nx run workspace-cli:workspace:start
+    task stop
     ```
 
-*   **Stop all services:**
+*   **Check server status:**
     ```bash
-    nx run workspace-cli:workspace:stop
+    task status
+    curl http://localhost:3002/health
     ```
 
-*   **Restart all services:**
-    ```bash
-    nx run workspace-cli:workspace:restart
-    ```
+### Hot Reload
+
+The Go server uses `air` for hot reload. **Do not restart after code changes** — changes are picked up automatically in ~2 seconds.
+
+**Restart only when:**
+- Adding new fx modules to `cmd/server/main.go`
+- Changing environment variables
+- After `go mod tidy`
+- Server is not responding
 
 ## 3. Running Scripts and Tests
 
-All scripts and tests should be executed using `nx`. Note that commands for the `workspace-cli` project are prefixed with `workspace:`.
+All backend build/test/lint tasks use `task` (Taskfile):
 
-*   **Run a specific script:**
-    ```bash
-    nx run <project>:<script>
-    ```
-    *(e.g., `nx run workspace-cli:workspace:logs`)*
+```bash
+task build              # Build server binary
+task test               # Unit tests
+task test:e2e           # E2E tests
+task lint               # Go linter
+task migrate:up         # Run migrations
+task migrate:status     # Check migration status
+```
 
-*   **Run Playwright tests:**
-    ```bash
-    npx playwright test --project=chromium
-    ```
+For frontend tasks, use `pnpm` in `/root/emergent.memory.ui`:
+
+```bash
+cd /root/emergent.memory.ui
+pnpm run dev            # Start Vite dev server
+pnpm run build          # Build for production
+pnpm run test           # Unit tests
+```
