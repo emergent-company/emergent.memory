@@ -7,4 +7,5 @@ use (
 	./tests/api
 	./tools/emergent-cli
 	./tools/huma-test-suite
+	./tools/e2e-suite
 )
