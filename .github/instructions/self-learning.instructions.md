@@ -1264,7 +1264,7 @@ Backend Controller → Reads req.headers['x-org-id'], req.headers['x-project-id'
 
 **Why It Was Wrong**: Missing the method-level `}` meant the compiler flagged unrelated code, slowing diagnosis. The root cause was a simple structural omission hidden by a large diff.
 
-**Correct Approach**: After wrapping in `runWithTenantContext`, explicitly add both `});` and the method's closing `}` before moving on. Immediately run `nx run server:build` (or targeted tests) to confirm the file still parses.
+**Correct Approach**: After wrapping in `runWithTenantContext`, explicitly add both `});` and the method's closing `}` before moving on. Immediately run `task build` (or targeted tests) to confirm the file still parses.
 
 **Prevention**:
 - Use editor bracket matching or run Prettier/TS compiler after structural edits.
@@ -1331,11 +1331,10 @@ Backend Controller → Reads req.headers['x-org-id'], req.headers['x-project-id'
 - Add to central docs (copilot-instructions.md) to prevent future confusion
 
 **Related Files/Conventions**:
-- `tools/workspace-cli/pm2/ecosystem.apps.cjs` - PM2 process configuration (check `args` array)
-- `apps/admin/package.json` - "dev": "vite" (Vite HMR built-in)
-- `apps/server/package.json` - "start:dev": "ts-node-dev --respawn" (watch mode)
-- `.github/copilot-instructions.md` - Added "Development Environment" section with hot reload info
-- `docs/HOT_RELOAD.md` - Created comprehensive hot reload documentation
+- `apps/server-go/Taskfile.yml` - `dev` task runs `air` for Go hot reload
+- `/root/emergent.memory.ui/package.json` - "dev": "vite" (Vite HMR built-in)
+- `.github/copilot-instructions.md` - Process management section
+- `docs/HOT_RELOAD.md` - Comprehensive hot reload documentation
 
 **Documentation Added**:
 - Added to `.github/copilot-instructions.md` so future AI sessions know hot reload is default
@@ -1496,11 +1495,11 @@ const objectKey = entity.business_key || this.generateKeyFromName(entity.name, e
    - Provide dry-run and list modes for safety
    - Record execution time and errors
    
-2. **Then**: Use the script for all future migrations:
+2. **Then**: Use task commands for all migrations:
    ```bash
-   npx nx run server:migrate -- --list      # Check status
-   npx nx run server:migrate -- --dry-run   # Preview changes
-   npx nx run server:migrate                # Apply pending
+   task migrate:status   # Check status
+   task migrate:up       # Apply pending migrations
+   task migrate:down     # Roll back last migration
    ```
 
 3. **Benefits**:

@@ -6,11 +6,13 @@ This document provides instructions for interacting with the workspace, includin
 
 Before implementing new features, **always check** these domain-specific AGENT.md files to understand existing patterns and avoid recreating functionality:
 
-| File                                 | Domain              | Key Topics                                                                          |
-| ------------------------------------ | ------------------- | ----------------------------------------------------------------------------------- |
-| `apps/admin/src/components/AGENT.md` | Frontend Components | Atomic design (atoms/molecules/organisms), DaisyUI + Tailwind, available components |
-| `apps/admin/src/hooks/AGENT.md`      | Frontend Hooks      | `useApi` (MUST use for all API calls), all 33+ hooks categorized                    |
-| `apps/server-go/AGENT.md`            | Go Backend          | fx modules, Echo handlers, Bun ORM, job queues                                      |
+| File                                                      | Domain              | Key Topics                                                                          |
+| --------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------- |
+| `/root/emergent.memory.ui/src/components/AGENT.md`        | Frontend Components | Atomic design (atoms/molecules/organisms), DaisyUI + Tailwind, available components |
+| `/root/emergent.memory.ui/src/hooks/AGENT.md`             | Frontend Hooks      | `useApi` (MUST use for all API calls), all 33+ hooks categorized                    |
+| `apps/server-go/AGENT.md`                                 | Go Backend          | fx modules, Echo handlers, Bun ORM, job queues                                      |
+
+> **Frontend repo**: The React admin lives at `/root/emergent.memory.ui` (remote: `emergent-company/emergent.memory.ui`). It is a standalone Vite project — not in this monorepo.
 
 **When to read these files:**
 
@@ -27,117 +29,59 @@ Before implementing new features, **always check** these domain-specific AGENT.m
 
 ## 1. Logging
 
-All service logs are managed by the workspace CLI. The primary command for accessing logs is `nx run workspace-cli:workspace:logs`.
+Log files are stored in `logs/` (root directory).
 
-### Viewing Logs
+- **Server logs:** `logs/server/server.log`, `logs/server/server.error.log`
 
-- **Tail logs for default services (admin + server) and dependencies:**
+## 2. Process Management
 
+Services use **Taskfile tasks** for process management.
+
+- **Start with hot reload (foreground):**
   ```bash
-  nx run workspace-cli:workspace:logs
+  task dev
   ```
 
-- **Tail logs in real-time:**
-
+- **Start in background:**
   ```bash
-  nx run workspace-cli:workspace:logs -- --follow
+  task start
   ```
 
-- **View logs for a specific service:**
+- **Stop background server:**
   ```bash
-  nx run workspace-cli:workspace:logs -- --service=<service-id>
-  ```
-  _(Replace `<service-id>` with the service you want to inspect, e.g., `server`)_
-
-### Log File Locations
-
-Log files are stored in the `apps/logs/` directory.
-
-- **Service logs:** `apps/logs/<serviceId>/out.log` (stdout) and `apps/logs/<serviceId>/error.log` (stderr)
-- **Dependency logs:** `apps/logs/dependencies/<id>/out.log` and `apps/logs/dependencies/<id>/error.log`
-
-## 2. Process Management (PM2)
-
-Services are managed as processes by PM2, but you should interact with them through the workspace CLI.
-
-- **Start all services:**
-
-  ```bash
-  nx run workspace-cli:workspace:start
+  task stop
   ```
 
-- **Stop all services:**
-
+- **Check server status:**
   ```bash
-  nx run workspace-cli:workspace:stop
+  task status
   ```
 
-- **Restart all services:**
-  ```bash
-  nx run workspace-cli:workspace:restart
-  ```
+The Go server uses `air` for hot reload. **Do not restart after code changes** — changes are picked up automatically.
 
 ## 3. Running Scripts and Tests
 
-All scripts and tests should be executed using `nx`. Note that commands for the `workspace-cli` project are prefixed with `workspace:`.
+All backend tasks use `task` (Taskfile):
 
-- **Run a specific script:**
-  ```bash
-  nx run <project>:<script>
-  ```
-  _(e.g., `nx run workspace-cli:workspace:logs`)_
+```bash
+task build              # Build server binary
+task test               # Unit tests
+task test:e2e           # API e2e tests
+task test:integration   # Integration tests
+task test:coverage      # Tests with coverage
+task lint               # Go linter
+task migrate:up         # Run migrations
+```
 
-### Testing
+For frontend tasks, use `pnpm` in `/root/emergent.memory.ui`:
 
-For comprehensive testing guidance, refer to **`docs/testing/AI_AGENT_GUIDE.md`** which provides:
+```bash
+cd /root/emergent.memory.ui
+pnpm run test           # Unit tests
+pnpm run build          # Production build
+```
 
-- Test type decision trees (unit, integration, API e2e, browser e2e)
-- Test templates and quick reference
-- Directory structure and file naming conventions
-- Import patterns and best practices
-
-**Quick Test Commands:**
-
-- **Run admin unit tests:**
-
-  ```bash
-  nx run admin:test
-  ```
-
-- **Run admin unit tests with coverage:**
-
-  ```bash
-  nx run admin:test-coverage
-  ```
-
-- **Run admin browser e2e tests:**
-
-  ```bash
-  nx run admin:e2e
-  ```
-
-- **Run admin e2e tests in UI mode:**
-
-  ```bash
-  nx run admin:e2e-ui
-  ```
-
-- **Run server unit tests:**
-
-  ```bash
-  nx run server-go:test
-  ```
-
-- **Run server integration tests:**
-
-  ```bash
-  nx run server-go:test -- --testPathPattern=tests/integration
-  ```
-
-- **Run server API e2e tests:**
-  ```bash
-  nx run server-go:test-e2e
-  ```
+For comprehensive testing guidance, refer to **`docs/testing/AI_AGENT_GUIDE.md`**.
 
 ## 4. EPF Working Directory
 

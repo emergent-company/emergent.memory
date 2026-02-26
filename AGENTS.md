@@ -27,33 +27,29 @@
 ### Build, Lint, Test
 
 ```bash
-# Backend (this repo)
-nx run server-go:test           # Backend unit tests (Go)
-nx run server-go:test-e2e       # API e2e tests (Go)
+# Backend (this repo) — run from repo root or apps/server-go
+task build                      # Build Go server binary
+task test                       # Backend unit tests (Go)
+task test:e2e                   # API e2e tests (Go)
+task lint                       # Run Go linter
 
 # Frontend (emergent.memory.ui repo — cd /root/emergent.memory.ui)
-npm run lint                    # Lint frontend
-npm run test                    # Frontend unit tests
+pnpm run lint                   # Lint frontend
+pnpm run test                   # Frontend unit tests
 ```
 
 ### Code Style
 
-- **Prettier**: `singleQuote: true` — Run `npx prettier --write .`
-- **TypeScript**: Strict types, no `any`
+- **Go**: `gofmt`, no unused imports, follow existing patterns
+- **TypeScript** (frontend): Strict types, no `any`
 - **Naming**: `camelCase` variables/functions, `PascalCase` classes/interfaces
-
-### Nx Monorepo
-
-- Always use `nx run <project>:<task>` for builds, tests, linting
-- Use `nx_workspace` tool to understand project structure
-- Use `nx_project_details` for specific project dependencies
 
 ### ⚠️ Hot Reload — DO NOT RESTART AFTER CODE CHANGES
 
 **The Go server has hot reload.** Changes are picked up automatically in 1-2 seconds.
 
 - ✅ **Just save the file** — hot reload handles Go handler, service, and store changes
-- ❌ **Only restart if** server is down (check with `pnpm run workspace:status`)
+- ❌ **Only restart if** server is down (check with `task status`)
 - ❌ **Restart required for:** new fx modules in `cmd/server/main.go`, env var changes, after `go mod tidy`
 
 ## Environment URLs
@@ -67,6 +63,6 @@ Local and Dev refer to the **same environment** accessible via two methods. Pref
 
 ## Detailed Documentation
 
-- **Workspace operations**: `.opencode/instructions.md` (logging, process management, MCP tools)
+- **Workspace operations**: `.opencode/instructions.md` (logging, process management)
 - **Testing guide**: `docs/testing/AI_AGENT_GUIDE.md`
 - **Database schema**: `docs/database/schema-context.md`

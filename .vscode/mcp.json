@@ -52,21 +52,6 @@
         "http://127.0.0.1:9222"
       ]
     },
-    "logs": {
-      "command": "npx",
-      "args": ["tsx", "tools/logs-mcp/src/index.ts"],
-      "env": {
-        "LOGS_DIR": "./logs"
-      }
-    },
-    "workspace": {
-      "command": "npx",
-      "args": ["tsx", "tools/workspace-mcp/src/index.ts"]
-    },
-    "api-client": {
-      "command": "npx",
-      "args": ["tsx", "tools/api-client-mcp/src/index.ts"]
-    }
     // "signoz": {
     //   "type": "sse",
     //   "url": "http://localhost:8001/mcp"
