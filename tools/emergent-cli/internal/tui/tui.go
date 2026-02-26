@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/health"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/templatepacks"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
 )
 
@@ -26,6 +28,7 @@ const (
 	ProjectsView ViewMode = iota
 	DocumentsView
 	WorkerStatsView
+	TemplatePacksView
 	ExtractionsView
 	DetailsView
 )
@@ -50,6 +53,11 @@ type Model struct {
 	// Worker stats
 	workerStats     *health.AllJobMetrics
 	lastStatsUpdate time.Time
+
+	// Template packs
+	templatePacks          []templatepacks.InstalledPackItem
+	compiledTypes          *templatepacks.CompiledTypesResponse
+	lastTemplatePacksFetch time.Time
 
 	// Search
 	searchMode  bool
@@ -191,11 +199,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 
 		case key.Matches(msg, m.keyMap.Tab):
-			m.activeTab = (m.activeTab + 1) % 4
+			m.activeTab = (m.activeTab + 1) % 5
 			m.currentView = ViewMode(m.activeTab)
 			// Load worker stats when switching to that tab
 			if m.currentView == WorkerStatsView {
 				return m, loadWorkerStats(m.client)
+			}
+			// Load template packs when switching to that tab
+			if m.currentView == TemplatePacksView {
+				return m, loadTemplatePacks(m.client, m.selectedProjectID)
 			}
 			return m, nil
 
@@ -245,6 +257,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.currentView == WorkerStatsView {
 			return m, tickEvery(3 * time.Second)
 		}
+		return m, nil
+
+	case templatePacksLoadedMsg:
+		m.templatePacks = msg.packs
+		m.compiledTypes = msg.compiledTypes
+		m.lastTemplatePacksFetch = time.Now()
+		m.statusMsg = fmt.Sprintf("Loaded %d template packs", len(msg.packs))
 		return m, nil
 
 	case tickMsg:
@@ -353,6 +372,8 @@ func (m Model) View() string {
 		content.WriteString(m.documentsList.View())
 	case WorkerStatsView:
 		content.WriteString(m.renderWorkerStats())
+	case TemplatePacksView:
+		content.WriteString(m.renderTemplatePacks())
 	case ExtractionsView:
 		content.WriteString(m.extractionsList.View())
 	case DetailsView:
@@ -382,7 +403,7 @@ func (m Model) View() string {
 
 // renderTabBar renders the tab bar
 func (m Model) renderTabBar() string {
-	tabs := []string{"Projects", "Documents", "Worker Stats", "Extractions"}
+	tabs := []string{"Projects", "Documents", "Worker Stats", "Template Packs", "Extractions"}
 	var renderedTabs []string
 
 	activeStyle := lipgloss.NewStyle().
@@ -475,7 +496,7 @@ func (m Model) renderWorkerStats() string {
 	completedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Padding(0, 1)
 	failedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Padding(0, 1)
 
-	// Render header
+	// Render header (without lipgloss padding to ensure alignment)
 	header := fmt.Sprintf("%-*s  %*s  %*s  %*s  %*s  %*s",
 		nameWidth, "Queue",
 		numberWidth, "Pending",
@@ -486,8 +507,9 @@ func (m Model) renderWorkerStats() string {
 	content.WriteString(tableHeaderStyle.Render(header))
 	content.WriteString("\n")
 
-	// Separator
-	separator := strings.Repeat("─", nameWidth+numberWidth*5+12)
+	// Separator (match exact header width: nameWidth + 5 number columns + 10 spaces between)
+	totalWidth := nameWidth + (numberWidth * 5) + 10
+	separator := strings.Repeat("─", totalWidth)
 	content.WriteString(normalCellStyle.Render(separator))
 	content.WriteString("\n")
 
@@ -513,6 +535,183 @@ func (m Model) renderWorkerStats() string {
 
 	elapsed := time.Since(m.lastStatsUpdate).Round(time.Second)
 	footer := fmt.Sprintf("Last updated: %s ago • Auto-refreshing every 3s", elapsed)
+	content.WriteString(footerStyle.Render(footer))
+
+	return content.String()
+}
+
+// renderTemplatePacks renders the template packs view with full details
+func (m Model) renderTemplatePacks() string {
+	if m.selectedProjectID == "" {
+		return "Please select a project first (Tab to Projects, select a project)"
+	}
+
+	if m.templatePacks == nil {
+		return "Loading template packs..."
+	}
+
+	var content strings.Builder
+
+	// Header
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("12")).
+		Padding(0, 1)
+
+	content.WriteString(headerStyle.Render("Installed Template Packs"))
+	content.WriteString("\n\n")
+
+	if len(m.templatePacks) == 0 {
+		content.WriteString("No template packs installed for this project.\n")
+		return content.String()
+	}
+
+	// Styles
+	packHeaderStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("14")).
+		Padding(0, 1)
+
+	sectionStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("11")).
+		Bold(true).
+		Padding(0, 1)
+
+	labelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Padding(0, 1)
+
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("15")).
+		Padding(0, 1)
+
+	fieldStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("10")).
+		Padding(0, 1)
+
+	typeStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("12")).
+		Padding(0, 1)
+
+	// Render each installed pack
+	for i, pack := range m.templatePacks {
+		// Pack header
+		packTitle := fmt.Sprintf("📦 %s (v%s)", pack.Name, pack.Version)
+		if !pack.Active {
+			packTitle += " [INACTIVE]"
+		}
+		content.WriteString(packHeaderStyle.Render(packTitle))
+		content.WriteString("\n")
+
+		// Pack details
+		if pack.Description != nil && *pack.Description != "" {
+			content.WriteString(labelStyle.Render("  Description: "))
+			content.WriteString(valueStyle.Render(*pack.Description))
+			content.WriteString("\n")
+		}
+
+		content.WriteString(labelStyle.Render("  Installed: "))
+		content.WriteString(valueStyle.Render(pack.InstalledAt.Format("2006-01-02 15:04:05")))
+		content.WriteString("\n")
+
+		// Find object types from this pack
+		var objectTypes []templatepacks.ObjectTypeSchema
+		var relationshipTypes []templatepacks.RelationshipTypeSchema
+
+		if m.compiledTypes != nil {
+			for _, ot := range m.compiledTypes.ObjectTypes {
+				if ot.PackID == pack.TemplatePackID {
+					objectTypes = append(objectTypes, ot)
+				}
+			}
+			for _, rt := range m.compiledTypes.RelationshipTypes {
+				if rt.PackID == pack.TemplatePackID {
+					relationshipTypes = append(relationshipTypes, rt)
+				}
+			}
+		}
+
+		// Object Types section
+		if len(objectTypes) > 0 {
+			content.WriteString("\n")
+			content.WriteString(sectionStyle.Render("  Object Types:"))
+			content.WriteString("\n")
+
+			for _, ot := range objectTypes {
+				content.WriteString(typeStyle.Render(fmt.Sprintf("    • %s", ot.Name)))
+				if ot.Label != "" {
+					content.WriteString(fmt.Sprintf(" (%s)", ot.Label))
+				}
+				content.WriteString("\n")
+
+				if ot.Description != "" {
+					content.WriteString(labelStyle.Render(fmt.Sprintf("      %s", ot.Description)))
+					content.WriteString("\n")
+				}
+
+				// Parse and display properties if available
+				if len(ot.Properties) > 0 {
+					var props map[string]interface{}
+					if err := json.Unmarshal(ot.Properties, &props); err == nil {
+						if propsMap, ok := props["properties"].(map[string]interface{}); ok {
+							content.WriteString(labelStyle.Render("      Fields: "))
+							fieldNames := make([]string, 0, len(propsMap))
+							for name := range propsMap {
+								fieldNames = append(fieldNames, name)
+							}
+							content.WriteString(fieldStyle.Render(strings.Join(fieldNames, ", ")))
+							content.WriteString("\n")
+						}
+					}
+				}
+			}
+		}
+
+		// Relationship Types section
+		if len(relationshipTypes) > 0 {
+			content.WriteString("\n")
+			content.WriteString(sectionStyle.Render("  Relationship Types:"))
+			content.WriteString("\n")
+
+			for _, rt := range relationshipTypes {
+				relDesc := fmt.Sprintf("    • %s", rt.Name)
+				if rt.SourceType != "" && rt.TargetType != "" {
+					relDesc += fmt.Sprintf(" (%s → %s)", rt.SourceType, rt.TargetType)
+				}
+				content.WriteString(typeStyle.Render(relDesc))
+				content.WriteString("\n")
+
+				if rt.Description != "" {
+					content.WriteString(labelStyle.Render(fmt.Sprintf("      %s", rt.Description)))
+					content.WriteString("\n")
+				}
+			}
+		}
+
+		// Add spacing between packs
+		if i < len(m.templatePacks)-1 {
+			content.WriteString("\n")
+			separator := strings.Repeat("─", 80)
+			content.WriteString(labelStyle.Render(separator))
+			content.WriteString("\n\n")
+		}
+	}
+
+	// Summary footer
+	content.WriteString("\n")
+	footerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Padding(0, 1)
+
+	totalObjectTypes := 0
+	totalRelTypes := 0
+	if m.compiledTypes != nil {
+		totalObjectTypes = len(m.compiledTypes.ObjectTypes)
+		totalRelTypes = len(m.compiledTypes.RelationshipTypes)
+	}
+
+	footer := fmt.Sprintf("Total: %d packs • %d object types • %d relationship types",
+		len(m.templatePacks), totalObjectTypes, totalRelTypes)
 	content.WriteString(footerStyle.Render(footer))
 
 	return content.String()
@@ -583,6 +782,11 @@ type documentsLoadedMsg struct {
 
 type workerStatsLoadedMsg struct {
 	stats *health.AllJobMetrics
+}
+
+type templatePacksLoadedMsg struct {
+	packs         []templatepacks.InstalledPackItem
+	compiledTypes *templatepacks.CompiledTypesResponse
 }
 
 type errMsg struct {
@@ -677,6 +881,34 @@ func loadWorkerStats(client *client.Client) tea.Cmd {
 		}
 
 		return workerStatsLoadedMsg{stats: stats}
+	}
+}
+
+func loadTemplatePacks(client *client.Client, projectID string) tea.Cmd {
+	return func() tea.Msg {
+		if projectID == "" {
+			return errMsg{err: fmt.Errorf("no project selected")}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// Get installed packs for the project
+		packs, err := client.SDK.TemplatePacks.GetInstalledPacks(ctx)
+		if err != nil {
+			return errMsg{err: fmt.Errorf("failed to load template packs: %w", err)}
+		}
+
+		// Get compiled types (all object and relationship types from all packs)
+		compiledTypes, err := client.SDK.TemplatePacks.GetCompiledTypes(ctx)
+		if err != nil {
+			return errMsg{err: fmt.Errorf("failed to load compiled types: %w", err)}
+		}
+
+		return templatePacksLoadedMsg{
+			packs:         packs,
+			compiledTypes: compiledTypes,
+		}
 	}
 }
 
