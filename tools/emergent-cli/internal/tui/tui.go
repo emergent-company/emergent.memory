@@ -190,8 +190,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, m.keyMap.Back):
-			if m.currentView == DocumentsView {
+			switch m.currentView {
+			case DetailsView:
+				// Go back from details to documents
+				m.currentView = DocumentsView
+				m.selectedDocID = ""
+			case DocumentsView:
+				// Go back from documents to projects
 				m.currentView = ProjectsView
+				m.activeTab = 0
 				m.selectedProjectID = ""
 			}
 			return m, nil
@@ -249,6 +256,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		if item, ok := m.projectsList.SelectedItem().(projectItem); ok {
 			m.selectedProjectID = item.id
 			m.currentView = DocumentsView
+			m.activeTab = 1 // Sync active tab to Documents
 			return m, loadDocuments(m.client, item.id)
 		}
 	case DocumentsView:
