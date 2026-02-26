@@ -250,8 +250,14 @@ func (c *Client) Debug(ctx context.Context) (*DebugResponse, error) {
 
 // JobMetrics returns metrics for all job queues.
 // GET /api/metrics/jobs
-func (c *Client) JobMetrics(ctx context.Context) (*AllJobMetrics, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/metrics/jobs", nil)
+// If projectID is provided, filters metrics to that project only.
+func (c *Client) JobMetrics(ctx context.Context, projectID string) (*AllJobMetrics, error) {
+	url := c.base + "/api/metrics/jobs"
+	if projectID != "" {
+		url += "?project_id=" + projectID
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
