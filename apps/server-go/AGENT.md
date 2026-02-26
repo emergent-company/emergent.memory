@@ -418,18 +418,18 @@ go run ./cmd/tasks test:unit
 
 ### Running Tests via nx (Recommended)
 
-Always use nx targets for running tests - they handle environment setup and provide summary statistics:
+Use task commands for running tests:
 
 ```bash
 # E2E tests - shows summary only (fast to read)
-nx run server-go:test-e2e                      # All E2E tests
-nx run server-go:test-e2e --args="GraphSuite"  # Specific suite
+task test:e2e                                         # All E2E tests
+task test:e2e -- -run GraphSuite                      # Specific suite
 
 # E2E tests - verbose output (shows all test names)
-nx run server-go:test-e2e --args.v=true        # Verbose mode
+task test:e2e -- -v                                   # Verbose mode
 
 # Integration tests
-nx run server-go:test-integration              # All integration tests
+task test:integration                                 # All integration tests
 ```
 
 **Default output (summary only - shows failing tests if any):**

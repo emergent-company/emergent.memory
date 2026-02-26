@@ -1,0 +1,79 @@
+version: '3'
+
+dotenv:
+  - .env
+  - .env.local
+
+includes:
+  server:
+    taskfile: apps/server-go/Taskfile.yml
+    dir: apps/server-go
+
+tasks:
+  build:
+    desc: Build the Go server binary
+    cmds:
+      - task: server:build
+
+  test:
+    desc: Run backend unit tests
+    cmds:
+      - task: server:test
+
+  test:e2e:
+    desc: Run backend e2e tests
+    cmds:
+      - task: server:test:e2e
+
+  test:integration:
+    desc: Run backend integration tests
+    cmds:
+      - task: server:test:integration
+
+  lint:
+    desc: Run Go linter
+    cmds:
+      - task: server:lint
+
+  migrate:up:
+    desc: Run database migrations up
+    cmds:
+      - task: server:migrate:up
+
+  migrate:down:
+    desc: Run database migrations down
+    cmds:
+      - task: server:migrate:down
+
+  migrate:status:
+    desc: Show migration status
+    cmds:
+      - task: server:migrate:status
+
+  swagger:
+    desc: Generate swagger docs
+    cmds:
+      - task: server:swagger
+
+  dev:
+    desc: Start server with hot reload (air, foreground)
+    dir: apps/server-go
+    cmds:
+      - air
+    env:
+      PATH: /usr/local/go/bin:/usr/local/bin:{{.PATH}}
+
+  start:
+    desc: Build and start server in background
+    cmds:
+      - task: server:start
+
+  stop:
+    desc: Stop background server
+    cmds:
+      - task: server:stop
+
+  status:
+    desc: Check server status
+    cmds:
+      - task: server:status
