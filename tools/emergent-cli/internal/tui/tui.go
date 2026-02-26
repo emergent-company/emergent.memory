@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/health"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
 )
@@ -24,6 +25,7 @@ type ViewMode int
 const (
 	ProjectsView ViewMode = iota
 	DocumentsView
+	WorkerStatsView
 	ExtractionsView
 	DetailsView
 )
@@ -44,6 +46,10 @@ type Model struct {
 	projectsList    list.Model
 	documentsList   list.Model
 	extractionsList list.Model
+
+	// Worker stats
+	workerStats     *health.AllJobMetrics
+	lastStatsUpdate time.Time
 
 	// Search
 	searchMode  bool
@@ -185,8 +191,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 
 		case key.Matches(msg, m.keyMap.Tab):
-			m.activeTab = (m.activeTab + 1) % 3
+			m.activeTab = (m.activeTab + 1) % 4
 			m.currentView = ViewMode(m.activeTab)
+			// Load worker stats when switching to that tab
+			if m.currentView == WorkerStatsView {
+				return m, loadWorkerStats(m.client)
+			}
 			return m, nil
 
 		case key.Matches(msg, m.keyMap.Back):
@@ -225,6 +235,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items[i] = d.(list.Item)
 		}
 		m.documentsList.SetItems(items)
+		return m, nil
+
+	case workerStatsLoadedMsg:
+		m.workerStats = msg.stats
+		m.lastStatsUpdate = time.Now()
+		m.statusMsg = "Worker stats updated"
+		// Schedule next refresh if we're still on worker stats view
+		if m.currentView == WorkerStatsView {
+			return m, tickEvery(3 * time.Second)
+		}
+		return m, nil
+
+	case tickMsg:
+		// Auto-refresh worker stats if we're on that view
+		if m.currentView == WorkerStatsView {
+			return m, loadWorkerStats(m.client)
+		}
 		return m, nil
 
 	case errMsg:
@@ -324,6 +351,8 @@ func (m Model) View() string {
 		content.WriteString(m.projectsList.View())
 	case DocumentsView:
 		content.WriteString(m.documentsList.View())
+	case WorkerStatsView:
+		content.WriteString(m.renderWorkerStats())
 	case ExtractionsView:
 		content.WriteString(m.extractionsList.View())
 	case DetailsView:
@@ -353,7 +382,7 @@ func (m Model) View() string {
 
 // renderTabBar renders the tab bar
 func (m Model) renderTabBar() string {
-	tabs := []string{"Projects", "Documents", "Extractions"}
+	tabs := []string{"Projects", "Documents", "Worker Stats", "Extractions"}
 	var renderedTabs []string
 
 	activeStyle := lipgloss.NewStyle().
@@ -410,6 +439,83 @@ func (m Model) renderDetails() string {
 		Padding(1, 2)
 
 	return style.Render("Details view - coming soon\nPress Esc to go back")
+}
+
+// renderWorkerStats renders the worker stats view
+func (m Model) renderWorkerStats() string {
+	if m.workerStats == nil {
+		return "Loading worker statistics..."
+	}
+
+	var content strings.Builder
+
+	// Header
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("12")).
+		Padding(0, 1)
+
+	content.WriteString(headerStyle.Render("Worker Queue Statistics"))
+	content.WriteString("\n\n")
+
+	// Calculate column widths
+	nameWidth := 25
+	numberWidth := 12
+
+	// Table header style
+	tableHeaderStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("14")).
+		Padding(0, 1)
+
+	// Table cell styles
+	normalCellStyle := lipgloss.NewStyle().Padding(0, 1)
+	pendingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Padding(0, 1)
+	processingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Padding(0, 1)
+	completedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Padding(0, 1)
+	failedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Padding(0, 1)
+
+	// Render header
+	header := fmt.Sprintf("%-*s  %*s  %*s  %*s  %*s  %*s",
+		nameWidth, "Queue",
+		numberWidth, "Pending",
+		numberWidth, "Processing",
+		numberWidth, "Completed",
+		numberWidth, "Failed",
+		numberWidth, "Total")
+	content.WriteString(tableHeaderStyle.Render(header))
+	content.WriteString("\n")
+
+	// Separator
+	separator := strings.Repeat("─", nameWidth+numberWidth*5+12)
+	content.WriteString(normalCellStyle.Render(separator))
+	content.WriteString("\n")
+
+	// Render each queue
+	for _, queue := range m.workerStats.Queues {
+		row := fmt.Sprintf("%-*s  %s  %s  %s  %s  %*d",
+			nameWidth, queue.Queue,
+			pendingStyle.Render(fmt.Sprintf("%*d", numberWidth, queue.Pending)),
+			processingStyle.Render(fmt.Sprintf("%*d", numberWidth, queue.Processing)),
+			completedStyle.Render(fmt.Sprintf("%*d", numberWidth, queue.Completed)),
+			failedStyle.Render(fmt.Sprintf("%*d", numberWidth, queue.Failed)),
+			numberWidth, queue.Total)
+		content.WriteString(normalCellStyle.Render(row))
+		content.WriteString("\n")
+	}
+
+	content.WriteString("\n")
+
+	// Footer with last update time
+	footerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Padding(0, 1)
+
+	elapsed := time.Since(m.lastStatsUpdate).Round(time.Second)
+	footer := fmt.Sprintf("Last updated: %s ago • Auto-refreshing every 3s", elapsed)
+	content.WriteString(footerStyle.Render(footer))
+
+	return content.String()
 }
 
 // errorView renders an error message
@@ -475,9 +581,15 @@ type documentsLoadedMsg struct {
 	documents []interface{}
 }
 
+type workerStatsLoadedMsg struct {
+	stats *health.AllJobMetrics
+}
+
 type errMsg struct {
 	err error
 }
+
+type tickMsg time.Time
 
 // Commands
 
@@ -554,11 +666,32 @@ func loadDocuments(client *client.Client, projectID string) tea.Cmd {
 	}
 }
 
+func loadWorkerStats(client *client.Client) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		stats, err := client.SDK.Health.JobMetrics(ctx)
+		if err != nil {
+			return errMsg{err: fmt.Errorf("failed to load worker stats: %w", err)}
+		}
+
+		return workerStatsLoadedMsg{stats: stats}
+	}
+}
+
 func performSearch(client *client.Client, query string) tea.Cmd {
 	return func() tea.Msg {
 		// TODO: Perform search
 		return nil
 	}
+}
+
+// Auto-refresh ticker for worker stats
+func tickEvery(interval time.Duration) tea.Cmd {
+	return tea.Tick(interval, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 // List items
