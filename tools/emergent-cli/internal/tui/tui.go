@@ -386,7 +386,7 @@ func (m Model) View() string {
 		content.WriteString(m.renderDetails())
 	}
 
-	content.WriteString("\n\n")
+	content.WriteString("\n")
 
 	// Render search bar if active
 	if m.searchMode {
@@ -488,7 +488,13 @@ func (m Model) renderWorkerStats() string {
 		Foreground(lipgloss.Color("12")).
 		Padding(0, 1)
 
-	content.WriteString(headerStyle.Render("Worker Queue Statistics"))
+	title := "Worker Queue Statistics"
+	if m.selectedProjectName != "" {
+		title += " - " + m.selectedProjectName
+	} else {
+		title += " - All Projects"
+	}
+	content.WriteString(headerStyle.Render(title))
 	content.WriteString("\n\n")
 
 	// Calculate column widths
@@ -756,24 +762,32 @@ func errorView(err error) string {
 
 // New creates a new TUI model.
 func New(client *client.Client) Model {
+	// Create delegate with custom styles
+	delegate := list.NewDefaultDelegate()
+
 	// Create lists
-	projectsList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	projectsList := list.New([]list.Item{}, delegate, 0, 0)
 	projectsList.Title = "Projects"
 	projectsList.SetShowHelp(false)         // Disable list's default help
 	projectsList.SetShowStatusBar(false)    // Disable list's status bar
 	projectsList.SetFilteringEnabled(false) // We'll handle filtering ourselves
+	// Set custom empty message with proper indentation
+	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 2)
+	projectsList.Styles.NoItems = emptyStyle
 
-	documentsList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	documentsList := list.New([]list.Item{}, delegate, 0, 0)
 	documentsList.Title = "Documents"
 	documentsList.SetShowHelp(false)
 	documentsList.SetShowStatusBar(false)
 	documentsList.SetFilteringEnabled(false)
+	documentsList.Styles.NoItems = emptyStyle
 
-	extractionsList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	extractionsList := list.New([]list.Item{}, delegate, 0, 0)
 	extractionsList.Title = "Extractions"
 	extractionsList.SetShowHelp(false)
 	extractionsList.SetShowStatusBar(false)
 	extractionsList.SetFilteringEnabled(false)
+	extractionsList.Styles.NoItems = emptyStyle
 
 	// Create search input
 	searchInput := textinput.New()
@@ -898,7 +912,10 @@ func loadWorkerStats(client *client.Client) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		stats, err := client.SDK.Health.JobMetrics(ctx)
+		// Get project ID from client context (empty string if no project selected = all projects)
+		projectID := client.ProjectID()
+
+		stats, err := client.SDK.Health.JobMetrics(ctx, projectID)
 		if err != nil {
 			return errMsg{err: fmt.Errorf("failed to load worker stats: %w", err)}
 		}
