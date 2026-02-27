@@ -1175,7 +1175,10 @@ func errorView(err error) string {
 }
 
 // New creates a new TUI model.
-func New(client *client.Client) Model {
+func New(client *client.Client, tempoURL string) Model {
+	if tempoURL == "" {
+		tempoURL = resolveTempoURL()
+	}
 	// Create delegate with custom styles
 	delegate := list.NewDefaultDelegate()
 
@@ -1234,7 +1237,7 @@ func New(client *client.Client) Model {
 		keyMap:          DefaultKeyMap(),
 		showHelp:        false,
 		statusMsg:       "Loading projects...",
-		tempoURL:        resolveTempoURL(),
+		tempoURL:        tempoURL,
 	}
 }
 
