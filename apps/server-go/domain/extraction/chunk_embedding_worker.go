@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
 // ChunkEmbeddingWorker processes chunk embedding jobs from the queue.
@@ -210,6 +213,11 @@ type chunkRow struct {
 
 // processJob processes a single chunk embedding job
 func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddingJob) error {
+	ctx, span := tracing.Start(ctx, "extraction.chunk_embedding",
+		attribute.String("emergent.job.id", job.ID),
+	)
+	defer span.End()
+
 	startTime := time.Now()
 
 	// Fetch the chunk
@@ -222,16 +230,21 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 
 	if err == sql.ErrNoRows {
 		// Chunk doesn't exist, mark as failed
+		chunkErr := fmt.Errorf("chunk not found: %s", job.ChunkID)
+		span.RecordError(chunkErr)
+		span.SetStatus(codes.Error, chunkErr.Error())
 		if markErr := w.jobs.MarkFailed(ctx, job.ID, fmt.Errorf("chunk_missing")); markErr != nil {
 			w.log.Error("failed to mark job as failed",
 				slog.String("job_id", job.ID),
 				slog.String("error", markErr.Error()))
 		}
 		w.incrementFailure()
-		return fmt.Errorf("chunk not found: %s", job.ChunkID)
+		return chunkErr
 	}
 	if err != nil {
 		// Database error
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
 			w.log.Error("failed to mark job as failed",
 				slog.String("job_id", job.ID),
@@ -250,6 +263,8 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 
 	if err != nil {
 		// Embedding failed
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
 			w.log.Error("failed to mark job as failed",
 				slog.String("job_id", job.ID),
@@ -262,6 +277,8 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 	if result == nil || len(result.Embedding) == 0 {
 		// No embedding returned (likely noop client)
 		err := fmt.Errorf("no embedding returned")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
 			w.log.Error("failed to mark job as failed",
 				slog.String("job_id", job.ID),
@@ -274,14 +291,16 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 	// Update the chunk with the embedding
 	// Note: embedding is vector(768), we need to use raw SQL for pgvector
 	now := time.Now()
-	_, err = w.db.NewRaw(`UPDATE kb.chunks 
-		SET embedding = ?::vector, 
+	_, err = w.db.NewRaw(`UPDATE kb.chunks
+		SET embedding = ?::vector,
 			updated_at = ?
 		WHERE id = ?`,
 		vectorToString(result.Embedding), now, job.ChunkID).Exec(ctx)
 
 	if err != nil {
 		// Update failed
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
 			w.log.Error("failed to mark job as failed",
 				slog.String("job_id", job.ID),
@@ -296,8 +315,11 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 		w.log.Error("failed to mark job as completed",
 			slog.String("job_id", job.ID),
 			slog.String("error", err.Error()))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
+	span.SetStatus(codes.Ok, "")
 
 	totalDurationMs := time.Since(startTime).Milliseconds()
 

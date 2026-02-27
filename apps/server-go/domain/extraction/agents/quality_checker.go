@@ -6,9 +6,14 @@ import (
 	"iter"
 	"log/slog"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
+
+	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
 // QualityCheckerConfig holds configuration for the quality checker agent.
@@ -41,11 +46,16 @@ func NewQualityCheckerAgent(cfg QualityCheckerConfig) (agent.Agent, error) {
 		Description: "Checks extraction quality and decides whether to retry relationship building",
 		Run: func(ctx agent.InvocationContext) iter.Seq2[*session.Event, error] {
 			return func(yield func(*session.Event, error) bool) {
+				_, span := tracing.Start(ctx, "extraction.pipeline.quality_check")
+				defer span.End()
+
 				state := ctx.Session().State()
 
 				// Get entities and relationships from state
 				entities, err := getEntitiesFromState(state)
 				if err != nil {
+					span.RecordError(err)
+					span.SetStatus(codes.Error, err.Error())
 					yield(nil, fmt.Errorf("failed to get entities: %w", err))
 					return
 				}
@@ -59,6 +69,19 @@ func NewQualityCheckerAgent(cfg QualityCheckerConfig) (agent.Agent, error) {
 				// Calculate orphan rate
 				orphanRate := CalculateOrphanRate(entities, relationships)
 				orphanIDs := GetOrphanTempIDs(entities, relationships)
+
+				span.SetAttributes(
+					attribute.Float64("emergent.extraction.orphan_rate", orphanRate),
+					attribute.Int("emergent.extraction.entity_count", len(entities)),
+					attribute.Int("emergent.extraction.relationship_count", len(relationships)),
+				)
+
+				if orphanRate > threshold {
+					span.AddEvent("extraction.quality_warning", trace.WithAttributes(
+						attribute.Float64("emergent.extraction.orphan_rate", orphanRate),
+						attribute.Float64("emergent.extraction.orphan_threshold", threshold),
+					))
+				}
 
 				log.Info("quality check",
 					slog.Float64("orphan_rate", orphanRate),
@@ -92,7 +115,7 @@ func NewQualityCheckerAgent(cfg QualityCheckerConfig) (agent.Agent, error) {
 
 					// Clear retry state
 					event.Actions.StateDelta = map[string]any{
-						"quality_passed": true,
+						"quality_passed":    true,
 						"final_orphan_rate": orphanRate,
 					}
 				} else {
@@ -107,13 +130,14 @@ func NewQualityCheckerAgent(cfg QualityCheckerConfig) (agent.Agent, error) {
 
 					// Store state for retry
 					event.Actions.StateDelta = map[string]any{
-						"orphan_temp_ids":   orphanIDs,
+						"orphan_temp_ids":  orphanIDs,
 						"retry_iteration":  iteration + 1,
 						"quality_passed":   false,
 						"last_orphan_rate": orphanRate,
 					}
 				}
 
+				span.SetStatus(codes.Ok, "")
 				yield(event, nil)
 			}
 		},
