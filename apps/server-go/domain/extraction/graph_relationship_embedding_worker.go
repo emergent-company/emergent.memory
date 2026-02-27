@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/emergent-company/emergent/pkg/logger"
 	"github.com/emergent-company/emergent/pkg/syshealth"
+	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
 // graphRelationshipRow holds the minimal fields needed to generate a relationship embedding.
@@ -208,6 +211,11 @@ func (w *GraphRelationshipEmbeddingWorker) processBatch(ctx context.Context) err
 
 // processJob generates and stores the embedding for a single relationship job.
 func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *GraphRelationshipEmbeddingJob) error {
+	ctx, span := tracing.Start(ctx, "extraction.relationship_embedding",
+		attribute.String("emergent.job.id", job.ID),
+	)
+	defer span.End()
+
 	startTime := time.Now()
 
 	// Fetch the relationship along with endpoint names for triplet text generation.
@@ -229,14 +237,19 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	).Scan(ctx, rel)
 
 	if err == sql.ErrNoRows {
+		relErr := fmt.Errorf("relationship not found: %s", job.RelationshipID)
+		span.RecordError(relErr)
+		span.SetStatus(codes.Error, relErr.Error())
 		markErr := w.jobs.MarkFailed(ctx, job.ID, fmt.Errorf("relationship_missing"))
 		if markErr != nil {
 			w.log.Error("failed to mark rel embedding job as failed", slog.String("job_id", job.ID), slog.String("error", markErr.Error()))
 		}
 		w.incrementFailure()
-		return fmt.Errorf("relationship not found: %s", job.RelationshipID)
+		return relErr
 	}
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		markErr := w.jobs.MarkFailed(ctx, job.ID, err)
 		if markErr != nil {
 			w.log.Error("failed to mark rel embedding job as failed", slog.String("job_id", job.ID), slog.String("error", markErr.Error()))
@@ -253,6 +266,8 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	embeddingDurationMs := time.Since(embeddingStartTime).Milliseconds()
 
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		markErr := w.jobs.MarkFailed(ctx, job.ID, err)
 		if markErr != nil {
 			w.log.Error("failed to mark rel embedding job as failed", slog.String("job_id", job.ID), slog.String("error", markErr.Error()))
@@ -263,6 +278,8 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 
 	if result == nil || len(result.Embedding) == 0 {
 		jobErr := fmt.Errorf("no embedding returned")
+		span.RecordError(jobErr)
+		span.SetStatus(codes.Error, jobErr.Error())
 		markErr := w.jobs.MarkFailed(ctx, job.ID, jobErr)
 		if markErr != nil {
 			w.log.Error("failed to mark rel embedding job as failed", slog.String("job_id", job.ID), slog.String("error", markErr.Error()))
@@ -282,6 +299,8 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	).Exec(ctx)
 
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		markErr := w.jobs.MarkFailed(ctx, job.ID, err)
 		if markErr != nil {
 			w.log.Error("failed to mark rel embedding job as failed", slog.String("job_id", job.ID), slog.String("error", markErr.Error()))
@@ -291,6 +310,8 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	}
 
 	if err := w.jobs.MarkCompleted(ctx, job.ID); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		w.log.Error("failed to mark rel embedding job as completed", slog.String("job_id", job.ID), slog.String("error", err.Error()))
 		return err
 	}
@@ -304,6 +325,7 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 		slog.Int64("total_duration_ms", totalDurationMs))
 
 	w.incrementSuccess()
+	span.SetStatus(codes.Ok, "")
 	return nil
 }
 
@@ -364,6 +386,11 @@ func (w *GraphRelationshipEmbeddingWorker) SetConfig(cfg GraphEmbeddingConfig) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	*w.cfg = cfg
+
+	if w.scaler != nil {
+		w.scaler.UpdateConfig(cfg.EnableAdaptiveScaling, cfg.MinConcurrency, cfg.MaxConcurrency)
+	}
+
 	w.log.Info("graph relationship embedding worker config updated",
 		slog.Int("batch_size", cfg.WorkerBatchSize),
 		slog.Int("concurrency", cfg.WorkerConcurrency),

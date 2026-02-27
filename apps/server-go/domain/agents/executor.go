@@ -7,6 +7,9 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/model"
@@ -19,6 +22,7 @@ import (
 	"github.com/emergent-company/emergent/internal/config"
 	"github.com/emergent-company/emergent/pkg/adk"
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
 // StreamEventType identifies the kind of streaming event.
@@ -148,6 +152,14 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		return nil, fmt.Errorf("failed to create agent run: %w", err)
 	}
 
+	// Start OTel span now that we have the run ID
+	ctx, span := tracing.Start(ctx, "agent.run",
+		attribute.String("emergent.agent.id", ae.resolveAgentID(req)),
+		attribute.String("emergent.agent.run_id", run.ID),
+		attribute.String("emergent.project.id", req.ProjectID),
+	)
+	defer span.End()
+
 	ae.log.Info("executing agent",
 		slog.String("run_id", run.ID),
 		slog.String("project_id", req.ProjectID),
@@ -188,6 +200,12 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	if err != nil {
 		// Mark run as failed
 		_ = ae.repo.FailRunWithSteps(ctx, run.ID, err.Error(), 0)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(
+			attribute.Int("emergent.agent.step_count", 0),
+			attribute.String("emergent.agent.run_status", string(RunStatusError)),
+		)
 		return &ExecuteResult{
 			RunID:    run.ID,
 			Status:   RunStatusError,
@@ -195,6 +213,27 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 			Steps:    0,
 			Duration: time.Since(startTime),
 		}, nil
+	}
+
+	// Record final run outcome on the span
+	span.SetAttributes(
+		attribute.Int("emergent.agent.step_count", result.Steps),
+		attribute.String("emergent.agent.run_status", string(result.Status)),
+	)
+	switch result.Status {
+	case RunStatusPaused:
+		span.AddEvent("agent.max_steps_reached", trace.WithAttributes(
+			attribute.Int("emergent.agent.step_count", result.Steps),
+		))
+		span.SetStatus(codes.Ok, "")
+	case RunStatusError:
+		errMsg := ""
+		if e, ok := result.Summary["error"].(string); ok {
+			errMsg = e
+		}
+		span.SetStatus(codes.Error, errMsg)
+	default:
+		span.SetStatus(codes.Ok, "")
 	}
 
 	return result, nil

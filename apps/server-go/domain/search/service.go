@@ -7,10 +7,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/emergent-company/emergent/domain/graph"
 	"github.com/emergent-company/emergent/pkg/embeddings"
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
 // Service handles unified search combining graph and text results
@@ -38,6 +41,12 @@ func NewService(
 
 // Search executes unified search combining graph and text results
 func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, searchCtx *SearchContext) (*UnifiedSearchResponse, error) {
+	ctx, span := tracing.Start(ctx, "search.execute",
+		attribute.Int("emergent.search.query_length", len(req.Query)),
+		attribute.String("emergent.project.id", projectID.String()),
+	)
+	defer span.End()
+
 	startTime := time.Now()
 
 	// Apply defaults
@@ -134,12 +143,18 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 	relationshipRes := <-relationshipCh
 
 	if graphRes.err != nil {
+		span.RecordError(graphRes.err)
+		span.SetStatus(codes.Error, graphRes.err.Error())
 		return nil, graphRes.err
 	}
 	if textRes.err != nil {
+		span.RecordError(textRes.err)
+		span.SetStatus(codes.Error, textRes.err.Error())
 		return nil, textRes.err
 	}
 	if relationshipRes.err != nil {
+		span.RecordError(relationshipRes.err)
+		span.SetStatus(codes.Error, relationshipRes.err.Error())
 		return nil, relationshipRes.err
 	}
 
@@ -151,6 +166,8 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 		graphResults = s.expandRelationships(ctx, projectID, graphResults, req.RelationshipOptions)
 		relationshipElapsed = time.Since(start)
 	}
+
+	span.SetAttributes(attribute.String("emergent.search.strategy", string(fusionStrategy)))
 
 	// Fuse results
 	fusionStart := time.Now()
@@ -205,6 +222,9 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 	if req.IncludeDebug {
 		debug = s.buildDebugInfo(graphRes.rawDebug, textRes.rawDebug, relationshipRes.rawDebug, graphResults, textRes.results, relationshipRes.results, fusionStrategy, req.Weights, len(fusedResults))
 	}
+
+	span.SetAttributes(attribute.Int("emergent.search.result_count", len(fusedResults)))
+	span.SetStatus(codes.Ok, "")
 
 	return &UnifiedSearchResponse{
 		Results:  fusedResults,

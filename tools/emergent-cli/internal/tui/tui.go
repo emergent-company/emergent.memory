@@ -2,9 +2,13 @@
 package tui
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -17,7 +21,6 @@ import (
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/health"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/search"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/templatepacks"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
 )
@@ -64,11 +67,11 @@ type Model struct {
 	lastTemplatePacksFetch time.Time
 
 	// Query
-	queryMode    bool
-	queryInput   textinput.Model
-	queryResults []search.SearchResult
-	queryError   error
-	isQuerying   bool
+	queryMode     bool
+	queryInput    textinput.Model
+	queryResponse string
+	queryError    error
+	isQuerying    bool
 
 	// Search
 	searchMode  bool
@@ -261,9 +264,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Load traces when switching to traces tab
 			if m.currentView == TracesView {
+				if m.selectedProjectID == "" {
+					// No project selected — show prompt, don't query Tempo
+					m.tracesLoading = false
+					m.tracesErr = nil
+					m.tracesData = nil
+					return m, nil
+				}
 				m.tracesLoading = true
 				m.tracesErr = nil
-				return m, loadTraces(m.tempoURL)
+				return m, loadTraces(m.tempoURL, m.selectedProjectID)
 			}
 			return m, nil
 
@@ -329,9 +339,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case queryResultsMsg:
-		m.queryResults = msg.results
+		m.queryResponse = msg.response
 		m.isQuerying = false
-		m.statusMsg = fmt.Sprintf("Found %d results in %v for: %s", len(msg.results), msg.duration.Round(time.Millisecond), msg.query)
+		m.statusMsg = fmt.Sprintf("Query answered in %v: %s", msg.duration.Round(time.Millisecond), msg.query)
 		return m, nil
 
 	case tickMsg:
@@ -492,8 +502,9 @@ func (m Model) handleQueryInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Execute query
 		m.isQuerying = true
 		m.queryError = nil
+		m.queryResponse = ""
 		m.statusMsg = "Executing query..."
-		return m, performQuery(m.client, query)
+		return m, performQuery(m.client, m.selectedProjectID, query)
 	}
 
 	// Clear error when user starts typing again
@@ -634,6 +645,10 @@ func (m Model) renderStatusBar() string {
 
 // renderTraces renders the traces list view.
 func (m Model) renderTraces() string {
+	if m.selectedProjectID == "" {
+		hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(1, 2)
+		return hintStyle.Render("Select a project first to see its traces.")
+	}
 	if m.tracesLoading {
 		loadingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Padding(1, 2)
 		return loadingStyle.Render("⏳ Loading traces from Tempo...")
@@ -670,6 +685,24 @@ func (m Model) renderTraceDetail() string {
 	if m.selectedTraceData == nil {
 		content.WriteString("  Loading...")
 		return content.String()
+	}
+
+	// Scan all spans for emergent.agent.run_id and render a deep-link if found
+	linkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true).Padding(0, 1)
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
+	for _, batch := range m.selectedTraceData.Batches {
+		for _, ss := range batch.ScopeSpans {
+			for _, s := range ss.Spans {
+				if runID := traceAttrValue(s.Attributes, "emergent.agent.run_id"); runID != "" {
+					deepLink := m.client.BaseURL() + "/agents/runs/" + runID
+					content.WriteString(labelStyle.Render("Open in browser:"))
+					content.WriteString(" ")
+					content.WriteString(linkStyle.Render(deepLink))
+					content.WriteString("\n\n")
+					break
+				}
+			}
+		}
 	}
 
 	// Build span node map
@@ -808,7 +841,7 @@ func (m Model) renderQuery() string {
 		Foreground(lipgloss.Color("240")).
 		Padding(0, 1)
 
-	content.WriteString(instructionStyle.Render("Type your question and press Enter to search. Press Esc to cancel."))
+	content.WriteString(instructionStyle.Render("Ask anything about your project. Press Enter to get an AI answer, Esc to cancel."))
 	content.WriteString("\n\n")
 
 	// Show loading indicator
@@ -817,7 +850,7 @@ func (m Model) renderQuery() string {
 			Foreground(lipgloss.Color("11")).
 			Bold(true).
 			Padding(0, 1)
-		content.WriteString(loadingStyle.Render("⏳ Searching..."))
+		content.WriteString(loadingStyle.Render("⏳ Thinking..."))
 		content.WriteString("\n")
 		return content.String()
 	}
@@ -839,51 +872,16 @@ func (m Model) renderQuery() string {
 		return content.String()
 	}
 
-	// Show results
-	if len(m.queryResults) > 0 {
-		resultHeaderStyle := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("10")).
-			Padding(0, 1)
+	// Show natural language response
+	if m.queryResponse != "" {
+		responseStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("10")).
+			Padding(1, 2).
+			Width(m.width - 8)
 
-		content.WriteString(resultHeaderStyle.Render(fmt.Sprintf("Results (%d found):", len(m.queryResults))))
-		content.WriteString("\n\n")
-
-		// Render each result
-		for i, result := range m.queryResults {
-			resultStyle := lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("240")).
-				Padding(1, 2).
-				Width(m.width - 8)
-
-			scoreStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("14")).
-				Bold(true)
-
-			docStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240"))
-
-			resultText := fmt.Sprintf("%s (Score: %s)\n\n%s\n\n%s",
-				scoreStyle.Render(fmt.Sprintf("Result #%d", i+1)),
-				scoreStyle.Render(fmt.Sprintf("%.2f", result.Score)),
-				result.Content,
-				docStyle.Render(fmt.Sprintf("Document ID: %s | Chunk ID: %s", result.DocumentID, result.ChunkID)))
-
-			content.WriteString(resultStyle.Render(resultText))
-			content.WriteString("\n")
-
-			// Limit display to avoid overwhelming the terminal
-			if i >= 2 {
-				moreStyle := lipgloss.NewStyle().
-					Foreground(lipgloss.Color("240")).
-					Italic(true).
-					Padding(0, 1)
-				content.WriteString(moreStyle.Render(fmt.Sprintf("... and %d more results", len(m.queryResults)-3)))
-				content.WriteString("\n")
-				break
-			}
-		}
+		content.WriteString(responseStyle.Render(m.queryResponse))
+		content.WriteString("\n")
 	}
 
 	return content.String()
@@ -1262,7 +1260,7 @@ type templatePacksLoadedMsg struct {
 }
 
 type queryResultsMsg struct {
-	results  []search.SearchResult
+	response string
 	query    string
 	duration time.Duration
 }
@@ -1403,27 +1401,74 @@ func performSearch(client *client.Client, query string) tea.Cmd {
 	}
 }
 
-func performQuery(client *client.Client, query string) tea.Cmd {
+// defaultQueryAgentID is the agent definition used for natural language queries.
+const defaultQueryAgentID = "70356e5f-2c97-4ce4-9754-ec14e15a2a13"
+
+func performQuery(c *client.Client, projectID, query string) tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 
-		// Perform unified search with weighted fusion strategy
-		response, err := client.SDK.Search.Search(ctx, &search.SearchRequest{
-			Query:          query,
-			FusionStrategy: "weighted", // Use weighted fusion for best results
-			ResultTypes:    "both",     // Search both graph and text
-			Limit:          10,
-		})
-		elapsed := time.Since(start)
-
+		reqBody := map[string]interface{}{
+			"message":           query,
+			"agentDefinitionId": defaultQueryAgentID,
+		}
+		bodyBytes, err := json.Marshal(reqBody)
 		if err != nil {
-			return errMsg{err: fmt.Errorf("query failed after %v: %w", elapsed, err)}
+			return errMsg{err: fmt.Errorf("failed to marshal query: %w", err)}
 		}
 
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL()+"/api/chat/stream", bytes.NewReader(bodyBytes))
+		if err != nil {
+			return errMsg{err: fmt.Errorf("failed to build request: %w", err)}
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("X-Project-ID", projectID)
+		if apiKey := c.APIKey(); apiKey != "" {
+			httpReq.Header.Set("X-API-Key", apiKey)
+		}
+
+		httpClient := &http.Client{Timeout: 120 * time.Second}
+		resp, err := httpClient.Do(httpReq)
+		if err != nil {
+			return errMsg{err: fmt.Errorf("query failed after %v: %w", time.Since(start), err)}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return errMsg{err: fmt.Errorf("query failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))}
+		}
+
+		var response strings.Builder
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			data := strings.TrimPrefix(line, "data: ")
+			if data == "" {
+				continue
+			}
+			var event map[string]interface{}
+			if err := json.Unmarshal([]byte(data), &event); err != nil {
+				continue
+			}
+			if eventType, _ := event["type"].(string); eventType == "token" {
+				if token, ok := event["token"].(string); ok {
+					response.WriteString(token)
+				}
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return errMsg{err: fmt.Errorf("error reading response: %w", err)}
+		}
+
+		elapsed := time.Since(start)
 		return queryResultsMsg{
-			results:  response.Results,
+			response: response.String(),
 			query:    query,
 			duration: elapsed,
 		}
