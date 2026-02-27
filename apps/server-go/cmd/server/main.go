@@ -63,6 +63,7 @@ import (
 	"github.com/emergent-company/emergent/domain/useractivity"
 	"github.com/emergent-company/emergent/domain/userprofile"
 	"github.com/emergent-company/emergent/domain/users"
+	"github.com/emergent-company/emergent/domain/tracing"
 	"github.com/emergent-company/emergent/domain/workspace"
 	"github.com/emergent-company/emergent/domain/workspaceimages"
 	"github.com/emergent-company/emergent/internal/config"
@@ -96,6 +97,7 @@ func main() {
 		database.Module,
 		server.Module,
 		storage.Module,
+		tracing.Module,
 
 		// Auth module
 		auth.Module,
