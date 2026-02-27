@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/domain/chunking"
 	"github.com/emergent-company/emergent/domain/documents"
@@ -17,6 +20,7 @@ import (
 	"github.com/emergent-company/emergent/internal/storage"
 	"github.com/emergent-company/emergent/pkg/kreuzberg"
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/tracing"
 	"github.com/emergent-company/emergent/pkg/whisper"
 )
 
@@ -214,6 +218,15 @@ func (w *DocumentParsingWorker) poll() {
 
 // processJob handles a single document parsing job
 func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentParsingJob) {
+	docID := ptrToString(job.DocumentID)
+	ctx, span := tracing.Start(ctx, "extraction.document_parsing",
+		attribute.String("emergent.job.id", job.ID),
+		attribute.String("emergent.project.id", job.ProjectID),
+		attribute.String("emergent.document.id", docID),
+		attribute.String("emergent.document.content_type", ptrToString(job.MimeType)),
+	)
+	defer span.End()
+
 	startTime := time.Now()
 	jobLog := w.log.With(
 		slog.String("job_id", job.ID),
@@ -232,6 +245,8 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 	if storageKey == "" {
 		err := fmt.Errorf("no storage key for document parsing job")
 		jobLog.Error("job missing storage key", logger.Error(err))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		w.markFailed(ctx, job, err)
 		return
 	}
@@ -255,6 +270,8 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 		// For now, mark as failed with clear message
 		err = fmt.Errorf("email parsing not yet implemented in Go server")
 		jobLog.Warn("email parsing not implemented", slog.String("mime_type", mimeType))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		w.markFailed(ctx, job, err)
 		return
 	} else if isAudio {
@@ -290,6 +307,8 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 			slog.String("method", extractionMethod),
 			logger.Error(err),
 		)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		w.markFailed(ctx, job, err)
 		return
 	}
@@ -324,6 +343,7 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 		}
 	}
 
+	span.SetStatus(codes.Ok, "")
 	jobLog.Info("document parsing completed",
 		slog.String("method", extractionMethod),
 		slog.Int("content_length", len(parsedContent)),

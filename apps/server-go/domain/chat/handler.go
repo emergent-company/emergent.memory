@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/emergent-company/emergent/domain/agents"
 	"github.com/emergent-company/emergent/domain/search"
@@ -20,6 +22,7 @@ import (
 	"github.com/emergent-company/emergent/pkg/llm/vertex"
 	"github.com/emergent-company/emergent/pkg/logger"
 	"github.com/emergent-company/emergent/pkg/sse"
+	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
 // Handler handles chat HTTP requests
@@ -423,6 +426,13 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
+
+	// Start chat span before conversation is resolved (conversation_id added below)
+	ctx, span := tracing.Start(ctx, "chat.handle_message",
+		attribute.String("emergent.project.id", user.ProjectID),
+	)
+	defer span.End()
+
 	message := strings.TrimSpace(req.Message)
 
 	// If agentDefinitionId is provided on a new conversation, validate it exists
@@ -487,6 +497,9 @@ func (h *Handler) StreamChat(c echo.Context) error {
 			}
 		}
 	}
+
+	// Annotate span with conversation_id now that we have it
+	span.SetAttributes(attribute.String("emergent.chat.conversation_id", conv.ID.String()))
 
 	// Now that validation is done and conversation is ready, start SSE streaming
 	w := c.Response().Writer
@@ -572,17 +585,32 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 	// Stream tokens from LLM
 	var fullResponse strings.Builder
-	err := h.llmClient.GenerateStreaming(ctx, vertex.GenerateRequest{
-		Prompt:       message,
-		SystemPrompt: systemPrompt,
-	}, func(token string) {
-		fullResponse.WriteString(token)
-		sseWriter.WriteData(sse.NewTokenEvent(token))
-	})
+	var llmErr error
+	{
+		llmCtx, llmSpan := tracing.Start(ctx, "chat.llm_generate",
+			attribute.String("emergent.llm.model", h.llmClient.Model()),
+		)
+		llmErr = h.llmClient.GenerateStreaming(llmCtx, vertex.GenerateRequest{
+			Prompt:       message,
+			SystemPrompt: systemPrompt,
+		}, func(token string) {
+			fullResponse.WriteString(token)
+			sseWriter.WriteData(sse.NewTokenEvent(token))
+		})
+		if llmErr != nil {
+			llmSpan.RecordError(llmErr)
+			llmSpan.SetStatus(codes.Error, llmErr.Error())
+		} else {
+			llmSpan.SetStatus(codes.Ok, "")
+		}
+		llmSpan.End()
+	}
 
-	if err != nil {
+	if llmErr != nil {
 		// Emit error event
-		sseWriter.WriteData(sse.NewErrorEvent(err.Error()))
+		span.RecordError(llmErr)
+		span.SetStatus(codes.Error, llmErr.Error())
+		sseWriter.WriteData(sse.NewErrorEvent(llmErr.Error()))
 	} else {
 		// Persist assistant response
 		go func() {
@@ -598,6 +626,10 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	// Emit done event
 	sseWriter.WriteData(sse.NewDoneEvent())
 	sseWriter.Close()
+
+	if llmErr == nil {
+		span.SetStatus(codes.Ok, "")
+	}
 
 	return nil
 }
