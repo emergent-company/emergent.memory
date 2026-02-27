@@ -61,6 +61,34 @@ Local and Dev refer to the **same environment** accessible via two methods. Pref
 | Domain (preferred) | `https://admin.dev.emergent-company.ai` | `https://api.dev.emergent-company.ai` |
 | Localhost          | `http://localhost:5176`                 | `http://localhost:3002`               |
 
+## Observability (OTel Tracing)
+
+Tracing is **opt-in**. When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset the server runs with a no-op provider (zero overhead).
+
+### Enable local tracing
+
+```bash
+# Start Grafana Tempo (single container, local storage)
+docker compose --profile observability up tempo -d
+
+# Add to .env.local
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_SERVICE_NAME=emergent-server
+OTEL_SAMPLING_RATE=1.0
+```
+
+### Query traces via CLI
+
+```bash
+emergent traces list                     # Recent traces (last 1h)
+emergent traces list --since 30m         # Last 30 minutes
+emergent traces search --service emergent-server --route /api/kb/documents
+emergent traces search --min-duration 500ms
+emergent traces get <traceID>            # Full span tree for a trace
+```
+
+Data is retained for 720 h (30 days) by default. Override with `OTEL_RETENTION_HOURS` in `.env.local`.
+
 ## Detailed Documentation
 
 - **Workspace operations**: `.opencode/instructions.md` (logging, process management)

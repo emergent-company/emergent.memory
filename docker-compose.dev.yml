@@ -134,9 +134,9 @@ services:
   # Requires: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 in .env.local
   # ---------------------------------------------------------------------------
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:2.6.1
     container_name: emergent-tempo
-    command: ["-config.file=/etc/tempo.yaml"]
+    command: ["-config.file=/etc/tempo.yaml", "-config.expand-env=true"]
     volumes:
       - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
       - tempo_data:/var/tempo

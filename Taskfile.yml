@@ -77,3 +77,13 @@ tasks:
     desc: Check server status
     cmds:
       - task: server:status
+
+  traces:list:
+    desc: List recent traces from Tempo (emergent traces list)
+    cmds:
+      - emergent traces list {{.CLI_ARGS}}
+
+  traces:get:
+    desc: Fetch a full trace by ID (emergent traces get <traceID>)
+    cmds:
+      - emergent traces get {{.CLI_ARGS}}
