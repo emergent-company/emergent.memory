@@ -8,6 +8,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var browseFlags struct {
+	tempoURL string
+}
+
 var browseCmd = &cobra.Command{
 	Use:   "browse",
 	Short: "Interactive TUI for browsing projects and documents",
@@ -20,7 +24,10 @@ The TUI provides:
 - Search functionality (press / to search)
 - Help panel (press ? to toggle)
 
-Minimum terminal size: 80x24`,
+Minimum terminal size: 80x24
+
+The Traces tab connects to Grafana Tempo. Set --tempo-url or EMERGENT_TEMPO_URL to point at
+a remote Tempo instance (default: http://localhost:3200).`,
 	RunE: runBrowse,
 }
 
@@ -31,7 +38,7 @@ func runBrowse(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create TUI model
-	model := tui.New(c)
+	model := tui.New(c, browseFlags.tempoURL)
 
 	// Run TUI
 	p := tea.NewProgram(model, tea.WithAltScreen())
@@ -44,4 +51,5 @@ func runBrowse(cmd *cobra.Command, args []string) error {
 
 func init() {
 	rootCmd.AddCommand(browseCmd)
+	browseCmd.Flags().StringVar(&browseFlags.tempoURL, "tempo-url", "", "Grafana Tempo base URL (default: $EMERGENT_TEMPO_URL or http://localhost:3200)")
 }

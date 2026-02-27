@@ -234,13 +234,26 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 
 	cliNeedsUpgrade := latestVersion != currentVersion || upgradeFlags.force
 
+	// Check current server version (saved to ~/.emergent/version after each upgrade)
+	var serverNeedsUpgrade bool
+	if serverInstalled && !upgradeFlags.cliOnly {
+		serverVersion := strings.TrimPrefix(inst.GetInstalledVersion(), "v")
+		serverNeedsUpgrade = serverVersion != latestVersion || upgradeFlags.force
+	}
+
 	if !cliNeedsUpgrade && !serverInstalled {
 		displayCurrent := strings.TrimPrefix(Version, "v")
 		fmt.Printf("You are already using the latest version: %s\n", displayCurrent)
 		return
 	}
 
-	if serverInstalled && !upgradeFlags.cliOnly && !release.ImagesReady {
+	if !cliNeedsUpgrade && serverInstalled && !serverNeedsUpgrade {
+		displayCurrent := strings.TrimPrefix(Version, "v")
+		fmt.Printf("Everything is up to date: %s\n", displayCurrent)
+		return
+	}
+
+	if serverInstalled && !upgradeFlags.cliOnly && serverNeedsUpgrade && !release.ImagesReady {
 		displayLatest := strings.TrimPrefix(release.TagName, "v")
 		fmt.Println()
 		fmt.Println("⚠️  Warning: Docker images for this release are still being built")
@@ -261,8 +274,10 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	displayCurrent := strings.TrimPrefix(Version, "v")
 	displayLatest := strings.TrimPrefix(release.TagName, "v")
 	fmt.Printf("Current CLI version: %s\n", displayCurrent)
-	fmt.Printf("Latest version: %s\n", displayLatest)
+	fmt.Printf("Latest version:      %s\n", displayLatest)
 	if serverInstalled && !upgradeFlags.cliOnly {
+		serverVersion := inst.GetInstalledVersion()
+		fmt.Printf("Server version:      %s\n", strings.TrimPrefix(serverVersion, "v"))
 		fmt.Printf("Server installation: %s\n", upgradeFlags.dir)
 	}
 	fmt.Println()
@@ -280,7 +295,11 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	}
 
 	if serverInstalled && !upgradeFlags.cliOnly {
-		fmt.Println("Will upgrade server: pull latest images and restart")
+		if serverNeedsUpgrade {
+			fmt.Printf("Will upgrade server: pull images and restart\n")
+		} else {
+			fmt.Println("Server is up to date")
+		}
 	}
 	fmt.Println()
 
@@ -316,7 +335,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		// We use the path returned by installUpdate() rather than os.Executable()
 		// because on Linux /proc/self/exe becomes a dead symlink after the binary
 		// is replaced, causing filepath.EvalSymlinks to fail.
-		if serverInstalled && !upgradeFlags.cliOnly {
+		if serverInstalled && !upgradeFlags.cliOnly && serverNeedsUpgrade {
 			fmt.Println()
 			fmt.Println("Upgrading server with new CLI...")
 			reexecArgs := []string{"upgrade", "server", "--dir", upgradeFlags.dir, "--force"}
@@ -334,8 +353,8 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Upgrade server if installed and not --cli-only (CLI was already up to date)
-	if serverInstalled && !upgradeFlags.cliOnly {
+	// Upgrade server if installed, not --cli-only, and server is out of date
+	if serverInstalled && !upgradeFlags.cliOnly && serverNeedsUpgrade {
 		fmt.Println()
 		fmt.Println("Upgrading server...")
 		cfg.ServerPort = inst.GetServerPort()
