@@ -9,10 +9,13 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/pkg/embeddings/vertex"
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
 // EmbeddingService is the interface for embedding services used by the worker.
@@ -227,6 +230,11 @@ type graphObjectRow struct {
 
 // processJob processes a single graph embedding job
 func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddingJob) error {
+	ctx, span := tracing.Start(ctx, "extraction.graph_embedding",
+		attribute.String("emergent.job.id", job.ID),
+	)
+	defer span.End()
+
 	startTime := time.Now()
 
 	// Fetch the graph object
@@ -239,16 +247,21 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 
 	if err == sql.ErrNoRows {
 		// Object doesn't exist, mark as failed with a short error
+		objErr := fmt.Errorf("object not found: %s", job.ObjectID)
+		span.RecordError(objErr)
+		span.SetStatus(codes.Error, objErr.Error())
 		if markErr := w.jobs.MarkFailed(ctx, job.ID, fmt.Errorf("object_missing")); markErr != nil {
 			w.log.Error("failed to mark job as failed",
 				slog.String("job_id", job.ID),
 				slog.String("error", markErr.Error()))
 		}
 		w.incrementFailure()
-		return fmt.Errorf("object not found: %s", job.ObjectID)
+		return objErr
 	}
 	if err != nil {
 		// Database error
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
 			w.log.Error("failed to mark job as failed",
 				slog.String("job_id", job.ID),
@@ -257,6 +270,9 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		w.incrementFailure()
 		return fmt.Errorf("fetch object: %w", err)
 	}
+
+	// Now we have the project ID from the fetched object
+	span.SetAttributes(attribute.String("emergent.project.id", obj.ProjectID))
 
 	// Extract text for embedding
 	text := w.extractText(obj)
@@ -269,6 +285,8 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 
 	if err != nil {
 		// Embedding failed
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
 			w.log.Error("failed to mark job as failed",
 				slog.String("job_id", job.ID),
@@ -281,6 +299,8 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 	if result == nil || len(result.Embedding) == 0 {
 		// No embedding returned (likely noop client)
 		err := fmt.Errorf("no embedding returned")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
 			w.log.Error("failed to mark job as failed",
 				slog.String("job_id", job.ID),
@@ -293,8 +313,8 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 	// Update the graph object with the embedding
 	// Note: embedding_v2 is vector(768), we need to use raw SQL for pgvector
 	now := time.Now()
-	_, err = w.db.NewRaw(`UPDATE kb.graph_objects 
-		SET embedding_v2 = ?::vector, 
+	_, err = w.db.NewRaw(`UPDATE kb.graph_objects
+		SET embedding_v2 = ?::vector,
 			embedding_updated_at = ?,
 			updated_at = ?
 		WHERE id = ?`,
@@ -302,6 +322,8 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 
 	if err != nil {
 		// Update failed
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
 			w.log.Error("failed to mark job as failed",
 				slog.String("job_id", job.ID),
@@ -316,6 +338,8 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		w.log.Error("failed to mark job as completed",
 			slog.String("job_id", job.ID),
 			slog.String("error", err.Error()))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
@@ -330,6 +354,7 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		slog.Int64("total_duration_ms", totalDurationMs))
 
 	w.incrementSuccess()
+	span.SetStatus(codes.Ok, "")
 	return nil
 }
 
@@ -471,6 +496,11 @@ func (w *GraphEmbeddingWorker) SetConfig(cfg GraphEmbeddingConfig) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	*w.cfg = cfg
+
+	if w.scaler != nil {
+		w.scaler.UpdateConfig(cfg.EnableAdaptiveScaling, cfg.MinConcurrency, cfg.MaxConcurrency)
+	}
+
 	w.log.Info("graph embedding worker config updated",
 		slog.Int("batch_size", cfg.WorkerBatchSize),
 		slog.Int("concurrency", cfg.WorkerConcurrency),

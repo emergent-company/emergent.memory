@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/domain/documents"
@@ -16,6 +18,7 @@ import (
 	"github.com/emergent-company/emergent/domain/graph"
 	"github.com/emergent-company/emergent/pkg/adk"
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
 // ObjectExtractionWorkerConfig holds configuration for the extraction worker.
@@ -169,6 +172,17 @@ func (w *ObjectExtractionWorker) run(ctx context.Context) {
 
 // processSingleJob processes a single job after it's dequeued
 func (w *ObjectExtractionWorker) processSingleJob(ctx context.Context, job *ObjectExtractionJob) error {
+	docID := ""
+	if job.DocumentID != nil {
+		docID = *job.DocumentID
+	}
+	ctx, span := tracing.Start(ctx, "extraction.object_extraction",
+		attribute.String("emergent.job.id", job.ID),
+		attribute.String("emergent.project.id", job.ProjectID),
+		attribute.String("emergent.document.id", docID),
+	)
+	defer span.End()
+
 	w.log.Info("processing extraction job",
 		slog.String("job_id", job.ID),
 		slog.String("project_id", job.ProjectID),
@@ -181,10 +195,18 @@ func (w *ObjectExtractionWorker) processSingleJob(ctx context.Context, job *Obje
 			slog.String("job_id", job.ID),
 			logger.Error(err))
 
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return w.jobsService.MarkFailed(ctx, job.ID, err.Error(), JSON{
 			"error_type": "processing_error",
 		})
 	}
+
+	span.SetAttributes(
+		attribute.Int("emergent.extraction.entity_count", result.ObjectsCreated),
+		attribute.Int("emergent.extraction.relationship_count", result.RelationshipsCreated),
+	)
+	span.SetStatus(codes.Ok, "")
 
 	// Mark completed
 	return w.jobsService.MarkCompleted(ctx, job.ID, *result)

@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/workflowagents/loopagent"
 	"google.golang.org/adk/agent/workflowagents/sequentialagent"
@@ -19,6 +21,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent/pkg/adk"
+	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
 // ExtractionPipelineConfig holds configuration for the extraction pipeline.
@@ -355,11 +358,16 @@ func (p *ExtractionPipeline) createEntityProcessorAgent() (agent.Agent, error) {
 		Description: "Processes extracted entities to add temp_ids for relationship building",
 		Run: func(ctx agent.InvocationContext) iter.Seq2[*session.Event, error] {
 			return func(yield func(*session.Event, error) bool) {
+				_, span := tracing.Start(ctx, "extraction.pipeline.extract_entities")
+				defer span.End()
+
 				state := ctx.Session().State()
 
 				// Get raw extracted entities
 				rawEntitiesAny, err := state.Get("extracted_entities_raw")
 				if err != nil {
+					span.RecordError(err)
+					span.SetStatus(codes.Error, err.Error())
 					yield(nil, fmt.Errorf("no extracted entities found: %w", err))
 					return
 				}
@@ -429,8 +437,12 @@ func (p *ExtractionPipeline) createEntityProcessorAgent() (agent.Agent, error) {
 					slog.Int("count", len(internalEntities)),
 				)
 
+				span.SetAttributes(attribute.Int("emergent.extraction.entity_count", len(internalEntities)))
+
 				// Use state.Set() for immediate visibility to subsequent agents
 				if err := state.Set("extracted_entities", internalEntities); err != nil {
+					span.RecordError(err)
+					span.SetStatus(codes.Error, err.Error())
 					yield(nil, fmt.Errorf("failed to set extracted_entities in state: %w", err))
 					return
 				}
@@ -442,6 +454,7 @@ func (p *ExtractionPipeline) createEntityProcessorAgent() (agent.Agent, error) {
 				event.Actions.StateDelta = map[string]any{
 					"extracted_entities": internalEntities,
 				}
+				span.SetStatus(codes.Ok, "")
 				yield(event, nil)
 			}
 		},
@@ -578,11 +591,15 @@ func (p *ExtractionPipeline) createRelationshipProcessorAgent() (agent.Agent, er
 		Description: "Processes relationship builder output to ensure state visibility for quality checker",
 		Run: func(ctx agent.InvocationContext) iter.Seq2[*session.Event, error] {
 			return func(yield func(*session.Event, error) bool) {
+				_, span := tracing.Start(ctx, "extraction.pipeline.extract_relationships")
+				defer span.End()
+
 				state := ctx.Session().State()
 
 				relsRaw, err := state.Get("extracted_relationships")
 				if err != nil {
 					p.log.Debug("no relationships in state yet, checking for raw output")
+					span.SetStatus(codes.Ok, "")
 					yield(nil, nil)
 					return
 				}
@@ -614,8 +631,12 @@ func (p *ExtractionPipeline) createRelationshipProcessorAgent() (agent.Agent, er
 
 				p.log.Debug("processed relationships", slog.Int("count", len(relationships)))
 
+				span.SetAttributes(attribute.Int("emergent.extraction.relationship_count", len(relationships)))
+
 				// Use state.Set() for immediate visibility to QualityChecker
 				if err := state.Set("extracted_relationships", relationships); err != nil {
+					span.RecordError(err)
+					span.SetStatus(codes.Error, err.Error())
 					yield(nil, fmt.Errorf("failed to set extracted_relationships in state: %w", err))
 					return
 				}
@@ -627,6 +648,7 @@ func (p *ExtractionPipeline) createRelationshipProcessorAgent() (agent.Agent, er
 				event.Actions.StateDelta = map[string]any{
 					"extracted_relationships": relationships,
 				}
+				span.SetStatus(codes.Ok, "")
 				yield(event, nil)
 			}
 		},
