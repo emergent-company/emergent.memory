@@ -645,8 +645,9 @@ func (m Model) renderTraces() string {
 		content.WriteString(errStyle.Render("⚠  Cannot reach Tempo\n" + m.tracesErr.Error()))
 		content.WriteString("\n\n")
 		content.WriteString(hintStyle.Render(
-			"Start Tempo first:\n  docker compose --profile observability up tempo -d\n\nURL: " + m.tempoURL +
-				"\nOverride: set EMERGENT_TEMPO_URL env var\n\nSwitch to this tab again to retry."))
+			"Tempo is expected to run alongside the server at:\n  " + m.tempoURL +
+				"\n\nEnsure the server deployment has Tempo enabled.\n" +
+				"Override with: emergent browse --tempo-url <url>\n\nSwitch to this tab again to retry."))
 		return content.String()
 	}
 	return m.tracesList.View()
