@@ -14,7 +14,8 @@ var browseCmd = &cobra.Command{
 	Long: `Launch an interactive terminal UI (TUI) for browsing projects, documents, and extractions.
 
 The TUI provides:
-- Tab-based navigation (Projects, Documents, Extractions)
+- Tab-based navigation (Projects, Documents, Worker Stats, Template Packs, Query, Extractions, Traces)
+- Natural language query (Ctrl+Q) to ask questions about your project
 - Vim-style keybindings (j/k for up/down, Enter to select)
 - Search functionality (press / to search)
 - Help panel (press ? to toggle)

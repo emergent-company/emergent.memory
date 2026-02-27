@@ -128,12 +128,40 @@ task test:coverage             # Tests with coverage report
 pnpm run test                  # Frontend unit tests
 ```
 
-## 4. Custom Tools
+## 4. Observability (OTel Tracing)
+
+Tracing is **opt-in** — set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable. Without it the server uses a no-op provider (zero overhead).
+
+### Start Tempo
+
+```bash
+docker compose --profile observability up tempo -d
+```
+
+Add to `.env.local`:
+```
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_SERVICE_NAME=emergent-server
+```
+
+### Query traces
+
+```bash
+emergent traces list                      # Recent traces (last 1h)
+emergent traces list --since 30m          # Last 30 min
+emergent traces search --service emergent-server
+emergent traces search --route /api/kb/documents --min-duration 200ms
+emergent traces get <traceID>             # Full span tree
+```
+
+Data retention defaults to 720 h (30 days). Override with `OTEL_RETENTION_HOURS` in `.env.local`.
+
+## 5. Custom Tools
 
 - **credentials** - Get test user credentials and application URLs
 - **open-browser** - Launch isolated browser with test credentials (Chromium preferred)
 
-## 5. Available MCP Servers
+## 6. Available MCP Servers
 
 MCP tool documentation is available via tool introspection. Key servers:
 
@@ -141,7 +169,7 @@ MCP tool documentation is available via tool introspection. Key servers:
 - **Chrome DevTools** - Browser debugging (start with `./scripts/start-chrome-debug.sh` first)
 - **SigNoz** - Observability (traces, logs, metrics, alerts)
 
-## 6. Database Queries
+## 7. Database Queries
 
 **Always consult `docs/database/schema-context.md` first.**
 
@@ -154,7 +182,7 @@ SELECT * FROM kb.object_extraction_jobs;
 
 **Schemas:** `kb` (knowledge base), `core` (users), `public` (extensions)
 
-## 7. Bug Reports & Improvements
+## 8. Bug Reports & Improvements
 
 - **Bugs:** `docs/bugs/` — Use `docs/bugs/TEMPLATE.md`
 - **Improvements:** `docs/improvements/` — Use `docs/improvements/TEMPLATE.md`

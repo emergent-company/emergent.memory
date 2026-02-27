@@ -25,23 +25,59 @@ type Client struct {
 
 // SearchRequest represents a search query.
 type SearchRequest struct {
-	Query    string `json:"query"`
-	Strategy string `json:"strategy,omitempty"` // lexical, semantic, hybrid
-	Limit    int    `json:"limit,omitempty"`
+	Query          string `json:"query"`
+	Limit          int    `json:"limit,omitempty"`
+	ResultTypes    string `json:"resultTypes,omitempty"`    // graph, text, both
+	FusionStrategy string `json:"fusionStrategy,omitempty"` // weighted, rrf, interleave, graph_first, text_first
+	IncludeDebug   bool   `json:"includeDebug,omitempty"`
 }
 
-// SearchResult represents a single search result.
+// SearchResult represents a unified search result item (can be graph, text, or relationship).
 type SearchResult struct {
-	DocumentID string  `json:"document_id"`
-	ChunkID    string  `json:"chunk_id"`
-	Content    string  `json:"content"`
-	Score      float64 `json:"score"`
+	// Common fields
+	Type  string  `json:"type"` // "graph", "text", or "relationship"
+	Score float32 `json:"score"`
+	Rank  int     `json:"rank"`
+
+	// Graph object fields
+	ObjectID        string         `json:"object_id,omitempty"`
+	CanonicalID     string         `json:"canonical_id,omitempty"`
+	ObjectType      string         `json:"object_type,omitempty"`
+	Key             string         `json:"key,omitempty"`
+	Fields          map[string]any `json:"fields,omitempty"`
+	LexicalScore    *float32       `json:"lexical_score,omitempty"`
+	VectorScore     *float32       `json:"vector_score,omitempty"`
+	TruncatedFields []string       `json:"truncated_fields,omitempty"`
+
+	// Text chunk fields
+	DocumentID string `json:"document_id,omitempty"`
+	ChunkID    string `json:"chunk_id,omitempty"`
+	Content    string `json:"content,omitempty"`
+
+	// Relationship fields
+	RelationshipType string  `json:"relationship_type,omitempty"`
+	SrcObjectID      string  `json:"src_object_id,omitempty"`
+	SrcObjectType    string  `json:"src_object_type,omitempty"`
+	SrcKey           *string `json:"src_key,omitempty"`
+	DstObjectID      string  `json:"dst_object_id,omitempty"`
+	DstObjectType    string  `json:"dst_object_type,omitempty"`
+	DstKey           *string `json:"dst_key,omitempty"`
 }
 
-// SearchResponse represents the response from a search query.
+// SearchMetadata contains metadata about the search results.
+type SearchMetadata struct {
+	Total      int     `json:"totalResults"`
+	GraphCount int     `json:"graphResultCount"`
+	TextCount  int     `json:"textResultCount"`
+	RelCount   int     `json:"relationshipResultCount"`
+	ElapsedMs  float64 `json:"elapsed_ms"`
+}
+
+// SearchResponse represents the response from a unified search query.
 type SearchResponse struct {
-	Results []SearchResult `json:"results"`
-	Total   int            `json:"total"`
+	Results  []SearchResult `json:"results"`
+	Metadata SearchMetadata `json:"metadata"`
+	Total    int            // Convenience field (same as Metadata.Total)
 }
 
 // NewClient creates a new Search service client.
@@ -108,12 +144,19 @@ func (c *Client) Search(ctx context.Context, req *SearchRequest) (*SearchRespons
 	}
 
 	// Parse response
-	var result struct {
-		Data SearchResponse `json:"data"`
+	var apiResponse struct {
+		Results  []SearchResult `json:"results"`
+		Metadata SearchMetadata `json:"metadata"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return &result.Data, nil
+	result := &SearchResponse{
+		Results:  apiResponse.Results,
+		Metadata: apiResponse.Metadata,
+		Total:    apiResponse.Metadata.Total,
+	}
+
+	return result, nil
 }

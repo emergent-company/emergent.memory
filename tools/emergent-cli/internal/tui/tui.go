@@ -17,6 +17,7 @@ import (
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/health"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/search"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/templatepacks"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
 )
@@ -29,8 +30,11 @@ const (
 	DocumentsView
 	WorkerStatsView
 	TemplatePacksView
+	QueryView
 	ExtractionsView
-	DetailsView
+	TracesView      // tab 6
+	DetailsView     // not a tab — document details overlay
+	TraceDetailView // not a tab — trace details overlay
 )
 
 // Model represents the state of the TUI application.
@@ -59,6 +63,13 @@ type Model struct {
 	compiledTypes          *templatepacks.CompiledTypesResponse
 	lastTemplatePacksFetch time.Time
 
+	// Query
+	queryMode    bool
+	queryInput   textinput.Model
+	queryResults []search.SearchResult
+	queryError   error
+	isQuerying   bool
+
 	// Search
 	searchMode  bool
 	searchInput textinput.Model
@@ -76,6 +87,15 @@ type Model struct {
 	selectedProjectName string
 	selectedOrgID       string
 	selectedDocID       string
+
+	// Traces (Tempo)
+	tracesList         list.Model
+	tracesData         []traceResult
+	selectedTraceID    string
+	selectedTraceData  *traceOTLPResp
+	tracesLoading      bool
+	tracesErr          error
+	tempoURL           string
 }
 
 // KeyMap defines keybindings
@@ -86,6 +106,7 @@ type KeyMap struct {
 	Back     key.Binding
 	Tab      key.Binding
 	Search   key.Binding
+	Query    key.Binding
 	Help     key.Binding
 	Quit     key.Binding
 	NextPage key.Binding
@@ -119,6 +140,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("/"),
 			key.WithHelp("/", "search"),
 		),
+		Query: key.NewBinding(
+			key.WithKeys("ctrl+q"),
+			key.WithHelp("ctrl+q", "query project"),
+		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),
 			key.WithHelp("?", "toggle help"),
@@ -140,14 +165,14 @@ func DefaultKeyMap() KeyMap {
 
 // ShortHelp returns keybindings to be shown in the mini help view
 func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Enter, k.Search, k.Help, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Enter, k.Search, k.Query, k.Help, k.Quit}
 }
 
 // FullHelp returns keybindings for the expanded help view
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Enter, k.Back},
-		{k.Tab, k.Search, k.NextPage, k.PrevPage},
+		{k.Tab, k.Search, k.Query, k.NextPage, k.PrevPage},
 		{k.Help, k.Quit},
 	}
 }
@@ -180,11 +205,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projectsList.SetSize(m.width-4, m.height-10)
 		m.documentsList.SetSize(m.width-4, m.height-10)
 		m.extractionsList.SetSize(m.width-4, m.height-10)
+		m.tracesList.SetSize(m.width-4, m.height-10)
 
 	case tea.KeyMsg:
 		// Global keybindings
 		if m.searchMode {
 			return m.handleSearchInput(msg)
+		}
+
+		if m.queryMode {
+			return m.handleQueryInput(msg)
 		}
 
 		switch {
@@ -200,8 +230,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchInput.Focus()
 			return m, textinput.Blink
 
+		case key.Matches(msg, m.keyMap.Query):
+			// Switch to query view
+			m.currentView = QueryView
+			m.activeTab = 4 // Query tab index
+			// Only focus input if project is selected
+			if m.selectedProjectID != "" {
+				m.queryMode = true
+				m.queryInput.Focus()
+				return m, textinput.Blink
+			}
+			return m, nil
+
 		case key.Matches(msg, m.keyMap.Tab):
-			m.activeTab = (m.activeTab + 1) % 5
+			m.activeTab = (m.activeTab + 1) % 7
 			m.currentView = ViewMode(m.activeTab)
 			// Load worker stats when switching to that tab
 			if m.currentView == WorkerStatsView {
@@ -211,10 +253,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentView == TemplatePacksView {
 				return m, loadTemplatePacks(m.client)
 			}
+			// Focus query input when switching to query tab (only if project selected)
+			if m.currentView == QueryView && m.selectedProjectID != "" {
+				m.queryMode = true
+				m.queryInput.Focus()
+				return m, textinput.Blink
+			}
+			// Load traces when switching to traces tab
+			if m.currentView == TracesView {
+				m.tracesLoading = true
+				m.tracesErr = nil
+				return m, loadTraces(m.tempoURL)
+			}
 			return m, nil
 
 		case key.Matches(msg, m.keyMap.Back):
 			switch m.currentView {
+			case TraceDetailView:
+				// Go back from trace detail to traces list
+				m.currentView = TracesView
+				m.activeTab = 6
+				m.selectedTraceID = ""
+				m.selectedTraceData = nil
 			case DetailsView:
 				// Go back from details to documents
 				m.currentView = DocumentsView
@@ -268,6 +328,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = fmt.Sprintf("Loaded %d template packs", len(msg.packs))
 		return m, nil
 
+	case queryResultsMsg:
+		m.queryResults = msg.results
+		m.isQuerying = false
+		m.statusMsg = fmt.Sprintf("Found %d results in %v for: %s", len(msg.results), msg.duration.Round(time.Millisecond), msg.query)
+		return m, nil
+
 	case tickMsg:
 		// Auto-refresh worker stats if we're on that view
 		if m.currentView == WorkerStatsView {
@@ -275,8 +341,62 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tracesLoadedMsg:
+		m.tracesLoading = false
+		m.tracesData = msg.traces
+		items := make([]list.Item, len(msg.traces))
+		for i, t := range msg.traces {
+			ts := ""
+			if t.StartTimeUnixNano != "" {
+				ts = traceNanoToTime(t.StartTimeUnixNano).Format("15:04:05")
+			}
+			svc := t.RootServiceName
+			if svc == "" {
+				svc = "unknown"
+			}
+			root := t.RootTraceName
+			if root == "" {
+				root = "(no name)"
+			}
+			items[i] = traceItem{
+				traceID:    t.TraceID,
+				service:    svc,
+				rootSpan:   root,
+				durationMs: t.DurationMs,
+				timestamp:  ts,
+			}
+		}
+		m.tracesList.SetItems(items)
+		m.statusMsg = fmt.Sprintf("Loaded %d traces", len(msg.traces))
+		return m, nil
+
+	case traceDetailLoadedMsg:
+		if msg.err != nil {
+			m.tracesErr = msg.err
+			m.statusMsg = "Failed to load trace"
+			return m, nil
+		}
+		m.selectedTraceData = msg.detail
+		m.currentView = TraceDetailView
+		m.statusMsg = "Trace: " + traceShortID(m.selectedTraceID)
+		return m, nil
+
+	case tracesErrMsg:
+		m.tracesLoading = false
+		m.tracesErr = msg.err
+		m.statusMsg = "Tempo unavailable"
+		return m, nil
+
 	case errMsg:
-		m.err = msg.err
+		// For query errors, just set queryError (don't block the whole UI)
+		if m.isQuerying || m.currentView == QueryView {
+			m.queryError = msg.err
+			m.isQuerying = false
+			m.statusMsg = "Query failed"
+		} else {
+			// For other errors, set m.err to show full error screen
+			m.err = msg.err
+		}
 		return m, nil
 	}
 
@@ -290,6 +410,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 	case ExtractionsView:
 		m.extractionsList, cmd = m.extractionsList.Update(msg)
+		cmds = append(cmds, cmd)
+	case TracesView:
+		m.tracesList, cmd = m.tracesList.Update(msg)
 		cmds = append(cmds, cmd)
 	}
 
@@ -317,6 +440,14 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.selectedDocID = item.id
 			m.currentView = DetailsView
 		}
+	case TracesView:
+		// Get selected trace
+		if item, ok := m.tracesList.SelectedItem().(traceItem); ok {
+			m.selectedTraceID = item.traceID
+			m.selectedTraceData = nil
+			m.statusMsg = "Loading trace..."
+			return m, loadTraceDetail(m.tempoURL, item.traceID)
+		}
 	}
 	return m, nil
 }
@@ -341,6 +472,37 @@ func (m Model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.searchInput, cmd = m.searchInput.Update(msg)
+	return m, cmd
+}
+
+// handleQueryInput handles query input in Query view
+func (m Model) handleQueryInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEscape:
+		m.queryMode = false
+		m.queryInput.Blur()
+		m.queryError = nil // Clear any error when exiting query mode
+		return m, nil
+
+	case tea.KeyEnter:
+		query := m.queryInput.Value()
+		if query == "" {
+			return m, nil
+		}
+		// Execute query
+		m.isQuerying = true
+		m.queryError = nil
+		m.statusMsg = "Executing query..."
+		return m, performQuery(m.client, query)
+	}
+
+	// Clear error when user starts typing again
+	if m.queryError != nil {
+		m.queryError = nil
+	}
+
+	var cmd tea.Cmd
+	m.queryInput, cmd = m.queryInput.Update(msg)
 	return m, cmd
 }
 
@@ -380,8 +542,14 @@ func (m Model) View() string {
 		content.WriteString(m.renderWorkerStats())
 	case TemplatePacksView:
 		content.WriteString(m.renderTemplatePacks())
+	case QueryView:
+		content.WriteString(m.renderQuery())
 	case ExtractionsView:
 		content.WriteString(m.extractionsList.View())
+	case TracesView:
+		content.WriteString(m.renderTraces())
+	case TraceDetailView:
+		content.WriteString(m.renderTraceDetail())
 	case DetailsView:
 		content.WriteString(m.renderDetails())
 	}
@@ -409,7 +577,7 @@ func (m Model) View() string {
 
 // renderTabBar renders the tab bar
 func (m Model) renderTabBar() string {
-	tabs := []string{"Projects", "Documents", "Worker Stats", "Template Packs", "Extractions"}
+	tabs := []string{"Projects", "Documents", "Worker Stats", "Template Packs", "Query", "Extractions", "Traces"}
 	var renderedTabs []string
 
 	activeStyle := lipgloss.NewStyle().
@@ -457,11 +625,126 @@ func (m Model) renderStatusBar() string {
 	status := m.statusMsg
 	if m.selectedProjectName != "" {
 		status += " | Current Project: " + projectStyle.Render(m.selectedProjectName)
-	} else if m.currentView != ProjectsView {
+	} else if m.currentView != ProjectsView && m.currentView != TracesView && m.currentView != TraceDetailView {
 		status += " | " + lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("No project selected")
 	}
 
 	return style.Render(status)
+}
+
+// renderTraces renders the traces list view.
+func (m Model) renderTraces() string {
+	if m.tracesLoading {
+		loadingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Padding(1, 2)
+		return loadingStyle.Render("⏳ Loading traces from Tempo...")
+	}
+	if m.tracesErr != nil {
+		var content strings.Builder
+		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Padding(1, 2)
+		hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 2)
+		content.WriteString(errStyle.Render("⚠  Cannot reach Tempo\n" + m.tracesErr.Error()))
+		content.WriteString("\n\n")
+		content.WriteString(hintStyle.Render(
+			"Start Tempo first:\n  docker compose --profile observability up tempo -d\n\nURL: " + m.tempoURL +
+				"\nOverride: set EMERGENT_TEMPO_URL env var\n\nSwitch to this tab again to retry."))
+		return content.String()
+	}
+	return m.tracesList.View()
+}
+
+// renderTraceDetail renders the full span tree for the selected trace.
+func (m Model) renderTraceDetail() string {
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).Padding(0, 1)
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 1)
+	okStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	attrStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	var content strings.Builder
+	content.WriteString(headerStyle.Render("Trace: " + m.selectedTraceID))
+	content.WriteString("\n")
+	content.WriteString(dimStyle.Render("Press Esc to go back"))
+	content.WriteString("\n\n")
+
+	if m.selectedTraceData == nil {
+		content.WriteString("  Loading...")
+		return content.String()
+	}
+
+	// Build span node map
+	type spanNode struct {
+		span     traceSpan
+		children []*spanNode
+	}
+	nodes := map[string]*spanNode{}
+	var roots []*spanNode
+
+	for _, batch := range m.selectedTraceData.Batches {
+		for _, ss := range batch.ScopeSpans {
+			for _, s := range ss.Spans {
+				n := &spanNode{span: s}
+				nodes[s.SpanID] = n
+			}
+		}
+	}
+	for _, n := range nodes {
+		if n.span.ParentSpanID == "" {
+			roots = append(roots, n)
+		} else if parent, ok := nodes[n.span.ParentSpanID]; ok {
+			parent.children = append(parent.children, n)
+		} else {
+			roots = append(roots, n)
+		}
+	}
+
+	// Cap rendered lines to avoid overflowing terminal
+	maxLines := m.height - 10
+	lines := 0
+
+	var printNode func(n *spanNode, indent int)
+	printNode = func(n *spanNode, indent int) {
+		if lines >= maxLines {
+			return
+		}
+		s := n.span
+		durMs := traceSpanDurMs(s.StartTimeUnixNano, s.EndTimeUnixNano)
+
+		icon := okStyle.Render("✓")
+		if s.Status.Code == 2 {
+			icon = errStyle.Render("✗")
+		}
+
+		prefix := strings.Repeat("  ", indent)
+		content.WriteString(fmt.Sprintf("%s%s %s  [%s]\n", prefix, icon, s.Name, traceFmtDur(durMs)))
+		lines++
+
+		for _, key := range []string{"http.method", "http.route", "http.status_code", "db.statement", "error"} {
+			if lines >= maxLines {
+				return
+			}
+			if v := traceAttrValue(s.Attributes, key); v != "" {
+				if len(v) > 70 {
+					v = v[:69] + "…"
+				}
+				content.WriteString(attrStyle.Render(fmt.Sprintf("%s    %s: %s\n", prefix, key, v)))
+				lines++
+			}
+		}
+
+		for _, c := range n.children {
+			printNode(c, indent+1)
+		}
+	}
+
+	for _, r := range roots {
+		printNode(r, 0)
+	}
+
+	if lines >= maxLines {
+		content.WriteString(dimStyle.Render("  … (truncated — terminal too small to show all spans)"))
+	}
+
+	return content.String()
 }
 
 // renderDetails renders the details view
@@ -472,6 +755,137 @@ func (m Model) renderDetails() string {
 		Padding(1, 2)
 
 	return style.Render("Details view - coming soon\nPress Esc to go back")
+}
+
+// renderQuery renders the query view
+func (m Model) renderQuery() string {
+	var content strings.Builder
+
+	// Header
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("12")).
+		Padding(0, 1)
+
+	title := "Natural Language Query"
+	if m.selectedProjectName != "" {
+		title += " - " + m.selectedProjectName
+	}
+	content.WriteString(headerStyle.Render(title))
+	content.WriteString("\n\n")
+
+	// Check if project is selected
+	if m.selectedProjectID == "" {
+		warningStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("11")).
+			Bold(true).
+			Padding(1, 2)
+
+		helpStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Padding(1, 2)
+
+		content.WriteString(warningStyle.Render("⚠  No Project Selected"))
+		content.WriteString("\n\n")
+		content.WriteString(helpStyle.Render("To query a project:\n1. Press Tab to go to Projects\n2. Press Enter on a project to select it\n3. Press Ctrl+Q or Tab to Query"))
+		return content.String()
+	}
+
+	// Query input
+	inputStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("12")).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(0, 1).
+		Width(m.width - 6)
+
+	content.WriteString(inputStyle.Render("Question: " + m.queryInput.View()))
+	content.WriteString("\n\n")
+
+	// Instructions
+	instructionStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Padding(0, 1)
+
+	content.WriteString(instructionStyle.Render("Type your question and press Enter to search. Press Esc to cancel."))
+	content.WriteString("\n\n")
+
+	// Show loading indicator
+	if m.isQuerying {
+		loadingStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("11")).
+			Bold(true).
+			Padding(0, 1)
+		content.WriteString(loadingStyle.Render("⏳ Searching..."))
+		content.WriteString("\n")
+		return content.String()
+	}
+
+	// Show error if any
+	if m.queryError != nil {
+		errorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("9")).
+			Bold(true).
+			Padding(0, 1)
+		helpStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Padding(0, 1)
+
+		content.WriteString(errorStyle.Render(fmt.Sprintf("❌ Error: %s", m.queryError.Error())))
+		content.WriteString("\n\n")
+		content.WriteString(helpStyle.Render("Press Esc to dismiss error, or start typing to try again. Press q to quit."))
+		content.WriteString("\n")
+		return content.String()
+	}
+
+	// Show results
+	if len(m.queryResults) > 0 {
+		resultHeaderStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("10")).
+			Padding(0, 1)
+
+		content.WriteString(resultHeaderStyle.Render(fmt.Sprintf("Results (%d found):", len(m.queryResults))))
+		content.WriteString("\n\n")
+
+		// Render each result
+		for i, result := range m.queryResults {
+			resultStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("240")).
+				Padding(1, 2).
+				Width(m.width - 8)
+
+			scoreStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("14")).
+				Bold(true)
+
+			docStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240"))
+
+			resultText := fmt.Sprintf("%s (Score: %s)\n\n%s\n\n%s",
+				scoreStyle.Render(fmt.Sprintf("Result #%d", i+1)),
+				scoreStyle.Render(fmt.Sprintf("%.2f", result.Score)),
+				result.Content,
+				docStyle.Render(fmt.Sprintf("Document ID: %s | Chunk ID: %s", result.DocumentID, result.ChunkID)))
+
+			content.WriteString(resultStyle.Render(resultText))
+			content.WriteString("\n")
+
+			// Limit display to avoid overwhelming the terminal
+			if i >= 2 {
+				moreStyle := lipgloss.NewStyle().
+					Foreground(lipgloss.Color("240")).
+					Italic(true).
+					Padding(0, 1)
+				content.WriteString(moreStyle.Render(fmt.Sprintf("... and %d more results", len(m.queryResults)-3)))
+				content.WriteString("\n")
+				break
+			}
+		}
+	}
+
+	return content.String()
 }
 
 // renderWorkerStats renders the worker stats view
@@ -789,9 +1203,21 @@ func New(client *client.Client) Model {
 	extractionsList.SetFilteringEnabled(false)
 	extractionsList.Styles.NoItems = emptyStyle
 
+	tracesList := list.New([]list.Item{}, delegate, 0, 0)
+	tracesList.Title = "Traces  (press Enter for detail, Tab to refresh)"
+	tracesList.SetShowHelp(false)
+	tracesList.SetShowStatusBar(false)
+	tracesList.SetFilteringEnabled(false)
+	tracesList.Styles.NoItems = emptyStyle
+
 	// Create search input
 	searchInput := textinput.New()
 	searchInput.Placeholder = "Search..."
+
+	// Create query input
+	queryInput := textinput.New()
+	queryInput.Placeholder = "Ask a question about your project..."
+	queryInput.Width = 80
 
 	return Model{
 		client:          client,
@@ -801,11 +1227,14 @@ func New(client *client.Client) Model {
 		projectsList:    projectsList,
 		documentsList:   documentsList,
 		extractionsList: extractionsList,
+		tracesList:      tracesList,
 		searchInput:     searchInput,
+		queryInput:      queryInput,
 		help:            help.New(),
 		keyMap:          DefaultKeyMap(),
 		showHelp:        false,
 		statusMsg:       "Loading projects...",
+		tempoURL:        resolveTempoURL(),
 	}
 }
 
@@ -826,6 +1255,12 @@ type workerStatsLoadedMsg struct {
 type templatePacksLoadedMsg struct {
 	packs         []templatepacks.InstalledPackItem
 	compiledTypes *templatepacks.CompiledTypesResponse
+}
+
+type queryResultsMsg struct {
+	results  []search.SearchResult
+	query    string
+	duration time.Duration
 }
 
 type errMsg struct {
@@ -964,6 +1399,33 @@ func performSearch(client *client.Client, query string) tea.Cmd {
 	}
 }
 
+func performQuery(client *client.Client, query string) tea.Cmd {
+	return func() tea.Msg {
+		start := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+
+		// Perform unified search with weighted fusion strategy
+		response, err := client.SDK.Search.Search(ctx, &search.SearchRequest{
+			Query:          query,
+			FusionStrategy: "weighted", // Use weighted fusion for best results
+			ResultTypes:    "both",     // Search both graph and text
+			Limit:          10,
+		})
+		elapsed := time.Since(start)
+
+		if err != nil {
+			return errMsg{err: fmt.Errorf("query failed after %v: %w", elapsed, err)}
+		}
+
+		return queryResultsMsg{
+			results:  response.Results,
+			query:    query,
+			duration: elapsed,
+		}
+	}
+}
+
 // Auto-refresh ticker for worker stats
 func tickEvery(interval time.Duration) tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
@@ -993,3 +1455,20 @@ type documentItem struct {
 func (d documentItem) FilterValue() string { return d.filename }
 func (d documentItem) Title() string       { return d.filename }
 func (d documentItem) Description() string { return d.status }
+
+// traceItem is a list.Item for the Traces tab.
+type traceItem struct {
+	traceID    string
+	service    string
+	rootSpan   string
+	durationMs float64
+	timestamp  string
+}
+
+func (t traceItem) FilterValue() string { return t.rootSpan + " " + t.service }
+func (t traceItem) Title() string {
+	return fmt.Sprintf("[%s]  %s", traceShortID(t.traceID), t.rootSpan)
+}
+func (t traceItem) Description() string {
+	return fmt.Sprintf("%s  •  %s  •  %s", t.service, traceFmtDur(t.durationMs), t.timestamp)
+}
