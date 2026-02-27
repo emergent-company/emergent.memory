@@ -71,6 +71,18 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.cfg.OrgID = orgID
 	c.cfg.ProjectID = projectID
 }
+
+// ProjectID returns the current project ID
 func (c *Client) ProjectID() string {
 	return c.cfg.ProjectID
+}
+
+// BaseURL returns the server URL
+func (c *Client) BaseURL() string {
+	return c.cfg.ServerURL
+}
+
+// APIKey returns the API key if configured
+func (c *Client) APIKey() string {
+	return c.cfg.APIKey
 }

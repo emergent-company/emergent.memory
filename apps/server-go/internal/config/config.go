@@ -55,6 +55,9 @@ type Config struct {
 	// Brave Search API configuration
 	BraveSearch BraveSearchConfig
 
+	// OpenTelemetry tracing configuration
+	Otel OtelConfig
+
 	// Server timeouts
 	ReadTimeout     time.Duration `env:"SERVER_READ_TIMEOUT" envDefault:"3600s"`   // 1 hour for large file uploads
 	WriteTimeout    time.Duration `env:"SERVER_WRITE_TIMEOUT" envDefault:"28800s"` // 8 hours for SSE
