@@ -873,14 +873,18 @@ func (m Model) renderQuery() string {
 	}
 
 	// Show natural language response
-	if m.queryResponse != "" {
-		responseStyle := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("10")).
-			Padding(1, 2).
-			Width(m.width - 8)
+	responseStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("10")).
+		Padding(1, 2).
+		Width(m.width - 8)
 
+	if m.queryResponse != "" {
 		content.WriteString(responseStyle.Render(m.queryResponse))
+		content.WriteString("\n")
+	} else if strings.HasPrefix(m.statusMsg, "Query answered") {
+		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 1)
+		content.WriteString(dimStyle.Render("No response received. The project may have no indexed data yet."))
 		content.WriteString("\n")
 	}
 
@@ -1401,9 +1405,6 @@ func performSearch(client *client.Client, query string) tea.Cmd {
 	}
 }
 
-// defaultQueryAgentID is the agent definition used for natural language queries.
-const defaultQueryAgentID = "70356e5f-2c97-4ce4-9754-ec14e15a2a13"
-
 func performQuery(c *client.Client, projectID, query string) tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
@@ -1411,8 +1412,7 @@ func performQuery(c *client.Client, projectID, query string) tea.Cmd {
 		defer cancel()
 
 		reqBody := map[string]interface{}{
-			"message":           query,
-			"agentDefinitionId": defaultQueryAgentID,
+			"message": query,
 		}
 		bodyBytes, err := json.Marshal(reqBody)
 		if err != nil {
