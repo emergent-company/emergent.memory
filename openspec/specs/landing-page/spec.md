@@ -5,7 +5,7 @@ TBD - created by archiving change add-emergent-product-hierarchy. Update Purpose
 ## Requirements
 ### Requirement: Product Hierarchy Landing Page
 
-The landing page SHALL present Emergent as a platform with multiple product offerings, positioning Emergent Core as the foundation technology and showcasing specialized products built on top.
+The landing page SHALL present Emergent as a platform with multiple product offerings, positioning Emergent Core as the foundation technology and showcasing specialized products built on top. The page SHALL be rendered as static HTML using the static website generation system.
 
 #### Scenario: Landing page shows Core positioning
 
@@ -15,6 +15,7 @@ The landing page SHALL present Emergent as a platform with multiple product offe
 - **AND** the page SHALL include a "Products Built on Emergent Core" section
 - **AND** the products section SHALL display cards for Emergent Personal Assistant and Emergent Product Framework
 - **AND** each product card SHALL include: product name, tagline, 2-3 key benefits, and a link to the product page
+- **AND** the page SHALL be served as pre-rendered static HTML (no client-side JavaScript framework required)
 
 #### Scenario: Navigation to product pages
 
@@ -22,6 +23,7 @@ The landing page SHALL present Emergent as a platform with multiple product offe
 - **WHEN** the user clicks on a product card or navigation link
 - **THEN** the system SHALL navigate to the corresponding product page (`/personal-assistant` or `/product-framework`)
 - **AND** the browser history SHALL update with the new URL
+- **AND** the navigation SHALL be a standard HTML link (no client-side routing required)
 
 #### Scenario: Core platform features section
 
@@ -29,6 +31,7 @@ The landing page SHALL present Emergent as a platform with multiple product offe
 - **WHEN** they scroll to the features section
 - **THEN** the page SHALL display Core platform capabilities (knowledge graph, semantic embeddings, AI chat, MCP integration, configurable template packs)
 - **AND** features SHALL emphasize platform extensibility and foundation capabilities
+- **AND** the section SHALL be rendered from content data (YAML) into HTML via Go templates
 
 ### Requirement: Personal Assistant Product Page
 
@@ -201,4 +204,171 @@ Product pages SHALL load quickly and provide a smooth user experience.
 - **WHEN** they navigate to another product page
 - **THEN** the navigation SHALL be near-instantaneous (client-side routing)
 - **AND** the page SHALL not require full page reload
+
+### Requirement: Landing Page Product Branding
+
+The landing page SHALL represent the "Emergent" product with accurate branding, messaging, and visual identity.
+
+#### Scenario: User visits landing page
+
+- **WHEN** a user navigates to `/` or `/landing`
+- **THEN** the page displays "Emergent" branding (logo, product name)
+- **AND** all references to template content (Scalo, generic dashboards) are removed
+
+#### Scenario: Logo displays correctly
+
+- **WHEN** the landing page renders
+- **THEN** the Emergent logo appears in the topbar
+- **AND** the logo works in both light and dark themes
+- **AND** the logo is accessible (alt text, proper ARIA labels)
+
+### Requirement: Clear Value Proposition
+
+The landing page SHALL communicate Emergent's core value: transforming documents into AI-ready knowledge through intelligent database processing.
+
+#### Scenario: Hero section conveys purpose
+
+- **WHEN** a user views the hero section
+- **THEN** the primary headline clearly states the product's main benefit
+- **AND** the supporting text explains how Emergent works (semantic embeddings, graph relationships, MCP)
+- **AND** the language is accessible to both technical and non-technical audiences
+
+#### Scenario: Call-to-action guides users
+
+- **WHEN** a user wants to try the product
+- **THEN** a prominent "Open Dashboard" button is visible
+- **AND** clicking the button navigates to `/admin`
+- **AND** secondary actions (docs, GitHub) are available but less prominent
+
+### Requirement: Product-Specific Features
+
+The landing page SHALL highlight Emergent's key capabilities: document ingestion, semantic embeddings, knowledge graph, schema-aware chat, hybrid search, and multi-tenant projects.
+
+#### Scenario: Features section displays core capabilities
+
+- **WHEN** a user scrolls to the features section
+- **THEN** exactly 6 feature cards are displayed
+- **AND** each card has an icon, title, and brief description
+- **AND** features focus on user benefits, not implementation details
+
+#### Scenario: Feature content is accurate
+
+- **WHEN** feature descriptions are rendered
+- **THEN** they accurately reflect implemented functionality
+- **AND** no placeholder or template content is shown
+- **AND** technical terms are explained in user-friendly language
+
+### Requirement: Clean Content Removal
+
+The landing page SHALL NOT contain template-specific content: technology stack badges, e-commerce/CRM showcase, "Buy Now" buttons, testimonials, or bundle offers.
+
+#### Scenario: Template content is removed
+
+- **WHEN** the landing page renders
+- **THEN** no technology stack logos (React, Next.js, Tailwind, etc.) are visible
+- **AND** no e-commerce/CRM/dashboard screenshots are shown
+- **AND** no "Buy Now" or purchase-related buttons exist
+- **AND** no references to template marketplace (Scalo, daisyUI store) appear
+
+#### Scenario: Showcase section is product-focused
+
+- **WHEN** the showcase section renders (if present)
+- **THEN** it displays Emergent product screenshots OR architecture diagram OR is removed entirely
+- **AND** no generic admin dashboard templates are shown
+
+### Requirement: SEO and Accessibility
+
+The landing page SHALL include proper meta tags, semantic HTML, and accessibility features for Emergent branding.
+
+#### Scenario: Meta tags reflect product
+
+- **WHEN** the page HTML is rendered
+- **THEN** the page title is "Emergent - AI-Ready Knowledge Management"
+- **AND** meta description accurately describes Emergent's purpose
+- **AND** Open Graph tags use Emergent branding and description
+
+#### Scenario: Accessibility standards met
+
+- **WHEN** the page is evaluated for accessibility
+- **THEN** all images have appropriate alt text
+- **AND** heading hierarchy is semantic (h1, h2, h3)
+- **AND** keyboard navigation works for all interactive elements
+- **AND** ARIA labels are present where needed
+
+### Requirement: Responsive Design Maintained
+
+The landing page SHALL maintain responsive design and theme compatibility (light/dark mode) after rebranding.
+
+#### Scenario: Mobile layout works correctly
+
+- **WHEN** the page is viewed on mobile devices (< 768px)
+- **THEN** all content is readable and properly formatted
+- **AND** navigation is accessible via mobile menu
+- **AND** images and sections stack appropriately
+
+#### Scenario: Theme switching works
+
+- **WHEN** a user toggles between light and dark themes
+- **THEN** all text remains readable
+- **AND** images/logos display appropriate variants
+- **AND** color contrast meets accessibility standards (WCAG AA)
+
+### Requirement: Static HTML Rendering
+
+The landing page and all product pages SHALL be generated as static HTML files using the static website generation system, not rendered client-side by React.
+
+#### Scenario: Build-time page generation
+
+- **GIVEN** the static site generator runs
+- **WHEN** processing the landing page template and content
+- **THEN** the system SHALL generate `dist/index.html` with fully rendered HTML
+- **AND** all component templates (Hero, Features, CTA, Footer) SHALL be composed into the final HTML
+- **AND** the HTML SHALL be minified and optimized for production
+- **AND** the HTML SHALL include all necessary metadata for SEO
+
+#### Scenario: Asset references in static HTML
+
+- **GIVEN** a static HTML page is generated
+- **WHEN** the HTML references CSS, JavaScript, or images
+- **THEN** all asset URLs SHALL use absolute paths from site root (e.g., `/assets/css/style.min.css`)
+- **AND** asset URLs SHALL include content hashes for cache busting (e.g., `style.abc123.min.css`)
+- **AND** all asset files SHALL exist in the `dist/assets/` directory
+
+#### Scenario: Content updates trigger rebuild
+
+- **GIVEN** content data is updated (e.g., YAML file edited)
+- **WHEN** the static site generator runs
+- **THEN** the affected pages SHALL be regenerated with new content
+- **AND** unchanged pages SHALL not be rebuilt (incremental build optimization)
+- **AND** the build SHALL complete in \u003c5 seconds for single page update
+
+### Requirement: Landing Page Performance
+
+The static landing page SHALL load quickly and achieve high performance scores on standard benchmarks.
+
+#### Scenario: Fast initial load
+
+- **GIVEN** a user visits the landing page for the first time
+- **WHEN** the page begins loading
+- **THEN** the First Contentful Paint SHALL occur within 1.5 seconds
+- **AND** the Largest Contentful Paint SHALL occur within 2.5 seconds
+- **AND** the page SHALL be interactive within 3 seconds (Time to Interactive)
+
+#### Scenario: Lighthouse performance score
+
+- **GIVEN** the landing page is tested with Google Lighthouse
+- **WHEN** running on a standard connection (4G)
+- **THEN** the Performance score SHALL be ≥90
+- **AND** the Accessibility score SHALL be ≥90
+- **AND** the Best Practices score SHALL be ≥90
+- **AND** the SEO score SHALL be ≥90
+
+#### Scenario: Asset size budgets
+
+- **GIVEN** the landing page is analyzed
+- **WHEN** examining total page weight
+- **THEN** the HTML file SHALL be \u003c50KB (uncompressed)
+- **AND** the CSS file SHALL be \u003c30KB (gzipped)
+- **AND** the JavaScript file SHALL be \u003c5KB (gzipped)
+- **AND** total page weight (excluding large images) SHALL be \u003c200KB
 

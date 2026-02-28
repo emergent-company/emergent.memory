@@ -28,29 +28,6 @@ func newADKSessionsCmd() *cobra.Command {
 	return cmd
 }
 
-func resolveADKSessionsProjectID(cmd *cobra.Command) (string, error) {
-	if adkSessionsProjectID != "" {
-		if isUUID(adkSessionsProjectID) {
-			return adkSessionsProjectID, nil
-		}
-		c, err := getClient(cmd)
-		if err != nil {
-			return "", err
-		}
-		return resolveProjectNameOrID(c, adkSessionsProjectID)
-	}
-
-	c, err := getClient(cmd)
-	if err != nil {
-		return "", err
-	}
-	if c.ProjectID() != "" {
-		return c.ProjectID(), nil
-	}
-
-	return "", fmt.Errorf("no project ID configured. Use --project-id flag or set it in config")
-}
-
 func newListADKSessionsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -62,7 +39,7 @@ func newListADKSessionsCmd() *cobra.Command {
 				return err
 			}
 
-			projectID, err := resolveADKSessionsProjectID(cmd)
+			projectID, err := resolveProjectContext(cmd, adkSessionsProjectID)
 			if err != nil {
 				return err
 			}
@@ -100,7 +77,7 @@ func newGetADKSessionCmd() *cobra.Command {
 				return err
 			}
 
-			projectID, err := resolveADKSessionsProjectID(cmd)
+			projectID, err := resolveProjectContext(cmd, adkSessionsProjectID)
 			if err != nil {
 				return err
 			}

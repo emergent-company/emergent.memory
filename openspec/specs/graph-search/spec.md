@@ -1,11 +1,20 @@
-## MODIFIED Requirements
+# graph-search Specification
 
+## Purpose
+Specification for graph search functionality.
+## Requirements
 ### Requirement: Hybrid search includes relationship embeddings alongside object embeddings
 
-The system SHALL extend existing hybrid search to query both graph object embeddings and graph relationship embeddings, merging results via Reciprocal Rank Fusion.
+The system SHALL extend existing hybrid search to query both graph object embeddings and graph relationship embeddings, merging results via Reciprocal Rank Fusion, with improved recall via increased IVFFlat probes.
 
-**Modified from:** Search queries only `kb.graph_objects.embedding_vec`  
-**Modified to:** Search queries both `kb.graph_objects.embedding_vec` AND `kb.graph_relationships.embedding`
+**Modified from:** IVFFlat probes at default (1), no query-aware expansion
+**Modified to:** IVFFlat probes set to 10 for all vector queries, optional query-aware expansion mode
+
+#### Scenario: Vector search sets IVFFlat probes for improved recall
+
+- **WHEN** executing any vector similarity query against `graph_objects.embedding_v2`
+- **THEN** the system SHALL set `SET LOCAL ivfflat.probes = 10` within the transaction before executing the query
+- **AND** this SHALL apply to FTS+vector hybrid search, vector-only search, and similar-objects search
 
 #### Scenario: Search queries both objects and relationships
 
@@ -93,3 +102,22 @@ The SDK SHALL expose hybrid search result objects using the `VersionID` and `Ent
 
 - **WHEN** SDK consumer accesses `result.ID` or `result.CanonicalID` during the deprecation period
 - **THEN** the values SHALL be identical to `result.VersionID` and `result.EntityID` respectively
+
+### Requirement: Graph expansion supports query-aware edge prioritization
+
+The system SHALL support an optional query-aware mode on graph expansion endpoints where edges are prioritized by semantic similarity to a query string.
+
+**Modified from:** ExpandGraph uses unranked BFS traversal
+**Modified to:** ExpandGraph optionally accepts queryContext for similarity-ranked edge traversal
+
+#### Scenario: Expansion endpoint accepts queryContext
+
+- **WHEN** a client calls the graph expansion API with `queryContext: "funding rounds"`
+- **THEN** the system SHALL pass the query context to the ExpandGraph function
+- **AND** edge traversal SHALL be prioritized by relationship embedding similarity to the query
+
+#### Scenario: Expansion without queryContext unchanged
+
+- **WHEN** a client calls graph expansion without queryContext
+- **THEN** behavior SHALL be identical to current unranked BFS implementation
+

@@ -102,10 +102,16 @@ func parseEnvVars(envVarStrs []string) (map[string]any, error) {
 }
 
 func runListMCPServers(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	result, err := c.SDK.MCPRegistry.List(context.Background())
 	if err != nil {
@@ -144,10 +150,16 @@ func runListMCPServers(cmd *cobra.Command, args []string) error {
 func runGetMCPServer(cmd *cobra.Command, args []string) error {
 	serverID := args[0]
 
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	result, err := c.SDK.MCPRegistry.Get(context.Background(), serverID)
 	if err != nil {
@@ -207,10 +219,16 @@ func runGetMCPServer(cmd *cobra.Command, args []string) error {
 }
 
 func runCreateMCPServer(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	serverType := mcpregistry.MCPServerType(mcpServerType)
 
@@ -264,10 +282,16 @@ func runCreateMCPServer(cmd *cobra.Command, args []string) error {
 func runDeleteMCPServer(cmd *cobra.Command, args []string) error {
 	serverID := args[0]
 
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	err = c.SDK.MCPRegistry.Delete(context.Background(), serverID)
 	if err != nil {
@@ -281,10 +305,16 @@ func runDeleteMCPServer(cmd *cobra.Command, args []string) error {
 func runSyncMCPServer(cmd *cobra.Command, args []string) error {
 	serverID := args[0]
 
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	result, err := c.SDK.MCPRegistry.SyncTools(context.Background(), serverID)
 	if err != nil {
@@ -303,10 +333,16 @@ func runSyncMCPServer(cmd *cobra.Command, args []string) error {
 func runInspectMCPServer(cmd *cobra.Command, args []string) error {
 	serverID := args[0]
 
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	result, err := c.SDK.MCPRegistry.Inspect(context.Background(), serverID)
 	if err != nil {
@@ -389,10 +425,16 @@ func runInspectMCPServer(cmd *cobra.Command, args []string) error {
 func runListMCPServerTools(cmd *cobra.Command, args []string) error {
 	serverID := args[0]
 
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	result, err := c.SDK.MCPRegistry.ListTools(context.Background(), serverID)
 	if err != nil {

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apitokens"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -56,48 +55,8 @@ var (
 	tokenScopes    string
 )
 
-// resolveProjectID gets the project ID from the --project-id flag or config.
-// The value can be either a UUID or a project name, which will be resolved to an ID.
-func resolveProjectID(cmd *cobra.Command) (string, error) {
-	nameOrID := tokenProjectID
-
-	if nameOrID == "" {
-		// Fall back to config / env
-		configPath, _ := cmd.Flags().GetString("config")
-		if configPath == "" {
-			configPath = config.DiscoverPath("")
-		}
-
-		cfg, err := config.LoadWithEnv(configPath)
-		if err != nil {
-			return "", fmt.Errorf("failed to load config: %w", err)
-		}
-
-		if cfg.ProjectID != "" {
-			nameOrID = cfg.ProjectID
-		}
-	}
-
-	if nameOrID == "" {
-		return "", fmt.Errorf("project is required. Use --project-id flag with a project name or ID, set EMERGENT_PROJECT_ID, or configure it in your config file")
-	}
-
-	// If it's already a UUID, return directly
-	if isUUID(nameOrID) {
-		return nameOrID, nil
-	}
-
-	// Otherwise resolve the name to an ID
-	c, err := getClient(cmd)
-	if err != nil {
-		return "", err
-	}
-
-	return resolveProjectNameOrID(c, nameOrID)
-}
-
 func runListTokens(cmd *cobra.Command, args []string) error {
-	projectID, err := resolveProjectID(cmd)
+	projectID, err := resolveProjectContext(cmd, tokenProjectID)
 	if err != nil {
 		return err
 	}
@@ -145,7 +104,7 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("token name is required. Use --name flag")
 	}
 
-	projectID, err := resolveProjectID(cmd)
+	projectID, err := resolveProjectContext(cmd, tokenProjectID)
 	if err != nil {
 		return err
 	}
@@ -194,7 +153,7 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 func runGetToken(cmd *cobra.Command, args []string) error {
 	tokenID := args[0]
 
-	projectID, err := resolveProjectID(cmd)
+	projectID, err := resolveProjectContext(cmd, tokenProjectID)
 	if err != nil {
 		return err
 	}
@@ -230,7 +189,7 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 func runRevokeToken(cmd *cobra.Command, args []string) error {
 	tokenID := args[0]
 
-	projectID, err := resolveProjectID(cmd)
+	projectID, err := resolveProjectContext(cmd, tokenProjectID)
 	if err != nil {
 		return err
 	}
