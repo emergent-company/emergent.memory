@@ -2,31 +2,37 @@ package syshealth
 
 import "time"
 
-// Config holds configuration for the system health monitor
+// Config holds configuration for the system health monitor.
 type Config struct {
-	// CollectionInterval is how often to collect system metrics
+	// CollectionInterval is how often to collect system metrics (default: 30s).
 	CollectionInterval time.Duration
 
-	// Thresholds for health scoring
-	IOWaitCriticalPercent float64 // Default: 40%
-	IOWaitWarningPercent  float64 // Default: 30%
-	CPULoadCriticalFactor float64 // Default: 3x CPU count
-	CPULoadWarningFactor  float64 // Default: 2x CPU count
-	MemoryCriticalPercent float64 // Default: 95%
-	MemoryWarningPercent  float64 // Default: 85%
-	DBPoolCriticalPercent float64 // Default: 90%
-	DBPoolWarningPercent  float64 // Default: 75%
+	// IOWaitCriticalPercent is the I/O wait threshold for critical penalty (default: 40%).
+	IOWaitCriticalPercent float64
+	// IOWaitWarningPercent is the I/O wait threshold for warning penalty (default: 30%).
+	IOWaitWarningPercent float64
+	// CPULoadCriticalFactor is the load avg multiplier (vs CPU count) for critical penalty (default: 3x).
+	CPULoadCriticalFactor float64
+	// CPULoadWarningFactor is the load avg multiplier (vs CPU count) for warning penalty (default: 2x).
+	CPULoadWarningFactor float64
+	// MemoryCriticalPercent is the memory usage threshold for critical penalty (default: 95%).
+	MemoryCriticalPercent float64
+	// MemoryWarningPercent is the memory usage threshold for warning penalty (default: 85%).
+	MemoryWarningPercent float64
+	// DBPoolCriticalPercent is the DB pool usage threshold for critical penalty (default: 90%).
+	DBPoolCriticalPercent float64
+	// DBPoolWarningPercent is the DB pool usage threshold for warning penalty (default: 75%).
+	DBPoolWarningPercent float64
 
-	// Staleness threshold - metrics older than this are considered stale
-	StalenessThreshold time.Duration // Default: 2 minutes
+	// StalenessThreshold is the time after which metrics are considered stale (default: 2m).
+	StalenessThreshold time.Duration
 
-	// Metric collection timeout
-	CollectionTimeout time.Duration // Default: 5 seconds
+	// CollectionTimeout is the timeout for a single metric collection cycle (default: 5s).
+	CollectionTimeout time.Duration
 }
 
-// DefaultConfig returns a Config with sensible defaults
-func DefaultConfig() *Config {
-	return &Config{
+// DefaultConfig returns a Config with sensible default values for production use.
+func DefaultConfig() *Config {	return &Config{
 		CollectionInterval:    30 * time.Second,
 		IOWaitCriticalPercent: 40.0,
 		IOWaitWarningPercent:  30.0,

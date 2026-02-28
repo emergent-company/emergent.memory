@@ -28,9 +28,18 @@ type sysHealthMonitor struct {
 
 	lastCPUTimes   *cpu.TimesStat
 	consecFailures int
+
+	// Collection functions for mocking
+	getLoadAvg   func(context.Context) (*load.AvgStat, error)
+	getCPUTimes  func(context.Context, bool) ([]cpu.TimesStat, error)
+	getMemStats  func(context.Context) (*mem.VirtualMemoryStat, error)
+	getCPUCores  func() int
 }
 
-// NewMonitor creates a new system health monitor
+// NewMonitor creates a new system health monitor.
+// cfg: Configuration for the monitor (uses DefaultConfig if nil).
+// db: Database connection for pool utilization metrics.
+// log: Logger for health events.
 func NewMonitor(cfg *Config, db bun.IDB, log *slog.Logger) Monitor {
 	if cfg == nil {
 		cfg = DefaultConfig()
@@ -43,6 +52,10 @@ func NewMonitor(cfg *Config, db bun.IDB, log *slog.Logger) Monitor {
 			Score: 100,
 			Zone:  HealthZoneSafe,
 		},
+		getLoadAvg:  load.AvgWithContext,
+		getCPUTimes: cpu.TimesWithContext,
+		getMemStats: mem.VirtualMemoryWithContext,
+		getCPUCores: runtime.NumCPU,
 	}
 }
 
@@ -119,7 +132,7 @@ func (m *sysHealthMonitor) collect() {
 	)
 
 	// 1. CPU Load Average (Task 2.4)
-	if l, err := load.AvgWithContext(ctx); err == nil {
+	if l, err := m.getLoadAvg(ctx); err == nil {
 		loadAvg = l.Load1
 	} else {
 		success = false
@@ -127,23 +140,28 @@ func (m *sysHealthMonitor) collect() {
 	}
 
 	// 2. I/O Wait (Task 2.5)
-	if times, err := cpu.TimesWithContext(ctx, false); err == nil && len(times) > 0 {
-		t := times[0]
-		if m.lastCPUTimes != nil {
-			deltaTotal := t.Total() - m.lastCPUTimes.Total()
-			deltaIOWait := t.Iowait - m.lastCPUTimes.Iowait
-			if deltaTotal > 0 {
-				ioWait = (deltaIOWait / deltaTotal) * 100.0
+	if times, err := m.getCPUTimes(ctx, false); err == nil {
+		if len(times) > 0 {
+			t := times[0]
+			if m.lastCPUTimes != nil {
+				deltaTotal := t.Total() - m.lastCPUTimes.Total()
+				deltaIOWait := t.Iowait - m.lastCPUTimes.Iowait
+				if deltaTotal > 0 {
+					ioWait = (deltaIOWait / deltaTotal) * 100.0
+				}
 			}
+			m.lastCPUTimes = &t
+		} else {
+			success = false
+			m.log.Error("failed to collect cpu times: no data returned")
 		}
-		m.lastCPUTimes = &t
 	} else {
 		success = false
 		m.log.Error("failed to collect cpu times", slog.String("error", err.Error()))
 	}
 
 	// 3. Memory Utilization (Task 2.6)
-	if v, err := mem.VirtualMemoryWithContext(ctx); err == nil {
+	if v, err := m.getMemStats(ctx); err == nil {
 		memPercent = v.UsedPercent
 	} else {
 		success = false
@@ -188,7 +206,7 @@ func (m *sysHealthMonitor) collect() {
 	}
 
 	// Calculate scores (Task 2.8)
-	cpuCores := float64(runtime.NumCPU())
+	cpuCores := float64(m.getCPUCores())
 	if cpuCores == 0 {
 		cpuCores = 1
 	}
@@ -232,6 +250,13 @@ func (m *sysHealthMonitor) collect() {
 	m.metrics.DBPoolPercent = dbPercent
 	m.metrics.Timestamp = time.Now()
 	m.metrics.Stale = false
+
+	// Publish Prometheus metrics (Task 9.10)
+	HealthScore.WithLabelValues(string(newZone)).Set(float64(finalScore))
+	IOWaitPercent.Set(ioWait)
+	CPULoadAvg.WithLabelValues("1m").Set(loadAvg)
+	MemoryUtilization.Set(memPercent)
+	DBPoolUtilization.Set(dbPercent)
 
 	// Periodic logging (Task 3.1)
 	m.log.Info("system health metrics collected",
