@@ -1,14 +1,19 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apitokens"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/completion"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )
 
@@ -39,6 +44,15 @@ var createProjectCmd = &cobra.Command{
 	Short: "Create a new project",
 	Long:  "Create a new project in the Emergent platform",
 	RunE:  runCreateProject,
+}
+
+var setProjectCmd = &cobra.Command{
+	Use:               "set [name-or-id]",
+	Short:             "Set active project",
+	Long:              "Set the active project context by writing to .env.local",
+	Args:              cobra.MaximumNArgs(1),
+	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
+	RunE:              runSetProject,
 }
 
 var (
@@ -278,6 +292,124 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runSetProject(cmd *cobra.Command, args []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	var selectedProjectID string
+	var selectedProjectName string
+
+	if len(args) == 0 {
+		// Interactive mode
+		fmt.Println("Fetching projects...")
+		projectList, err := c.SDK.Projects.List(context.Background(), &projects.ListOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to list projects: %w", err)
+		}
+		if len(projectList) == 0 {
+			return fmt.Errorf("no projects found. Create one first.")
+		}
+
+		fmt.Println("\nAvailable Projects:")
+		for i, p := range projectList {
+			fmt.Printf("%d. %s (%s)\n", i+1, p.Name, p.ID)
+		}
+
+		reader := bufio.NewReader(os.Stdin)
+		for {
+			fmt.Print("\nSelect a project (enter number): ")
+			input, _ := reader.ReadString('\n')
+			input = strings.TrimSpace(input)
+			if input == "" {
+				return fmt.Errorf("selection cancelled")
+			}
+
+			num, err := strconv.Atoi(input)
+			if err == nil && num > 0 && num <= len(projectList) {
+				selectedProjectID = projectList[num-1].ID
+				selectedProjectName = projectList[num-1].Name
+				break
+			}
+			fmt.Println("Invalid selection. Please enter a valid number.")
+		}
+	} else {
+		// Resolve name or ID
+		id, err := resolveProjectNameOrID(c, args[0])
+		if err != nil {
+			return err
+		}
+		selectedProjectID = id
+
+		// Fetch the project to get its name
+		projectList, err := c.SDK.Projects.List(context.Background(), &projects.ListOptions{})
+		if err != nil {
+			return err
+		}
+		for _, p := range projectList {
+			if p.ID == selectedProjectID {
+				selectedProjectName = p.Name
+				break
+			}
+		}
+		if selectedProjectName == "" {
+			selectedProjectName = "Unknown Project"
+		}
+	}
+
+	fmt.Printf("\nSelected project: %s\n", selectedProjectName)
+	fmt.Println("Fetching/generating project token...")
+
+	// Find or create a token
+	tokensResp, err := c.SDK.APITokens.List(context.Background(), selectedProjectID)
+	if err != nil {
+		return fmt.Errorf("failed to list tokens: %w", err)
+	}
+
+	var tokenValue string
+
+	if len(tokensResp.Tokens) > 0 {
+		// Try to fetch full token for the first one
+		firstToken := tokensResp.Tokens[0]
+		fullTokenResp, err := c.SDK.APITokens.Get(context.Background(), selectedProjectID, firstToken.ID)
+		if err == nil && fullTokenResp.Token != "" {
+			tokenValue = fullTokenResp.Token
+		}
+	}
+
+	if tokenValue == "" {
+		// Generate a new one
+		fmt.Println("No existing viewable token found. Generating a new one...")
+		req := &apitokens.CreateTokenRequest{
+			Name:   "cli-auto-token",
+			Scopes: []string{"data:read", "data:write", "schema:read"},
+		}
+		createResp, err := c.SDK.APITokens.Create(context.Background(), selectedProjectID, req)
+		if err != nil {
+			return fmt.Errorf("failed to create token: %w", err)
+		}
+		tokenValue = createResp.Token
+	}
+
+	// Write to .env.local
+	envMap, _ := godotenv.Read(".env.local")
+	if envMap == nil {
+		envMap = make(map[string]string)
+	}
+	envMap["EMERGENT_PROJECT_ID"] = selectedProjectID
+	envMap["EMERGENT_PROJECT_NAME"] = selectedProjectName
+	envMap["EMERGENT_PROJECT_TOKEN"] = tokenValue
+
+	err = godotenv.Write(envMap, ".env.local")
+	if err != nil {
+		return fmt.Errorf("failed to write to .env.local: %w", err)
+	}
+
+	fmt.Println("\nSuccessfully updated .env.local with project context!")
+	return nil
+}
+
 func init() {
 	createProjectCmd.Flags().StringVar(&projectName, "name", "", "Project name (required)")
 	createProjectCmd.Flags().StringVar(&projectDescription, "description", "", "Project description")
@@ -296,5 +428,6 @@ func init() {
 	projectsCmd.AddCommand(listProjectsCmd)
 	projectsCmd.AddCommand(getProjectCmd)
 	projectsCmd.AddCommand(createProjectCmd)
+	projectsCmd.AddCommand(setProjectCmd)
 	rootCmd.AddCommand(projectsCmd)
 }

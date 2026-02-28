@@ -11,101 +11,62 @@ The system SHALL provide a unified search endpoint that executes both graph obje
 
 **Files:**
 
-- `apps/server/src/modules/unified-search/unified-search.controller.ts` - Controller with POST /search/unified endpoint
-- `apps/server/src/modules/unified-search/unified-search.service.ts` - Service with parallel execution and fusion logic
-- `apps/server/src/modules/unified-search/unified-search.module.ts` - NestJS module wiring
-- `apps/server/src/modules/unified-search/dto/` - Request/response DTOs with validation
-- `apps/server/tests/e2e/search.unified.e2e.spec.ts` - 15 E2E test scenarios
+- `apps/server-go/domain/search/service.go` - Service with parallel execution and fusion logic
+- `apps/server-go/domain/search/repository.go` - Search queries
 
 **Fusion Strategies Implemented:**
 
-1. `weighted` - Score-based combination with configurable weights (default 0.5/0.5)
+1. `weighted` - Score-based combination with configurable weights (default 0.5/0.5) and independent `relationshipWeight`
 2. `rrf` - Reciprocal Rank Fusion (k=60, rank-based)
-3. `interleave` - Alternates between graph and text results
-4. `graph_first` - All graph results before text results
-5. `text_first` - All text results before graph results
+3. `interleave` - Alternates between graph, text, and relationship results
+4. `graph_first` - All graph results, then relationship results, then text results
+5. `text_first` - All text results, then relationship results, then graph results
 
-#### Scenario: Execute unified search with both result types
+#### Scenario: Execute unified search with single embedding call
 
 - **GIVEN** a user query "authentication patterns"
 - **WHEN** the user calls `POST /search/unified` with the query
-- **THEN** the system SHALL execute graph object hybrid search
-- **AND** the system SHALL execute document chunk hybrid search
-- **AND** both searches SHALL run in parallel for performance
-- **AND** the response SHALL include combined results array with type discriminator
-- **AND** the response SHALL include metadata with result counts and execution times
+- **THEN** the system SHALL embed the query string exactly once via the embedding service
+- **AND** the system SHALL pass the pre-computed embedding vector to all three parallel search goroutines (graph, text, relationship)
+- **AND** no search goroutine SHALL independently call the embedding service
+- **AND** total embedding API calls for one unified search request SHALL be exactly 1
 
-**Implementation:** ✅ Implemented in `UnifiedSearchService.search()`
+#### Scenario: Apply fusion strategy to combine results including relationships
 
-- Uses `Promise.all()` for parallel execution
-- Returns `UnifiedSearchResultItem[]` with `type: 'graph' | 'text'`
-- Metadata includes `graphResultCount`, `textResultCount`, `executionTime` breakdown
-
-#### Scenario: Apply fusion strategy to combine results
-
-- **GIVEN** graph results and text results from parallel searches
-- **WHEN** unified search applies fusion strategy
-- **THEN** results SHALL be combined according to strategy
-- **AND** `weighted` strategy SHALL multiply scores by normalized weights
-- **AND** `rrf` strategy SHALL use reciprocal rank formula (1/(k+rank))
-- **AND** `interleave` strategy SHALL alternate between result types
+- **GIVEN** graph results, text results, and relationship results from parallel searches
+- **WHEN** unified search applies any fusion strategy
+- **THEN** all five strategies SHALL include relationship results in their output
+- **AND** `weighted` strategy SHALL apply `relationshipWeight` to relationship result scores (defaulting to `graphWeight` if not specified)
+- **AND** `rrf` strategy SHALL include relationship results in the RRF ranking
+- **AND** `interleave` strategy SHALL alternate between graph, text, and relationship results
+- **AND** `graph_first` strategy SHALL place relationship results after graph results and before text results
+- **AND** `text_first` strategy SHALL place relationship results after text results and before graph results
 - **AND** combined results SHALL be limited by `limit` parameter
 
-**Implementation:** ✅ Implemented in `UnifiedSearchService.fuseResults()`
+#### Scenario: Independent relationship weight in weighted fusion
 
-- 5 fusion strategies with detailed inline documentation
-- Configurable weights for `weighted` strategy (normalized to sum=1)
-- RRF with k=60 (standard research value)
-- Interleave preserves relative ranking within each type
+- **GIVEN** a unified search request with `graphWeight: 0.6`, `textWeight: 0.3`, `relationshipWeight: 0.1`
+- **WHEN** the weighted fusion strategy is applied
+- **THEN** graph result scores SHALL be multiplied by 0.6
+- **AND** text result scores SHALL be multiplied by 0.3
+- **AND** relationship result scores SHALL be multiplied by 0.1
+- **AND** weights SHALL be normalized to sum to 1.0
 
-#### Scenario: Include relationships in graph results
+#### Scenario: Backward compatible when relationshipWeight is omitted
 
-- **GIVEN** graph objects have relationships to other objects
-- **WHEN** unified search returns graph results
-- **AND** the request specifies `relationshipOptions.enabled: true`
-- **THEN** each graph object SHALL include an array of relationships
-- **AND** each relationship SHALL include type, sourceId, targetId, direction, and properties
-- **AND** relationship expansion SHALL be limited by `maxNeighbors` parameter (default 5)
-- **AND** relationship expansion SHALL respect `maxDepth` parameter (0-3, default 1)
-- **AND** relationships SHALL be filtered by `direction` (in/out/both, default both)
-
-**Implementation:** ✅ Implemented in `UnifiedSearchService.expandRelationships()`
-
-- Calls `GraphService.expand()` with configurable depth and direction
-- Builds relationship map from edges
-- Includes bidirectional relationships (in + out)
-- Applies maxNeighbors limit
-- Handles errors gracefully (returns results without relationships on failure)
+- **GIVEN** a unified search request with only `graphWeight` and `textWeight` specified
+- **WHEN** the weighted fusion strategy is applied
+- **THEN** `relationshipWeight` SHALL default to the value of `graphWeight`
+- **AND** all three weights SHALL be normalized to sum to 1.0
 
 #### Scenario: Handle empty results gracefully
 
-- **GIVEN** a query that matches no graph objects or text chunks
+- **GIVEN** a query that matches no graph objects, text chunks, or relationships
 - **WHEN** unified search is executed
 - **THEN** the response SHALL return empty array for `results`
 - **AND** metadata SHALL indicate zero `totalResults`
 - **AND** no error SHALL be thrown
 - **AND** HTTP status SHALL be 200
-
-**Implementation:** ✅ Implemented with proper empty handling
-
-- Service returns empty arrays when no results found
-- Metadata correctly reflects zero counts
-- E2E test AT-US-14 validates empty results scenario
-
-#### Scenario: Enforce result limits independently
-
-- **GIVEN** request parameter `limit: 20`
-- **WHEN** unified search is executed
-- **THEN** total combined results SHALL not exceed `limit`
-- **AND** limit SHALL be enforced after fusion (not per-search)
-- **AND** limit validation SHALL reject values <1 or >100
-
-**Implementation:** ✅ Implemented with validation
-
-- DTOs enforce limit constraints (1-100, default 20)
-- Fusion strategies apply limit after combining results
-- E2E test AT-US-10 validates limit enforcement
-- E2E test AT-US-13 validates limit constraint validation
 
 ### Requirement: Relationship Expansion
 
