@@ -74,10 +74,16 @@ var (
 )
 
 func runListAgentDefs(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	result, err := c.SDK.AgentDefinitions.List(context.Background())
 	if err != nil {
@@ -109,10 +115,16 @@ func runListAgentDefs(cmd *cobra.Command, args []string) error {
 func runGetAgentDef(cmd *cobra.Command, args []string) error {
 	defID := args[0]
 
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	result, err := c.SDK.AgentDefinitions.Get(context.Background(), defID)
 	if err != nil {
@@ -185,10 +197,16 @@ func runCreateAgentDef(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("definition name is required. Use --name flag")
 	}
 
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	createReq := &agentdefinitions.CreateAgentDefinitionRequest{
 		Name: defName,
@@ -246,10 +264,16 @@ func runCreateAgentDef(cmd *cobra.Command, args []string) error {
 func runUpdateAgentDef(cmd *cobra.Command, args []string) error {
 	defID := args[0]
 
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	updateReq := &agentdefinitions.UpdateAgentDefinitionRequest{}
 	hasUpdate := false
@@ -323,10 +347,16 @@ func runUpdateAgentDef(cmd *cobra.Command, args []string) error {
 func runDeleteAgentDef(cmd *cobra.Command, args []string) error {
 	defID := args[0]
 
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	err = c.SDK.AgentDefinitions.Delete(context.Background(), defID)
 	if err != nil {

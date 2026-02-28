@@ -6,9 +6,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestResolveProjectID_UUIDPassthrough tests that valid UUIDs are returned as-is
+// TestResolveProjectContext_UUIDPassthrough tests that valid UUIDs are returned as-is
 // without requiring a client lookup
-func TestResolveProjectID_UUIDPassthrough(t *testing.T) {
+func TestResolveProjectContext_UUIDPassthrough(t *testing.T) {
 	// This tests the early-return optimization in resolveProjectID where
 	// if the input is already a UUID, it returns directly without calling the SDK
 
@@ -26,8 +26,8 @@ func TestResolveProjectID_UUIDPassthrough(t *testing.T) {
 	}
 }
 
-// TestResolveProjectID_NonUUID tests that non-UUID values trigger name resolution
-func TestResolveProjectID_NonUUID(t *testing.T) {
+// TestResolveProjectContext_NonUUID tests that non-UUID values trigger name resolution
+func TestResolveProjectContext_NonUUID(t *testing.T) {
 	// These should NOT be recognized as UUIDs and would trigger name resolution
 
 	nonUUIDs := []string{

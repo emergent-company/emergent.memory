@@ -1,164 +1,75 @@
-# Quick Start – Workspace Orchestration CLI
+# Quick Start – Local Development
 
-The workspace CLI provides preflight checks, health monitoring, and log collection using a PID-based process manager. Use these commands for a clean local dev workflow.
-
-> **📚 Multi-Environment Setup:** For comprehensive guides covering local, dev, staging, and production environments, see the **[Environment Setup Guide](docs/guides/ENVIRONMENT_SETUP.md)**.
+The project uses `task` (Taskfile) for local development automation, providing a streamlined workflow for building, testing, and running the Go-based backend.
 
 ## TL;DR
 
 ```bash
-# Start infrastructure (from emergent-infra repository)
-cd ../emergent-infra/postgres && docker compose up -d
-cd ../zitadel && docker compose up -d
-cd ../../emergent
+# Start infrastructure
+docker compose -f docker/docker-compose.dev.yml up -d
 
-# Start API + Admin services
-pnpm run workspace:start
+# Build and run the server with hot reload
+task dev
 
-# Inspect status for everything
-pnpm run workspace:status
+# Run all unit tests
+task test
 
-# Tail aggregated logs (adjust --lines as needed)
-pnpm run workspace:logs -- --lines 200
-
-# Stop services when you are done
-pnpm run workspace:stop
-
-# Stop infrastructure when done (from emergent-infra)
-cd ../emergent-infra/zitadel && docker compose down
-cd ../postgres && docker compose down
+# Stop infrastructure when done
+docker compose -f docker/docker-compose.dev.yml down
 ```
 
 ## Infrastructure Setup
 
-Database and Identity services are managed externally via the `emergent-infra` repository:
-
-### PostgreSQL Database
+The essential infrastructure (PostgreSQL and transcription/extraction services) is managed via Docker Compose:
 
 ```bash
-cd ../emergent-infra/postgres
-
-# First time setup
-cp .env.example .env
-# Edit .env with your credentials
-
-# Start PostgreSQL
-docker compose up -d
-
-# Check health
-./scripts/health-check.sh
+# Start PostgreSQL, Whisper, and Kreuzberg
+docker compose -f docker/docker-compose.dev.yml up -d
 ```
 
-Connection: `postgresql://emergent:<password>@localhost:5432/emergent`
+Connection: `postgresql://spec:spec@localhost:5432/spec`
 
-### Zitadel (Identity Provider)
+## Starting the Server
+
+The server can be run in development mode with hot-reloading (requires [air](https://github.com/air-verse/air)):
 
 ```bash
-cd ../emergent-infra/zitadel
+$ task dev
 
-# First time setup
-cp .env.example .env
-
-# Start Zitadel
-docker compose up -d
-
-# Check health
-./scripts/health-check.sh
+# This will:
+# 1. Load environment variables from .env
+# 2. Start 'air' to watch for file changes
+# 3. Rebuild and restart the server automatically on save
 ```
 
-Key endpoints:
-
-- Zitadel Console: https://zitadel.dev.emergent-company.ai
-- Login UI: https://login.dev.emergent-company.ai/ui/v2/login
-
-For detailed setup instructions, see:
-
-- [emergent-infra/postgres/README.md](../emergent-infra/postgres/README.md)
-- [emergent-infra/zitadel/README.md](../emergent-infra/zitadel/README.md)
-
-## Starting Services
-
-```bash
-$ pnpm run workspace:start
-
-🚀 Starting services [admin, server] with profile development
-∙ Starting admin
-∙ Starting server
-✅ admin reached healthy state
-✅ server reached healthy state
-```
-
-Services run with the workspace CLI process manager with health checks:
-
-- **admin** → http://localhost:5175
-- **server** → http://localhost:3002
-
-Use `--service` to scope a command:
-
-```bash
-pnpm run workspace:start -- --service server   # API only
-pnpm run workspace:start -- --service admin    # Admin SPA only
-```
+The server listens on port `5300` by default (as configured in `.env`).
 
 ## Status & Logs
 
-```bash
-$ pnpm run workspace:status
-
-Workspace Status (development profile)
-
-Services:
-  • server                 online (port 3002)
-  • admin                  online (port 5175)
-```
-
-**Note:** Infrastructure status is checked separately via health-check scripts in emergent-infra.
-
-Tail logs across apps:
-
-```bash
-pnpm run workspace:logs -- --lines 150
-pnpm run workspace:logs -- --service server
-```
-
-Use `--json` for machine-readable status or log metadata.
+The server logs to stdout. You can also inspect logs in the `apps/server-go/logs/` directory if configured.
 
 ## Daily Flow
 
 ```bash
-# Morning - start infrastructure first
-cd ../emergent-infra/postgres && docker compose up -d
-cd ../zitadel && docker compose up -d
-cd ../../emergent
+# 1. Start infrastructure
+docker compose -f docker/docker-compose.dev.yml up -d
 
-# Start services
-pnpm run workspace:start
+# 2. Run migrations
+task migrate:up
 
-# Check during the day
-pnpm run workspace:status
+# 3. Start development server
+task dev
 
-# Evening shutdown
-pnpm run workspace:stop
-
-# Stop infrastructure (optional - can leave running)
-cd ../emergent-infra/zitadel && docker compose down
-cd ../postgres && docker compose down
+# 4. When finished
+ctrl+c
+docker compose -f docker/docker-compose.dev.yml stop
 ```
 
-## Graceful Recovery
+## Building for Production
+
+To create a production-ready binary:
 
 ```bash
-# Something feels off? Restart services.
-pnpm run workspace:restart
+task build
+# Binary will be at apps/server-go/dist/server
 ```
-
-## Need Raw Docker?
-
-For infrastructure, use docker compose directly in emergent-infra:
-
-```bash
-cd ../emergent-infra/postgres && docker compose up -d
-cd ../emergent-infra/zitadel && docker compose up -d
-```
-
-The workspace CLI is recommended for application services—it enforces preflight checks, health probes, and consistent logging.

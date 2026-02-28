@@ -20,7 +20,13 @@ func New(cfg *config.Config) (*Client, error) {
 	// Determine authentication mode
 	var authConfig sdk.AuthConfig
 
-	if cfg.APIKey != "" {
+	if cfg.ProjectToken != "" {
+		// Project Token mode: Use as API key
+		authConfig = sdk.AuthConfig{
+			Mode:   "apikey",
+			APIKey: cfg.ProjectToken,
+		}
+	} else if cfg.APIKey != "" {
 		// Standalone mode: Use API key
 		authConfig = sdk.AuthConfig{
 			Mode:   "apikey",
