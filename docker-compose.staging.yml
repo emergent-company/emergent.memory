@@ -87,34 +87,6 @@ services:
       timeout: 10s
       retries: 3
 
-  # React Admin Frontend
-  admin:
-    build:
-      context: . # EXPLICIT: Build from repository root
-      dockerfile: apps/admin/Dockerfile # EXPLICIT: Path to Dockerfile
-      args:
-        VITE_API_URL: ${VITE_API_URL}
-        VITE_API_BASE: ${VITE_API_BASE:-https://spec-server.kucharz.net}
-        VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
-        VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
-        VITE_APP_ENV: ${VITE_APP_ENV:-production}
-    expose:
-      - '3000'
-    labels:
-      - 'traefik.enable=true'
-      - 'traefik.http.routers.admin.rule=PathPrefix(`/`)'
-      - 'traefik.http.routers.admin.entrypoints=web'
-      - 'traefik.http.routers.admin.priority=1'
-      - 'traefik.http.services.admin.loadbalancer.server.port=3000'
-      - 'traefik.http.routers.admin.service=admin'
-    depends_on:
-      - server
-    healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
 volumes:
   postgres_data:
     driver: local

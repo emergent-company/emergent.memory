@@ -11,16 +11,18 @@ import (
 )
 
 type Config struct {
-	ServerURL  string           `mapstructure:"server_url" yaml:"server_url"`
-	APIKey     string           `mapstructure:"api_key" yaml:"api_key"`
-	Email      string           `mapstructure:"email" yaml:"email"`
-	OrgID      string           `mapstructure:"org_id" yaml:"org_id"`
-	ProjectID  string           `mapstructure:"project_id" yaml:"project_id"`
-	Debug      bool             `mapstructure:"debug" yaml:"debug"`
-	Cache      CacheConfig      `mapstructure:"cache" yaml:"cache"`
-	UI         UIConfig         `mapstructure:"ui" yaml:"ui"`
-	Query      QueryConfig      `mapstructure:"query" yaml:"query"`
-	Completion CompletionConfig `mapstructure:"completion" yaml:"completion"`
+	ServerURL    string           `mapstructure:"server_url" yaml:"server_url"`
+	APIKey       string           `mapstructure:"api_key" yaml:"api_key"`
+	Email        string           `mapstructure:"email" yaml:"email"`
+	OrgID        string           `mapstructure:"org_id" yaml:"org_id"`
+	ProjectID    string           `mapstructure:"project_id" yaml:"project_id"`
+	ProjectToken string           `mapstructure:"project_token" yaml:"project_token"`
+	ProjectName  string           `mapstructure:"project_name" yaml:"project_name"`
+	Debug        bool             `mapstructure:"debug" yaml:"debug"`
+	Cache        CacheConfig      `mapstructure:"cache" yaml:"cache"`
+	UI           UIConfig         `mapstructure:"ui" yaml:"ui"`
+	Query        QueryConfig      `mapstructure:"query" yaml:"query"`
+	Completion   CompletionConfig `mapstructure:"completion" yaml:"completion"`
 }
 
 type CacheConfig struct {
@@ -134,6 +136,8 @@ func LoadWithEnv(path string) (*Config, error) {
 	_ = v.BindEnv("email")
 	_ = v.BindEnv("org_id")
 	_ = v.BindEnv("project_id")
+	_ = v.BindEnv("project_token")
+	_ = v.BindEnv("project_name")
 	_ = v.BindEnv("debug")
 	_ = v.BindEnv("cache.ttl")
 	_ = v.BindEnv("cache.enabled")

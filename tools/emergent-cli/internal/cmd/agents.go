@@ -192,7 +192,7 @@ func runCreateAgent(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("agent name is required. Use --name flag")
 	}
 
-	projectID, err := resolveAgentProjectID(cmd)
+	projectID, err := resolveProjectContext(cmd, agentProjectID)
 	if err != nil {
 		return err
 	}
@@ -573,7 +573,7 @@ func runListQuestions(cmd *cobra.Command, args []string) error {
 	}
 
 	runID := args[0]
-	projectID, err := resolveAgentProjectID(cmd)
+	projectID, err := resolveProjectContext(cmd, agentProjectID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve project ID: %w", err)
 	}
@@ -597,7 +597,7 @@ func runListProjectQuestions(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	projectID, err := resolveAgentProjectID(cmd)
+	projectID, err := resolveProjectContext(cmd, agentProjectID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve project ID: %w", err)
 	}
@@ -624,7 +624,7 @@ func runRespondToQuestion(cmd *cobra.Command, args []string) error {
 	questionID := args[0]
 	response := args[1]
 
-	projectID, err := resolveAgentProjectID(cmd)
+	projectID, err := resolveProjectContext(cmd, agentProjectID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve project ID: %w", err)
 	}
@@ -644,23 +644,6 @@ func runRespondToQuestion(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println(string(out))
 	return nil
-}
-
-// resolveAgentProjectID resolves the project ID from --project-id flag or config.
-// Accepts both project names and IDs.
-func resolveAgentProjectID(cmd *cobra.Command) (string, error) {
-	if agentProjectID != "" {
-		if isUUID(agentProjectID) {
-			return agentProjectID, nil
-		}
-		// Resolve name to ID
-		c, err := getClient(cmd)
-		if err != nil {
-			return "", err
-		}
-		return resolveProjectNameOrID(c, agentProjectID)
-	}
-	return resolveProjectID(cmd)
 }
 
 func init() {

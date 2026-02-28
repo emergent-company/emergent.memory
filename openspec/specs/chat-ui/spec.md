@@ -77,29 +77,29 @@ The system SHALL provide an input field for composing and submitting chat messag
 
 ### Requirement: LangGraph Conversation Orchestration
 
-The system SHALL use LangGraph to orchestrate multi-turn conversations with tool calling and state management.
+The system SHALL use LangGraph to orchestrate multi-turn conversations with tool calling and state management, utilizing prebuilt agent architectures where appropriate.
 
 #### Scenario: Execute conversation graph
 
 - **WHEN** a chat request is received
-- **THEN** the system SHALL execute the LangGraph conversation graph
+- **THEN** the system SHALL execute the LangGraph conversation graph (e.g., `createReactAgent`)
 - **AND** the system SHALL process the user message through the input node
-- **AND** the system SHALL determine if tool calls are needed in the process node
+- **AND** the system SHALL determine if tool calls are needed
 - **AND** the system SHALL invoke the LLM with full conversation context
 
 #### Scenario: Tool call required
 
-- **WHEN** the LangGraph process node determines a tool call is needed
-- **THEN** the system SHALL route to the tool call node
-- **AND** the system SHALL invoke the appropriate MCP tool with extracted arguments
-- **AND** the system SHALL inject the tool result into the conversation context
-- **AND** the system SHALL continue to the respond node with the augmented context
+- **WHEN** the agent determines a tool call is needed
+- **THEN** the system SHALL execute the tool (e.g., `getWeather`)
+- **AND** the system SHALL return the result to the model
+- **AND** the system SHALL continue generation until a final response is produced
 
-#### Scenario: No tool call required
+#### Scenario: Weather tool availability
 
-- **WHEN** the LangGraph process node determines no tool call is needed
-- **THEN** the system SHALL route directly to the respond node
-- **AND** the system SHALL generate a response using the LLM with existing context
+- **WHEN** the user asks about weather
+- **THEN** the system SHALL invoke the `get_weather` tool
+- **AND** the tool SHALL return structured weather data or a text description
+- **AND** the system SHALL incorporate this information into the response
 
 ### Requirement: PostgreSQL Conversation Checkpointing
 
@@ -575,4 +575,66 @@ The system SHALL handle import errors gracefully and guide users toward resoluti
 - **WHEN** the Google Drive file exceeds the maximum allowed size (e.g., 50MB)
 - **THEN** the chat SHALL respond: "That file is too large to import ({size}MB). The maximum file size is 50MB."
 - **AND** the system SHALL NOT attempt to download the oversized file
+
+### Requirement: Agent-backed conversation initiation
+
+The chat UI SHALL allow users to start agent-backed conversations by selecting an agent definition, enabling tool-calling capabilities in the chat interface.
+
+#### Scenario: Start conversation with graph-query-agent
+
+- **WHEN** a user starts a new chat conversation with an agent-backed mode selected
+- **THEN** the UI SHALL include `agentDefinitionId` in the `StreamRequest` body
+- **AND** the conversation SHALL be marked as agent-backed for all subsequent messages
+
+#### Scenario: Visual indicator for agent-backed conversation
+
+- **WHEN** a conversation is backed by an agent definition
+- **THEN** the UI SHALL display an indicator showing the agent name (e.g., "Knowledge Graph Assistant")
+- **AND** the indicator SHALL distinguish agent-backed conversations from plain chat conversations
+
+### Requirement: MCP tool call SSE event rendering
+
+The chat UI SHALL render `mcp_tool` SSE events inline during agent-backed conversations, showing users which graph operations the agent is performing.
+
+#### Scenario: Display tool call started
+
+- **WHEN** the SSE stream emits an event with `type: "mcp_tool"` and `status: "started"`
+- **THEN** the UI SHALL display a loading indicator with the tool name (e.g., "Searching entities...")
+- **AND** the indicator SHALL appear inline in the message stream below any preceding text tokens
+
+#### Scenario: Display tool call completed
+
+- **WHEN** the SSE stream emits an event with `type: "mcp_tool"` and `status: "completed"`
+- **THEN** the UI SHALL replace the loading indicator with a completed state showing the tool name
+- **AND** the tool result SHALL be available in a collapsible detail view
+- **AND** the detail view SHALL render the result data in a readable format
+
+#### Scenario: Display tool call error
+
+- **WHEN** the SSE stream emits an event with `type: "mcp_tool"` and `status: "error"`
+- **THEN** the UI SHALL display the tool name with an error state
+- **AND** the error message SHALL be visible to the user
+- **AND** the conversation SHALL continue (tool errors are non-fatal)
+
+#### Scenario: Multiple sequential tool calls
+
+- **WHEN** the agent makes multiple tool calls in a single response (e.g., search then traverse)
+- **THEN** the UI SHALL display each tool call as a separate inline element in chronological order
+- **AND** text tokens between tool calls SHALL be displayed normally
+
+### Requirement: Mixed token and tool event streaming
+
+The chat UI SHALL correctly interleave text tokens and tool call events in the message display during agent-backed conversations.
+
+#### Scenario: Text before and after tool calls
+
+- **WHEN** the agent streams text tokens, then makes a tool call, then streams more text
+- **THEN** the UI SHALL display: text block -> tool call indicator -> text block
+- **AND** the final message SHALL read as a coherent response with tool calls shown inline
+
+#### Scenario: Streaming text tokens in agent mode
+
+- **WHEN** the SSE stream emits `token` events during an agent-backed conversation
+- **THEN** the UI SHALL render them identically to the existing non-agent chat streaming behavior
+- **AND** tokens SHALL appear incrementally in real-time
 

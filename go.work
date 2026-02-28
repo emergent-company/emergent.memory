@@ -3,9 +3,8 @@ go 1.25.6
 use (
 	./apps/server-go
 	./apps/server-go/pkg/sdk
-	./apps/website
 	./tests/api
+	./tools/e2e-suite
 	./tools/emergent-cli
 	./tools/huma-test-suite
-	./tools/e2e-suite
 )
