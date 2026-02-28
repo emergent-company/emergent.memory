@@ -144,13 +144,16 @@ func traceShortID(id string) string {
 
 // ── Async commands ────────────────────────────────────────────────────────────
 
-func loadTraces(tempoURL string) tea.Cmd {
+func loadTraces(tempoURL, projectID string) tea.Cmd {
 	return func() tea.Msg {
 		since := time.Now().Add(-1 * time.Hour)
 		params := url.Values{
 			"limit": {"30"},
 			"start": {strconv.FormatInt(since.Unix(), 10)},
 			"end":   {strconv.FormatInt(time.Now().Unix(), 10)},
+		}
+		if projectID != "" {
+			params.Set("q", fmt.Sprintf(`{span.emergent.project.id="%s"}`, projectID))
 		}
 		body, err := doTempoGet(tempoURL, "/api/search", params)
 		if err != nil {
