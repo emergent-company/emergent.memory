@@ -58,7 +58,7 @@ func DefaultGraphEmbeddingConfig() *GraphEmbeddingConfig {
 		WorkerIntervalMs:      5000,
 		WorkerBatchSize:       200,
 		WorkerConcurrency:     200,
-		EnableAdaptiveScaling: true,
+		EnableAdaptiveScaling: false,
 		MinConcurrency:        50,
 		MaxConcurrency:        500,
 	}
