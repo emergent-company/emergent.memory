@@ -1274,6 +1274,15 @@ func TestDefaultChunkEmbeddingConfig(t *testing.T) {
 	if cfg.WorkerBatchSize != 10 {
 		t.Errorf("WorkerBatchSize = %d, want 10", cfg.WorkerBatchSize)
 	}
+	if cfg.EnableAdaptiveScaling != false {
+		t.Errorf("EnableAdaptiveScaling = %v, want false", cfg.EnableAdaptiveScaling)
+	}
+	if cfg.MinConcurrency != 5 {
+		t.Errorf("MinConcurrency = %d, want 5", cfg.MinConcurrency)
+	}
+	if cfg.MaxConcurrency != 50 {
+		t.Errorf("MaxConcurrency = %d, want 50", cfg.MaxConcurrency)
+	}
 }
 
 func TestChunkEmbeddingConfigWorkerInterval(t *testing.T) {
@@ -1312,8 +1321,17 @@ func TestDefaultGraphEmbeddingConfig(t *testing.T) {
 	if cfg.WorkerIntervalMs != 5000 {
 		t.Errorf("WorkerIntervalMs = %d, want 5000", cfg.WorkerIntervalMs)
 	}
-	if cfg.WorkerBatchSize != 10 {
-		t.Errorf("WorkerBatchSize = %d, want 10", cfg.WorkerBatchSize)
+	if cfg.WorkerBatchSize != 200 {
+		t.Errorf("WorkerBatchSize = %d, want 200", cfg.WorkerBatchSize)
+	}
+	if cfg.EnableAdaptiveScaling != false {
+		t.Errorf("EnableAdaptiveScaling = %v, want false", cfg.EnableAdaptiveScaling)
+	}
+	if cfg.MinConcurrency != 50 {
+		t.Errorf("MinConcurrency = %d, want 50", cfg.MinConcurrency)
+	}
+	if cfg.MaxConcurrency != 500 {
+		t.Errorf("MaxConcurrency = %d, want 500", cfg.MaxConcurrency)
 	}
 }
 
