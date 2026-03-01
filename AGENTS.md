@@ -89,6 +89,33 @@ emergent traces get <traceID>            # Full span tree for a trace
 
 Data is retained for 720 h (30 days) by default. Override with `OTEL_RETENTION_HOURS` in `.env.local`.
 
+## Available Skills
+
+Skills extend what you can do as an agent. They are defined in `.claude/skills/` and invoked via the `skill` tool (e.g., `skill: "openspec-new-change"`). **Always invoke a relevant skill before generating a response about that task.**
+
+### OpenSpec Skills (Structured Change Workflow)
+
+| Skill | When to use |
+|-------|-------------|
+| `openspec-new-change` | Start a new feature, fix, or modification using the artifact-driven workflow |
+| `openspec-ff-change` | Fast-forward through all artifact creation steps at once |
+| `openspec-continue-change` | Progress an existing change by creating the next artifact |
+| `openspec-apply-change` | Implement tasks from a change (start or continue coding) |
+| `openspec-verify-change` | Validate that implementation matches change artifacts before archiving |
+| `openspec-archive-change` | Archive a single completed change |
+| `openspec-bulk-archive-change` | Archive multiple completed changes at once |
+| `openspec-sync-specs` | Sync delta specs from a change into main specs without archiving |
+| `openspec-explore` | Enter thinking-partner mode to explore ideas and clarify requirements |
+| `openspec-onboard` | Guided walkthrough of a complete OpenSpec workflow cycle |
+
+### Other Skills
+
+| Skill | When to use |
+|-------|-------------|
+| `commit` | Stage, commit, and push changes (conventional commits, auto-.gitignore) |
+| `release` | Cut a versioned release — bump VERSION, tag, push to trigger CI |
+| `deploy-mcj` | Upgrade the `mcj-emergent` test server via SSH |
+
 ## Detailed Documentation
 
 - **Workspace operations**: `.opencode/instructions.md` (logging, process management)
