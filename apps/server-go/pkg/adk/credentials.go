@@ -13,6 +13,9 @@ type ResolvedCredential struct {
 	Location           string
 	ServiceAccountJSON string
 	GenerativeModel    string
+	// Source describes where the credential was resolved from (project/organization/environment).
+	// Informational only; used for logging and tracing.
+	Source string
 }
 
 // CredentialResolver resolves LLM credentials for the current request context.

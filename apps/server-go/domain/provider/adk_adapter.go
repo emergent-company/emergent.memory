@@ -40,5 +40,6 @@ func toADKCredential(c *ResolvedCredential) *adk.ResolvedCredential {
 		Location:           c.Location,
 		ServiceAccountJSON: c.ServiceAccountJSON,
 		GenerativeModel:    c.GenerativeModel,
+		Source:             string(c.Source),
 	}
 }

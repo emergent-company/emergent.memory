@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"cloud.google.com/go/auth/credentials"
 	"go.uber.org/fx"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/model/gemini"
@@ -19,22 +20,35 @@ var Module = fx.Module("adk",
 	fx.Provide(provideModelFactory),
 )
 
-// provideModelFactory creates a ModelFactory from the main config
-func provideModelFactory(cfg *config.Config, log *slog.Logger) *ModelFactory {
-	return NewModelFactory(&cfg.LLM, log)
+// modelFactoryParams allows optional injection of a CredentialResolver via fx.
+type modelFactoryParams struct {
+	fx.In
+
+	Cfg      *config.Config
+	Log      *slog.Logger
+	Resolver CredentialResolver `optional:"true"`
+}
+
+// provideModelFactory creates a ModelFactory from the main config, with an
+// optional CredentialResolver injected by domain/provider.Module.
+func provideModelFactory(p modelFactoryParams) *ModelFactory {
+	return NewModelFactory(&p.Cfg.LLM, p.Log, p.Resolver)
 }
 
 // ModelFactory creates ADK-compatible LLM models from configuration.
 type ModelFactory struct {
-	cfg *config.LLMConfig
-	log *slog.Logger
+	cfg      *config.LLMConfig
+	log      *slog.Logger
+	resolver CredentialResolver // optional; nil → env-var-only mode
 }
 
 // NewModelFactory creates a new ModelFactory with the given configuration.
-func NewModelFactory(cfg *config.LLMConfig, log *slog.Logger) *ModelFactory {
+// resolver may be nil for env-var-only setups (tests, local dev without DB creds).
+func NewModelFactory(cfg *config.LLMConfig, log *slog.Logger, resolver CredentialResolver) *ModelFactory {
 	return &ModelFactory{
-		cfg: cfg,
-		log: log,
+		cfg:      cfg,
+		log:      log,
+		resolver: resolver,
 	}
 }
 
@@ -51,15 +65,86 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 // This allows overriding the default model for specific use cases (e.g., using
 // a different model for extraction vs verification).
 //
-// Backend selection:
-//   - If GCP_PROJECT_ID + VERTEX_AI_LOCATION are set → Vertex AI (production)
-//   - Else if GOOGLE_API_KEY is set → Google AI / Gemini API (standalone/dev)
-//   - Otherwise → error
+// Credential resolution order:
+//  1. If a CredentialResolver is configured, resolve per-request credentials from
+//     the DB hierarchy (project → org → env). This is the production path when
+//     domain/provider.Module is registered.
+//  2. Fall back to static env-var config (GCP_PROJECT_ID+VERTEX_AI_LOCATION or
+//     GOOGLE_API_KEY). Used in tests and env-var-only setups.
 func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string) (model.LLM, error) {
 	if modelName == "" {
 		return nil, fmt.Errorf("model name is required")
 	}
 
+	// --- 1. DB credential resolution (project/org hierarchy) ---
+	if f.resolver != nil {
+		cred, err := f.resolver.ResolveAny(ctx)
+		if err != nil {
+			f.log.Warn("credential resolver returned error, falling back to env config",
+				slog.String("error", err.Error()),
+			)
+		} else if cred != nil {
+			// Use model name from resolved cred if caller didn't specify one
+			resolvedModel := modelName
+			if resolvedModel == "" && cred.GenerativeModel != "" {
+				resolvedModel = cred.GenerativeModel
+			}
+			if resolvedModel == "" {
+				resolvedModel = f.cfg.Model
+			}
+
+			if cred.IsVertexAI {
+				clientCfg := &genai.ClientConfig{
+					Backend:  genai.BackendVertexAI,
+					Project:  cred.GCPProject,
+					Location: cred.Location,
+				}
+				if cred.ServiceAccountJSON != "" {
+					creds, err := credentials.NewCredentialsFromJSON(
+						credentials.ServiceAccount,
+						[]byte(cred.ServiceAccountJSON),
+						&credentials.DetectOptions{
+							Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+						},
+					)
+					if err != nil {
+						return nil, fmt.Errorf("failed to parse service account credentials: %w", err)
+					}
+					clientCfg.Credentials = creds
+				}
+				f.log.Debug("creating ADK Gemini model via Vertex AI (DB cred)",
+					slog.String("model", resolvedModel),
+					slog.String("project", cred.GCPProject),
+					slog.String("location", cred.Location),
+					slog.String("source", cred.Source),
+				)
+				llm, err := gemini.NewModel(ctx, resolvedModel, clientCfg)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create Gemini model via Vertex AI (DB cred): %w", err)
+				}
+				return llm, nil
+			}
+
+			if cred.IsGoogleAI && cred.APIKey != "" {
+				clientCfg := &genai.ClientConfig{
+					Backend: genai.BackendGeminiAPI,
+					APIKey:  cred.APIKey,
+				}
+				f.log.Debug("creating ADK Gemini model via Google AI (DB cred)",
+					slog.String("model", resolvedModel),
+					slog.String("source", cred.Source),
+				)
+				llm, err := gemini.NewModel(ctx, resolvedModel, clientCfg)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create Gemini model via Google AI (DB cred): %w", err)
+				}
+				return llm, nil
+			}
+		}
+		// cred == nil means no DB credential found — fall through to env vars
+	}
+
+	// --- 2. Static env-var fallback ---
 	// Try Vertex AI first (production), then fall back to Google AI API key (standalone/dev)
 	if f.cfg.UseVertexAI() {
 		clientCfg := &genai.ClientConfig{
@@ -67,7 +152,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 			Project:  f.cfg.GCPProjectID,
 			Location: f.cfg.VertexAILocation,
 		}
-		f.log.Debug("creating ADK Gemini model via Vertex AI",
+		f.log.Debug("creating ADK Gemini model via Vertex AI (env config)",
 			slog.String("model", modelName),
 			slog.String("project", f.cfg.GCPProjectID),
 			slog.String("location", f.cfg.VertexAILocation),
@@ -93,7 +178,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 			Backend: genai.BackendGeminiAPI,
 			APIKey:  f.cfg.GoogleAPIKey,
 		}
-		f.log.Debug("creating ADK Gemini model via Google AI (API key)",
+		f.log.Debug("creating ADK Gemini model via Google AI (env config)",
 			slog.String("model", modelName),
 		)
 
