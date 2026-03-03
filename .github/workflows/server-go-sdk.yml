@@ -59,7 +59,9 @@ jobs:
 
       - name: Generate coverage
         working-directory: apps/server-go/pkg/sdk
-        run: go test -coverprofile=coverage.out -covermode=atomic ./... 2>/dev/null; true
+        # Go 1.24 emits 'covdata' errors to stderr for packages without test files
+        # when using -coverprofile with ./... — suppress stderr, tests already ran above.
+        run: go test -coverprofile=coverage.out -covermode=atomic ./... 2>/dev/null || true
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
