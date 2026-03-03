@@ -104,3 +104,4 @@ nav:
     - Models: swift-sdk/models.md
     - Errors: swift-sdk/errors.md
     - Roadmap: swift-sdk/roadmap.md
+  - API Reference: api-reference/index.md
