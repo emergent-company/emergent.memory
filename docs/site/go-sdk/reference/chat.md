@@ -81,8 +81,11 @@ type StreamRequest struct {
 
 ```go
 type StreamEvent struct {
-    Type    string // "token", "done", or "error"
-    Content string // Token text, empty for "done", error message for "error"
+    Type           string // "meta", "token", "done", or "error"
+    Token          string // Token text (non-empty on "token" events)
+    Message        string // Final message text (non-empty on "done" events)
+    Error          string // Error description (non-empty on "error" events)
+    ConversationID string // Conversation ID (non-empty on "meta" events)
 }
 ```
 
@@ -120,11 +123,11 @@ defer stream.Close()
 for event := range stream.Events() {
     switch event.Type {
     case "token":
-        fmt.Print(event.Content)
+        fmt.Print(event.Token)
     case "done":
         fmt.Println()
     case "error":
-        return fmt.Errorf("stream error: %s", event.Content)
+        return fmt.Errorf("stream error: %s", event.Error)
     }
 }
 ```
