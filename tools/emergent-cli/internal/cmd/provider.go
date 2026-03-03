@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"text/tabwriter"
 	"time"
 
@@ -214,14 +215,7 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "MODEL\tTYPE\tDISPLAY NAME")
-		for _, m := range models {
-			display := m.DisplayName
-			if display == "" {
-				display = "-"
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\n", m.ModelName, m.ModelType, display)
-		}
+		printModelsByType(w, models)
 		return w.Flush()
 	}
 
@@ -255,7 +249,7 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PROVIDER\tMODEL\tTYPE\tDISPLAY NAME")
+	fmt.Fprintln(w, "PROVIDER\tMODEL\tTYPE")
 
 	anyModels := false
 	for _, cred := range creds {
@@ -264,12 +258,8 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "Warning: could not fetch models for %s: %v\n", cred.Provider, err)
 			continue
 		}
-		for _, m := range models {
-			display := m.DisplayName
-			if display == "" {
-				display = "-"
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", cred.Provider, m.ModelName, m.ModelType, display)
+		for _, m := range sortModelsByType(models) {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", cred.Provider, m.ModelName, m.ModelType)
 			anyModels = true
 		}
 	}
@@ -442,4 +432,52 @@ func init() {
 	providerCmd.AddCommand(providerUsageCmd)
 
 	rootCmd.AddCommand(providerCmd)
+}
+
+// sortModelsByType returns models sorted: generative first, then embedding,
+// alphabetically within each group.
+func sortModelsByType(models []provider.SupportedModel) []provider.SupportedModel {
+	out := make([]provider.SupportedModel, len(models))
+	copy(out, models)
+	sort.SliceStable(out, func(i, j int) bool {
+		ti, tj := out[i].ModelType, out[j].ModelType
+		if ti != tj {
+			// generative < embedding for ordering purposes
+			return ti == "generative"
+		}
+		return out[i].ModelName < out[j].ModelName
+	})
+	return out
+}
+
+// printModelsByType writes models to w grouped under "Generative" and
+// "Embedding" section headers, sorted alphabetically within each group.
+func printModelsByType(w *tabwriter.Writer, models []provider.SupportedModel) {
+	var generative, embedding []provider.SupportedModel
+	for _, m := range models {
+		switch m.ModelType {
+		case "embedding":
+			embedding = append(embedding, m)
+		default:
+			generative = append(generative, m)
+		}
+	}
+	sort.Slice(generative, func(i, j int) bool { return generative[i].ModelName < generative[j].ModelName })
+	sort.Slice(embedding, func(i, j int) bool { return embedding[i].ModelName < embedding[j].ModelName })
+
+	if len(generative) > 0 {
+		fmt.Fprintln(w, "GENERATIVE")
+		for _, m := range generative {
+			fmt.Fprintf(w, "  %s\n", m.ModelName)
+		}
+	}
+	if len(embedding) > 0 {
+		if len(generative) > 0 {
+			fmt.Fprintln(w, "")
+		}
+		fmt.Fprintln(w, "EMBEDDING")
+		for _, m := range embedding {
+			fmt.Fprintf(w, "  %s\n", m.ModelName)
+		}
+	}
 }
