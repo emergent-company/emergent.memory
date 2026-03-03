@@ -277,6 +277,27 @@ func (r *Repository) UpsertSupportedModels(ctx context.Context, models []Provide
 	return nil
 }
 
+// DeleteSupportedModelsNotIn removes rows for a provider whose model_name is
+// not in the provided list. Used after a successful sync to prune stale entries
+// (retired models, renamed models, leftover static-fallback rows).
+func (r *Repository) DeleteSupportedModelsNotIn(ctx context.Context, provider ProviderType, modelNames []string) error {
+	if len(modelNames) == 0 {
+		return nil
+	}
+
+	_, err := r.db.NewDelete().
+		TableExpr("kb.provider_supported_models").
+		Where("provider = ?", string(provider)).
+		Where("model_name NOT IN (?)", bun.In(modelNames)).
+		Exec(ctx)
+
+	if err != nil {
+		r.log.Error("failed to delete stale supported models", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
 // --- LLM Usage Events ---
 
 // InsertUsageEvent records a single LLM usage event.
