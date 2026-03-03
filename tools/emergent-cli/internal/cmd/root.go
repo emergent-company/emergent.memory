@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/completion"
+	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -30,6 +31,37 @@ var rootCmd = &cobra.Command{
 The Emergent CLI provides commands to manage projects, documents, and other
 resources in your Emergent knowledge base. It supports both interactive and
 non-interactive workflows with flexible output formats.`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		configPath, _ := cmd.Flags().GetString("config")
+		if configPath == "" {
+			configPath = config.DiscoverPath("")
+		}
+		cfg, err := config.LoadWithEnv(configPath)
+		if err != nil {
+			return nil // non-fatal — commands handle missing config themselves
+		}
+
+		// If EMERGENT_PROJECT is set (name/slug), always resolve it to a project
+		// ID and override any existing EMERGENT_PROJECT_ID. EMERGENT_PROJECT is
+		// the intentional per-workspace override (set in .env.local) and must
+		// win over any placeholder value that may be present in .env.
+		if projectName := os.Getenv("EMERGENT_PROJECT"); projectName != "" {
+			c, clientErr := getClient(cmd)
+			if clientErr == nil {
+				if id, resolveErr := resolveProjectNameOrID(c, projectName); resolveErr == nil {
+					cfg.ProjectID = id
+					// Propagate the resolved ID so downstream code (TUI, commands)
+					// that re-loads config or calls getClient picks it up.
+					_ = os.Setenv("EMERGENT_PROJECT_ID", id)
+				}
+				// Resolution failure is silent — commands that need a project
+				// will surface the error themselves.
+			}
+		}
+
+		printProjectIndicator(cmd, cfg)
+		return nil
+	},
 }
 
 // NewRootCommand creates and returns the root command
