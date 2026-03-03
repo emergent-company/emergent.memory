@@ -197,6 +197,8 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       STORAGE_BUCKET_TEMP: document-temp
       STORAGE_USE_SSL: 'false'
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GITHUB_APP_ENCRYPTION_KEY: ${GITHUB_APP_ENCRYPTION_KEY:-}
+      LLM_ENCRYPTION_KEY: ${LLM_ENCRYPTION_KEY:-}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
       DB_AUTOINIT: 'true'
       SCOPES_DISABLED: 'true'
