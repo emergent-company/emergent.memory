@@ -7,6 +7,7 @@ Serves raw files at:
   /llms-swift-sdk.md
   /swagger.json
   /swagger.yaml
+  /openapi.json   (alias for swagger.json — same Swagger 2.0 content)
 
 Generates interactive Swagger UI at:
   /api-reference/index.html
@@ -70,17 +71,19 @@ def on_post_build(config):
         else:
             print(f"mkdocs-hook: WARNING {src} not found, skipping")
 
-    # --- swagger spec files ---
-    swagger_files = [
-        "docs/swagger/swagger.json",
-        "docs/swagger/swagger.yaml",
-    ]
-    for rel_path in swagger_files:
-        src = repo_root / rel_path
-        dst = site_dir / Path(rel_path).name
+    # --- swagger spec files (swagger.json, swagger.yaml, openapi.json alias) ---
+    swagger_src = repo_root / "docs/swagger/swagger.json"
+    swagger_yaml_src = repo_root / "docs/swagger/swagger.yaml"
+
+    for src, dst_name in [
+        (swagger_src, "swagger.json"),
+        (swagger_yaml_src, "swagger.yaml"),
+        (swagger_src, "openapi.json"),   # alias — same Swagger 2.0 content
+    ]:
+        dst = site_dir / dst_name
         if src.exists():
             shutil.copy2(src, dst)
-            print(f"mkdocs-hook: copied {src.name} → {dst}")
+            print(f"mkdocs-hook: copied {src.name} → {dst_name}")
         else:
             print(f"mkdocs-hook: WARNING {src} not found, skipping")
 
