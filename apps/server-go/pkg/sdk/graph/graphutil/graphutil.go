@@ -30,11 +30,11 @@ type IDSet struct {
 func NewIDSet(obj *graph.GraphObject) IDSet {
 	vid := obj.VersionID
 	if vid == "" {
-		vid = obj.ID
+		vid = obj.ID //nolint:staticcheck
 	}
 	eid := obj.EntityID
 	if eid == "" {
-		eid = obj.CanonicalID
+		eid = obj.CanonicalID //nolint:staticcheck
 	}
 	return IDSet{
 		VersionID: vid,
@@ -85,13 +85,13 @@ func NewObjectIndex(objects []*graph.GraphObject) *ObjectIndex {
 	}
 
 	// Second pass: build the lookup map from winners only.
-	// Index by all available ID variants (ID, VersionID, CanonicalID, EntityID).
+	// Index by all available ID variants (VersionID, ID, EntityID, CanonicalID).
 	idx := &ObjectIndex{
 		byID:     make(map[string]*graph.GraphObject, len(latest)*4),
 		entities: len(latest),
 	}
 	for _, obj := range latest {
-		for _, id := range []string{obj.ID, obj.VersionID, obj.CanonicalID, obj.EntityID} {
+		for _, id := range []string{obj.VersionID, obj.ID, obj.EntityID, obj.CanonicalID} { //nolint:staticcheck
 			if id != "" {
 				idx.byID[id] = obj
 			}
@@ -141,16 +141,16 @@ func UniqueByEntity(objects []*graph.GraphObject) []*graph.GraphObject {
 }
 
 // entityKeyFor returns the canonical key for dedup/indexing.
-// Prefers EntityID, falls back to CanonicalID, then ID.
+// Prefers EntityID, falls back to CanonicalID, then VersionID, then ID.
 func entityKeyFor(obj *graph.GraphObject) string {
 	if obj.EntityID != "" {
 		return obj.EntityID
 	}
-	if obj.CanonicalID != "" {
-		return obj.CanonicalID
+	if obj.CanonicalID != "" { //nolint:staticcheck
+		return obj.CanonicalID //nolint:staticcheck
 	}
 	if obj.VersionID != "" {
 		return obj.VersionID
 	}
-	return obj.ID
+	return obj.ID //nolint:staticcheck
 }

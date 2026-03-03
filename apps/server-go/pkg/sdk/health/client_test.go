@@ -225,7 +225,7 @@ func TestHealthJobMetrics(t *testing.T) {
 
 	client := newClient(t, mock)
 
-	result, err := client.Health.JobMetrics(context.Background())
+	result, err := client.Health.JobMetrics(context.Background(), "")
 	if err != nil {
 		t.Fatalf("JobMetrics() error = %v", err)
 	}

@@ -14,8 +14,8 @@ import (
 
 func TestIDSet_Contains_MatchesVersionID(t *testing.T) {
 	obj := &graph.GraphObject{
-		ID:          "v1-abc",
-		CanonicalID: "ent-xyz",
+		VersionID: "v1-abc",
+		EntityID:  "ent-xyz",
 	}
 	s := graphutil.NewIDSet(obj)
 
@@ -26,8 +26,8 @@ func TestIDSet_Contains_MatchesVersionID(t *testing.T) {
 
 func TestIDSet_Contains_MatchesEntityID(t *testing.T) {
 	obj := &graph.GraphObject{
-		ID:          "v1-abc",
-		CanonicalID: "ent-xyz",
+		VersionID: "v1-abc",
+		EntityID:  "ent-xyz",
 	}
 	s := graphutil.NewIDSet(obj)
 
@@ -38,8 +38,8 @@ func TestIDSet_Contains_MatchesEntityID(t *testing.T) {
 
 func TestIDSet_Contains_RejectsUnrelated(t *testing.T) {
 	obj := &graph.GraphObject{
-		ID:          "v1-abc",
-		CanonicalID: "ent-xyz",
+		VersionID: "v1-abc",
+		EntityID:  "ent-xyz",
 	}
 	s := graphutil.NewIDSet(obj)
 
@@ -60,14 +60,14 @@ func TestIDSet_NewIDSetFromIDs(t *testing.T) {
 
 func TestIDSet_ConstructFromObject(t *testing.T) {
 	obj := &graph.GraphObject{
-		ID:          "v1-abc",
-		CanonicalID: "ent-xyz",
-		Version:     1,
-		Type:        "task",
-		ProjectID:   "proj_1",
-		Properties:  map[string]any{"name": "test"},
-		Labels:      []string{},
-		CreatedAt:   time.Now(),
+		VersionID:  "v1-abc",
+		EntityID:   "ent-xyz",
+		Version:    1,
+		Type:       "task",
+		ProjectID:  "proj_1",
+		Properties: map[string]any{"name": "test"},
+		Labels:     []string{},
+		CreatedAt:  time.Now(),
 	}
 	s := graphutil.NewIDSet(obj)
 	if s.VersionID != "v1-abc" {
@@ -84,14 +84,14 @@ func TestIDSet_ConstructFromObject(t *testing.T) {
 
 func makeObj(id, canonicalID string, version int) *graph.GraphObject {
 	return &graph.GraphObject{
-		ID:          id,
-		CanonicalID: canonicalID,
-		Version:     version,
-		Type:        "test",
-		ProjectID:   "proj_1",
-		Properties:  map[string]any{},
-		Labels:      []string{},
-		CreatedAt:   time.Now(),
+		VersionID:  id,
+		EntityID:   canonicalID,
+		Version:    version,
+		Type:       "test",
+		ProjectID:  "proj_1",
+		Properties: map[string]any{},
+		Labels:     []string{},
+		CreatedAt:  time.Now(),
 	}
 }
 
@@ -106,8 +106,8 @@ func TestObjectIndex_LookupByVersionID(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected to find object by VersionID")
 	}
-	if got.ID != "v1-abc" {
-		t.Errorf("expected ID v1-abc, got %s", got.ID)
+	if got.VersionID != "v1-abc" {
+		t.Errorf("expected VersionID v1-abc, got %s", got.VersionID)
 	}
 }
 
@@ -122,8 +122,8 @@ func TestObjectIndex_LookupByEntityID(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected to find object by EntityID")
 	}
-	if got.CanonicalID != "ent-2" {
-		t.Errorf("expected CanonicalID ent-2, got %s", got.CanonicalID)
+	if got.EntityID != "ent-2" {
+		t.Errorf("expected EntityID ent-2, got %s", got.EntityID)
 	}
 }
 
@@ -153,8 +153,8 @@ func TestObjectIndex_DuplicatesKeepsLatest(t *testing.T) {
 	if got.Version != 2 {
 		t.Errorf("expected version 2, got %d", got.Version)
 	}
-	if got.ID != "v2-abc" {
-		t.Errorf("expected ID v2-abc, got %s", got.ID)
+	if got.VersionID != "v2-abc" {
+		t.Errorf("expected VersionID v2-abc, got %s", got.VersionID)
 	}
 }
 
@@ -226,11 +226,11 @@ func TestUniqueByEntity_PreservesFirstAppearanceOrder(t *testing.T) {
 	if len(result) != 3 {
 		t.Fatalf("expected 3 entities, got %d", len(result))
 	}
-	if result[0].CanonicalID != "ent-3" {
-		t.Errorf("expected first entity ent-3, got %s", result[0].CanonicalID)
+	if result[0].EntityID != "ent-3" {
+		t.Errorf("expected first entity ent-3, got %s", result[0].EntityID)
 	}
-	if result[1].CanonicalID != "ent-1" {
-		t.Errorf("expected second entity ent-1, got %s", result[1].CanonicalID)
+	if result[1].EntityID != "ent-1" {
+		t.Errorf("expected second entity ent-1, got %s", result[1].EntityID)
 	}
 }
 

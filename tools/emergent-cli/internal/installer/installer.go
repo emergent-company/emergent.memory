@@ -274,7 +274,7 @@ func (i *Installer) Install() error {
 
 	if i.config.SkipStart {
 		i.output.Info("Skipping service start (--skip-start)")
-		i.printCompletionMessage(apiKey, false)
+		i.printCompletionMessage(apiKey, false, i.config.GoogleAPIKey != "")
 		// Prompt for Google API key if not provided via flag
 		if i.config.GoogleAPIKey == "" {
 			i.PromptGoogleAPIKey()
@@ -304,7 +304,7 @@ func (i *Installer) Install() error {
 		i.output.Success("Server is healthy!")
 	}
 
-	i.printCompletionMessage(apiKey, true)
+	i.printCompletionMessage(apiKey, true, i.config.GoogleAPIKey != "")
 
 	// Prompt for Google API key if not provided via flag
 	if i.config.GoogleAPIKey == "" {
@@ -530,7 +530,7 @@ func (i *Installer) PromptGoogleAPIKey() {
 
 	if input == "" {
 		fmt.Println()
-		i.output.Warn("Skipped. You can set it later with: emergent config set google_api_key YOUR_KEY")
+		i.output.Warn("Skipped. You can set it later with: emergent provider set-key YOUR_KEY")
 		return
 	}
 
@@ -563,7 +563,7 @@ func (i *Installer) PromptGoogleAPIKey() {
 	i.output.Success("Google API key saved to configuration")
 }
 
-func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool) {
+func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, providerConfigured bool) {
 	fmt.Println()
 	fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", colorGreen, colorBold, colorReset)
 	fmt.Printf("%s%s  ✓ Emergent Installation Complete!%s\n", colorGreen, colorBold, colorReset)
@@ -606,6 +606,22 @@ func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool) 
 	fmt.Println()
 	fmt.Printf("%s📚 Documentation:%s https://github.com/emergent-company/emergent\n", colorCyan, colorReset)
 	fmt.Println()
+
+	if !providerConfigured {
+		fmt.Printf("%s%sLLM Provider Setup (required for AI features)%s\n", colorYellow, colorBold, colorReset)
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Println()
+		fmt.Println("No LLM provider was configured during install.")
+		fmt.Println("AI features (embeddings, extraction, chat) will not work until you add one.")
+		fmt.Println()
+		fmt.Println("To configure Google AI (Gemini):")
+		fmt.Println("  1. Get an API key from https://aistudio.google.com/apikey")
+		fmt.Printf("  2. Run: emergent provider set-key <your-api-key>\n")
+		fmt.Println()
+		fmt.Println("To configure Vertex AI:")
+		fmt.Printf("  Run: emergent provider set-vertex --project <gcp-project> --location <region>\n")
+		fmt.Println()
+	}
 }
 
 // GetEnvPath returns the path to the .env.local file

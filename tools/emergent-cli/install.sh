@@ -75,6 +75,7 @@ main() {
     success "Installed to ${INSTALL_DIR}/emergent"
     
     setup_path
+    setup_completion
     
     echo
     "${INSTALL_DIR}/emergent" version
@@ -145,6 +146,66 @@ setup_path() {
         echo "  Could not update shell config (files may be read-only symlinks)."
         echo "  Add to PATH manually: $path_line"
         echo "  Recommended: add the line above to ~/.zshenv or ~/.bash_profile"
+    fi
+}
+
+setup_completion() {
+    local added_to=""
+
+    # Helper: try to append completion config to a file
+    # Returns 0 on success or already configured, 1 on failure
+    try_append_completion() {
+        local file="$1"
+        local line="$2"
+        if [ -f "$file" ] && grep -q "emergent completion" "$file" 2>/dev/null; then
+            return 0  # Already configured
+        fi
+        if { echo "" >> "$file" && echo "# Emergent CLI shell completion" >> "$file" && echo "$line" >> "$file"; } 2>/dev/null; then
+            return 0
+        fi
+        return 1
+    }
+
+    # Zsh: source <(emergent completion zsh)
+    if command -v zsh &>/dev/null; then
+        local zsh_line='source <(emergent completion zsh)'
+        if [ -f "$HOME/.zshrc" ]; then
+            if grep -q "emergent completion" "$HOME/.zshrc" 2>/dev/null; then
+                added_to="${added_to} ~/.zshrc"
+            elif try_append_completion "$HOME/.zshrc" "$zsh_line"; then
+                added_to="${added_to} ~/.zshrc"
+            elif try_append_completion "$HOME/.zshenv" "$zsh_line"; then
+                added_to="${added_to} ~/.zshenv"
+            fi
+        elif try_append_completion "$HOME/.zshenv" "$zsh_line"; then
+            added_to="${added_to} ~/.zshenv"
+        fi
+    fi
+
+    # Bash: source <(emergent completion bash)
+    if command -v bash &>/dev/null; then
+        local bash_line='source <(emergent completion bash)'
+        if [ -f "$HOME/.bashrc" ]; then
+            if grep -q "emergent completion" "$HOME/.bashrc" 2>/dev/null; then
+                added_to="${added_to} ~/.bashrc"
+            elif try_append_completion "$HOME/.bashrc" "$bash_line"; then
+                added_to="${added_to} ~/.bashrc"
+            elif try_append_completion "$HOME/.bash_profile" "$bash_line"; then
+                added_to="${added_to} ~/.bash_profile"
+            fi
+        elif try_append_completion "$HOME/.bash_profile" "$bash_line"; then
+            added_to="${added_to} ~/.bash_profile"
+        fi
+    fi
+
+    echo
+    if [ -n "$added_to" ]; then
+        success "Shell completion configured in:${added_to}"
+    else
+        log "Could not auto-configure shell completion."
+        log "Add manually to your shell rc file:"
+        log "  zsh:  source <(emergent completion zsh)"
+        log "  bash: source <(emergent completion bash)"
     fi
 }
 
