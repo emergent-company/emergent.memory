@@ -32,6 +32,11 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
 
+extra:
+  version:
+    provider: mike
+    default: latest
+
 hooks:
   - docs/hooks/llms_files.py
 
