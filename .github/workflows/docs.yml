@@ -64,6 +64,22 @@ jobs:
       - name: Deploy as latest
         run: mike deploy --push --update-aliases latest
 
+      - name: Sync root-level files to gh-pages
+        run: |
+          # mike deploys versioned docs but root-level raw files need to be at /
+          # (swagger.json, swagger.yaml, openapi.json, llms*.md)
+          git fetch origin gh-pages
+          git checkout gh-pages
+          cp docs/swagger/swagger.json swagger.json
+          cp docs/swagger/swagger.yaml swagger.yaml
+          cp docs/swagger/swagger.json openapi.json
+          cp docs/llms.md llms.md
+          cp docs/llms-go-sdk.md llms-go-sdk.md
+          cp docs/llms-swift-sdk.md llms-swift-sdk.md
+          git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-swift-sdk.md
+          git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
+          git push origin gh-pages
+
   deploy-version:
     name: Deploy versioned release
     runs-on: ubuntu-latest
@@ -97,3 +113,17 @@ jobs:
         run: |
           mike deploy --push --update-aliases "${{ steps.version.outputs.VERSION }}" latest
           mike set-default --push latest
+
+      - name: Sync root-level files to gh-pages
+        run: |
+          git fetch origin gh-pages
+          git checkout gh-pages
+          cp docs/swagger/swagger.json swagger.json
+          cp docs/swagger/swagger.yaml swagger.yaml
+          cp docs/swagger/swagger.json openapi.json
+          cp docs/llms.md llms.md
+          cp docs/llms-go-sdk.md llms-go-sdk.md
+          cp docs/llms-swift-sdk.md llms-swift-sdk.md
+          git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-swift-sdk.md
+          git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
+          git push origin gh-pages
