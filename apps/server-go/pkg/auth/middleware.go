@@ -144,8 +144,14 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 				}
 			}
 
-			// Store user in context
+			// Store user in Echo context (for handler-layer access via GetUser(c))
 			c.Set(string(UserContextKey), user)
+
+			// Inject auth data into the request's context.Context so
+			// downstream service layers can access user, project ID,
+			// and org ID without an Echo dependency.
+			enrichedCtx := InjectAuthContext(c.Request().Context(), user)
+			c.SetRequest(c.Request().WithContext(enrichedCtx))
 
 			return next(c)
 		}
@@ -216,6 +222,55 @@ func (m *Middleware) RequireProjectScope() echo.MiddlewareFunc {
 	}
 }
 
+// scopeImplies defines umbrella scopes that cover multiple specific scopes.
+// When a user has an umbrella scope, they are granted all the scopes it covers.
+// This allows project API tokens (which use coarse-grained scopes like "data:read")
+// to satisfy fine-grained route requirements (like "documents:read").
+var scopeImplies = map[string][]string{
+	"data:read": {
+		"documents:read",
+		"chunks:read",
+		"search:read",
+		"graph:read",
+		"graph:search:read",
+		"extraction:read",
+		"schema:read",
+		"tasks:read",
+		"user-activity:read",
+		"notifications:read",
+	},
+	"data:write": {
+		"documents:write",
+		"documents:delete",
+		"chunks:write",
+		"graph:write",
+		"ingest:write",
+		"extraction:write",
+		"tasks:write",
+		"user-activity:write",
+		"notifications:write",
+	},
+	"agents:read": {
+		"chat:use",
+	},
+	"agents:write": {
+		"chat:admin",
+	},
+}
+
+// expandScopes returns the full set of scopes a user effectively has,
+// including all scopes implied by umbrella scopes like "data:read".
+func expandScopes(scopes []string) map[string]bool {
+	result := make(map[string]bool, len(scopes))
+	for _, s := range scopes {
+		result[s] = true
+		for _, implied := range scopeImplies[s] {
+			result[implied] = true
+		}
+	}
+	return result
+}
+
 // RequireScopes returns middleware that requires specific scopes
 func (m *Middleware) RequireScopes(scopes ...string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -225,11 +280,8 @@ func (m *Middleware) RequireScopes(scopes ...string) echo.MiddlewareFunc {
 				return apperror.ErrUnauthorized
 			}
 
-			// Check if user has all required scopes
-			userScopes := make(map[string]bool)
-			for _, s := range user.Scopes {
-				userScopes[s] = true
-			}
+			// Build the effective scope set, expanding umbrella scopes.
+			userScopes := expandScopes(user.Scopes)
 
 			missing := []string{}
 			for _, required := range scopes {

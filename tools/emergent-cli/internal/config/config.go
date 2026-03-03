@@ -161,6 +161,20 @@ func LoadWithEnv(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// EMERGENT_PROJECT holds a project name or slug and is used to scope the
+	// CLI to a single project directory-wide. It is resolved to a project ID
+	// at runtime — it is NOT a token. For a project-scoped API token use
+	// EMERGENT_PROJECT_TOKEN (emt_... value) instead.
+	if cfg.ProjectID == "" {
+		if name := os.Getenv("EMERGENT_PROJECT"); name != "" {
+			// Store the name in ProjectName so callers can display it before
+			// the ID has been resolved (resolution happens in root.go).
+			if cfg.ProjectName == "" {
+				cfg.ProjectName = name
+			}
+		}
+	}
+
 	if cfg.ServerURL == "" {
 		cfg.ServerURL = defaults().ServerURL
 	}
