@@ -1,14 +1,14 @@
 ## ADDED Requirements
 
 ### Requirement: Swift SDK site section exists
-The documentation site SHALL contain a dedicated Swift SDK section documenting the `EmergentAPIClient` class, all 16 public model types from `Models.swift`, error types, and connection state types from the Mac app's `Emergent/Core/` layer.
+The documentation site SHALL contain a dedicated Swift SDK section documenting the `EmergentAPIClient` class, all 19 public model types from `Models.swift`, error types, and connection state types from the Mac app's `Emergent/Core/` layer.
 
 #### Scenario: EmergentAPIClient methods are all documented
 - **WHEN** a developer navigates to the Swift SDK API reference
-- **THEN** they find documentation for all 15 public methods on `EmergentAPIClient`: `configure(serverURL:apiKey:)`, `fetchProjects()`, `fetchTraces(projectID:)`, `searchObjects(projectID:query:limit:)`, `fetchObject(projectID:objectID:)`, `searchDocuments(projectID:query:)`, `executeQuery(projectID:query:limit:)`, `fetchWorkers()`, `fetchDiagnostics()`, `fetchAgents()`, `updateAgent(_:)`, `fetchMCPServers()`, `fetchUserProfile()`, `fetchAccountStats()`
+- **THEN** they find documentation for all 14 public methods on `EmergentAPIClient`: `configure(serverURL:apiKey:)`, `fetchProjects()`, `fetchTraces(projectID:)`, `searchObjects(projectID:query:limit:)`, `fetchObject(projectID:objectID:)`, `searchDocuments(projectID:query:)`, `executeQuery(projectID:query:limit:)`, `fetchWorkers()`, `fetchDiagnostics()`, `fetchAgents()`, `updateAgent(_:)`, `fetchMCPServers()`, `fetchUserProfile()`, `fetchAccountStats()`
 - **AND** each method entry shows its signature, parameters, return type, and a brief description of the endpoint it calls
 
-#### Scenario: All 16 public model types are documented
+#### Scenario: All 19 public model types are documented
 - **WHEN** a developer navigates to the Swift SDK models reference
 - **THEN** they find a documented entry for each public struct and enum: `Project`, `ProjectStats`, `AccountStats`, `Trace`, `TraceDetail`, `LLMCall`, `Worker`, `WorkerStatus`, `GraphObject`, `AnyCodable`, `Agent`, `MCPServer`, `MCPTool`, `UserProfile`, `Document`, `ServerDiagnostics`, `QueryResult`, `QueryResultItem`, `QueryResultMeta`
 - **AND** each entry lists all properties with their Swift types

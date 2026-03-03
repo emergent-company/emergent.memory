@@ -146,6 +146,9 @@ type JobListItem struct {
 
 ### FinalizeDiscoveryRequest / IncludedType / IncludedRelationship
 
+!!! note "JSON naming convention"
+    `FinalizeDiscoveryRequest` uses camelCase JSON tags (e.g. `packName`, `existingPackId`) to match the server API contract. `IncludedType` and `IncludedRelationship` use snake_case. Use the struct fields directly — the SDK handles serialization.
+
 ```go
 type FinalizeDiscoveryRequest struct {
     PackName              string                 `json:"packName"`
