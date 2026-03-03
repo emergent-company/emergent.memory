@@ -295,7 +295,11 @@ func (h *Handler) GetSourceTypes(c echo.Context) error {
 		return apperror.ErrUnauthorized
 	}
 
-	sourceTypes, err := h.svc.GetSourceTypes(c.Request().Context())
+	if user.ProjectID == "" {
+		return apperror.ErrBadRequest.WithMessage("project ID is required")
+	}
+
+	sourceTypes, err := h.svc.GetSourceTypes(c.Request().Context(), user.ProjectID)
 	if err != nil {
 		return err
 	}

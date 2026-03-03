@@ -46,9 +46,9 @@ func (s *Service) GetByID(ctx context.Context, projectID, documentID string) (*D
 	return doc, nil
 }
 
-// GetSourceTypes returns all distinct source types with document counts
-func (s *Service) GetSourceTypes(ctx context.Context) ([]SourceTypeWithCount, error) {
-	return s.repo.GetDistinctSourceTypes(ctx)
+// GetSourceTypes returns all distinct source types with document counts for a project
+func (s *Service) GetSourceTypes(ctx context.Context, projectID string) ([]SourceTypeWithCount, error) {
+	return s.repo.GetDistinctSourceTypes(ctx, projectID)
 }
 
 // CreateParams contains parameters for creating a document
