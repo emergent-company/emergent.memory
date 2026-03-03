@@ -12,12 +12,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
-	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/domain/documents"
 	"github.com/emergent-company/emergent/domain/extraction/agents"
 	"github.com/emergent-company/emergent/domain/graph"
 	"github.com/emergent-company/emergent/pkg/adk"
+	"github.com/emergent-company/emergent/pkg/auth"
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
@@ -182,6 +183,12 @@ func (w *ObjectExtractionWorker) processSingleJob(ctx context.Context, job *Obje
 		attribute.String("emergent.document.id", docID),
 	)
 	defer span.End()
+
+	// Inject project ID into context so the credential resolver can look up
+	// per-project LLM provider configuration (e.g. Vertex AI credentials).
+	if job.ProjectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, job.ProjectID)
+	}
 
 	w.log.Info("processing extraction job",
 		slog.String("job_id", job.ID),
