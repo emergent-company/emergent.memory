@@ -108,11 +108,13 @@ func (s *ModelCatalogService) fetchModelsFromAPI(ctx context.Context, provider P
 	}
 
 	var models []ProviderSupportedModel
+	var total int
 
 	for m, err := range client.Models.All(fetchCtx) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to list models: %w", err)
 		}
+		total++
 
 		mt := classifyModel(m)
 		if mt == "" {
@@ -127,35 +129,53 @@ func (s *ModelCatalogService) fetchModelsFromAPI(ctx context.Context, provider P
 		})
 	}
 
+	s.log.Info("model catalog fetch complete",
+		slog.String("provider", string(provider)),
+		slog.Int("total_from_api", total),
+		slog.Int("classified", len(models)),
+	)
+
 	if len(models) == 0 {
 		return nil, fmt.Errorf("API returned no usable models")
 	}
 
-	s.log.Info("fetched models from API",
-		slog.String("provider", string(provider)),
-		slog.Int("count", len(models)),
-	)
-
 	return models, nil
 }
 
-// classifyModel determines if a genai.Model is an embedding or generative model
-// based on its supported generation methods.
+// classifyModel determines if a genai.Model is an embedding or generative model.
+//
+// It first checks SupportedActions (populated by the Google AI backend).
+// For Vertex AI publisher models the SDK does not map supportedGenerationMethods
+// into SupportedActions, so we fall back to name-based heuristics when the
+// field is empty.
 func classifyModel(m *genai.Model) ModelType {
 	if m == nil {
 		return ""
 	}
 
+	// Action-based classification (works for Google AI / Gemini API responses).
 	for _, action := range m.SupportedActions {
 		if action == "embedContent" || action == "batchEmbedContents" {
 			return ModelTypeEmbedding
 		}
 	}
-
 	for _, action := range m.SupportedActions {
 		if action == "generateContent" || action == "streamGenerateContent" {
 			return ModelTypeGenerative
 		}
+	}
+
+	// Name-based fallback for Vertex AI publisher models where the SDK omits
+	// SupportedActions in the listModelsResponseFromVertex converter.
+	name := strings.ToLower(m.Name)
+	if strings.Contains(name, "embedding") || strings.Contains(name, "text-embedding") {
+		return ModelTypeEmbedding
+	}
+	if strings.Contains(name, "gemini") || strings.Contains(name, "gemma") ||
+		strings.Contains(name, "llama") || strings.Contains(name, "claude") ||
+		strings.Contains(name, "mistral") || strings.Contains(name, "codestral") ||
+		strings.Contains(name, "jamba") || strings.Contains(name, "command") {
+		return ModelTypeGenerative
 	}
 
 	return ""
