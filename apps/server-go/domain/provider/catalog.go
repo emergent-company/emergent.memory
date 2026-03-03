@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/auth/credentials"
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent/pkg/logger"
@@ -79,6 +80,22 @@ func (s *ModelCatalogService) fetchModelsFromAPI(ctx context.Context, provider P
 			Backend:  genai.BackendVertexAI,
 			Project:  cred.GCPProject,
 			Location: cred.Location,
+		}
+		// Use stored service account credentials when available so we don't
+		// rely on ambient ADC (which may not be present or may not have the
+		// required scopes for the stored GCP project).
+		if cred.ServiceAccountJSON != "" {
+			creds, err := credentials.NewCredentialsFromJSON(
+				credentials.ServiceAccount,
+				[]byte(cred.ServiceAccountJSON),
+				&credentials.DetectOptions{
+					Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+				},
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse service account credentials: %w", err)
+			}
+			clientCfg.Credentials = creds
 		}
 
 	default:
