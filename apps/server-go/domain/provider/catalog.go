@@ -45,7 +45,26 @@ func (s *ModelCatalogService) SyncModels(ctx context.Context, provider ProviderT
 		return fmt.Errorf("no models available for provider %s", provider)
 	}
 
-	return s.repo.UpsertSupportedModels(ctx, models)
+	if err := s.repo.UpsertSupportedModels(ctx, models); err != nil {
+		return err
+	}
+
+	// Remove any stale rows for this provider that were not returned by the
+	// current sync. This handles: model renames, retired models, and stale
+	// static-fallback rows left over from a previous failed API call.
+	names := make([]string, len(models))
+	for i, m := range models {
+		names[i] = m.ModelName
+	}
+	if err := s.repo.DeleteSupportedModelsNotIn(ctx, provider, names); err != nil {
+		// Non-fatal: stale rows are cosmetic, don't fail the whole sync.
+		s.log.Warn("failed to delete stale models after sync",
+			logger.Error(err),
+			slog.String("provider", string(provider)),
+		)
+	}
+
+	return nil
 }
 
 // ListModels returns the cached supported models for a provider,
@@ -181,9 +200,25 @@ func classifyModel(m *genai.Model) ModelType {
 	return ""
 }
 
-// normalizeModelName strips the "models/" prefix that the API sometimes returns.
+// normalizeModelName strips path prefixes that the API sometimes returns,
+// producing a short canonical model name suitable for storage and display.
+//
+// Examples of inputs handled:
+//   - "models/gemini-2.0-flash"                              → "gemini-2.0-flash"
+//   - "publishers/google/models/gemini-2.0-flash"            → "gemini-2.0-flash"
+//   - "locations/us-central1/publishers/google/models/gemma" → "gemma"
 func normalizeModelName(name string) string {
-	return strings.TrimPrefix(name, "models/")
+	// Strip leading location segment: locations/<loc>/publishers/...
+	if idx := strings.Index(name, "/publishers/"); idx != -1 {
+		name = name[idx+1:] // keep "publishers/..."
+	}
+	// Strip publishers/<org>/models/ prefix
+	if idx := strings.Index(name, "/models/"); idx != -1 {
+		name = name[idx+8:] // skip "/models/"
+	}
+	// Strip bare "models/" prefix (Google AI backend)
+	name = strings.TrimPrefix(name, "models/")
+	return name
 }
 
 // staticModels returns a known-good list of models as a fallback when the
