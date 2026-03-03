@@ -163,9 +163,10 @@ func (h *Handler) SaveVertexAICredential(c echo.Context) error {
 
 	// Sync model catalog in the background.
 	cred := &ResolvedCredential{
-		Provider:   ProviderVertexAI,
-		GCPProject: req.GCPProject,
-		Location:   req.Location,
+		Provider:           ProviderVertexAI,
+		GCPProject:         req.GCPProject,
+		Location:           req.Location,
+		ServiceAccountJSON: req.ServiceAccountJSON,
 	}
 	go func() {
 		if err := h.catalog.SyncModels(context.Background(), ProviderVertexAI, cred); err != nil {

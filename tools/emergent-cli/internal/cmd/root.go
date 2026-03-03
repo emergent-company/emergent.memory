@@ -24,7 +24,7 @@ var (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "emergent-cli",
+	Use:   "emergent",
 	Short: "CLI tool for Emergent platform",
 	Long: `Command-line interface for interacting with the Emergent knowledge base API.
 

@@ -129,8 +129,22 @@ func (s *CredentialService) resolveForProject(ctx context.Context, projectID, or
 	}
 
 	if policy == nil {
-		// No policy set — fall through to org/env
-		return nil, nil
+		// No explicit policy configured — default to organization credentials.
+		// This ensures projects without a policy row inherit org-level creds
+		// rather than silently falling through to server env vars.
+		if orgID == "" {
+			resolvedOrgID, err := s.repo.GetOrgIDForProject(ctx, projectID)
+			if err != nil {
+				// Non-fatal: log and fall through so Resolve() can try orgID from context
+				s.log.Warn("failed to resolve org for project (no policy row)",
+					slog.String("projectID", projectID),
+					logger.Error(err),
+				)
+				return nil, nil
+			}
+			orgID = resolvedOrgID
+		}
+		return s.resolveForOrg(ctx, orgID, provider)
 	}
 
 	switch policy.Policy {

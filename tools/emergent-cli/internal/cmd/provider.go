@@ -10,6 +10,7 @@ import (
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/provider"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
+	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -173,53 +174,113 @@ func runProviderListCredentials(cmd *cobra.Command, args []string) error {
 
 var providerModelsCmd = &cobra.Command{
 	Use:   "models [provider]",
-	Short: "List available models from a provider's catalog",
+	Short: "List available models from the provider catalog",
 	Long: `List models available in the cached model catalog.
 
-provider is optional; defaults to "google-ai".
-Use --type to filter by model type.
+Without a provider argument, lists models for all configured providers.
+Pass a provider name to filter to a single provider.
+
+Use --type to filter by model type (embedding or generative).
 
 Examples:
   emergent provider models
-  emergent provider models google-ai
+  emergent provider models vertex-ai
   emergent provider models google-ai --type generative`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: runProviderModels,
+	Args:      cobra.MaximumNArgs(1),
+	ValidArgs: []string{"google-ai", "vertex-ai"},
+	RunE:      runProviderModels,
 }
 
 var modelsTypeFlag string
 
 func runProviderModels(cmd *cobra.Command, args []string) error {
-	providerArg := "google-ai"
-	if len(args) > 0 {
-		providerArg = args[0]
-	}
-
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
 
-	models, err := c.SDK.Provider.ListModels(context.Background(), providerArg, modelsTypeFlag)
-	if err != nil {
-		return fmt.Errorf("failed to list models: %w", err)
+	ctx := context.Background()
+
+	// Explicit provider: single-provider behaviour
+	if len(args) > 0 {
+		providerArg := args[0]
+		models, err := c.SDK.Provider.ListModels(ctx, providerArg, modelsTypeFlag)
+		if err != nil {
+			return fmt.Errorf("failed to list models: %w", err)
+		}
+		if len(models) == 0 {
+			fmt.Printf("No models cached for provider %q.\n", providerArg)
+			fmt.Println("Check that credentials are configured with 'emergent provider list-credentials'.")
+			return nil
+		}
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "MODEL\tTYPE\tDISPLAY NAME")
+		for _, m := range models {
+			display := m.DisplayName
+			if display == "" {
+				display = "-"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\n", m.ModelName, m.ModelType, display)
+		}
+		return w.Flush()
 	}
 
-	if len(models) == 0 {
-		fmt.Printf("No models cached for provider %q.\n", providerArg)
-		fmt.Println("Check that credentials are configured with 'emergent provider list-credentials'.")
+	// No provider argument: discover configured providers and list models for all
+	configPath, _ := cmd.Flags().GetString("config")
+	if configPath == "" {
+		configPath = config.DiscoverPath("")
+	}
+	cfg, err := config.LoadWithEnv(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	orgID := cfg.OrgID
+	if orgID == "" {
+		// Fall back to API discovery if not in config
+		orgID, err = resolveProviderOrgID(c, "")
+		if err != nil {
+			return fmt.Errorf("failed to resolve organization: %w", err)
+		}
+	}
+
+	creds, err := c.SDK.Provider.ListOrgCredentials(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to list credentials: %w", err)
+	}
+	if len(creds) == 0 {
+		fmt.Println("No providers configured.")
+		fmt.Println("Run 'emergent provider set-key <api-key>' or 'emergent provider set-vertex' to configure a provider.")
 		return nil
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "MODEL\tTYPE\tDISPLAY NAME")
-	for _, m := range models {
-		display := m.DisplayName
-		if display == "" {
-			display = "-"
+	fmt.Fprintln(w, "PROVIDER\tMODEL\tTYPE\tDISPLAY NAME")
+
+	anyModels := false
+	for _, cred := range creds {
+		models, err := c.SDK.Provider.ListModels(ctx, cred.Provider, modelsTypeFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not fetch models for %s: %v\n", cred.Provider, err)
+			continue
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", m.ModelName, m.ModelType, display)
+		for _, m := range models {
+			display := m.DisplayName
+			if display == "" {
+				display = "-"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", cred.Provider, m.ModelName, m.ModelType, display)
+			anyModels = true
+		}
 	}
+
+	if !anyModels {
+		w.Flush()
+		fmt.Println("No models cached for any configured provider.")
+		fmt.Println("Tip: use --type embedding or --type generative to filter by model type.")
+		return nil
+	}
+
 	return w.Flush()
 }
 
