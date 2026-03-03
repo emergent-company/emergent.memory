@@ -296,16 +296,41 @@ func printAPIKeyStatus(cfg *config.Config) {
 	fmt.Println(separator)
 	fmt.Println()
 
-	isProjectToken := strings.HasPrefix(cfg.APIKey, "emt_")
+	// Determine the active key and whether it's a project-scoped token.
+	// When only a project token is configured, cfg.APIKey may be the global
+	// account key from ~/.emergent/config.yaml; prefer cfg.ProjectToken when set.
+	activeKey := cfg.APIKey
+	isProjectToken := cfg.ProjectToken != "" || strings.HasPrefix(cfg.APIKey, "emt_")
+	if cfg.ProjectToken != "" {
+		activeKey = cfg.ProjectToken
+	}
+
+	// EMERGENT_PROJECT name-scope: account API key scoped to a specific project
+	// by name/slug (no project token, but a project name or pre-resolved ID).
+	hasNameScope := !isProjectToken && (cfg.ProjectName != "" || cfg.ProjectID != "")
+
+	fmt.Printf("CLI Version:   %s\n", Version)
+	fmt.Println()
 
 	fmt.Println("Authentication:")
 	if isProjectToken {
-		fmt.Println("  Mode:        Project API Token")
+		fmt.Println("  Mode:        Project token (scoped to one project)")
+	} else if hasNameScope {
+		scopeLabel := cfg.ProjectName
+		if scopeLabel == "" {
+			// Prefer the EMERGENT_PROJECT slug over a raw UUID
+			if ep := os.Getenv("EMERGENT_PROJECT"); ep != "" {
+				scopeLabel = ep
+			} else {
+				scopeLabel = cfg.ProjectID
+			}
+		}
+		fmt.Printf("  Mode:        Account API key (project scope: %s)\n", scopeLabel)
 	} else {
-		fmt.Println("  Mode:        API Key (Standalone)")
+		fmt.Println("  Mode:        Account API key (access to all projects)")
 	}
 	fmt.Printf("  Server:      %s\n", cfg.ServerURL)
-	fmt.Printf("  API Key:     %s\n", maskAPIKey(cfg.APIKey))
+	fmt.Printf("  Key:         %s\n", maskAPIKey(activeKey))
 
 	health, healthErr := fetchHealth(cfg.ServerURL)
 	if healthErr == nil {
@@ -325,7 +350,7 @@ func printAPIKeyStatus(cfg *config.Config) {
 		fmt.Printf("  Health:      ✗ Unreachable (%v)\n", healthErr)
 	}
 
-	projects, projErr := fetchProjects(cfg.ServerURL, cfg.APIKey)
+	projects, projErr := fetchProjects(cfg.ServerURL, activeKey)
 	if projErr != nil || len(projects) == 0 {
 		return
 	}
@@ -337,20 +362,41 @@ func printAPIKeyStatus(cfg *config.Config) {
 		fmt.Println("Project:")
 		fmt.Printf("  Name:        %s\n", project.Name)
 		fmt.Printf("  ID:          %s\n", project.ID)
-		fmt.Println("  Source:      embedded in API token")
+		fmt.Println("  Access:      project token (scoped)")
 
 		if healthErr == nil {
-			printUsageStats(cfg, project.ID)
+			printUsageStats(cfg, activeKey, project.ID)
 		}
+	} else if hasNameScope {
+		// Account API key scoped to one project by name — find the matching project.
+		var matchedProject *projectResponse
+		for i := range projects {
+			if projects[i].ID == cfg.ProjectID ||
+				strings.EqualFold(projects[i].Name, cfg.ProjectName) {
+				matchedProject = &projects[i]
+				break
+			}
+		}
+		if matchedProject != nil {
+			fmt.Println()
+			fmt.Println("Project:")
+			fmt.Printf("  Name:        %s\n", matchedProject.Name)
+			fmt.Printf("  ID:          %s\n", matchedProject.ID)
+			fmt.Println("  Access:      account key (EMERGENT_PROJECT scoped)")
 
-		fmt.Println()
-		fmt.Println(separator)
-		fmt.Println("MCP Configuration (copy to your AI agent config)")
-		fmt.Println(separator)
-		fmt.Println()
-		printMCPConfig(cfg, project)
+			if healthErr == nil {
+				printUsageStats(cfg, activeKey, matchedProject.ID)
+			}
+		} else {
+			// Fallback — show all projects
+			fmt.Println()
+			fmt.Printf("Projects:      %d\n", len(projects))
+			for _, p := range projects {
+				fmt.Printf("  • %s (%s)\n", p.Name, p.ID)
+			}
+		}
 	} else {
-		// Standalone API key: show all projects with aggregated stats
+		// Account API key: show all projects with aggregated stats
 		fmt.Println()
 		fmt.Printf("Projects:      %d\n", len(projects))
 		for _, p := range projects {
@@ -358,16 +404,8 @@ func printAPIKeyStatus(cfg *config.Config) {
 		}
 
 		if healthErr == nil {
-			printAggregatedUsageStats(cfg, projects)
+			printAggregatedUsageStats(cfg, activeKey, projects)
 		}
-
-		// Use first project for MCP config
-		fmt.Println()
-		fmt.Println(separator)
-		fmt.Println("MCP Configuration (copy to your AI agent config)")
-		fmt.Println(separator)
-		fmt.Println()
-		printMCPConfig(cfg, &projects[0])
 	}
 }
 
@@ -424,12 +462,12 @@ type taskCountsResponse struct {
 }
 
 // printUsageStats fetches and displays usage statistics for the project.
-func printUsageStats(cfg *config.Config, projectID string) {
+func printUsageStats(cfg *config.Config, apiKey string, projectID string) {
 	fmt.Println()
 	fmt.Println("Usage Statistics:")
 
 	// Documents
-	docSources := fetchDocumentSourceTypes(cfg.ServerURL, cfg.APIKey, projectID)
+	docSources := fetchDocumentSourceTypes(cfg.ServerURL, apiKey, projectID)
 	if docSources != nil {
 		totalDocs := 0
 		for _, s := range docSources {
@@ -453,19 +491,19 @@ func printUsageStats(cfg *config.Config, projectID string) {
 	}
 
 	// Graph objects
-	objTotal := fetchGraphObjectsTotal(cfg.ServerURL, cfg.APIKey, projectID)
+	objTotal := fetchGraphObjectsTotal(cfg.ServerURL, apiKey, projectID)
 	if objTotal >= 0 {
 		fmt.Printf("  Graph Objects: %d\n", objTotal)
 	}
 
 	// Graph relationships
-	relTotal := fetchGraphRelationshipsTotal(cfg.ServerURL, cfg.APIKey, projectID)
+	relTotal := fetchGraphRelationshipsTotal(cfg.ServerURL, apiKey, projectID)
 	if relTotal >= 0 {
 		fmt.Printf("  Relationships: %d\n", relTotal)
 	}
 
 	// Type Registry
-	typeStats := fetchTypeRegistryStats(cfg.ServerURL, cfg.APIKey, projectID)
+	typeStats := fetchTypeRegistryStats(cfg.ServerURL, apiKey, projectID)
 	if typeStats != nil && typeStats.TotalTypes > 0 {
 		fmt.Println()
 		fmt.Println("Type Registry:")
@@ -489,7 +527,7 @@ func printUsageStats(cfg *config.Config, projectID string) {
 	}
 
 	// Template Packs
-	packs := fetchInstalledPacks(cfg.ServerURL, cfg.APIKey, projectID)
+	packs := fetchInstalledPacks(cfg.ServerURL, apiKey, projectID)
 	if packs != nil {
 		fmt.Println()
 		if len(packs) == 0 {
@@ -543,7 +581,7 @@ func printUsageStats(cfg *config.Config, projectID string) {
 	}
 
 	// Tasks
-	tasks := fetchTaskCounts(cfg.ServerURL, cfg.APIKey, projectID)
+	tasks := fetchTaskCounts(cfg.ServerURL, apiKey, projectID)
 	if tasks != nil {
 		total := tasks.Pending + tasks.Accepted + tasks.Rejected + tasks.Cancelled
 		if total > 0 {
@@ -567,7 +605,7 @@ func printUsageStats(cfg *config.Config, projectID string) {
 }
 
 // printAggregatedUsageStats fetches and displays usage statistics summed across all projects.
-func printAggregatedUsageStats(cfg *config.Config, projects []projectResponse) {
+func printAggregatedUsageStats(cfg *config.Config, apiKey string, projects []projectResponse) {
 	fmt.Println()
 	fmt.Println("Usage Statistics (all projects):")
 
@@ -585,15 +623,15 @@ func printAggregatedUsageStats(cfg *config.Config, projects []projectResponse) {
 
 	for i, p := range projects {
 		docs := 0
-		docSources := fetchDocumentSourceTypes(cfg.ServerURL, cfg.APIKey, p.ID)
+		docSources := fetchDocumentSourceTypes(cfg.ServerURL, apiKey, p.ID)
 		for _, s := range docSources {
 			docs += s.Count
 		}
-		objs := fetchGraphObjectsTotal(cfg.ServerURL, cfg.APIKey, p.ID)
+		objs := fetchGraphObjectsTotal(cfg.ServerURL, apiKey, p.ID)
 		if objs < 0 {
 			objs = 0
 		}
-		rels := fetchGraphRelationshipsTotal(cfg.ServerURL, cfg.APIKey, p.ID)
+		rels := fetchGraphRelationshipsTotal(cfg.ServerURL, apiKey, p.ID)
 		if rels < 0 {
 			rels = 0
 		}
@@ -871,4 +909,50 @@ func init() {
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(logoutCmd)
+	rootCmd.AddCommand(mcpGuideCmd)
+}
+
+// mcpGuideCmd prints MCP configuration snippets for connecting AI agents to Emergent.
+var mcpGuideCmd = &cobra.Command{
+	Use:   "mcp-guide",
+	Short: "Show MCP configuration for AI agents",
+	Long:  "Print MCP server configuration snippets for connecting AI agents (Claude Desktop, Cursor, etc.) to Emergent.",
+	RunE:  runMCPGuide,
+}
+
+func runMCPGuide(cmd *cobra.Command, args []string) error {
+	var configPath string
+	configPath, _ = cmd.Flags().GetString("config")
+	if configPath == "" {
+		configPath = config.DiscoverPath("")
+	}
+
+	cfg, err := config.LoadWithEnv(configPath)
+	if err != nil || cfg == nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Determine active key (prefer project token)
+	activeKey := cfg.APIKey
+	if cfg.ProjectToken != "" {
+		activeKey = cfg.ProjectToken
+	}
+
+	if activeKey == "" {
+		return fmt.Errorf("no API key configured. Set EMERGENT_API_KEY or EMERGENT_PROJECT_TOKEN")
+	}
+
+	projects, err := fetchProjects(cfg.ServerURL, activeKey)
+	if err != nil || len(projects) == 0 {
+		return fmt.Errorf("could not fetch projects to generate MCP config: %w", err)
+	}
+
+	separator := strings.Repeat("━", 50)
+	fmt.Println()
+	fmt.Println(separator)
+	fmt.Println("MCP Configuration (copy to your AI agent config)")
+	fmt.Println(separator)
+	fmt.Println()
+	printMCPConfig(cfg, &projects[0])
+	return nil
 }

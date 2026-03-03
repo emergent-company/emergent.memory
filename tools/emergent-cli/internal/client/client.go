@@ -92,3 +92,18 @@ func (c *Client) BaseURL() string {
 func (c *Client) APIKey() string {
 	return c.cfg.APIKey
 }
+
+// HasProjectToken reports whether the client was configured with a project-scoped
+// token (EMERGENT_PROJECT_TOKEN). When true the token already identifies a single
+// project, so interactive project selection can be skipped.
+func (c *Client) HasProjectToken() bool {
+	return c.cfg.ProjectToken != ""
+}
+
+// HasProjectScope reports whether the client has any project scope set — either
+// via a project token (EMERGENT_PROJECT_TOKEN) or a pre-resolved project ID
+// (EMERGENT_PROJECT_ID / EMERGENT_PROJECT name resolution). When true, interactive
+// project selection can be skipped.
+func (c *Client) HasProjectScope() bool {
+	return c.cfg.ProjectToken != "" || c.cfg.ProjectID != ""
+}
