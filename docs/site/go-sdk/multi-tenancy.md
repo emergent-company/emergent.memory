@@ -28,7 +28,7 @@ client, err := sdk.New(sdk.Config{
 
 ## Context-Scoped vs Non-Context Clients
 
-### Context-Scoped (26 clients)
+### Context-Scoped (25 clients)
 
 These clients send `X-Org-ID` and `X-Project-ID` on every request. They have a `SetContext` method and are updated when you call `client.SetContext`.
 
