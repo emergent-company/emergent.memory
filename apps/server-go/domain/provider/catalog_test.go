@@ -90,11 +90,18 @@ func TestNormalizeModelName(t *testing.T) {
 		input    string
 		expected string
 	}{
+		// Google AI backend: "models/" prefix
 		{"models/gemini-2.0-flash", "gemini-2.0-flash"},
 		{"gemini-2.0-flash", "gemini-2.0-flash"},
 		{"models/text-embedding-004", "text-embedding-004"},
 		{"", ""},
 		{"models/", ""},
+		// Vertex AI backend: "publishers/google/models/" prefix
+		{"publishers/google/models/gemini-2.0-flash", "gemini-2.0-flash"},
+		{"publishers/google/models/text-embedding-005", "text-embedding-005"},
+		{"publishers/google/models/gemma3", "gemma3"},
+		// Vertex AI backend: full resource path with location segment
+		{"locations/us-central1/publishers/google/models/gemini-2.0-flash", "gemini-2.0-flash"},
 	}
 
 	for _, tt := range tests {
