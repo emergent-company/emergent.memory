@@ -103,7 +103,7 @@
 
 - [ ] 12.1 Run `mkdocs serve` locally and manually navigate: home page, Go SDK quickstart, at least 3 reference pages, Swift SDK overview
 - [x] 12.2 Run `mkdocs build --strict` locally — confirm zero errors
-- [ ] 12.3 Open PR against `main`; confirm `docs.yml` CI build-check passes (build-only, no deploy)
+- [x] 12.3 Open PR against `main`; confirm `docs.yml` CI build-check passes (build-only, no deploy)
 - [x] 12.4 Confirm all 33 Go SDK reference pages are present under `docs/site/go-sdk/reference/`
 - [x] 12.5 Confirm all 3 LLM files exist at `docs/llms.md`, `docs/llms-go-sdk.md`, `docs/llms-swift-sdk.md` and contain no YAML front matter or MkDocs directives
 - [ ] 12.6 After merge to `main`: confirm `mkdocs gh-deploy` step completes in CI and `gh-pages` branch is created/updated
