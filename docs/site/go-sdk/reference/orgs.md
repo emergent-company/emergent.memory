@@ -40,8 +40,8 @@ type CreateOrganizationRequest struct {
 
 ```go
 // List all organizations the current user belongs to
-orgs, err := client.Orgs.List(ctx)
-for _, org := range orgs {
+orgList, err := client.Orgs.List(ctx)
+for _, org := range orgList {
     fmt.Printf("%s (%s)\n", org.Name, org.ID)
 }
 

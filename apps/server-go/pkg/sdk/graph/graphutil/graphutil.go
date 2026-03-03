@@ -85,7 +85,7 @@ func NewObjectIndex(objects []*graph.GraphObject) *ObjectIndex {
 	}
 
 	// Second pass: build the lookup map from winners only.
-	// Index by all available ID variants (ID, VersionID, CanonicalID, EntityID).
+	// Index by all available ID variants (VersionID, ID, EntityID, CanonicalID).
 	idx := &ObjectIndex{
 		byID:     make(map[string]*graph.GraphObject, len(latest)*4),
 		entities: len(latest),

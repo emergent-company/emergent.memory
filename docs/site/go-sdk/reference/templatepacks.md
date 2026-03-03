@@ -231,7 +231,10 @@ for _, t := range types.ObjectTypes {
 }
 
 // Install a pack on the current project
-available, _ := client.TemplatePacks.GetAvailablePacks(ctx)
+available, err := client.TemplatePacks.GetAvailablePacks(ctx)
+if err != nil || len(available) == 0 {
+    log.Fatal("no packs available")
+}
 assignment, err := client.TemplatePacks.AssignPack(ctx, &templatepacks.AssignPackRequest{
     TemplatePackID: available[0].ID,
 })
