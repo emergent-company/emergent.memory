@@ -34,6 +34,9 @@ type Config struct {
 	// LLM configuration (for chat completions)
 	LLM LLMConfig
 
+	// LLMProvider holds multi-tenant LLM provider credential management configuration
+	LLMProvider LLMProviderConfig
+
 	// Email configuration
 	Email EmailConfig
 
