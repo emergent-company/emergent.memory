@@ -15,7 +15,7 @@
         "license": {
             "name": "Proprietary"
         },
-        "version": "0.28.4"
+        "version": "0.28.12"
     },
     "host": "localhost:5300",
     "basePath": "/",
@@ -13866,6 +13866,413 @@
                 }
             }
         },
+        "/api/v1/organizations/{orgId}/providers/credentials": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns metadata about stored credentials. Secrets are never returned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "provider"
+                ],
+                "summary": "List organization credentials",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Credentials",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/provider.OrgCredentialResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/organizations/{orgId}/providers/google-ai/credentials": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Encrypts and stores a Google AI API key for the organization. Syncs the model catalog on success.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "provider"
+                ],
+                "summary": "Save Google AI credential",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Google AI credential",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.SaveGoogleAICredentialRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Credential saved",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/organizations/{orgId}/providers/vertex-ai/credentials": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Encrypts and stores Vertex AI service account credentials for the organization.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "provider"
+                ],
+                "summary": "Save Vertex AI credential",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Vertex AI credential",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.SaveVertexAICredentialRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Credential saved",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/organizations/{orgId}/providers/{provider}/credentials": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Removes the stored credential for the given provider from the organization.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "provider"
+                ],
+                "summary": "Delete organization credential",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider (google-ai or vertex-ai)",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deleted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/organizations/{orgId}/providers/{provider}/models": {
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Sets the default embedding and generative models to use for the given provider.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "provider"
+                ],
+                "summary": "Set organization model selection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider (google-ai or vertex-ai)",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Model selection",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.SetOrgModelSelectionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Saved",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/organizations/{orgId}/usage": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns aggregated token usage and ESTIMATED costs for all projects in the organization, grouped by provider and model.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "provider"
+                ],
+                "summary": "Get organization usage summary",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (RFC3339)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (RFC3339)",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Usage summary",
+                        "schema": {
+                            "$ref": "#/definitions/provider.UsageSummaryResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/projects/{projectId}/backups": {
             "post": {
                 "security": [
@@ -13917,6 +14324,204 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/projects/{projectId}/providers/policies": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns all provider policies configured for the given project.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "provider"
+                ],
+                "summary": "List project provider policies",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Policies",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/provider.ProjectProviderPolicy"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/projects/{projectId}/providers/{provider}/policy": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the current provider policy for the given project + provider.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "provider"
+                ],
+                "summary": "Get project provider policy",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider (google-ai or vertex-ai)",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Policy",
+                        "schema": {
+                            "$ref": "#/definitions/provider.ProjectProviderPolicy"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Sets the provider policy for a project (none, organization, or project) and optionally stores project-level credentials.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "provider"
+                ],
+                "summary": "Set project provider policy",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider (google-ai or vertex-ai)",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Policy request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.SetProjectPolicyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Policy set",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
                         }
@@ -14002,6 +14607,125 @@
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/projects/{projectId}/usage": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns aggregated token usage and ESTIMATED costs for a project, grouped by provider and model.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "provider"
+                ],
+                "summary": "Get project usage summary",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (RFC3339)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (RFC3339)",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Usage summary",
+                        "schema": {
+                            "$ref": "#/definitions/provider.UsageSummaryResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/providers/{provider}/models": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the cached list of supported models for the given provider.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "provider"
+                ],
+                "summary": "List provider models",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Provider (google-ai or vertex-ai)",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Model type filter (embedding or generative)",
+                        "name": "type",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Models",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/provider.ProviderSupportedModel"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
                         }
                     }
                 }
@@ -20130,6 +20854,142 @@
                 }
             }
         },
+        "domain_provider.ModelType": {
+            "type": "string",
+            "enum": [
+                "embedding",
+                "generative"
+            ],
+            "x-enum-varnames": [
+                "ModelTypeEmbedding",
+                "ModelTypeGenerative"
+            ]
+        },
+        "domain_provider.ProviderPolicy": {
+            "type": "string",
+            "enum": [
+                "none",
+                "organization",
+                "project"
+            ],
+            "x-enum-varnames": [
+                "PolicyNone",
+                "PolicyOrganization",
+                "PolicyProject"
+            ]
+        },
+        "domain_provider.ProviderType": {
+            "type": "string",
+            "enum": [
+                "google-ai",
+                "vertex-ai"
+            ],
+            "x-enum-varnames": [
+                "ProviderGoogleAI",
+                "ProviderVertexAI"
+            ]
+        },
+        "domain_provider.SaveGoogleAICredentialRequest": {
+            "type": "object",
+            "required": [
+                "apiKey"
+            ],
+            "properties": {
+                "apiKey": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_provider.SaveVertexAICredentialRequest": {
+            "type": "object",
+            "required": [
+                "gcpProject",
+                "location",
+                "serviceAccountJson"
+            ],
+            "properties": {
+                "gcpProject": {
+                    "type": "string"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "serviceAccountJson": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_provider.SetOrgModelSelectionRequest": {
+            "type": "object",
+            "properties": {
+                "embeddingModel": {
+                    "type": "string"
+                },
+                "generativeModel": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_provider.SetProjectPolicyRequest": {
+            "type": "object",
+            "required": [
+                "policy"
+            ],
+            "properties": {
+                "apiKey": {
+                    "description": "The following fields are only required when policy == \"project\".",
+                    "type": "string"
+                },
+                "embeddingModel": {
+                    "type": "string"
+                },
+                "gcpProject": {
+                    "type": "string"
+                },
+                "generativeModel": {
+                    "type": "string"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "policy": {
+                    "description": "Policy must be one of: none, organization, project.",
+                    "type": "string"
+                },
+                "serviceAccountJson": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_provider.UsageSummaryRow": {
+            "type": "object",
+            "properties": {
+                "estimatedCostUSD": {
+                    "type": "number"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "provider": {
+                    "$ref": "#/definitions/domain_provider.ProviderType"
+                },
+                "totalAudio": {
+                    "type": "integer"
+                },
+                "totalImage": {
+                    "type": "integer"
+                },
+                "totalOutput": {
+                    "type": "integer"
+                },
+                "totalText": {
+                    "type": "integer"
+                },
+                "totalVideo": {
+                    "type": "integer"
+                }
+            }
+        },
         "domain_search.PreFusionCounts": {
             "type": "object",
             "properties": {
@@ -23050,6 +23910,104 @@
             "type": "object",
             "additionalProperties": {
                 "type": "string"
+            }
+        },
+        "provider.OrgCredentialResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "gcpProject": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "orgId": {
+                    "type": "string"
+                },
+                "provider": {
+                    "$ref": "#/definitions/domain_provider.ProviderType"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "provider.ProjectProviderPolicy": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "embeddingModel": {
+                    "type": "string"
+                },
+                "gcpProject": {
+                    "type": "string"
+                },
+                "generativeModel": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "policy": {
+                    "$ref": "#/definitions/domain_provider.ProviderPolicy"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "provider": {
+                    "$ref": "#/definitions/domain_provider.ProviderType"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "provider.ProviderSupportedModel": {
+            "type": "object",
+            "properties": {
+                "displayName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastSynced": {
+                    "type": "string"
+                },
+                "modelName": {
+                    "type": "string"
+                },
+                "modelType": {
+                    "$ref": "#/definitions/domain_provider.ModelType"
+                },
+                "provider": {
+                    "$ref": "#/definitions/domain_provider.ProviderType"
+                }
+            }
+        },
+        "provider.UsageSummaryResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_provider.UsageSummaryRow"
+                    }
+                },
+                "note": {
+                    "type": "string"
+                }
             }
         }
     },

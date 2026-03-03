@@ -3418,6 +3418,99 @@ definitions:
         minLength: 1
         type: string
     type: object
+  domain_provider.ModelType:
+    enum:
+    - embedding
+    - generative
+    type: string
+    x-enum-varnames:
+    - ModelTypeEmbedding
+    - ModelTypeGenerative
+  domain_provider.ProviderPolicy:
+    enum:
+    - none
+    - organization
+    - project
+    type: string
+    x-enum-varnames:
+    - PolicyNone
+    - PolicyOrganization
+    - PolicyProject
+  domain_provider.ProviderType:
+    enum:
+    - google-ai
+    - vertex-ai
+    type: string
+    x-enum-varnames:
+    - ProviderGoogleAI
+    - ProviderVertexAI
+  domain_provider.SaveGoogleAICredentialRequest:
+    properties:
+      apiKey:
+        type: string
+    required:
+    - apiKey
+    type: object
+  domain_provider.SaveVertexAICredentialRequest:
+    properties:
+      gcpProject:
+        type: string
+      location:
+        type: string
+      serviceAccountJson:
+        type: string
+    required:
+    - gcpProject
+    - location
+    - serviceAccountJson
+    type: object
+  domain_provider.SetOrgModelSelectionRequest:
+    properties:
+      embeddingModel:
+        type: string
+      generativeModel:
+        type: string
+    type: object
+  domain_provider.SetProjectPolicyRequest:
+    properties:
+      apiKey:
+        description: The following fields are only required when policy == "project".
+        type: string
+      embeddingModel:
+        type: string
+      gcpProject:
+        type: string
+      generativeModel:
+        type: string
+      location:
+        type: string
+      policy:
+        description: 'Policy must be one of: none, organization, project.'
+        type: string
+      serviceAccountJson:
+        type: string
+    required:
+    - policy
+    type: object
+  domain_provider.UsageSummaryRow:
+    properties:
+      estimatedCostUSD:
+        type: number
+      model:
+        type: string
+      provider:
+        $ref: '#/definitions/domain_provider.ProviderType'
+      totalAudio:
+        type: integer
+      totalImage:
+        type: integer
+      totalOutput:
+        type: integer
+      totalText:
+        type: integer
+      totalVideo:
+        type: integer
+    type: object
   domain_search.PreFusionCounts:
     properties:
       graph:
@@ -5357,6 +5450,70 @@ definitions:
     additionalProperties:
       type: string
     type: object
+  provider.OrgCredentialResponse:
+    properties:
+      createdAt:
+        type: string
+      gcpProject:
+        type: string
+      id:
+        type: string
+      location:
+        type: string
+      orgId:
+        type: string
+      provider:
+        $ref: '#/definitions/domain_provider.ProviderType'
+      updatedAt:
+        type: string
+    type: object
+  provider.ProjectProviderPolicy:
+    properties:
+      createdAt:
+        type: string
+      embeddingModel:
+        type: string
+      gcpProject:
+        type: string
+      generativeModel:
+        type: string
+      id:
+        type: string
+      location:
+        type: string
+      policy:
+        $ref: '#/definitions/domain_provider.ProviderPolicy'
+      projectId:
+        type: string
+      provider:
+        $ref: '#/definitions/domain_provider.ProviderType'
+      updatedAt:
+        type: string
+    type: object
+  provider.ProviderSupportedModel:
+    properties:
+      displayName:
+        type: string
+      id:
+        type: string
+      lastSynced:
+        type: string
+      modelName:
+        type: string
+      modelType:
+        $ref: '#/definitions/domain_provider.ModelType'
+      provider:
+        $ref: '#/definitions/domain_provider.ProviderType'
+    type: object
+  provider.UsageSummaryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/domain_provider.UsageSummaryRow'
+        type: array
+      note:
+        type: string
+    type: object
 host: localhost:5300
 info:
   contact:
@@ -5367,7 +5524,7 @@ info:
   license:
     name: Proprietary
   title: Emergent API
-  version: 0.28.4
+  version: 0.28.12
 paths:
   /api/admin/agent-definitions/{id}/workspace-config:
     get:
@@ -14426,6 +14583,272 @@ paths:
       summary: Download backup archive
       tags:
       - backups
+  /api/v1/organizations/{orgId}/providers/{provider}/credentials:
+    delete:
+      description: Removes the stored credential for the given provider from the organization.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: Provider (google-ai or vertex-ai)
+        in: path
+        name: provider
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Deleted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete organization credential
+      tags:
+      - provider
+  /api/v1/organizations/{orgId}/providers/{provider}/models:
+    put:
+      consumes:
+      - application/json
+      description: Sets the default embedding and generative models to use for the
+        given provider.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: Provider (google-ai or vertex-ai)
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Model selection
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_provider.SetOrgModelSelectionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Saved
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Set organization model selection
+      tags:
+      - provider
+  /api/v1/organizations/{orgId}/providers/credentials:
+    get:
+      description: Returns metadata about stored credentials. Secrets are never returned.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Credentials
+          schema:
+            items:
+              $ref: '#/definitions/provider.OrgCredentialResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List organization credentials
+      tags:
+      - provider
+  /api/v1/organizations/{orgId}/providers/google-ai/credentials:
+    post:
+      consumes:
+      - application/json
+      description: Encrypts and stores a Google AI API key for the organization. Syncs
+        the model catalog on success.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: Google AI credential
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_provider.SaveGoogleAICredentialRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Credential saved
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Save Google AI credential
+      tags:
+      - provider
+  /api/v1/organizations/{orgId}/providers/vertex-ai/credentials:
+    post:
+      consumes:
+      - application/json
+      description: Encrypts and stores Vertex AI service account credentials for the
+        organization.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: Vertex AI credential
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_provider.SaveVertexAICredentialRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Credential saved
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Save Vertex AI credential
+      tags:
+      - provider
+  /api/v1/organizations/{orgId}/usage:
+    get:
+      description: Returns aggregated token usage and ESTIMATED costs for all projects
+        in the organization, grouped by provider and model.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: Start time (RFC3339)
+        in: query
+        name: since
+        type: string
+      - description: End time (RFC3339)
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Usage summary
+          schema:
+            $ref: '#/definitions/provider.UsageSummaryResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get organization usage summary
+      tags:
+      - provider
   /api/v1/projects/{projectId}/backups:
     post:
       consumes:
@@ -14471,6 +14894,135 @@ paths:
       summary: Create project backup
       tags:
       - backups
+  /api/v1/projects/{projectId}/providers/{provider}/policy:
+    get:
+      description: Returns the current provider policy for the given project + provider.
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Provider (google-ai or vertex-ai)
+        in: path
+        name: provider
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Policy
+          schema:
+            $ref: '#/definitions/provider.ProjectProviderPolicy'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get project provider policy
+      tags:
+      - provider
+    put:
+      consumes:
+      - application/json
+      description: Sets the provider policy for a project (none, organization, or
+        project) and optionally stores project-level credentials.
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Provider (google-ai or vertex-ai)
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Policy request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_provider.SetProjectPolicyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Policy set
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Set project provider policy
+      tags:
+      - provider
+  /api/v1/projects/{projectId}/providers/policies:
+    get:
+      description: Returns all provider policies configured for the given project.
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Policies
+          schema:
+            items:
+              $ref: '#/definitions/provider.ProjectProviderPolicy'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List project provider policies
+      tags:
+      - provider
   /api/v1/projects/{projectId}/restore:
     post:
       description: Initiates async restore of a project from backup archive (coming
@@ -14521,6 +15073,83 @@ paths:
       summary: Get restore job status
       tags:
       - backups
+  /api/v1/projects/{projectId}/usage:
+    get:
+      description: Returns aggregated token usage and ESTIMATED costs for a project,
+        grouped by provider and model.
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Start time (RFC3339)
+        in: query
+        name: since
+        type: string
+      - description: End time (RFC3339)
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Usage summary
+          schema:
+            $ref: '#/definitions/provider.UsageSummaryResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get project usage summary
+      tags:
+      - provider
+  /api/v1/providers/{provider}/models:
+    get:
+      description: Returns the cached list of supported models for the given provider.
+      parameters:
+      - description: Provider (google-ai or vertex-ai)
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Model type filter (embedding or generative)
+        in: query
+        name: type
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Models
+          schema:
+            items:
+              $ref: '#/definitions/provider.ProviderSupportedModel'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List provider models
+      tags:
+      - provider
   /api/v1/settings/github:
     delete:
       produces:
