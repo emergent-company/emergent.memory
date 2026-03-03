@@ -71,7 +71,7 @@ if err != nil {
     return err
 }
 // Save resp.Token — it won't be shown again
-fmt.Printf("Created token: %s (prefix: %s)\n", resp.Token, resp.Prefix)
+fmt.Printf("Created token prefix: %s\n", resp.Prefix)
 
 // List tokens
 list, err := client.APITokens.List(ctx, "proj_xyz")

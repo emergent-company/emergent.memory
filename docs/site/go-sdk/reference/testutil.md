@@ -23,7 +23,7 @@ func TestListProjects(t *testing.T) {
     defer ms.Close()
 
     ms.OnJSON("GET", "/api/projects", http.StatusOK, []projects.Project{
-        testutil.FixtureProject(),
+        *testutil.FixtureProject(),
     })
 
     client, _ := sdk.New(sdk.Config{

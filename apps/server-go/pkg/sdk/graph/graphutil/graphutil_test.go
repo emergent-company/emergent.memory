@@ -107,7 +107,7 @@ func TestObjectIndex_LookupByVersionID(t *testing.T) {
 		t.Fatal("expected to find object by VersionID")
 	}
 	if got.VersionID != "v1-abc" {
-		t.Errorf("expected ID v1-abc, got %s", got.VersionID)
+		t.Errorf("expected VersionID v1-abc, got %s", got.VersionID)
 	}
 }
 
@@ -154,7 +154,7 @@ func TestObjectIndex_DuplicatesKeepsLatest(t *testing.T) {
 		t.Errorf("expected version 2, got %d", got.Version)
 	}
 	if got.VersionID != "v2-abc" {
-		t.Errorf("expected ID v2-abc, got %s", got.VersionID)
+		t.Errorf("expected VersionID v2-abc, got %s", got.VersionID)
 	}
 }
 
