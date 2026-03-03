@@ -92,13 +92,13 @@ type Model struct {
 	selectedDocID       string
 
 	// Traces (Tempo)
-	tracesList         list.Model
-	tracesData         []traceResult
-	selectedTraceID    string
-	selectedTraceData  *traceOTLPResp
-	tracesLoading      bool
-	tracesErr          error
-	tempoURL           string
+	tracesList        list.Model
+	tracesData        []traceResult
+	selectedTraceID   string
+	selectedTraceData *traceOTLPResp
+	tracesLoading     bool
+	tracesErr         error
+	tempoURL          string
 }
 
 // KeyMap defines keybindings
@@ -309,6 +309,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items[i] = p.(list.Item)
 		}
 		m.projectsList.SetItems(items)
+
+		// When a project scope is active, skip the project chooser and jump
+		// straight to Documents for the scoped project.
+		//
+		// Two cases:
+		// 1. Project token (emt_*): server returns only the one project → match
+		//    by list length == 1.
+		// 2. EMERGENT_PROJECT name resolution: account API key with a pre-resolved
+		//    project ID → find the matching item by ID regardless of list length.
+		if m.client.HasProjectScope() {
+			var target *projectItem
+
+			// Case 1: token-scoped — server filtered to exactly one project.
+			if m.client.HasProjectToken() && len(items) == 1 {
+				if item, ok := items[0].(projectItem); ok {
+					target = &item
+				}
+			}
+
+			// Case 2: pre-resolved project ID (EMERGENT_PROJECT name resolution).
+			if target == nil {
+				if scopedID := m.client.ProjectID(); scopedID != "" {
+					for _, li := range items {
+						if item, ok := li.(projectItem); ok && item.id == scopedID {
+							target = &item
+							break
+						}
+					}
+				}
+			}
+
+			if target != nil {
+				m.selectedProjectID = target.id
+				m.selectedProjectName = target.name
+				m.selectedOrgID = target.orgID
+				m.client.SetContext(target.orgID, target.id)
+				m.currentView = DocumentsView
+				m.activeTab = 1
+				m.statusMsg = fmt.Sprintf("Project: %s", target.name)
+				return m, loadDocuments(m.client, target.id)
+			}
+		}
 		return m, nil
 
 	case documentsLoadedMsg:

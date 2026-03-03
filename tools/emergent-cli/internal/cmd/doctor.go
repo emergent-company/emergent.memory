@@ -83,6 +83,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	results = append(results, checkConfigStandalone(configPath, isStandalone, cfg))
 	results = append(results, checkShellPath(installDir))
+	results = append(results, checkShellCompletion())
 
 	if isStandalone {
 		results = append(results, checkGoogleAPIKey(installDir))
@@ -439,6 +440,140 @@ func fixShellPath(installDir string) error {
 	return fmt.Errorf("could not write to any shell config file — add manually: %s", pathLine)
 }
 
+// fileContainsCompletionSetup checks if a file already has emergent completion configured.
+func fileContainsCompletionSetup(filePath string) bool {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(content), "emergent completion")
+}
+
+func checkShellCompletion() checkResult {
+	fmt.Print("Checking shell completion... ")
+
+	shell := os.Getenv("SHELL")
+	shellName := filepath.Base(shell)
+
+	primary, fallbacks := getShellConfigFiles()
+	configuredIn := ""
+
+	if primary != "" && fileContainsCompletionSetup(primary) {
+		configuredIn = primary
+	}
+	if configuredIn == "" {
+		for _, fb := range fallbacks {
+			if fileContainsCompletionSetup(fb) {
+				configuredIn = fb
+				break
+			}
+		}
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	shortPath := func(p string) string {
+		if homeDir != "" && strings.HasPrefix(p, homeDir) {
+			return "~" + p[len(homeDir):]
+		}
+		return p
+	}
+
+	if configuredIn != "" {
+		fmt.Println("OK")
+		return checkResult{
+			name:    "Shell Completion",
+			status:  "pass",
+			message: fmt.Sprintf("Configured in %s (shell: %s)", shortPath(configuredIn), shellName),
+		}
+	}
+
+	fmt.Println("NOT CONFIGURED")
+	targetFile := shortPath(primary)
+	if primary == "" {
+		targetFile = "shell config"
+	}
+	return checkResult{
+		name:   "Shell Completion",
+		status: "warn",
+		message: fmt.Sprintf("Shell completion is not configured (shell: %s)\n"+
+			"         Add to %s: source <(emergent completion %s)",
+			shellName, targetFile, shellName),
+		fixable: true,
+		fixType: "fix_shell_completion",
+	}
+}
+
+func fixShellCompletion() error {
+	fmt.Println("Configuring shell completion...")
+
+	shell := os.Getenv("SHELL")
+	shellName := filepath.Base(shell)
+
+	// Fish uses a different mechanism — write a completion file instead
+	if shellName == "fish" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("could not determine home directory: %w", err)
+		}
+		fishCompletionDir := filepath.Join(homeDir, ".config", "fish", "completions")
+		if err := os.MkdirAll(fishCompletionDir, 0755); err != nil {
+			return fmt.Errorf("could not create fish completions directory: %w", err)
+		}
+		fishFile := filepath.Join(fishCompletionDir, "emergent.fish")
+		f, err := os.OpenFile(fishFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			return fmt.Errorf("could not write fish completion file: %w", err)
+		}
+		_, err = fmt.Fprintln(f, "emergent completion fish | source")
+		f.Close()
+		if err != nil {
+			return fmt.Errorf("could not write fish completion file: %w", err)
+		}
+		fmt.Printf("Added fish completion to %s\n", fishFile)
+		return nil
+	}
+
+	primary, fallbacks := getShellConfigFiles()
+	completionLine := fmt.Sprintf("source <(emergent completion %s)", shellName)
+
+	candidates := []string{}
+	if primary != "" {
+		candidates = append(candidates, primary)
+	}
+	candidates = append(candidates, fallbacks...)
+
+	homeDir, _ := os.UserHomeDir()
+	shortPath := func(p string) string {
+		if homeDir != "" && strings.HasPrefix(p, homeDir) {
+			return "~" + p[len(homeDir):]
+		}
+		return p
+	}
+
+	for _, file := range candidates {
+		if fileContainsCompletionSetup(file) {
+			fmt.Printf("Already configured in %s\n", shortPath(file))
+			return nil
+		}
+
+		f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			continue
+		}
+		_, err = fmt.Fprintf(f, "\n# Emergent CLI shell completion\n%s\n", completionLine)
+		f.Close()
+		if err != nil {
+			continue
+		}
+
+		fmt.Printf("Added completion to %s\n", shortPath(file))
+		fmt.Printf("Restart your terminal or run: source %s\n", shortPath(file))
+		return nil
+	}
+
+	return fmt.Errorf("could not write to any shell config file — add manually: %s", completionLine)
+}
+
 func checkGoogleAPIKey(installDir string) checkResult {
 	fmt.Print("Checking Google API key... ")
 
@@ -764,6 +899,8 @@ func attemptFix(r checkResult, installDir string) error {
 		return restartContainers(installDir)
 	case "fix_shell_path":
 		return fixShellPath(installDir)
+	case "fix_shell_completion":
+		return fixShellCompletion()
 	default:
 		return fmt.Errorf("unknown fix type: %s", r.fixType)
 	}

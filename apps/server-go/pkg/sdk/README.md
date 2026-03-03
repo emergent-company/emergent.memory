@@ -1,6 +1,10 @@
 # Emergent Go SDK
 
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://emergent-company.github.io/emergent/)
+
 Official Go client library for the Emergent API.
+
+> **Full documentation** — guides, per-package reference, and LLM-friendly reference files are published at **https://emergent-company.github.io/emergent/**
 
 ## Installation
 
