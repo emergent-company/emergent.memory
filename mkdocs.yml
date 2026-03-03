@@ -1,0 +1,103 @@
+site_name: Emergent SDK Documentation
+site_url: https://emergent-company.github.io/emergent/
+site_description: Official documentation for the Emergent Go SDK and Swift SDK
+site_author: Emergent Company
+repo_url: https://github.com/emergent-company/emergent
+repo_name: emergent-company/emergent
+
+docs_dir: docs/site
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - content.tabs.link
+    - content.code.copy
+    - toc.follow
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Go SDK:
+    - Overview: go-sdk/index.md
+    - Authentication: go-sdk/authentication.md
+    - Multi-Tenancy: go-sdk/multi-tenancy.md
+    - Error Handling: go-sdk/error-handling.md
+    - Streaming: go-sdk/streaming.md
+    - Graph ID Model: go-sdk/graph-id-model.md
+    - Changelog: go-sdk/changelog.md
+    - Reference:
+      - auth: go-sdk/reference/auth.md
+      - errors: go-sdk/reference/errors.md
+      - graph/graphutil: go-sdk/reference/graphutil.md
+      - testutil: go-sdk/reference/testutil.md
+      - graph: go-sdk/reference/graph.md
+      - documents: go-sdk/reference/documents.md
+      - search: go-sdk/reference/search.md
+      - chat: go-sdk/reference/chat.md
+      - chunks: go-sdk/reference/chunks.md
+      - chunking: go-sdk/reference/chunking.md
+      - agents: go-sdk/reference/agents.md
+      - agentdefinitions: go-sdk/reference/agentdefinitions.md
+      - branches: go-sdk/reference/branches.md
+      - projects: go-sdk/reference/projects.md
+      - orgs: go-sdk/reference/orgs.md
+      - users: go-sdk/reference/users.md
+      - apitokens: go-sdk/reference/apitokens.md
+      - mcp: go-sdk/reference/mcp.md
+      - mcpregistry: go-sdk/reference/mcpregistry.md
+      - datasources: go-sdk/reference/datasources.md
+      - discoveryjobs: go-sdk/reference/discoveryjobs.md
+      - embeddingpolicies: go-sdk/reference/embeddingpolicies.md
+      - integrations: go-sdk/reference/integrations.md
+      - templatepacks: go-sdk/reference/templatepacks.md
+      - typeregistry: go-sdk/reference/typeregistry.md
+      - notifications: go-sdk/reference/notifications.md
+      - tasks: go-sdk/reference/tasks.md
+      - monitoring: go-sdk/reference/monitoring.md
+      - useractivity: go-sdk/reference/useractivity.md
+      - health: go-sdk/reference/health.md
+      - superadmin: go-sdk/reference/superadmin.md
+      - apidocs: go-sdk/reference/apidocs.md
+      - provider: go-sdk/reference/provider.md
+  - Swift SDK:
+    - Overview: swift-sdk/index.md
+    - API Client: swift-sdk/api-client.md
+    - Models: swift-sdk/models.md
+    - Errors: swift-sdk/errors.md
+    - Roadmap: swift-sdk/roadmap.md

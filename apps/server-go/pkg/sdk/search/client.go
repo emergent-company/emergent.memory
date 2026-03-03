@@ -27,6 +27,7 @@ type Client struct {
 type SearchRequest struct {
 	Query          string `json:"query"`
 	Limit          int    `json:"limit,omitempty"`
+	Strategy       string `json:"strategy,omitempty"`       // hybrid, semantic, keyword
 	ResultTypes    string `json:"resultTypes,omitempty"`    // graph, text, both
 	FusionStrategy string `json:"fusionStrategy,omitempty"` // weighted, rrf, interleave, graph_first, text_first
 	IncludeDebug   bool   `json:"includeDebug,omitempty"`
