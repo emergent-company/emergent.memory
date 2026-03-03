@@ -1,7 +1,7 @@
 // Package main provides the entry point for the Emergent API server
 //
 // @title Emergent API
-// @version 0.28.10
+// @version 0.28.12
 // @description Emergent Knowledge Base API - AI-powered knowledge management system
 // @contact.name Emergent Team
 // @contact.url https://emergent-company.ai
@@ -58,12 +58,12 @@ import (
 	"github.com/emergent-company/emergent/domain/superadmin"
 	"github.com/emergent-company/emergent/domain/tasks"
 	"github.com/emergent-company/emergent/domain/templatepacks"
+	"github.com/emergent-company/emergent/domain/tracing"
 	"github.com/emergent-company/emergent/domain/typeregistry"
 	"github.com/emergent-company/emergent/domain/useraccess"
 	"github.com/emergent-company/emergent/domain/useractivity"
 	"github.com/emergent-company/emergent/domain/userprofile"
 	"github.com/emergent-company/emergent/domain/users"
-	"github.com/emergent-company/emergent/domain/tracing"
 	"github.com/emergent-company/emergent/domain/workspace"
 	"github.com/emergent-company/emergent/domain/workspaceimages"
 	"github.com/emergent-company/emergent/internal/config"
