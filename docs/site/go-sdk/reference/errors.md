@@ -8,8 +8,10 @@ The `errors` package provides structured error handling for SDK API responses.
 
 ```go
 type Error struct {
-    StatusCode int    // HTTP status code
-    Message    string // Error message from the server
+    StatusCode int                    // HTTP status code
+    Code       string                 // Machine-readable error code (e.g. "not_found")
+    Message    string                 // Human-readable error message from the server
+    Details    map[string]interface{} // Optional structured details from the server
 }
 
 func (e *Error) Error() string
