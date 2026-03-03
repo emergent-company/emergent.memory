@@ -2,6 +2,9 @@ node_modules/
 dist/
 .next/
 
+# MkDocs build output (root-level site/ only, not docs/site/ which is our source)
+/site/
+
 # Ignore build outputs in all packages
 **/dist-openapi/
 
