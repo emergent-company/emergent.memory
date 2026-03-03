@@ -53,6 +53,7 @@ import (
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/notifications"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/orgs"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
+	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/provider"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/search"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/superadmin"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/tasks"
@@ -102,6 +103,7 @@ type Client struct {
 	Health     *health.Client
 	Superadmin *superadmin.Client
 	APIDocs    *apidocs.Client
+	Provider   *provider.Client
 }
 
 // Config holds configuration for the SDK client.
@@ -275,6 +277,7 @@ func initClients(c *Client) {
 	c.Health = health.NewClient(c.http, c.base)
 	c.Superadmin = superadmin.NewClient(c.http, c.base, c.auth)
 	c.APIDocs = apidocs.NewClient(c.http, c.base, c.auth)
+	c.Provider = provider.NewClient(c.http, c.base, c.auth)
 }
 
 // SetContext sets the default organization and project context for API calls.
