@@ -1158,7 +1158,7 @@ func TestChunkAndSchemaComparison(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	modelFactory := adk.NewModelFactory(llmConfig, logger)
+	modelFactory := adk.NewModelFactory(llmConfig, logger, nil)
 
 	llm, err := modelFactory.CreateModel(ctx)
 	require.NoError(t, err, "Failed to create model")
@@ -1452,7 +1452,7 @@ func TestSingleStepVsTwoStepComparison(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	modelFactory := adk.NewModelFactory(llmConfig, logger)
+	modelFactory := adk.NewModelFactory(llmConfig, logger, nil)
 
 	llm, err := modelFactory.CreateModel(ctx)
 	require.NoError(t, err, "Failed to create model")
@@ -1679,7 +1679,7 @@ func TestModelComparison(t *testing.T) {
 		}
 
 		logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-		modelFactory := adk.NewModelFactory(llmConfig, logger)
+		modelFactory := adk.NewModelFactory(llmConfig, logger, nil)
 
 		llm, err := modelFactory.CreateModel(ctx)
 		require.NoError(t, err, "Failed to create model %s", modelName)

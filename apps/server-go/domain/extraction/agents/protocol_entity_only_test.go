@@ -344,7 +344,7 @@ func TestProtocolEntityOnlyE2E(t *testing.T) {
 
 	// Create model factory and model
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	modelFactory := adk.NewModelFactory(llmConfig, logger)
+	modelFactory := adk.NewModelFactory(llmConfig, logger, nil)
 
 	llm, err := modelFactory.CreateModel(ctx)
 	require.NoError(t, err, "Failed to create model")

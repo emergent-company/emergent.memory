@@ -48,12 +48,13 @@ type Config struct {
 
 // Client is a Vertex AI embeddings client
 type Client struct {
-	projectID  string
-	location   string
-	model      string
-	httpClient *http.Client
-	tokenSrc   *google.Credentials
-	log        *slog.Logger
+	projectID       string
+	location        string
+	model           string
+	httpClient      *http.Client
+	tokenSrc        *google.Credentials
+	credentialsJSON []byte // explicit SA JSON; if set, overrides ADC
+	log             *slog.Logger
 
 	// Retry configuration
 	maxRetries int
@@ -92,6 +93,15 @@ func WithLogger(log *slog.Logger) ClientOption {
 	}
 }
 
+// WithCredentialsJSON provides explicit service account JSON credentials,
+// overriding Application Default Credentials. The JSON should be the content
+// of a GCP service account key file.
+func WithCredentialsJSON(saJSON []byte) ClientOption {
+	return func(c *Client) {
+		c.credentialsJSON = saJSON
+	}
+}
+
 // NewClient creates a new Vertex AI embeddings client
 func NewClient(ctx context.Context, cfg Config, opts ...ClientOption) (*Client, error) {
 	if cfg.ProjectID == "" {
@@ -107,12 +117,6 @@ func NewClient(ctx context.Context, cfg Config, opts ...ClientOption) (*Client, 
 		cfg.Timeout = DefaultTimeout
 	}
 
-	// Get default credentials
-	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
-	if err != nil {
-		return nil, fmt.Errorf("failed to find default credentials: %w", err)
-	}
-
 	c := &Client{
 		projectID: cfg.ProjectID,
 		location:  cfg.Location,
@@ -120,15 +124,31 @@ func NewClient(ctx context.Context, cfg Config, opts ...ClientOption) (*Client, 
 		httpClient: &http.Client{
 			Timeout: cfg.Timeout,
 		},
-		tokenSrc:   creds,
 		log:        slog.Default(),
 		maxRetries: DefaultMaxRetries,
 		baseDelay:  DefaultBaseDelay,
 		maxDelay:   DefaultMaxDelay,
 	}
 
+	// Apply options first so WithCredentialsJSON takes effect before ADC fallback
 	for _, opt := range opts {
 		opt(c)
+	}
+
+	// Resolve credentials: explicit SA JSON takes priority over ADC
+	if len(c.credentialsJSON) > 0 {
+		creds, err := google.CredentialsFromJSON(ctx, c.credentialsJSON, "https://www.googleapis.com/auth/cloud-platform")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse service account credentials: %w", err)
+		}
+		c.tokenSrc = creds
+	} else {
+		// Fall back to Application Default Credentials
+		creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+		if err != nil {
+			return nil, fmt.Errorf("failed to find default credentials: %w", err)
+		}
+		c.tokenSrc = creds
 	}
 
 	return c, nil

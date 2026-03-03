@@ -20,7 +20,7 @@ func TestNewModelFactory(t *testing.T) {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	factory := NewModelFactory(cfg, log)
+	factory := NewModelFactory(cfg, log, nil)
 
 	if factory == nil {
 		t.Fatal("NewModelFactory returned nil")
@@ -49,7 +49,7 @@ func TestModelFactoryCreateModelWithName_ValidationErrors(t *testing.T) {
 				VertexAILocation: "us-central1",
 			},
 			modelName: "gemini-1.5-pro",
-			wantErr:   "GCP project ID is required for Vertex AI",
+			wantErr:   "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI",
 		},
 		{
 			name: "missing Vertex AI location",
@@ -58,7 +58,7 @@ func TestModelFactoryCreateModelWithName_ValidationErrors(t *testing.T) {
 				VertexAILocation: "",
 			},
 			modelName: "gemini-1.5-pro",
-			wantErr:   "Vertex AI location is required",
+			wantErr:   "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI",
 		},
 		{
 			name: "missing model name",
@@ -73,7 +73,7 @@ func TestModelFactoryCreateModelWithName_ValidationErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			factory := NewModelFactory(tt.cfg, log)
+			factory := NewModelFactory(tt.cfg, log, nil)
 			_, err := factory.CreateModelWithName(context.Background(), tt.modelName)
 
 			if err == nil {
@@ -91,7 +91,7 @@ func TestModelFactoryDefaultGenerateConfig(t *testing.T) {
 		MaxOutputTokens: 4096,
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log)
+	factory := NewModelFactory(cfg, log, nil)
 
 	config := factory.DefaultGenerateConfig()
 
@@ -115,7 +115,7 @@ func TestModelFactoryExtractionGenerateConfig(t *testing.T) {
 		MaxOutputTokens: 8192,
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log)
+	factory := NewModelFactory(cfg, log, nil)
 
 	config := factory.ExtractionGenerateConfig()
 
@@ -173,7 +173,7 @@ func TestModelFactoryIsEnabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			factory := NewModelFactory(tt.cfg, log)
+			factory := NewModelFactory(tt.cfg, log, nil)
 			got := factory.IsEnabled()
 			if got != tt.want {
 				t.Errorf("IsEnabled() = %v, want %v", got, tt.want)
@@ -187,7 +187,7 @@ func TestModelFactoryModelName(t *testing.T) {
 		Model: "gemini-1.5-flash",
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log)
+	factory := NewModelFactory(cfg, log, nil)
 
 	got := factory.ModelName()
 	if got != "gemini-1.5-flash" {
@@ -231,7 +231,7 @@ func TestProvideModelFactory(t *testing.T) {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	factory := provideModelFactory(cfg, log)
+	factory := provideModelFactory(modelFactoryParams{Cfg: cfg, Log: log})
 
 	if factory == nil {
 		t.Fatal("provideModelFactory returned nil")
@@ -259,7 +259,7 @@ func TestModelFactoryCreateModel_ValidationErrors(t *testing.T) {
 				VertexAILocation: "us-central1",
 				Model:            "gemini-1.5-pro",
 			},
-			wantErr: "GCP project ID is required for Vertex AI",
+			wantErr: "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI",
 		},
 		{
 			name: "missing Vertex AI location",
@@ -268,7 +268,7 @@ func TestModelFactoryCreateModel_ValidationErrors(t *testing.T) {
 				VertexAILocation: "",
 				Model:            "gemini-1.5-pro",
 			},
-			wantErr: "Vertex AI location is required",
+			wantErr: "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI",
 		},
 		{
 			name: "missing model name (uses config's empty model)",
@@ -283,7 +283,7 @@ func TestModelFactoryCreateModel_ValidationErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			factory := NewModelFactory(tt.cfg, log)
+			factory := NewModelFactory(tt.cfg, log, nil)
 			_, err := factory.CreateModel(context.Background())
 
 			if err == nil {
@@ -301,7 +301,7 @@ func TestModelFactoryExtractionGenerateConfigWithSchema(t *testing.T) {
 		MaxOutputTokens: 8192,
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log)
+	factory := NewModelFactory(cfg, log, nil)
 
 	schema := &genai.Schema{
 		Type:        genai.TypeObject,
@@ -354,7 +354,7 @@ func TestModelFactoryExtractionGenerateConfigWithSchema_NilSchema(t *testing.T) 
 		MaxOutputTokens: 4096,
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log)
+	factory := NewModelFactory(cfg, log, nil)
 
 	config := factory.ExtractionGenerateConfigWithSchema(nil)
 
@@ -377,7 +377,7 @@ func TestModelFactoryExtractionGenerateConfigWithSchema_SchemaWithEnumConstraint
 		MaxOutputTokens: 8192,
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log)
+	factory := NewModelFactory(cfg, log, nil)
 
 	schema := &genai.Schema{
 		Type:     genai.TypeObject,
