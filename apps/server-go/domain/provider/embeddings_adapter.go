@@ -34,11 +34,13 @@ func (a *EmbeddingCredentialAdapter) ResolveEmbedding(ctx context.Context) (*emb
 // toEmbeddingCredential converts a domain ResolvedCredential to the embeddings-package type.
 func toEmbeddingCredential(c *ResolvedCredential) *embeddings.ResolvedEmbeddingCredential {
 	return &embeddings.ResolvedEmbeddingCredential{
-		IsGoogleAI:     c.Provider == ProviderGoogleAI,
-		APIKey:         c.APIKey,
-		IsVertexAI:     c.Provider == ProviderVertexAI,
-		GCPProject:     c.GCPProject,
-		Location:       c.Location,
-		EmbeddingModel: c.EmbeddingModel,
+		IsGoogleAI:         c.Provider == ProviderGoogleAI,
+		APIKey:             c.APIKey,
+		IsVertexAI:         c.Provider == ProviderVertexAI,
+		GCPProject:         c.GCPProject,
+		Location:           c.Location,
+		ServiceAccountJSON: c.ServiceAccountJSON,
+		EmbeddingModel:     c.EmbeddingModel,
+		Source:             string(c.Source),
 	}
 }

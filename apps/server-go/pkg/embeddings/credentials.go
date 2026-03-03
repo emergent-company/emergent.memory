@@ -6,12 +6,16 @@ import "context"
 // instantiate an embeddings client for a specific request context.
 // This type is defined in pkg/embeddings (not domain/provider) to avoid an import cycle.
 type ResolvedEmbeddingCredential struct {
-	IsGoogleAI     bool
-	APIKey         string
-	IsVertexAI     bool
-	GCPProject     string
-	Location       string
-	EmbeddingModel string
+	IsGoogleAI         bool
+	APIKey             string
+	IsVertexAI         bool
+	GCPProject         string
+	Location           string
+	ServiceAccountJSON string // set for Vertex AI; SA key JSON
+	EmbeddingModel     string
+	// Source describes where the credential was resolved from (project/organization/environment).
+	// Informational only; used for logging and tracing.
+	Source string
 }
 
 // EmbeddingResolver resolves embedding credentials for the current request context.
