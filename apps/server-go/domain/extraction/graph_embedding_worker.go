@@ -12,9 +12,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
-	"github.com/emergent-company/emergent/pkg/syshealth"
+	"github.com/emergent-company/emergent/pkg/auth"
 	"github.com/emergent-company/emergent/pkg/embeddings/vertex"
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
@@ -273,6 +274,12 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 
 	// Now we have the project ID from the fetched object
 	span.SetAttributes(attribute.String("emergent.project.id", obj.ProjectID))
+
+	// Inject project ID into context so the credential resolver can look up
+	// per-project LLM provider configuration (e.g. Vertex AI credentials).
+	if obj.ProjectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, obj.ProjectID)
+	}
 
 	// Extract text for embedding
 	text := w.extractText(obj)

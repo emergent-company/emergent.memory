@@ -12,8 +12,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
-	"github.com/emergent-company/emergent/pkg/syshealth"
+	"github.com/emergent-company/emergent/pkg/auth"
 	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/pkg/tracing"
 )
 
@@ -209,6 +210,7 @@ type chunkRow struct {
 	DocumentID string `bun:"document_id,type:uuid"`
 	ChunkIndex int    `bun:"chunk_index"`
 	Text       string `bun:"text"`
+	ProjectID  string `bun:"project_id,type:uuid"`
 }
 
 // processJob processes a single chunk embedding job
@@ -220,13 +222,13 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 
 	startTime := time.Now()
 
-	// Fetch the chunk
+	// Fetch the chunk along with the project ID from its parent document.
 	chunk := &chunkRow{}
-	err := w.db.NewSelect().
-		TableExpr("kb.chunks").
-		Column("id", "document_id", "chunk_index", "text").
-		Where("id = ?", job.ChunkID).
-		Scan(ctx, chunk)
+	err := w.db.NewRaw(`
+		SELECT c.id, c.document_id, c.chunk_index, c.text, d.project_id
+		FROM kb.chunks c
+		JOIN kb.documents d ON d.id = c.document_id
+		WHERE c.id = ?`, job.ChunkID).Scan(ctx, chunk)
 
 	if err == sql.ErrNoRows {
 		// Chunk doesn't exist, mark as failed
@@ -255,6 +257,13 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 	}
 
 	textLength := len(chunk.Text)
+
+	// Inject project ID into context so the credential resolver can look up
+	// per-project LLM provider configuration (e.g. Vertex AI credentials).
+	if chunk.ProjectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, chunk.ProjectID)
+		span.SetAttributes(attribute.String("emergent.project.id", chunk.ProjectID))
+	}
 
 	// Generate embedding
 	embeddingStartTime := time.Now()

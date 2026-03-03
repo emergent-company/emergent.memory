@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/emergent-company/emergent/pkg/auth"
 	"github.com/emergent-company/emergent/pkg/logger"
 	"github.com/emergent-company/emergent/pkg/syshealth"
 	"github.com/emergent-company/emergent/pkg/tracing"
@@ -19,12 +20,13 @@ import (
 
 // graphRelationshipRow holds the minimal fields needed to generate a relationship embedding.
 type graphRelationshipRow struct {
-	ID      string `bun:"id,type:uuid"`
-	Type    string `bun:"type"`
-	SrcName string `bun:"src_name"`
-	DstName string `bun:"dst_name"`
-	SrcType string `bun:"src_type"`
-	DstType string `bun:"dst_type"`
+	ID        string `bun:"id,type:uuid"`
+	Type      string `bun:"type"`
+	SrcName   string `bun:"src_name"`
+	DstName   string `bun:"dst_name"`
+	SrcType   string `bun:"src_type"`
+	DstType   string `bun:"dst_type"`
+	ProjectID string `bun:"project_id,type:uuid"`
 }
 
 // GraphRelationshipEmbeddingWorker processes relationship embedding jobs from the queue.
@@ -225,6 +227,7 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 		SELECT
 			gr.id,
 			gr.type,
+			gr.project_id,
 			COALESCE(src.key, src.type) AS src_name,
 			src.type                    AS src_type,
 			COALESCE(dst.key, dst.type) AS dst_name,
@@ -260,6 +263,13 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 
 	// Build triplet text: "SrcName REL_TYPE DstName"
 	text := rel.SrcName + " " + rel.Type + " " + rel.DstName
+
+	// Inject project ID into context so the credential resolver can look up
+	// per-project LLM provider configuration (e.g. Vertex AI credentials).
+	if rel.ProjectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, rel.ProjectID)
+		span.SetAttributes(attribute.String("emergent.project.id", rel.ProjectID))
+	}
 
 	embeddingStartTime := time.Now()
 	result, err := w.embeds.EmbedQueryWithUsage(ctx, text)
