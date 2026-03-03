@@ -10,6 +10,7 @@ import (
 func RegisterRoutes(e *echo.Echo, h *Handler, uploadHandler *UploadHandler, authMiddleware *auth.Middleware) {
 	sourceTypesGroup := e.Group("/api/documents")
 	sourceTypesGroup.Use(authMiddleware.RequireAuth())
+	sourceTypesGroup.Use(authMiddleware.RequireProjectID())
 	sourceTypesGroup.GET("/source-types", h.GetSourceTypes)
 
 	g := e.Group("/api/documents")

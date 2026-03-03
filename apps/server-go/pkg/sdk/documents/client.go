@@ -546,8 +546,7 @@ func (c *Client) Download(ctx context.Context, id string) (string, error) {
 	return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 }
 
-// GetSourceTypes returns a list of all available document source types with counts.
-// This endpoint does NOT require a project ID.
+// GetSourceTypes returns a list of all available document source types with counts for the current project.
 //
 // Example:
 //

@@ -181,12 +181,13 @@ func (r *Repository) GetByFileHash(ctx context.Context, projectID, fileHash stri
 	return &doc, nil
 }
 
-// GetDistinctSourceTypes returns all distinct source types with document counts
-func (r *Repository) GetDistinctSourceTypes(ctx context.Context) ([]SourceTypeWithCount, error) {
+// GetDistinctSourceTypes returns all distinct source types with document counts for a project
+func (r *Repository) GetDistinctSourceTypes(ctx context.Context, projectID string) ([]SourceTypeWithCount, error) {
 	var results []SourceTypeWithCount
 	err := r.db.NewSelect().
 		TableExpr("kb.documents").
 		ColumnExpr("source_type, COUNT(*)::int as count").
+		Where("project_id = ?", projectID).
 		Where("source_type IS NOT NULL").
 		GroupExpr("source_type").
 		OrderExpr("count DESC").
