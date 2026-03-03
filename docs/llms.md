@@ -32,7 +32,7 @@ client, err := sdk.New(sdk.Config{
 client.SetContext(orgID, projectID)  // update context at runtime
 ```
 
-**30 service clients** on `*Client`:
+**29 service clients** on `*Client`:
 
 Context-scoped (25): `Documents`, `Chunks`, `Search`, `Graph`, `Chat`, `Projects`, `Orgs`, `Users`, `APITokens`, `MCP`, `MCPRegistry`, `Branches`, `UserActivity`, `TypeRegistry`, `Notifications`, `Tasks`, `Monitoring`, `Agents`, `AgentDefinitions`, `DataSources`, `DiscoveryJobs`, `EmbeddingPolicy`, `Integrations`, `TemplatePacks`, `Chunking`
 

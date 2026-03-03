@@ -1,6 +1,6 @@
 # Go SDK
 
-The Emergent Go SDK is a fully type-safe client library for the Emergent API, providing 30 service clients that cover the complete API surface.
+The Emergent Go SDK is a fully type-safe client library for the Emergent API, providing 29 service clients that cover the complete API surface.
 
 ## Installation
 
@@ -23,9 +23,9 @@ go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@latest
 
 | Feature | Details |
 |---------|---------|
-| **Service clients** | 30 clients covering the full API surface |
+| **Service clients** | 29 clients covering the full API surface |
 | **Authentication** | API key, API token (`emt_*`), and OAuth device flow |
-| **Multi-tenancy** | `SetContext(orgID, projectID)` propagates to all 26 context-scoped clients |
+| **Multi-tenancy** | `SetContext(orgID, projectID)` propagates to all 25 context-scoped clients |
 | **Streaming** | SSE streaming for chat responses via `chat.StreamChat` |
 | **Error handling** | Structured `errors.Error` with `IsNotFound`, `IsForbidden`, etc. |
 | **Graph utilities** | `graphutil.IDSet`, `ObjectIndex`, `UniqueByEntity` for the dual-ID model |
@@ -70,7 +70,7 @@ func main() {
 
 ## Service Clients
 
-### Context-Scoped (26 clients)
+### Context-Scoped (25 clients)
 
 These clients send `X-Org-ID` and `X-Project-ID` headers on every request. Call `client.SetContext(orgID, projectID)` to update all of them atomically.
 

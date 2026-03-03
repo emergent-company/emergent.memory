@@ -82,15 +82,28 @@ type DeleteSummary struct {
 
 ```go
 type DeletionImpact struct {
-    DocumentID           string
-    ObjectsToDelete      int
-    RelationshipsToDelete int
-    ChunksToDelete       int
+    Document DocumentInfo
+    Impact   ImpactSummary
+}
+
+type DocumentInfo struct {
+    ID        string
+    Name      string
+    CreatedAt string
+}
+
+type ImpactSummary struct {
+    Chunks             int
+    ExtractionJobs     int
+    GraphObjects       int
+    GraphRelationships int
+    Notifications      int
 }
 
 type BulkDeletionImpact struct {
-    Documents []DeletionImpact
-    Summary   ImpactSummary
+    TotalDocuments int
+    Impact         ImpactSummary
+    Documents      []DeletionImpact
 }
 ```
 
