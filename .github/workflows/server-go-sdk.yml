@@ -55,7 +55,11 @@ jobs:
 
       - name: Run tests
         working-directory: apps/server-go/pkg/sdk
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -v -race ./...
+
+      - name: Generate coverage
+        working-directory: apps/server-go/pkg/sdk
+        run: go test -coverprofile=coverage.out -covermode=atomic ./... 2>/dev/null; true
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
