@@ -52,6 +52,7 @@ import (
 	"github.com/emergent-company/emergent/domain/notifications"
 	"github.com/emergent-company/emergent/domain/orgs"
 	"github.com/emergent-company/emergent/domain/projects"
+	"github.com/emergent-company/emergent/domain/provider"
 	"github.com/emergent-company/emergent/domain/scheduler"
 	"github.com/emergent-company/emergent/domain/search"
 	"github.com/emergent-company/emergent/domain/standalone"
@@ -149,6 +150,9 @@ func main() {
 		events.Module,
 		integrations.Module,
 		discoveryjobs.Module,
+
+		// Provider module (credential resolution, model catalog, LLM usage tracking)
+		provider.Module,
 
 		// Extraction module (background workers for document parsing, embeddings, etc.)
 		extraction.Module,
