@@ -27,16 +27,16 @@ func TestSearchHybrid(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		testutil.JSONResponse(t, w, map[string]interface{}{
-			"data": map[string]interface{}{
-				"results": []map[string]interface{}{
-					{
-						"document_id": "doc_123",
-						"chunk_id":    "chunk_456",
-						"content":     "Machine learning is a subset of AI",
-						"score":       0.95,
-					},
+			"results": []map[string]interface{}{
+				{
+					"document_id": "doc_123",
+					"chunk_id":    "chunk_456",
+					"content":     "Machine learning is a subset of AI",
+					"score":       0.95,
 				},
-				"total": 1,
+			},
+			"metadata": map[string]interface{}{
+				"totalResults": 1,
 			},
 		})
 	})
@@ -72,10 +72,8 @@ func TestSearchSemantic(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		testutil.JSONResponse(t, w, map[string]interface{}{
-			"data": map[string]interface{}{
-				"results": []map[string]interface{}{},
-				"total":   0,
-			},
+			"results":  []map[string]interface{}{},
+			"metadata": map[string]interface{}{"totalResults": 0},
 		})
 	})
 
