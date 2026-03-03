@@ -32,13 +32,13 @@ func streamResponse(client *sdk.Client, conversationID string) {
     for event := range stream.Events() {
         switch event.Type {
         case "token":
-            fmt.Print(event.Content)
+            fmt.Print(event.Token)
         case "done":
             fmt.Println()
             fmt.Println("[stream complete]")
             return
         case "error":
-            log.Printf("stream error: %s", event.Content)
+            log.Printf("stream error: %s", event.Error)
             return
         }
     }
@@ -73,11 +73,12 @@ func (s *Stream) Err() error                   // Check for a stream-level error
 
 ## StreamEvent Types
 
-| `Type` | Meaning | `Content` |
-|--------|---------|-----------|
-| `"token"` | Incremental text token | Token text to append to output |
-| `"done"` | Stream complete | Empty or final message |
-| `"error"` | Stream-level error | Error description |
+| `Type` | Meaning | Field |
+|--------|---------|-------|
+| `"meta"` | Stream metadata | `ConversationID` contains the conversation ID |
+| `"token"` | Incremental text token | `Token` contains text to append to output |
+| `"done"` | Stream complete | `Message` may contain final message text |
+| `"error"` | Stream-level error | `Error` contains error description |
 
 ## Usage Pattern
 

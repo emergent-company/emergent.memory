@@ -6,10 +6,14 @@
 github.com/emergent-company/emergent/apps/server-go/pkg/sdk
 ```
 
-Install (requires sub-module tag `sdk/vX.Y.Z`):
+Install (supports both `@latest` and path-qualified version tags):
 
 ```bash
+# Latest version
 go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@latest
+
+# Specific version (monorepo path-qualified tag)
+go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@apps/server-go/pkg/sdk/v0.1.0
 ```
 
 ---
@@ -148,9 +152,10 @@ func (c *Client) Close()
 import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
 
 type Error struct {
-    StatusCode int
-    Message    string
-    RequestID  string
+    StatusCode int                    `json:"status_code"`
+    Code       string                 `json:"code"`
+    Message    string                 `json:"message"`
+    Details    map[string]interface{} `json:"details,omitempty"`
 }
 
 func IsNotFound(err error) bool
@@ -179,7 +184,13 @@ type Provider interface {
     Authenticate(req *http.Request) error
 }
 
-type Credentials struct { AccessToken, RefreshToken, IDToken string; Expiry time.Time }
+type Credentials struct {
+    AccessToken  string    `json:"access_token"`
+    RefreshToken string    `json:"refresh_token"`
+    ExpiresAt    time.Time `json:"expires_at"`
+    UserEmail    string    `json:"user_email,omitempty"`
+    IssuerURL    string    `json:"issuer_url,omitempty"`
+}
 
 func NewAPIKeyProvider(key string) Provider         // X-API-Key header
 func NewAPITokenProvider(token string) Provider     // Authorization: Bearer header
@@ -210,10 +221,10 @@ func UniqueByEntity(objects []GraphObject) []GraphObject
 import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/testutil"
 
 type MockServer      // httptest.Server wrapper with assertion helpers
-func AssertHeader(t, req, key, val)
-func AssertMethod(t, req, method)
-func AssertJSONBody(t, req, v interface{})
-func JSONResponse(w, statusCode, body interface{})
+func AssertHeader(t *testing.T, r *http.Request, key, expected string)
+func AssertMethod(t *testing.T, r *http.Request, expected string)
+func AssertJSONBody(t *testing.T, r *http.Request, expected interface{})
+func JSONResponse(t *testing.T, w http.ResponseWriter, data interface{})
 ```
 
 ---
