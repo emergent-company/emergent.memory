@@ -28,7 +28,7 @@ Use --mode=search for direct hybrid search without reasoning.
 Examples:
   emergent query "who directed fight club and what are their other movies?"
   emergent query --mode=search "fight club"
-  emergent query --project-id abc123 "list all requirements"
+  emergent query --project abc123 "list all requirements"
   emergent query --agent-id <id> "complex question"`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runQuery,
@@ -51,7 +51,7 @@ var (
 func init() {
 	rootCmd.AddCommand(queryCmd)
 
-	queryCmd.Flags().StringVar(&queryProjectID, "project-id", "", "Project ID to query (uses default project if not specified)")
+	queryCmd.Flags().StringVar(&queryProjectID, "project", "", "Project ID to query (uses default project if not specified)")
 	queryCmd.Flags().StringVar(&queryMode, "mode", "agent", "Query mode: agent (default, uses AI reasoning) or search (direct hybrid search)")
 	queryCmd.Flags().StringVar(&queryAgentID, "agent-id", "70356e5f-2c97-4ce4-9754-ec14e15a2a13", "Agent definition ID to use (only for agent mode)")
 	queryCmd.Flags().BoolVar(&queryShowTools, "show-tools", false, "Show tool calls made by the agent (only for agent mode)")

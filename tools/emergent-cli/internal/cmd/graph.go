@@ -761,7 +761,7 @@ Output (one line per relationship): <entity-id>  <type>  <from> -> <to>`,
 
 func init() {
 	// Persistent project flag
-	graphCmd.PersistentFlags().StringVar(&graphProjectFlag, "project-id", "", "Project ID (overrides config/env)")
+	graphCmd.PersistentFlags().StringVar(&graphProjectFlag, "project", "", "Project ID (overrides config/env)")
 	graphCmd.PersistentFlags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
 
 	// Object subcommand flags

@@ -396,6 +396,71 @@ func (r *Repository) GetPack(ctx context.Context, packID string) (*GraphTemplate
 	return &pack, nil
 }
 
+// UpdatePack partially updates a template pack in the global registry.
+// Only non-nil / non-empty fields in req are applied.
+func (r *Repository) UpdatePack(ctx context.Context, packID string, req *UpdatePackRequest) (*GraphTemplatePack, error) {
+	// Fetch current record first to ensure it exists and to return full pack.
+	var pack GraphTemplatePack
+	err := r.db.NewSelect().Model(&pack).Where("id = ?", packID).Scan(ctx)
+	if err != nil {
+		return nil, apperror.ErrNotFound.WithMessage("template pack not found")
+	}
+
+	q := r.db.NewUpdate().Model(&pack).Where("id = ?", packID).Set("updated_at = ?", time.Now())
+
+	if req.Name != nil {
+		pack.Name = *req.Name
+		q = q.Set("name = ?", *req.Name)
+	}
+	if req.Version != nil {
+		pack.Version = *req.Version
+		q = q.Set("version = ?", *req.Version)
+	}
+	if req.Description != nil {
+		pack.Description = req.Description
+		q = q.Set("description = ?", *req.Description)
+	}
+	if req.Author != nil {
+		pack.Author = req.Author
+		q = q.Set("author = ?", *req.Author)
+	}
+	if req.License != nil {
+		pack.License = req.License
+		q = q.Set("license = ?", *req.License)
+	}
+	if req.RepositoryURL != nil {
+		pack.RepositoryURL = req.RepositoryURL
+		q = q.Set("repository_url = ?", *req.RepositoryURL)
+	}
+	if req.DocumentationURL != nil {
+		pack.DocumentationURL = req.DocumentationURL
+		q = q.Set("documentation_url = ?", *req.DocumentationURL)
+	}
+	if len(req.ObjectTypeSchemas) > 0 {
+		pack.ObjectTypeSchemas = req.ObjectTypeSchemas
+		q = q.Set("object_type_schemas = ?", req.ObjectTypeSchemas)
+	}
+	if len(req.RelationshipTypeSchemas) > 0 {
+		pack.RelationshipTypeSchemas = req.RelationshipTypeSchemas
+		q = q.Set("relationship_type_schemas = ?", req.RelationshipTypeSchemas)
+	}
+	if len(req.UIConfigs) > 0 {
+		pack.UIConfigs = req.UIConfigs
+		q = q.Set("ui_configs = ?", req.UIConfigs)
+	}
+	if len(req.ExtractionPrompts) > 0 {
+		pack.ExtractionPrompts = req.ExtractionPrompts
+		q = q.Set("extraction_prompts = ?", req.ExtractionPrompts)
+	}
+
+	if _, err := q.Returning("updated_at").Exec(ctx); err != nil {
+		r.log.Error("failed to update template pack", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return &pack, nil
+}
+
 // DeletePack deletes a template pack from the global registry.
 // Returns an error if the pack is assigned to any projects.
 func (r *Repository) DeletePack(ctx context.Context, packID string) error {

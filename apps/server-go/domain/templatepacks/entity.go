@@ -122,6 +122,21 @@ type CreatePackRequest struct {
 	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
 }
 
+// UpdatePackRequest is the request to update an existing template pack (partial update — only non-nil fields are applied)
+type UpdatePackRequest struct {
+	Name                    *string         `json:"name,omitempty"`
+	Version                 *string         `json:"version,omitempty"`
+	Description             *string         `json:"description,omitempty"`
+	Author                  *string         `json:"author,omitempty"`
+	License                 *string         `json:"license,omitempty"`
+	RepositoryURL           *string         `json:"repository_url,omitempty"`
+	DocumentationURL        *string         `json:"documentation_url,omitempty"`
+	ObjectTypeSchemas       json.RawMessage `json:"object_type_schemas,omitempty"`
+	RelationshipTypeSchemas json.RawMessage `json:"relationship_type_schemas,omitempty"`
+	UIConfigs               json.RawMessage `json:"ui_configs,omitempty"`
+	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
+}
+
 // GetPackRequest is the request to get a template pack by ID
 type GetPackRequest struct {
 	ID string `json:"id"`

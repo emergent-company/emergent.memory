@@ -15,7 +15,7 @@ package cmd
 //     Human-readable labels for EuroVoc thesaurus concept IDs
 //
 // Phases:
-//   1. (optional) Delete previous lovdata project  --project-id
+//   1. (optional) Delete previous lovdata project  --project
 //   2. Find or create "Norwegian Law" project
 //   3. Download / cache Lovdata tar.bz2 archives
 //   4. Parse and ingest Lovdata documents            --seed, --workers, --dataset
@@ -131,8 +131,8 @@ func init() {
 	f.BoolVar(&dbLovdataFlags.cleanup, "cleanup", false, "delete the project after the run")
 	f.StringVar(&dbLovdataFlags.logFile, "log", "", "JSONL log file to append results to")
 	f.StringVar(&dbLovdataFlags.server, "server", "", "Emergent server URL (overrides config)")
-	f.StringVar(&dbLovdataFlags.projectID, "project-id", "", "delete this project ID before creating a new one")
-	f.BoolVar(&dbLovdataFlags.skipDelete, "skip-delete", false, "skip deleting --project-id even if set")
+	f.StringVar(&dbLovdataFlags.projectID, "project", "", "delete this project ID before creating a new one")
+	f.BoolVar(&dbLovdataFlags.skipDelete, "skip-delete", false, "skip deleting --project even if set")
 	f.BoolVarP(&dbLovdataFlags.verbose, "verbose", "v", false, "verbose output")
 	f.StringVar(&dbLovdataFlags.configPath, "config-path", "", "path to Emergent config.yaml")
 	f.StringVar(&dbLovdataFlags.orgID, "org-id", "", "organisation ID for project creation (default: dev org)")

@@ -89,6 +89,43 @@ func BashCalled(t *testing.T, result *runner.Result) {
 	ToolCalled(t, result, "bash")
 }
 
+// BashCommandUsed asserts that at least one bash tool call had a command
+// containing the given substring. This is used to verify the agent used a
+// specific CLI command (e.g. "create-batch") rather than just verifying bash
+// was called at all.
+func BashCommandUsed(t *testing.T, result *runner.Result, substr string) {
+	t.Helper()
+	for _, tc := range result.ToolCalls {
+		if tc.Tool != "bash" {
+			continue
+		}
+		cmd, ok := tc.Input["command"].(string)
+		if ok && strings.Contains(cmd, substr) {
+			return
+		}
+	}
+	t.Errorf("expected a bash tool call with command containing %q; bash commands were:\n%s",
+		substr, bashCommands(result))
+}
+
+// bashCommands returns a newline-separated list of all bash command inputs
+// from the result (truncated for readability).
+func bashCommands(result *runner.Result) string {
+	var b strings.Builder
+	for i, tc := range result.ToolCalls {
+		if tc.Tool != "bash" {
+			continue
+		}
+		cmd, _ := tc.Input["command"].(string)
+		line := strings.ReplaceAll(cmd, "\n", " ")
+		if len(line) > 200 {
+			line = line[:200] + "..."
+		}
+		fmt.Fprintf(&b, "  [%d] %s\n", i, line)
+	}
+	return b.String()
+}
+
 func toolNames(result *runner.Result) []string {
 	names := make([]string, len(result.ToolCalls))
 	for i, tc := range result.ToolCalls {
