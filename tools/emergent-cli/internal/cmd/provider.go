@@ -118,6 +118,47 @@ func runProviderSetVertex(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// ── set-vertex-express ────────────────────────────────────────────────────────
+
+var setVertexExpressCmd = &cobra.Command{
+	Use:   "set-vertex-express <api-key>",
+	Short: "Save a Vertex AI Express Mode API key for the organization",
+	Long: `Save a Vertex AI Express Mode API key for the current organization.
+
+Vertex AI Express Mode allows you to use Vertex AI models with an API key
+(no GCP project or service account required). The key is encrypted at rest.
+
+Example:
+  emergent provider set-vertex-express AQ.Ab8RN6...`,
+	Args: cobra.ExactArgs(1),
+	RunE: runProviderSetVertexExpress,
+}
+
+var setVertexExpressOrgID string
+
+func runProviderSetVertexExpress(cmd *cobra.Command, args []string) error {
+	apiKey := args[0]
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	orgID, err := resolveProviderOrgID(c, setVertexExpressOrgID)
+	if err != nil {
+		return err
+	}
+
+	req := &provider.SaveVertexAIExpressCredentialRequest{APIKey: apiKey}
+	if err := c.SDK.Provider.SaveVertexAIExpressCredential(context.Background(), orgID, req); err != nil {
+		return fmt.Errorf("failed to save Vertex AI Express credential: %w", err)
+	}
+
+	fmt.Println("Vertex AI Express API key saved successfully.")
+	fmt.Println("Run 'emergent provider test vertex-ai-express' to verify it works.")
+	return nil
+}
+
 // ── list-credentials ──────────────────────────────────────────────────────────
 
 var listCredentialsCmd = &cobra.Command{
@@ -376,6 +417,94 @@ func runProviderUsage(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// ── test ──────────────────────────────────────────────────────────────────────
+
+var providerTestCmd = &cobra.Command{
+	Use:   "test [provider]",
+	Short: "Test LLM provider credentials with a live generate call",
+	Long: `Send a live "say hello" generate call to verify that provider credentials
+work end-to-end.
+
+Without a provider argument, tests all configured providers.
+Pass a provider name (google-ai or vertex-ai) to test a specific one.
+
+Use --project to test using the project-level credential hierarchy
+(project override → org → env) instead of org credentials only.
+
+Examples:
+  emergent provider test
+  emergent provider test vertex-ai
+  emergent provider test google-ai --project <id>`,
+	Args:      cobra.MaximumNArgs(1),
+	ValidArgs: []string{"google-ai", "vertex-ai", "vertex-ai-express"},
+	RunE:      runProviderTest,
+}
+
+var (
+	testProviderOrgID     string
+	testProviderProjectID string
+)
+
+func runProviderTest(cmd *cobra.Command, args []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	// If --project was not explicitly passed, fall back to EMERGENT_PROJECT_ID
+	// from the environment (auto-loaded from .env.local by the CLI).
+	if testProviderProjectID == "" {
+		testProviderProjectID = os.Getenv("EMERGENT_PROJECT_ID")
+	}
+
+	// Always resolve the org ID so we can pass it to TestProvider for credential resolution.
+	resolvedOrgID, err := resolveProviderOrgID(c, testProviderOrgID)
+	if err != nil {
+		return err
+	}
+
+	// Build list of providers to test
+	var providers []string
+	if len(args) > 0 {
+		providers = []string{args[0]}
+	} else {
+		// Auto-discover from configured credentials
+		creds, err := c.SDK.Provider.ListOrgCredentials(ctx, resolvedOrgID)
+		if err != nil {
+			return fmt.Errorf("failed to list credentials: %w", err)
+		}
+		if len(creds) == 0 {
+			fmt.Println("No credentials configured.")
+			fmt.Println("Run 'emergent provider set-key <api-key>' or 'emergent provider set-vertex' to configure a provider.")
+			return nil
+		}
+		for _, cred := range creds {
+			providers = append(providers, cred.Provider)
+		}
+	}
+
+	anyFailed := false
+	for _, p := range providers {
+		fmt.Printf("Testing %s... ", p)
+		result, err := c.SDK.Provider.TestProvider(ctx, p, testProviderProjectID, resolvedOrgID)
+		if err != nil {
+			fmt.Printf("FAILED\n  Error: %v\n", err)
+			anyFailed = true
+			continue
+		}
+		fmt.Printf("OK (%dms)\n", result.LatencyMs)
+		fmt.Printf("  Model:  %s\n", result.Model)
+		fmt.Printf("  Reply:  %s\n", result.Reply)
+	}
+
+	if anyFailed {
+		return fmt.Errorf("one or more provider tests failed")
+	}
+	return nil
+}
+
 // ── resolveProviderOrgID helper ───────────────────────────────────────────────
 
 // resolveProviderOrgID returns the explicit orgID if provided; otherwise it
@@ -411,6 +540,9 @@ func init() {
 	_ = setVertexCmd.MarkFlagRequired("project")
 	_ = setVertexCmd.MarkFlagRequired("location")
 
+	// set-vertex-express flags
+	setVertexExpressCmd.Flags().StringVar(&setVertexExpressOrgID, "org-id", "", "Organization ID (auto-detected from config)")
+
 	// list-credentials flags
 	listCredentialsCmd.Flags().StringVar(&listCredentialsOrgID, "org-id", "", "Organization ID (auto-detected from config)")
 
@@ -424,12 +556,18 @@ func init() {
 	providerUsageCmd.Flags().StringVar(&usageOrgID, "org-id", "", "Organization ID (auto-detected from config)")
 	providerUsageCmd.Flags().BoolVar(&usageJSONFlag, "json", false, "Output raw JSON")
 
+	// test flags
+	providerTestCmd.Flags().StringVar(&testProviderOrgID, "org-id", "", "Organization ID (auto-detected from config)")
+	providerTestCmd.Flags().StringVar(&testProviderProjectID, "project", "", "Project ID for project-level credential resolution")
+
 	// Wire sub-commands
 	providerCmd.AddCommand(setKeyCmd)
 	providerCmd.AddCommand(setVertexCmd)
+	providerCmd.AddCommand(setVertexExpressCmd)
 	providerCmd.AddCommand(listCredentialsCmd)
 	providerCmd.AddCommand(providerModelsCmd)
 	providerCmd.AddCommand(providerUsageCmd)
+	providerCmd.AddCommand(providerTestCmd)
 
 	rootCmd.AddCommand(providerCmd)
 }
