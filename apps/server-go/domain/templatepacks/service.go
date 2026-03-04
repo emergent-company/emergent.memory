@@ -61,6 +61,11 @@ func (s *Service) GetPack(ctx context.Context, packID string) (*GraphTemplatePac
 	return s.repo.GetPack(ctx, packID)
 }
 
+// UpdatePack partially updates an existing template pack
+func (s *Service) UpdatePack(ctx context.Context, packID string, req *UpdatePackRequest) (*GraphTemplatePack, error) {
+	return s.repo.UpdatePack(ctx, packID, req)
+}
+
 // DeletePack deletes a template pack from the global registry
 func (s *Service) DeletePack(ctx context.Context, packID string) error {
 	return s.repo.DeletePack(ctx, packID)

@@ -86,7 +86,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "enable debug logging")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output")
 	rootCmd.PersistentFlags().BoolVar(&compact, "compact", false, "use compact output layout")
-	rootCmd.PersistentFlags().StringVar(&projectID, "project-id", "", "project ID (overrides config and environment)")
+	rootCmd.PersistentFlags().StringVar(&projectID, "project", "", "project ID (overrides config and environment)")
 	rootCmd.PersistentFlags().StringVar(&projectToken, "project-token", "", "project token (overrides config and environment)")
 
 	// Bind flags to viper for config file support
@@ -95,7 +95,7 @@ func init() {
 	_ = viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
 	_ = viper.BindPFlag("no-color", rootCmd.PersistentFlags().Lookup("no-color"))
 	_ = viper.BindPFlag("ui.compact", rootCmd.PersistentFlags().Lookup("compact"))
-	_ = viper.BindPFlag("project_id", rootCmd.PersistentFlags().Lookup("project-id"))
+	_ = viper.BindPFlag("project_id", rootCmd.PersistentFlags().Lookup("project"))
 	_ = viper.BindPFlag("project_token", rootCmd.PersistentFlags().Lookup("project-token"))
 
 	// Register completion functions for flags

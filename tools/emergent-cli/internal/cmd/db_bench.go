@@ -6,7 +6,7 @@ package cmd
 // real IMDb data, then runs db diagnose EXPLAIN checks on the now-populated DB.
 //
 // Phases:
-//   1. (optional) Delete previous bench project                   --project-id
+//   1. (optional) Delete previous bench project                   --project
 //   2. Create a fresh project
 //   3. Download/cache IMDb TSV files to /tmp/imdb_data/
 //   4. Seed N titles with parallel workers                         --seed / --workers / --batch
@@ -78,7 +78,7 @@ EXPLAIN ANALYZE checks are run against the live database so you get
 meaningful query timing on real data.
 
 Phases:
-  1. (optional) Delete a previous bench project  --project-id
+  1. (optional) Delete a previous bench project  --project
   2. Create a fresh project
   3. Download / cache IMDb TSV files
   4. Seed N titles with parallel workers         --seed, --workers, --batch
@@ -115,9 +115,9 @@ func init() {
 	dbBenchCmd.Flags().StringVar(&dbBenchFlags.logFile, "log", "", "JSONL log file to append results to (default: ~/.emergent/bench_log.jsonl)")
 	dbBenchCmd.Flags().StringVar(&dbBenchFlags.dsn, "dsn", "", "PostgreSQL DSN for EXPLAIN checks (overrides auto-detect)")
 	dbBenchCmd.Flags().StringVar(&dbBenchFlags.server, "server", "", "Emergent server URL (overrides config)")
-	dbBenchCmd.Flags().StringVar(&dbBenchFlags.projectID, "project-id", "", "delete this project ID before creating a new bench project")
+	dbBenchCmd.Flags().StringVar(&dbBenchFlags.projectID, "project", "", "delete this project ID before creating a new bench project")
 	dbBenchCmd.Flags().StringVar(&dbBenchFlags.appendProject, "append-project", "", "append to existing project ID instead of creating a new one")
-	dbBenchCmd.Flags().BoolVar(&dbBenchFlags.skipDelete, "skip-delete", false, "skip deleting --project-id even if set")
+	dbBenchCmd.Flags().BoolVar(&dbBenchFlags.skipDelete, "skip-delete", false, "skip deleting --project even if set")
 	dbBenchCmd.Flags().IntVar(&dbBenchFlags.slowMS, "slow", 200, "flag EXPLAIN queries slower than this many ms")
 	dbBenchCmd.Flags().BoolVarP(&dbBenchFlags.verbose, "verbose", "v", false, "print full EXPLAIN output for every query")
 	dbBenchCmd.Flags().StringVar(&dbBenchFlags.configPath, "config-path", "", "path to Emergent config.yaml (default: ~/.emergent/config.yaml)")

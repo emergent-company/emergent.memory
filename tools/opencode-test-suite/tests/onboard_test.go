@@ -37,11 +37,14 @@ const (
 const initialPrompt = `start emergent onboarding
 
 Important context:
-- This project is already configured — EMERGENT_PROJECT is set in .env.local.
+- This project is already configured — EMERGENT_PROJECT_ID is set in .env.local.
 - Do NOT create a new project or list existing projects. Use the project from .env.local.
 - For Step 2.5 (LLM provider): the user wants to use vertex-ai-express. Save the credential using: emergent provider set-vertex-express "AQ.Ab8RN6KJRRdau1iBFTDC2gy9vsq72X_02LmK_SHgcbAVD51uCg"
 - Then verify it works with: emergent provider test vertex-ai-express
-- Complete all remaining steps automatically without asking for confirmation: design the template pack, install it, upload the documents, create graph objects, then run a search query to verify.`
+- Complete all remaining steps automatically without asking for confirmation: design the template pack, install it, upload the documents, create graph objects, then run a search query to verify.
+- IMPORTANT: When creating graph objects, use the batch command: emergent graph objects create-batch --file <path>
+- IMPORTANT: When creating graph relationships, use the batch command: emergent graph relationships create-batch --file <path>
+- Do NOT use single-item create commands (emergent graph objects create or emergent graph relationships create) — always use the batch variants.`
 
 // TestOnboardSkill is the primary e2e test. It:
 //  1. Creates a fresh Emergent project via the CLI.
@@ -98,6 +101,9 @@ func TestOnboardSkill(t *testing.T) {
 	// Emergent state assertions via CLI — did the skill create real state?
 	assert.HasTemplatePack(t, ws.Dir)
 	assert.HasGraphObjects(t, ws.Dir, 3) // at minimum the 3 services
+
+	// Batch command assertion — agent must use create-batch, not single creates.
+	assert.BashCommandUsed(t, result, "create-batch")
 }
 
 // vertexExpressAPIKey is the Vertex AI Express Mode API key used for testing.
@@ -111,14 +117,17 @@ const vertexExpressAPIKey = "AQ.Ab8RN6KJRRdau1iBFTDC2gy9vsq72X_02LmK_SHgcbAVD51u
 const vertexExpressPrompt = `start emergent onboarding
 
 Important context:
-- This project is already configured — EMERGENT_PROJECT is set in .env.local.
+- This project is already configured — EMERGENT_PROJECT_ID is set in .env.local.
 - Do NOT create a new project or list existing projects. Use the project from .env.local.
 - For Step 2.5 (LLM provider): the vertex-ai-express credential has already been saved
   by the test harness. Skip the save step and go straight to verifying it works with:
   emergent provider test vertex-ai-express
 - Complete all remaining steps automatically without asking for confirmation:
   design the template pack, install it, upload the documents, create graph objects,
-  then run a search query to verify.`
+  then run a search query to verify.
+- IMPORTANT: When creating graph objects, use the batch command: emergent graph objects create-batch --file <path>
+- IMPORTANT: When creating graph relationships, use the batch command: emergent graph relationships create-batch --file <path>
+- Do NOT use single-item create commands (emergent graph objects create or emergent graph relationships create) — always use the batch variants.`
 
 // e2eTestToken is the static Bearer token accepted by the local dev server.
 // It maps to the AdminUser fixture (test-admin-user) and is the same token
@@ -193,6 +202,9 @@ func TestOnboardSkillWithVertexAIExpress(t *testing.T) {
 	// Emergent state assertions — skill created real state.
 	assert.HasTemplatePack(t, ws.Dir)
 	assert.HasGraphObjects(t, ws.Dir, 3)
+
+	// Batch command assertion — agent must use create-batch, not single creates.
+	assert.BashCommandUsed(t, result, "create-batch")
 }
 
 // and logs all tool calls and text output. Use this to understand what opencode
