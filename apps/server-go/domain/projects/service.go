@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/emergent-company/emergent/domain/agents"
 	"github.com/emergent-company/emergent/pkg/apperror"
 	"github.com/emergent-company/emergent/pkg/logger"
 )
@@ -24,15 +25,17 @@ var (
 
 // Service handles business logic for projects
 type Service struct {
-	repo *Repository
-	log  *slog.Logger
+	repo      *Repository
+	agentRepo *agents.Repository
+	log       *slog.Logger
 }
 
 // NewService creates a new project service
-func NewService(repo *Repository, log *slog.Logger) *Service {
+func NewService(repo *Repository, agentRepo *agents.Repository, log *slog.Logger) *Service {
 	return &Service{
-		repo: repo,
-		log:  log.With(logger.Scope("projects.svc")),
+		repo:      repo,
+		agentRepo: agentRepo,
+		log:       log.With(logger.Scope("projects.svc")),
 	}
 }
 
@@ -178,6 +181,15 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 		slog.String("name", project.Name),
 		slog.String("orgID", project.OrganizationID),
 		slog.String("userID", userID))
+
+	// Eagerly provision the graph-query-agent for every new project so it is
+	// ready immediately without a separate install step.
+	if _, err := s.agentRepo.EnsureGraphQueryAgent(ctx, project.ID); err != nil {
+		// Non-fatal: the agent will be created lazily on first /query call.
+		s.log.Warn("failed to provision graph-query-agent for new project",
+			slog.String("projectID", project.ID),
+			slog.String("error", err.Error()))
+	}
 
 	dto := project.ToDTO()
 	return &dto, nil
