@@ -6,19 +6,22 @@ import (
 	"path/filepath"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
+	cliauth "github.com/emergent-company/emergent/tools/emergent-cli/internal/auth"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
 )
 
 // Client wraps the SDK client for CLI usage
 type Client struct {
-	SDK *sdk.Client
-	cfg *config.Config
+	SDK       *sdk.Client
+	cfg       *config.Config
+	authToken string // effective bearer token, set during New()
 }
 
 // New creates a new CLI client using the SDK
 func New(cfg *config.Config) (*Client, error) {
 	// Determine authentication mode
 	var authConfig sdk.AuthConfig
+	var effectiveToken string
 
 	if cfg.ProjectToken != "" {
 		// Project Token mode: Use as API key
@@ -26,24 +29,36 @@ func New(cfg *config.Config) (*Client, error) {
 			Mode:   "apikey",
 			APIKey: cfg.ProjectToken,
 		}
+		effectiveToken = cfg.ProjectToken
 	} else if cfg.APIKey != "" {
 		// Standalone mode: Use API key
 		authConfig = sdk.AuthConfig{
 			Mode:   "apikey",
 			APIKey: cfg.APIKey,
 		}
+		effectiveToken = cfg.APIKey
 	} else {
-		// Full mode: Use OAuth with credential file
+		// Full mode: load token from credentials.json (written by `emergent login`
+		// or `emergent auth set-token`) and use it as a Bearer token. This avoids
+		// the live OIDC discovery that sdk.NewWithDeviceFlow() requires.
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get home directory: %w", err)
 		}
 
-		authConfig = sdk.AuthConfig{
-			Mode:      "oauth",
-			ClientID:  "emergent-cli",
-			CredsPath: filepath.Join(homeDir, ".emergent", "credentials.json"),
+		credsPath := filepath.Join(homeDir, ".emergent", "credentials.json")
+		creds, err := cliauth.Load(credsPath)
+		if err != nil {
+			return nil, fmt.Errorf("not authenticated: %w\nRun 'emergent login' or 'emergent auth set-token <token>'", err)
 		}
+		if creds.IsExpired() {
+			return nil, fmt.Errorf("credentials expired — run 'emergent login' or 'emergent auth set-token <token>'")
+		}
+		authConfig = sdk.AuthConfig{
+			Mode:   "apitoken",
+			APIKey: creds.AccessToken,
+		}
+		effectiveToken = creds.AccessToken
 	}
 
 	// Create SDK client
@@ -66,8 +81,9 @@ func New(cfg *config.Config) (*Client, error) {
 	}
 
 	return &Client{
-		SDK: sdkClient,
-		cfg: cfg,
+		SDK:       sdkClient,
+		cfg:       cfg,
+		authToken: effectiveToken,
 	}, nil
 }
 
@@ -91,6 +107,17 @@ func (c *Client) BaseURL() string {
 // APIKey returns the API key if configured
 func (c *Client) APIKey() string {
 	return c.cfg.APIKey
+}
+
+// AuthorizationHeader returns the value to use for the Authorization header,
+// derived from whichever credential source was configured: project token,
+// standalone API key, or the access token loaded from credentials.json.
+// Returns an empty string if no credential is available.
+func (c *Client) AuthorizationHeader() string {
+	if c.authToken != "" {
+		return "Bearer " + c.authToken
+	}
+	return ""
 }
 
 // HasProjectToken reports whether the client was configured with a project-scoped
