@@ -156,7 +156,8 @@ func TestOnboardSkillWithVertexAIExpress(t *testing.T) {
 	harness.SetupVertexExpressProvider(t, vertexExpressAPIKey)
 
 	// Verify the credential actually works before we even start opencode.
-	assert.ProviderWorks(t, harness.ServerURL(), "vertex-ai-express")
+	// No project needed here — org-level credential check is sufficient as pre-flight.
+	assert.ProviderWorks(t, harness.ServerURL(), "vertex-ai-express", "")
 
 	proj := harness.CreateProject(t, fmt.Sprintf("oc-test-vaiexpress-%d", time.Now().Unix()))
 	projToken := harness.CreateProjectToken(t, proj.ID)
@@ -196,8 +197,8 @@ func TestOnboardSkillWithVertexAIExpress(t *testing.T) {
 	assert.BashCalled(t, result)
 	assert.NoToolErrors(t, result)
 
-	// Provider assertion — credential still works after the run.
-	assert.ProviderWorks(t, harness.ServerURL(), "vertex-ai-express")
+	// Provider assertion — credential still works after the run, tested via project scope.
+	assert.ProviderWorks(t, harness.ServerURL(), "vertex-ai-express", proj.ID)
 
 	// Emergent state assertions — skill created real state.
 	assert.HasTemplatePack(t, ws.Dir)
