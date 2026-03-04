@@ -16,7 +16,9 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/emergent-company/emergent/domain/agents"
+	"github.com/emergent-company/emergent/domain/provider"
 	"github.com/emergent-company/emergent/domain/search"
+	"github.com/emergent-company/emergent/pkg/adk"
 	"github.com/emergent-company/emergent/pkg/apperror"
 	"github.com/emergent-company/emergent/pkg/auth"
 	"github.com/emergent-company/emergent/pkg/llm/vertex"
@@ -32,17 +34,21 @@ type Handler struct {
 	searchSvc     *search.Service
 	agentExecutor *agents.AgentExecutor
 	agentRepo     *agents.Repository
+	credSvc       *provider.CredentialService
+	modelFactory  *adk.ModelFactory
 	log           *slog.Logger
 }
 
 // NewHandler creates a new chat handler
-func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, log *slog.Logger) *Handler {
+func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, credSvc *provider.CredentialService, modelFactory *adk.ModelFactory, log *slog.Logger) *Handler {
 	return &Handler{
 		svc:           svc,
 		llmClient:     llmClient,
 		searchSvc:     searchSvc,
 		agentExecutor: agentExecutor,
 		agentRepo:     agentRepo,
+		credSvc:       credSvc,
+		modelFactory:  modelFactory,
 		log:           log.With(logger.Scope("chat.handler")),
 	}
 }
@@ -888,4 +894,101 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			})
 		}()
 	}
+}
+
+// QueryStreamRequest is the request body for the stateless query endpoint.
+type QueryStreamRequest struct {
+	Message string `json:"message"`
+}
+
+// QueryStream handles POST /api/projects/:projectId/query.
+// It finds (or lazily creates) the project's graph-query-agent and streams the response
+// using the same agent chat path as /api/chat/stream. The agent is internal — it never
+// appears in the agent definitions list. No conversation is persisted.
+func (h *Handler) QueryStream(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req QueryStreamRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
+		return apperror.ErrBadRequest.WithMessage("message is required")
+	}
+
+	ctx := c.Request().Context()
+
+	// Fail fast if no LLM provider is configured. Probe the model factory before
+	// opening the SSE stream so clients get a proper HTTP error code, not a
+	// success status with an error buried in the stream.
+	if h.modelFactory != nil {
+		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, h.modelFactory.ModelName())
+		if probeErr != nil {
+			return apperror.New(http.StatusServiceUnavailable, "no_provider",
+				"No LLM provider configured for this project. "+
+					"Please configure a Google AI or Vertex AI credential in your project settings.")
+		}
+		// Close the probe model if it implements io.Closer (best-effort).
+		if closer, ok := probeModel.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}
+
+	// Ensure the graph-query-agent exists (idempotent, internal visibility).
+	agentDef, err := h.agentRepo.EnsureGraphQueryAgent(ctx, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to ensure graph-query-agent", err)
+	}
+
+	agentDefUUID, err := uuid.Parse(agentDef.ID)
+	if err != nil {
+		return apperror.NewInternal("invalid graph-query-agent ID", err)
+	}
+
+	// Create a transient conversation for this query (not persisted to user history).
+	title := message
+	if len(title) > 50 {
+		title = title[:50] + "..."
+	}
+	conv, err := h.svc.CreateConversation(ctx, projectID, user.ID, CreateConversationRequest{
+		Title:   title,
+		Message: message,
+	})
+	if err != nil {
+		return apperror.NewInternal("failed to create conversation", err)
+	}
+	conv.AgentDefinitionID = &agentDefUUID
+	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
+		h.log.Warn("failed to set agent_definition_id on query conversation",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	// Start SSE stream.
+	sseWriter := sse.NewWriter(c.Response().Writer)
+	if err := sseWriter.Start(); err != nil {
+		return apperror.ErrInternal.WithMessage("failed to start SSE stream")
+	}
+
+	if err := sseWriter.WriteData(sse.NewMetaEvent(conv.ID.String())); err != nil {
+		return nil
+	}
+
+	h.streamAgentChat(ctx, conv, message, projectID, sseWriter)
+	sseWriter.WriteData(sse.NewDoneEvent())
+	sseWriter.Close()
+	return nil
 }

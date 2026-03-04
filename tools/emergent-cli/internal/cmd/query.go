@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -20,16 +21,18 @@ import (
 var queryCmd = &cobra.Command{
 	Use:   "query <question>",
 	Short: "Query a project using natural language",
-	Long: `Query a project using natural language search across graph objects and documents.
+	Long: `Query a project using natural language.
 
-By default, uses an AI agent that can reason about complex queries and traverse the graph.
-Use --mode=search for direct hybrid search without reasoning.
+By default, uses the graph-query-agent — an AI agent that reasons over the knowledge
+graph using search, traversal, and entity tools. The agent is managed server-side;
+no agent ID is needed.
+
+Use --mode=search for direct hybrid search without AI reasoning.
 
 Examples:
-  emergent query "who directed fight club and what are their other movies?"
-  emergent query --mode=search "fight club"
-  emergent query --project abc123 "list all requirements"
-  emergent query --agent-id <id> "complex question"`,
+  emergent query "what are the main services and how do they relate?"
+  emergent query --mode=search "auth service"
+  emergent query --project abc123 "list all requirements"`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runQuery,
 }
@@ -42,7 +45,6 @@ var (
 	queryJSON           bool
 	queryDebug          bool
 	queryMode           string
-	queryAgentID        string
 	queryShowTools      bool
 	queryShowScores     bool
 	queryShowTime       bool
@@ -52,24 +54,21 @@ func init() {
 	rootCmd.AddCommand(queryCmd)
 
 	queryCmd.Flags().StringVar(&queryProjectID, "project", "", "Project ID to query (uses default project if not specified)")
-	queryCmd.Flags().StringVar(&queryMode, "mode", "agent", "Query mode: agent (default, uses AI reasoning) or search (direct hybrid search)")
-	queryCmd.Flags().StringVar(&queryAgentID, "agent-id", "70356e5f-2c97-4ce4-9754-ec14e15a2a13", "Agent definition ID to use (only for agent mode)")
-	queryCmd.Flags().BoolVar(&queryShowTools, "show-tools", false, "Show tool calls made by the agent (only for agent mode)")
-	queryCmd.Flags().IntVar(&queryLimit, "limit", 10, "Maximum number of results to return (only for search mode)")
-	queryCmd.Flags().StringVar(&queryResultTypes, "result-types", "both", "Types of results: graph, text, or both (only for search mode)")
-	queryCmd.Flags().StringVar(&queryFusionStrategy, "fusion-strategy", "weighted", "Fusion strategy: weighted, rrf, interleave, graph_first, text_first (only for search mode)")
+	queryCmd.Flags().StringVar(&queryMode, "mode", "agent", "Query mode: agent (default, AI reasoning) or search (direct hybrid search)")
+	queryCmd.Flags().BoolVar(&queryShowTools, "show-tools", false, "Show tool calls made by the agent (agent mode only)")
+	queryCmd.Flags().IntVar(&queryLimit, "limit", 10, "Maximum number of results to return (search mode only)")
+	queryCmd.Flags().StringVar(&queryResultTypes, "result-types", "both", "Types of results: graph, text, or both (search mode only)")
+	queryCmd.Flags().StringVar(&queryFusionStrategy, "fusion-strategy", "weighted", "Fusion strategy: weighted, rrf, interleave, graph_first, text_first (search mode only)")
 	queryCmd.Flags().BoolVar(&queryJSON, "json", false, "Output results as JSON")
 	queryCmd.Flags().BoolVar(&queryDebug, "debug", false, "Include debug information in output")
-	queryCmd.Flags().BoolVar(&queryShowScores, "show-scores", false, "Show relevance scores for each result (search mode)")
+	queryCmd.Flags().BoolVar(&queryShowScores, "show-scores", false, "Show relevance scores for each result (search mode only)")
 	queryCmd.Flags().BoolVar(&queryShowTime, "show-time", false, "Show elapsed query time")
 }
 
 func runQuery(cmd *cobra.Command, args []string) error {
-	// Join all args as the query
 	query := strings.Join(args, " ")
 
-	// Get client
-	client, err := getClient(cmd)
+	c, err := getClient(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
@@ -79,25 +78,21 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Set context (also updates org ID if needed)
-	orgID := "" // Will use default from config
-	client.SetContext(orgID, projectID)
+	c.SetContext("", projectID)
 
-	// Route to appropriate query mode
 	if queryMode == "agent" {
-		return runAgentQuery(cmd.Context(), client, query, projectID)
+		return runAgentQuery(cmd.Context(), c, query, projectID)
 	} else if queryMode == "search" {
-		return runSearchQuery(cmd.Context(), client, query, projectID)
-	} else {
-		return fmt.Errorf("invalid mode: %s (must be 'agent' or 'search')", queryMode)
+		return runSearchQuery(cmd.Context(), c, query, projectID)
 	}
+	return fmt.Errorf("invalid mode %q (must be 'agent' or 'search')", queryMode)
 }
 
+// runAgentQuery posts to POST /api/projects/:projectId/query.
+// The server manages the graph-query-agent entirely — no agent ID needed client-side.
 func runAgentQuery(ctx context.Context, c *client.Client, query, projectID string) error {
-	// Build request
 	reqBody := map[string]interface{}{
-		"message":           query,
-		"agentDefinitionId": queryAgentID,
+		"message": query,
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -105,22 +100,17 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL()+"/api/chat/stream", bytes.NewReader(bodyBytes))
+	endpoint := c.BaseURL() + "/api/projects/" + url.PathEscape(projectID) + "/query"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Project-ID", projectID)
-
-	// Add authentication using the effective bearer token (project token, API key,
-	// or access token from credentials.json — whichever was configured).
 	if auth := c.AuthorizationHeader(); auth != "" {
 		httpReq.Header.Set("Authorization", auth)
 	}
 
-	// Execute request
 	start := time.Now()
 	httpClient := &http.Client{Timeout: 120 * time.Second}
 	resp, err := httpClient.Do(httpReq)
@@ -195,7 +185,6 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 		return encoder.Encode(output)
 	}
 
-	// Human-readable output already printed during streaming
 	fmt.Printf("\n\n")
 	if queryShowTools && len(tools) > 0 {
 		fmt.Printf("Tools used: %s\n", strings.Join(tools, ", "))
@@ -207,10 +196,9 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	return nil
 }
 
-func runSearchQuery(ctx context.Context, client *client.Client, query, projectID string) error {
-
+func runSearchQuery(ctx context.Context, c *client.Client, query, projectID string) error {
 	start := time.Now()
-	response, err := client.SDK.Search.Search(ctx, &search.SearchRequest{
+	response, err := c.SDK.Search.Search(ctx, &search.SearchRequest{
 		Query:          query,
 		Limit:          queryLimit,
 		ResultTypes:    queryResultTypes,
@@ -223,9 +211,7 @@ func runSearchQuery(ctx context.Context, client *client.Client, query, projectID
 		return fmt.Errorf("query failed: %w", err)
 	}
 
-	// Output results
 	if queryJSON {
-		// JSON output
 		output := map[string]interface{}{
 			"query":     query,
 			"projectId": projectID,
@@ -238,7 +224,6 @@ func runSearchQuery(ctx context.Context, client *client.Client, query, projectID
 		return encoder.Encode(output)
 	}
 
-	// Human-readable output
 	fmt.Printf("Query: %s\n", query)
 	if queryShowTime {
 		fmt.Printf("Results: %d  Time: %v\n\n", response.Total, elapsed.Round(time.Millisecond))
@@ -255,7 +240,6 @@ func runSearchQuery(ctx context.Context, client *client.Client, query, projectID
 		return nil
 	}
 
-	// Print results as a markdown table
 	if queryShowScores {
 		fmt.Printf("| # | type | details | id | score |\n")
 		fmt.Printf("|---|------|---------|-----|-------|\n")
@@ -278,7 +262,6 @@ func runSearchQuery(ctx context.Context, client *client.Client, query, projectID
 				}
 			}
 			details = label
-			// Append non-name fields as key=value
 			var extras []string
 			for key, value := range result.Fields {
 				if key == "name" {
@@ -336,7 +319,6 @@ func runSearchQuery(ctx context.Context, client *client.Client, query, projectID
 			id = result.SrcObjectID
 		}
 
-		// Escape pipe chars inside cells
 		details = strings.ReplaceAll(details, "|", "\\|")
 
 		if queryShowScores {
