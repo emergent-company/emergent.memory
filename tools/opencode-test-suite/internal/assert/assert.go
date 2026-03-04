@@ -215,14 +215,20 @@ func HasGraphObjects(t *testing.T, workspaceDir string, minCount int) {
 // ProviderWorks asserts that the named provider credential is configured and
 // passes a live generate test. It runs:
 //
-//	emergent provider test <providerType> --server <serverURL>
+//	emergent provider test <providerType> --project <projectID> --server <serverURL>
 //
-// without a workspace dir, relying on ~/.emergent/config.yaml auth.
+// Passing projectID causes the CLI to resolve credentials through the project
+// hierarchy (project override → org → env), which is the same path the agent
+// uses when running from the workspace directory with EMERGENT_PROJECT_ID set.
 // A non-zero exit code or an output containing "FAILED" is treated as failure.
-func ProviderWorks(t *testing.T, serverURL, providerType string) {
+func ProviderWorks(t *testing.T, serverURL, providerType, projectID string) {
 	t.Helper()
 
-	out, err := runCLIGlobal("provider", "test", providerType, "--server", serverURL)
+	args := []string{"provider", "test", providerType, "--server", serverURL}
+	if projectID != "" {
+		args = append(args, "--project", projectID)
+	}
+	out, err := runCLIGlobal(args...)
 	if err != nil {
 		t.Errorf("assert.ProviderWorks(%q): provider test failed: %v\noutput: %s", providerType, err, out)
 		return
