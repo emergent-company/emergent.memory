@@ -44,6 +44,8 @@ var (
 	queryMode           string
 	queryAgentID        string
 	queryShowTools      bool
+	queryShowScores     bool
+	queryShowTime       bool
 )
 
 func init() {
@@ -58,6 +60,8 @@ func init() {
 	queryCmd.Flags().StringVar(&queryFusionStrategy, "fusion-strategy", "weighted", "Fusion strategy: weighted, rrf, interleave, graph_first, text_first (only for search mode)")
 	queryCmd.Flags().BoolVar(&queryJSON, "json", false, "Output results as JSON")
 	queryCmd.Flags().BoolVar(&queryDebug, "debug", false, "Include debug information in output")
+	queryCmd.Flags().BoolVar(&queryShowScores, "show-scores", false, "Show relevance scores for each result (search mode)")
+	queryCmd.Flags().BoolVar(&queryShowTime, "show-time", false, "Show elapsed query time")
 }
 
 func runQuery(cmd *cobra.Command, args []string) error {
@@ -110,9 +114,10 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Project-ID", projectID)
 
-	// Add authentication
-	if apiKey := c.APIKey(); apiKey != "" {
-		httpReq.Header.Set("X-API-Key", apiKey)
+	// Add authentication using the effective bearer token (project token, API key,
+	// or access token from credentials.json — whichever was configured).
+	if auth := c.AuthorizationHeader(); auth != "" {
+		httpReq.Header.Set("Authorization", auth)
 	}
 
 	// Execute request
@@ -195,7 +200,9 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	if queryShowTools && len(tools) > 0 {
 		fmt.Printf("Tools used: %s\n", strings.Join(tools, ", "))
 	}
-	fmt.Printf("Time: %v\n", elapsed.Round(time.Millisecond))
+	if queryShowTime {
+		fmt.Printf("Time: %v\n", elapsed.Round(time.Millisecond))
+	}
 
 	return nil
 }
@@ -233,9 +240,11 @@ func runSearchQuery(ctx context.Context, client *client.Client, query, projectID
 
 	// Human-readable output
 	fmt.Printf("Query: %s\n", query)
-	fmt.Printf("Project ID: %s\n", projectID)
-	fmt.Printf("Results: %d (showing up to %d)\n", response.Total, queryLimit)
-	fmt.Printf("Time: %v\n\n", elapsed.Round(time.Millisecond))
+	if queryShowTime {
+		fmt.Printf("Results: %d  Time: %v\n\n", response.Total, elapsed.Round(time.Millisecond))
+	} else {
+		fmt.Printf("Results: %d\n\n", response.Total)
+	}
 
 	if response.Total == 0 {
 		fmt.Println("No results found.")
@@ -246,93 +255,97 @@ func runSearchQuery(ctx context.Context, client *client.Client, query, projectID
 		return nil
 	}
 
-	// Print results
-	for i, result := range response.Results {
-		fmt.Printf("─────────────────────────────────────────────────────────────\n")
-		fmt.Printf("Result %d (score: %.4f)\n", i+1, result.Score)
-		fmt.Printf("─────────────────────────────────────────────────────────────\n")
+	// Print results as a markdown table
+	if queryShowScores {
+		fmt.Printf("| # | type | details | id | score |\n")
+		fmt.Printf("|---|------|---------|-----|-------|\n")
+	} else {
+		fmt.Printf("| # | type | details | id |\n")
+		fmt.Printf("|---|------|---------|----|\n")
+	}
 
-		// Handle different result types
+	for i, result := range response.Results {
+		num := fmt.Sprintf("%d", i+1)
+		var resultType, details, id string
+
 		switch result.Type {
 		case "graph":
-			// Graph result
-			fmt.Printf("Type: Graph Object\n")
-			fmt.Printf("Object Type: %s\n", result.ObjectType)
-			if result.Key != "" {
-				fmt.Printf("Key: %s\n", result.Key)
-			}
-			if result.ObjectID != "" {
-				fmt.Printf("ID: %s\n", result.ObjectID)
-			}
-
-			// Print fields
-			if len(result.Fields) > 0 {
-				fmt.Printf("\nFields:\n")
-				for key, value := range result.Fields {
-					// Format value
-					var valueStr string
-					switch v := value.(type) {
-					case string:
-						if len(v) > 200 {
-							valueStr = v[:200] + "..."
-						} else {
-							valueStr = v
-						}
-					case []interface{}:
-						valueStr = fmt.Sprintf("[%d items]", len(v))
-					case map[string]interface{}:
-						valueStr = fmt.Sprintf("{%d fields}", len(v))
-					default:
-						valueStr = fmt.Sprintf("%v", v)
-					}
-					fmt.Printf("  %s: %s\n", key, valueStr)
+			resultType = result.ObjectType
+			label := result.Key
+			if label == "" {
+				if v, ok := result.Fields["name"].(string); ok {
+					label = v
 				}
 			}
-
-			// Print scores breakdown if available
-			if result.LexicalScore != nil || result.VectorScore != nil {
-				fmt.Printf("\nScore Breakdown:\n")
-				if result.LexicalScore != nil {
-					fmt.Printf("  Lexical: %.4f\n", *result.LexicalScore)
+			details = label
+			// Append non-name fields as key=value
+			var extras []string
+			for key, value := range result.Fields {
+				if key == "name" {
+					continue
 				}
-				if result.VectorScore != nil {
-					fmt.Printf("  Vector: %.4f\n", *result.VectorScore)
+				var vs string
+				switch v := value.(type) {
+				case string:
+					vs = v
+				case []interface{}:
+					vs = fmt.Sprintf("[%d items]", len(v))
+				case map[string]interface{}:
+					vs = fmt.Sprintf("{%d fields}", len(v))
+				default:
+					vs = fmt.Sprintf("%v", v)
 				}
+				extras = append(extras, key+"="+vs)
 			}
+			if len(extras) > 0 {
+				extra := strings.Join(extras, ", ")
+				full := details + " (" + extra + ")"
+				if len(full) > 80 {
+					full = full[:77] + "..."
+				}
+				details = full
+			}
+			id = result.ObjectID
 
 		case "text":
-			// Text result
-			fmt.Printf("Type: Document Chunk\n")
-			fmt.Printf("Document ID: %s\n", result.DocumentID)
-			if result.ChunkID != "" {
-				fmt.Printf("Chunk ID: %s\n", result.ChunkID)
+			resultType = "chunk"
+			details = result.Content
+			if len(details) > 80 {
+				details = details[:77] + "..."
 			}
-			if result.Content != "" {
-				fmt.Printf("\nContent:\n%s\n", result.Content)
-			}
+			id = result.DocumentID
 
 		case "relationship":
-			// Relationship result
-			fmt.Printf("Type: Relationship\n")
-			if result.RelationshipType != "" {
-				fmt.Printf("Relationship Type: %s\n", result.RelationshipType)
+			resultType = "relationship"
+			srcLabel := ""
+			if result.SrcKey != nil && *result.SrcKey != "" {
+				srcLabel = *result.SrcKey
+			} else if result.SrcObjectID != "" {
+				srcLabel = result.SrcObjectID
 			}
-			if result.SrcObjectType != "" && result.DstObjectType != "" {
-				srcKey := ""
-				if result.SrcKey != nil {
-					srcKey = *result.SrcKey
-				}
-				dstKey := ""
-				if result.DstKey != nil {
-					dstKey = *result.DstKey
-				}
-				fmt.Printf("Source: %s (%s)\n", result.SrcObjectType, srcKey)
-				fmt.Printf("Target: %s (%s)\n", result.DstObjectType, dstKey)
+			dstLabel := ""
+			if result.DstKey != nil && *result.DstKey != "" {
+				dstLabel = *result.DstKey
+			} else if result.DstObjectID != "" {
+				dstLabel = result.DstObjectID
 			}
+			details = fmt.Sprintf("%s(%s) -[%s]-> %s(%s)",
+				result.SrcObjectType, srcLabel,
+				result.RelationshipType,
+				result.DstObjectType, dstLabel)
+			id = result.SrcObjectID
 		}
 
-		fmt.Println()
+		// Escape pipe chars inside cells
+		details = strings.ReplaceAll(details, "|", "\\|")
+
+		if queryShowScores {
+			fmt.Printf("| %s | %s | %s | %s | %.4f |\n", num, resultType, details, id, result.Score)
+		} else {
+			fmt.Printf("| %s | %s | %s | %s |\n", num, resultType, details, id)
+		}
 	}
+	fmt.Println()
 
 	return nil
 }
