@@ -15,6 +15,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Global template pack CRUD (not project-scoped)
 	g.POST("", h.CreatePack)
 	g.GET("/:packId", h.GetPack)
+	g.PUT("/:packId", h.UpdatePack)
 	g.DELETE("/:packId", h.DeletePack)
 
 	// Project-scoped template pack routes

@@ -37,7 +37,7 @@ var createAgentCmd = &cobra.Command{
 	Long: `Create a new runtime agent for the current project.
 
 Examples:
-  emergent-cli agents create --name "my-agent" --project-id <id>
+  emergent-cli agents create --name "my-agent" --project <id>
   emergent-cli agents create --name "cron-agent" --trigger-type schedule --cron "0 */5 * * * *"
   emergent-cli agents create --name "reaction-agent" --trigger-type reaction --reaction-events created,updated --reaction-object-types document`,
 	RunE: runCreateAgent,
@@ -648,7 +648,7 @@ func runRespondToQuestion(cmd *cobra.Command, args []string) error {
 
 func init() {
 	// Persistent flags for all agent subcommands
-	agentsCmd.PersistentFlags().StringVar(&agentProjectID, "project-id", "", "Project name or ID (auto-detected from config/env if not specified)")
+	agentsCmd.PersistentFlags().StringVar(&agentProjectID, "project", "", "Project name or ID (auto-detected from config/env if not specified)")
 
 	// Create agent flags
 	createAgentCmd.Flags().StringVar(&agentName, "name", "", "Agent name (required)")
