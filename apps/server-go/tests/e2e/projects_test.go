@@ -484,12 +484,13 @@ func (s *ProjectsTestSuite) TestDeleteProject_Success() {
 		testutil.WithAuth("e2e-test-user"),
 	)
 
-	s.Equal(http.StatusOK, resp.StatusCode)
+	// Delete is async — returns 202 Accepted with status "deleting".
+	s.Equal(http.StatusAccepted, resp.StatusCode)
 
 	var body map[string]any
 	err := json.Unmarshal(resp.Body, &body)
 	s.NoError(err)
-	s.Equal("deleted", body["status"])
+	s.Equal("deleting", body["status"])
 
 	// Verify project is soft-deleted (not visible via GET)
 	getResp := s.Client.GET("/api/projects/"+projectID,
@@ -637,7 +638,7 @@ func (s *ProjectsTestSuite) TestProjectStats() {
 			if p["id"] == projectID {
 				found = true
 				s.Require().NotNil(p["stats"], "stats should be present with ?include_stats=true")
-				
+
 				stats := p["stats"].(map[string]any)
 				s.Require().Equal(float64(0), stats["documentCount"])
 				s.Require().Equal(float64(0), stats["objectCount"])
@@ -655,9 +656,9 @@ func (s *ProjectsTestSuite) TestProjectStats() {
 		var p map[string]any
 		err := json.Unmarshal(resp.Body, &p)
 		s.Require().NoError(err)
-		
+
 		s.Require().NotNil(p["stats"], "stats should be present for single GET with ?include_stats=true")
-		
+
 		stats := p["stats"].(map[string]any)
 		s.Require().Equal(float64(0), stats["documentCount"])
 	})
