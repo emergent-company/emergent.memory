@@ -211,7 +211,7 @@ func runRevokeToken(cmd *cobra.Command, args []string) error {
 
 func init() {
 	// Persistent flag for all token subcommands
-	tokensCmd.PersistentFlags().StringVar(&tokenProjectID, "project-id", "", "Project name or ID (auto-detected from config/env if not specified)")
+	tokensCmd.PersistentFlags().StringVar(&tokenProjectID, "project", "", "Project name or ID (auto-detected from config/env if not specified)")
 
 	// Create token flags
 	createTokenCmd.Flags().StringVar(&tokenName, "name", "", "Token name (required)")

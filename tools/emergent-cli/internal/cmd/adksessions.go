@@ -18,7 +18,7 @@ func newADKSessionsCmd() *cobra.Command {
 		Aliases: []string{"sessions"},
 	}
 
-	cmd.PersistentFlags().StringVar(&adkSessionsProjectID, "project-id", "", "Project name or ID")
+	cmd.PersistentFlags().StringVar(&adkSessionsProjectID, "project", "", "Project name or ID")
 
 	cmd.AddCommand(
 		newListADKSessionsCmd(),

@@ -111,7 +111,7 @@ func resolveProjectContext(cmd *cobra.Command, flagValue string) (string, error)
 	}
 
 	if nameOrID == "" {
-		return "", fmt.Errorf("project is required. Use --project-id flag, set EMERGENT_PROJECT in .env.local, or configure it in your config file")
+		return "", fmt.Errorf("project is required. Use --project flag, set EMERGENT_PROJECT in .env.local, or configure it in your config file")
 	}
 
 	// If it's already a UUID, return directly

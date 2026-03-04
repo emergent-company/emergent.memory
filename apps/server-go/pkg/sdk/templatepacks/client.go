@@ -161,6 +161,22 @@ type UpdateAssignmentResponse struct {
 	Status string `json:"status"`
 }
 
+// UpdatePackRequest is the request to partially update a template pack.
+// All fields are optional; only non-nil / non-empty values are applied.
+type UpdatePackRequest struct {
+	Name                    *string         `json:"name,omitempty"`
+	Version                 *string         `json:"version,omitempty"`
+	Description             *string         `json:"description,omitempty"`
+	Author                  *string         `json:"author,omitempty"`
+	License                 *string         `json:"license,omitempty"`
+	RepositoryURL           *string         `json:"repository_url,omitempty"`
+	DocumentationURL        *string         `json:"documentation_url,omitempty"`
+	ObjectTypeSchemas       json.RawMessage `json:"object_type_schemas,omitempty"`
+	RelationshipTypeSchemas json.RawMessage `json:"relationship_type_schemas,omitempty"`
+	UIConfigs               json.RawMessage `json:"ui_configs,omitempty"`
+	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
+}
+
 // --- Internal helpers ---
 
 // prepareRequest creates an HTTP request with auth and context headers set.
@@ -244,6 +260,21 @@ func (c *Client) patchJSON(ctx context.Context, reqURL string, reqBody any, resu
 	}
 
 	req, err := c.prepareRequest(ctx, http.MethodPatch, reqURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.doJSON(req, result)
+}
+
+// putJSON performs a PUT request with JSON body and decodes the response.
+func (c *Client) putJSON(ctx context.Context, reqURL string, reqBody any, result any) error {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := c.prepareRequest(ctx, http.MethodPut, reqURL, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -358,4 +389,14 @@ func (c *Client) GetPack(ctx context.Context, packID string) (*TemplatePack, err
 // DELETE /api/template-packs/:packId
 func (c *Client) DeletePack(ctx context.Context, packID string) error {
 	return c.doDelete(ctx, c.packPath()+"/"+url.PathEscape(packID))
+}
+
+// UpdatePack partially updates a template pack by ID.
+// PUT /api/template-packs/:packId
+func (c *Client) UpdatePack(ctx context.Context, packID string, req *UpdatePackRequest) (*TemplatePack, error) {
+	var result TemplatePack
+	if err := c.putJSON(ctx, c.packPath()+"/"+url.PathEscape(packID), req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
