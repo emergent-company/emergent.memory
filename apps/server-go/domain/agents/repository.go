@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/emergent-company/emergent/pkg/adk/session/bunsession"
@@ -456,6 +457,73 @@ func (r *Repository) CreateDefinition(ctx context.Context, def *AgentDefinition)
 		Returning("*").
 		Exec(ctx)
 	return err
+}
+
+// graphQueryAgentSystemPrompt is the default system prompt for the graph-query-agent.
+const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. Your role is to help users explore and understand the data in their knowledge graph.
+
+## Rules
+1. ALWAYS use the provided tools to look up data. Never answer from your training data or fabricate entities, relationships, or facts.
+2. When you retrieve results, cite specific entity names, types, and relationship types in your response.
+3. If a tool returns no results, clearly state that no matching data was found. Do not fabricate or hallucinate results.
+4. For complex questions, chain multiple tool calls (e.g., search first, then traverse relationships).
+5. Format responses using markdown for clarity. Use tables for structured data when appropriate.
+6. Keep responses concise and factual. Focus on what the data shows.`
+
+// EnsureGraphQueryAgent returns the graph-query-agent for the project, creating it if it
+// does not exist yet. Uses VisibilityInternal so it never appears in the public list.
+// Safe to call concurrently — a race between two callers results in one insert and one
+// subsequent read (FindDefinitionByName will find the winner's row).
+func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string) (*AgentDefinition, error) {
+	existing, err := r.FindDefinitionByName(ctx, projectID, "graph-query-agent")
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up graph-query-agent: %w", err)
+	}
+	if existing != nil {
+		return existing, nil
+	}
+
+	temperature := float32(0.1)
+	maxSteps := 15
+	systemPrompt := graphQueryAgentSystemPrompt
+
+	def := &AgentDefinition{
+		ProjectID:    projectID,
+		Name:         "graph-query-agent",
+		Description:  strPtr("Knowledge graph query assistant with access to search, entity, and relationship tools"),
+		SystemPrompt: &systemPrompt,
+		Model: &ModelConfig{
+			Name:        "gemini-2.5-flash",
+			Temperature: &temperature,
+		},
+		Tools: []string{
+			"hybrid_search",
+			"query_entities",
+			"search_entities",
+			"semantic_search",
+			"find_similar",
+			"get_entity_edges",
+			"traverse_graph",
+			"list_entity_types",
+			"schema_version",
+			"list_relationships",
+		},
+		FlowType:   FlowTypeSingle,
+		IsDefault:  true,
+		MaxSteps:   &maxSteps,
+		Visibility: VisibilityInternal,
+		Config:     map[string]any{},
+	}
+
+	if err := r.CreateDefinition(ctx, def); err != nil {
+		// Race condition: another caller inserted first — retry the read.
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, "graph-query-agent"); err2 == nil && existing != nil {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("failed to create graph-query-agent: %w", err)
+	}
+
+	return def, nil
 }
 
 // UpdateDefinition updates an agent definition.

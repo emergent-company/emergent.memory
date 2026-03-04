@@ -25,58 +25,20 @@ func (s *AgentChatTestSuite) SetupSuite() {
 }
 
 // =============================================================================
-// Test: Install Default Agents
-// =============================================================================
-
-func (s *AgentChatTestSuite) TestInstallDefaultAgents() {
-	// 4.5 Install default agents and verify
-	resp := s.Client.POST("/api/admin/projects/"+s.ProjectID+"/install-default-agents",
-		testutil.WithAuth("e2e-test-user"),
-		testutil.WithProjectID(s.ProjectID),
-	)
-	s.Equal(http.StatusCreated, resp.StatusCode)
-
-	var result map[string]any
-	err := json.Unmarshal(resp.Body, &result)
-	s.NoError(err)
-	s.True(result["success"].(bool))
-
-	agentDef, ok := result["data"].(map[string]any)
-	s.True(ok)
-	s.Equal("graph-query-agent", agentDef["name"])
-
-	// 4.6 Call install endpoint twice to verify idempotency
-	resp2 := s.Client.POST("/api/admin/projects/"+s.ProjectID+"/install-default-agents",
-		testutil.WithAuth("e2e-test-user"),
-		testutil.WithProjectID(s.ProjectID),
-	)
-	s.Equal(http.StatusOK, resp2.StatusCode) // Returns 200 OK on existing
-
-	var result2 map[string]any
-	err2 := json.Unmarshal(resp2.Body, &result2)
-	s.NoError(err2)
-	s.True(result2["success"].(bool))
-	agentDef2 := result2["data"].(map[string]any)
-	s.Equal(agentDef["id"], agentDef2["id"]) // Same ID means no duplicate created
-}
-
-// =============================================================================
 // Test: Agent-Backed Chat Flow
 // =============================================================================
 
 func (s *AgentChatTestSuite) TestStreamChat_AgentBacked() {
-	// First, install the default agent
-	installResp := s.Client.POST("/api/admin/projects/"+s.ProjectID+"/install-default-agents",
-		testutil.WithAuth("e2e-test-user"),
-		testutil.WithProjectID(s.ProjectID),
-	)
-	// Either 201 Created or 200 OK if already installed
-	s.True(installResp.StatusCode == http.StatusCreated || installResp.StatusCode == http.StatusOK)
-
-	var result map[string]any
-	json.Unmarshal(installResp.Body, &result)
-	agentDef := result["data"].(map[string]any)
-	agentDefID := agentDef["id"].(string)
+	// The graph-query-agent is automatically created when the project is created.
+	// It is hidden from the public agent-definitions list (VisibilityInternal),
+	// so we fetch its ID directly from the DB.
+	var agentDefID string
+	err := s.DB().NewRaw(
+		`SELECT id FROM kb.agent_definitions WHERE project_id = ? AND name = 'graph-query-agent' LIMIT 1`,
+		s.ProjectID,
+	).Scan(s.Ctx, &agentDefID)
+	s.NoError(err, "graph-query-agent should exist from project creation")
+	s.NotEmpty(agentDefID)
 
 	// 5.1 & 5.2 & 5.3 & 5.4 Send stream request with agentDefinitionId
 	req := map[string]any{
