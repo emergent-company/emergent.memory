@@ -55,14 +55,6 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	defsWrite.DELETE("/:id", h.DeleteDefinition)
 	defsWrite.PUT("/:id/workspace-config", h.UpdateWorkspaceConfig)
 
-	// --- Project-level install-default-agents ---
-	// Moved from /api/admin/projects/:projectId to /api/projects/:projectId/agents-admin.
-	projectAdmin := e.Group("/api/projects/:projectId/agents-admin")
-	projectAdmin.Use(authMiddleware.RequireAuth())
-	projectAdmin.Use(authMiddleware.RequireProjectScope())
-	projectAdmin.Use(authMiddleware.RequireScopes("agents:write"))
-	projectAdmin.POST("/install-default-agents", h.InstallDefaultAgents)
-
 	// --- Project-scoped run history routes ---
 	runs := e.Group("/api/projects/:projectId/agent-runs")
 	runs.Use(authMiddleware.RequireAuth())

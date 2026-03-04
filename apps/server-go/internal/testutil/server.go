@@ -34,6 +34,7 @@ import (
 	"github.com/emergent-company/emergent/domain/notifications"
 	"github.com/emergent-company/emergent/domain/orgs"
 	"github.com/emergent-company/emergent/domain/projects"
+	"github.com/emergent-company/emergent/domain/provider"
 	"github.com/emergent-company/emergent/domain/search"
 	"github.com/emergent-company/emergent/domain/superadmin"
 	"github.com/emergent-company/emergent/domain/tasks"
@@ -146,7 +147,8 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register projects routes
 	projectsRepo := projects.NewRepository(db, log)
-	projectsSvc := projects.NewService(projectsRepo, log)
+	agentRepo := agents.NewRepository(db)
+	projectsSvc := projects.NewService(projectsRepo, agentRepo, log)
 	projectsHandler := projects.NewHandler(projectsSvc)
 	projects.RegisterRoutes(e, projectsHandler, authMiddleware)
 
@@ -206,8 +208,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register chat routes
 	chatRepo := chat.NewRepository(db, log)
 	chatSvc := chat.NewService(chatRepo, log)
-	agentRepo := agents.NewRepository(db)
-	chatHandler := chat.NewHandler(chatSvc, nil, searchSvc, nil, agentRepo, log) // nil LLM client, executor for tests
+	chatHandler := chat.NewHandler(chatSvc, nil, searchSvc, nil, agentRepo, nil, nil, log) // nil LLM client, executor, credSvc, modelFactory for tests
 	chat.RegisterRoutes(e, chatHandler, authMiddleware)
 
 	// Register MCP routes
@@ -305,6 +306,14 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	datasourceRegistry.Register(datasource.NewNoOpProvider("google_drive"))
 	datasourceHandler := datasource.NewHandler(datasourceRepo, datasourceJobsSvc, datasourceRegistry, encryptionSvc, log)
 	datasource.RegisterRoutes(e, datasourceHandler, authMiddleware)
+
+	// Register provider routes (LLM credential management, model catalog, usage)
+	providerRepo := provider.NewRepository(db, log)
+	providerRegistry := provider.NewRegistry()
+	providerCredSvc := provider.NewCredentialService(providerRepo, providerRegistry, testDB.Config, log)
+	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log)
+	providerHandler := provider.NewHandler(providerCredSvc, providerCatalogSvc, providerRepo)
+	provider.RegisterRoutes(e, providerHandler, authMiddleware)
 
 	return &TestServer{
 		Echo:           e,

@@ -7,6 +7,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent/domain/agents"
 )
 
 // BaseSuite provides common test infrastructure with automatic fixture setup.
@@ -60,7 +62,7 @@ func (s *BaseSuite) SetupSuite() {
 		s.T().Logf("Using external server: %s", serverURL)
 		s.externalServer = true
 		s.Client = NewExternalHTTPClient(serverURL)
-		
+
 		// Create DB connection for direct DB assertions if env vars are present
 		if os.Getenv("POSTGRES_PORT") != "" {
 			db, err := SetupTestDB(s.Ctx, "emergent")
@@ -133,6 +135,14 @@ func (s *BaseSuite) SetupTest() {
 		Name:  "Test Project",
 	}, AdminUser.ID)
 	s.Require().NoError(err)
+
+	// Ensure the graph-query-agent exists for this project. In production this
+	// happens in projects.Service.CreateProject, but the test fixture bypasses
+	// the service layer, so we call EnsureGraphQueryAgent directly here.
+	agentRepo := agents.NewRepository(s.TestDB.GetDB())
+	if _, err := agentRepo.EnsureGraphQueryAgent(s.Ctx, s.ProjectID); err != nil {
+		s.T().Logf("warning: EnsureGraphQueryAgent failed in test setup: %v", err)
+	}
 
 	// Create memberships for the admin user
 	err = CreateTestOrgMembership(s.Ctx, s.TestDB.GetDB(), s.OrgID, AdminUser.ID, "org_admin")

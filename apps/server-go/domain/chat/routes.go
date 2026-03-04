@@ -32,4 +32,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Message operations
 	g.POST("/:id/messages", h.AddMessage)
+
+	// Project-scoped query endpoint — stateless NL query against the knowledge graph.
+	// Uses the internal graph-query-agent; no agent ID needed from the client.
+	queryGroup := e.Group("/api/projects/:projectId/query")
+	queryGroup.Use(authMiddleware.RequireAuth())
+	queryGroup.Use(authMiddleware.RequireProjectScope())
+	queryGroup.Use(authMiddleware.RequireScopes("chat:use"))
+	queryGroup.POST("", h.QueryStream)
 }
