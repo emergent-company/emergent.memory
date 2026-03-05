@@ -22,194 +22,211 @@ var providerCmd = &cobra.Command{
 	Long:  "Commands for managing LLM provider credentials, model selections, and usage reporting.",
 }
 
-// ── set-key ──────────────────────────────────────────────────────────────────
+// ── configure (org-level) ─────────────────────────────────────────────────────
 
-var setKeyCmd = &cobra.Command{
-	Use:   "set-key <api-key>",
-	Short: "Save a Google AI API key for the organization",
-	Long: `Save a Google AI (Gemini) API key for the current organization.
+var configureCmd = &cobra.Command{
+	Use:   "configure <provider>",
+	Short: "Save LLM provider credentials and model selections for the organization",
+	Long: `Save LLM provider credentials (and optionally model selections) for the
+current organization. Runs a live credential test and syncs the model catalog
+on success. Models are auto-selected from the catalog if not specified.
 
-The key is encrypted at rest and used for all projects that do not have a
-project-level override.
+Supported providers:
+  google-ai   — Google AI (Gemini API); requires --api-key
+  vertex-ai   — Google Cloud Vertex AI; requires --gcp-project, --location
+                Optionally supply --key-file for a service account JSON key.
 
-Example:
-  emergent provider set-key AIzaSy...`,
-	Args: cobra.ExactArgs(1),
-	RunE: runProviderSetKey,
-}
-
-var setKeyOrgID string
-
-func runProviderSetKey(cmd *cobra.Command, args []string) error {
-	apiKey := args[0]
-
-	c, err := getClient(cmd)
-	if err != nil {
-		return err
-	}
-
-	orgID, err := resolveProviderOrgID(c, setKeyOrgID)
-	if err != nil {
-		return err
-	}
-
-	req := &provider.SaveGoogleAICredentialRequest{APIKey: apiKey}
-	if err := c.SDK.Provider.SaveGoogleAICredential(context.Background(), orgID, req); err != nil {
-		return fmt.Errorf("failed to save Google AI credential: %w", err)
-	}
-
-	fmt.Println("Google AI API key saved successfully.")
-	fmt.Println("Run 'emergent provider models google-ai' to list available models.")
-	return nil
-}
-
-// ── set-vertex ────────────────────────────────────────────────────────────────
-
-var setVertexCmd = &cobra.Command{
-	Use:   "set-vertex",
-	Short: "Save Vertex AI credentials for the organization",
-	Long: `Save Google Cloud Vertex AI credentials for the current organization.
-
-Provide a service account JSON file, GCP project ID, and region.
-
-Example:
-  emergent provider set-vertex --project my-project --location us-central1 --sa-file sa.json`,
-	RunE: runProviderSetVertex,
+Examples:
+  emergent provider configure google-ai --api-key AIzaSy...
+  emergent provider configure vertex-ai --gcp-project my-project --location us-central1 --key-file sa.json
+  emergent provider configure google-ai --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004`,
+	Args:      cobra.ExactArgs(1),
+	ValidArgs: []string{"google-ai", "vertex-ai"},
+	RunE:      runProviderConfigure,
 }
 
 var (
-	setVertexSAFile   string
-	setVertexProject  string
-	setVertexLocation string
-	setVertexOrgID    string
+	configureAPIKey          string
+	configureKeyFile         string
+	configureGCPProject      string
+	configureLocation        string
+	configureGenerativeModel string
+	configureEmbeddingModel  string
+	configureOrgID           string
 )
 
-func runProviderSetVertex(cmd *cobra.Command, args []string) error {
-	var saJSON string
-	if setVertexSAFile != "" {
-		data, err := os.ReadFile(setVertexSAFile)
-		if err != nil {
-			return fmt.Errorf("failed to read service account file: %w", err)
+func runProviderConfigure(cmd *cobra.Command, args []string) error {
+	providerArg := args[0]
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	orgID, err := resolveProviderOrgID(c, configureOrgID)
+	if err != nil {
+		return err
+	}
+
+	req := &provider.UpsertProviderConfigRequest{
+		GenerativeModel: configureGenerativeModel,
+		EmbeddingModel:  configureEmbeddingModel,
+	}
+
+	switch providerArg {
+	case provider.ProviderGoogleAI:
+		if configureAPIKey == "" {
+			return fmt.Errorf("--api-key is required for google-ai")
 		}
-		saJSON = string(data)
+		req.APIKey = configureAPIKey
+
+	case provider.ProviderVertexAI:
+		if configureGCPProject == "" {
+			return fmt.Errorf("--gcp-project is required for vertex-ai")
+		}
+		if configureLocation == "" {
+			return fmt.Errorf("--location is required for vertex-ai")
+		}
+		if configureKeyFile != "" {
+			data, err := os.ReadFile(configureKeyFile)
+			if err != nil {
+				return fmt.Errorf("failed to read key file: %w", err)
+			}
+			req.ServiceAccountJSON = string(data)
+		}
+		req.GCPProject = configureGCPProject
+		req.Location = configureLocation
+
+	default:
+		return fmt.Errorf("unsupported provider %q; must be google-ai or vertex-ai", providerArg)
 	}
 
-	c, err := getClient(cmd)
+	fmt.Printf("Configuring %s for org %s...\n", providerArg, orgID)
+	cfg, err := c.SDK.Provider.UpsertOrgConfig(context.Background(), orgID, providerArg, req)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to configure %s: %w", providerArg, err)
 	}
 
-	orgID, err := resolveProviderOrgID(c, setVertexOrgID)
-	if err != nil {
-		return err
+	fmt.Printf("%s configured successfully.\n", providerArg)
+	if cfg.GenerativeModel != "" {
+		fmt.Printf("  Generative model: %s\n", cfg.GenerativeModel)
 	}
-
-	req := &provider.SaveVertexAICredentialRequest{
-		ServiceAccountJSON: saJSON,
-		GCPProject:         setVertexProject,
-		Location:           setVertexLocation,
+	if cfg.EmbeddingModel != "" {
+		fmt.Printf("  Embedding model:  %s\n", cfg.EmbeddingModel)
 	}
-	if err := c.SDK.Provider.SaveVertexAICredential(context.Background(), orgID, req); err != nil {
-		return fmt.Errorf("failed to save Vertex AI credential: %w", err)
-	}
-
-	fmt.Println("Vertex AI credentials saved successfully.")
-	fmt.Println("Run 'emergent provider models vertex-ai' to list available models.")
+	fmt.Printf("Run 'emergent provider test' to verify the configuration.\n")
 	return nil
 }
 
-// ── set-vertex-express ────────────────────────────────────────────────────────
+// ── configure-project (project-level) ────────────────────────────────────────
 
-var setVertexExpressCmd = &cobra.Command{
-	Use:   "set-vertex-express <api-key>",
-	Short: "Save a Vertex AI Express Mode API key for the organization",
-	Long: `Save a Vertex AI Express Mode API key for the current organization.
+var configureProjectCmd = &cobra.Command{
+	Use:   "configure-project <provider>",
+	Short: "Save project-level LLM provider credentials (overrides org config)",
+	Long: `Save project-specific credentials and model selections for the given provider.
+This overrides the organization's provider config for this project.
 
-Vertex AI Express Mode allows you to use Vertex AI models with an API key
-(no GCP project or service account required). The key is encrypted at rest.
+Use --remove to remove the project-level override and fall back to the org config.
 
-Example:
-  emergent provider set-vertex-express AQ.Ab8RN6...`,
-	Args: cobra.ExactArgs(1),
-	RunE: runProviderSetVertexExpress,
+Supported providers:
+  google-ai   — Google AI (Gemini API); requires --api-key
+  vertex-ai   — Google Cloud Vertex AI; requires --gcp-project, --location
+
+The project is read from --project or the EMERGENT_PROJECT_ID environment variable.
+
+Examples:
+  emergent provider configure-project google-ai --api-key AIzaSy...
+  emergent provider configure-project vertex-ai --gcp-project my-proj --location us-central1 --key-file sa.json
+  emergent provider configure-project google-ai --remove`,
+	Args:      cobra.ExactArgs(1),
+	ValidArgs: []string{"google-ai", "vertex-ai"},
+	RunE:      runProviderConfigureProject,
 }
 
-var setVertexExpressOrgID string
+var (
+	configureProjectAPIKey          string
+	configureProjectKeyFile         string
+	configureProjectGCPProject      string
+	configureProjectLocation        string
+	configureProjectGenerativeModel string
+	configureProjectEmbeddingModel  string
+	configureProjectID              string
+	configureProjectRemove          bool
+)
 
-func runProviderSetVertexExpress(cmd *cobra.Command, args []string) error {
-	apiKey := args[0]
+func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
+	providerArg := args[0]
 
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
 
-	orgID, err := resolveProviderOrgID(c, setVertexExpressOrgID)
-	if err != nil {
-		return err
+	// Resolve project ID: flag → env var → error
+	projectID := configureProjectID
+	if projectID == "" {
+		projectID = os.Getenv("EMERGENT_PROJECT_ID")
+	}
+	if projectID == "" {
+		return fmt.Errorf("--project is required (or set EMERGENT_PROJECT_ID / EMERGENT_PROJECT in .env.local)")
 	}
 
-	req := &provider.SaveVertexAIExpressCredentialRequest{APIKey: apiKey}
-	if err := c.SDK.Provider.SaveVertexAIExpressCredential(context.Background(), orgID, req); err != nil {
-		return fmt.Errorf("failed to save Vertex AI Express credential: %w", err)
-	}
-
-	fmt.Println("Vertex AI Express API key saved successfully.")
-	fmt.Println("Run 'emergent provider test vertex-ai-express' to verify it works.")
-	return nil
-}
-
-// ── list-credentials ──────────────────────────────────────────────────────────
-
-var listCredentialsCmd = &cobra.Command{
-	Use:   "list-credentials",
-	Short: "List configured LLM provider credentials",
-	RunE:  runProviderListCredentials,
-}
-
-var listCredentialsOrgID string
-
-func runProviderListCredentials(cmd *cobra.Command, args []string) error {
-	c, err := getClient(cmd)
-	if err != nil {
-		return err
-	}
-
-	orgID, err := resolveProviderOrgID(c, listCredentialsOrgID)
-	if err != nil {
-		return err
-	}
-
-	creds, err := c.SDK.Provider.ListOrgCredentials(context.Background(), orgID)
-	if err != nil {
-		return fmt.Errorf("failed to list credentials: %w", err)
-	}
-
-	if len(creds) == 0 {
-		fmt.Println("No credentials configured.")
-		fmt.Println("Run 'emergent provider set-key <api-key>' to configure Google AI.")
+	if configureProjectRemove {
+		if err := c.SDK.Provider.DeleteProjectConfig(context.Background(), projectID, providerArg); err != nil {
+			return fmt.Errorf("failed to remove project config for %s: %w", providerArg, err)
+		}
+		fmt.Printf("Project-level %s config removed. The project will now inherit the org config.\n", providerArg)
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PROVIDER\tGCP PROJECT\tLOCATION\tUPDATED")
-	for _, cred := range creds {
-		gcpProject := cred.GCPProject
-		if gcpProject == "" {
-			gcpProject = "-"
-		}
-		location := cred.Location
-		if location == "" {
-			location = "-"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-			cred.Provider,
-			gcpProject,
-			location,
-			cred.UpdatedAt.Format(time.DateTime),
-		)
+	req := &provider.UpsertProviderConfigRequest{
+		GenerativeModel: configureProjectGenerativeModel,
+		EmbeddingModel:  configureProjectEmbeddingModel,
 	}
-	return w.Flush()
+
+	switch providerArg {
+	case provider.ProviderGoogleAI:
+		if configureProjectAPIKey == "" {
+			return fmt.Errorf("--api-key is required for google-ai")
+		}
+		req.APIKey = configureProjectAPIKey
+
+	case provider.ProviderVertexAI:
+		if configureProjectGCPProject == "" {
+			return fmt.Errorf("--gcp-project is required for vertex-ai")
+		}
+		if configureProjectLocation == "" {
+			return fmt.Errorf("--location is required for vertex-ai")
+		}
+		if configureProjectKeyFile != "" {
+			data, err := os.ReadFile(configureProjectKeyFile)
+			if err != nil {
+				return fmt.Errorf("failed to read key file: %w", err)
+			}
+			req.ServiceAccountJSON = string(data)
+		}
+		req.GCPProject = configureProjectGCPProject
+		req.Location = configureProjectLocation
+
+	default:
+		return fmt.Errorf("unsupported provider %q; must be google-ai or vertex-ai", providerArg)
+	}
+
+	fmt.Printf("Configuring %s for project %s...\n", providerArg, projectID)
+	cfg, err := c.SDK.Provider.UpsertProjectConfig(context.Background(), projectID, providerArg, req)
+	if err != nil {
+		return fmt.Errorf("failed to configure project %s: %w", providerArg, err)
+	}
+
+	fmt.Printf("%s configured successfully for project %s.\n", providerArg, projectID)
+	if cfg.GenerativeModel != "" {
+		fmt.Printf("  Generative model: %s\n", cfg.GenerativeModel)
+	}
+	if cfg.EmbeddingModel != "" {
+		fmt.Printf("  Embedding model:  %s\n", cfg.EmbeddingModel)
+	}
+	fmt.Printf("Run 'emergent provider test --project %s' to verify the configuration.\n", projectID)
+	return nil
 }
 
 // ── models ────────────────────────────────────────────────────────────────────
@@ -252,7 +269,7 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 		}
 		if len(models) == 0 {
 			fmt.Printf("No models cached for provider %q.\n", providerArg)
-			fmt.Println("Check that credentials are configured with 'emergent provider list-credentials'.")
+			fmt.Println("Check that credentials are configured with 'emergent provider configure'.")
 			return nil
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -279,13 +296,13 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	creds, err := c.SDK.Provider.ListOrgCredentials(ctx, orgID)
+	configs, err := c.SDK.Provider.ListOrgConfigs(ctx, orgID)
 	if err != nil {
-		return fmt.Errorf("failed to list credentials: %w", err)
+		return fmt.Errorf("failed to list provider configs: %w", err)
 	}
-	if len(creds) == 0 {
+	if len(configs) == 0 {
 		fmt.Println("No providers configured.")
-		fmt.Println("Run 'emergent provider set-key <api-key>' or 'emergent provider set-vertex' to configure a provider.")
+		fmt.Println("Run 'emergent provider configure google-ai --api-key <key>' to configure a provider.")
 		return nil
 	}
 
@@ -293,14 +310,14 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(w, "PROVIDER\tMODEL\tTYPE")
 
 	anyModels := false
-	for _, cred := range creds {
-		models, err := c.SDK.Provider.ListModels(ctx, cred.Provider, modelsTypeFlag)
+	for _, pc := range configs {
+		models, err := c.SDK.Provider.ListModels(ctx, pc.Provider, modelsTypeFlag)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not fetch models for %s: %v\n", cred.Provider, err)
+			fmt.Fprintf(os.Stderr, "Warning: could not fetch models for %s: %v\n", pc.Provider, err)
 			continue
 		}
 		for _, m := range sortModelsByType(models) {
-			fmt.Fprintf(w, "%s\t%s\t%s\n", cred.Provider, m.ModelName, m.ModelType)
+			fmt.Fprintf(w, "%s\t%s\t%s\n", pc.Provider, m.ModelName, m.ModelType)
 			anyModels = true
 		}
 	}
@@ -429,14 +446,14 @@ Without a provider argument, tests all configured providers.
 Pass a provider name (google-ai or vertex-ai) to test a specific one.
 
 Use --project to test using the project-level credential hierarchy
-(project override → org → env) instead of org credentials only.
+(project override → org) instead of org credentials only.
 
 Examples:
   emergent provider test
   emergent provider test vertex-ai
   emergent provider test google-ai --project <id>`,
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"google-ai", "vertex-ai", "vertex-ai-express"},
+	ValidArgs: []string{"google-ai", "vertex-ai"},
 	RunE:      runProviderTest,
 }
 
@@ -470,18 +487,18 @@ func runProviderTest(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		providers = []string{args[0]}
 	} else {
-		// Auto-discover from configured credentials
-		creds, err := c.SDK.Provider.ListOrgCredentials(ctx, resolvedOrgID)
+		// Auto-discover from configured org configs
+		configs, err := c.SDK.Provider.ListOrgConfigs(ctx, resolvedOrgID)
 		if err != nil {
-			return fmt.Errorf("failed to list credentials: %w", err)
+			return fmt.Errorf("failed to list provider configs: %w", err)
 		}
-		if len(creds) == 0 {
-			fmt.Println("No credentials configured.")
-			fmt.Println("Run 'emergent provider set-key <api-key>' or 'emergent provider set-vertex' to configure a provider.")
+		if len(configs) == 0 {
+			fmt.Println("No providers configured.")
+			fmt.Println("Run 'emergent provider configure google-ai --api-key <key>' to configure a provider.")
 			return nil
 		}
-		for _, cred := range creds {
-			providers = append(providers, cred.Provider)
+		for _, pc := range configs {
+			providers = append(providers, pc.Provider)
 		}
 	}
 
@@ -529,22 +546,24 @@ func resolveProviderOrgID(c *client.Client, explicit string) (string, error) {
 }
 
 func init() {
-	// set-key flags
-	setKeyCmd.Flags().StringVar(&setKeyOrgID, "org-id", "", "Organization ID (auto-detected from config)")
+	// configure flags
+	configureCmd.Flags().StringVar(&configureAPIKey, "api-key", "", "API key (required for google-ai)")
+	configureCmd.Flags().StringVar(&configureKeyFile, "key-file", "", "Path to service account JSON key file (vertex-ai)")
+	configureCmd.Flags().StringVar(&configureGCPProject, "gcp-project", "", "GCP project ID (required for vertex-ai)")
+	configureCmd.Flags().StringVar(&configureLocation, "location", "", "GCP region, e.g. us-central1 (required for vertex-ai)")
+	configureCmd.Flags().StringVar(&configureGenerativeModel, "generative-model", "", "Generative model to use (auto-selected from catalog if omitted)")
+	configureCmd.Flags().StringVar(&configureEmbeddingModel, "embedding-model", "", "Embedding model to use (auto-selected from catalog if omitted)")
+	configureCmd.Flags().StringVar(&configureOrgID, "org-id", "", "Organization ID (auto-detected from config)")
 
-	// set-vertex flags
-	setVertexCmd.Flags().StringVar(&setVertexSAFile, "sa-file", "", "Path to service account JSON key file")
-	setVertexCmd.Flags().StringVar(&setVertexProject, "project", "", "GCP project ID (required)")
-	setVertexCmd.Flags().StringVar(&setVertexLocation, "location", "", "GCP region, e.g. us-central1 (required)")
-	setVertexCmd.Flags().StringVar(&setVertexOrgID, "org-id", "", "Organization ID (auto-detected from config)")
-	_ = setVertexCmd.MarkFlagRequired("project")
-	_ = setVertexCmd.MarkFlagRequired("location")
-
-	// set-vertex-express flags
-	setVertexExpressCmd.Flags().StringVar(&setVertexExpressOrgID, "org-id", "", "Organization ID (auto-detected from config)")
-
-	// list-credentials flags
-	listCredentialsCmd.Flags().StringVar(&listCredentialsOrgID, "org-id", "", "Organization ID (auto-detected from config)")
+	// configure-project flags
+	configureProjectCmd.Flags().StringVar(&configureProjectAPIKey, "api-key", "", "API key (required for google-ai)")
+	configureProjectCmd.Flags().StringVar(&configureProjectKeyFile, "key-file", "", "Path to service account JSON key file (vertex-ai)")
+	configureProjectCmd.Flags().StringVar(&configureProjectGCPProject, "gcp-project", "", "GCP project ID (required for vertex-ai)")
+	configureProjectCmd.Flags().StringVar(&configureProjectLocation, "location", "", "GCP region, e.g. us-central1 (required for vertex-ai)")
+	configureProjectCmd.Flags().StringVar(&configureProjectGenerativeModel, "generative-model", "", "Generative model to use (auto-selected from catalog if omitted)")
+	configureProjectCmd.Flags().StringVar(&configureProjectEmbeddingModel, "embedding-model", "", "Embedding model to use (auto-selected from catalog if omitted)")
+	configureProjectCmd.Flags().StringVar(&configureProjectID, "project", "", "Project ID (auto-detected from EMERGENT_PROJECT_ID)")
+	configureProjectCmd.Flags().BoolVar(&configureProjectRemove, "remove", false, "Remove the project-level override and inherit org config")
 
 	// models flags
 	providerModelsCmd.Flags().StringVar(&modelsTypeFlag, "type", "", "Filter by model type: embedding or generative")
@@ -561,10 +580,8 @@ func init() {
 	providerTestCmd.Flags().StringVar(&testProviderProjectID, "project", "", "Project ID for project-level credential resolution")
 
 	// Wire sub-commands
-	providerCmd.AddCommand(setKeyCmd)
-	providerCmd.AddCommand(setVertexCmd)
-	providerCmd.AddCommand(setVertexExpressCmd)
-	providerCmd.AddCommand(listCredentialsCmd)
+	providerCmd.AddCommand(configureCmd)
+	providerCmd.AddCommand(configureProjectCmd)
 	providerCmd.AddCommand(providerModelsCmd)
 	providerCmd.AddCommand(providerUsageCmd)
 	providerCmd.AddCommand(providerTestCmd)
