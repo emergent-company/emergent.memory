@@ -24,7 +24,7 @@ type Registry struct {
 }
 
 // NewRegistry creates and returns a Registry pre-populated with the
-// two first-class providers: Google AI and Vertex AI.
+// supported providers: Google AI and Vertex AI.
 func NewRegistry() *Registry {
 	r := &Registry{
 		providers: make(map[ProviderType]*ProviderDefinition, 2),

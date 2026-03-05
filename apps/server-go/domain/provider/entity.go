@@ -14,15 +14,6 @@ const (
 	ProviderVertexAI ProviderType = "vertex-ai"
 )
 
-// ProviderPolicy controls credential inheritance at the project level.
-type ProviderPolicy string
-
-const (
-	PolicyNone         ProviderPolicy = "none"
-	PolicyOrganization ProviderPolicy = "organization"
-	PolicyProject      ProviderPolicy = "project"
-)
-
 // ModelType classifies a model as embedding or generative.
 type ModelType string
 
@@ -41,10 +32,11 @@ const (
 
 // --- Bun entities mapping to migration tables ---
 
-// OrganizationProviderCredential stores encrypted credentials for a provider at the org level.
-// Table: kb.organization_provider_credentials (migration 00035)
-type OrganizationProviderCredential struct {
-	bun.BaseModel `bun:"table:kb.organization_provider_credentials,alias:opc"`
+// OrgProviderConfig stores encrypted credentials and model selections for a
+// provider at the organization level.
+// Table: kb.org_provider_configs (migration 00042)
+type OrgProviderConfig struct {
+	bun.BaseModel `bun:"table:kb.org_provider_configs,alias:opc"`
 
 	ID                  string       `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
 	OrgID               string       `bun:"org_id,notnull,type:uuid" json:"orgId"`
@@ -53,41 +45,55 @@ type OrganizationProviderCredential struct {
 	EncryptionNonce     []byte       `bun:"encryption_nonce,notnull" json:"-"`
 	GCPProject          string       `bun:"gcp_project" json:"gcpProject,omitempty"`
 	Location            string       `bun:"location" json:"location,omitempty"`
+	GenerativeModel     string       `bun:"generative_model" json:"generativeModel,omitempty"`
+	EmbeddingModel      string       `bun:"embedding_model" json:"embeddingModel,omitempty"`
 	CreatedAt           time.Time    `bun:"created_at,notnull,default:now()" json:"createdAt"`
 	UpdatedAt           time.Time    `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
-// OrganizationProviderModelSelection stores the chosen default models per provider at the org level.
-// Table: kb.organization_provider_model_selections (migration 00036)
-type OrganizationProviderModelSelection struct {
-	bun.BaseModel `bun:"table:kb.organization_provider_model_selections,alias:opms"`
+// ProjectProviderConfig stores encrypted credentials and model selections for a
+// provider at the project level.
+// Table: kb.project_provider_configs (migration 00042)
+type ProjectProviderConfig struct {
+	bun.BaseModel `bun:"table:kb.project_provider_configs,alias:ppc"`
 
-	ID              string       `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	OrgID           string       `bun:"org_id,notnull,type:uuid" json:"orgId"`
-	Provider        ProviderType `bun:"provider,notnull" json:"provider"`
-	EmbeddingModel  string       `bun:"embedding_model" json:"embeddingModel,omitempty"`
-	GenerativeModel string       `bun:"generative_model" json:"generativeModel,omitempty"`
-	CreatedAt       time.Time    `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt       time.Time    `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	ID                  string       `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID           string       `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	Provider            ProviderType `bun:"provider,notnull" json:"provider"`
+	EncryptedCredential []byte       `bun:"encrypted_credential,notnull" json:"-"`
+	EncryptionNonce     []byte       `bun:"encryption_nonce,notnull" json:"-"`
+	GCPProject          string       `bun:"gcp_project" json:"gcpProject,omitempty"`
+	Location            string       `bun:"location" json:"location,omitempty"`
+	GenerativeModel     string       `bun:"generative_model" json:"generativeModel,omitempty"`
+	EmbeddingModel      string       `bun:"embedding_model" json:"embeddingModel,omitempty"`
+	CreatedAt           time.Time    `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt           time.Time    `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
-// ProjectProviderPolicy controls credential inheritance and optional overrides at the project level.
-// Table: kb.project_provider_policies (migration 00037)
-type ProjectProviderPolicy struct {
-	bun.BaseModel `bun:"table:kb.project_provider_policies,alias:ppp"`
+// UpsertProviderConfigRequest is the request body for creating or updating a
+// provider config (org-level or project-level).
+// For google-ai: set APIKey.
+// For vertex-ai: set ServiceAccountJSON, GCPProject, Location.
+type UpsertProviderConfigRequest struct {
+	APIKey             string `json:"apiKey,omitempty"`
+	ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
+	GCPProject         string `json:"gcpProject,omitempty"`
+	Location           string `json:"location,omitempty"`
+	GenerativeModel    string `json:"generativeModel,omitempty"`
+	EmbeddingModel     string `json:"embeddingModel,omitempty"`
+}
 
-	ID                  string         `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	ProjectID           string         `bun:"project_id,notnull,type:uuid" json:"projectId"`
-	Provider            ProviderType   `bun:"provider,notnull" json:"provider"`
-	Policy              ProviderPolicy `bun:"policy,notnull,default:'none'" json:"policy"`
-	EncryptedCredential []byte         `bun:"encrypted_credential" json:"-"`
-	EncryptionNonce     []byte         `bun:"encryption_nonce" json:"-"`
-	GCPProject          string         `bun:"gcp_project" json:"gcpProject,omitempty"`
-	Location            string         `bun:"location" json:"location,omitempty"`
-	EmbeddingModel      string         `bun:"embedding_model" json:"embeddingModel,omitempty"`
-	GenerativeModel     string         `bun:"generative_model" json:"generativeModel,omitempty"`
-	CreatedAt           time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt           time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+// ProviderConfigResponse is the public-safe representation of a stored provider config.
+// Credential fields (APIKey, ServiceAccountJSON) are never returned.
+type ProviderConfigResponse struct {
+	ID              string       `json:"id"`
+	Provider        ProviderType `json:"provider"`
+	GCPProject      string       `json:"gcpProject,omitempty"`
+	Location        string       `json:"location,omitempty"`
+	GenerativeModel string       `json:"generativeModel,omitempty"`
+	EmbeddingModel  string       `json:"embeddingModel,omitempty"`
+	CreatedAt       time.Time    `json:"createdAt"`
+	UpdatedAt       time.Time    `json:"updatedAt"`
 }
 
 // ProviderSupportedModel is a cached entry of a model available from a provider.

@@ -1,5 +1,5 @@
 // Package provider provides the Provider service client for the Emergent API SDK.
-// It covers LLM credential management, model catalog, project policies, and usage reporting.
+// It covers LLM provider config management, model catalog, and usage reporting.
 package provider
 
 import (
@@ -42,15 +42,6 @@ const (
 	ProviderVertexAI ProviderType = "vertex-ai"
 )
 
-// ProviderPolicy controls credential inheritance at the project level.
-type ProviderPolicy = string
-
-const (
-	PolicyNone         ProviderPolicy = "none"
-	PolicyOrganization ProviderPolicy = "organization"
-	PolicyProject      ProviderPolicy = "project"
-)
-
 // ModelType classifies a model.
 type ModelType = string
 
@@ -59,15 +50,17 @@ const (
 	ModelTypeGenerative ModelType = "generative"
 )
 
-// OrgCredential is the public-safe representation of a stored org credential (no secrets).
-type OrgCredential struct {
-	ID         string    `json:"id"`
-	OrgID      string    `json:"orgId"`
-	Provider   string    `json:"provider"`
-	GCPProject string    `json:"gcpProject,omitempty"`
-	Location   string    `json:"location,omitempty"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+// ProviderConfig is the public-safe representation of a stored provider config.
+// Credential fields (APIKey, ServiceAccountJSON) are never returned.
+type ProviderConfig struct {
+	ID              string    `json:"id"`
+	Provider        string    `json:"provider"`
+	GCPProject      string    `json:"gcpProject,omitempty"`
+	Location        string    `json:"location,omitempty"`
+	GenerativeModel string    `json:"generativeModel,omitempty"`
+	EmbeddingModel  string    `json:"embeddingModel,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 // SupportedModel is a cached model entry from the provider catalog.
@@ -78,20 +71,6 @@ type SupportedModel struct {
 	ModelType   string    `json:"modelType"`
 	DisplayName string    `json:"displayName,omitempty"`
 	LastSynced  time.Time `json:"lastSynced"`
-}
-
-// ProjectPolicy is the per-provider policy for a project (no credential secrets).
-type ProjectPolicy struct {
-	ID              string    `json:"id"`
-	ProjectID       string    `json:"projectId"`
-	Provider        string    `json:"provider"`
-	Policy          string    `json:"policy"`
-	GCPProject      string    `json:"gcpProject,omitempty"`
-	Location        string    `json:"location,omitempty"`
-	EmbeddingModel  string    `json:"embeddingModel,omitempty"`
-	GenerativeModel string    `json:"generativeModel,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 // UsageSummaryRow is a single row of aggregated usage data.
@@ -112,76 +91,110 @@ type UsageSummary struct {
 	Data []UsageSummaryRow `json:"data"`
 }
 
+// TestProviderResponse is returned by the provider test endpoint.
+type TestProviderResponse struct {
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+	Reply     string `json:"reply"`
+	LatencyMs int64  `json:"latencyMs"`
+}
+
 // --- Request types ---
 
-// SaveGoogleAICredentialRequest is the body for saving a Google AI API key.
-type SaveGoogleAICredentialRequest struct {
-	APIKey string `json:"apiKey"`
-}
-
-// SaveVertexAICredentialRequest is the body for saving Vertex AI credentials.
-type SaveVertexAICredentialRequest struct {
-	ServiceAccountJSON string `json:"serviceAccountJson"`
-	GCPProject         string `json:"gcpProject"`
-	Location           string `json:"location"`
-}
-
-// SetOrgModelSelectionRequest sets default models for an org + provider.
-type SetOrgModelSelectionRequest struct {
-	EmbeddingModel  string `json:"embeddingModel"`
-	GenerativeModel string `json:"generativeModel"`
-}
-
-// SetProjectPolicyRequest sets a project's provider policy.
-type SetProjectPolicyRequest struct {
-	Policy             string `json:"policy"`
+// UpsertProviderConfigRequest is the unified request body for creating or
+// updating a provider config (org-level or project-level).
+// For google-ai: set APIKey.
+// For vertex-ai: set ServiceAccountJSON, GCPProject, Location.
+// GenerativeModel and EmbeddingModel are auto-selected from the catalog if omitted.
+type UpsertProviderConfigRequest struct {
 	APIKey             string `json:"apiKey,omitempty"`
 	ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
 	GCPProject         string `json:"gcpProject,omitempty"`
 	Location           string `json:"location,omitempty"`
-	EmbeddingModel     string `json:"embeddingModel,omitempty"`
 	GenerativeModel    string `json:"generativeModel,omitempty"`
+	EmbeddingModel     string `json:"embeddingModel,omitempty"`
 }
 
-// --- Organization Credential Methods ---
+// --- Organization Provider Config Methods ---
 
-// SaveGoogleAICredential stores a Google AI API key for an organization.
-func (c *Client) SaveGoogleAICredential(ctx context.Context, orgID string, req *SaveGoogleAICredentialRequest) error {
-	return c.doJSON(ctx, "POST",
-		fmt.Sprintf("/api/v1/organizations/%s/providers/google-ai/credentials", url.PathEscape(orgID)),
-		req, nil)
+// UpsertOrgConfig stores credentials and model selections for an organization's provider.
+// Runs a live credential test and syncs the model catalog on success.
+func (c *Client) UpsertOrgConfig(ctx context.Context, orgID, provider string, req *UpsertProviderConfigRequest) (*ProviderConfig, error) {
+	var result ProviderConfig
+	err := c.doJSON(ctx, "PUT",
+		fmt.Sprintf("/api/v1/organizations/%s/providers/%s",
+			url.PathEscape(orgID), url.PathEscape(provider)),
+		req, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
-// SaveVertexAICredential stores Vertex AI credentials for an organization.
-func (c *Client) SaveVertexAICredential(ctx context.Context, orgID string, req *SaveVertexAICredentialRequest) error {
-	return c.doJSON(ctx, "POST",
-		fmt.Sprintf("/api/v1/organizations/%s/providers/vertex-ai/credentials", url.PathEscape(orgID)),
-		req, nil)
+// GetOrgConfig returns the stored config metadata (no secrets) for an org's provider.
+func (c *Client) GetOrgConfig(ctx context.Context, orgID, provider string) (*ProviderConfig, error) {
+	var result ProviderConfig
+	err := c.doJSON(ctx, "GET",
+		fmt.Sprintf("/api/v1/organizations/%s/providers/%s",
+			url.PathEscape(orgID), url.PathEscape(provider)),
+		nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
-// DeleteOrgCredential removes a provider credential from an organization.
-func (c *Client) DeleteOrgCredential(ctx context.Context, orgID, provider string) error {
+// DeleteOrgConfig removes a provider config from an organization.
+func (c *Client) DeleteOrgConfig(ctx context.Context, orgID, provider string) error {
 	return c.doJSON(ctx, "DELETE",
-		fmt.Sprintf("/api/v1/organizations/%s/providers/%s/credentials",
+		fmt.Sprintf("/api/v1/organizations/%s/providers/%s",
 			url.PathEscape(orgID), url.PathEscape(provider)),
 		nil, nil)
 }
 
-// ListOrgCredentials returns stored credential metadata for an organization.
-func (c *Client) ListOrgCredentials(ctx context.Context, orgID string) ([]OrgCredential, error) {
-	var result []OrgCredential
+// ListOrgConfigs returns all provider config metadata for an organization.
+func (c *Client) ListOrgConfigs(ctx context.Context, orgID string) ([]ProviderConfig, error) {
+	var result []ProviderConfig
 	err := c.doJSON(ctx, "GET",
-		fmt.Sprintf("/api/v1/organizations/%s/providers/credentials", url.PathEscape(orgID)),
+		fmt.Sprintf("/api/v1/organizations/%s/providers", url.PathEscape(orgID)),
 		nil, &result)
 	return result, err
 }
 
-// SetOrgModelSelection sets the default models for an org + provider.
-func (c *Client) SetOrgModelSelection(ctx context.Context, orgID, provider string, req *SetOrgModelSelectionRequest) error {
-	return c.doJSON(ctx, "PUT",
-		fmt.Sprintf("/api/v1/organizations/%s/providers/%s/models",
-			url.PathEscape(orgID), url.PathEscape(provider)),
-		req, nil)
+// --- Project Provider Config Methods ---
+
+// UpsertProjectConfig stores credentials and model selections for a project's provider.
+func (c *Client) UpsertProjectConfig(ctx context.Context, projectID, provider string, req *UpsertProviderConfigRequest) (*ProviderConfig, error) {
+	var result ProviderConfig
+	err := c.doJSON(ctx, "PUT",
+		fmt.Sprintf("/api/v1/projects/%s/providers/%s",
+			url.PathEscape(projectID), url.PathEscape(provider)),
+		req, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetProjectConfig returns the stored config metadata (no secrets) for a project's provider.
+func (c *Client) GetProjectConfig(ctx context.Context, projectID, provider string) (*ProviderConfig, error) {
+	var result ProviderConfig
+	err := c.doJSON(ctx, "GET",
+		fmt.Sprintf("/api/v1/projects/%s/providers/%s",
+			url.PathEscape(projectID), url.PathEscape(provider)),
+		nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteProjectConfig removes a provider config from a project.
+func (c *Client) DeleteProjectConfig(ctx context.Context, projectID, provider string) error {
+	return c.doJSON(ctx, "DELETE",
+		fmt.Sprintf("/api/v1/projects/%s/providers/%s",
+			url.PathEscape(projectID), url.PathEscape(provider)),
+		nil, nil)
 }
 
 // --- Model Catalog Methods ---
@@ -198,42 +211,31 @@ func (c *Client) ListModels(ctx context.Context, provider, modelType string) ([]
 	return result, err
 }
 
-// --- Project Policy Methods ---
-
-// SetProjectPolicy sets the provider policy for a project.
-func (c *Client) SetProjectPolicy(ctx context.Context, projectID, provider string, req *SetProjectPolicyRequest) error {
-	return c.doJSON(ctx, "PUT",
-		fmt.Sprintf("/api/v1/projects/%s/providers/%s/policy",
-			url.PathEscape(projectID), url.PathEscape(provider)),
-		req, nil)
-}
-
-// GetProjectPolicy returns the current provider policy for a project.
-func (c *Client) GetProjectPolicy(ctx context.Context, projectID, provider string) (*ProjectPolicy, error) {
-	var result ProjectPolicy
-	err := c.doJSON(ctx, "GET",
-		fmt.Sprintf("/api/v1/projects/%s/providers/%s/policy",
-			url.PathEscape(projectID), url.PathEscape(provider)),
-		nil, &result)
+// TestProvider sends a live generate call to verify provider credentials work.
+// projectID and orgID are optional context hints for credential resolution.
+func (c *Client) TestProvider(ctx context.Context, provider, projectID, orgID string) (*TestProviderResponse, error) {
+	path := fmt.Sprintf("/api/v1/providers/%s/test", url.PathEscape(provider))
+	params := url.Values{}
+	if projectID != "" {
+		params.Set("projectId", projectID)
+	}
+	if orgID != "" {
+		params.Set("orgId", orgID)
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	var result TestProviderResponse
+	err := c.doJSON(ctx, "POST", path, nil, &result)
 	if err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-// ListProjectPolicies returns all provider policies for a project.
-func (c *Client) ListProjectPolicies(ctx context.Context, projectID string) ([]ProjectPolicy, error) {
-	var result []ProjectPolicy
-	err := c.doJSON(ctx, "GET",
-		fmt.Sprintf("/api/v1/projects/%s/providers/policies", url.PathEscape(projectID)),
-		nil, &result)
-	return result, err
-}
-
 // --- Usage & Cost Methods ---
 
 // GetProjectUsage returns aggregated usage and estimated cost for a project.
-// since and until are optional; pass zero time.Time to omit.
 func (c *Client) GetProjectUsage(ctx context.Context, projectID string, since, until time.Time) (*UsageSummary, error) {
 	path := fmt.Sprintf("/api/v1/projects/%s/usage", url.PathEscape(projectID))
 	path = appendTimeRange(path, since, until)
@@ -247,7 +249,6 @@ func (c *Client) GetProjectUsage(ctx context.Context, projectID string, since, u
 }
 
 // GetOrgUsage returns aggregated usage and estimated cost for all projects in an org.
-// since and until are optional; pass zero time.Time to omit.
 func (c *Client) GetOrgUsage(ctx context.Context, orgID string, since, until time.Time) (*UsageSummary, error) {
 	path := fmt.Sprintf("/api/v1/organizations/%s/usage", url.PathEscape(orgID))
 	path = appendTimeRange(path, since, until)
@@ -262,8 +263,6 @@ func (c *Client) GetOrgUsage(ctx context.Context, orgID string, since, until tim
 
 // --- Internal helpers ---
 
-// doJSON performs an authenticated JSON HTTP request. bodyIn is marshalled to the
-// request body (if non-nil); the response body is unmarshalled into bodyOut (if non-nil).
 func (c *Client) doJSON(ctx context.Context, method, path string, bodyIn, bodyOut any) error {
 	var bodyReader io.Reader
 	if bodyIn != nil {
@@ -307,7 +306,6 @@ func (c *Client) doJSON(ctx context.Context, method, path string, bodyIn, bodyOu
 	return nil
 }
 
-// appendTimeRange adds since/until query params to a path if they are non-zero.
 func appendTimeRange(path string, since, until time.Time) string {
 	params := url.Values{}
 	if !since.IsZero() {
