@@ -116,18 +116,6 @@ func TestProviderTypeConstants(t *testing.T) {
 	}
 }
 
-func TestProviderPolicyConstants(t *testing.T) {
-	if PolicyNone != "none" {
-		t.Errorf("expected PolicyNone to be 'none', got %q", PolicyNone)
-	}
-	if PolicyOrganization != "organization" {
-		t.Errorf("expected PolicyOrganization to be 'organization', got %q", PolicyOrganization)
-	}
-	if PolicyProject != "project" {
-		t.Errorf("expected PolicyProject to be 'project', got %q", PolicyProject)
-	}
-}
-
 func TestModelTypeConstants(t *testing.T) {
 	if ModelTypeEmbedding != "embedding" {
 		t.Errorf("expected ModelTypeEmbedding to be 'embedding', got %q", ModelTypeEmbedding)

@@ -34,11 +34,7 @@ func NewModelCatalogService(repo *Repository, log *slog.Logger) *ModelCatalogSer
 func (s *ModelCatalogService) SyncModels(ctx context.Context, provider ProviderType, cred *ResolvedCredential) error {
 	models, err := s.fetchModelsFromAPI(ctx, provider, cred)
 	if err != nil {
-		s.log.Warn("failed to fetch models from API, using static fallback",
-			logger.Error(err),
-			slog.String("provider", string(provider)),
-		)
-		models = staticModels(provider)
+		return fmt.Errorf("failed to fetch model catalog from %s API: %w", provider, err)
 	}
 
 	if len(models) == 0 {
@@ -79,46 +75,9 @@ func (s *ModelCatalogService) fetchModelsFromAPI(ctx context.Context, provider P
 	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	var clientCfg *genai.ClientConfig
-
-	switch provider {
-	case ProviderGoogleAI:
-		if cred.APIKey == "" {
-			return nil, fmt.Errorf("API key required for Google AI model listing")
-		}
-		clientCfg = &genai.ClientConfig{
-			Backend: genai.BackendGeminiAPI,
-			APIKey:  cred.APIKey,
-		}
-
-	case ProviderVertexAI:
-		if cred.GCPProject == "" || cred.Location == "" {
-			return nil, fmt.Errorf("GCP project and location required for Vertex AI model listing")
-		}
-		clientCfg = &genai.ClientConfig{
-			Backend:  genai.BackendVertexAI,
-			Project:  cred.GCPProject,
-			Location: cred.Location,
-		}
-		// Use stored service account credentials when available so we don't
-		// rely on ambient ADC (which may not be present or may not have the
-		// required scopes for the stored GCP project).
-		if cred.ServiceAccountJSON != "" {
-			creds, err := credentials.NewCredentialsFromJSON(
-				credentials.ServiceAccount,
-				[]byte(cred.ServiceAccountJSON),
-				&credentials.DetectOptions{
-					Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
-				},
-			)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse service account credentials: %w", err)
-			}
-			clientCfg.Credentials = creds
-		}
-
-	default:
-		return nil, fmt.Errorf("unsupported provider for model listing: %s", provider)
+	clientCfg, err := buildClientConfig(provider, cred)
+	if err != nil {
+		return nil, err
 	}
 
 	client, err := genai.NewClient(fetchCtx, clientCfg)
@@ -221,33 +180,97 @@ func normalizeModelName(name string) string {
 	return name
 }
 
-// staticModels returns a known-good list of models as a fallback when the
-// provider API is unavailable. These are kept intentionally conservative.
-func staticModels(provider ProviderType) []ProviderSupportedModel {
-	// Both Google AI and Vertex AI serve the same Gemini model family
-	base := []struct {
-		name        string
-		displayName string
-		modelType   ModelType
-	}{
-		// Generative models
-		{"gemini-2.0-flash", "Gemini 2.0 Flash", ModelTypeGenerative},
-		{"gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite", ModelTypeGenerative},
-		{"gemini-2.5-flash-preview-05-20", "Gemini 2.5 Flash Preview", ModelTypeGenerative},
-		{"gemini-2.5-pro-preview-05-06", "Gemini 2.5 Pro Preview", ModelTypeGenerative},
-		// Embedding models
-		{"gemini-embedding-001", "Gemini Embedding 001", ModelTypeEmbedding},
-		{"text-embedding-004", "Text Embedding 004", ModelTypeEmbedding},
+// TestGenerate sends a single "say hello" generate call to verify credentials
+// work end-to-end. It picks the first available generative model for the
+// provider. Returns the model name used and the LLM's reply text.
+func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider ProviderType, cred *ResolvedCredential) (model, reply string, err error) {
+	// Always use the live catalog — SyncModels must have been called before TestGenerate.
+	genType := ModelTypeGenerative
+	models, listErr := s.repo.ListSupportedModels(ctx, provider, &genType)
+	if listErr != nil || len(models) == 0 {
+		return "", "", fmt.Errorf("no models in catalog for provider %s (sync models before testing)", provider)
 	}
 
-	models := make([]ProviderSupportedModel, len(base))
-	for i, m := range base {
-		models[i] = ProviderSupportedModel{
-			Provider:    provider,
-			ModelName:   m.name,
-			ModelType:   m.modelType,
-			DisplayName: m.displayName,
+	// Pick the best model: prefer any flash variant (fast, low-cost), then first available.
+	model = models[0].ModelName
+	for _, m := range models {
+		if m.ModelName == "gemini-2.5-flash" {
+			model = m.ModelName
+			break
 		}
 	}
-	return models
+	if model == models[0].ModelName {
+		for _, m := range models {
+			name := m.ModelName
+			if strings.Contains(name, "flash") &&
+				!strings.Contains(name, "image") &&
+				!strings.Contains(name, "tts") &&
+				!strings.Contains(name, "audio") {
+				model = name
+				break
+			}
+		}
+	}
+
+	testCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	clientCfg, err := buildClientConfig(provider, cred)
+	if err != nil {
+		return "", "", err
+	}
+
+	client, err := genai.NewClient(testCtx, clientCfg)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create genai client: %w", err)
+	}
+
+	resp, err := client.Models.GenerateContent(testCtx, model, genai.Text("Say hello in one sentence."), nil)
+	if err != nil {
+		return "", "", fmt.Errorf("generate call failed: %w", err)
+	}
+
+	reply = resp.Text()
+	return model, reply, nil
+}
+
+// buildClientConfig constructs a genai.ClientConfig from resolved credentials.
+func buildClientConfig(provider ProviderType, cred *ResolvedCredential) (*genai.ClientConfig, error) {
+	switch provider {
+	case ProviderGoogleAI:
+		if cred.APIKey == "" {
+			return nil, fmt.Errorf("API key required for Google AI")
+		}
+		return &genai.ClientConfig{
+			Backend: genai.BackendGeminiAPI,
+			APIKey:  cred.APIKey,
+		}, nil
+
+	case ProviderVertexAI:
+		if cred.GCPProject == "" || cred.Location == "" {
+			return nil, fmt.Errorf("GCP project and location required for Vertex AI")
+		}
+		cfg := &genai.ClientConfig{
+			Backend:  genai.BackendVertexAI,
+			Project:  cred.GCPProject,
+			Location: cred.Location,
+		}
+		if cred.ServiceAccountJSON != "" {
+			c, err := credentials.NewCredentialsFromJSON(
+				credentials.ServiceAccount,
+				[]byte(cred.ServiceAccountJSON),
+				&credentials.DetectOptions{
+					Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+				},
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse service account credentials: %w", err)
+			}
+			cfg.Credentials = c
+		}
+		return cfg, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported provider: %s", provider)
+	}
 }

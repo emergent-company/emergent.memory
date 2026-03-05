@@ -49,8 +49,8 @@ func provideProviderRegistry() *Registry {
 	return NewRegistry()
 }
 
-func provideCredentialService(repo *Repository, registry *Registry, cfg *config.Config, log *slog.Logger) *CredentialService {
-	return NewCredentialService(repo, registry, cfg, log)
+func provideCredentialService(repo *Repository, registry *Registry, catalog *ModelCatalogService, cfg *config.Config, log *slog.Logger) *CredentialService {
+	return NewCredentialService(repo, registry, catalog, cfg, log)
 }
 
 func provideModelCatalogService(repo *Repository, log *slog.Logger) *ModelCatalogService {

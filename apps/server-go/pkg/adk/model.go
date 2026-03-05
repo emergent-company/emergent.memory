@@ -84,10 +84,11 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				slog.String("error", err.Error()),
 			)
 		} else if cred != nil {
-			// Use model name from resolved cred if caller didn't specify one
-			resolvedModel := modelName
-			if resolvedModel == "" && cred.GenerativeModel != "" {
-				resolvedModel = cred.GenerativeModel
+			// Prefer the DB-stored model if available; fall back to caller's modelName,
+			// then to the static config model.
+			resolvedModel := cred.GenerativeModel
+			if resolvedModel == "" {
+				resolvedModel = modelName
 			}
 			if resolvedModel == "" {
 				resolvedModel = f.cfg.Model

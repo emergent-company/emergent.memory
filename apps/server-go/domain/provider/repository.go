@@ -26,13 +26,13 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	}
 }
 
-// --- Organization Provider Credentials ---
+// --- Organization Provider Configs ---
 
-// GetOrgCredential returns the credential for a specific provider and org.
-func (r *Repository) GetOrgCredential(ctx context.Context, orgID string, provider ProviderType) (*OrganizationProviderCredential, error) {
-	var cred OrganizationProviderCredential
+// GetOrgProviderConfig returns the config for a specific provider and org.
+func (r *Repository) GetOrgProviderConfig(ctx context.Context, orgID string, provider ProviderType) (*OrgProviderConfig, error) {
+	var cfg OrgProviderConfig
 	err := r.db.NewSelect().
-		Model(&cred).
+		Model(&cfg).
 		Where("org_id = ?", orgID).
 		Where("provider = ?", provider).
 		Scan(ctx)
@@ -41,50 +41,52 @@ func (r *Repository) GetOrgCredential(ctx context.Context, orgID string, provide
 		if err == sql.ErrNoRows {
 			return nil, nil // not found is not an error here
 		}
-		r.log.Error("failed to get org credential",
+		r.log.Error("failed to get org provider config",
 			logger.Error(err),
 			slog.String("orgID", orgID),
 			slog.String("provider", string(provider)),
 		)
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	return &cred, nil
+	return &cfg, nil
 }
 
-// UpsertOrgCredential inserts or updates an organization's provider credential.
-func (r *Repository) UpsertOrgCredential(ctx context.Context, cred *OrganizationProviderCredential) error {
+// UpsertOrgProviderConfig inserts or updates an organization's provider config.
+func (r *Repository) UpsertOrgProviderConfig(ctx context.Context, cfg *OrgProviderConfig) error {
 	_, err := r.db.NewInsert().
-		Model(cred).
+		Model(cfg).
 		On("CONFLICT (org_id, provider) DO UPDATE").
 		Set("encrypted_credential = EXCLUDED.encrypted_credential").
 		Set("encryption_nonce = EXCLUDED.encryption_nonce").
 		Set("gcp_project = EXCLUDED.gcp_project").
 		Set("location = EXCLUDED.location").
+		Set("generative_model = EXCLUDED.generative_model").
+		Set("embedding_model = EXCLUDED.embedding_model").
 		Set("updated_at = NOW()").
 		Returning("*").
 		Exec(ctx)
 
 	if err != nil {
-		r.log.Error("failed to upsert org credential",
+		r.log.Error("failed to upsert org provider config",
 			logger.Error(err),
-			slog.String("orgID", cred.OrgID),
-			slog.String("provider", string(cred.Provider)),
+			slog.String("orgID", cfg.OrgID),
+			slog.String("provider", string(cfg.Provider)),
 		)
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 	return nil
 }
 
-// DeleteOrgCredential removes an organization's provider credential.
-func (r *Repository) DeleteOrgCredential(ctx context.Context, orgID string, provider ProviderType) error {
+// DeleteOrgProviderConfig removes an organization's provider config.
+func (r *Repository) DeleteOrgProviderConfig(ctx context.Context, orgID string, provider ProviderType) error {
 	_, err := r.db.NewDelete().
-		Model((*OrganizationProviderCredential)(nil)).
+		Model((*OrgProviderConfig)(nil)).
 		Where("org_id = ?", orgID).
 		Where("provider = ?", provider).
 		Exec(ctx)
 
 	if err != nil {
-		r.log.Error("failed to delete org credential",
+		r.log.Error("failed to delete org provider config",
 			logger.Error(err),
 			slog.String("orgID", orgID),
 			slog.String("provider", string(provider)),
@@ -94,80 +96,33 @@ func (r *Repository) DeleteOrgCredential(ctx context.Context, orgID string, prov
 	return nil
 }
 
-// ListOrgCredentials lists all credentials for an organization (metadata only, no secrets).
-func (r *Repository) ListOrgCredentials(ctx context.Context, orgID string) ([]OrganizationProviderCredential, error) {
-	var creds []OrganizationProviderCredential
+// ListOrgProviderConfigs lists all configs for an organization (metadata only, no secrets).
+func (r *Repository) ListOrgProviderConfigs(ctx context.Context, orgID string) ([]OrgProviderConfig, error) {
+	var cfgs []OrgProviderConfig
 	err := r.db.NewSelect().
-		Model(&creds).
-		Column("id", "org_id", "provider", "gcp_project", "location", "created_at", "updated_at").
+		Model(&cfgs).
+		Column("id", "org_id", "provider", "gcp_project", "location", "generative_model", "embedding_model", "created_at", "updated_at").
 		Where("org_id = ?", orgID).
 		Order("provider ASC").
 		Scan(ctx)
 
 	if err != nil {
-		r.log.Error("failed to list org credentials",
+		r.log.Error("failed to list org provider configs",
 			logger.Error(err),
 			slog.String("orgID", orgID),
 		)
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	return creds, nil
+	return cfgs, nil
 }
 
-// --- Organization Provider Model Selections ---
+// --- Project Provider Configs ---
 
-// GetOrgModelSelection returns the model selection for a specific provider and org.
-func (r *Repository) GetOrgModelSelection(ctx context.Context, orgID string, provider ProviderType) (*OrganizationProviderModelSelection, error) {
-	var sel OrganizationProviderModelSelection
+// GetProjectProviderConfig returns the config for a specific provider and project.
+func (r *Repository) GetProjectProviderConfig(ctx context.Context, projectID string, provider ProviderType) (*ProjectProviderConfig, error) {
+	var cfg ProjectProviderConfig
 	err := r.db.NewSelect().
-		Model(&sel).
-		Where("org_id = ?", orgID).
-		Where("provider = ?", provider).
-		Scan(ctx)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		r.log.Error("failed to get org model selection",
-			logger.Error(err),
-			slog.String("orgID", orgID),
-			slog.String("provider", string(provider)),
-		)
-		return nil, apperror.ErrDatabase.WithInternal(err)
-	}
-	return &sel, nil
-}
-
-// UpsertOrgModelSelection inserts or updates model selections for an org + provider.
-func (r *Repository) UpsertOrgModelSelection(ctx context.Context, sel *OrganizationProviderModelSelection) error {
-	_, err := r.db.NewInsert().
-		Model(sel).
-		On("CONFLICT (org_id, provider) DO UPDATE").
-		Set("embedding_model = EXCLUDED.embedding_model").
-		Set("generative_model = EXCLUDED.generative_model").
-		Set("updated_at = NOW()").
-		Returning("*").
-		Exec(ctx)
-
-	if err != nil {
-		r.log.Error("failed to upsert org model selection",
-			logger.Error(err),
-			slog.String("orgID", sel.OrgID),
-			slog.String("provider", string(sel.Provider)),
-		)
-		return apperror.ErrDatabase.WithInternal(err)
-	}
-	return nil
-}
-
-// --- Project Provider Policies ---
-
-// GetProjectPolicy returns the policy for a specific provider and project.
-func (r *Repository) GetProjectPolicy(ctx context.Context, projectID string, provider ProviderType) (*ProjectProviderPolicy, error) {
-	var policy ProjectProviderPolicy
-	err := r.db.NewSelect().
-		Model(&policy).
+		Model(&cfg).
 		Where("project_id = ?", projectID).
 		Where("provider = ?", provider).
 		Scan(ctx)
@@ -176,60 +131,59 @@ func (r *Repository) GetProjectPolicy(ctx context.Context, projectID string, pro
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
-		r.log.Error("failed to get project policy",
+		r.log.Error("failed to get project provider config",
 			logger.Error(err),
 			slog.String("projectID", projectID),
 			slog.String("provider", string(provider)),
 		)
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	return &policy, nil
+	return &cfg, nil
 }
 
-// UpsertProjectPolicy inserts or updates a project's provider policy.
-func (r *Repository) UpsertProjectPolicy(ctx context.Context, policy *ProjectProviderPolicy) error {
+// UpsertProjectProviderConfig inserts or updates a project's provider config.
+func (r *Repository) UpsertProjectProviderConfig(ctx context.Context, cfg *ProjectProviderConfig) error {
 	_, err := r.db.NewInsert().
-		Model(policy).
+		Model(cfg).
 		On("CONFLICT (project_id, provider) DO UPDATE").
-		Set("policy = EXCLUDED.policy").
 		Set("encrypted_credential = EXCLUDED.encrypted_credential").
 		Set("encryption_nonce = EXCLUDED.encryption_nonce").
 		Set("gcp_project = EXCLUDED.gcp_project").
 		Set("location = EXCLUDED.location").
-		Set("embedding_model = EXCLUDED.embedding_model").
 		Set("generative_model = EXCLUDED.generative_model").
+		Set("embedding_model = EXCLUDED.embedding_model").
 		Set("updated_at = NOW()").
 		Returning("*").
 		Exec(ctx)
 
 	if err != nil {
-		r.log.Error("failed to upsert project policy",
+		r.log.Error("failed to upsert project provider config",
 			logger.Error(err),
-			slog.String("projectID", policy.ProjectID),
-			slog.String("provider", string(policy.Provider)),
+			slog.String("projectID", cfg.ProjectID),
+			slog.String("provider", string(cfg.Provider)),
 		)
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 	return nil
 }
 
-// ListProjectPolicies lists all policies for a project.
-func (r *Repository) ListProjectPolicies(ctx context.Context, projectID string) ([]ProjectProviderPolicy, error) {
-	var policies []ProjectProviderPolicy
-	err := r.db.NewSelect().
-		Model(&policies).
+// DeleteProjectProviderConfig removes a project's provider config.
+func (r *Repository) DeleteProjectProviderConfig(ctx context.Context, projectID string, provider ProviderType) error {
+	_, err := r.db.NewDelete().
+		Model((*ProjectProviderConfig)(nil)).
 		Where("project_id = ?", projectID).
-		Order("provider ASC").
-		Scan(ctx)
+		Where("provider = ?", provider).
+		Exec(ctx)
 
 	if err != nil {
-		r.log.Error("failed to list project policies",
+		r.log.Error("failed to delete project provider config",
 			logger.Error(err),
 			slog.String("projectID", projectID),
+			slog.String("provider", string(provider)),
 		)
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return apperror.ErrDatabase.WithInternal(err)
 	}
-	return policies, nil
+	return nil
 }
 
 // --- Provider Supported Models ---
