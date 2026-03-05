@@ -10,34 +10,41 @@ import (
 //
 // Route groups:
 //
-//	/api/v1/organizations/:orgId/providers/...   — org-level credential & model management
-//	/api/v1/projects/:projectId/providers/...    — project-level policy management
-//	/api/v1/providers/:provider/models           — read-only model catalog
+//	PUT    /api/v1/organizations/:orgId/providers/:provider   — upsert org config
+//	GET    /api/v1/organizations/:orgId/providers/:provider   — get org config metadata
+//	DELETE /api/v1/organizations/:orgId/providers/:provider   — delete org config
+//	GET    /api/v1/organizations/:orgId/providers             — list org configs
+//	PUT    /api/v1/projects/:projectId/providers/:provider    — upsert project config
+//	GET    /api/v1/projects/:projectId/providers/:provider    — get project config metadata
+//	DELETE /api/v1/projects/:projectId/providers/:provider    — delete project config
+//	GET    /api/v1/providers/:provider/models                 — read-only model catalog
+//	POST   /api/v1/providers/:provider/test                   — live credential test
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
-	// All provider routes require authentication.
 	api := e.Group("/api/v1")
 	api.Use(authMiddleware.RequireAuth())
 
-	// Org-level credentials (provider-specific POST routes)
+	// Org-level provider configs
 	orgs := api.Group("/organizations/:orgId/providers")
-	orgs.POST("/google-ai/credentials", h.SaveGoogleAICredential)
-	orgs.POST("/vertex-ai/credentials", h.SaveVertexAICredential)
-	orgs.DELETE("/:provider/credentials", h.DeleteOrgCredential)
-	orgs.GET("/credentials", h.ListOrgCredentials)
-	orgs.PUT("/:provider/models", h.SetOrgModelSelection)
+	orgs.PUT("/:provider", h.SaveOrgConfig)
+	orgs.GET("/:provider", h.GetOrgConfig)
+	orgs.DELETE("/:provider", h.DeleteOrgConfig)
+	orgs.GET("", h.ListOrgConfigs)
 
 	// Org-level usage summary
 	api.GET("/organizations/:orgId/usage", h.GetOrgUsageSummary)
 
-	// Project-level policy management
+	// Project-level provider configs
 	projects := api.Group("/projects/:projectId/providers")
-	projects.PUT("/:provider/policy", h.SetProjectPolicy)
-	projects.GET("/:provider/policy", h.GetProjectPolicy)
-	projects.GET("/policies", h.ListProjectPolicies)
+	projects.PUT("/:provider", h.SaveProjectConfig)
+	projects.GET("/:provider", h.GetProjectConfig)
+	projects.DELETE("/:provider", h.DeleteProjectConfig)
 
 	// Project-level usage summary
 	api.GET("/projects/:projectId/usage", h.GetProjectUsageSummary)
 
-	// Read-only model catalog (any authenticated user)
+	// Read-only model catalog
 	api.GET("/providers/:provider/models", h.ListModels)
+
+	// Live provider credential test
+	api.POST("/providers/:provider/test", h.TestProvider)
 }

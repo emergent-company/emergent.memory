@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apitokens"
 	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
@@ -47,6 +48,15 @@ var createProjectCmd = &cobra.Command{
 	RunE:  runCreateProject,
 }
 
+var deleteProjectCmd = &cobra.Command{
+	Use:               "delete <project-id>",
+	Short:             "Delete a project",
+	Long:              "Permanently delete a project and all its data",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
+	RunE:              runDeleteProject,
+}
+
 var setProjectCmd = &cobra.Command{
 	Use:               "set [name-or-id]",
 	Short:             "Set active project",
@@ -56,28 +66,91 @@ var setProjectCmd = &cobra.Command{
 	RunE:              runSetProject,
 }
 
+var projectsCreateTokenCmd = &cobra.Command{
+	Use:   "create-token <project-name-or-id>",
+	Short: "Create a new API token for a project",
+	Long: `Create a new project-scoped API token (emt_...) and print it.
+
+The token is also written to .env.local in the current directory as
+EMERGENT_PROJECT_TOKEN so subsequent CLI commands pick it up automatically.
+
+Scopes default to: data:read data:write schema:read agents:read agents:write
+
+Example:
+  emergent projects create-token my-project --name onboard-token`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
+	RunE:              runProjectsCreateToken,
+}
+
+var (
+	createTokenName   string
+	createTokenScopes []string
+	createTokenNoEnv  bool
+)
+
+func runProjectsCreateToken(cmd *cobra.Command, args []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	projectID, err := resolveProjectNameOrID(c, args[0])
+	if err != nil {
+		return err
+	}
+
+	scopes := createTokenScopes
+	if len(scopes) == 0 {
+		scopes = []string{"data:read", "data:write", "schema:read", "agents:read", "agents:write"}
+	}
+
+	name := createTokenName
+	if name == "" {
+		name = "cli-token"
+	}
+
+	resp, err := c.SDK.APITokens.Create(context.Background(), projectID, &apitokens.CreateTokenRequest{
+		Name:   name,
+		Scopes: scopes,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create token: %w", err)
+	}
+
+	fmt.Printf("Token created: %s\n", resp.Token)
+
+	if !createTokenNoEnv {
+		envMap, _ := godotenv.Read(".env.local")
+		if envMap == nil {
+			envMap = make(map[string]string)
+		}
+		envMap["EMERGENT_PROJECT_TOKEN"] = resp.Token
+		if err := godotenv.Write(envMap, ".env.local"); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not write .env.local: %v\n", err)
+		} else {
+			fmt.Println("EMERGENT_PROJECT_TOKEN written to .env.local")
+		}
+	}
+
+	return nil
+}
+
 var setProjectProviderCmd = &cobra.Command{
 	Use:   "set-provider <project-name-or-id> <provider>",
-	Short: "Set the LLM provider policy for a project",
-	Long: `Set the LLM provider policy for a project.
+	Short: "Set project-level LLM provider credentials",
+	Long: `Set project-level LLM provider credentials, overriding the org config.
 
 <provider> must be "google-ai" or "vertex-ai".
 
-Policy values:
-  organization  Use the organization's shared credentials (default)
-  project       Use project-level credentials supplied via flags
-  none          Disable LLM for this project
-
 Examples:
-  emergent projects set-provider my-project google-ai
-  emergent projects set-provider my-project google-ai --policy project --api-key AIzaSy...
-  emergent projects set-provider my-project vertex-ai --policy project --gcp-project my-proj --location us-central1`,
+  emergent projects set-provider my-project google-ai --api-key AIzaSy...
+  emergent projects set-provider my-project vertex-ai --gcp-project my-proj --location us-central1`,
 	Args: cobra.ExactArgs(2),
 	RunE: runSetProjectProvider,
 }
 
 var (
-	setProviderPolicy     string
 	setProviderAPIKey     string
 	setProviderSAFile     string
 	setProviderGCPProject string
@@ -321,14 +394,36 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Name: %s (%s)\n", project.Name, project.ID)
 
 	// Warn if no LLM provider is configured for the org
-	creds, credErr := c.SDK.Provider.ListOrgCredentials(context.Background(), orgID)
-	if credErr == nil && len(creds) == 0 {
+	configs, credErr := c.SDK.Provider.ListOrgConfigs(context.Background(), orgID)
+	if credErr == nil && len(configs) == 0 {
 		fmt.Println()
 		fmt.Println("Warning: No LLM provider credentials are configured for your organization.")
 		fmt.Println("AI features (embeddings, search, extraction) will not work until you add one.")
-		fmt.Println("  Run: emergent provider set-key <api-key>")
+		fmt.Println("  Run: emergent provider configure google-ai --api-key <api-key>")
 	}
 
+	return nil
+}
+
+func runDeleteProject(cmd *cobra.Command, args []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	projectID, err := resolveProjectNameOrID(c, args[0])
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := c.SDK.Projects.Delete(ctx, projectID); err != nil {
+		return fmt.Errorf("failed to delete project: %w", err)
+	}
+
+	fmt.Printf("Project %s deleted.\n", args[0])
 	return nil
 }
 
@@ -468,16 +563,7 @@ func runSetProjectProvider(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	policy := setProviderPolicy
-	if policy == "" {
-		policy = "organization"
-	}
-	if policy != "none" && policy != "organization" && policy != "project" {
-		return fmt.Errorf("invalid --policy %q: must be 'none', 'organization', or 'project'", policy)
-	}
-
-	req := &provider.SetProjectPolicyRequest{
-		Policy:          policy,
+	req := &provider.UpsertProviderConfigRequest{
 		APIKey:          setProviderAPIKey,
 		GCPProject:      setProviderGCPProject,
 		Location:        setProviderLocation,
@@ -493,11 +579,18 @@ func runSetProjectProvider(cmd *cobra.Command, args []string) error {
 		req.ServiceAccountJSON = string(data)
 	}
 
-	if err := c.SDK.Provider.SetProjectPolicy(context.Background(), projectID, providerName, req); err != nil {
-		return fmt.Errorf("failed to set project provider policy: %w", err)
+	cfg, err := c.SDK.Provider.UpsertProjectConfig(context.Background(), projectID, providerName, req)
+	if err != nil {
+		return fmt.Errorf("failed to set project provider config: %w", err)
 	}
 
-	fmt.Printf("Provider policy for project %q set to %q (provider: %s).\n", nameOrID, policy, providerName)
+	fmt.Printf("Provider config for project %q set (provider: %s).\n", nameOrID, providerName)
+	if cfg.GenerativeModel != "" {
+		fmt.Printf("  Generative model: %s\n", cfg.GenerativeModel)
+	}
+	if cfg.EmbeddingModel != "" {
+		fmt.Printf("  Embedding model:  %s\n", cfg.EmbeddingModel)
+	}
 	return nil
 }
 
@@ -516,18 +609,23 @@ func init() {
 
 	getProjectCmd.Flags().BoolVar(&projectStatsFlag, "stats", false, "Include project statistics (documents, objects, jobs, template packs)")
 
-	setProjectProviderCmd.Flags().StringVar(&setProviderPolicy, "policy", "organization", "Provider policy: none, organization, or project")
-	setProjectProviderCmd.Flags().StringVar(&setProviderAPIKey, "api-key", "", "Google AI API key (for --policy project with google-ai)")
-	setProjectProviderCmd.Flags().StringVar(&setProviderSAFile, "sa-file", "", "Path to Vertex AI service account JSON (for --policy project with vertex-ai)")
-	setProjectProviderCmd.Flags().StringVar(&setProviderGCPProject, "gcp-project", "", "GCP project ID (for --policy project with vertex-ai)")
-	setProjectProviderCmd.Flags().StringVar(&setProviderLocation, "location", "", "GCP region (for --policy project with vertex-ai)")
+	setProjectProviderCmd.Flags().StringVar(&setProviderAPIKey, "api-key", "", "Google AI API key (for google-ai)")
+	setProjectProviderCmd.Flags().StringVar(&setProviderSAFile, "sa-file", "", "Path to Vertex AI service account JSON (for vertex-ai)")
+	setProjectProviderCmd.Flags().StringVar(&setProviderGCPProject, "gcp-project", "", "GCP project ID (for vertex-ai)")
+	setProjectProviderCmd.Flags().StringVar(&setProviderLocation, "location", "", "GCP region (for vertex-ai)")
 	setProjectProviderCmd.Flags().StringVar(&setProviderEmbedding, "embedding-model", "", "Override embedding model for this project")
 	setProjectProviderCmd.Flags().StringVar(&setProviderGenerative, "generative-model", "", "Override generative model for this project")
+
+	projectsCreateTokenCmd.Flags().StringVar(&createTokenName, "name", "cli-token", "Token name")
+	projectsCreateTokenCmd.Flags().StringSliceVar(&createTokenScopes, "scopes", nil, "Token scopes (default: data:read,data:write,schema:read,agents:read,agents:write)")
+	projectsCreateTokenCmd.Flags().BoolVar(&createTokenNoEnv, "no-env", false, "Do not write token to .env.local")
 
 	projectsCmd.AddCommand(listProjectsCmd)
 	projectsCmd.AddCommand(getProjectCmd)
 	projectsCmd.AddCommand(createProjectCmd)
+	projectsCmd.AddCommand(deleteProjectCmd)
 	projectsCmd.AddCommand(setProjectCmd)
 	projectsCmd.AddCommand(setProjectProviderCmd)
+	projectsCmd.AddCommand(projectsCreateTokenCmd)
 	rootCmd.AddCommand(projectsCmd)
 }

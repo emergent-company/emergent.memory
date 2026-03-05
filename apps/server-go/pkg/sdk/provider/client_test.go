@@ -26,24 +26,14 @@ func newClient(t *testing.T, mock *testutil.MockServer) *sdk.Client {
 	return c
 }
 
-func fixtureOrgCredential() provider.OrgCredential {
-	return provider.OrgCredential{
-		ID:        "cred_test123",
-		OrgID:     "org_test456",
-		Provider:  provider.ProviderGoogleAI,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-}
-
-func fixtureProjectPolicy() provider.ProjectPolicy {
-	return provider.ProjectPolicy{
-		ID:        "policy_test123",
-		ProjectID: "proj_test123",
-		Provider:  provider.ProviderGoogleAI,
-		Policy:    provider.PolicyOrganization,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+func fixtureProviderConfig() provider.ProviderConfig {
+	return provider.ProviderConfig{
+		ID:              "cfg_test123",
+		Provider:        provider.ProviderGoogleAI,
+		GenerativeModel: "gemini-2.0-flash",
+		EmbeddingModel:  "text-embedding-004",
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
 	}
 }
 
@@ -73,120 +63,167 @@ func fixtureUsageSummary() provider.UsageSummary {
 	}
 }
 
-// --- Organization Credential Tests ---
+// --- Organization Provider Config Tests ---
 
-func TestSaveGoogleAICredential(t *testing.T) {
+func TestUpsertOrgConfig(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.On("POST", "/api/v1/organizations/org_test456/providers/google-ai/credentials",
+	fixture := fixtureProviderConfig()
+	mock.On("PUT", "/api/v1/organizations/org_test456/providers/google-ai",
 		func(w http.ResponseWriter, r *http.Request) {
 			testutil.AssertHeader(t, r, "Content-Type", "application/json")
-			w.WriteHeader(http.StatusNoContent)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			if err := encodeJSON(w, fixture); err != nil {
+				t.Fatalf("encode: %v", err)
+			}
 		})
 
 	c := newClient(t, mock)
-	err := c.Provider.SaveGoogleAICredential(context.Background(), "org_test456",
-		&provider.SaveGoogleAICredentialRequest{APIKey: "AIza-test-key"})
+	result, err := c.Provider.UpsertOrgConfig(context.Background(), "org_test456", provider.ProviderGoogleAI,
+		&provider.UpsertProviderConfigRequest{APIKey: "AIza-test-key"})
 	if err != nil {
-		t.Fatalf("SaveGoogleAICredential() error = %v", err)
+		t.Fatalf("UpsertOrgConfig() error = %v", err)
+	}
+	if result.Provider != provider.ProviderGoogleAI {
+		t.Errorf("expected provider %s, got %s", provider.ProviderGoogleAI, result.Provider)
+	}
+	if result.GenerativeModel != fixture.GenerativeModel {
+		t.Errorf("expected generative model %s, got %s", fixture.GenerativeModel, result.GenerativeModel)
 	}
 }
 
-func TestSaveVertexAICredential(t *testing.T) {
+func TestGetOrgConfig(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.On("POST", "/api/v1/organizations/org_test456/providers/vertex-ai/credentials",
-		func(w http.ResponseWriter, r *http.Request) {
-			testutil.AssertHeader(t, r, "Content-Type", "application/json")
-			w.WriteHeader(http.StatusNoContent)
-		})
-
-	c := newClient(t, mock)
-	err := c.Provider.SaveVertexAICredential(context.Background(), "org_test456",
-		&provider.SaveVertexAICredentialRequest{
-			GCPProject: "my-project",
-			Location:   "us-central1",
-		})
-	if err != nil {
-		t.Fatalf("SaveVertexAICredential() error = %v", err)
-	}
-}
-
-func TestDeleteOrgCredential(t *testing.T) {
-	mock := testutil.NewMockServer(t)
-	defer mock.Close()
-
-	mock.OnJSON("DELETE", "/api/v1/organizations/org_test456/providers/google-ai/credentials",
-		http.StatusOK, map[string]string{"status": "deleted"})
-
-	c := newClient(t, mock)
-	err := c.Provider.DeleteOrgCredential(context.Background(), "org_test456", provider.ProviderGoogleAI)
-	if err != nil {
-		t.Fatalf("DeleteOrgCredential() error = %v", err)
-	}
-}
-
-func TestListOrgCredentials(t *testing.T) {
-	mock := testutil.NewMockServer(t)
-	defer mock.Close()
-
-	fixture := []provider.OrgCredential{fixtureOrgCredential()}
-	mock.OnJSON("GET", "/api/v1/organizations/org_test456/providers/credentials",
+	fixture := fixtureProviderConfig()
+	mock.OnJSON("GET", "/api/v1/organizations/org_test456/providers/google-ai",
 		http.StatusOK, fixture)
 
 	c := newClient(t, mock)
-	result, err := c.Provider.ListOrgCredentials(context.Background(), "org_test456")
+	result, err := c.Provider.GetOrgConfig(context.Background(), "org_test456", provider.ProviderGoogleAI)
 	if err != nil {
-		t.Fatalf("ListOrgCredentials() error = %v", err)
+		t.Fatalf("GetOrgConfig() error = %v", err)
+	}
+	if result.ID != fixture.ID {
+		t.Errorf("expected ID %s, got %s", fixture.ID, result.ID)
+	}
+}
+
+func TestDeleteOrgConfig(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.OnJSON("DELETE", "/api/v1/organizations/org_test456/providers/google-ai",
+		http.StatusOK, map[string]string{"status": "deleted"})
+
+	c := newClient(t, mock)
+	err := c.Provider.DeleteOrgConfig(context.Background(), "org_test456", provider.ProviderGoogleAI)
+	if err != nil {
+		t.Fatalf("DeleteOrgConfig() error = %v", err)
+	}
+}
+
+func TestListOrgConfigs(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	fixture := []provider.ProviderConfig{fixtureProviderConfig()}
+	mock.OnJSON("GET", "/api/v1/organizations/org_test456/providers",
+		http.StatusOK, fixture)
+
+	c := newClient(t, mock)
+	result, err := c.Provider.ListOrgConfigs(context.Background(), "org_test456")
+	if err != nil {
+		t.Fatalf("ListOrgConfigs() error = %v", err)
 	}
 	if len(result) != 1 {
-		t.Fatalf("expected 1 credential, got %d", len(result))
+		t.Fatalf("expected 1 config, got %d", len(result))
 	}
 	if result[0].ID != fixture[0].ID {
-		t.Errorf("expected credential ID %s, got %s", fixture[0].ID, result[0].ID)
+		t.Errorf("expected config ID %s, got %s", fixture[0].ID, result[0].ID)
 	}
 	if result[0].Provider != provider.ProviderGoogleAI {
 		t.Errorf("expected provider %s, got %s", provider.ProviderGoogleAI, result[0].Provider)
 	}
 }
 
-func TestListOrgCredentials_Empty(t *testing.T) {
+func TestListOrgConfigs_Empty(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.OnJSON("GET", "/api/v1/organizations/org_test456/providers/credentials",
-		http.StatusOK, []provider.OrgCredential{})
+	mock.OnJSON("GET", "/api/v1/organizations/org_test456/providers",
+		http.StatusOK, []provider.ProviderConfig{})
 
 	c := newClient(t, mock)
-	result, err := c.Provider.ListOrgCredentials(context.Background(), "org_test456")
+	result, err := c.Provider.ListOrgConfigs(context.Background(), "org_test456")
 	if err != nil {
-		t.Fatalf("ListOrgCredentials() error = %v", err)
+		t.Fatalf("ListOrgConfigs() error = %v", err)
 	}
 	if len(result) != 0 {
-		t.Errorf("expected 0 credentials, got %d", len(result))
+		t.Errorf("expected 0 configs, got %d", len(result))
 	}
 }
 
-func TestSetOrgModelSelection(t *testing.T) {
+// --- Project Provider Config Tests ---
+
+func TestUpsertProjectConfig(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.On("PUT", "/api/v1/organizations/org_test456/providers/google-ai/models",
+	fixture := fixtureProviderConfig()
+	mock.On("PUT", "/api/v1/projects/proj_test123/providers/google-ai",
 		func(w http.ResponseWriter, r *http.Request) {
 			testutil.AssertHeader(t, r, "Content-Type", "application/json")
-			w.WriteHeader(http.StatusNoContent)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			if err := encodeJSON(w, fixture); err != nil {
+				t.Fatalf("encode: %v", err)
+			}
 		})
 
 	c := newClient(t, mock)
-	err := c.Provider.SetOrgModelSelection(context.Background(), "org_test456", provider.ProviderGoogleAI,
-		&provider.SetOrgModelSelectionRequest{
-			EmbeddingModel:  "text-embedding-004",
-			GenerativeModel: "gemini-2.0-flash",
-		})
+	result, err := c.Provider.UpsertProjectConfig(context.Background(), "proj_test123", provider.ProviderGoogleAI,
+		&provider.UpsertProviderConfigRequest{APIKey: "AIza-project-key"})
 	if err != nil {
-		t.Fatalf("SetOrgModelSelection() error = %v", err)
+		t.Fatalf("UpsertProjectConfig() error = %v", err)
+	}
+	if result.GenerativeModel != fixture.GenerativeModel {
+		t.Errorf("expected generative model %s, got %s", fixture.GenerativeModel, result.GenerativeModel)
+	}
+}
+
+func TestGetProjectConfig(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	fixture := fixtureProviderConfig()
+	mock.OnJSON("GET", "/api/v1/projects/proj_test123/providers/google-ai",
+		http.StatusOK, fixture)
+
+	c := newClient(t, mock)
+	result, err := c.Provider.GetProjectConfig(context.Background(), "proj_test123", provider.ProviderGoogleAI)
+	if err != nil {
+		t.Fatalf("GetProjectConfig() error = %v", err)
+	}
+	if result.ID != fixture.ID {
+		t.Errorf("expected ID %s, got %s", fixture.ID, result.ID)
+	}
+}
+
+func TestDeleteProjectConfig(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.OnJSON("DELETE", "/api/v1/projects/proj_test123/providers/google-ai",
+		http.StatusOK, map[string]string{"status": "deleted"})
+
+	c := newClient(t, mock)
+	err := c.Provider.DeleteProjectConfig(context.Background(), "proj_test123", provider.ProviderGoogleAI)
+	if err != nil {
+		t.Fatalf("DeleteProjectConfig() error = %v", err)
 	}
 }
 
@@ -238,68 +275,6 @@ func TestListModels_WithTypeFilter(t *testing.T) {
 	}
 	if len(result) != 1 {
 		t.Errorf("expected 1 model, got %d", len(result))
-	}
-}
-
-// --- Project Policy Tests ---
-
-func TestSetProjectPolicy(t *testing.T) {
-	mock := testutil.NewMockServer(t)
-	defer mock.Close()
-
-	mock.On("PUT", "/api/v1/projects/proj_test123/providers/google-ai/policy",
-		func(w http.ResponseWriter, r *http.Request) {
-			testutil.AssertHeader(t, r, "Content-Type", "application/json")
-			w.WriteHeader(http.StatusNoContent)
-		})
-
-	c := newClient(t, mock)
-	err := c.Provider.SetProjectPolicy(context.Background(), "proj_test123", provider.ProviderGoogleAI,
-		&provider.SetProjectPolicyRequest{Policy: provider.PolicyOrganization})
-	if err != nil {
-		t.Fatalf("SetProjectPolicy() error = %v", err)
-	}
-}
-
-func TestGetProjectPolicy(t *testing.T) {
-	mock := testutil.NewMockServer(t)
-	defer mock.Close()
-
-	fixture := fixtureProjectPolicy()
-	mock.OnJSON("GET", "/api/v1/projects/proj_test123/providers/google-ai/policy",
-		http.StatusOK, fixture)
-
-	c := newClient(t, mock)
-	result, err := c.Provider.GetProjectPolicy(context.Background(), "proj_test123", provider.ProviderGoogleAI)
-	if err != nil {
-		t.Fatalf("GetProjectPolicy() error = %v", err)
-	}
-	if result.Policy != provider.PolicyOrganization {
-		t.Errorf("expected policy %s, got %s", provider.PolicyOrganization, result.Policy)
-	}
-	if result.ProjectID != fixture.ProjectID {
-		t.Errorf("expected project ID %s, got %s", fixture.ProjectID, result.ProjectID)
-	}
-}
-
-func TestListProjectPolicies(t *testing.T) {
-	mock := testutil.NewMockServer(t)
-	defer mock.Close()
-
-	fixture := []provider.ProjectPolicy{fixtureProjectPolicy()}
-	mock.OnJSON("GET", "/api/v1/projects/proj_test123/providers/policies",
-		http.StatusOK, fixture)
-
-	c := newClient(t, mock)
-	result, err := c.Provider.ListProjectPolicies(context.Background(), "proj_test123")
-	if err != nil {
-		t.Fatalf("ListProjectPolicies() error = %v", err)
-	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 policy, got %d", len(result))
-	}
-	if result[0].ID != fixture[0].ID {
-		t.Errorf("expected policy ID %s, got %s", fixture[0].ID, result[0].ID)
 	}
 }
 
@@ -375,30 +350,30 @@ func TestGetOrgUsage(t *testing.T) {
 
 // --- Error handling ---
 
-func TestSaveGoogleAICredential_4xxError(t *testing.T) {
+func TestUpsertOrgConfig_4xxError(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.OnJSON("POST", "/api/v1/organizations/org_test456/providers/google-ai/credentials",
+	mock.OnJSON("PUT", "/api/v1/organizations/org_test456/providers/google-ai",
 		http.StatusBadRequest, map[string]string{"error": "missing api key"})
 
 	c := newClient(t, mock)
-	err := c.Provider.SaveGoogleAICredential(context.Background(), "org_test456",
-		&provider.SaveGoogleAICredentialRequest{})
+	_, err := c.Provider.UpsertOrgConfig(context.Background(), "org_test456", provider.ProviderGoogleAI,
+		&provider.UpsertProviderConfigRequest{})
 	if err == nil {
 		t.Fatal("expected error for 400 response, got nil")
 	}
 }
 
-func TestListOrgCredentials_ServerError(t *testing.T) {
+func TestListOrgConfigs_ServerError(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.OnJSON("GET", "/api/v1/organizations/org_test456/providers/credentials",
+	mock.OnJSON("GET", "/api/v1/organizations/org_test456/providers",
 		http.StatusInternalServerError, map[string]string{"error": "internal error"})
 
 	c := newClient(t, mock)
-	_, err := c.Provider.ListOrgCredentials(context.Background(), "org_test456")
+	_, err := c.Provider.ListOrgConfigs(context.Background(), "org_test456")
 	if err == nil {
 		t.Fatal("expected error for 500 response, got nil")
 	}

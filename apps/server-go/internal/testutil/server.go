@@ -310,8 +310,8 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register provider routes (LLM credential management, model catalog, usage)
 	providerRepo := provider.NewRepository(db, log)
 	providerRegistry := provider.NewRegistry()
-	providerCredSvc := provider.NewCredentialService(providerRepo, providerRegistry, testDB.Config, log)
 	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log)
+	providerCredSvc := provider.NewCredentialService(providerRepo, providerRegistry, providerCatalogSvc, testDB.Config, log)
 	providerHandler := provider.NewHandler(providerCredSvc, providerCatalogSvc, providerRepo)
 	provider.RegisterRoutes(e, providerHandler, authMiddleware)
 
