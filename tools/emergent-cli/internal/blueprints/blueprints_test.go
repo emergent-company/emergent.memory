@@ -1,4 +1,4 @@
-package apply_test
+package blueprints_test
 
 import (
 	"encoding/json"
@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/apply"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/blueprints"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
-// LoadDir tests (task 7.1)
+// LoadDir tests
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestLoadDir_ValidYAMLPack(t *testing.T) {
@@ -23,7 +23,7 @@ objectTypes:
     label: "Document"
 `)
 
-	packs, agents, results, err := apply.LoadDir(dir)
+	packs, agents, results, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestLoadDir_ValidJSONAgent(t *testing.T) {
 	data, _ := json.Marshal(agent)
 	writeFile(t, dir, "agents/my-agent.json", string(data))
 
-	packs, agents, results, err := apply.LoadDir(dir)
+	packs, agents, results, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,7 +82,7 @@ objectTypes:
   - name: Doc
 `)
 
-	packs, _, _, err := apply.LoadDir(dir)
+	packs, _, _, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -100,7 +100,7 @@ objectTypes:
   - name: Doc
 `)
 
-	packs, _, results, err := apply.LoadDir(dir)
+	packs, _, results, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -110,8 +110,8 @@ objectTypes:
 	if len(results) != 1 {
 		t.Fatalf("expected 1 error result, got %d", len(results))
 	}
-	if results[0].Action != apply.ActionError {
-		t.Errorf("expected ActionError, got %v", results[0].Action)
+	if results[0].Action != blueprints.BlueprintsActionError {
+		t.Errorf("expected BlueprintsActionError, got %v", results[0].Action)
 	}
 }
 
@@ -119,7 +119,7 @@ func TestLoadDir_MissingSubdirsNotError(t *testing.T) {
 	dir := t.TempDir()
 	// No packs/ or agents/ subdirectory at all
 
-	packs, agents, results, err := apply.LoadDir(dir)
+	packs, agents, results, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("expected no error when subdirs are missing, got: %v", err)
 	}
@@ -140,7 +140,7 @@ objectTypes:
   - name: Node
 `)
 
-	packs, _, results, err := apply.LoadDir(dir)
+	packs, _, results, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -150,13 +150,13 @@ objectTypes:
 	if len(results) != 1 {
 		t.Fatalf("expected 1 error result for broken file, got %d", len(results))
 	}
-	if results[0].Action != apply.ActionError {
-		t.Errorf("expected ActionError, got %v", results[0].Action)
+	if results[0].Action != blueprints.BlueprintsActionError {
+		t.Errorf("expected BlueprintsActionError, got %v", results[0].Action)
 	}
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// GitHub URL parsing tests (task 7.3 — no network calls)
+// GitHub URL parsing tests (no network calls)
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestIsGitHubURL(t *testing.T) {
@@ -171,7 +171,7 @@ func TestIsGitHubURL(t *testing.T) {
 		{"https://gitlab.com/acme/repo", false},
 	}
 	for _, tc := range cases {
-		got := apply.IsGitHubURL(tc.src)
+		got := blueprints.IsGitHubURL(tc.src)
 		if got != tc.want {
 			t.Errorf("IsGitHubURL(%q) = %v, want %v", tc.src, got, tc.want)
 		}

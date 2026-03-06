@@ -1,7 +1,7 @@
-// Package apply implements the "emergent apply" command: reading a structured
-// directory of pack and agent definition files, then creating or updating those
-// resources via the Emergent API.
-package apply
+// Package blueprints implements the "memory blueprints" command: reading a
+// structured directory of pack and agent definition files, then creating or
+// updating those resources via the Memory API.
+package blueprints
 
 import "encoding/json"
 
@@ -75,24 +75,24 @@ type AgentModel struct {
 }
 
 // ──────────────────────────────────────────────
-// ApplyResult — outcome of processing one resource
+// BlueprintsResult — outcome of processing one resource
 // ──────────────────────────────────────────────
 
-// ApplyAction describes what happened to a resource.
-type ApplyAction string
+// BlueprintsAction describes what happened to a resource.
+type BlueprintsAction string
 
 const (
-	ActionCreated ApplyAction = "created"
-	ActionUpdated ApplyAction = "updated"
-	ActionSkipped ApplyAction = "skipped"
-	ActionError   ApplyAction = "error"
+	BlueprintsActionCreated BlueprintsAction = "created"
+	BlueprintsActionUpdated BlueprintsAction = "updated"
+	BlueprintsActionSkipped BlueprintsAction = "skipped"
+	BlueprintsActionError   BlueprintsAction = "error"
 )
 
-// ApplyResult records the outcome of applying a single resource file.
-type ApplyResult struct {
-	ResourceType string      // "pack" or "agent"
-	Name         string      // resource name
-	SourceFile   string      // file path it was loaded from
-	Action       ApplyAction // what happened
-	Error        error       // non-nil when Action == ActionError
+// BlueprintsResult records the outcome of applying a single resource file.
+type BlueprintsResult struct {
+	ResourceType string           // "pack" or "agent"
+	Name         string           // resource name
+	SourceFile   string           // file path it was loaded from
+	Action       BlueprintsAction // what happened
+	Error        error            // non-nil when Action == BlueprintsActionError
 }
