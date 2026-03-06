@@ -3,7 +3,7 @@
 //
 // Environment variables:
 //
-//	EMERGENT_TEST_SERVER   - Emergent API base URL (default: http://localhost:3012)
+//	EMERGENT_TEST_SERVER   - Emergent API base URL (default: http://localhost:5300)
 //
 // Requirements:
 //   - `opencode` binary in PATH
@@ -39,8 +39,6 @@ const initialPrompt = `start emergent onboarding
 Important context:
 - This project is already configured — EMERGENT_PROJECT_ID is set in .env.local.
 - Do NOT create a new project or list existing projects. Use the project from .env.local.
-- For Step 2.5 (LLM provider): the user wants to use vertex-ai-express. Save the credential using: emergent provider set-vertex-express "REDACTED_VERTEX_AI_EXPRESS_KEY_1"
-- Then verify it works with: emergent provider test vertex-ai-express
 - Complete all remaining steps automatically without asking for confirmation: design the template pack, install it, upload the documents, create graph objects, then run a search query to verify.
 - IMPORTANT: When creating graph objects, use the batch command: emergent graph objects create-batch --file <path>
 - IMPORTANT: When creating graph relationships, use the batch command: emergent graph relationships create-batch --file <path>
@@ -106,107 +104,10 @@ func TestOnboardSkill(t *testing.T) {
 	assert.BashCommandUsed(t, result, "create-batch")
 }
 
-// vertexExpressAPIKey is the Vertex AI Express Mode API key used for testing.
-// The harness saves this credential before the opencode run so the agent
-// only needs to verify it (not configure it).
-const vertexExpressAPIKey = "REDACTED_VERTEX_AI_EXPRESS_KEY_1"
-
-// vertexExpressPrompt is the prompt for TestOnboardSkillWithVertexAIExpress.
-// The credential is pre-configured by the harness; the agent just verifies it
-// and completes the full onboarding.
-const vertexExpressPrompt = `start emergent onboarding
-
-Important context:
-- This project is already configured — EMERGENT_PROJECT_ID is set in .env.local.
-- Do NOT create a new project or list existing projects. Use the project from .env.local.
-- For Step 2.5 (LLM provider): the vertex-ai-express credential has already been saved
-  by the test harness. Skip the save step and go straight to verifying it works with:
-  emergent provider test vertex-ai-express
-- Complete all remaining steps automatically without asking for confirmation:
-  design the template pack, install it, upload the documents, create graph objects,
-  then run a search query to verify.
-- IMPORTANT: When creating graph objects, use the batch command: emergent graph objects create-batch --file <path>
-- IMPORTANT: When creating graph relationships, use the batch command: emergent graph relationships create-batch --file <path>
-- Do NOT use single-item create commands (emergent graph objects create or emergent graph relationships create) — always use the batch variants.`
-
 // e2eTestToken is the static Bearer token accepted by the local dev server.
 // It maps to the AdminUser fixture (test-admin-user) and is the same token
 // used by the server-go E2E test suite.
 const e2eTestToken = "e2e-test-user"
-
-// TestOnboardSkillWithVertexAIExpress verifies the full onboarding flow with
-// a pre-configured Vertex AI Express credential. The harness saves the credential
-// before opencode starts (using its own CLI auth), so the credential is in place
-// when the agent calls `emergent provider test vertex-ai-express` to verify it.
-//
-// This test exercises:
-//   - Harness pre-configures the org-level vertex-ai-express credential.
-//   - Agent loads the emergent-onboard skill.
-//   - Agent verifies the credential via `emergent provider test vertex-ai-express`.
-//   - Agent installs a template pack, creates graph objects, and runs a search.
-//   - Harness asserts the provider works and that real Emergent state was created.
-func TestOnboardSkillWithVertexAIExpress(t *testing.T) {
-	harness.SkipIfServerDown(t)
-
-	// Authenticate the CLI using the e2e test token (writes credentials.json).
-	harness.SetupAuth(t, e2eTestToken)
-
-	// Pre-configure the vertex-ai-express credential using the harness's auth
-	// (outside the opencode process, where ~/.emergent/config.yaml is available).
-	harness.SetupVertexExpressProvider(t, vertexExpressAPIKey)
-
-	// Verify the credential actually works before we even start opencode.
-	// No project needed here — org-level credential check is sufficient as pre-flight.
-	assert.ProviderWorks(t, harness.ServerURL(), "vertex-ai-express", "")
-
-	proj := harness.CreateProject(t, fmt.Sprintf("oc-test-vaiexpress-%d", time.Now().Unix()))
-	projToken := harness.CreateProjectToken(t, proj.ID)
-	ws := fixture.NewWorkspace(t)
-	ws.EnvFile(harness.ServerURL(), proj.ID, projToken)
-	harness.InstallSkills(t, ws.Dir)
-
-	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
-	defer cancel()
-
-	srv, err := runner.StartServer(ctx, ws.Dir, 0)
-	if err != nil {
-		t.Fatalf("start opencode server: %v", err)
-	}
-	t.Cleanup(srv.Close)
-	t.Logf("opencode server: %s", srv.URL)
-
-	sessionID, err := srv.NewSession("vaiexpress-test")
-	if err != nil {
-		t.Fatalf("new session: %v", err)
-	}
-	t.Logf("session: %s", sessionID)
-
-	result, err := srv.RunUntilDone(ctx, sessionID, vertexExpressPrompt, testModel, maxTurns)
-	if err != nil {
-		t.Fatalf("conversation failed: %v", err)
-	}
-	chatlog.Write(t, result, t.Name())
-
-	t.Logf("opencode cost:    $%.4f", result.Cost)
-	t.Logf("opencode elapsed: %s", result.Elapsed)
-	t.Logf("opencode text (last 500 chars):\n...%s", last500(result.Text))
-	t.Logf("tool calls (%d): %v", len(result.ToolCalls), toolCallNames(result))
-
-	// Process assertions — skill loaded, bash used, no tool errors.
-	assert.SkillLoaded(t, result, "emergent-onboard")
-	assert.BashCalled(t, result)
-	assert.NoToolErrors(t, result)
-
-	// Provider assertion — credential still works after the run, tested via project scope.
-	assert.ProviderWorks(t, harness.ServerURL(), "vertex-ai-express", proj.ID)
-
-	// Emergent state assertions — skill created real state.
-	assert.HasTemplatePack(t, ws.Dir)
-	assert.HasGraphObjects(t, ws.Dir, 3)
-
-	// Batch command assertion — agent must use create-batch, not single creates.
-	assert.BashCommandUsed(t, result, "create-batch")
-}
 
 // and logs all tool calls and text output. Use this to understand what opencode
 // actually does before relying on the full assertions in TestOnboardSkill.

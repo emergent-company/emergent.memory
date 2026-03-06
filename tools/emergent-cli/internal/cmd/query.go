@@ -110,6 +110,9 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	if auth := c.AuthorizationHeader(); auth != "" {
 		httpReq.Header.Set("Authorization", auth)
 	}
+	if projectID != "" {
+		httpReq.Header.Set("X-Project-ID", projectID)
+	}
 
 	start := time.Now()
 	httpClient := &http.Client{Timeout: 120 * time.Second}

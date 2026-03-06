@@ -1499,7 +1499,7 @@ CREATE INDEX idx_documents_email_message_id_lookup ON kb.documents USING btree (
 CREATE INDEX idx_documents_external_source_id ON kb.documents USING btree (external_source_id) WHERE (external_source_id IS NOT NULL);
 CREATE INDEX idx_documents_metadata ON kb.documents USING gin (metadata) WHERE ((metadata IS NOT NULL) AND (metadata <> '{}'::jsonb));
 CREATE INDEX idx_documents_parent_document_id ON kb.documents USING btree (parent_document_id);
-CREATE INDEX idx_documents_project_file_hash ON kb.documents USING btree (project_id, file_hash) WHERE (file_hash IS NOT NULL);
+CREATE UNIQUE INDEX idx_documents_project_file_hash ON kb.documents USING btree (project_id, file_hash) WHERE (file_hash IS NOT NULL);
 CREATE INDEX idx_documents_source_type ON kb.documents USING btree (source_type);
 CREATE INDEX idx_documents_storage_key ON kb.documents USING btree (storage_key) WHERE (storage_key IS NOT NULL);
 CREATE INDEX idx_email_jobs_mailgun_id ON kb.email_jobs USING btree (mailgun_message_id) WHERE (mailgun_message_id IS NOT NULL);

@@ -2,7 +2,21 @@
 
 Go monorepo for the Emergent knowledge graph platform. React admin UI lives in a **separate repo** at `/root/emergent.memory.ui`.
 
-## Build, Lint, Test
+## Architecture
+
+**Go module:** `github.com/emergent-company/emergent`
+
+**Server stack:** Echo (HTTP) · Bun ORM (pgx/Postgres) · fx (dependency injection) · Zitadel (auth)
+
+**Domain layout** (`apps/server-go/domain/<name>/`): agents, apitoken, authinfo, backups, branches, chat, chunking, chunks, datasource, devtools, discoveryjobs, docs, documents, email, embeddingpolicies, events, extraction, githubapp, graph, health, integrations, invites, mcp, mcpregistry, monitoring, notifications, orgs, projects, provider, scheduler, search, standalone, superadmin, tasks, templatepacks, tracing, typeregistry, useraccess, useractivity, userprofile, users, workspace, workspaceimages
+
+Each domain: `handler.go` (Echo routes) · `service.go` (business logic) · `store.go` (Bun ORM queries) · `module.go` (fx wiring)
+
+**DB:** Postgres on port `5436` (not 5432) · schemas: `kb` (knowledge), `core` (users/orgs) · migrations in `apps/server-go/migrations/` via Goose
+
+**CLI:** source at `tools/emergent-cli/` · install with `task cli:install` → `~/.local/bin/emergent` · defaults to remote `http://mcj-emergent:3002`; override with `--server http://localhost:3012`
+
+
 
 ```bash
 # Backend (repo root or apps/server-go)
@@ -10,6 +24,7 @@ task build          # build Go server binary
 task test           # unit tests
 task test:e2e       # API e2e tests
 task lint           # Go linter
+task cli:install    # build + install emergent CLI → ~/.local/bin/emergent
 
 # Frontend (/root/emergent.memory.ui)
 pnpm run lint
@@ -22,6 +37,8 @@ The Go server uses `air`. Changes are picked up in 1-2 seconds automatically.
 
 - **Just save the file** — hot reload handles Go handler/service/store changes
 - **Restart only for**: new fx modules in `cmd/server/main.go`, env var changes, after `go mod tidy`, server down
+- **After structural refactors** (new packages, moved types): restart `air` explicitly — incremental reload may silently use stale binary
+- **Confirm reload worked**: check `logs/server/server.log` for a fresh startup line before testing
 
 ```bash
 task status      # check server health first
@@ -37,6 +54,7 @@ task stop        # stop background server
 | Domain (preferred) | `https://admin.dev.emergent-company.ai` | `https://api.dev.emergent-company.ai` |
 | Localhost | `http://localhost:5176` | `http://localhost:5300` |
 | mcj-emergent (remote test) | — | `http://localhost:3002` (via SSH tunnel) |
+| Local Go server (direct) | — | `http://localhost:3012` |
 
 ## Before Writing Code — Check These First
 
@@ -76,6 +94,8 @@ logs/admin/admin.out.log      logs/admin/admin.error.log
 
 - `docs/site/` is tracked in git — do NOT add to `.gitignore`
 - `search/client_test.go` and `health/client_test.go` have pre-existing compile errors; ignore unless working on those packages
+- **SSH timeouts**: SSH commands to `mcj-emergent` time out at ~120s. For long operations (builds, test suites), run in background: `ssh root@mcj-emergent "nohup <cmd> > /tmp/out.log 2>&1 &"`. Use `gh run watch` to track CI instead of polling manually.
+- **Ephemeral container deploys**: copying a binary into a running Docker container is temporary — a container restart reverts to the image version. All permanent deployments require a tagged release pushed through CI.
 
 ## Detail Docs
 

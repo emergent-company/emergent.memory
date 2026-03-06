@@ -72,3 +72,4 @@ After completing the steps, summarize:
 - If the name is invalid (not kebab-case), ask for a valid name
 - If a change with that name already exists, suggest continuing that change instead
 - Pass --schema if using a non-default workflow
+- **When writing specs for existing code:** enumerate actual items (not estimates). Use a subagent to count/list before writing numbers into specs. Specs written with estimated counts cause PR errors when the actual count differs.
