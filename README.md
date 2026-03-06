@@ -20,7 +20,7 @@ Minimal ingestion server aligned with the spec:
 Install server + CLI in 2-3 minutes with pre-built images:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install-online.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install-online.sh | bash
 ```
 
 ### Self-Update

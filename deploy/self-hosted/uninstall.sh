@@ -48,9 +48,9 @@ if [[ "$REMOVE_DATA" =~ ^[Yy]$ ]]; then
         docker compose -f docker-compose.yml --env-file "${CONFIG_DIR}/.env.local" down -v 2>/dev/null || true
     fi
     
-    docker volume rm minimal_postgres_data 2>/dev/null || true
-    docker volume rm minimal_minio_data 2>/dev/null || true
-    docker volume rm minimal_emergent_cli_config 2>/dev/null || true
+    docker volume rm self-hosted_postgres_data minimal_postgres_data 2>/dev/null || true
+    docker volume rm self-hosted_minio_data minimal_minio_data 2>/dev/null || true
+    docker volume rm self-hosted_emergent_cli_config minimal_emergent_cli_config 2>/dev/null || true
     
     echo -e "${GREEN}Volumes removed.${NC}"
 fi
@@ -58,7 +58,7 @@ fi
 echo ""
 
 if [ -t 0 ]; then
-    read -p "Remove Docker image (emergent-server-with-cli:latest)? (y/N): " -r REMOVE_IMAGE
+    read -p "Remove Docker image (memory-server:latest)? (y/N): " -r REMOVE_IMAGE
 else
     REMOVE_IMAGE="${REMOVE_IMAGE:-N}"
     echo "Non-interactive mode: REMOVE_IMAGE=${REMOVE_IMAGE}"
@@ -66,7 +66,7 @@ fi
 
 if [[ "$REMOVE_IMAGE" =~ ^[Yy]$ ]]; then
     echo -e "${CYAN}Removing Docker image...${NC}"
-    docker rmi emergent-server-with-cli:latest 2>/dev/null || true
+    docker rmi memory-server:latest 2>/dev/null || true
     echo -e "${GREEN}Image removed.${NC}"
 fi
 
@@ -78,5 +78,5 @@ echo ""
 echo -e "${GREEN}${BOLD}Emergent has been uninstalled.${NC}"
 echo ""
 echo "To reinstall, run:"
-echo "  curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install-online.sh | bash"
+echo "  curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install-online.sh | bash"
 echo ""

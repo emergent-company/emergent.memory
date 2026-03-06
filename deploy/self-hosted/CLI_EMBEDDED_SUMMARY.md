@@ -6,9 +6,9 @@ Enhanced the Emergent standalone deployment to include the `emergent-cli` binary
 
 ## What Was Added
 
-### 1. Enhanced Dockerfile (`Dockerfile.server-with-cli`)
+### 1. Enhanced Dockerfile (`Dockerfile.server`)
 
-**Location**: `/root/emergent/deploy/minimal/Dockerfile.server-with-cli`
+**Location**: `/root/emergent/deploy/self-hosted/Dockerfile.server`
 
 **Features**:
 
@@ -26,15 +26,15 @@ Enhanced the Emergent standalone deployment to include the `emergent-cli` binary
 2. `cli-builder` - Compiles CLI from `tools/emergent-cli/`
 3. `runtime` - Alpine image with both binaries + tools
 
-### 2. Build Script (`build-server-with-cli.sh`)
+### 2. Build Script (`build.sh`)
 
-**Location**: `/root/emergent/deploy/minimal/build-server-with-cli.sh`
+**Location**: `/root/emergent/deploy/self-hosted/build.sh`
 
 **Usage**:
 
 ```bash
-cd /root/emergent/deploy/minimal
-./build-server-with-cli.sh
+cd /root/emergent/deploy/self-hosted
+./build.sh
 ```
 
 **Features**:
@@ -46,12 +46,12 @@ cd /root/emergent/deploy/minimal
 
 ### 3. Updated Docker Compose Configuration
 
-**Location**: `/root/emergent/deploy/minimal/docker-compose.local.yml`
+**Location**: `/root/emergent/deploy/self-hosted/docker-compose.local.yml`
 
 **Changes**:
 
-- Server service uses new `emergent-server-with-cli:latest` image
-- Added build context pointing to Dockerfile.server-with-cli
+- Server service uses new `memory-server:latest` image
+- Added build context pointing to Dockerfile.server
 - Added `emergent_cli_config` volume for persistent CLI configuration
 - Volume mounted at `/root/.emergent` (CLI config directory)
 
@@ -65,7 +65,7 @@ cd /root/emergent/deploy/minimal
 
 #### CLI_USAGE.md (Full Guide)
 
-**Location**: `/root/emergent/deploy/minimal/CLI_USAGE.md`
+**Location**: `/root/emergent/deploy/self-hosted/CLI_USAGE.md`
 
 **Content** (250+ lines):
 
@@ -81,7 +81,7 @@ cd /root/emergent/deploy/minimal
 
 #### CLI_QUICK_REFERENCE.md (Cheat Sheet)
 
-**Location**: `/root/emergent/deploy/minimal/CLI_QUICK_REFERENCE.md`
+**Location**: `/root/emergent/deploy/self-hosted/CLI_QUICK_REFERENCE.md`
 
 **Content**:
 
@@ -95,7 +95,7 @@ cd /root/emergent/deploy/minimal
 
 #### Updated README.md
 
-**Location**: `/root/emergent/deploy/minimal/README.md`
+**Location**: `/root/emergent/deploy/self-hosted/README.md`
 
 **Changes**:
 
@@ -209,29 +209,29 @@ volumes:
 ### Local Build
 
 ```bash
-cd /root/emergent/deploy/minimal
-./build-server-with-cli.sh
+cd /root/emergent/deploy/self-hosted
+./build.sh
 ```
 
 ### Custom Configuration
 
 ```bash
 # Custom image name
-IMAGE_NAME=my-emergent TAG=v1.0.0 ./build-server-with-cli.sh
+IMAGE_NAME=my-emergent TAG=v1.0.0 ./build.sh
 
 # Specific version
-VERSION=1.2.3 ./build-server-with-cli.sh
+VERSION=1.2.3 ./build.sh
 ```
 
 ### Registry Push
 
 ```bash
 # Tag for registry
-docker tag emergent-server-with-cli:latest \
-  ghcr.io/emergent-company/memory-server-with-cli:latest
+docker tag memory-server:latest \
+  ghcr.io/emergent-company/memory-server:latest
 
 # Push
-docker push ghcr.io/emergent-company/memory-server-with-cli:latest
+docker push ghcr.io/emergent-company/memory-server:latest
 ```
 
 ## Deployment Integration
@@ -252,7 +252,7 @@ The updated `docker-compose.local.yml` automatically:
 docker run -d -p 3002:3002 \
   -e STANDALONE_MODE=true \
   -e STANDALONE_API_KEY=test-key \
-  emergent-server-with-cli:latest
+  memory-server:latest
 
 # Run CLI command
 docker exec <container-id> emergent-cli projects list
@@ -329,7 +329,7 @@ Verify the enhanced image works correctly:
 
 ```bash
 # Build image
-./build-server-with-cli.sh
+./build.sh
 
 # Start services
 docker-compose up -d
@@ -358,16 +358,16 @@ docker exec emergent-server emergent-cli config show | grep test-id
 
 ### New Files
 
-- ✅ `deploy/minimal/Dockerfile.server-with-cli` (Enhanced Dockerfile)
-- ✅ `deploy/minimal/build-server-with-cli.sh` (Build automation script)
-- ✅ `deploy/minimal/CLI_USAGE.md` (Comprehensive CLI guide, 250+ lines)
-- ✅ `deploy/minimal/CLI_QUICK_REFERENCE.md` (Quick command reference)
-- ✅ `deploy/minimal/CLI_EMBEDDED_SUMMARY.md` (This file)
+- ✅ `deploy/self-hosted/Dockerfile.server` (Enhanced Dockerfile)
+- ✅ `deploy/self-hosted/build.sh` (Build automation script)
+- ✅ `deploy/self-hosted/CLI_USAGE.md` (Comprehensive CLI guide, 250+ lines)
+- ✅ `deploy/self-hosted/CLI_QUICK_REFERENCE.md` (Quick command reference)
+- ✅ `deploy/self-hosted/CLI_EMBEDDED_SUMMARY.md` (This file)
 
 ### Modified Files
 
-- ✅ `deploy/minimal/docker-compose.local.yml` (Updated server service + volume)
-- ✅ `deploy/minimal/README.md` (Added CLI access section)
+- ✅ `deploy/self-hosted/docker-compose.local.yml` (Updated server service + volume)
+- ✅ `deploy/self-hosted/README.md` (Added CLI access section)
 
 ## Conclusion
 

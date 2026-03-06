@@ -35,8 +35,8 @@ Successfully deployed a minimal standalone instance of Emergent knowledge manage
 
 **Actions**:
 
-1. Created `/root/emergent/deploy/minimal/docker-compose.local.yml`
-2. Created `/root/emergent/deploy/minimal/.env.local` with configuration
+1. Created `/root/emergent/deploy/self-hosted/docker-compose.local.yml`
+2. Created `/root/emergent/deploy/self-hosted/.env.local` with configuration
 3. Started services with `docker compose --env-file .env.local up -d`
 
 **Results**:
@@ -47,8 +47,8 @@ Successfully deployed a minimal standalone instance of Emergent knowledge manage
 
 **Files**:
 
-- `/root/emergent/deploy/minimal/docker-compose.local.yml`
-- `/root/emergent/deploy/minimal/.env.local`
+- `/root/emergent/deploy/self-hosted/docker-compose.local.yml`
+- `/root/emergent/deploy/self-hosted/.env.local`
 
 ### Phase 2: Database Schema ✅
 
@@ -463,7 +463,7 @@ func (m *Middleware) checkStandaloneAPIKey(r *http.Request) *AuthUser {
 
 ```bash
 # 1. Start Docker dependencies
-cd /root/emergent/deploy/minimal
+cd /root/emergent/deploy/self-hosted
 docker compose --env-file .env.local up -d db kreuzberg minio minio-init
 
 # 2. Build and run local server
@@ -487,7 +487,7 @@ emergent-cli projects list
 Once Docker image is fixed:
 
 ```bash
-cd /root/emergent/deploy/minimal
+cd /root/emergent/deploy/self-hosted
 docker compose --env-file .env.local up -d
 # Wait for health checks
 emergent-cli projects list
@@ -497,8 +497,8 @@ emergent-cli projects list
 
 ### Configuration Files
 
-- ✅ `/root/emergent/deploy/minimal/docker-compose.local.yml` - Docker Compose config
-- ✅ `/root/emergent/deploy/minimal/.env.local` - Environment variables
+- ✅ `/root/emergent/deploy/self-hosted/docker-compose.local.yml` - Docker Compose config
+- ✅ `/root/emergent/deploy/self-hosted/.env.local` - Environment variables
 - ✅ `/root/.emergent/config.yaml` - CLI configuration
 - ✅ `/tmp/standalone-server-env.sh` - Server environment setup script
 
@@ -514,7 +514,7 @@ emergent-cli projects list
 
 ### Documentation
 
-- ✅ `/root/emergent/deploy/minimal/DEPLOYMENT_REPORT.md` - This file
+- ✅ `/root/emergent/deploy/self-hosted/DEPLOYMENT_REPORT.md` - This file
 
 ## Conclusion
 

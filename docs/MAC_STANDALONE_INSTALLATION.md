@@ -15,7 +15,7 @@ This guide helps you test the **Standalone Version** of Emergent using your loca
 1. Navigate to the deployment directory:
 
    ```bash
-   cd deploy/minimal
+   cd deploy/self-hosted
    ```
 
 2. Create the environment configuration file `.env.local`:
@@ -174,12 +174,12 @@ These non-standard ports prevent conflicts with any other development environmen
 
 ## Public Installation Script (For Sharing)
 
-If you need to share a one-line installer with others (once the repo/images are public), we have prepared `deploy/minimal/install-online.sh`.
+If you need to share a one-line installer with others (once the repo/images are public), we have prepared `deploy/self-hosted/install-online.sh`.
 
 **Usage:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install-online.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/self-hosted/install-online.sh | bash
 ```
 
 **Prerequisites for this to work publicly:**
@@ -191,5 +191,5 @@ curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/depl
 
 ```bash
 # Run the local copy of the script
-./deploy/minimal/install-online.sh
+./deploy/self-hosted/install-online.sh
 ```

@@ -171,9 +171,9 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: deploy/minimal/Dockerfile.server-with-cli
+          file: deploy/self-hosted/Dockerfile.server
           push: false
-          tags: emergent-server-with-cli:${{ github.sha }}
+          tags: memory-server:${{ github.sha }}
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
             GIT_COMMIT=${{ steps.version.outputs.commit }}
@@ -183,4 +183,4 @@ jobs:
 
       - name: Get image size
         run: |
-          docker images emergent-server-with-cli:${{ github.sha }} --format "{{.Size}}"
+          docker images memory-server:${{ github.sha }} --format "{{.Size}}"

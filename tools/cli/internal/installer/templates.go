@@ -7,7 +7,7 @@ import (
 
 const (
 	// ServerImageRepo is the Docker image repository for the Memory server
-	ServerImageRepo = "ghcr.io/emergent-company/memory-server-with-cli"
+	ServerImageRepo = "ghcr.io/emergent-company/memory-server"
 
 	// PostgresImage is the pgvector-enabled PostgreSQL image used for all deployments.
 	// Bumping this constant is the single source of truth for the postgres version.

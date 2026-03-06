@@ -35,7 +35,7 @@ services:
   migrate-e2e:
     build:
       context: ..
-      dockerfile: deploy/minimal/Dockerfile.server-with-cli
+      dockerfile: deploy/self-hosted/Dockerfile.server
     container_name: spec-e2e-migrations
     environment:
       POSTGRES_HOST: db-e2e

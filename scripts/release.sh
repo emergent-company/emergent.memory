@@ -7,7 +7,7 @@
 # What this does:
 #   1. Updates VERSION and apps/server/cmd/server/main.go
 #   2. Commits the bump
-#   3. Tags v<new> (triggers cli.yml + publish-minimal-images.yml)
+#   3. Tags v<new> (triggers cli.yml + publish-self-hosted-images.yml)
 #   4. Tags apps/server/pkg/sdk/v<new> (Go module proxy)
 #   5. Pushes the commit and both tags
 
@@ -96,5 +96,5 @@ echo "  apps/server/pkg/sdk/v$NEW  → Go module proxy"
 echo ""
 echo "CI will build:"
 echo "  - Cross-platform CLI binaries (linux, darwin, windows, freebsd × amd64/arm64)"
-echo "  - Docker images (ghcr.io/emergent-company/emergent-server-with-cli:$NEW)"
+echo "  - Docker images (ghcr.io/emergent-company/memory-server:$NEW)"
 echo "  - Docker images (ghcr.io/emergent-company/memory-cli:$NEW)"

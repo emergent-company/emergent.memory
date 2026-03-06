@@ -7,7 +7,7 @@ echo "Emergent Installation Verification"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-cd "$INSTALL_DIR/deploy/minimal" 2>/dev/null || {
+cd "$INSTALL_DIR/deploy/self-hosted" 2>/dev/null || {
     echo "❌ Installation directory not found: $INSTALL_DIR"
     echo "   Have you run the installer yet?"
     exit 1
@@ -53,9 +53,9 @@ echo "  Installation Status: ✅ HEALTHY"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "Server URL: http://localhost:$SERVER_PORT"
-echo "Credentials: $INSTALL_DIR/deploy/minimal/credentials.txt"
+echo "Credentials: $INSTALL_DIR/deploy/self-hosted/credentials.txt"
 echo ""
 echo "Next steps:"
 echo "  docker exec emergent-server memory projects list"
-echo "  cat $INSTALL_DIR/deploy/minimal/credentials.txt"
+echo "  cat $INSTALL_DIR/deploy/self-hosted/credentials.txt"
 echo ""

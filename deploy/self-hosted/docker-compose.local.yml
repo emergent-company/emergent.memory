@@ -98,10 +98,10 @@ services:
       - memory
 
   server:
-    image: memory-server-with-cli:latest
+    image: memory-server:latest
     build:
       context: ../..
-      dockerfile: deploy/minimal/Dockerfile.server-with-cli
+      dockerfile: deploy/self-hosted/Dockerfile.server
     container_name: memory-server
     restart: unless-stopped
     network_mode: host
