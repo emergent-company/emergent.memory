@@ -6,8 +6,8 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 type BootstrapService struct {

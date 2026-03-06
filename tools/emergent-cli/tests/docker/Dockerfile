@@ -9,12 +9,12 @@
 # PATH setup — exactly as a real user experiences it, not a cached artefact.
 #
 # The container is designed to run against a live Emergent server injected via
-# EMERGENT_TEST_SERVER at runtime (see docker-compose.yml).
+# MEMORY_TEST_SERVER at runtime (see docker-compose.yml).
 #
 # Usage (standalone):
 #   docker build -t emergent-cli-test .
 #   docker run --rm \
-#     -e EMERGENT_TEST_SERVER=http://host.docker.internal:5300 \
+#     -e MEMORY_TEST_SERVER=http://host.docker.internal:5300 \
 #     emergent-cli-test
 
 FROM golang:1.24-alpine AS test-runner
@@ -55,9 +55,9 @@ ENV HOME="/root"
 # Log directory for test session output
 RUN mkdir -p /test-logs
 
-# EMERGENT_TEST_SERVER must be injected at runtime (e.g. by docker-compose.yml).
+# MEMORY_TEST_SERVER must be injected at runtime (e.g. by docker-compose.yml).
 # The server runs in a separate container — there is no localhost fallback.
-# docker-compose.yml sets:  EMERGENT_TEST_SERVER=http://test-emergent-server:5300
+# docker-compose.yml sets:  MEMORY_TEST_SERVER=http://test-emergent-server:5300
 
 # Copy the entrypoint which installs the emergent CLI at runtime then runs tests.
 COPY entrypoint.sh /entrypoint.sh

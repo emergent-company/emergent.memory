@@ -2,11 +2,11 @@
 set -euo pipefail
 
 REPO_ORG="emergent-company"
-REPO_NAME="emergent"
-REPO_BRANCH="${EMERGENT_VERSION:-main}"
+REPO_NAME="emergent.memory"
+REPO_BRANCH="${MEMORY_VERSION:-main}"
 CLI_VERSION="${CLI_VERSION:-latest}"
 BASE_URL="https://raw.githubusercontent.com/${REPO_ORG}/${REPO_NAME}/${REPO_BRANCH}/deploy/minimal"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.emergent}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.memory}"
 SERVER_PORT="${SERVER_PORT:-3002}"
 IMAGE_ORG=$(echo "$REPO_ORG" | tr '[:upper:]' '[:lower:]')
 
@@ -22,7 +22,7 @@ get_image_tag() {
 }
 
 # Will be set after determining CLI_VERSION
-SERVER_IMAGE_BASE="ghcr.io/${IMAGE_ORG}/emergent-server-with-cli"
+SERVER_IMAGE_BASE="ghcr.io/${IMAGE_ORG}/memory-server-with-cli"
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -31,7 +31,7 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-echo -e "${BOLD}Emergent Standalone Installer${NC}"
+echo -e "${BOLD}Memory Standalone Installer${NC}"
 echo "=============================="
 echo ""
 
@@ -103,38 +103,38 @@ install_cli() {
     
     if [ -z "$version" ]; then
         echo -e "${YELLOW}⚠${NC} CLI release not found, skipping CLI installation"
-        echo "  You can still use: docker exec emergent-server emergent <command>"
+        echo "  You can still use: docker exec memory-server memory <command>"
         return 1
     fi
     
     local ext="tar.gz"
     [ "$os" = "windows" ] && ext="zip"
     
-    local download_url="https://github.com/${REPO_ORG}/${REPO_NAME}/releases/download/${version}/emergent-cli-${os}-${arch}.${ext}"
+    local download_url="https://github.com/${REPO_ORG}/${REPO_NAME}/releases/download/${version}/memory-cli-${os}-${arch}.${ext}"
     local tmp_dir=$(mktemp -d)
     
     echo -e "${CYAN}Downloading CLI ${version} for ${os}/${arch}...${NC}"
     
-    if ! download_file "$download_url" "${tmp_dir}/emergent-cli.${ext}" 2>/dev/null; then
+    if ! download_file "$download_url" "${tmp_dir}/memory-cli.${ext}" 2>/dev/null; then
         echo -e "${YELLOW}⚠${NC} Failed to download CLI binary"
-        echo "  You can still use: docker exec emergent-server emergent <command>"
+        echo "  You can still use: docker exec memory-server memory <command>"
         rm -rf "$tmp_dir"
         return 1
     fi
     
     if [ "$ext" = "zip" ]; then
-        unzip -q "${tmp_dir}/emergent-cli.${ext}" -d "$tmp_dir" 2>/dev/null || { rm -rf "$tmp_dir"; return 1; }
+        unzip -q "${tmp_dir}/memory-cli.${ext}" -d "$tmp_dir" 2>/dev/null || { rm -rf "$tmp_dir"; return 1; }
     else
-        tar xzf "${tmp_dir}/emergent-cli.${ext}" -C "$tmp_dir" 2>/dev/null || { rm -rf "$tmp_dir"; return 1; }
+        tar xzf "${tmp_dir}/memory-cli.${ext}" -C "$tmp_dir" 2>/dev/null || { rm -rf "$tmp_dir"; return 1; }
     fi
     
-    local binary_name="emergent-cli-${os}-${arch}"
+    local binary_name="memory-cli-${os}-${arch}"
     [ "$os" = "windows" ] && binary_name="${binary_name}.exe"
     
     if [ -f "${tmp_dir}/${binary_name}" ]; then
-        mv "${tmp_dir}/${binary_name}" "${INSTALL_DIR}/bin/emergent"
-        chmod +x "${INSTALL_DIR}/bin/emergent"
-        echo -e "${GREEN}✓${NC} CLI installed to ${INSTALL_DIR}/bin/emergent"
+        mv "${tmp_dir}/${binary_name}" "${INSTALL_DIR}/bin/memory"
+        chmod +x "${INSTALL_DIR}/bin/memory"
+        echo -e "${GREEN}✓${NC} CLI installed to ${INSTALL_DIR}/bin/memory"
     else
         echo -e "${YELLOW}⚠${NC} CLI binary not found in archive (expected ${binary_name})"
         rm -rf "$tmp_dir"
@@ -146,14 +146,14 @@ install_cli() {
 }
 
 setup_path() {
-    local path_line="export PATH=\"\$HOME/.emergent/bin:\$PATH\""
+    local path_line="export PATH=\"\$HOME/.memory/bin:\$PATH\""
     local added_to=""
     
     # Add to .bashrc if it exists
     if [ -f "$HOME/.bashrc" ]; then
-        if ! grep -q "\.emergent/bin" "$HOME/.bashrc" 2>/dev/null; then
+        if ! grep -q "\.memory/bin" "$HOME/.bashrc" 2>/dev/null; then
             echo "" >> "$HOME/.bashrc"
-            echo "# Emergent CLI" >> "$HOME/.bashrc"
+            echo "# Memory CLI" >> "$HOME/.bashrc"
             echo "$path_line" >> "$HOME/.bashrc"
             added_to="${added_to} ~/.bashrc"
         fi
@@ -161,9 +161,9 @@ setup_path() {
     
     # Add to .zshrc if it exists
     if [ -f "$HOME/.zshrc" ]; then
-        if ! grep -q "\.emergent/bin" "$HOME/.zshrc" 2>/dev/null; then
+        if ! grep -q "\.memory/bin" "$HOME/.zshrc" 2>/dev/null; then
             echo "" >> "$HOME/.zshrc"
-            echo "# Emergent CLI" >> "$HOME/.zshrc"
+            echo "# Memory CLI" >> "$HOME/.zshrc"
             echo "$path_line" >> "$HOME/.zshrc"
             added_to="${added_to} ~/.zshrc"
         fi
@@ -172,16 +172,16 @@ setup_path() {
     # If neither exists, try .bash_profile or .profile
     if [ -z "$added_to" ]; then
         if [ -f "$HOME/.bash_profile" ]; then
-            if ! grep -q "\.emergent/bin" "$HOME/.bash_profile" 2>/dev/null; then
+            if ! grep -q "\.memory/bin" "$HOME/.bash_profile" 2>/dev/null; then
                 echo "" >> "$HOME/.bash_profile"
-                echo "# Emergent CLI" >> "$HOME/.bash_profile"
+                echo "# Memory CLI" >> "$HOME/.bash_profile"
                 echo "$path_line" >> "$HOME/.bash_profile"
                 added_to=" ~/.bash_profile"
             fi
         elif [ -f "$HOME/.profile" ]; then
-            if ! grep -q "\.emergent/bin" "$HOME/.profile" 2>/dev/null; then
+            if ! grep -q "\.memory/bin" "$HOME/.profile" 2>/dev/null; then
                 echo "" >> "$HOME/.profile"
-                echo "# Emergent CLI" >> "$HOME/.profile"
+                echo "# Memory CLI" >> "$HOME/.profile"
                 echo "$path_line" >> "$HOME/.profile"
                 added_to=" ~/.profile"
             fi
@@ -191,7 +191,7 @@ setup_path() {
     if [ -n "$added_to" ]; then
         echo -e "${GREEN}✓${NC} Added to PATH in:${added_to}"
         echo "  Restart your terminal or run 'source <config-file>' to activate"
-    elif echo "$PATH" | grep -q "\.emergent/bin"; then
+    elif echo "$PATH" | grep -q "\.memory/bin"; then
         echo -e "${GREEN}✓${NC} PATH already configured"
     else
         echo -e "${YELLOW}⚠${NC} Could not detect shell config file"
@@ -232,7 +232,7 @@ prompt_google_api_key() {
             echo -e "${GREEN}✓${NC} Google API key saved to configuration"
             
             # Restart server container if it's running to pick up the key
-            if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "emergent-server"; then
+            if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "memory-server"; then
                 echo -e "${CYAN}Restarting server to apply Google API key...${NC}"
                 cd "${INSTALL_DIR}/docker"
                 docker compose --env-file "${INSTALL_DIR}/config/.env.local" restart server 2>/dev/null || true
@@ -241,8 +241,8 @@ prompt_google_api_key() {
         fi
     else
         echo -e "${YELLOW}⚠${NC} Skipped. You can set it later:"
-        echo "  emergent config set google_api_key YOUR_KEY"
-        echo "  Or re-run: emergent install --google-api-key YOUR_KEY"
+        echo "  memory config set google_api_key YOUR_KEY"
+        echo "  Or re-run: memory install --google-api-key YOUR_KEY"
     fi
 }
 
@@ -265,30 +265,30 @@ if [ "${CLIENT_ONLY:-}" = "true" ] || [ "${CLIENT_ONLY:-}" = "1" ]; then
         setup_path
         echo ""
         echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${GREEN}${BOLD}  ✓ Emergent CLI Installed!${NC}"
+        echo -e "${GREEN}${BOLD}  ✓ Memory CLI Installed!${NC}"
         echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
         echo -e "${CYAN}Next Steps:${NC}"
         echo ""
-        echo "1. Connect to an Emergent server:"
-        echo "   emergent login --server-url <SERVER_URL> --api-key <API_KEY>"
+        echo "1. Connect to an Memory server:"
+        echo "   memory login --server-url <SERVER_URL> --api-key <API_KEY>"
         echo ""
         echo "2. Configure MCP for your AI agent:"
         echo ""
         cat << 'CLIENTMCPEOF'
 {
   "mcpServers": {
-    "emergent": {
-      "command": "/path/to/emergent",
+    "memory": {
+      "command": "/path/to/memory",
       "args": ["mcp"]
     }
   }
 }
 CLIENTMCPEOF
         echo ""
-        echo "   Replace /path/to/emergent with: ${INSTALL_DIR}/bin/emergent"
+        echo "   Replace /path/to/memory with: ${INSTALL_DIR}/bin/memory"
         echo ""
-        echo -e "${YELLOW}Note:${NC} Restart your terminal for 'emergent' to be in PATH."
+        echo -e "${YELLOW}Note:${NC} Restart your terminal for 'memory' to be in PATH."
         echo ""
         prompt_google_api_key
         echo ""
@@ -331,7 +331,7 @@ if [ -f "${INSTALL_DIR}/docker/docker-compose.yml" ]; then
     echo -e "${GREEN}✓${NC} Target version: ${CLI_VERSION} (image tag: ${IMAGE_TAG})"
     
     echo -e "${CYAN}Updating docker-compose.yml with versioned image...${NC}"
-    sed -i.bak "s|image: ghcr.io/.*/emergent-server-with-cli:.*|image: ${SERVER_IMAGE}|g" "${INSTALL_DIR}/docker/docker-compose.yml"
+    sed -i.bak "s|image: ghcr.io/.*/memory-server-with-cli:.*|image: ${SERVER_IMAGE}|g" "${INSTALL_DIR}/docker/docker-compose.yml"
     rm -f "${INSTALL_DIR}/docker/docker-compose.yml.bak"
     
     echo -e "${CYAN}Pulling Docker images...${NC}"
@@ -367,14 +367,14 @@ if [ -f "${INSTALL_DIR}/docker/docker-compose.yml" ]; then
     if install_cli "$HOST_OS" "$HOST_ARCH" "$CLI_VERSION"; then
         echo -e "${GREEN}✓${NC} CLI updated to ${CLI_VERSION}"
     else
-        echo -e "${YELLOW}⚠${NC} CLI update skipped (you can still use: docker exec emergent-server emergent <command>)"
+        echo -e "${YELLOW}⚠${NC} CLI update skipped (you can still use: docker exec memory-server memory <command>)"
     fi
     
     echo "${CLI_VERSION}" > "${INSTALL_DIR}/version"
     
     echo ""
     echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${GREEN}${BOLD}  ✓ Emergent Upgrade Complete!${NC}"
+    echo -e "${GREEN}${BOLD}  ✓ Memory Upgrade Complete!${NC}"
     echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo -e "${CYAN}Upgraded components:${NC}"
@@ -460,7 +460,7 @@ cat > "${INSTALL_DIR}/docker/docker-compose.yml" <<EOF
 services:
   db:
     image: pgvector/pgvector:pg17
-    container_name: emergent-db
+    container_name: memory-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: \${POSTGRES_USER:-emergent}
@@ -477,11 +477,11 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - emergent
+      - memory
 
   kreuzberg:
     image: goldziher/kreuzberg:latest
-    container_name: emergent-kreuzberg
+    container_name: memory-kreuzberg
     restart: unless-stopped
     ports:
       - '\${KREUZBERG_PORT:-8000}:8000'
@@ -499,11 +499,11 @@ services:
         reservations:
           memory: 512M
     networks:
-      - emergent
+      - memory
 
   minio:
     image: minio/minio:latest
-    container_name: emergent-minio
+    container_name: memory-minio
     restart: unless-stopped
     command: server /data --console-address ':9001'
     environment:
@@ -519,11 +519,11 @@ services:
       timeout: 10s
       retries: 3
     networks:
-      - emergent
+      - memory
 
   minio-init:
     image: minio/mc:latest
-    container_name: emergent-minio-init
+    container_name: memory-minio-init
     depends_on:
       minio:
         condition: service_healthy
@@ -537,16 +537,16 @@ services:
       exit 0;
       "
     networks:
-      - emergent
+      - memory
 
   server:
     image: ${SERVER_IMAGE}
-    container_name: emergent-server
+    container_name: memory-server
     restart: unless-stopped
     ports:
       - '\${SERVER_PORT:-3002}:3002'
     volumes:
-      - emergent_cli_config:/root/.emergent
+      - memory_cli_config:/root/.memory
     environment:
       STANDALONE_MODE: 'true'
       STANDALONE_API_KEY: \${STANDALONE_API_KEY}
@@ -586,15 +586,15 @@ services:
       timeout: 10s
       retries: 3
     networks:
-      - emergent
+      - memory
 
 volumes:
   postgres_data:
   minio_data:
-  emergent_cli_config:
+  memory_cli_config:
 
 networks:
-  emergent:
+  memory:
 EOF
 
 echo ""
@@ -653,7 +653,7 @@ echo -e "${GREEN}✓${NC} Version recorded: ${CLI_VERSION:-latest}"
 
 echo ""
 echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}${BOLD}  ✓ Emergent Installation Complete!${NC}"
+echo -e "${GREEN}${BOLD}  ✓ Memory Installation Complete!${NC}"
 echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo "Server URL: http://localhost:${SERVER_PORT}"
@@ -662,7 +662,7 @@ echo ""
 echo -e "${CYAN}${BOLD}🔌 MCP Configuration${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "To connect your AI agent to Emergent, add this configuration:"
+echo "To connect your AI agent to Memory, add this configuration:"
 echo ""
 echo -e "${BOLD}For Claude Desktop:${NC}"
 echo "  File: ~/.config/claude/claude_desktop_config.json (macOS/Linux)"
@@ -676,12 +676,12 @@ echo ""
 cat << MCPEOF
 {
   "mcpServers": {
-    "emergent": {
-      "command": "${INSTALL_DIR}/bin/emergent",
+    "memory": {
+      "command": "${INSTALL_DIR}/bin/memory",
       "args": ["mcp"],
       "env": {
-        "EMERGENT_SERVER_URL": "http://localhost:${SERVER_PORT}",
-        "EMERGENT_API_KEY": "${API_KEY}"
+        "MEMORY_SERVER_URL": "http://localhost:${SERVER_PORT}",
+        "MEMORY_API_KEY": "${API_KEY}"
       }
     }
   }
@@ -693,22 +693,22 @@ echo ""
 echo -e "${CYAN}Alternative: Use CLI login for simpler config${NC}"
 echo ""
 echo "  1. Run login command (restart terminal first):"
-echo "     emergent login --server-url http://localhost:${SERVER_PORT} --api-key ${API_KEY}"
+echo "     memory login --server-url http://localhost:${SERVER_PORT} --api-key ${API_KEY}"
 echo ""
 echo "  2. Then use this simplified MCP config:"
 echo ""
 cat << 'SIMPLEEOF'
 {
   "mcpServers": {
-    "emergent": {
-      "command": "emergent",
+    "memory": {
+      "command": "memory",
       "args": ["mcp"]
     }
   }
 }
 SIMPLEEOF
 echo ""
-echo -e "${CYAN}📚 Documentation:${NC} https://github.com/emergent-company/emergent"
+echo -e "${CYAN}📚 Documentation:${NC} https://github.com/emergent-company/emergent.memory"
 echo ""
 
 # Prompt for Google API key

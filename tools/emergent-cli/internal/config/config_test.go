@@ -105,10 +105,10 @@ func TestDiscoverPath_EnvVar(t *testing.T) {
 	err := os.WriteFile(envPath, []byte("test: env"), 0644)
 	require.NoError(t, err)
 
-	t.Setenv("EMERGENT_CONFIG", envPath)
+	t.Setenv("MEMORY_CONFIG", envPath)
 
 	discovered := DiscoverPath("")
-	assert.Equal(t, envPath, discovered, "should use EMERGENT_CONFIG env var")
+	assert.Equal(t, envPath, discovered, "should use MEMORY_CONFIG env var")
 }
 
 func TestDiscoverPath_Default(t *testing.T) {
@@ -117,7 +117,7 @@ func TestDiscoverPath_Default(t *testing.T) {
 	homeDir, err := os.UserHomeDir()
 	require.NoError(t, err)
 
-	expectedDefault := filepath.Join(homeDir, ".emergent", "config.yaml")
+	expectedDefault := filepath.Join(homeDir, ".memory", "config.yaml")
 	assert.Equal(t, expectedDefault, discovered, "should fallback to default path")
 }
 
@@ -132,7 +132,7 @@ func TestDiscoverPath_Precedence(t *testing.T) {
 	err = os.WriteFile(envPath, []byte("test: env"), 0644)
 	require.NoError(t, err)
 
-	t.Setenv("EMERGENT_CONFIG", envPath)
+	t.Setenv("MEMORY_CONFIG", envPath)
 
 	discovered := DiscoverPath(flagPath)
 	assert.Equal(t, flagPath, discovered, "flag should take precedence over env var")
@@ -148,7 +148,7 @@ email: file@example.com
 	err := os.WriteFile(configPath, []byte(content), 0644)
 	require.NoError(t, err)
 
-	t.Setenv("EMERGENT_SERVER_URL", "http://env.example.com")
+	t.Setenv("MEMORY_SERVER_URL", "http://env.example.com")
 
 	cfg, err := LoadWithEnv(configPath)
 	require.NoError(t, err)
@@ -167,7 +167,7 @@ email: file@example.com
 	err := os.WriteFile(configPath, []byte(content), 0644)
 	require.NoError(t, err)
 
-	t.Setenv("EMERGENT_EMAIL", "env@example.com")
+	t.Setenv("MEMORY_EMAIL", "env@example.com")
 
 	cfg, err := LoadWithEnv(configPath)
 	require.NoError(t, err)
@@ -187,8 +187,8 @@ debug: false
 	err := os.WriteFile(configPath, []byte(content), 0644)
 	require.NoError(t, err)
 
-	t.Setenv("EMERGENT_SERVER_URL", "http://env.example.com")
-	t.Setenv("EMERGENT_DEBUG", "true")
+	t.Setenv("MEMORY_SERVER_URL", "http://env.example.com")
+	t.Setenv("MEMORY_DEBUG", "true")
 
 	cfg, err := LoadWithEnv(configPath)
 	require.NoError(t, err)

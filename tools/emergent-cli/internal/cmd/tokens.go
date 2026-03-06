@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apitokens"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/apitokens"
 	"github.com/spf13/cobra"
 )
 
 var tokensCmd = &cobra.Command{
 	Use:   "tokens",
 	Short: "Manage project API tokens",
-	Long:  "Commands for managing API tokens (emt_* keys) for projects in the Emergent platform",
+	Long:  "Commands for managing API tokens (emt_* keys) for projects in the Memory platform",
 }
 
 var listTokensCmd = &cobra.Command{

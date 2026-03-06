@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/emergent-company/emergent/domain/mcp"
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // Service handles business logic for the MCP server registry.

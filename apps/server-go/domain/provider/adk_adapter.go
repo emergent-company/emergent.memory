@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 
-	"github.com/emergent-company/emergent/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
 )
 
 // ADKCredentialAdapter wraps CredentialService to satisfy the adk.CredentialResolver

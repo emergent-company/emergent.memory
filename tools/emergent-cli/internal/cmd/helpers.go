@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/term"
@@ -16,11 +16,11 @@ func detectProjectSource(cmd *cobra.Command) string {
 	if cmd.Flags().Changed("project-token") {
 		return "project API key via --project-token"
 	}
-	if os.Getenv("EMERGENT_PROJECT_TOKEN") != "" {
+	if os.Getenv("MEMORY_PROJECT_TOKEN") != "" {
 		return "project API key"
 	}
-	if os.Getenv("EMERGENT_PROJECT") != "" {
-		return "EMERGENT_PROJECT"
+	if os.Getenv("MEMORY_PROJECT") != "" {
+		return "MEMORY_PROJECT"
 	}
 	return "config file"
 }
@@ -43,13 +43,13 @@ func printProjectIndicator(cmd *cobra.Command, cfg *config.Config) {
 	}
 
 	// Resolve display name:
-	// 1. Explicit EMERGENT_PROJECT env var (name/slug)
-	// 2. cfg.ProjectName (set from EMERGENT_PROJECT slug in config.go)
+	// 1. Explicit MEMORY_PROJECT env var (name/slug)
+	// 2. cfg.ProjectName (set from MEMORY_PROJECT slug in config.go)
 	// 3. API lookup when only a token is available
 	// 4. Masked token as last resort
 	name := cfg.ProjectName
-	if name == "" && os.Getenv("EMERGENT_PROJECT") != "" {
-		name = os.Getenv("EMERGENT_PROJECT")
+	if name == "" && os.Getenv("MEMORY_PROJECT") != "" {
+		name = os.Getenv("MEMORY_PROJECT")
 	}
 	if name == "" && cfg.ProjectToken != "" {
 		name = resolveProjectNameFromToken(cfg)
@@ -111,7 +111,7 @@ func resolveProjectContext(cmd *cobra.Command, flagValue string) (string, error)
 	}
 
 	if nameOrID == "" {
-		return "", fmt.Errorf("project is required. Use --project flag, set EMERGENT_PROJECT in .env.local, or configure it in your config file")
+		return "", fmt.Errorf("project is required. Use --project flag, set MEMORY_PROJECT in .env.local, or configure it in your config file")
 	}
 
 	// If it's already a UUID, return directly

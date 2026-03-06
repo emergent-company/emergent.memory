@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/emergent-company/emergent/pkg/adk/session/bunsession"
+	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
 	"github.com/uptrace/bun"
 )
 

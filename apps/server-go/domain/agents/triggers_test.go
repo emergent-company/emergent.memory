@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/emergent-company/emergent/domain/events"
-	"github.com/emergent-company/emergent/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/domain/scheduler"
 )
 
 // newTestTriggerService creates a TriggerService without event bus subscription.

@@ -45,21 +45,21 @@ sequential scans on large tables, table bloat, and unused indexes.
 
 Connection priority (first found wins):
   1. --dsn flag
-  2. EMERGENT_DATABASE_URL / DATABASE_URL environment variable
-  3. Standalone install ~/.emergent/config/.env.local (auto-detected)
+  2. MEMORY_DATABASE_URL / DATABASE_URL environment variable
+  3. Standalone install ~/.memory/config/.env.local (auto-detected)
 
 Examples:
-  emergent db diagnose
-  emergent db diagnose --verbose
-  emergent db diagnose --slow 100
-  emergent db diagnose --dsn "postgres://user:pass@localhost:5432/emergent?sslmode=disable"`,
+  memory db diagnose
+  memory db diagnose --verbose
+  memory db diagnose --slow 100
+  memory db diagnose --dsn "postgres://user:pass@localhost:5432/emergent?sslmode=disable"`,
 	RunE: runDbDiagnose,
 }
 
 func init() {
 	dbDiagnoseCmd.Flags().BoolVarP(&dbDiagnoseFlags.verbose, "verbose", "v", false, "print full EXPLAIN output for every query")
 	dbDiagnoseCmd.Flags().IntVar(&dbDiagnoseFlags.slowMS, "slow", 200, "flag queries that take longer than this many milliseconds")
-	dbDiagnoseCmd.Flags().StringVar(&dbDiagnoseFlags.installDir, "dir", "", "standalone install directory (default: ~/.emergent)")
+	dbDiagnoseCmd.Flags().StringVar(&dbDiagnoseFlags.installDir, "dir", "", "standalone install directory (default: ~/.memory)")
 	dbDiagnoseCmd.Flags().StringVar(&dbDiagnoseFlags.dsn, "dsn", "", "PostgreSQL connection string (overrides auto-detection)")
 }
 
@@ -108,7 +108,7 @@ func runDbDiagnose(cmd *cobra.Command, _ []string) error {
 	fmt.Println()
 	if err != nil || dsn == "" {
 		fmt.Printf("%s✗ PostgreSQL connection string not available (skipping EXPLAIN checks)%s\n", diagYellow, diagReset)
-		fmt.Println("Set one via --dsn or the EMERGENT_DATABASE_URL environment variable to run query planner checks.")
+		fmt.Println("Set one via --dsn or the MEMORY_DATABASE_URL environment variable to run query planner checks.")
 		return nil
 	}
 
@@ -206,7 +206,7 @@ func resolveDiagDSN() (string, error) {
 	if dbDiagnoseFlags.dsn != "" {
 		return dbDiagnoseFlags.dsn, nil
 	}
-	for _, env := range []string{"EMERGENT_DATABASE_URL", "DATABASE_URL"} {
+	for _, env := range []string{"MEMORY_DATABASE_URL", "DATABASE_URL"} {
 		if v := os.Getenv(env); v != "" {
 			return v, nil
 		}
@@ -218,7 +218,7 @@ func readDiagDSNFromEnvLocal() string {
 	dir := dbDiagnoseFlags.installDir
 	if dir == "" {
 		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".emergent")
+		dir = filepath.Join(home, ".memory")
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "config", ".env.local"))
 	if err != nil {
@@ -302,7 +302,7 @@ func checkDiagVersion(dsn string) diagResult {
 	if major < 17 {
 		fmt.Println("WARN")
 		return diagResult{name: "PostgreSQL version", status: "warn",
-			message: fmt.Sprintf("%s\n  → Upgrade to PostgreSQL 17 for best performance (run: emergent upgrade)", strings.SplitN(out, " on ", 2)[0])}
+			message: fmt.Sprintf("%s\n  → Upgrade to PostgreSQL 17 for best performance (run: memory upgrade)", strings.SplitN(out, " on ", 2)[0])}
 	}
 	fmt.Println("OK")
 	return diagResult{name: "PostgreSQL version", status: "pass", message: strings.SplitN(out, " on ", 2)[0]}
@@ -318,7 +318,7 @@ func checkDiagSharedBuffers(dsn string) diagResult {
 	if out == "128MB" {
 		fmt.Println("WARN")
 		return diagResult{name: "shared_buffers", status: "warn",
-			message: fmt.Sprintf("%s — default value, tune to 25%% of RAM (emergent upgrade applies this automatically)", out)}
+			message: fmt.Sprintf("%s — default value, tune to 25%% of RAM (memory upgrade applies this automatically)", out)}
 	}
 	fmt.Println("OK")
 	return diagResult{name: "shared_buffers", status: "pass", message: out}

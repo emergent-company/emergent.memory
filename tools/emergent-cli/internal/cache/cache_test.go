@@ -116,7 +116,7 @@ func TestNewManager_DefaultCacheDir(t *testing.T) {
 	}
 
 	home, _ := os.UserHomeDir()
-	expectedDir := filepath.Join(home, ".emergent", "cache")
+	expectedDir := filepath.Join(home, ".memory", "cache")
 
 	if manager.cacheDir != expectedDir {
 		t.Errorf("Expected cache dir %s, got %s", expectedDir, manager.cacheDir)

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	sdkdocs "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
+	sdkdocs "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/documents"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
@@ -18,7 +18,7 @@ import (
 var documentsCmd = &cobra.Command{
 	Use:   "documents",
 	Short: "Manage project documents",
-	Long:  "Commands for managing documents in the Emergent platform",
+	Long:  "Commands for managing documents in the Memory platform",
 }
 
 // ─────────────────────────────────────────────

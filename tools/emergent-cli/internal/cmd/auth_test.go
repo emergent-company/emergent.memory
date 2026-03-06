@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/testutil"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -13,7 +13,7 @@ import (
 func TestLogout(t *testing.T) {
 	tempDir := t.TempDir()
 
-	emergentDir := filepath.Join(tempDir, ".emergent")
+	emergentDir := filepath.Join(tempDir, ".memory")
 	err := os.MkdirAll(emergentDir, 0700)
 	require.NoError(t, err)
 

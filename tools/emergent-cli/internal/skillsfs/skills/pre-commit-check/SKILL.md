@@ -10,7 +10,7 @@ metadata:
 # Skill: pre-commit-check (emergent monorepo)
 
 Run the appropriate subset of checks based on what files were changed.
-All commands run from `/root/emergent` (the repo root) unless noted.
+All commands run from `/root/emergent.memory` (the repo root) unless noted.
 
 ---
 
@@ -20,7 +20,7 @@ All commands run from `/root/emergent` (the repo root) unless noted.
 
 ```bash
 # Confirm the repo root
-pwd  # should be /root/emergent or navigate there
+pwd  # should be /root/emergent.memory or navigate there
 ```
 
 ### If any `apps/server-go/**/*.go` files changed
@@ -94,7 +94,7 @@ python3 -c "import yaml; yaml.safe_load(open('<file>'))"
 | `task lint` | `apps/server-go/` |
 | `task build` | `apps/server-go/` |
 | SDK `go test ./...` | `apps/server-go/pkg/sdk/` |
-| `mkdocs build --strict` | repo root (`/root/emergent`) |
+| `mkdocs build --strict` | repo root (`/root/emergent.memory`) |
 
 ---
 

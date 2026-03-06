@@ -7,9 +7,9 @@ import (
 	"encoding/hex"
 	"log/slog"
 
-	"github.com/emergent-company/emergent/pkg/apperror"
-	"github.com/emergent-company/emergent/pkg/encryption"
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/encryption"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 const (

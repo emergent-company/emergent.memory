@@ -221,7 +221,7 @@ type EmailConfig struct {
 	// FromEmail is the default from email address
 	FromEmail string `env:"EMAIL_FROM_ADDRESS" envDefault:"noreply@example.com"`
 	// FromName is the default from name
-	FromName string `env:"EMAIL_FROM_NAME" envDefault:"Emergent"`
+	FromName string `env:"EMAIL_FROM_NAME" envDefault:"Memory"`
 	// MaxRetries is the maximum number of retry attempts (default: 3)
 	MaxRetries int `env:"EMAIL_MAX_RETRIES" envDefault:"3"`
 	// RetryDelaySec is the base delay in seconds for retries (default: 60)
@@ -339,7 +339,7 @@ type WorkspaceConfig struct {
 	GitHubAppEncryptionKey string `env:"GITHUB_APP_ENCRYPTION_KEY" envDefault:""`
 	// NetworkName is the Docker network to attach workspace containers to for isolation
 	NetworkName string `env:"WORKSPACE_NETWORK_NAME" envDefault:""`
-	// DefaultImage is the Docker image for workspace containers (e.g. ghcr.io/emergent-company/emergent-workspace:latest)
+	// DefaultImage is the Docker image for workspace containers (e.g. ghcr.io/emergent-company/memory-workspace:latest)
 	DefaultImage string `env:"WORKSPACE_DEFAULT_IMAGE" envDefault:""`
 	// FirecrackerDataDir is the directory containing Firecracker rootfs and kernel files
 	FirecrackerDataDir string `env:"WORKSPACE_FIRECRACKER_DATA_DIR" envDefault:"/var/lib/firecracker"`

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
@@ -14,7 +14,7 @@ import (
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage CLI configuration",
-	Long:  "Configure server URL, credentials, and other settings for the Emergent CLI",
+	Long:  "Configure server URL, credentials, and other settings for the Memory CLI",
 }
 
 func newConfigSetServerCmd() *cobra.Command {
@@ -22,7 +22,7 @@ func newConfigSetServerCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "set-server [url]",
-		Short: "Set the Emergent server URL",
+		Short: "Set the Memory server URL",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			serverURL := args[0]
@@ -184,11 +184,11 @@ All other keys are saved to config.yaml.`,
 				if err != nil {
 					return fmt.Errorf("cannot determine home directory: %w", err)
 				}
-				installDir := filepath.Join(homeDir, ".emergent")
+				installDir := filepath.Join(homeDir, ".memory")
 				envPath := filepath.Join(installDir, "config", ".env.local")
 
 				if _, err := os.Stat(envPath); os.IsNotExist(err) {
-					return fmt.Errorf(".env.local not found at %s\n  This setting is only available for standalone installations.\n  Run 'emergent install' first to set up a standalone server", envPath)
+					return fmt.Errorf(".env.local not found at %s\n  This setting is only available for standalone installations.\n  Run 'memory install' first to set up a standalone server", envPath)
 				}
 
 				if err := updateEnvFileKey(envPath, envKey, value); err != nil {
@@ -196,7 +196,7 @@ All other keys are saved to config.yaml.`,
 				}
 
 				fmt.Printf("%s updated in .env.local\n", key)
-				fmt.Println("Restart services to apply: emergent ctl restart")
+				fmt.Println("Restart services to apply: memory ctl restart")
 				return nil
 			}
 

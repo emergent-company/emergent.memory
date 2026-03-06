@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emergent-company/emergent/tools/huma-test-suite/internal/config"
-	"github.com/emergent-company/emergent/tools/huma-test-suite/internal/uploader"
+	"github.com/emergent-company/emergent.memory/tools/huma-test-suite/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/huma-test-suite/internal/uploader"
 )
 
 // DocumentResult holds the extraction outcome for one document.
@@ -53,10 +53,10 @@ type Verifier struct {
 // New creates a Verifier.
 func New(cfg *config.Config) (*Verifier, error) {
 	if cfg.EmergentAPIKey == "" {
-		return nil, fmt.Errorf("EMERGENT_API_KEY is required for verify phase")
+		return nil, fmt.Errorf("MEMORY_API_KEY is required for verify phase")
 	}
 	if cfg.EmergentProjectID == "" {
-		return nil, fmt.Errorf("EMERGENT_PROJECT_ID is required for verify phase")
+		return nil, fmt.Errorf("MEMORY_PROJECT_ID is required for verify phase")
 	}
 	return &Verifier{cfg: cfg}, nil
 }

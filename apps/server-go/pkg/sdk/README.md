@@ -1,20 +1,20 @@
-# Emergent Go SDK
+# Memory Go SDK
 
-[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://emergent-company.github.io/emergent/)
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://emergent-company.github.io/emergent.memory/)
 
-Official Go client library for the Emergent API.
+Official Go client library for the Memory API.
 
-> **Full documentation** — guides, per-package reference, and LLM-friendly reference files are published at **https://emergent-company.github.io/emergent/**
+> **Full documentation** — guides, per-package reference, and LLM-friendly reference files are published at **https://emergent-company.github.io/emergent.memory/**
 
 ## Installation
 
 ```bash
-go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@latest
+go get github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk@latest
 ```
 
 ## Features
 
-- **Type-safe API client** for all Emergent endpoints
+- **Type-safe API client** for all Memory endpoints
 - **Dual authentication** - API key (standalone) and OAuth (full deployment)
 - **Multi-tenancy support** - Organization and project context management
 - **26 service clients** covering the full API surface
@@ -35,7 +35,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
+    "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
 )
 
 func main() {
@@ -74,7 +74,7 @@ client, err := sdk.NewWithDeviceFlow(sdk.Config{
     Auth: sdk.AuthConfig{
         Mode:      "oauth",
         ClientID:  "emergent-sdk",
-        CredsPath: "~/.emergent/credentials.json",
+        CredsPath: "~/.memory/credentials.json",
     },
 })
 // Displays URL and code for browser authentication
@@ -254,10 +254,10 @@ See the `examples/` directory for complete working examples:
 
 ```bash
 cd apps/server-go/pkg/sdk/examples/basic
-export EMERGENT_API_KEY="your_api_key"
+export MEMORY_API_KEY="your_api_key"
 go run main.go
 ```
 
 ## License
 
-See the main [Emergent LICENSE](../../LICENSE) file.
+See the main [Memory LICENSE](../../LICENSE) file.

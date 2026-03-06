@@ -1,15 +1,15 @@
-# Emergent Minimal Standalone Deployment (Local Testing)
+# Memory Minimal Standalone Deployment (Local Testing)
 # Simplified version without Tailscale for local CLI testing
 #
 # Quick Start:
 #   1. docker compose -f docker-compose.local.yml up -d
-#   2. Configure CLI: export EMERGENT_SERVER_URL=http://localhost:3002
-#   3. Configure API key: export EMERGENT_API_KEY=your-key-from-env
+#   2. Configure CLI: export MEMORY_SERVER_URL=http://localhost:3002
+#   3. Configure API key: export MEMORY_API_KEY=your-key-from-env
 
 services:
   db:
     image: pgvector/pgvector:pg17
-    container_name: emergent-db
+    container_name: memory-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-emergent}
@@ -30,11 +30,11 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - emergent
+      - memory
 
   kreuzberg:
     image: goldziher/kreuzberg:latest
-    container_name: emergent-kreuzberg
+    container_name: memory-kreuzberg
     restart: unless-stopped
     ports:
       - '${KREUZBERG_PORT:-8000}:8000'
@@ -53,11 +53,11 @@ services:
         reservations:
           memory: 512M
     networks:
-      - emergent
+      - memory
 
   minio:
     image: minio/minio:latest
-    container_name: emergent-minio
+    container_name: memory-minio
     restart: unless-stopped
     command: server /data --console-address ':9001'
     environment:
@@ -74,11 +74,11 @@ services:
       timeout: 10s
       retries: 3
     networks:
-      - emergent
+      - memory
 
   minio-init:
     image: minio/mc:latest
-    container_name: emergent-minio-init
+    container_name: memory-minio-init
     depends_on:
       minio:
         condition: service_healthy
@@ -95,21 +95,21 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-changeme}
     networks:
-      - emergent
+      - memory
 
   server:
-    image: emergent-server-with-cli:latest
+    image: memory-server-with-cli:latest
     build:
       context: ../..
       dockerfile: deploy/minimal/Dockerfile.server-with-cli
-    container_name: emergent-server
+    container_name: memory-server
     restart: unless-stopped
     network_mode: host
     volumes:
-      - emergent_cli_config:/root/.emergent
+      - memory_cli_config:/root/.memory
       - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/emergent/firecracker:/var/lib/emergent/firecracker
-      - /var/lib/emergent/firecracker/firecracker:/usr/local/bin/firecracker:ro
+      - /var/lib/memory/firecracker:/var/lib/memory/firecracker
+      - /var/lib/memory/firecracker/firecracker:/usr/local/bin/firecracker:ro
     devices:
       - /dev/kvm:/dev/kvm
       - /dev/net/tun:/dev/net/tun
@@ -152,7 +152,7 @@ services:
 
       # Workspace configuration
       WORKSPACE_WARM_POOL_SIZE: ${WORKSPACE_WARM_POOL_SIZE:-2}
-      WORKSPACE_DEFAULT_IMAGE: ${WORKSPACE_DEFAULT_IMAGE:-emergent-workspace:latest}
+      WORKSPACE_DEFAULT_IMAGE: ${WORKSPACE_DEFAULT_IMAGE:-memory-workspace:latest}
       WORKSPACE_DEFAULT_PROVIDER: ${WORKSPACE_DEFAULT_PROVIDER:-gvisor}
     healthcheck:
       test:
@@ -169,9 +169,9 @@ volumes:
     driver: local
   minio_data:
     driver: local
-  emergent_cli_config:
+  memory_cli_config:
     driver: local
 
 networks:
-  emergent:
+  memory:
     driver: bridge

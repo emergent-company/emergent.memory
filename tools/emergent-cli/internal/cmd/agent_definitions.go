@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/agentdefinitions"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/agentdefinitions"
 	"github.com/spf13/cobra"
 )
 

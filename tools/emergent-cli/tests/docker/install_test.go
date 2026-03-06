@@ -6,7 +6,7 @@
 //
 // Each test runs against a real Emergent server whose URL is provided via:
 //
-//	EMERGENT_TEST_SERVER  (default: http://localhost:5300)
+//	MEMORY_TEST_SERVER  (default: http://localhost:5300)
 //
 // The container is expected to have these binaries on PATH:
 //   - emergent  — installed by install.sh from the GitHub release
@@ -14,7 +14,7 @@
 //
 // # Running locally (outside Docker, against your dev server)
 //
-//	EMERGENT_TEST_SERVER=http://localhost:3012 go test -v ./...
+//	MEMORY_TEST_SERVER=http://localhost:3012 go test -v ./...
 //
 // # Session logs
 //
@@ -44,8 +44,8 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 
 const (
-	// defaultServer is used when EMERGENT_TEST_SERVER is not set.
-	// Outside Docker this should be overridden via EMERGENT_TEST_SERVER.
+	// defaultServer is used when MEMORY_TEST_SERVER is not set.
+	// Outside Docker this should be overridden via MEMORY_TEST_SERVER.
 	// Inside Docker it is always set by docker-compose.yml to http://emergent-server:5300.
 	// There is no safe single default — an empty value causes skipIfServerDown to skip
 	// server-dependent tests rather than hitting a wrong address.
@@ -102,8 +102,8 @@ func TestCLIInstalled_Help(t *testing.T) {
 // Test: set-token auth flow
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestCLIInstalled_SetToken verifies that `emergent set-token` writes credentials
-// to ~/.emergent/credentials.json so subsequent CLI calls authenticate correctly.
+// TestCLIInstalled_SetToken verifies that `memory set-token` writes credentials
+// to ~/.memory/credentials.json so subsequent CLI calls authenticate correctly.
 func TestCLIInstalled_SetToken(t *testing.T) {
 	logStatusPreamble(t)
 	skipIfServerDown(t)
@@ -118,7 +118,7 @@ func TestCLIInstalled_SetToken(t *testing.T) {
 	}
 
 	// Credentials file must now exist.
-	credsPath := filepath.Join(os.Getenv("HOME"), ".emergent", "credentials.json")
+	credsPath := filepath.Join(os.Getenv("HOME"), ".memory", "credentials.json")
 	if _, err := os.Stat(credsPath); os.IsNotExist(err) {
 		t.Errorf("credentials file not created at %s", credsPath)
 	}
@@ -405,11 +405,11 @@ func TestCLIInstalled_ProjectsList(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // serverURL returns the Emergent server URL from the environment.
-// EMERGENT_TEST_SERVER must be set — there is no safe default because the
+// MEMORY_TEST_SERVER must be set — there is no safe default because the
 // server address differs between local dev (http://localhost:3012) and Docker
 // Compose (http://emergent-server:5300).
 func serverURL() string {
-	if v := os.Getenv("EMERGENT_TEST_SERVER"); v != "" {
+	if v := os.Getenv("MEMORY_TEST_SERVER"); v != "" {
 		return v
 	}
 	return defaultServer
@@ -429,7 +429,7 @@ func skipIfServerDown(t *testing.T) {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Skipf("server unreachable (%s): %v — is EMERGENT_TEST_SERVER set?", srv, err)
+		t.Skipf("server unreachable (%s): %v — is MEMORY_TEST_SERVER set?", srv, err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode >= 400 {
@@ -481,10 +481,10 @@ func filteredEnv() []string {
 	filtered := make([]string, 0, len(os.Environ()))
 	for _, kv := range os.Environ() {
 		switch {
-		case strings.HasPrefix(kv, "EMERGENT_PROJECT_TOKEN="),
-			strings.HasPrefix(kv, "EMERGENT_PROJECT="),
-			strings.HasPrefix(kv, "EMERGENT_PROJECT_ID="),
-			strings.HasPrefix(kv, "EMERGENT_API_KEY="):
+		case strings.HasPrefix(kv, "MEMORY_PROJECT_TOKEN="),
+			strings.HasPrefix(kv, "MEMORY_PROJECT="),
+			strings.HasPrefix(kv, "MEMORY_PROJECT_ID="),
+			strings.HasPrefix(kv, "MEMORY_API_KEY="):
 			// skip
 		default:
 			filtered = append(filtered, kv)

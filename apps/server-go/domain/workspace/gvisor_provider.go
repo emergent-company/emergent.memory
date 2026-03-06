@@ -21,9 +21,9 @@ import (
 )
 
 const (
-	defaultWorkspaceImage = "emergent-workspace:latest"
+	defaultWorkspaceImage = "memory-workspace:latest"
 	gvisorRuntime         = "runsc"
-	defaultRuntimeLabel   = "emergent.workspace"
+	defaultRuntimeLabel   = "memory.workspace"
 	workspaceDir          = "/workspace"
 	maxOutputBytes        = 50 * 1024 // 50KB output limit
 )
@@ -48,7 +48,7 @@ type GVisorProviderConfig struct {
 	// Leave empty to use the default Docker bridge network.
 	NetworkName string
 	// DefaultImage overrides the default workspace base image.
-	// When empty, falls back to the package constant (emergent-workspace:latest).
+	// When empty, falls back to the package constant (memory-workspace:latest).
 	DefaultImage string
 }
 
@@ -144,7 +144,7 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 	p.log.Info("image is ready", "image", image)
 
 	// Generate volume name
-	volumeName := fmt.Sprintf("emergent-workspace-%d", time.Now().UnixNano())
+	volumeName := fmt.Sprintf("memory-workspace-%d", time.Now().UnixNano())
 	p.log.Info("creating volume", "volume_name", volumeName)
 
 	// Create named volume for persistence
@@ -189,7 +189,7 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 	}
 
 	// Inject default environment variables for API discoverability
-	containerConfig.Env = append(containerConfig.Env, "EMERGENT_API_URL=http://host.docker.internal:3002")
+	containerConfig.Env = append(containerConfig.Env, "MEMORY_API_URL=http://host.docker.internal:3002")
 
 	// Set caller-provided environment variables (may override defaults)
 	if len(req.Env) > 0 {
@@ -271,7 +271,7 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		"workdir", workspaceDir,
 	)
 
-	containerName := fmt.Sprintf("emergent-ws-%d", time.Now().UnixNano())
+	containerName := fmt.Sprintf("memory-ws-%d", time.Now().UnixNano())
 	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, nil, containerName)
 	if err != nil {
 		p.log.Error("failed to create Docker container", "image", image, "error", err)
@@ -367,7 +367,7 @@ func (p *GVisorProvider) Snapshot(ctx context.Context, providerID string) (strin
 	}
 
 	// Create snapshot volume
-	snapshotID := fmt.Sprintf("emergent-snapshot-%d", time.Now().UnixNano())
+	snapshotID := fmt.Sprintf("memory-snapshot-%d", time.Now().UnixNano())
 	_, err = p.client.VolumeCreate(ctx, volume.CreateOptions{
 		Name: snapshotID,
 		Labels: map[string]string{
@@ -395,7 +395,7 @@ func (p *GVisorProvider) Snapshot(ctx context.Context, providerID string) (strin
 		},
 	}
 
-	snapCopyName := fmt.Sprintf("emergent-ws-snap-%d", time.Now().UnixNano())
+	snapCopyName := fmt.Sprintf("memory-ws-snap-%d", time.Now().UnixNano())
 	copyResp, err := p.client.ContainerCreate(ctx, copyConfig, copyHostConfig, nil, nil, snapCopyName)
 	if err != nil {
 		_ = p.client.VolumeRemove(ctx, snapshotID, true)
@@ -455,7 +455,7 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 	}
 
 	// Create a new workspace volume and copy snapshot data into it
-	volumeName := fmt.Sprintf("emergent-workspace-%d", time.Now().UnixNano())
+	volumeName := fmt.Sprintf("memory-workspace-%d", time.Now().UnixNano())
 	_, err = p.client.VolumeCreate(ctx, volume.CreateOptions{
 		Name: volumeName,
 		Labels: map[string]string{
@@ -481,7 +481,7 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 		},
 	}
 
-	restoreCopyName := fmt.Sprintf("emergent-ws-restore-%d", time.Now().UnixNano())
+	restoreCopyName := fmt.Sprintf("memory-ws-restore-%d", time.Now().UnixNano())
 	copyResp, err := p.client.ContainerCreate(ctx, copyConfig, copyHostConfig, nil, nil, restoreCopyName)
 	if err != nil {
 		_ = p.client.VolumeRemove(ctx, volumeName, true)
@@ -557,7 +557,7 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 		p.applyResourceLimits(hostConfig, req.ResourceLimits)
 	}
 
-	containerName := fmt.Sprintf("emergent-ws-%d", time.Now().UnixNano())
+	containerName := fmt.Sprintf("memory-ws-%d", time.Now().UnixNano())
 	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, containerName)
 	if err != nil {
 		_ = p.client.VolumeRemove(ctx, volumeName, true)

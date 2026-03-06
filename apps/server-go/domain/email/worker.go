@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // Worker processes email jobs from the queue.
@@ -344,7 +344,7 @@ func (w *Worker) generateFallbackHTML(job *EmailJob, ctx TemplateContext) string
 	html += `
     <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 32px 0 16px;">
     <p style="font-size: 12px; color: #6b7280;">
-      This email was sent by Emergent.
+      This email was sent by Memory.
     </p>
   </div>
 </body>
@@ -381,7 +381,7 @@ func (w *Worker) generateFallbackText(job *EmailJob, ctx TemplateContext) string
 		text += "\n\nLink: " + ctaUrl
 	}
 
-	text += "\n\n---\nThis email was sent by Emergent."
+	text += "\n\n---\nThis email was sent by Memory."
 
 	return text
 }

@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/installer"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/installer"
 	"github.com/spf13/cobra"
 )
 
@@ -17,8 +17,8 @@ var uninstallFlags struct {
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "Remove Emergent installation",
-	Long: `Remove Emergent standalone server installation.
+	Short: "Remove Memory installation",
+	Long: `Remove Memory standalone server installation.
 
 This command will:
   - Stop and remove Docker containers
@@ -26,15 +26,15 @@ This command will:
   - Remove installation directory
 
 Example:
-  emergent uninstall
-  emergent uninstall --keep-data
-  emergent uninstall --force`,
+  memory uninstall
+  memory uninstall --keep-data
+  memory uninstall --force`,
 	RunE: runUninstall,
 }
 
 func init() {
 	homeDir, _ := os.UserHomeDir()
-	defaultDir := filepath.Join(homeDir, ".emergent")
+	defaultDir := filepath.Join(homeDir, ".memory")
 
 	uninstallCmd.Flags().StringVar(&uninstallFlags.dir, "dir", defaultDir, "Installation directory")
 	uninstallCmd.Flags().BoolVar(&uninstallFlags.keepData, "keep-data", false, "Keep Docker volumes (preserve data)")
@@ -56,7 +56,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	}
 
 	if !uninstallFlags.force {
-		fmt.Printf("This will remove Emergent from %s\n", uninstallFlags.dir)
+		fmt.Printf("This will remove Memory from %s\n", uninstallFlags.dir)
 		if !uninstallFlags.keepData {
 			fmt.Println("WARNING: All data (database, files) will be permanently deleted!")
 		}

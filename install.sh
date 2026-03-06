@@ -1,6 +1,6 @@
 #!/bin/sh
 # Emergent Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/install.sh | sh
 #
 # Environment variables:
 #   EMERGENT_VERSION  - Specific version to install (default: latest)
@@ -9,7 +9,7 @@
 set -e
 
 # Configuration
-GITHUB_REPO="emergent-company/emergent"
+GITHUB_REPO="emergent-company/emergent.memory"
 BINARY_NAME="emergent"
 DEFAULT_INSTALL_DIR="${HOME}/.emergent"
 

@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 const (

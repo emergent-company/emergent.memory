@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/search"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/search"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/client"
 	"github.com/spf13/cobra"
 )
 

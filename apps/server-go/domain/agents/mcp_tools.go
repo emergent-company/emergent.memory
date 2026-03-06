@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/emergent-company/emergent/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 )
 
 // MCPToolHandler implements mcp.AgentToolHandler, providing 16 agent management

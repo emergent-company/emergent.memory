@@ -1,10 +1,10 @@
-# Emergent
+# Memory
 
-Go monorepo for the Emergent knowledge graph platform. React admin UI lives in a **separate repo** at `/root/emergent.memory.ui`.
+Go monorepo for the Memory knowledge graph platform. React admin UI lives in a **separate repo** at `/root/emergent.memory.ui`.
 
 ## Architecture
 
-**Go module:** `github.com/emergent-company/emergent`
+**Go module:** `github.com/emergent-company/emergent.memory`
 
 **Server stack:** Echo (HTTP) · Bun ORM (pgx/Postgres) · fx (dependency injection) · Zitadel (auth)
 
@@ -14,7 +14,7 @@ Each domain: `handler.go` (Echo routes) · `service.go` (business logic) · `sto
 
 **DB:** Postgres on port `5436` (not 5432) · schemas: `kb` (knowledge), `core` (users/orgs) · migrations in `apps/server-go/migrations/` via Goose
 
-**CLI:** source at `tools/emergent-cli/` · install with `task cli:install` → `~/.local/bin/emergent` · defaults to remote `http://mcj-emergent:3002`; override with `--server http://localhost:3012`
+**CLI:** source at `tools/emergent-cli/` · install with `task cli:install` → `~/.local/bin/memory` · defaults to remote `http://mcj-emergent:3002`; override with `--server http://localhost:3012`
 
 
 
@@ -24,7 +24,7 @@ task build          # build Go server binary
 task test           # unit tests
 task test:e2e       # API e2e tests
 task lint           # Go linter
-task cli:install    # build + install emergent CLI → ~/.local/bin/emergent
+task cli:install    # build + install memory CLI → ~/.local/bin/memory
 
 # Frontend (/root/emergent.memory.ui)
 pnpm run lint
@@ -79,8 +79,8 @@ Tracing is opt-in. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable (no-op when unset
 
 ```bash
 docker compose --profile observability up tempo -d  # start Tempo
-emergent traces list --since 30m                    # query traces
-emergent traces get <traceID>                       # full span tree
+memory traces list --since 30m                    # query traces
+memory traces get <traceID>                       # full span tree
 ```
 
 ## Logs

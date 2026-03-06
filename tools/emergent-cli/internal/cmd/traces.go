@@ -103,7 +103,7 @@ var tracesCmd = &cobra.Command{
 	Long: `Query OpenTelemetry traces stored in a local Grafana Tempo instance.
 
 Tempo must be running (docker compose --profile observability up tempo -d).
-Configure the Tempo URL via --tempo-url flag or EMERGENT_TEMPO_URL env var.`,
+Configure the Tempo URL via --tempo-url flag or MEMORY_TEMPO_URL env var.`,
 }
 
 var tracesListCmd = &cobra.Command{
@@ -134,7 +134,7 @@ func tempoURL() string {
 	if tracesTempoURL != "" {
 		return strings.TrimRight(tracesTempoURL, "/")
 	}
-	if v := os.Getenv("EMERGENT_TEMPO_URL"); v != "" {
+	if v := os.Getenv("MEMORY_TEMPO_URL"); v != "" {
 		return strings.TrimRight(v, "/")
 	}
 	return "http://localhost:3200"
@@ -383,7 +383,7 @@ func runTracesGet(_ *cobra.Command, args []string) error {
 
 func init() {
 	// Persistent: tempo URL applies to all subcommands
-	tracesCmd.PersistentFlags().StringVar(&tracesTempoURL, "tempo-url", "", "Tempo query API URL (default: $EMERGENT_TEMPO_URL or http://localhost:3200)")
+	tracesCmd.PersistentFlags().StringVar(&tracesTempoURL, "tempo-url", "", "Tempo query API URL (default: $MEMORY_TEMPO_URL or http://localhost:3200)")
 
 	// list flags
 	tracesListCmd.Flags().StringVar(&tracesListSince, "since", "1h", "Show traces from the last duration (e.g. 30m, 2h, 24h)")

@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent-company/emergent/domain/graph"
-	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
 type GraphSuite struct {

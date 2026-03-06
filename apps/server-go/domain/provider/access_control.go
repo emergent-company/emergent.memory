@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/emergent-company/emergent/pkg/apperror"
-	"github.com/emergent-company/emergent/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // --- Application-level cross-tenant access guards ---

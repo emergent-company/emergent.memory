@@ -14,8 +14,8 @@
 # Test logs are written to ./test-logs/ on the host (mounted into the container).
 #
 # Environment variables you can override:
-#   EMERGENT_SERVER_IMAGE   - Emergent server Docker image (default: ghcr.io/emergent-company/emergent:latest)
-#   EMERGENT_TEST_TOKEN     - static Bearer token for the dev server (default: e2e-test-user)
+#   MEMORY_SERVER_IMAGE   - Emergent server Docker image (default: ghcr.io/emergent-company/memory:latest)
+#   MEMORY_TEST_TOKEN     - static Bearer token for the dev server (default: e2e-test-user)
 
 services:
   # ─────────────────────────────────────────────────────────────────────────
@@ -24,11 +24,11 @@ services:
   # environment variables so the static e2e-test-user token is accepted.
   # ─────────────────────────────────────────────────────────────────────────
   test-emergent-server:
-    image: ${EMERGENT_SERVER_IMAGE:-ghcr.io/emergent-company/emergent:latest}
+    image: ${MEMORY_SERVER_IMAGE:-ghcr.io/emergent-company/memory:latest}
     container_name: test-emergent-server
     environment:
       # Accept the static e2e-test-user Bearer token
-      E2E_TEST_TOKEN: ${EMERGENT_TEST_TOKEN:-e2e-test-user}
+      E2E_TEST_TOKEN: ${MEMORY_TEST_TOKEN:-e2e-test-user}
       # Use an in-memory or ephemeral DB so no external Postgres is needed.
       # Override with a real DSN if your server image requires Postgres.
       DATABASE_URL: ${DATABASE_URL:-}
@@ -55,7 +55,7 @@ services:
       test-emergent-server:
         condition: service_healthy
     environment:
-      EMERGENT_TEST_SERVER: "http://test-emergent-server:5300"
+      MEMORY_TEST_SERVER: "http://test-emergent-server:5300"
       TEST_LOG_DIR: "/test-logs"
       CI: "true"
     volumes:

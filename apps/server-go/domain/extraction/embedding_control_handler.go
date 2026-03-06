@@ -5,7 +5,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent-company/emergent/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/domain/scheduler"
 )
 
 // EmbeddingControlHandler exposes HTTP endpoints to pause/resume/inspect

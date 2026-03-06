@@ -14,10 +14,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/emergent-company/emergent/tools/e2e-suite/suite"
-	"github.com/emergent-company/emergent/tools/e2e-suite/suites/huma"
-	imdbsuite "github.com/emergent-company/emergent/tools/e2e-suite/suites/imdb"
-	"github.com/emergent-company/emergent/tools/e2e-suite/suites/niezatapialni"
+	"github.com/emergent-company/emergent.memory/tools/e2e-suite/suite"
+	"github.com/emergent-company/emergent.memory/tools/e2e-suite/suites/huma"
+	imdbsuite "github.com/emergent-company/emergent.memory/tools/e2e-suite/suites/imdb"
+	"github.com/emergent-company/emergent.memory/tools/e2e-suite/suites/niezatapialni"
 )
 
 func main() {

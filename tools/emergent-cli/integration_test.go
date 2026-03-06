@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/auth"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/auth"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -110,7 +110,7 @@ func TestIntegration_CredentialsStorage(t *testing.T) {
 	}
 
 	tempDir := t.TempDir()
-	credsPath := filepath.Join(tempDir, ".emergent", "credentials.json")
+	credsPath := filepath.Join(tempDir, ".memory", "credentials.json")
 
 	expiresAt := time.Now().Add(1 * time.Hour)
 	creds := &auth.Credentials{
@@ -169,16 +169,16 @@ func TestIntegration_ConfigFileDiscovery(t *testing.T) {
 	err := config.Save(cfg, configPath)
 	require.NoError(t, err)
 
-	originalEnv := os.Getenv("EMERGENT_CONFIG")
+	originalEnv := os.Getenv("MEMORY_CONFIG")
 	defer func() {
 		if originalEnv != "" {
-			os.Setenv("EMERGENT_CONFIG", originalEnv)
+			os.Setenv("MEMORY_CONFIG", originalEnv)
 		} else {
-			os.Unsetenv("EMERGENT_CONFIG")
+			os.Unsetenv("MEMORY_CONFIG")
 		}
 	}()
 
-	os.Setenv("EMERGENT_CONFIG", configPath)
+	os.Setenv("MEMORY_CONFIG", configPath)
 
 	discoveredPath := config.DiscoverPath("")
 	assert.Equal(t, configPath, discoveredPath, "should discover config from env var")
@@ -209,8 +209,8 @@ func TestIntegration_EnvironmentOverrides(t *testing.T) {
 	err := config.Save(cfg, configPath)
 	require.NoError(t, err)
 
-	t.Setenv("EMERGENT_SERVER_URL", "https://env.example.com")
-	t.Setenv("EMERGENT_EMAIL", "env@example.com")
+	t.Setenv("MEMORY_SERVER_URL", "https://env.example.com")
+	t.Setenv("MEMORY_EMAIL", "env@example.com")
 
 	loadedCfg, err := config.LoadWithEnv(configPath)
 	require.NoError(t, err)

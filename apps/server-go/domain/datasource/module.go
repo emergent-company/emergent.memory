@@ -7,9 +7,9 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
-	"github.com/emergent-company/emergent/domain/datasource/providers/clickup"
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/pkg/encryption"
+	"github.com/emergent-company/emergent.memory/domain/datasource/providers/clickup"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/encryption"
 )
 
 // Module provides data source sync functionality

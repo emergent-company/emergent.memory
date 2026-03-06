@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
 // TenantIsolationTestSuite tests RLS policies and tenant isolation using HTTP-only calls.

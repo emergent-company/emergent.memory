@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/completion"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/completion"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -24,12 +24,12 @@ var (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "emergent",
-	Short: "CLI tool for Emergent platform",
-	Long: `Command-line interface for interacting with the Emergent knowledge base API.
+	Use:   "memory",
+	Short: "CLI tool for Memory platform",
+	Long: `Command-line interface for interacting with the Memory knowledge base API.
 
-The Emergent CLI provides commands to manage projects, documents, and other
-resources in your Emergent knowledge base. It supports both interactive and
+The Memory CLI provides commands to manage projects, documents, and other
+resources in your Memory knowledge base. It supports both interactive and
 non-interactive workflows with flexible output formats.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		configPath, _ := cmd.Flags().GetString("config")
@@ -41,18 +41,18 @@ non-interactive workflows with flexible output formats.`,
 			return nil // non-fatal — commands handle missing config themselves
 		}
 
-		// If EMERGENT_PROJECT is set (name/slug), always resolve it to a project
-		// ID and override any existing EMERGENT_PROJECT_ID. EMERGENT_PROJECT is
+		// If MEMORY_PROJECT is set (name/slug), always resolve it to a project
+		// ID and override any existing MEMORY_PROJECT_ID. MEMORY_PROJECT is
 		// the intentional per-workspace override (set in .env.local) and must
 		// win over any placeholder value that may be present in .env.
-		if projectName := os.Getenv("EMERGENT_PROJECT"); projectName != "" {
+		if projectName := os.Getenv("MEMORY_PROJECT"); projectName != "" {
 			c, clientErr := getClient(cmd)
 			if clientErr == nil {
 				if id, resolveErr := resolveProjectNameOrID(c, projectName); resolveErr == nil {
 					cfg.ProjectID = id
 					// Propagate the resolved ID so downstream code (TUI, commands)
 					// that re-loads config or calls getClient picks it up.
-					_ = os.Setenv("EMERGENT_PROJECT_ID", id)
+					_ = os.Setenv("MEMORY_PROJECT_ID", id)
 				}
 				// Resolution failure is silent — commands that need a project
 				// will surface the error themselves.
@@ -80,8 +80,8 @@ func init() {
 	cobra.OnInitialize(initConfig)
 
 	// Global persistent flags (available to all subcommands)
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.emergent/config.yaml)")
-	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "", "Emergent server URL")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.memory/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "", "Memory server URL")
 	rootCmd.PersistentFlags().StringVar(&output, "output", "table", "output format (table, json, yaml, csv)")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "enable debug logging")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output")
@@ -119,14 +119,14 @@ func initConfig() {
 			os.Exit(1)
 		}
 
-		// Search config in home directory with name ".emergent" (without extension)
-		viper.AddConfigPath(home + "/.emergent")
+		// Search config in home directory with name ".memory" (without extension)
+		viper.AddConfigPath(home + "/.memory")
 		viper.SetConfigType("yaml")
 		viper.SetConfigName("config")
 	}
 
 	// Environment variables
-	viper.SetEnvPrefix("EMERGENT")
+	viper.SetEnvPrefix("MEMORY")
 	viper.AutomaticEnv() // read in environment variables that match
 
 	// Set defaults for new config fields

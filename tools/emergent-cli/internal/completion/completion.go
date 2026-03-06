@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/cache"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/cache"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/client"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 

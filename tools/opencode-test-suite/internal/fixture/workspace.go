@@ -236,15 +236,15 @@ func (w *Workspace) gitInit() {
 	}
 }
 
-// EnvFile writes a .env.local file into the workspace with EMERGENT_SERVER_URL,
-// EMERGENT_PROJECT_ID, and EMERGENT_PROJECT_TOKEN. The CLI auto-loads .env.local
+// EnvFile writes a .env.local file into the workspace with MEMORY_SERVER_URL,
+// MEMORY_PROJECT_ID, and MEMORY_PROJECT_TOKEN. The CLI auto-loads .env.local
 // from the current directory, so any emergent command run from the workspace root
 // will be authenticated and project-scoped without needing --project-token flags.
 func (w *Workspace) EnvFile(serverURL, projectID, projectToken string) string {
 	path := filepath.Join(w.Dir, ".env.local")
-	content := fmt.Sprintf("EMERGENT_SERVER_URL=%s\nEMERGENT_PROJECT_ID=%s\n", serverURL, projectID)
+	content := fmt.Sprintf("MEMORY_SERVER_URL=%s\nMEMORY_PROJECT_ID=%s\n", serverURL, projectID)
 	if projectToken != "" {
-		content += fmt.Sprintf("EMERGENT_PROJECT_TOKEN=%s\n", projectToken)
+		content += fmt.Sprintf("MEMORY_PROJECT_TOKEN=%s\n", projectToken)
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		w.t.Fatalf("fixture: write .env.local: %v", err)

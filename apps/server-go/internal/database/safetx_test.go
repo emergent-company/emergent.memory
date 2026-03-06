@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/emergent-company/emergent/internal/database"
-	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/emergent-company/emergent.memory/internal/database"
+	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
 func TestSafeTx_CommitThenRollback(t *testing.T) {

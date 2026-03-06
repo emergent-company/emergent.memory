@@ -10,10 +10,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
-	"github.com/emergent-company/emergent/domain/graph"
-	"github.com/emergent-company/emergent/pkg/embeddings"
-	"github.com/emergent-company/emergent/pkg/logger"
-	"github.com/emergent-company/emergent/pkg/tracing"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
 // Service handles unified search combining graph and text results

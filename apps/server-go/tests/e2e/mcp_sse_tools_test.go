@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
 // MCPSSEToolsSuite tests all MCP tools via the unified SSE endpoint.

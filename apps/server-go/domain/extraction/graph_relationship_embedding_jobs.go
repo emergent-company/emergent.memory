@@ -10,7 +10,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // GraphRelationshipEmbeddingJobsService manages the relationship embedding job queue.

@@ -18,16 +18,16 @@ Use this mode when connecting to a standalone Emergent server that uses simple A
 **Configuration:**
 
 ```bash
-export EMERGENT_SERVER_URL=http://localhost:9090
-export EMERGENT_API_KEY=your-api-key-here
+export MEMORY_SERVER_URL=http://localhost:9090
+export MEMORY_API_KEY=your-api-key-here
 ```
 
 **Example:**
 
 ```bash
 # Set environment variables
-export EMERGENT_SERVER_URL=http://localhost:9090
-export EMERGENT_API_KEY=a1e9e1ec8a81886ab68bbdf4a32a1deb36d3e523c639e0ad841d96263dc8b0a7
+export MEMORY_SERVER_URL=http://localhost:9090
+export MEMORY_API_KEY=a1e9e1ec8a81886ab68bbdf4a32a1deb36d3e523c639e0ad841d96263dc8b0a7
 
 # Use CLI commands
 emergent-cli projects list
@@ -61,7 +61,7 @@ The CLI automatically detects which authentication mode to use:
                   │
                   v
          ┌────────────────────┐
-         │ Is EMERGENT_API_KEY│
+         │ Is MEMORY_API_KEY│
          │   configured?      │
          └────────┬───────────┘
                   │
@@ -81,12 +81,12 @@ The CLI automatically detects which authentication mode to use:
 
 | Variable              | Description                 | Required | Example                                                            |
 | --------------------- | --------------------------- | -------- | ------------------------------------------------------------------ |
-| `EMERGENT_SERVER_URL` | Server API base URL         | Yes      | `http://localhost:9090`                                            |
-| `EMERGENT_API_KEY`    | API key for standalone mode | No\*     | `a1e9e1ec8a81886ab68bbdf4a32a1deb36d3e523c639e0ad841d96263dc8b0a7` |
-| `EMERGENT_EMAIL`      | User email (optional)       | No       | `user@example.com`                                                 |
-| `EMERGENT_ORG_ID`     | Default organization ID     | No       | `uuid-here`                                                        |
-| `EMERGENT_PROJECT_ID` | Default project ID          | No       | `uuid-here`                                                        |
-| `EMERGENT_DEBUG`      | Enable debug logging        | No       | `true`                                                             |
+| `MEMORY_SERVER_URL` | Server API base URL         | Yes      | `http://localhost:9090`                                            |
+| `MEMORY_API_KEY`    | API key for standalone mode | No\*     | `a1e9e1ec8a81886ab68bbdf4a32a1deb36d3e523c639e0ad841d96263dc8b0a7` |
+| `MEMORY_EMAIL`      | User email (optional)       | No       | `user@example.com`                                                 |
+| `MEMORY_ORG_ID`     | Default organization ID     | No       | `uuid-here`                                                        |
+| `MEMORY_PROJECT_ID` | Default project ID          | No       | `uuid-here`                                                        |
+| `MEMORY_DEBUG`      | Enable debug logging        | No       | `true`                                                             |
 
 \* Required for standalone mode, not needed for OAuth mode
 
@@ -132,8 +132,8 @@ grep STANDALONE_API_KEY .env
 ### 3. Use the CLI
 
 ```bash
-export EMERGENT_SERVER_URL=http://localhost:9090
-export EMERGENT_API_KEY=$(grep STANDALONE_API_KEY .env | cut -d'=' -f2)
+export MEMORY_SERVER_URL=http://localhost:9090
+export MEMORY_API_KEY=$(grep STANDALONE_API_KEY .env | cut -d'=' -f2)
 
 emergent-cli projects list
 ```
@@ -158,16 +158,16 @@ Error: failed to make request: not authenticated. Run 'emergent-cli login' first
 ```
 
 **Solution:**
-Make sure `EMERGENT_API_KEY` is set:
+Make sure `MEMORY_API_KEY` is set:
 
 ```bash
-echo $EMERGENT_API_KEY  # Should output your API key
+echo $MEMORY_API_KEY  # Should output your API key
 ```
 
 If empty, set it:
 
 ```bash
-export EMERGENT_API_KEY=your-api-key-here
+export MEMORY_API_KEY=your-api-key-here
 ```
 
 ### "request failed with status 401"
@@ -233,8 +233,8 @@ jobs:
 
       - name: List projects
         env:
-          EMERGENT_SERVER_URL: ${{ secrets.EMERGENT_SERVER_URL }}
-          EMERGENT_API_KEY: ${{ secrets.EMERGENT_API_KEY }}
+          MEMORY_SERVER_URL: ${{ secrets.MEMORY_SERVER_URL }}
+          MEMORY_API_KEY: ${{ secrets.MEMORY_API_KEY }}
         run: |
           ./emergent-cli projects list
 ```
@@ -250,8 +250,8 @@ test:
     - chmod +x emergent-cli
     - ./emergent-cli projects list
   variables:
-    EMERGENT_SERVER_URL: $EMERGENT_SERVER_URL
-    EMERGENT_API_KEY: $EMERGENT_API_KEY
+    MEMORY_SERVER_URL: $MEMORY_SERVER_URL
+    MEMORY_API_KEY: $MEMORY_API_KEY
 ```
 
 ## Implementation Details

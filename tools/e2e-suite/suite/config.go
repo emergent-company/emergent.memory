@@ -13,10 +13,10 @@ import (
 // Config holds shared configuration for all e2e suites.
 type Config struct {
 	// Server
-	ServerURL string // EMERGENT_SERVER_URL (default: http://mcj-emergent:3002)
-	APIKey    string // EMERGENT_API_KEY
-	OrgID     string // EMERGENT_ORG_ID
-	ProjectID string // EMERGENT_PROJECT_ID
+	ServerURL string // MEMORY_SERVER_URL (default: http://mcj-emergent:3002)
+	APIKey    string // MEMORY_API_KEY
+	OrgID     string // MEMORY_ORG_ID
+	ProjectID string // MEMORY_PROJECT_ID
 
 	// Runtime
 	Concurrency int           // --concurrency (default: 4)
@@ -43,10 +43,10 @@ func Load(envFile string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		ServerURL:    getEnv("EMERGENT_SERVER_URL", "http://mcj-emergent:3002"),
-		APIKey:       os.Getenv("EMERGENT_API_KEY"),
-		OrgID:        os.Getenv("EMERGENT_ORG_ID"),
-		ProjectID:    os.Getenv("EMERGENT_PROJECT_ID"),
+		ServerURL:    getEnv("MEMORY_SERVER_URL", "http://mcj-emergent:3002"),
+		APIKey:       os.Getenv("MEMORY_API_KEY"),
+		OrgID:        os.Getenv("MEMORY_ORG_ID"),
+		ProjectID:    os.Getenv("MEMORY_PROJECT_ID"),
 		Concurrency:  getEnvInt("E2E_CONCURRENCY", 4),
 		Timeout:      getEnvDuration("E2E_TIMEOUT", 30*time.Minute),
 		DryRun:       os.Getenv("E2E_DRY_RUN") == "true",
@@ -60,13 +60,13 @@ func Load(envFile string) (*Config, error) {
 // Validate checks that mandatory fields are set.
 func (c *Config) Validate() error {
 	if c.ServerURL == "" {
-		return fmt.Errorf("EMERGENT_SERVER_URL is required")
+		return fmt.Errorf("MEMORY_SERVER_URL is required")
 	}
 	if c.APIKey == "" {
-		return fmt.Errorf("EMERGENT_API_KEY is required")
+		return fmt.Errorf("MEMORY_API_KEY is required")
 	}
 	if c.ProjectID == "" {
-		return fmt.Errorf("EMERGENT_PROJECT_ID is required")
+		return fmt.Errorf("MEMORY_PROJECT_ID is required")
 	}
 	return nil
 }

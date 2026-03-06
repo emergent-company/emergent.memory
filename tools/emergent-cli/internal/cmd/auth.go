@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/auth"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/auth"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -93,14 +93,14 @@ func fetchProjects(serverURL, apiKey string) ([]projectResponse, error) {
 func getCLIPath() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "emergent"
+		return "memory"
 	}
 
 	// Check common installation paths
 	paths := []string{
-		filepath.Join(homeDir, ".emergent", "bin", "emergent"),
-		"/usr/local/bin/emergent",
-		filepath.Join(homeDir, "bin", "emergent"),
+		filepath.Join(homeDir, ".memory", "bin", "memory"),
+		"/usr/local/bin/memory",
+		filepath.Join(homeDir, "bin", "memory"),
 	}
 
 	for _, p := range paths {
@@ -111,9 +111,9 @@ func getCLIPath() string {
 
 	// Return platform-appropriate default
 	if runtime.GOOS == "windows" {
-		return filepath.Join(homeDir, ".emergent", "bin", "emergent.exe")
+		return filepath.Join(homeDir, ".memory", "bin", "memory.exe")
 	}
-	return filepath.Join(homeDir, ".emergent", "bin", "emergent")
+	return filepath.Join(homeDir, ".memory", "bin", "memory")
 }
 
 // maskAPIKey masks an API key for display, showing prefix and last 4 chars
@@ -140,7 +140,7 @@ type tokenInfoResponse struct {
 // registerCmd is a hidden alias for loginCmd — kept for backwards compatibility.
 var registerCmd = &cobra.Command{
 	Use:    "register",
-	Short:  "Create a new Emergent account (alias for login)",
+	Short:  "Create a new Memory account (alias for login)",
 	Hidden: true,
 	RunE:   runLogin,
 }
@@ -201,7 +201,7 @@ func fetchIssuer(serverURL string) (string, error) {
 	if info.Standalone {
 		return "", fmt.Errorf(
 			"this server is running in standalone mode and does not support OAuth authentication.\n" +
-				"Use an API key instead: emergent config set-api-key <key>",
+				"Use an API key instead: memory config set-api-key <key>",
 		)
 	}
 
@@ -214,14 +214,14 @@ func fetchIssuer(serverURL string) (string, error) {
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Sign in or create an Emergent account",
+	Short: "Sign in or create a Memory account",
 	Long: `Authenticate using the OAuth Device Authorization flow.
 
 Opens your browser so you can sign in or create a new account.
 Your credentials are saved locally for future CLI use.
 
 If this server is running in standalone mode, use an API key instead:
-  emergent config set-api-key <key>`,
+  memory config set-api-key <key>`,
 	RunE: runLogin,
 }
 
@@ -243,7 +243,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	if cfg.ServerURL == "" {
-		return fmt.Errorf("no server URL configured. Run: emergent config set-server <url>")
+		return fmt.Errorf("no server URL configured. Run: memory config set-server <url>")
 	}
 
 	clientID := "362800068257972227"
@@ -258,7 +258,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf(
 			"could not discover OAuth endpoints from %s\n\n"+
 				"This server may be running in standalone mode. Use an API key instead:\n"+
-				"  emergent config set-api-key <key>",
+				"  memory config set-api-key <key>",
 			issuerURL,
 		)
 	}
@@ -324,7 +324,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
-	credsPath := filepath.Join(homeDir, ".emergent", "credentials.json")
+	credsPath := filepath.Join(homeDir, ".memory", "credentials.json")
 	if err := auth.Save(creds, credsPath); err != nil {
 		return fmt.Errorf("failed to save credentials: %w", err)
 	}
@@ -336,7 +336,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		fmt.Println("  Logged in successfully.")
 	}
 	fmt.Println()
-	fmt.Println("  Run 'emergent status' to see your account and available projects.")
+	fmt.Println("  Run 'memory status' to see your account and available projects.")
 	fmt.Println()
 	return nil
 }
@@ -401,17 +401,17 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	credsPath := filepath.Join(homeDir, ".emergent", "credentials.json")
+	credsPath := filepath.Join(homeDir, ".memory", "credentials.json")
 
 	creds, err := auth.Load(credsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Println("Not authenticated.")
 			fmt.Println("\nSign in or create a new account:")
-			fmt.Println("  emergent login")
+			fmt.Println("  memory login")
 			fmt.Println("\nOr configure a static API key:")
-			fmt.Println("  export EMERGENT_API_KEY=your-api-key")
-			fmt.Println("  # or add 'api_key: your-api-key' to ~/.emergent/config.yaml")
+			fmt.Println("  export MEMORY_API_KEY=your-api-key")
+			fmt.Println("  # or add 'api_key: your-api-key' to ~/.memory/config.yaml")
 			return nil
 		}
 		return fmt.Errorf("failed to load credentials: %w", err)
@@ -433,7 +433,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	if creds.IsExpired() {
 		fmt.Println("  Status:      ⚠️  EXPIRED")
-		fmt.Println("\nYour session has expired. Run 'emergent login' to re-authenticate.")
+		fmt.Println("\nYour session has expired. Run 'memory login' to re-authenticate.")
 	} else {
 		timeUntilExpiry := time.Until(creds.ExpiresAt)
 		fmt.Printf("  Status:      ✓ Valid (expires in %s)\n", timeUntilExpiry.Round(time.Minute))
@@ -446,20 +446,20 @@ func printAPIKeyStatus(cfg *config.Config) {
 	separator := strings.Repeat("━", 50)
 
 	fmt.Println()
-	fmt.Println("Emergent Status")
+	fmt.Println("Memory Status")
 	fmt.Println(separator)
 	fmt.Println()
 
 	// Determine the active key and whether it's a project-scoped token.
 	// When only a project token is configured, cfg.APIKey may be the global
-	// account key from ~/.emergent/config.yaml; prefer cfg.ProjectToken when set.
+	// account key from ~/.memory/config.yaml; prefer cfg.ProjectToken when set.
 	activeKey := cfg.APIKey
 	isProjectToken := cfg.ProjectToken != "" || strings.HasPrefix(cfg.APIKey, "emt_")
 	if cfg.ProjectToken != "" {
 		activeKey = cfg.ProjectToken
 	}
 
-	// EMERGENT_PROJECT name-scope: account API key scoped to a specific project
+	// MEMORY_PROJECT name-scope: account API key scoped to a specific project
 	// by name/slug (no project token, but a project name or pre-resolved ID).
 	hasNameScope := !isProjectToken && (cfg.ProjectName != "" || cfg.ProjectID != "")
 
@@ -472,8 +472,8 @@ func printAPIKeyStatus(cfg *config.Config) {
 	} else if hasNameScope {
 		scopeLabel := cfg.ProjectName
 		if scopeLabel == "" {
-			// Prefer the EMERGENT_PROJECT slug over a raw UUID
-			if ep := os.Getenv("EMERGENT_PROJECT"); ep != "" {
+			// Prefer the MEMORY_PROJECT slug over a raw UUID
+			if ep := os.Getenv("MEMORY_PROJECT"); ep != "" {
 				scopeLabel = ep
 			} else {
 				scopeLabel = cfg.ProjectID
@@ -536,7 +536,7 @@ func printAPIKeyStatus(cfg *config.Config) {
 			fmt.Println("Project:")
 			fmt.Printf("  Name:        %s\n", matchedProject.Name)
 			fmt.Printf("  ID:          %s\n", matchedProject.ID)
-			fmt.Println("  Access:      account key (EMERGENT_PROJECT scoped)")
+			fmt.Println("  Access:      account key (MEMORY_PROJECT scoped)")
 
 			if healthErr == nil {
 				printUsageStats(cfg, activeKey, matchedProject.ID)
@@ -991,12 +991,12 @@ func printMCPConfig(cfg *config.Config, project *projectResponse) {
 
 	stdioConfig := map[string]interface{}{
 		"mcpServers": map[string]interface{}{
-			"emergent": map[string]interface{}{
+			"memory": map[string]interface{}{
 				"command": cliPath,
 				"args":    []string{"mcp"},
 				"env": map[string]string{
-					"EMERGENT_SERVER_URL": cfg.ServerURL,
-					"EMERGENT_API_KEY":    cfg.APIKey,
+					"MEMORY_SERVER_URL": cfg.ServerURL,
+					"MEMORY_API_KEY":    cfg.APIKey,
 				},
 			},
 		},
@@ -1011,7 +1011,7 @@ func printMCPConfig(cfg *config.Config, project *projectResponse) {
 
 	sseConfig := map[string]interface{}{
 		"servers": map[string]interface{}{
-			"emergent": map[string]interface{}{
+			"memory": map[string]interface{}{
 				"type": "sse",
 				"url":  fmt.Sprintf("%s/api/mcp/sse/%s", cfg.ServerURL, project.ID),
 				"headers": map[string]string{
@@ -1030,7 +1030,7 @@ func newLogoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Clear stored credentials",
-		Long:  "Remove locally stored OAuth credentials and log out from the Emergent platform.",
+		Long:  "Remove locally stored OAuth credentials and log out from the Memory platform.",
 		RunE:  runLogout,
 	}
 }
@@ -1043,7 +1043,7 @@ func runLogout(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	credsPath := filepath.Join(homeDir, ".emergent", "credentials.json")
+	credsPath := filepath.Join(homeDir, ".memory", "credentials.json")
 
 	if _, err := os.Stat(credsPath); os.IsNotExist(err) {
 		fmt.Println("No credentials found")
@@ -1063,18 +1063,18 @@ func runLogout(cmd *cobra.Command, args []string) error {
 // the OAuth device flow. Useful for CI, test harnesses, and development
 // environments that provide a pre-issued token (e.g. an e2e test token).
 //
-// The token is saved to ~/.emergent/credentials.json with a 24-hour expiry so
+// The token is saved to ~/.memory/credentials.json with a 24-hour expiry so
 // the normal OAuth provider picks it up on the next CLI invocation.
 var setTokenCmd = &cobra.Command{
 	Use:   "set-token <bearer-token>",
 	Short: "Save a static Bearer token as CLI credentials",
-	Long: `Save a static Bearer token to ~/.emergent/credentials.json.
+	Long: `Save a static Bearer token to ~/.memory/credentials.json.
 
 Useful in CI, test harnesses, and dev environments where a token is
 pre-issued rather than obtained via the OAuth device flow.
 
 Example:
-  emergent auth set-token e2e-test-user`,
+  memory auth set-token e2e-test-user`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSetToken,
 }
@@ -1119,7 +1119,7 @@ func runSetToken(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	credsPath := filepath.Join(homeDir, ".emergent", "credentials.json")
+	credsPath := filepath.Join(homeDir, ".memory", "credentials.json")
 	if err := auth.Save(creds, credsPath); err != nil {
 		return fmt.Errorf("failed to save credentials: %w", err)
 	}
@@ -1148,11 +1148,11 @@ func init() {
 	rootCmd.AddCommand(setTokenCmd)
 }
 
-// mcpGuideCmd prints MCP configuration snippets for connecting AI agents to Emergent.
+// mcpGuideCmd prints MCP configuration snippets for connecting AI agents to Memory.
 var mcpGuideCmd = &cobra.Command{
 	Use:   "mcp-guide",
 	Short: "Show MCP configuration for AI agents",
-	Long:  "Print MCP server configuration snippets for connecting AI agents (Claude Desktop, Cursor, etc.) to Emergent.",
+	Long:  "Print MCP server configuration snippets for connecting AI agents (Claude Desktop, Cursor, etc.) to Memory.",
 	RunE:  runMCPGuide,
 }
 
@@ -1175,7 +1175,7 @@ func runMCPGuide(cmd *cobra.Command, args []string) error {
 	}
 
 	if activeKey == "" {
-		return fmt.Errorf("no API key configured. Set EMERGENT_API_KEY or EMERGENT_PROJECT_TOKEN")
+		return fmt.Errorf("no API key configured. Set MEMORY_API_KEY or MEMORY_PROJECT_TOKEN")
 	}
 
 	projects, err := fetchProjects(cfg.ServerURL, activeKey)

@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/emergent-company/emergent/domain/extraction/agents"
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/uptrace/bun"
 )
 

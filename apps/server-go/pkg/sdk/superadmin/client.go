@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
-	sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/auth"
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/errors"
 )
 
 // Client provides access to the Superadmin API.

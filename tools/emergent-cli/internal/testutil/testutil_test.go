@@ -144,8 +144,8 @@ func TestWithConfigFile(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify env var is set
-	configPath := os.Getenv("EMERGENT_CONFIG")
-	assert.Equal(t, path, configPath, "EMERGENT_CONFIG should point to config file")
+	configPath := os.Getenv("MEMORY_CONFIG")
+	assert.Equal(t, path, configPath, "MEMORY_CONFIG should point to config file")
 
 	// Verify content
 	data, err := os.ReadFile(path)

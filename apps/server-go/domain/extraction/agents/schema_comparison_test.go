@@ -15,9 +15,9 @@ import (
 	adkmodel "google.golang.org/adk/model"
 	"google.golang.org/genai"
 
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/pkg/adk"
-	"github.com/emergent-company/emergent/pkg/kreuzberg"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
 )
 
 // SchemaVariant represents the different ways to provide schema to Gemini

@@ -10,13 +10,13 @@ Successfully implemented API key authentication support in the Emergent CLI, ena
 
 - **File**: `tools/emergent-cli/internal/config/config.go`
 - **Changes**: Added `APIKey` field to `Config` struct with proper Viper binding
-- **Result**: CLI now supports `EMERGENT_API_KEY` environment variable
+- **Result**: CLI now supports `MEMORY_API_KEY` environment variable
 
 ### 2. HTTP Client Authentication Wrapper
 
 - **File**: `tools/emergent-cli/internal/client/client.go`
 - **Implementation**: Created smart HTTP client that automatically:
-  - Uses `X-API-Key` header when `EMERGENT_API_KEY` is set (standalone mode)
+  - Uses `X-API-Key` header when `MEMORY_API_KEY` is set (standalone mode)
   - Uses OAuth Bearer token when no API key is configured (full mode)
   - Automatically refreshes expired OAuth tokens
   - Provides clean error messages for authentication issues
@@ -61,7 +61,7 @@ Successfully implemented API key authentication support in the Emergent CLI, ena
                   │
                   v
          ┌────────────────────┐
-         │ Is EMERGENT_API_KEY│
+         │ Is MEMORY_API_KEY│
          │   configured?      │
          └────────┬───────────┘
                   │
@@ -81,10 +81,10 @@ Successfully implemented API key authentication support in the Emergent CLI, ena
 
 1. **Environment variables** (highest priority)
 
-   - `EMERGENT_API_KEY` - API key for standalone mode
-   - `EMERGENT_SERVER_URL` - Server URL
-   - `EMERGENT_ORG_ID` - Default organization
-   - `EMERGENT_PROJECT_ID` - Default project
+   - `MEMORY_API_KEY` - API key for standalone mode
+   - `MEMORY_SERVER_URL` - Server URL
+   - `MEMORY_ORG_ID` - Default organization
+   - `MEMORY_PROJECT_ID` - Default project
 
 2. **Config file** (`~/.emergent/config.yaml`)
 
@@ -100,12 +100,12 @@ Successfully implemented API key authentication support in the Emergent CLI, ena
 Fixed Viper configuration to explicitly bind each config field to environment variables:
 
 ```go
-v.BindEnv("server_url")   // → EMERGENT_SERVER_URL
-v.BindEnv("api_key")      // → EMERGENT_API_KEY
-v.BindEnv("email")        // → EMERGENT_EMAIL
-v.BindEnv("org_id")       // → EMERGENT_ORG_ID
-v.BindEnv("project_id")   // → EMERGENT_PROJECT_ID
-v.BindEnv("debug")        // → EMERGENT_DEBUG
+v.BindEnv("server_url")   // → MEMORY_SERVER_URL
+v.BindEnv("api_key")      // → MEMORY_API_KEY
+v.BindEnv("email")        // → MEMORY_EMAIL
+v.BindEnv("org_id")       // → MEMORY_ORG_ID
+v.BindEnv("project_id")   // → MEMORY_PROJECT_ID
+v.BindEnv("debug")        // → MEMORY_DEBUG
 ```
 
 This was critical - Viper's `AutomaticEnv()` alone doesn't automatically bind struct fields.
@@ -115,8 +115,8 @@ This was critical - Viper's `AutomaticEnv()` alone doesn't automatically bind st
 ### Standalone Mode (API Key)
 
 ```bash
-$ export EMERGENT_SERVER_URL=http://localhost:9090
-$ export EMERGENT_API_KEY=a1e9e1ec8a81886ab68bbdf4a32a1deb36d3e523c639e0ad841d96263dc8b0a7
+$ export MEMORY_SERVER_URL=http://localhost:9090
+$ export MEMORY_API_KEY=a1e9e1ec8a81886ab68bbdf4a32a1deb36d3e523c639e0ad841d96263dc8b0a7
 $ /tmp/emergent-cli projects list
 
 Found 1 project(s):
@@ -128,8 +128,8 @@ Found 1 project(s):
 ### OAuth Mode (Not Authenticated)
 
 ```bash
-$ export EMERGENT_SERVER_URL=http://localhost:9090
-$ unset EMERGENT_API_KEY
+$ export MEMORY_SERVER_URL=http://localhost:9090
+$ unset MEMORY_API_KEY
 $ /tmp/emergent-cli projects list
 
 Error: failed to make request: not authenticated. Run 'emergent-cli login' first
@@ -288,4 +288,4 @@ Successfully implemented complete standalone mode support for Emergent CLI:
 4. **Tested** - Working Docker environment validates implementation
 5. **Extensible** - Easy to add new commands using same pattern
 
-The CLI can now work in both production (OAuth) and standalone (API key) environments with zero configuration changes - just set/unset `EMERGENT_API_KEY` environment variable.
+The CLI can now work in both production (OAuth) and standalone (API key) environments with zero configuration changes - just set/unset `MEMORY_API_KEY` environment variable.

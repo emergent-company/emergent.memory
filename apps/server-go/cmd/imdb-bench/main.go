@@ -51,9 +51,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/graph"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/projects"
 )
 
 // BenchVersion is bumped manually when the benchmark logic itself changes,

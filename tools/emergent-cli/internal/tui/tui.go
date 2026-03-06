@@ -18,11 +18,11 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/health"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/templatepacks"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/documents"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/health"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/projects"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/templatepacks"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/client"
 )
 
 // ViewMode represents the current view mode
@@ -316,7 +316,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Two cases:
 		// 1. Project token (emt_*): server returns only the one project → match
 		//    by list length == 1.
-		// 2. EMERGENT_PROJECT name resolution: account API key with a pre-resolved
+		// 2. MEMORY_PROJECT name resolution: account API key with a pre-resolved
 		//    project ID → find the matching item by ID regardless of list length.
 		if m.client.HasProjectScope() {
 			var target *projectItem
@@ -328,7 +328,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			// Case 2: pre-resolved project ID (EMERGENT_PROJECT name resolution).
+			// Case 2: pre-resolved project ID (MEMORY_PROJECT name resolution).
 			if target == nil {
 				if scopedID := m.client.ProjectID(); scopedID != "" {
 					for _, li := range items {

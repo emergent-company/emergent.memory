@@ -18,11 +18,11 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 
-	"github.com/emergent-company/emergent/domain/workspace"
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/pkg/adk"
-	"github.com/emergent-company/emergent/pkg/logger"
-	"github.com/emergent-company/emergent/pkg/tracing"
+	"github.com/emergent-company/emergent.memory/domain/workspace"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
 // StreamEventType identifies the kind of streaming event.
