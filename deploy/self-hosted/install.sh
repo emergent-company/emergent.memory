@@ -52,7 +52,7 @@ else
     fi
 fi
 
-cd deploy/minimal
+cd deploy/self-hosted
 
 echo ""
 echo "🔐 Generating secure passwords..."
@@ -100,18 +100,18 @@ if [ -t 0 ]; then
         echo "✅ Google API key configured"
     else
         echo "⚠️  Skipping Google API key (embeddings will be disabled)"
-        echo "   You can add it later by editing: $INSTALL_DIR/deploy/minimal/.env.local"
+        echo "   You can add it later by editing: $INSTALL_DIR/deploy/self-hosted/.env.local"
     fi
 else
     echo "⚠️  Non-interactive mode: Skipping Google API key prompt"
-    echo "   Add it later by editing: $INSTALL_DIR/deploy/minimal/.env.local"
+    echo "   Add it later by editing: $INSTALL_DIR/deploy/self-hosted/.env.local"
 fi
 
 echo ""
 echo "🏗️  Building Docker image with embedded CLI..."
-if [ -f "build-server-with-cli.sh" ]; then
-    chmod +x build-server-with-cli.sh
-    ./build-server-with-cli.sh
+if [ -f "build.sh" ]; then
+    chmod +x build.sh
+    ./build.sh
 else
     echo "⚠️  Build script not found, using docker compose build..."
     docker compose -f docker-compose.local.yml build
@@ -192,15 +192,15 @@ else
     echo "  docker compose -f docker-compose.local.yml restart"
     echo ""
     echo "Configuration saved to:"
-    echo "  $INSTALL_DIR/deploy/minimal/.env.local"
+    echo "  $INSTALL_DIR/deploy/self-hosted/.env.local"
     echo ""
     echo "Documentation:"
-    echo "  $INSTALL_DIR/deploy/minimal/INDEX.md"
+    echo "  $INSTALL_DIR/deploy/self-hosted/INDEX.md"
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 fi
 
-cat > "$INSTALL_DIR/deploy/minimal/credentials.txt" <<EOF
+cat > "$INSTALL_DIR/deploy/self-hosted/credentials.txt" <<EOF
 Emergent Standalone - Credentials
 Generated: $(date)
 
@@ -238,5 +238,5 @@ Quick Start:
   docker exec memory-server memory projects list
 EOF
 
-echo "🔐 Credentials saved to: $INSTALL_DIR/deploy/minimal/credentials.txt"
+echo "🔐 Credentials saved to: $INSTALL_DIR/deploy/self-hosted/credentials.txt"
 echo ""

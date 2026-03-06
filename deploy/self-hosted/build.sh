@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build script for emergent-server-with-cli Docker image
+# Build script for memory-server Docker image
 # This creates a single image containing both the server and CLI
 
 set -e
@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Configuration
-IMAGE_NAME="${IMAGE_NAME:-emergent-server-with-cli}"
+IMAGE_NAME="${IMAGE_NAME:-memory-server}"
 TAG="${TAG:-latest}"
 FULL_IMAGE="$IMAGE_NAME:$TAG"
 
@@ -27,7 +27,7 @@ echo
 cd "$REPO_ROOT"
 
 docker build \
-  --file deploy/minimal/Dockerfile.server-with-cli \
+  --file deploy/self-hosted/Dockerfile.server \
   --tag "$FULL_IMAGE" \
   --build-arg "VERSION=$VERSION" \
   --build-arg "GIT_COMMIT=$GIT_COMMIT" \

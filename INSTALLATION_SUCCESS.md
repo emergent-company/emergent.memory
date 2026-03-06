@@ -40,7 +40,7 @@ Status: Downloaded newer image for ghcr.io/emergent-company/emergent-server-with
   - `:sha-<commit>` (for reproducibility)
 
 ### 2. Installer Script
-**File**: `deploy/minimal/install-online.sh`
+**File**: `deploy/self-hosted/install-online.sh`
 
 **Major Improvements**:
 - ❌ **REMOVED**: `git clone` (no source download)
@@ -92,7 +92,7 @@ gh workflow run "Publish Minimal Deployment Images" --repo emergent-company/emer
 
 ### 1. One-Line Full Install
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install-online.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/self-hosted/install-online.sh | bash
 ```
 
 **Downloads**:
@@ -108,7 +108,7 @@ curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/depl
 
 ### 2. One-Line Client-Only Install
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install-online.sh | CLIENT_ONLY=1 bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/self-hosted/install-online.sh | CLIENT_ONLY=1 bash
 ```
 
 **Installs**:
@@ -133,7 +133,7 @@ emergent upgrade
 
 | File | Change |
 |------|--------|
-| `deploy/minimal/install-online.sh` | Rewritten to use pre-built images, added CLIENT_ONLY mode |
+| `deploy/self-hosted/install-online.sh` | Rewritten to use pre-built images, added CLIENT_ONLY mode |
 | `.github/workflows/publish-minimal-images.yml` | Added `build-server-with-cli` job |
 | `tools/emergent-cli/internal/cmd/upgrade.go` | Self-update command |
 | `deploy/homebrew/emergent-cli.rb` | Homebrew formula (v0.2.1) |

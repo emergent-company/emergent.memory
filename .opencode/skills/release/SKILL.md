@@ -20,7 +20,7 @@ All components share a **single version** derived from the git tag:
 ```
 Git tag v0.X.Y
 ├── CLI binary v0.X.Y (built by CI)
-├── Docker image memory-server-with-cli:v0.X.Y (built by CI)
+├── Docker image memory-server:v0.X.Y (built by CI)
 ├── API /health returns "v0.X.Y" (ldflags at build time)
 └── OpenAPI spec info.version = "0.X.Y" (annotation in main.go)
 ```
@@ -28,7 +28,7 @@ Git tag v0.X.Y
 **CI Workflows triggered by `v*` tag push:**
 
 1. `cli.yml` — Builds CLI binaries for 8 platforms, creates GitHub Release
-2. `publish-minimal-images.yml` — Builds & pushes Docker image, uploads `images-ready.txt` sentinel to release
+2. `publish-self-hosted-images.yml` — Builds & pushes Docker image, uploads `images-ready.txt` sentinel to release
 
 ## Release Process
 
@@ -104,7 +104,7 @@ git push origin main --tags
 This triggers CI which takes ~5-10 minutes to:
 
 - Build CLI binaries and **create the GitHub Release** (via `cli.yml` — the Release appears in GitHub only after CI completes, not immediately after `git tag`)
-- Build and push Docker image to `ghcr.io/emergent-company/memory-server-with-cli`
+- Build and push Docker image to `ghcr.io/emergent-company/memory-server`
 - Upload `images-ready.txt` sentinel when Docker image is ready
 
 > **NOTE:** `git tag` + `git push --tags` does NOT immediately create a GitHub Release. The Release is created by the `cli.yml` CI workflow. Monitor progress with: `gh run watch`
@@ -150,11 +150,11 @@ ssh root@<server> "curl -s http://localhost:3002/health | jq '.version'"
 | OpenAPI annotation | `apps/server/cmd/server/main.go` line 4          |
 | Swagger docs       | `apps/server/docs/swagger/`                      |
 | CI: CLI + Release  | `.github/workflows/cli.yml`                |
-| CI: Docker image   | `.github/workflows/publish-minimal-images.yml`      |
-| Dockerfile         | `deploy/minimal/Dockerfile.server-with-cli`         |
+| CI: Docker image   | `.github/workflows/publish-self-hosted-images.yml`      |
+| Dockerfile         | `deploy/self-hosted/Dockerfile.server`                  |
 | Upgrade command    | `tools/cli/internal/cmd/upgrade.go`        |
 | Versioning docs    | `apps/server/VERSIONING.md`                      |
-| Docker registry    | `ghcr.io/emergent-company/memory-server-with-cli`   |
+| Docker registry    | `ghcr.io/emergent-company/memory-server`            |
 
 ## Checklist
 

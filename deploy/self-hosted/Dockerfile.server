@@ -129,10 +129,10 @@ COPY --from=server-builder /build/server/docs/swagger /app/docs/swagger
 COPY apps/server/migrations/*.sql /app/migrations/
 
 # Copy entrypoint and CLI wrapper
-COPY deploy/minimal/entrypoint.sh /app/entrypoint.sh
+COPY deploy/self-hosted/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-COPY deploy/minimal/memory-wrapper.sh /usr/local/bin/emergent
+COPY deploy/self-hosted/memory-wrapper.sh /usr/local/bin/emergent
 RUN chmod +x /usr/local/bin/emergent
 
 # Create directory for CLI config

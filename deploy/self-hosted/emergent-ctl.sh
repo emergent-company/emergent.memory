@@ -7,12 +7,12 @@ CONFIG_DIR="$INSTALL_DIR/config"
 ENV_FILE="$CONFIG_DIR/.env.local"
 
 find_compose_file() {
-    if [ -f "$INSTALL_DIR/build/src/deploy/minimal/docker-compose.local.yml" ]; then
-        echo "$INSTALL_DIR/build/src/deploy/minimal/docker-compose.local.yml"
+    if [ -f "$INSTALL_DIR/build/src/deploy/self-hosted/docker-compose.local.yml" ]; then
+        echo "$INSTALL_DIR/build/src/deploy/self-hosted/docker-compose.local.yml"
     elif [ -f "$INSTALL_DIR/docker/docker-compose.yml" ]; then
         echo "$INSTALL_DIR/docker/docker-compose.yml"
     else
-        for f in "$HOME"/.emergent/*/deploy/minimal/docker-compose.local.yml; do
+        for f in "$HOME"/.emergent/*/deploy/self-hosted/docker-compose.local.yml; do
             if [ -f "$f" ]; then
                 echo "$f"
                 return
@@ -61,7 +61,7 @@ check_requirements() {
     fi
     if [ -z "$COMPOSE_FILE" ] || [ ! -f "$COMPOSE_FILE" ]; then
         echo -e "${RED}Error: docker-compose file not found${NC}"
-        echo "Expected at: $INSTALL_DIR/build/src/deploy/minimal/docker-compose.local.yml"
+        echo "Expected at: $INSTALL_DIR/build/src/deploy/self-hosted/docker-compose.local.yml"
         echo "or: $INSTALL_DIR/docker/docker-compose.yml"
         exit 1
     fi
@@ -140,7 +140,7 @@ cmd_rebuild() {
 }
 
 cmd_uninstall() {
-    UNINSTALL_URL="https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/uninstall.sh"
+    UNINSTALL_URL="https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/uninstall.sh"
     echo -e "${BLUE}Running uninstaller...${NC}"
     curl -fsSL "$UNINSTALL_URL" | bash
 }

@@ -368,14 +368,14 @@ jobs:
           ## Docker Image
 
           ```bash
-          docker pull ghcr.io/${{ steps.owner.outputs.lc }}/memory-server-with-cli:${{ steps.version.outputs.version }}
+          docker pull ghcr.io/${{ steps.owner.outputs.lc }}/memory-server:${{ steps.version.outputs.version }}
           ```
 
           Available platforms: `linux/amd64`, `linux/arm64`
 
           Includes: Memory API server, CLI, migration tooling, and Swagger docs.
 
-          [Deployment Guide](https://github.com/${{ github.repository }}/blob/main/deploy/minimal/README.md)
+          [Deployment Guide](https://github.com/${{ github.repository }}/blob/main/deploy/self-hosted/README.md)
           ENDOFNOTES
 
       - name: Create release

@@ -144,7 +144,7 @@ echo ""
 echo "6️⃣  Checking required files..."
 REQUIRED_FILES=(
     "docker-compose.yml"
-    "deploy/minimal/Dockerfile.server-with-cli"
+    "deploy/self-hosted/Dockerfile.server"
     "apps/admin/Dockerfile"
     ".dockerignore"
     ".env.production.example"

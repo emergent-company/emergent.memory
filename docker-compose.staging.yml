@@ -29,7 +29,7 @@ services:
   server:
     build:
       context: . # EXPLICIT: Build from repository root
-      dockerfile: deploy/minimal/Dockerfile.server-with-cli
+      dockerfile: deploy/self-hosted/Dockerfile.server
     expose:
       - '3002'
     labels:

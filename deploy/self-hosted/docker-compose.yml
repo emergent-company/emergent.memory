@@ -164,7 +164,7 @@ services:
 
   # Emergent Go Backend
   server:
-    image: ghcr.io/emergent-company/memory-server-with-cli:${VERSION:-latest}
+    image: ghcr.io/emergent-company/memory-server:${VERSION:-latest}
     pull_policy: always
     environment:
       # Standalone Mode Configuration
