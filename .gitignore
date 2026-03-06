@@ -152,3 +152,10 @@ tools/niezatapialni-scraper/niezatapialni-scraper
 tools/emergent-cli/test_search
 pids/
 tools/emergent-cli/.env
+
+# auto-added by commit skill — 2026-03-06
+vertex-sa-key.json
+tui.json
+opencode.jsonc.tui-migration.bak
+docs/hooks/__pycache__/
+apps/server-go/swiftbridge

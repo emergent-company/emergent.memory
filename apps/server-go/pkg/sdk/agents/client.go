@@ -307,10 +307,10 @@ func (c *Client) setHeaders(req *http.Request) error {
 // --- API Methods ---
 
 // List returns all agents for the current project.
-// GET /api/admin/agents
-// Requires admin:read scope.
+// GET /api/projects/:projectId/agents
+// Requires project:read scope.
 func (c *Client) List(ctx context.Context) (*APIResponse[[]Agent], error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/admin/agents", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -338,13 +338,13 @@ func (c *Client) List(ctx context.Context) (*APIResponse[[]Agent], error) {
 }
 
 // Get retrieves a single agent by ID.
-// GET /api/admin/agents/:id
-// Requires admin:read scope.
+// GET /api/projects/:projectId/agents/:id
+// Requires project:read scope.
 func (c *Client) Get(ctx context.Context, agentID string) (*APIResponse[Agent], error) {
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"GET",
-		c.base+"/api/admin/agents/"+url.PathEscape(agentID),
+		c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents/"+url.PathEscape(agentID),
 		nil,
 	)
 	if err != nil {
@@ -494,10 +494,10 @@ func (c *Client) RespondToQuestion(ctx context.Context, projectID, questionID st
 }
 
 // GetRuns returns recent runs for an agent.
-// GET /api/admin/agents/:id/runs
-// Requires admin:read scope.
+// GET /api/projects/:projectId/agents/:id/runs
+// Requires project:read scope.
 func (c *Client) GetRuns(ctx context.Context, agentID string, limit int) (*APIResponse[[]AgentRun], error) {
-	u, err := url.Parse(c.base + "/api/admin/agents/" + url.PathEscape(agentID) + "/runs")
+	u, err := url.Parse(c.base + "/api/projects/" + url.PathEscape(c.projectID) + "/agents/" + url.PathEscape(agentID) + "/runs")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -536,10 +536,10 @@ func (c *Client) GetRuns(ctx context.Context, agentID string, limit int) (*APIRe
 }
 
 // GetPendingEvents returns pending events for a reaction agent.
-// GET /api/admin/agents/:id/pending-events
-// Requires admin:read scope.
+// GET /api/projects/:projectId/agents/:id/pending-events
+// Requires project:read scope.
 func (c *Client) GetPendingEvents(ctx context.Context, agentID string, limit int) (*APIResponse[PendingEventsResponse], error) {
-	u, err := url.Parse(c.base + "/api/admin/agents/" + url.PathEscape(agentID) + "/pending-events")
+	u, err := url.Parse(c.base + "/api/projects/" + url.PathEscape(c.projectID) + "/agents/" + url.PathEscape(agentID) + "/pending-events")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -578,15 +578,15 @@ func (c *Client) GetPendingEvents(ctx context.Context, agentID string, limit int
 }
 
 // Create creates a new agent.
-// POST /api/admin/agents
-// Requires admin:write scope. Returns 201 on success.
+// POST /api/projects/:projectId/agents
+// Requires project:write scope. Returns 201 on success.
 func (c *Client) Create(ctx context.Context, createReq *CreateAgentRequest) (*APIResponse[Agent], error) {
 	body, err := json.Marshal(createReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/admin/agents", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -615,15 +615,15 @@ func (c *Client) Create(ctx context.Context, createReq *CreateAgentRequest) (*AP
 }
 
 // Update updates an agent (partial update via PATCH).
-// PATCH /api/admin/agents/:id
-// Requires admin:write scope.
+// PATCH /api/projects/:projectId/agents/:id
+// Requires project:write scope.
 func (c *Client) Update(ctx context.Context, agentID string, updateReq *UpdateAgentRequest) (*APIResponse[Agent], error) {
 	body, err := json.Marshal(updateReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/admin/agents/"+url.PathEscape(agentID), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents/"+url.PathEscape(agentID), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -652,10 +652,10 @@ func (c *Client) Update(ctx context.Context, agentID string, updateReq *UpdateAg
 }
 
 // Delete deletes an agent by ID.
-// DELETE /api/admin/agents/:id
-// Requires admin:write scope.
+// DELETE /api/projects/:projectId/agents/:id
+// Requires project:write scope.
 func (c *Client) Delete(ctx context.Context, agentID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/admin/agents/"+url.PathEscape(agentID), nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents/"+url.PathEscape(agentID), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -680,10 +680,10 @@ func (c *Client) Delete(ctx context.Context, agentID string) error {
 }
 
 // Trigger triggers an immediate run of an agent.
-// POST /api/admin/agents/:id/trigger
-// Requires admin:write scope.
+// POST /api/projects/:projectId/agents/:id/trigger
+// Requires project:write scope.
 func (c *Client) Trigger(ctx context.Context, agentID string) (*TriggerResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/trigger", nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents/"+url.PathEscape(agentID)+"/trigger", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -711,15 +711,15 @@ func (c *Client) Trigger(ctx context.Context, agentID string) (*TriggerResponse,
 }
 
 // BatchTrigger triggers a reaction agent for multiple graph objects.
-// POST /api/admin/agents/:id/batch-trigger
-// Requires admin:write scope. Max 100 objects per batch.
+// POST /api/projects/:projectId/agents/:id/batch-trigger
+// Requires project:write scope. Max 100 objects per batch.
 func (c *Client) BatchTrigger(ctx context.Context, agentID string, batchReq *BatchTriggerRequest) (*APIResponse[BatchTriggerResponse], error) {
 	body, err := json.Marshal(batchReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/batch-trigger", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents/"+url.PathEscape(agentID)+"/batch-trigger", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -748,13 +748,13 @@ func (c *Client) BatchTrigger(ctx context.Context, agentID string, batchReq *Bat
 }
 
 // CancelRun cancels a running agent run.
-// POST /api/admin/agents/:id/runs/:runId/cancel
-// Requires admin:write scope.
+// POST /api/projects/:projectId/agents/:id/runs/:runId/cancel
+// Requires project:write scope.
 func (c *Client) CancelRun(ctx context.Context, agentID, runID string) error {
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"POST",
-		c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/runs/"+url.PathEscape(runID)+"/cancel",
+		c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents/"+url.PathEscape(agentID)+"/runs/"+url.PathEscape(runID)+"/cancel",
 		nil,
 	)
 	if err != nil {
@@ -943,9 +943,9 @@ func (c *Client) GetRunToolCalls(ctx context.Context, projectID, runID string) (
 // --- Webhook Hook Methods ---
 
 // CreateWebhookHook creates a new webhook hook for an agent.
-// POST /api/admin/agents/:id/hooks
+// POST /api/projects/:projectId/agents/:id/hooks
 // Returns 201 on success. The plaintext token is only returned once.
-// Requires admin:write scope.
+// Requires project:write scope.
 func (c *Client) CreateWebhookHook(ctx context.Context, agentID string, createReq *CreateWebhookHookRequest) (*APIResponse[WebhookHook], error) {
 	body, err := json.Marshal(createReq)
 	if err != nil {
@@ -955,7 +955,7 @@ func (c *Client) CreateWebhookHook(ctx context.Context, agentID string, createRe
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"POST",
-		c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/hooks",
+		c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents/"+url.PathEscape(agentID)+"/hooks",
 		bytes.NewReader(body),
 	)
 	if err != nil {
@@ -986,13 +986,13 @@ func (c *Client) CreateWebhookHook(ctx context.Context, agentID string, createRe
 }
 
 // ListWebhookHooks lists all webhook hooks for an agent.
-// GET /api/admin/agents/:id/hooks
-// Requires admin:read scope.
+// GET /api/projects/:projectId/agents/:id/hooks
+// Requires project:read scope.
 func (c *Client) ListWebhookHooks(ctx context.Context, agentID string) (*APIResponse[[]WebhookHook], error) {
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"GET",
-		c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/hooks",
+		c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents/"+url.PathEscape(agentID)+"/hooks",
 		nil,
 	)
 	if err != nil {
@@ -1022,13 +1022,13 @@ func (c *Client) ListWebhookHooks(ctx context.Context, agentID string) (*APIResp
 }
 
 // DeleteWebhookHook deletes a webhook hook.
-// DELETE /api/admin/agents/:id/hooks/:hookId
-// Requires admin:write scope.
+// DELETE /api/projects/:projectId/agents/:id/hooks/:hookId
+// Requires project:write scope.
 func (c *Client) DeleteWebhookHook(ctx context.Context, agentID, hookID string) error {
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"DELETE",
-		c.base+"/api/admin/agents/"+url.PathEscape(agentID)+"/hooks/"+url.PathEscape(hookID),
+		c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents/"+url.PathEscape(agentID)+"/hooks/"+url.PathEscape(hookID),
 		nil,
 	)
 	if err != nil {

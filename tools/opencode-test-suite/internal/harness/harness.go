@@ -4,7 +4,7 @@
 // Auth: uses the emergent CLI for both create and delete so that the CLI's
 // configured OAuth/API-key flow handles authentication automatically.
 // For local dev, override the server via EMERGENT_TEST_SERVER env var
-// (defaults to http://localhost:3012).
+// (defaults to http://localhost:5300).
 package harness
 
 import (
@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	defaultServer  = "http://localhost:3012"
+	defaultServer  = "http://localhost:5300"
 	deleteGraceSec = 5 // seconds to wait after async delete
 )
 
@@ -146,25 +146,6 @@ func SetupAuth(t *testing.T, token string) {
 		t.Fatalf("harness: auth set-token: %v\noutput: %s", err, out)
 	}
 	t.Logf("harness: auth configured (set-token)")
-}
-
-// SetupVertexExpressProvider saves a Vertex AI Express credential for the
-// organisation that the local emergent CLI is authenticated as.
-// It runs `emergent provider set-vertex-express <apiKey> --server <url>` using
-// the CLI's own auth (from ~/.emergent/config.yaml), so it works independently
-// of any workspace .env.local.
-//
-// Call this before starting the opencode server so the credential is in place
-// when the agent calls `emergent provider test vertex-ai-express`.
-func SetupVertexExpressProvider(t *testing.T, apiKey string) {
-	t.Helper()
-
-	srv := serverURL()
-	out, err := runCLI(t, "provider", "set-vertex-express", apiKey, "--server", srv)
-	if err != nil {
-		t.Fatalf("harness: set-vertex-express: %v\noutput: %s", err, out)
-	}
-	t.Logf("harness: vertex-ai-express provider configured")
 }
 
 // CreateProjectToken creates a project-scoped API token for the given project ID

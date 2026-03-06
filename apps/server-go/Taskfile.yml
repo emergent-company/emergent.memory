@@ -121,7 +121,7 @@ tasks:
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
           echo "Server: RUNNING (PID $PID)"
-          curl -sf http://localhost:3002/health && echo " health: OK" || echo " health: UNREACHABLE"
+          curl -sf http://localhost:3012/health && echo " health: OK" || echo " health: UNREACHABLE"
         else
           echo "Server: NOT RUNNING (stale PID $PID)"
           exit 1
