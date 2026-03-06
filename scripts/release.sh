@@ -5,10 +5,10 @@
 # Example: bash scripts/release.sh 0.28.0
 #
 # What this does:
-#   1. Updates VERSION and apps/server-go/cmd/server/main.go
+#   1. Updates VERSION and apps/server/cmd/server/main.go
 #   2. Commits the bump
-#   3. Tags v<new> (triggers emergent-cli.yml + publish-minimal-images.yml)
-#   4. Tags apps/server-go/pkg/sdk/v<new> (Go module proxy)
+#   3. Tags v<new> (triggers cli.yml + publish-minimal-images.yml)
+#   4. Tags apps/server/pkg/sdk/v<new> (Go module proxy)
 #   5. Pushes the commit and both tags
 
 set -euo pipefail
@@ -53,7 +53,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   exit 1
 fi
 
-MAIN_GO="apps/server-go/cmd/server/main.go"
+MAIN_GO="apps/server/cmd/server/main.go"
 if ! grep -q "// @version $CURRENT" "$MAIN_GO"; then
   echo "Error: expected '// @version $CURRENT' in $MAIN_GO — not found."
   echo "Update the file manually before re-running this script."
@@ -77,13 +77,13 @@ git commit -m "chore: bump version to $NEW"
 
 echo "▸ Tagging..."
 git tag "v$NEW"
-git tag "apps/server-go/pkg/sdk/v$NEW"
+git tag "apps/server/pkg/sdk/v$NEW"
 
 echo "▸ Pushing commit..."
 git push origin "$BRANCH"
 
 echo "▸ Pushing tags..."
-git push origin "v$NEW" "apps/server-go/pkg/sdk/v$NEW"
+git push origin "v$NEW" "apps/server/pkg/sdk/v$NEW"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
@@ -91,10 +91,10 @@ echo ""
 echo "Released v$NEW"
 echo ""
 echo "Tags pushed:"
-echo "  v$NEW                         → emergent-cli.yml (CLI binaries + GitHub Release)"
-echo "  apps/server-go/pkg/sdk/v$NEW  → Go module proxy"
+echo "  v$NEW                         → cli.yml (CLI binaries + GitHub Release)"
+echo "  apps/server/pkg/sdk/v$NEW  → Go module proxy"
 echo ""
 echo "CI will build:"
 echo "  - Cross-platform CLI binaries (linux, darwin, windows, freebsd × amd64/arm64)"
 echo "  - Docker images (ghcr.io/emergent-company/emergent-server-with-cli:$NEW)"
-echo "  - Docker images (ghcr.io/emergent-company/emergent-cli:$NEW)"
+echo "  - Docker images (ghcr.io/emergent-company/memory-cli:$NEW)"

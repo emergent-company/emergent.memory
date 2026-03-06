@@ -6,8 +6,8 @@ dotenv:
 
 includes:
   server:
-    taskfile: apps/server-go/Taskfile.yml
-    dir: apps/server-go
+    taskfile: apps/server/Taskfile.yml
+    dir: apps/server
 
 tasks:
   build:
@@ -57,7 +57,7 @@ tasks:
 
   dev:
     desc: Start server with hot reload (air, foreground)
-    dir: apps/server-go
+    dir: apps/server
     cmds:
       - air
     env:
@@ -80,7 +80,7 @@ tasks:
 
   cli:install:
     desc: Build and install the memory CLI to ~/.local/bin/memory
-    dir: tools/emergent-cli
+    dir: tools/cli
     cmds:
       - go build -o ~/.local/bin/memory ./cmd/main.go
       - echo "Installed memory CLI → ~/.local/bin/memory"
@@ -103,8 +103,8 @@ tasks:
       - |
         echo "Releasing v{{.VERSION}}"
         echo "{{.VERSION}}" > VERSION
-        sed -i "s|// @version .*|// @version {{.VERSION}}|" apps/server-go/cmd/server/main.go
-        git add VERSION apps/server-go/cmd/server/main.go
+        sed -i "s|// @version .*|// @version {{.VERSION}}|" apps/server/cmd/server/main.go
+        git add VERSION apps/server/cmd/server/main.go
         git status
         git commit -m "chore: bump version to {{.VERSION}}"
         git tag v{{.VERSION}}

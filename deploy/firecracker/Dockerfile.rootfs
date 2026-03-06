@@ -23,10 +23,10 @@ FROM golang:1.24-alpine AS agent-builder
 RUN apk add --no-cache git
 
 WORKDIR /build
-COPY apps/server-go/go.mod apps/server-go/go.sum ./
+COPY apps/server/go.mod apps/server/go.sum ./
 RUN go mod download
 
-COPY apps/server-go/ ./
+COPY apps/server/ ./
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w -extldflags '-static'" \
