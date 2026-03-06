@@ -42,8 +42,8 @@ echo "  # Start server (default)"
 echo "  docker run -p 3002:3002 $FULL_IMAGE"
 echo
 echo "  # Run CLI commands"
-echo "  docker run --rm $FULL_IMAGE emergent-cli --help"
+echo "  docker run --rm $FULL_IMAGE memory --help"
 echo
 echo "  # Access CLI in running container"
-echo "  docker exec -it emergent-server emergent-cli projects list"
+echo "  docker exec -it emergent-server memory projects list"
 echo

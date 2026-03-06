@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
-	sdk "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
-	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/documents"
-	sdkerrors "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/errors"
+	sdk "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/documents"
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	"github.com/emergent-company/emergent.memory/tools/huma-test-suite/internal/config"
 )
 

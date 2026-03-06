@@ -1,12 +1,12 @@
 go 1.25.6
 
 use (
-	./apps/server-go
-	./apps/server-go/pkg/sdk
+	./apps/server
+	./apps/server/pkg/sdk
 	./tests/api
 	./tools/e2e-suite
-	./tools/emergent-cli
-	./tools/emergent-cli/tests/docker
+	./tools/cli
+	./tools/cli/tests/docker
 	./tools/huma-test-suite
 	./tools/opencode-test-suite
 )

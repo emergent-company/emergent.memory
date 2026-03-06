@@ -8,18 +8,18 @@ Go monorepo for the Memory knowledge graph platform. React admin UI lives in a *
 
 **Server stack:** Echo (HTTP) · Bun ORM (pgx/Postgres) · fx (dependency injection) · Zitadel (auth)
 
-**Domain layout** (`apps/server-go/domain/<name>/`): agents, apitoken, authinfo, backups, branches, chat, chunking, chunks, datasource, devtools, discoveryjobs, docs, documents, email, embeddingpolicies, events, extraction, githubapp, graph, health, integrations, invites, mcp, mcpregistry, monitoring, notifications, orgs, projects, provider, scheduler, search, standalone, superadmin, tasks, templatepacks, tracing, typeregistry, useraccess, useractivity, userprofile, users, workspace, workspaceimages
+**Domain layout** (`apps/server/domain/<name>/`): agents, apitoken, authinfo, backups, branches, chat, chunking, chunks, datasource, devtools, discoveryjobs, docs, documents, email, embeddingpolicies, events, extraction, githubapp, graph, health, integrations, invites, mcp, mcpregistry, monitoring, notifications, orgs, projects, provider, scheduler, search, standalone, superadmin, tasks, templatepacks, tracing, typeregistry, useraccess, useractivity, userprofile, users, workspace, workspaceimages
 
 Each domain: `handler.go` (Echo routes) · `service.go` (business logic) · `store.go` (Bun ORM queries) · `module.go` (fx wiring)
 
-**DB:** Postgres on port `5436` (not 5432) · schemas: `kb` (knowledge), `core` (users/orgs) · migrations in `apps/server-go/migrations/` via Goose
+**DB:** Postgres on port `5436` (not 5432) · schemas: `kb` (knowledge), `core` (users/orgs) · migrations in `apps/server/migrations/` via Goose
 
-**CLI:** source at `tools/emergent-cli/` · install with `task cli:install` → `~/.local/bin/memory` · defaults to remote `http://mcj-emergent:3002`; override with `--server http://localhost:3012`
+**CLI:** source at `tools/cli/` · install with `task cli:install` → `~/.local/bin/memory` · defaults to remote `http://mcj-emergent:3002`; override with `--server http://localhost:3012`
 
 
 
 ```bash
-# Backend (repo root or apps/server-go)
+# Backend (repo root or apps/server)
 task build          # build Go server binary
 task test           # unit tests
 task test:e2e       # API e2e tests
@@ -62,8 +62,8 @@ task stop        # stop background server
 |---|---|
 | React component | `/root/emergent.memory.ui/src/components/AGENT.md` — 50+ components |
 | React hook | `/root/emergent.memory.ui/src/hooks/AGENT.md` — use `useApi` for ALL API calls |
-| Go endpoint | `apps/server-go/AGENT.md` — fx modules, Echo, Bun ORM |
-| Database entity | `apps/server-go/AGENT.md` — Bun models, kb/core schemas |
+| Go endpoint | `apps/server/AGENT.md` — fx modules, Echo, Bun ORM |
+| Database entity | `apps/server/AGENT.md` — Bun models, kb/core schemas |
 
 Common mistakes: raw `fetch()` calls (use `useApi`), creating components that already exist.
 
@@ -101,8 +101,8 @@ logs/admin/admin.out.log      logs/admin/admin.error.log
 
 | File | Contents |
 |------|----------|
-| `apps/server-go/AGENT.md` | fx modules, Echo handlers, Bun ORM, job queues |
-| `apps/server-go/migrations/README.md` | Goose migration workflow |
+| `apps/server/AGENT.md` | fx modules, Echo handlers, Bun ORM, job queues |
+| `apps/server/migrations/README.md` | Goose migration workflow |
 | `/root/emergent.memory.ui/src/components/AGENT.md` | 50+ components, atomic design, DaisyUI |
 | `/root/emergent.memory.ui/src/components/organisms/DataTable/AGENT.md` | DataTable config, columns, sorting |
 | `/root/emergent.memory.ui/src/contexts/AGENT.md` | Auth, Theme, Toast, Modal contexts |

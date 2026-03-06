@@ -31,7 +31,7 @@ fi
 
 echo "✅ Server health check passed"
 
-if ! docker exec emergent-server emergent-cli status > /dev/null 2>&1; then
+if ! docker exec emergent-server memory status > /dev/null 2>&1; then
     echo "❌ CLI authentication failed"
     echo "   Check API key in credentials.txt"
     exit 1
@@ -39,7 +39,7 @@ fi
 
 echo "✅ CLI authentication successful"
 
-PROJECT_COUNT=$(docker exec emergent-server emergent-cli projects list --output json 2>/dev/null | jq '. | length' 2>/dev/null || echo "0")
+PROJECT_COUNT=$(docker exec emergent-server memory projects list --output json 2>/dev/null | jq '. | length' 2>/dev/null || echo "0")
 
 if [ "$PROJECT_COUNT" -gt 0 ]; then
     echo "✅ Default project created ($PROJECT_COUNT project(s) found)"
@@ -56,6 +56,6 @@ echo "Server URL: http://localhost:$SERVER_PORT"
 echo "Credentials: $INSTALL_DIR/deploy/minimal/credentials.txt"
 echo ""
 echo "Next steps:"
-echo "  docker exec emergent-server emergent-cli projects list"
+echo "  docker exec emergent-server memory projects list"
 echo "  cat $INSTALL_DIR/deploy/minimal/credentials.txt"
 echo ""

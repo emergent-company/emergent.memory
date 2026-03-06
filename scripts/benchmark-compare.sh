@@ -51,7 +51,7 @@ if [ "$GO_READY" = false ] && [ "$NESTJS_READY" = false ]; then
     echo ""
     echo "ERROR: No servers running. Start them first:"
     echo ""
-    echo "  Terminal 1 (Go):     cd apps/server-go && go run ./cmd/server"
+    echo "  Terminal 1 (Go):     cd apps/server && go run ./cmd/server"
     echo "  Terminal 2 (NestJS): cd apps/server && SERVER_PORT=3003 npm run start:dev"
     echo ""
     exit 1

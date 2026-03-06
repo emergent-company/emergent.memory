@@ -14,7 +14,7 @@ task stop 2>/dev/null || true
 
 if [ "$CLEAN" = "1" ]; then
   echo "Clean build..."
-  rm -f apps/server-go/dist/server
+  rm -f apps/server/dist/server
 fi
 
 echo "Starting server..."

@@ -28,7 +28,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SERVER_DIR="$REPO_ROOT/apps/server-go"
+SERVER_DIR="$REPO_ROOT/apps/server"
 BUILD_DIR="$REPO_ROOT/build/firecracker"
 
 # Defaults
