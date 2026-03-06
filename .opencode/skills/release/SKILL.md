@@ -71,7 +71,7 @@ Three places need updating:
 3. **Regenerate Swagger docs** (if OpenAPI version changed):
 
    ```bash
-   nx run server-go:swagger
+   nx run server:swagger
    ```
 
    If swagger generation fails or is unavailable, skip it — the version annotation is what matters for the tag, and CI will regenerate docs during the Docker build.

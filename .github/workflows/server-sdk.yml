@@ -120,5 +120,9 @@ jobs:
         run: |
           SDK_TAG="apps/server/pkg/sdk/${GITHUB_REF#refs/tags/}"
           echo "Creating SDK module tag: $SDK_TAG"
-          git tag "$SDK_TAG"
-          git push origin "$SDK_TAG"
+          if git rev-parse "$SDK_TAG" >/dev/null 2>&1; then
+            echo "Tag $SDK_TAG already exists, skipping"
+          else
+            git tag "$SDK_TAG"
+            git push origin "$SDK_TAG"
+          fi
