@@ -1,0 +1,65 @@
+# docker-compose.yml for emergent CLI Docker-based installation tests.
+#
+# This compose file spins up:
+#   - test-emergent-server:  the Emergent backend API (the test server)
+#   - test-emergent-client:  the Go test container that installs the CLI via install.sh
+#                            and runs all tests against the live server
+#
+# Usage:
+#   docker compose -f docker-compose.yml up --build --abort-on-container-exit
+#
+# The test-emergent-client container exits with the test process exit code, so CI can
+# inspect the exit code to determine pass/fail.
+#
+# Test logs are written to ./test-logs/ on the host (mounted into the container).
+#
+# Environment variables you can override:
+#   EMERGENT_SERVER_IMAGE   - Emergent server Docker image (default: ghcr.io/emergent-company/emergent:latest)
+#   EMERGENT_TEST_TOKEN     - static Bearer token for the dev server (default: e2e-test-user)
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Emergent API server
+  # The test server uses the same image as staging but with local-dev
+  # environment variables so the static e2e-test-user token is accepted.
+  # ─────────────────────────────────────────────────────────────────────────
+  test-emergent-server:
+    image: ${EMERGENT_SERVER_IMAGE:-ghcr.io/emergent-company/emergent:latest}
+    container_name: test-emergent-server
+    environment:
+      # Accept the static e2e-test-user Bearer token
+      E2E_TEST_TOKEN: ${EMERGENT_TEST_TOKEN:-e2e-test-user}
+      # Use an in-memory or ephemeral DB so no external Postgres is needed.
+      # Override with a real DSN if your server image requires Postgres.
+      DATABASE_URL: ${DATABASE_URL:-}
+      PORT: "5300"
+    ports:
+      - "5300:5300"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:5300/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # CLI test runner
+  # Installs the emergent CLI from the GitHub release and runs all Go tests.
+  # ─────────────────────────────────────────────────────────────────────────
+  test-emergent-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: test-emergent-client
+    depends_on:
+      test-emergent-server:
+        condition: service_healthy
+    environment:
+      EMERGENT_TEST_SERVER: "http://test-emergent-server:5300"
+      TEST_LOG_DIR: "/test-logs"
+      CI: "true"
+    volumes:
+      # Persist test session logs to the host so they survive container exit.
+      - ./test-logs:/test-logs
+    # Exit code of `go test` propagates out so CI can detect failures.
+    command: ["go", "test", "-v", "-timeout", "10m", "./..."]

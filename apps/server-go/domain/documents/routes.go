@@ -27,7 +27,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, uploadHandler *UploadHandler, auth
 	writeGroup := g.Group("")
 	writeGroup.Use(authMiddleware.RequireScopes("documents:write"))
 	writeGroup.POST("", h.Create)
-	writeGroup.POST("/upload", h.Upload)
+	writeGroup.POST("/upload", uploadHandler.Upload)
 	writeGroup.POST("/upload/batch", uploadHandler.UploadBatch)
 
 	deleteGroup := g.Group("")

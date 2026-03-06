@@ -169,6 +169,7 @@ func (r *Repository) GetByFileHash(ctx context.Context, projectID, fileHash stri
 		Model(&doc).
 		Where("project_id = ?", projectID).
 		Where("file_hash = ?", fileHash).
+		Limit(1).
 		Scan(ctx)
 
 	if err != nil {

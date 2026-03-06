@@ -930,11 +930,25 @@ func (h *Handler) QueryStream(c echo.Context) error {
 
 	ctx := c.Request().Context()
 
+	// Ensure the project ID from the URL param is in the context so that the
+	// credential resolver (ResolveAny) can look up org-level credentials even
+	// when the caller authenticates via user JWT (which does not set X-Project-ID).
+	if auth.ProjectIDFromContext(ctx) == "" && projectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, projectID)
+	}
+
 	// Fail fast if no LLM provider is configured. Probe the model factory before
 	// opening the SSE stream so clients get a proper HTTP error code, not a
 	// success status with an error buried in the stream.
 	if h.modelFactory != nil {
-		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, h.modelFactory.ModelName())
+		// Use the configured default model name; fall back to a well-known default
+		// so that DB-resolved credentials (org/project) can still be probed even
+		// when LLM_MODEL is not set in the server environment.
+		probeModelName := h.modelFactory.ModelName()
+		if probeModelName == "" {
+			probeModelName = "gemini-2.0-flash"
+		}
+		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
 		if probeErr != nil {
 			return apperror.New(http.StatusServiceUnavailable, "no_provider",
 				"No LLM provider configured for this project. "+

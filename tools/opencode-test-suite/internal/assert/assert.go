@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -206,75 +205,6 @@ func HasGraphObjects(t *testing.T, workspaceDir string, minCount int) {
 	for _, o := range objects {
 		t.Logf("  [%s] %s", o.Type, o.EntityID)
 	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Provider assertions
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ProviderWorks asserts that the named provider credential is configured and
-// passes a live generate test. It runs:
-//
-//	emergent provider test <providerType> --project <projectID> --server <serverURL>
-//
-// Passing projectID causes the CLI to resolve credentials through the project
-// hierarchy (project override → org → env), which is the same path the agent
-// uses when running from the workspace directory with EMERGENT_PROJECT_ID set.
-// A non-zero exit code or an output containing "FAILED" is treated as failure.
-func ProviderWorks(t *testing.T, serverURL, providerType, projectID string) {
-	t.Helper()
-
-	args := []string{"provider", "test", providerType, "--server", serverURL}
-	if projectID != "" {
-		args = append(args, "--project", projectID)
-	}
-	out, err := runCLIGlobal(args...)
-	if err != nil {
-		t.Errorf("assert.ProviderWorks(%q): provider test failed: %v\noutput: %s", providerType, err, out)
-		return
-	}
-	if strings.Contains(out, "FAILED") {
-		t.Errorf("assert.ProviderWorks(%q): provider test output contained FAILED\noutput: %s", providerType, out)
-		return
-	}
-	t.Logf("assert.ProviderWorks(%q): OK\n%s", providerType, out)
-}
-
-// runCLIGlobal runs `emergent <args>` without a working directory (inherits
-// the test process cwd) with a 60s timeout, relying on ~/.emergent/credentials.json
-// auth. Returns combined stdout+stderr. Project-scoped env vars are stripped so
-// a workspace .env.local does not interfere.
-func runCLIGlobal(args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "emergent", args...)
-
-	// Strip project-scoped env vars to prevent .env.local interference.
-	filtered := make([]string, 0, len(os.Environ()))
-	for _, kv := range os.Environ() {
-		switch {
-		case strings.HasPrefix(kv, "EMERGENT_PROJECT_TOKEN="),
-			strings.HasPrefix(kv, "EMERGENT_PROJECT="),
-			strings.HasPrefix(kv, "EMERGENT_PROJECT_ID="),
-			strings.HasPrefix(kv, "EMERGENT_API_KEY="):
-			// skip
-		default:
-			filtered = append(filtered, kv)
-		}
-	}
-	cmd.Env = filtered
-
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-
-	err := cmd.Run()
-	out := strings.TrimSpace(buf.String())
-	if err != nil {
-		return out, fmt.Errorf("emergent %s: %w", strings.Join(args, " "), err)
-	}
-	return out, nil
 }
 
 // runCLI runs `emergent <args>` from dir with a 30s timeout and returns

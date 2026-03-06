@@ -82,6 +82,18 @@ Three places need updating:
    git commit -m "chore: bump version to 0.X.Y"
    ```
 
+### Step 3.5: Pre-tag verification
+
+Before tagging, verify the build is clean:
+
+```bash
+go build ./...                        # must succeed — fix any compile errors first
+git status --short | grep "^?"        # check for untracked files that should have been staged
+```
+
+If `go build ./...` fails, do not tag. Fix the errors and commit first.
+If there are untracked files related to the release (e.g. generated docs), add and commit them now.
+
 ### Step 4: Tag and push
 
 ```bash
@@ -91,9 +103,11 @@ git push origin main --tags
 
 This triggers CI which takes ~5-10 minutes to:
 
-- Build CLI binaries and create GitHub Release
+- Build CLI binaries and **create the GitHub Release** (via `emergent-cli.yml` — the Release appears in GitHub only after CI completes, not immediately after `git tag`)
 - Build and push Docker image to `ghcr.io/emergent-company/emergent-server-with-cli`
 - Upload `images-ready.txt` sentinel when Docker image is ready
+
+> **NOTE:** `git tag` + `git push --tags` does NOT immediately create a GitHub Release. The Release is created by the `emergent-cli.yml` CI workflow. Monitor progress with: `gh run watch`
 
 ### Step 5: Deploy to servers (optional)
 
@@ -149,8 +163,10 @@ ssh root@<server> "curl -s http://localhost:3002/health | jq '.version'"
 - [ ] OpenAPI `@version` annotation updated in `main.go`
 - [ ] Swagger docs regenerated (if possible)
 - [ ] Version bump committed
+- [ ] `go build ./...` passes (no compile errors)
+- [ ] No untracked release-related files (`git status --short | grep "^?"`)
 - [ ] Tag created: `git tag v0.X.Y`
 - [ ] Pushed: `git push origin main --tags`
-- [ ] CI completed (check GitHub Actions)
+- [ ] CI completed — GitHub Release created by CI (`gh run watch`)
 - [ ] Server upgraded (if requested)
 - [ ] Health check verified on target server
