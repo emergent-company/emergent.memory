@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/skillsfs"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/skillsfs"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"

@@ -59,8 +59,8 @@ sudo mv emergent-cli-linux-amd64 /usr/local/bin/emergent-cli
 ```bash
 docker pull ghcr.io/eyedea-io/emergent-cli:latest
 
-docker run --rm -e EMERGENT_SERVER_URL=http://host.docker.internal:9090 \
-  -e EMERGENT_API_KEY=your-key \
+docker run --rm -e MEMORY_SERVER_URL=http://host.docker.internal:9090 \
+  -e MEMORY_API_KEY=your-key \
   ghcr.io/eyedea-io/emergent-cli:latest projects list
 ```
 

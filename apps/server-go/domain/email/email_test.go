@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/aymerick/raymond"
-	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 func TestMailgunSenderValidate(t *testing.T) {

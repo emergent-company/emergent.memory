@@ -177,14 +177,14 @@ timeout: 30s
 	return path
 }
 
-// WithConfigFile creates a temporary config file and sets the EMERGENT_CONFIG env var.
+// WithConfigFile creates a temporary config file and sets the MEMORY_CONFIG env var.
 // Both the file and env var are cleaned up when the test finishes.
 func WithConfigFile(t *testing.T, content string) string {
 	t.Helper()
 
 	path := CreateTempConfig(t, content)
 
-	SetEnv(t, "EMERGENT_CONFIG", path)
+	SetEnv(t, "MEMORY_CONFIG", path)
 
 	return path
 }

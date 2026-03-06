@@ -47,7 +47,7 @@ var SupportedProtocolVersions = []string{"2025-06-18", "2025-11-25"}
 const LatestProtocolVersion = "2025-11-25"
 
 var ServerInfo = map[string]string{
-	"name":    "emergent-mcp-server-go",
+	"name":    "memory-mcp-server-go",
 	"version": "1.0.0",
 }
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GITHUB_REPO="emergent-company/emergent"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.emergent/bin}"
+GITHUB_REPO="emergent-company/emergent.memory"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.memory/bin}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -48,7 +48,7 @@ main() {
     local ext="tar.gz"
     [ "$os" = "windows" ] && ext="zip"
     
-    download_url="https://github.com/${GITHUB_REPO}/releases/download/${version}/emergent-cli-${os}-${arch}.${ext}"
+    download_url="https://github.com/${GITHUB_REPO}/releases/download/${version}/memory-cli-${os}-${arch}.${ext}"
     
     log "Downloading ${version} for ${platform}..."
     tmp_dir=$(mktemp -d)
@@ -66,41 +66,41 @@ main() {
     mkdir -p "$INSTALL_DIR"
     
     local binary
-    binary=$(find . -type f -name 'emergent-cli*' ! -name '*.tar.gz' ! -name '*.zip' | head -1)
+    binary=$(find . -type f -name 'memory-cli*' ! -name '*.tar.gz' ! -name '*.zip' | head -1)
     [ -z "$binary" ] && error "Binary not found in archive"
     
-    mv "$binary" "${INSTALL_DIR}/emergent"
-    chmod +x "${INSTALL_DIR}/emergent"
+    mv "$binary" "${INSTALL_DIR}/memory"
+    chmod +x "${INSTALL_DIR}/memory"
     
-    success "Installed to ${INSTALL_DIR}/emergent"
+    success "Installed to ${INSTALL_DIR}/memory"
     
     setup_path
     setup_completion
     
     echo
-    "${INSTALL_DIR}/emergent" version
+    "${INSTALL_DIR}/memory" version
     
     echo
-    log "Run 'emergent install' to set up a standalone server"
-    log "Run 'emergent upgrade --force' to update an existing installation"
+    log "Run 'memory install' to set up a standalone server"
+    log "Run 'memory upgrade --force' to update an existing installation"
     
     echo
     prompt_google_api_key
 }
 
 setup_path() {
-    local path_line="export PATH=\"\$HOME/.emergent/bin:\$PATH\""
+    local path_line="export PATH=\"\$HOME/.memory/bin:\$PATH\""
     local added_to=""
     
     # Helper: try to append PATH config to a file
     # Returns 0 on success, 1 on failure (e.g., symlink to read-only location)
     try_append() {
         local file="$1"
-        if [ -f "$file" ] && grep -q "\.emergent/bin" "$file" 2>/dev/null; then
+        if [ -f "$file" ] && grep -q "\.memory/bin" "$file" 2>/dev/null; then
             return 0  # Already configured
         fi
         # Try writing; handle read-only symlinks (e.g., Mackup -> iCloud)
-        if { echo "" >> "$file" && echo "# Emergent CLI" >> "$file" && echo "$path_line" >> "$file"; } 2>/dev/null; then
+        if { echo "" >> "$file" && echo "# Memory CLI" >> "$file" && echo "$path_line" >> "$file"; } 2>/dev/null; then
             return 0
         fi
         return 1
@@ -109,7 +109,7 @@ setup_path() {
     # Zsh: try .zshrc first, fall back to .zshenv (not managed by Mackup, sourced by all zsh sessions)
     if command -v zsh &>/dev/null; then
         if [ -f "$HOME/.zshrc" ]; then
-            if grep -q "\.emergent/bin" "$HOME/.zshrc" 2>/dev/null; then
+            if grep -q "\.memory/bin" "$HOME/.zshrc" 2>/dev/null; then
                 added_to="${added_to} ~/.zshrc"
             elif try_append "$HOME/.zshrc"; then
                 added_to="${added_to} ~/.zshrc"
@@ -123,7 +123,7 @@ setup_path() {
     
     # Bash: try .bashrc first, fall back to .bash_profile, then .profile
     if [ -f "$HOME/.bashrc" ]; then
-        if grep -q "\.emergent/bin" "$HOME/.bashrc" 2>/dev/null; then
+        if grep -q "\.memory/bin" "$HOME/.bashrc" 2>/dev/null; then
             added_to="${added_to} ~/.bashrc"
         elif try_append "$HOME/.bashrc"; then
             added_to="${added_to} ~/.bashrc"
@@ -157,20 +157,20 @@ setup_completion() {
     try_append_completion() {
         local file="$1"
         local line="$2"
-        if [ -f "$file" ] && grep -q "emergent completion" "$file" 2>/dev/null; then
+        if [ -f "$file" ] && grep -q "memory completion" "$file" 2>/dev/null; then
             return 0  # Already configured
         fi
-        if { echo "" >> "$file" && echo "# Emergent CLI shell completion" >> "$file" && echo "$line" >> "$file"; } 2>/dev/null; then
+        if { echo "" >> "$file" && echo "# Memory CLI shell completion" >> "$file" && echo "$line" >> "$file"; } 2>/dev/null; then
             return 0
         fi
         return 1
     }
 
-    # Zsh: source <(emergent completion zsh)
+    # Zsh: source <(memory completion zsh)
     if command -v zsh &>/dev/null; then
-        local zsh_line='source <(emergent completion zsh)'
+        local zsh_line='source <(memory completion zsh)'
         if [ -f "$HOME/.zshrc" ]; then
-            if grep -q "emergent completion" "$HOME/.zshrc" 2>/dev/null; then
+            if grep -q "memory completion" "$HOME/.zshrc" 2>/dev/null; then
                 added_to="${added_to} ~/.zshrc"
             elif try_append_completion "$HOME/.zshrc" "$zsh_line"; then
                 added_to="${added_to} ~/.zshrc"
@@ -182,11 +182,11 @@ setup_completion() {
         fi
     fi
 
-    # Bash: source <(emergent completion bash)
+    # Bash: source <(memory completion bash)
     if command -v bash &>/dev/null; then
-        local bash_line='source <(emergent completion bash)'
+        local bash_line='source <(memory completion bash)'
         if [ -f "$HOME/.bashrc" ]; then
-            if grep -q "emergent completion" "$HOME/.bashrc" 2>/dev/null; then
+            if grep -q "memory completion" "$HOME/.bashrc" 2>/dev/null; then
                 added_to="${added_to} ~/.bashrc"
             elif try_append_completion "$HOME/.bashrc" "$bash_line"; then
                 added_to="${added_to} ~/.bashrc"
@@ -204,8 +204,8 @@ setup_completion() {
     else
         log "Could not auto-configure shell completion."
         log "Add manually to your shell rc file:"
-        log "  zsh:  source <(emergent completion zsh)"
-        log "  bash: source <(emergent completion bash)"
+        log "  zsh:  source <(memory completion zsh)"
+        log "  bash: source <(memory completion bash)"
     fi
 }
 
@@ -247,11 +247,11 @@ prompt_google_api_key() {
             log "Run 'emergent install' or restart services to apply"
         else
             success "Google API key noted"
-            log "Pass it during server setup: emergent install --google-api-key ${google_api_key}"
+            log "Pass it during server setup: memory install --google-api-key ${google_api_key}"
         fi
     else
-        log "Skipped. You can set it later with: emergent config set google_api_key YOUR_KEY"
-        log "Or pass it during install: emergent install --google-api-key YOUR_KEY"
+        log "Skipped. You can set it later with: memory config set google_api_key YOUR_KEY"
+        log "Or pass it during install: memory install --google-api-key YOUR_KEY"
     fi
 }
 

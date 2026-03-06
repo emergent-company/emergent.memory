@@ -11,9 +11,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent-company/emergent/domain/datasource"
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/emergent-company/emergent.memory/domain/datasource"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
 // DataSourceDeadLetterTestSuite tests the dead letter queue functionality for data source sync jobs

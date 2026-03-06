@@ -240,7 +240,7 @@ create_installation_directory() {
 download_files() {
     log "Downloading configuration files..."
     
-    local base_url="https://raw.githubusercontent.com/emergent-company/emergent/master/deploy/minimal"
+    local base_url="https://raw.githubusercontent.com/emergent-company/emergent.memory/master/deploy/minimal"
     
     curl -fsSL "${base_url}/docker-compose.yml" -o "$INSTALL_DIR/docker-compose.yml"
     success "Downloaded docker-compose.yml"
@@ -409,7 +409,7 @@ cleanup_on_error() {
         docker compose down -v 2>/dev/null || true
     fi
     
-    echo "For support, please visit: https://github.com/emergent-company/emergent/issues"
+    echo "For support, please visit: https://github.com/emergent-company/emergent.memory/issues"
 }
 
 main() {

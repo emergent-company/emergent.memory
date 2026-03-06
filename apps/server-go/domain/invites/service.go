@@ -11,7 +11,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // Service handles invitation operations

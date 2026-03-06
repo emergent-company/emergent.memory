@@ -13,16 +13,16 @@ import (
 	"log"
 	"os"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
 )
 
 func main() {
-	apiKey := os.Getenv("EMERGENT_API_KEY")
+	apiKey := os.Getenv("MEMORY_API_KEY")
 	if apiKey == "" {
-		log.Fatal("EMERGENT_API_KEY environment variable required")
+		log.Fatal("MEMORY_API_KEY environment variable required")
 	}
 
-	serverURL := os.Getenv("EMERGENT_SERVER_URL")
+	serverURL := os.Getenv("MEMORY_SERVER_URL")
 	if serverURL == "" {
 		serverURL = "http://localhost:3002"
 	}
@@ -33,8 +33,8 @@ func main() {
 			Mode:   "apikey",
 			APIKey: apiKey,
 		},
-		OrgID:     os.Getenv("EMERGENT_ORG_ID"),
-		ProjectID: os.Getenv("EMERGENT_PROJECT_ID"),
+		OrgID:     os.Getenv("MEMORY_ORG_ID"),
+		ProjectID: os.Getenv("MEMORY_PROJECT_ID"),
 	})
 	if err != nil {
 		log.Fatalf("Failed to create SDK client: %v", err)

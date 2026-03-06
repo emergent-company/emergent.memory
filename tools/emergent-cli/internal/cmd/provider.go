@@ -9,9 +9,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/provider"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/provider"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/client"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -132,7 +132,7 @@ Supported providers:
   google-ai   — Google AI (Gemini API); requires --api-key
   vertex-ai   — Google Cloud Vertex AI; requires --gcp-project, --location
 
-The project is read from --project or the EMERGENT_PROJECT_ID environment variable.
+The project is read from --project or the MEMORY_PROJECT_ID environment variable.
 
 Examples:
   emergent provider configure-project google-ai --api-key AIzaSy...
@@ -165,10 +165,10 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 	// Resolve project ID: flag → env var → error
 	projectID := configureProjectID
 	if projectID == "" {
-		projectID = os.Getenv("EMERGENT_PROJECT_ID")
+		projectID = os.Getenv("MEMORY_PROJECT_ID")
 	}
 	if projectID == "" {
-		return fmt.Errorf("--project is required (or set EMERGENT_PROJECT_ID / EMERGENT_PROJECT in .env.local)")
+		return fmt.Errorf("--project is required (or set MEMORY_PROJECT_ID / MEMORY_PROJECT in .env.local)")
 	}
 
 	if configureProjectRemove {
@@ -470,10 +470,10 @@ func runProviderTest(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 
-	// If --project was not explicitly passed, fall back to EMERGENT_PROJECT_ID
+	// If --project was not explicitly passed, fall back to MEMORY_PROJECT_ID
 	// from the environment (auto-loaded from .env.local by the CLI).
 	if testProviderProjectID == "" {
-		testProviderProjectID = os.Getenv("EMERGENT_PROJECT_ID")
+		testProviderProjectID = os.Getenv("MEMORY_PROJECT_ID")
 	}
 
 	// Always resolve the org ID so we can pass it to TestProvider for credential resolution.
@@ -562,7 +562,7 @@ func init() {
 	configureProjectCmd.Flags().StringVar(&configureProjectLocation, "location", "", "GCP region, e.g. us-central1 (required for vertex-ai)")
 	configureProjectCmd.Flags().StringVar(&configureProjectGenerativeModel, "generative-model", "", "Generative model to use (auto-selected from catalog if omitted)")
 	configureProjectCmd.Flags().StringVar(&configureProjectEmbeddingModel, "embedding-model", "", "Embedding model to use (auto-selected from catalog if omitted)")
-	configureProjectCmd.Flags().StringVar(&configureProjectID, "project", "", "Project ID (auto-detected from EMERGENT_PROJECT_ID)")
+	configureProjectCmd.Flags().StringVar(&configureProjectID, "project", "", "Project ID (auto-detected from MEMORY_PROJECT_ID)")
 	configureProjectCmd.Flags().BoolVar(&configureProjectRemove, "remove", false, "Remove the project-level override and inherit org config")
 
 	// models flags

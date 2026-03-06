@@ -9,8 +9,8 @@ import (
 	adkmodel "google.golang.org/adk/model"
 	"google.golang.org/genai"
 
-	"github.com/emergent-company/emergent/pkg/auth"
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // usageRecorder is a minimal interface for dispatching LLM usage events.

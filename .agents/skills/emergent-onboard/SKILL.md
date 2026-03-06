@@ -1,20 +1,20 @@
 ---
 name: emergent-onboard
-description: Onboard a project into Emergent — understand what the project is, choose or create an Emergent project, design and install a template pack, then guide on creating objects and relationships. Use when setting up Emergent for a new project or codebase for the first time.
+description: Onboard a project into Memory — understand what the project is, choose or create a Memory project, design and install a template pack, then guide on creating objects and relationships. Use when setting up Memory for a new project or codebase for the first time.
 metadata:
   author: emergent
   version: "1.7"
 ---
 
-Onboard the current project into Emergent by understanding what it is, selecting or creating an Emergent project, designing a matching knowledge graph schema (template pack), installing it, and guiding the user through populating the graph.
+Onboard the current project into Memory by understanding what it is, selecting or creating a Memory project, designing a matching knowledge graph schema (template pack), installing it, and guiding the user through populating the graph.
 
-> **Rule:** Use only `emergent` CLI commands throughout this workflow. Never use `curl`, raw HTTP requests, or direct API calls — the CLI handles authentication and project context automatically.
+> **Rule:** Use only `memory` CLI commands throughout this workflow. Never use `curl`, raw HTTP requests, or direct API calls — the CLI handles authentication and project context automatically.
 
 ---
 
-## What is Emergent?
+## What is Memory?
 
-**Emergent** is a knowledge graph platform. It stores information about a project as structured **objects** (typed nodes) connected by **relationships** (typed edges). Agents and users can query the graph in natural language, and the graph is automatically populated by extracting knowledge from documents.
+**Memory** is a knowledge graph platform. It stores information about a project as structured **objects** (typed nodes) connected by **relationships** (typed edges). Agents and users can query the graph in natural language, and the graph is automatically populated by extracting knowledge from documents.
 
 Key concepts:
 - **Project** — the top-level container. One project per codebase/product/domain.
@@ -29,7 +29,7 @@ Key concepts:
 
 ### Step 1 — Understand the project
 
-> **IMPORTANT: All file exploration must be anchored to the current working directory (CWD).** Do NOT navigate to or read files from other directories (e.g., `/root/emergent` or any path that isn't the user's project CWD). The project being onboarded is whatever is in the CWD.
+> **IMPORTANT: All file exploration must be anchored to the current working directory (CWD).** Do NOT navigate to or read files from other directories (e.g., `/root/emergent.memory` or any path that isn't the user's project CWD). The project being onboarded is whatever is in the CWD.
 
 First, confirm the CWD and list its contents:
 ```bash
@@ -48,20 +48,20 @@ Read `README.md`, `AGENTS.md`, `package.json`, `go.mod`, or any top-level docume
 Example questions to confirm with the user:
 > "This looks like a Go microservice for X. I'm thinking the key entities are: Service, Endpoint, Migration, and Dependency. Does that sound right? Anything to add or change?"
 
-### Step 2 — Choose or create an Emergent project
+### Step 2 — Choose or create a Memory project
 
-Before designing anything, establish which Emergent project this repository will use.
+Before designing anything, establish which Memory project this repository will use.
 
 #### 2a. Check if already configured
 
-Check whether `.env.local` already contains `EMERGENT_PROJECT`:
+Check whether `.env.local` already contains `MEMORY_PROJECT`:
 
 ```bash
-cat .env.local 2>/dev/null | grep EMERGENT_PROJECT
+cat .env.local 2>/dev/null | grep MEMORY_PROJECT
 ```
 
-- **If `EMERGENT_PROJECT=<id>` is found:** show the user the project ID and name (`emergent projects get <id>` if available, otherwise just the ID), then ask:
-  > "This repo is already connected to Emergent project `<name>` (`<id>`). Continue with this project, or switch to a different one?"
+- **If `MEMORY_PROJECT=<id>` is found:** show the user the project ID and name (`memory projects get <id>` if available, otherwise just the ID), then ask:
+  > "This repo is already connected to Memory project `<name>` (`<id>`). Continue with this project, or switch to a different one?"
   - If they confirm: proceed to Step 3.
   - If they want to switch: continue with Step 2b below.
 
@@ -70,7 +70,7 @@ cat .env.local 2>/dev/null | grep EMERGENT_PROJECT
 #### 2b. List existing projects
 
 ```bash
-emergent projects list
+memory projects list
 ```
 
 - **If projects are listed:** present them to the user and ask which one to use for this repo, or whether they want to create a new project.
@@ -81,45 +81,45 @@ emergent projects list
 Suggest a project name derived from the repository directory name or the project's product name:
 
 ```bash
-emergent projects create --name "<suggested-name>"
+memory projects create --name "<suggested-name>"
 ```
 
 Note the returned project ID.
 
 #### 2d. Write project ID to .env.local
 
-Write (or update) `EMERGENT_PROJECT` in `.env.local`:
+Write (or update) `MEMORY_PROJECT` in `.env.local`:
 
 ```bash
 # If .env.local does not exist:
-echo "EMERGENT_PROJECT=<project-id>" > .env.local
+echo "MEMORY_PROJECT=<project-id>" > .env.local
 
-# If .env.local exists but has no EMERGENT_PROJECT line:
-echo "EMERGENT_PROJECT=<project-id>" >> .env.local
+# If .env.local exists but has no MEMORY_PROJECT line:
+echo "MEMORY_PROJECT=<project-id>" >> .env.local
 
-# If .env.local already has EMERGENT_PROJECT (switching projects):
+# If .env.local already has MEMORY_PROJECT (switching projects):
 # Replace the existing line (use sed or rewrite the file)
 ```
 
 Confirm with the user:
-> "Set `EMERGENT_PROJECT=<project-id>` in `.env.local`. All subsequent `emergent` CLI commands in this directory will now use this project."
+> "Set `MEMORY_PROJECT=<project-id>` in `.env.local`. All subsequent `memory` CLI commands in this directory will now use this project."
 
 Also remind the user to add `.env.local` to `.gitignore` if it is not already there (it may contain project tokens or other credentials).
 
 ### Step 2.5 — Configure LLM provider credentials
 
-Emergent needs a live LLM provider to extract knowledge from documents and answer queries. Credentials are configured at the **organization level**. During onboarding, check whether credentials are set and, if not, configure them now — document extraction won't work without them.
+Memory needs a live LLM provider to extract knowledge from documents and answer queries. Credentials are configured at the **organization level**. During onboarding, check whether credentials are set and, if not, configure them now — document extraction won't work without them.
 
 #### Check if credentials are configured
 
 ```bash
-emergent provider list
+memory provider list
 ```
 
 **If a provider is listed:** run a live test to confirm it works:
 
 ```bash
-emergent provider test <provider>
+memory provider test <provider>
 # provider is one of: google-ai, vertex-ai
 ```
 
@@ -138,7 +138,7 @@ Ask the user:
 Once they provide the key:
 
 ```bash
-emergent provider configure google-ai --api-key <key>
+memory provider configure google-ai --api-key <key>
 ```
 
 This stores the credentials, syncs the model catalog, auto-selects models, and runs a live test — all in one step. If it succeeds, you will see the chosen generative and embedding models in the output. Proceed to Step 3.
@@ -153,7 +153,7 @@ If the user prefers Vertex AI, ask for:
 - Region (e.g. `us-central1`)
 
 ```bash
-emergent provider configure vertex-ai \
+memory provider configure vertex-ai \
   --key-file <path-to-service-account.json> \
   --gcp-project <gcp-project-id> \
   --location <region>
@@ -224,9 +224,9 @@ Examples: `go-microservice`, `react-app`, `data-pipeline`, `research-papers`
 Once the user confirms the design:
 
 ```bash
-emergent template-packs create --file .memory/templates/<pack-name>/pack.json
+memory template-packs create --file .memory/templates/<pack-name>/pack.json
 # Note the returned pack ID, then install it:
-emergent template-packs install <pack-id>
+memory template-packs install <pack-id>
 ```
 
 Save the pack ID for future reference:
@@ -236,7 +236,7 @@ echo "<pack-id>" > .memory/templates/<pack-name>/pack-id.txt
 
 Verify the types are available:
 ```bash
-emergent template-packs compiled-types
+memory template-packs compiled-types
 ```
 
 ### Step 5 — Populate the graph
@@ -246,8 +246,8 @@ The recommended approach is to ingest documents and let Emergent extract objects
 #### Upload documents
 
 ```bash
-emergent documents upload AGENTS.md --auto-extract
-emergent documents upload README.md --auto-extract
+memory documents upload AGENTS.md --auto-extract
+memory documents upload README.md --auto-extract
 # Upload any other relevant files (architecture docs, specs, etc.)
 ```
 
@@ -256,7 +256,7 @@ The `--auto-extract` flag triggers chunking, embedding, and automatic object ext
 #### Query the result
 
 ```bash
-emergent query "what are the main components and how do they relate?"
+memory query "what are the main components and how do they relate?"
 ```
 
 #### Create objects manually (optional)
@@ -265,26 +265,26 @@ If you need to add specific objects that aren't in any document:
 
 ```bash
 # Using named flags (recommended):
-emergent graph objects create --type Service --name "auth-service" --description "Handles authentication"
+memory graph objects create --type Service --name "auth-service" --description "Handles authentication"
 
 # Using raw JSON for additional properties:
-emergent graph objects create --type Service --properties '{"name":"auth-service","description":"Handles authentication"}'
+memory graph objects create --type Service --properties '{"name":"auth-service","description":"Handles authentication"}'
 ```
 
 #### Create relationships manually (optional)
 
 ```bash
-emergent graph relationships create --type depends_on --from <source-object-id> --to <target-object-id>
+memory graph relationships create --type depends_on --from <source-object-id> --to <target-object-id>
 ```
 
-> **Important:** Always use `emergent` CLI commands — never construct raw `curl` API calls. The CLI handles authentication and project context automatically.
+> **Important:** Always use `memory` CLI commands — never construct raw `curl` API calls. The CLI handles authentication and project context automatically.
 
 ---
 
 ## After Onboarding
 
 Remind the user:
-- `.env.local` contains `EMERGENT_PROJECT=<id>` — keep this out of git (add to `.gitignore`)
+- `.env.local` contains `MEMORY_PROJECT=<id>` — keep this out of git (add to `.gitignore`)
 - The template pack definition is saved at `.memory/templates/<pack-name>/pack.json` — commit this to the repo
 - To modify the schema, edit the JSON and create a new pack version (packs are immutable once created)
 - The `emergent-query` skill can be used to explore the populated graph

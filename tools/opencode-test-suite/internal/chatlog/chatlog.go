@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emergent-company/emergent/tools/opencode-test-suite/internal/runner"
+	"github.com/emergent-company/emergent.memory/tools/opencode-test-suite/internal/runner"
 )
 
 // Write schedules a log file write for after all test assertions complete.

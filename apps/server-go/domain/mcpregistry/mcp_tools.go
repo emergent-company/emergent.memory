@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/emergent-company/emergent/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 )
 
 // MCPRegistryToolHandler implements mcp.MCPRegistryToolHandler, providing MCP

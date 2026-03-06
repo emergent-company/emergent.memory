@@ -4,7 +4,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.uber.org/fx"
 
-	"github.com/emergent-company/emergent/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // Module provides the invites domain

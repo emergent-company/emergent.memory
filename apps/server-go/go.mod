@@ -1,4 +1,4 @@
-module github.com/emergent-company/emergent
+module github.com/emergent-company/emergent.memory
 
 go 1.24.12
 
@@ -10,7 +10,7 @@ require (
 	github.com/aymerick/raymond v2.0.2+incompatible
 	github.com/caarlos0/env/v11 v11.3.1
 	github.com/docker/docker v28.5.2+incompatible
-	github.com/emergent-company/emergent/apps/server-go/pkg/sdk v0.24.0
+	github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk v0.24.0
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/jsonschema-go v0.3.0

@@ -3,7 +3,7 @@
 //
 // Auth: uses the emergent CLI for both create and delete so that the CLI's
 // configured OAuth/API-key flow handles authentication automatically.
-// For local dev, override the server via EMERGENT_TEST_SERVER env var
+// For local dev, override the server via MEMORY_TEST_SERVER env var
 // (defaults to http://localhost:5300).
 package harness
 
@@ -32,7 +32,7 @@ type Project struct {
 
 // serverURL returns the Emergent server URL from env or the default.
 func serverURL() string {
-	if v := os.Getenv("EMERGENT_TEST_SERVER"); v != "" {
+	if v := os.Getenv("MEMORY_TEST_SERVER"); v != "" {
 		return v
 	}
 	return defaultServer
@@ -152,7 +152,7 @@ func SetupAuth(t *testing.T, token string) {
 // by running `emergent projects create-token <projectID> --no-env --server <url>`.
 // It returns the raw token string (e.g. "emt_...").
 //
-// The token can then be written to the workspace .env.local as EMERGENT_PROJECT_TOKEN
+// The token can then be written to the workspace .env.local as MEMORY_PROJECT_TOKEN
 // so that CLI commands (like `emergent query`) running inside the opencode agent
 // workspace are authenticated for the project.
 func CreateProjectToken(t *testing.T, projectID string) string {
@@ -203,8 +203,8 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 
 // runCLIInDir runs `emergent <args>` from dir and returns combined output.
 // When dir is empty the command inherits the test process working directory.
-// In both cases, project-scoped environment variables (EMERGENT_PROJECT_TOKEN,
-// EMERGENT_PROJECT, EMERGENT_PROJECT_ID) are stripped from the subprocess
+// In both cases, project-scoped environment variables (MEMORY_PROJECT_TOKEN,
+// MEMORY_PROJECT, MEMORY_PROJECT_ID) are stripped from the subprocess
 // environment to prevent a workspace .env.local in the test process's cwd
 // from interfering with org-level harness calls.
 func runCLIInDir(t *testing.T, dir string, args ...string) (string, error) {
@@ -224,10 +224,10 @@ func runCLIInDir(t *testing.T, dir string, args ...string) (string, error) {
 	filtered := make([]string, 0, len(os.Environ()))
 	for _, kv := range os.Environ() {
 		switch {
-		case strings.HasPrefix(kv, "EMERGENT_PROJECT_TOKEN="),
-			strings.HasPrefix(kv, "EMERGENT_PROJECT="),
-			strings.HasPrefix(kv, "EMERGENT_PROJECT_ID="),
-			strings.HasPrefix(kv, "EMERGENT_API_KEY="):
+		case strings.HasPrefix(kv, "MEMORY_PROJECT_TOKEN="),
+			strings.HasPrefix(kv, "MEMORY_PROJECT="),
+			strings.HasPrefix(kv, "MEMORY_PROJECT_ID="),
+			strings.HasPrefix(kv, "MEMORY_API_KEY="):
 			// skip — these would override our credentials.json auth
 		default:
 			filtered = append(filtered, kv)

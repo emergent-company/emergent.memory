@@ -5,7 +5,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // Handler handles HTTP requests for documentation

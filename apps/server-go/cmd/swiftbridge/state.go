@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	sdk "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
+	sdk "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
 )
 
 // ---------------------------------------------------------------------------

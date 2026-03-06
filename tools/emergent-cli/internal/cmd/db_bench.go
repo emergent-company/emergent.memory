@@ -1,8 +1,8 @@
 package cmd
 
-// db_bench.go — "emergent db bench" command
+// db_bench.go — "memory db bench" command
 //
-// Runs a full end-to-end write benchmark against the Emergent HTTP API using
+// Runs a full end-to-end write benchmark against the Memory HTTP API using
 // real IMDb data, then runs db diagnose EXPLAIN checks on the now-populated DB.
 //
 // Phases:
@@ -17,7 +17,7 @@ package cmd
 //   9. Append JSONL result to log file                             --log
 //
 // Connection for EXPLAIN checks uses the same DSN resolution as "db diagnose".
-// Connection for the API uses --server or the config file / EMERGENT_SERVER_URL.
+// Connection for the API uses --server or the config file / MEMORY_SERVER_URL.
 
 import (
 	"bufio"
@@ -37,10 +37,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	sdkgraph "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	sdkgraph "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/graph"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/projects"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -90,19 +90,19 @@ Phases:
 
 Connection for EXPLAIN checks (first match wins):
   1. --dsn flag
-  2. EMERGENT_DATABASE_URL / DATABASE_URL env var
-  3. ~/.emergent/config/.env.local (auto-detect)
+  2. MEMORY_DATABASE_URL / DATABASE_URL env var
+  3. ~/.memory/config/.env.local (auto-detect)
 
 Connection for the API (first match wins):
   1. --server flag
-  2. EMERGENT_SERVER_URL env var
-  3. ~/.emergent/config.yaml server_url field
+  2. MEMORY_SERVER_URL env var
+  3. ~/.memory/config.yaml server_url field
 
 Examples:
-  emergent db bench
-  emergent db bench --seed 500 --workers 20 --cleanup
-  emergent db bench --dsn "postgres://u:p@localhost:5432/emergent?sslmode=disable"
-  emergent db bench --server http://localhost:3002 --seed 1000 --log /tmp/bench.jsonl`,
+  memory db bench
+  memory db bench --seed 500 --workers 20 --cleanup
+  memory db bench --dsn "postgres://u:p@localhost:5432/emergent?sslmode=disable"
+  memory db bench --server http://localhost:3002 --seed 1000 --log /tmp/bench.jsonl`,
 	RunE: runDbBench,
 }
 
@@ -112,15 +112,15 @@ func init() {
 	dbBenchCmd.Flags().IntVar(&dbBenchFlags.workers, "workers", 20, "number of parallel upload workers")
 	dbBenchCmd.Flags().IntVar(&dbBenchFlags.batch, "batch", 100, "batch size for bulk API calls")
 	dbBenchCmd.Flags().BoolVar(&dbBenchFlags.cleanup, "cleanup", false, "delete the bench project after the run")
-	dbBenchCmd.Flags().StringVar(&dbBenchFlags.logFile, "log", "", "JSONL log file to append results to (default: ~/.emergent/bench_log.jsonl)")
+	dbBenchCmd.Flags().StringVar(&dbBenchFlags.logFile, "log", "", "JSONL log file to append results to (default: ~/.memory/bench_log.jsonl)")
 	dbBenchCmd.Flags().StringVar(&dbBenchFlags.dsn, "dsn", "", "PostgreSQL DSN for EXPLAIN checks (overrides auto-detect)")
-	dbBenchCmd.Flags().StringVar(&dbBenchFlags.server, "server", "", "Emergent server URL (overrides config)")
+	dbBenchCmd.Flags().StringVar(&dbBenchFlags.server, "server", "", "Memory server URL (overrides config)")
 	dbBenchCmd.Flags().StringVar(&dbBenchFlags.projectID, "project", "", "delete this project ID before creating a new bench project")
 	dbBenchCmd.Flags().StringVar(&dbBenchFlags.appendProject, "append-project", "", "append to existing project ID instead of creating a new one")
 	dbBenchCmd.Flags().BoolVar(&dbBenchFlags.skipDelete, "skip-delete", false, "skip deleting --project even if set")
 	dbBenchCmd.Flags().IntVar(&dbBenchFlags.slowMS, "slow", 200, "flag EXPLAIN queries slower than this many ms")
 	dbBenchCmd.Flags().BoolVarP(&dbBenchFlags.verbose, "verbose", "v", false, "print full EXPLAIN output for every query")
-	dbBenchCmd.Flags().StringVar(&dbBenchFlags.configPath, "config-path", "", "path to Emergent config.yaml (default: ~/.emergent/config.yaml)")
+	dbBenchCmd.Flags().StringVar(&dbBenchFlags.configPath, "config-path", "", "path to Memory config.yaml (default: ~/.memory/config.yaml)")
 }
 
 // ─── timing report ────────────────────────────────────────────────────────────
@@ -208,7 +208,7 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	// ── Resolve server URL ────────────────────────────────────────────────────
 	svrURL := dbBenchFlags.server
 	if svrURL == "" {
-		if v := os.Getenv("EMERGENT_SERVER_URL"); v != "" {
+		if v := os.Getenv("MEMORY_SERVER_URL"); v != "" {
 			svrURL = v
 		}
 	}
@@ -223,8 +223,8 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	}
 
 	// ── Resolve API key + org ID ──────────────────────────────────────────────
-	apiKey := os.Getenv("EMERGENT_API_KEY")
-	orgID := os.Getenv("EMERGENT_ORG_ID")
+	apiKey := os.Getenv("MEMORY_API_KEY")
+	orgID := os.Getenv("MEMORY_ORG_ID")
 	if apiKey == "" || orgID == "" {
 		cfgPath := config.DiscoverPath(dbBenchFlags.configPath)
 		if cfg, err := config.LoadWithEnv(cfgPath); err == nil {
@@ -241,7 +241,7 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	logFile := dbBenchFlags.logFile
 	if logFile == "" {
 		home, _ := os.UserHomeDir()
-		logFile = filepath.Join(home, ".emergent", "bench_log.jsonl")
+		logFile = filepath.Join(home, ".memory", "bench_log.jsonl")
 	}
 
 	// ── Collect environment metadata ──────────────────────────────────────────
@@ -434,7 +434,7 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 		printDiagSummary(explainResults)
 	} else {
 		fmt.Printf("\n%sPhase 5: EXPLAIN checks skipped — no DSN found%s\n", diagYellow, diagReset)
-		fmt.Println("  Set --dsn or EMERGENT_DATABASE_URL to enable EXPLAIN analysis.")
+		fmt.Println("  Set --dsn or MEMORY_DATABASE_URL to enable EXPLAIN analysis.")
 	}
 
 	// ── Phase 6: Cleanup (optional) ──────────────────────────────────────────

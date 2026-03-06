@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	sdktpacks "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/templatepacks"
+	sdktpacks "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/templatepacks"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
@@ -18,7 +18,7 @@ import (
 var templatePacksCmd = &cobra.Command{
 	Use:   "template-packs",
 	Short: "Manage template packs",
-	Long:  "Commands for managing template packs in the Emergent platform",
+	Long:  "Commands for managing template packs in the Memory platform",
 }
 
 // ─────────────────────────────────────────────

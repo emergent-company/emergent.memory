@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 
-	"github.com/emergent-company/emergent/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 )
 
 // EmbeddingCredentialAdapter wraps CredentialService to satisfy the

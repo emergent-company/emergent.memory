@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun"
 
-	"github.com/emergent-company/emergent/domain/agents"
+	"github.com/emergent-company/emergent.memory/domain/agents"
 )
 
 // BaseSuite provides common test infrastructure with automatic fixture setup.

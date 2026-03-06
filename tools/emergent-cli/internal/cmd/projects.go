@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apitokens"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/provider"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/completion"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/apitokens"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/projects"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/provider"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/client"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/completion"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )
@@ -22,7 +22,7 @@ import (
 var projectsCmd = &cobra.Command{
 	Use:   "projects",
 	Short: "Manage projects",
-	Long:  "Commands for managing projects in the Emergent platform",
+	Long:  "Commands for managing projects in the Memory platform",
 }
 
 var listProjectsCmd = &cobra.Command{
@@ -44,7 +44,7 @@ var getProjectCmd = &cobra.Command{
 var createProjectCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new project",
-	Long:  "Create a new project in the Emergent platform",
+	Long:  "Create a new project in the Memory platform",
 	RunE:  runCreateProject,
 }
 
@@ -72,7 +72,7 @@ var projectsCreateTokenCmd = &cobra.Command{
 	Long: `Create a new project-scoped API token (emt_...) and print it.
 
 The token is also written to .env.local in the current directory as
-EMERGENT_PROJECT_TOKEN so subsequent CLI commands pick it up automatically.
+MEMORY_PROJECT_TOKEN so subsequent CLI commands pick it up automatically.
 
 Scopes default to: data:read data:write schema:read agents:read agents:write
 
@@ -125,11 +125,11 @@ func runProjectsCreateToken(cmd *cobra.Command, args []string) error {
 		if envMap == nil {
 			envMap = make(map[string]string)
 		}
-		envMap["EMERGENT_PROJECT_TOKEN"] = resp.Token
+		envMap["MEMORY_PROJECT_TOKEN"] = resp.Token
 		if err := godotenv.Write(envMap, ".env.local"); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not write .env.local: %v\n", err)
 		} else {
-			fmt.Println("EMERGENT_PROJECT_TOKEN written to .env.local")
+			fmt.Println("MEMORY_PROJECT_TOKEN written to .env.local")
 		}
 	}
 
@@ -184,7 +184,7 @@ func getClient(cmd *cobra.Command) (*client.Client, error) {
 	}
 
 	if cfg.ServerURL == "" {
-		return nil, fmt.Errorf("no server URL configured. Set EMERGENT_SERVER_URL or run: emergent config set-server <url>")
+		return nil, fmt.Errorf("no server URL configured. Set MEMORY_SERVER_URL or run: memory config set-server <url>")
 	}
 
 	return client.New(cfg)
@@ -532,9 +532,9 @@ func runSetProject(cmd *cobra.Command, args []string) error {
 	if envMap == nil {
 		envMap = make(map[string]string)
 	}
-	envMap["EMERGENT_PROJECT_ID"] = selectedProjectID
-	envMap["EMERGENT_PROJECT_NAME"] = selectedProjectName
-	envMap["EMERGENT_PROJECT_TOKEN"] = tokenValue
+	envMap["MEMORY_PROJECT_ID"] = selectedProjectID
+	envMap["MEMORY_PROJECT_NAME"] = selectedProjectName
+	envMap["MEMORY_PROJECT_TOKEN"] = tokenValue
 
 	err = godotenv.Write(envMap, ".env.local")
 	if err != nil {

@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/pkg/auth"
-	"github.com/emergent-company/emergent/pkg/crypto"
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/crypto"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // ResolvedCredential holds the decrypted credential material and metadata

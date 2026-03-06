@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	// ServerImageRepo is the Docker image repository for the Emergent server
-	ServerImageRepo = "ghcr.io/emergent-company/emergent-server-with-cli"
+	// ServerImageRepo is the Docker image repository for the Memory server
+	ServerImageRepo = "ghcr.io/emergent-company/memory-server-with-cli"
 
 	// PostgresImage is the pgvector-enabled PostgreSQL image used for all deployments.
 	// Bumping this constant is the single source of truth for the postgres version.
@@ -44,7 +44,7 @@ func GetDockerComposeTemplateWithVersion(version string) string {
 	return `services:
   db:
     image: ` + PostgresImage + `
-    container_name: emergent-db
+    container_name: memory-db
     restart: unless-stopped
     command:
       - "postgres"
@@ -79,11 +79,11 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       timeout: 5s
       retries: 10
     networks:
-      - emergent
+      - memory
 
   kreuzberg:
     image: goldziher/kreuzberg:latest
-    container_name: emergent-kreuzberg
+    container_name: memory-kreuzberg
     restart: unless-stopped
     ports:
       - '${KREUZBERG_PORT:-8000}:8000'
@@ -101,11 +101,11 @@ func GetDockerComposeTemplateWithVersion(version string) string {
         reservations:
           memory: 512M
     networks:
-      - emergent
+      - memory
 
   whisper-server:
     image: onerahmet/openai-whisper-asr-webservice:latest
-    container_name: emergent-whisper
+    container_name: memory-whisper
     restart: unless-stopped
     ports:
       - '${WHISPER_PORT:-9000}:9000'
@@ -119,11 +119,11 @@ func GetDockerComposeTemplateWithVersion(version string) string {
         reservations:
           memory: 1G
     networks:
-      - emergent
+      - memory
 
   minio:
     image: minio/minio:latest
-    container_name: emergent-minio
+    container_name: memory-minio
     restart: unless-stopped
     command: server /data --console-address ':9001'
     environment:
@@ -139,11 +139,11 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       timeout: 10s
       retries: 3
     networks:
-      - emergent
+      - memory
 
   minio-init:
     image: minio/mc:latest
-    container_name: emergent-minio-init
+    container_name: memory-minio-init
     depends_on:
       minio:
         condition: service_healthy
@@ -158,16 +158,16 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       exit 0;
       "
     networks:
-      - emergent
+      - memory
 
   server:
     image: ` + serverImage + `
-    container_name: emergent-server
+    container_name: memory-server
     restart: unless-stopped
     ports:
       - '${SERVER_PORT:-3002}:3002'
     volumes:
-      - emergent_cli_config:/root/.emergent
+      - memory_cli_config:/root/.memory
     environment:
       STANDALONE_MODE: 'true'
       STANDALONE_API_KEY: ${STANDALONE_API_KEY}
@@ -215,20 +215,20 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       timeout: 10s
       retries: 3
     networks:
-      - emergent
+      - memory
 
 volumes:
   postgres_data:
   minio_data:
-  emergent_cli_config:
+  memory_cli_config:
 
 networks:
-  emergent:
+  memory:
 `
 }
 
 func GetInitSQLTemplate() string {
-	return `-- PostgreSQL Initialization Script for Emergent Standalone
+	return `-- PostgreSQL Initialization Script for Memory Standalone
 -- Creates required extensions and roles
 
 CREATE EXTENSION IF NOT EXISTS vector;

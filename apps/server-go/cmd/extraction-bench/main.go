@@ -39,9 +39,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/documents"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/graph"
 )
 
 // ─── Version ─────────────────────────────────────────────────────────────────

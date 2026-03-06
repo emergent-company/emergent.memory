@@ -22,7 +22,7 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
-	"github.com/emergent-company/emergent/tools/huma-test-suite/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/huma-test-suite/internal/config"
 )
 
 // driveFields are the file fields fetched from the Drive API.

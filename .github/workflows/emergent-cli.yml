@@ -1,4 +1,4 @@
-name: Emergent CLI & Release
+name: Memory CLI & Release
 
 on:
   push:
@@ -123,15 +123,15 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go build \
-            -ldflags="-s -w -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
-            -o dist/emergent-cli-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
+            -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
             ./cmd
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: emergent-cli-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: tools/emergent-cli/dist/emergent-cli-*
+          name: memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: tools/emergent-cli/dist/memory-cli-*
           retention-days: 7
 
   build-cross:
@@ -201,17 +201,17 @@ jobs:
           fi
 
           go build \
-            -ldflags="-s -w -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
-            -o dist/emergent-cli-${{ matrix.goos }}-${{ matrix.goarch }}${EXT} \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
+            -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}${EXT} \
             ./cmd
 
       - name: Create archive
         working-directory: tools/emergent-cli/dist
         run: |
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip emergent-cli-${{ matrix.goos }}-${{ matrix.goarch }}.zip emergent-cli-${{ matrix.goos }}-${{ matrix.goarch }}.exe
+            zip memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.zip memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.exe
           else
-            tar czf emergent-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz emergent-cli-${{ matrix.goos }}-${{ matrix.goarch }}
+            tar czf memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
           fi
 
       - name: Upload release artifact
@@ -336,14 +336,14 @@ jobs:
 
           | OS | Architecture | Download |
           |----|-------------|----------|
-          | Linux | amd64 | [emergent-cli-linux-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-linux-amd64.tar.gz) |
-          | Linux | arm64 | [emergent-cli-linux-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-linux-arm64.tar.gz) |
-          | Linux | arm | [emergent-cli-linux-arm.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-linux-arm.tar.gz) |
-          | macOS | Apple Silicon | [emergent-cli-darwin-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-darwin-arm64.tar.gz) |
-          | macOS | Intel | [emergent-cli-darwin-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-darwin-amd64.tar.gz) |
-          | Windows | amd64 | [emergent-cli-windows-amd64.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-windows-amd64.zip) |
-          | Windows | arm64 | [emergent-cli-windows-arm64.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-windows-arm64.zip) |
-          | FreeBSD | amd64 | [emergent-cli-freebsd-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/emergent-cli-freebsd-amd64.tar.gz) |
+          | Linux | amd64 | [memory-cli-linux-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-linux-amd64.tar.gz) |
+          | Linux | arm64 | [memory-cli-linux-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-linux-arm64.tar.gz) |
+          | Linux | arm | [memory-cli-linux-arm.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-linux-arm.tar.gz) |
+          | macOS | Apple Silicon | [memory-cli-darwin-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-darwin-arm64.tar.gz) |
+          | macOS | Intel | [memory-cli-darwin-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-darwin-amd64.tar.gz) |
+          | Windows | amd64 | [memory-cli-windows-amd64.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-windows-amd64.zip) |
+          | Windows | arm64 | [memory-cli-windows-arm64.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-windows-arm64.zip) |
+          | FreeBSD | amd64 | [memory-cli-freebsd-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-freebsd-amd64.tar.gz) |
 
           Verify downloads: `sha256sum -c checksums.txt`
 
@@ -354,26 +354,26 @@ jobs:
           ## Go SDK
 
           ```bash
-          go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@${{ github.ref_name }}
+          go get github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk@${{ github.ref_name }}
           ```
 
           ```go
-          import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
+          import "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
           ```
 
-          [SDK Documentation](https://pkg.go.dev/github.com/emergent-company/emergent/apps/server-go/pkg/sdk@${{ github.ref_name }}) | [Examples](https://github.com/${{ github.repository }}/tree/main/apps/server-go/pkg/sdk/examples)
+          [SDK Documentation](https://pkg.go.dev/github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk@${{ github.ref_name }}) | [Examples](https://github.com/${{ github.repository }}/tree/main/apps/server-go/pkg/sdk/examples)
 
           ---
 
           ## Docker Image
 
           ```bash
-          docker pull ghcr.io/${{ steps.owner.outputs.lc }}/emergent-server-with-cli:${{ steps.version.outputs.version }}
+          docker pull ghcr.io/${{ steps.owner.outputs.lc }}/memory-server-with-cli:${{ steps.version.outputs.version }}
           ```
 
           Available platforms: `linux/amd64`, `linux/arm64`
 
-          Includes: Emergent API server, CLI, migration tooling, and Swagger docs.
+          Includes: Memory API server, CLI, migration tooling, and Swagger docs.
 
           [Deployment Guide](https://github.com/${{ github.repository }}/blob/main/deploy/minimal/README.md)
           ENDOFNOTES
@@ -381,7 +381,7 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          name: Emergent ${{ steps.version.outputs.version }}
+          name: Memory ${{ steps.version.outputs.version }}
           body_path: release_notes.md
           files: |
             release-artifacts/*
@@ -417,13 +417,13 @@ jobs:
           ls -la artifacts/
 
           # Extract Linux amd64 binary
-          tar xzf artifacts/emergent-cli-linux-amd64.tar.gz -C .
+          tar xzf artifacts/memory-cli-linux-amd64.tar.gz -C .
 
           # Extract Linux arm64 binary
-          tar xzf artifacts/emergent-cli-linux-arm64.tar.gz -C .
+          tar xzf artifacts/memory-cli-linux-arm64.tar.gz -C .
 
           echo "=== Extracted binaries ==="
-          ls -la emergent-cli-linux-*
+          ls -la memory-cli-linux-*
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -451,7 +451,7 @@ jobs:
           file: tools/emergent-cli/Dockerfile.prebuilt
           push: true
           tags: |
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-amd64
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-amd64
           build-args: |
             TARGETARCH=amd64
             VERSION=${{ steps.version.outputs.version }}
@@ -460,8 +460,8 @@ jobs:
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.revision=${{ steps.version.outputs.commit }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.title=Emergent CLI
-            org.opencontainers.image.description=Command-line interface for Emergent Knowledge Base
+            org.opencontainers.image.title=Memory CLI
+            org.opencontainers.image.description=Command-line interface for Memory Knowledge Base
           platforms: linux/amd64
 
       - name: Build and push Docker image (arm64)
@@ -471,7 +471,7 @@ jobs:
           file: tools/emergent-cli/Dockerfile.prebuilt
           push: true
           tags: |
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-arm64
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-arm64
           build-args: |
             TARGETARCH=arm64
             VERSION=${{ steps.version.outputs.version }}
@@ -480,18 +480,18 @@ jobs:
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.revision=${{ steps.version.outputs.commit }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.title=Emergent CLI
-            org.opencontainers.image.description=Command-line interface for Emergent Knowledge Base
+            org.opencontainers.image.title=Memory CLI
+            org.opencontainers.image.description=Command-line interface for Memory Knowledge Base
           platforms: linux/arm64
 
       - name: Create and push multi-arch manifest
         run: |
           # Create manifest list combining both architectures
-          docker buildx imagetools create -t ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }} \
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-amd64 \
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-arm64
+          docker buildx imagetools create -t ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }} \
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-amd64 \
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-arm64
 
           # Also tag as latest
-          docker buildx imagetools create -t ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:latest \
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-amd64 \
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/emergent-cli:${{ steps.version.outputs.version }}-arm64
+          docker buildx imagetools create -t ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:latest \
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-amd64 \
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-arm64

@@ -14,7 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/fx"
 
-	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 // Module wires OTel tracing into the fx app.

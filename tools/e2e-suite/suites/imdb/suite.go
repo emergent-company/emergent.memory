@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	sdk "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
-	"github.com/emergent-company/emergent/tools/e2e-suite/suite"
+	sdk "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/graph"
+	"github.com/emergent-company/emergent.memory/tools/e2e-suite/suite"
 )
 
 // Suite implements the IMDB benchmark.

@@ -3,12 +3,12 @@
 //
 // Environment variables:
 //
-//	EMERGENT_TEST_SERVER   - Emergent API base URL (default: http://localhost:5300)
+//	MEMORY_TEST_SERVER   - Emergent API base URL (default: http://localhost:5300)
 //
 // Requirements:
 //   - `opencode` binary in PATH
 //   - `emergent` CLI binary in PATH (built with `task cli:install`)
-//   - A running Emergent server at EMERGENT_TEST_SERVER
+//   - A running Emergent server at MEMORY_TEST_SERVER
 package tests
 
 import (
@@ -17,11 +17,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emergent-company/emergent/tools/opencode-test-suite/internal/assert"
-	"github.com/emergent-company/emergent/tools/opencode-test-suite/internal/chatlog"
-	"github.com/emergent-company/emergent/tools/opencode-test-suite/internal/fixture"
-	"github.com/emergent-company/emergent/tools/opencode-test-suite/internal/harness"
-	"github.com/emergent-company/emergent/tools/opencode-test-suite/internal/runner"
+	"github.com/emergent-company/emergent.memory/tools/opencode-test-suite/internal/assert"
+	"github.com/emergent-company/emergent.memory/tools/opencode-test-suite/internal/chatlog"
+	"github.com/emergent-company/emergent.memory/tools/opencode-test-suite/internal/fixture"
+	"github.com/emergent-company/emergent.memory/tools/opencode-test-suite/internal/harness"
+	"github.com/emergent-company/emergent.memory/tools/opencode-test-suite/internal/runner"
 )
 
 const (
@@ -37,7 +37,7 @@ const (
 const initialPrompt = `start emergent onboarding
 
 Important context:
-- This project is already configured — EMERGENT_PROJECT_ID is set in .env.local.
+- This project is already configured — MEMORY_PROJECT_ID is set in .env.local.
 - Do NOT create a new project or list existing projects. Use the project from .env.local.
 - Complete all remaining steps automatically without asking for confirmation: design the template pack, install it, upload the documents, create graph objects, then run a search query to verify.
 - IMPORTANT: When creating graph objects, use the batch command: emergent graph objects create-batch --file <path>

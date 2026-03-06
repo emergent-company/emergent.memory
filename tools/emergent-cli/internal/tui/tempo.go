@@ -79,7 +79,7 @@ type tracesErrMsg struct {
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 func resolveTempoURL() string {
-	if v := os.Getenv("EMERGENT_TEMPO_URL"); v != "" {
+	if v := os.Getenv("MEMORY_TEMPO_URL"); v != "" {
 		return strings.TrimRight(v, "/")
 	}
 	return "http://localhost:3200"

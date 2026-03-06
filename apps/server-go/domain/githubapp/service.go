@@ -104,8 +104,8 @@ func (s *Service) GenerateManifestURL(callbackURL string) (string, error) {
 	hookURL.Path = path.Join(path.Dir(hookURL.Path), "webhook")
 
 	manifest := map[string]any{
-		"name":         "Emergent",
-		"url":          "https://emergent.sh",
+		"name":         "Memory",
+		"url":          "https://memory.emergent-company.ai",
 		"redirect_url": callbackURL,
 		"hook_attributes": map[string]any{
 			"url":    hookURL.String(),

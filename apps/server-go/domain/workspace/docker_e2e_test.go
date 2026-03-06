@@ -658,14 +658,14 @@ func TestDockerE2E_HostDNSResolution(t *testing.T) {
 		"host.docker.internal should resolve (got: %s %s)", resolveResult.Stdout, resolveResult.Stderr)
 	t.Logf("host.docker.internal resolves to: %s", strings.TrimSpace(resolveResult.Stdout))
 
-	// Verify EMERGENT_API_URL is set
+	// Verify MEMORY_API_URL is set
 	envResult, err := p.Exec(t.Context(), result.ProviderID, &ExecRequest{
-		Command: "echo $EMERGENT_API_URL",
+		Command: "echo $MEMORY_API_URL",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 0, envResult.ExitCode)
 	assert.Contains(t, envResult.Stdout, "http://host.docker.internal:3002",
-		"EMERGENT_API_URL should be set in container environment")
+		"MEMORY_API_URL should be set in container environment")
 
 	t.Log("TG16.9: Host DNS resolution E2E test passed")
 }

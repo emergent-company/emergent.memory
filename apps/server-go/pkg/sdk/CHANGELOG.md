@@ -81,7 +81,7 @@ This is the **first public release** of the Emergent Go SDK. The SDK is producti
 **Installation:**
 
 ```bash
-go get github.com/emergent-company/emergent/apps/server-go/pkg/sdk@v0.4.12
+go get github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk@v0.4.12
 ```
 
 **Breaking Changes:** None (first release)

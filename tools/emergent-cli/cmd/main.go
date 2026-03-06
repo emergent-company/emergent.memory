@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/cmd"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/cmd"
 )
 
 func main() {

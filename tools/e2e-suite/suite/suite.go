@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	sdk "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
+	sdk "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
 )
 
 // Suite is the interface every test scenario must implement.

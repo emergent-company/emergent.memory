@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/emergent-workspace
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/memory-workspace
 
 jobs:
   build-workspace:

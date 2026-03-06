@@ -6,7 +6,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.uber.org/fx"
 
-	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 // Module provides developer tools endpoints (coverage, docs)

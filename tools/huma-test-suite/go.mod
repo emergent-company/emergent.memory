@@ -1,11 +1,11 @@
-module github.com/emergent-company/emergent/tools/huma-test-suite
+module github.com/emergent-company/emergent.memory/tools/huma-test-suite
 
 go 1.24.0
 
-replace github.com/emergent-company/emergent/apps/server-go/pkg/sdk => ../../apps/server-go/pkg/sdk
+replace github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk => ../../apps/server-go/pkg/sdk
 
 require (
-	github.com/emergent-company/emergent/apps/server-go/pkg/sdk v0.0.0
+	github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk v0.0.0
 	github.com/joho/godotenv v1.5.1
 	golang.org/x/oauth2 v0.35.0
 	google.golang.org/api v0.267.0

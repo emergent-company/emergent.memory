@@ -19,8 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/graph"
 )
 
 const ProjectID = "956e3e88-07c5-462b-9076-50ea7e1e7951"

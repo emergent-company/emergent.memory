@@ -15,7 +15,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 
-	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 //go:embed schema.sql

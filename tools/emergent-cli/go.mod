@@ -1,4 +1,4 @@
-module github.com/emergent-company/emergent/tools/emergent-cli
+module github.com/emergent-company/emergent.memory/tools/emergent-cli
 
 go 1.24.12
 
@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
-	github.com/emergent-company/emergent/apps/server-go/pkg/sdk v0.0.0-20260212094821-53f928f864d0
+	github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk v0.0.0-20260212094821-53f928f864d0
 	github.com/go-resty/resty/v2 v2.17.1
 	github.com/joho/godotenv v1.5.1
 	github.com/olekukonko/tablewriter v1.1.3
@@ -65,4 +65,4 @@ require (
 	golang.org/x/time v0.14.0 // indirect
 )
 
-replace github.com/emergent-company/emergent/apps/server-go/pkg/sdk => ../../apps/server-go/pkg/sdk
+replace github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk => ../../apps/server-go/pkg/sdk

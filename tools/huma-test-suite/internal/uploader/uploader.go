@@ -17,10 +17,10 @@ import (
 	"sync"
 	"time"
 
-	sdk "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
-	sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
-	"github.com/emergent-company/emergent/tools/huma-test-suite/internal/config"
+	sdk "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/documents"
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/errors"
+	"github.com/emergent-company/emergent.memory/tools/huma-test-suite/internal/config"
 )
 
 // UploadRecord captures the result of a single document upload.
@@ -51,10 +51,10 @@ type Uploader struct {
 // New creates a new Uploader initialised with the Emergent SDK client.
 func New(cfg *config.Config) (*Uploader, error) {
 	if cfg.EmergentAPIKey == "" {
-		return nil, fmt.Errorf("EMERGENT_API_KEY is required for upload phase")
+		return nil, fmt.Errorf("MEMORY_API_KEY is required for upload phase")
 	}
 	if cfg.EmergentProjectID == "" {
-		return nil, fmt.Errorf("EMERGENT_PROJECT_ID is required for upload phase")
+		return nil, fmt.Errorf("MEMORY_PROJECT_ID is required for upload phase")
 	}
 
 	client, err := sdk.New(sdk.Config{

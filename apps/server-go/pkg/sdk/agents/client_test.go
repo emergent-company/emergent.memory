@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/agents"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/testutil"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/agents"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/testutil"
 )
 
 func TestAgentsList(t *testing.T) {

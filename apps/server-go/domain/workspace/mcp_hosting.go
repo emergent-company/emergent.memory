@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emergent-company/emergent/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 const (

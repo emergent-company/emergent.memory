@@ -10,7 +10,7 @@ Minimal ingestion server aligned with the spec:
 - **Backend:** Go (1.25+)
 - **Database:** PostgreSQL 16 with pgvector
 - **Authentication:** Zitadel (OIDC)
-- **CLI:** Go (emergent-cli)
+- **CLI:** Go (memory-cli)
 - **Automation:** Taskfile
 
 ## Quick Installation
@@ -20,13 +20,13 @@ Minimal ingestion server aligned with the spec:
 Install server + CLI in 2-3 minutes with pre-built images:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent/main/deploy/minimal/install-online.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install-online.sh | bash
 ```
 
 ### Self-Update
 
 ```bash
-emergent upgrade
+memory upgrade
 ```
 
 ## Getting Started

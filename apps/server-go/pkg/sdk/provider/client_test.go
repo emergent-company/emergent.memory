@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/provider"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/testutil"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/provider"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/testutil"
 )
 
 // --- helpers ---

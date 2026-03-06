@@ -1,11 +1,11 @@
 package cmd
 
-// embeddings.go — "emergent embeddings" command group
+// embeddings.go — "memory embeddings" command group
 //
 // Subcommands:
-//   emergent embeddings status   — show pause/run state of all embedding workers
-//   emergent embeddings pause    — pause all embedding workers
-//   emergent embeddings resume   — resume all embedding workers
+//   memory embeddings status   — show pause/run state of all embedding workers
+//   memory embeddings pause    — pause all embedding workers
+//   memory embeddings resume   — resume all embedding workers
 //
 // The commands hit the internal server-side endpoints:
 //   GET  /api/embeddings/status
@@ -23,7 +23,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -39,16 +39,16 @@ var embeddingsFlags struct {
 var embeddingsCmd = &cobra.Command{
 	Use:   "embeddings",
 	Short: "Manage embedding workers",
-	Long: `Inspect and control the embedding workers running in the Emergent server.
+	Long: `Inspect and control the embedding workers running in the Memory server.
 
 Useful for benchmarking: pause all workers before a bench run so embeddings
 don't interfere with write throughput, then resume afterwards.
 
 Examples:
-  emergent embeddings status            Show current worker state
-  emergent embeddings pause             Pause all embedding workers
-  emergent embeddings resume            Resume all embedding workers
-  emergent embeddings pause --server http://mcj-emergent:3002`,
+  memory embeddings status            Show current worker state
+  memory embeddings pause             Pause all embedding workers
+  memory embeddings resume            Resume all embedding workers
+  memory embeddings pause --server http://mcj-emergent:3002`,
 }
 
 func init() {
@@ -73,7 +73,7 @@ func init() {
 func resolveEmbeddingsServerURL() string {
 	u := embeddingsFlags.server
 	if u == "" {
-		if v := os.Getenv("EMERGENT_SERVER_URL"); v != "" {
+		if v := os.Getenv("MEMORY_SERVER_URL"); v != "" {
 			u = v
 		}
 	}
@@ -284,10 +284,10 @@ All flags are optional — omit a flag to leave that value unchanged.
 With no flags, shows the current configuration.
 
 Examples:
-  emergent embeddings config                                  Show current config
-  emergent embeddings config --batch 200 --concurrency 200   Max throughput
-  emergent embeddings config --stale-minutes 60              Raise stale threshold
-  emergent embeddings config --batch 10 --concurrency 10     Throttle down`,
+  memory embeddings config                                  Show current config
+  memory embeddings config --batch 200 --concurrency 200   Max throughput
+  memory embeddings config --stale-minutes 60              Raise stale threshold
+  memory embeddings config --batch 10 --concurrency 10     Throttle down`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// If no flags set, just show status
 		if !cmd.Flags().Changed("batch") &&

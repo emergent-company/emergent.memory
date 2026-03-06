@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/emergent-company/emergent/pkg/syshealth"
+	"github.com/emergent-company/emergent.memory/pkg/syshealth"
 	"github.com/stretchr/testify/assert"
 )
 

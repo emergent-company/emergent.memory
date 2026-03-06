@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/emergent-company/emergent/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 func TestMiddleware_checkStandaloneAPIKey(t *testing.T) {

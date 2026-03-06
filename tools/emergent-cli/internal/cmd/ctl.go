@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/installer"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/installer"
 	"github.com/spf13/cobra"
 )
 
@@ -23,22 +23,22 @@ var ctlFlags struct {
 
 var ctlCmd = &cobra.Command{
 	Use:   "ctl",
-	Short: "Control Emergent services",
-	Long: `Control and manage Emergent standalone services.
+	Short: "Control Memory services",
+	Long: `Control and manage Memory standalone services.
 
-This command provides service management capabilities similar to emergent-ctl:
+This command provides service management capabilities similar to memory-ctl:
   - start/stop/restart services
   - view service status and logs
   - check server health
   - open shell in server container
 
 Examples:
-  emergent ctl start
-  emergent ctl stop
-  emergent ctl status
-  emergent ctl logs -f
-  emergent ctl logs server
-  emergent ctl health`,
+  memory ctl start
+  memory ctl stop
+  memory ctl status
+  memory ctl logs -f
+  memory ctl logs server
+  memory ctl health`,
 }
 
 var ctlStartCmd = &cobra.Command{
@@ -68,13 +68,13 @@ var ctlStatusCmd = &cobra.Command{
 var ctlLogsCmd = &cobra.Command{
 	Use:   "logs [service]",
 	Short: "Show service logs",
-	Long: `Show logs from Emergent services.
+	Long: `Show logs from Memory services.
 
 Examples:
-  emergent ctl logs           # Show recent logs from all services
-  emergent ctl logs -f        # Follow logs in real-time
-  emergent ctl logs server    # Show logs from server only
-  emergent ctl logs -n 50     # Show last 50 lines`,
+  memory ctl logs           # Show recent logs from all services
+  memory ctl logs -f        # Follow logs in real-time
+  memory ctl logs server    # Show logs from server only
+  memory ctl logs -n 50     # Show last 50 lines`,
 	RunE: runCtlLogs,
 }
 
@@ -98,7 +98,7 @@ var ctlPullCmd = &cobra.Command{
 
 func init() {
 	homeDir, _ := os.UserHomeDir()
-	defaultDir := filepath.Join(homeDir, ".emergent")
+	defaultDir := filepath.Join(homeDir, ".memory")
 
 	ctlCmd.PersistentFlags().StringVar(&ctlFlags.dir, "dir", defaultDir, "Installation directory")
 
@@ -122,7 +122,7 @@ func getDockerManager() (*installer.DockerManager, error) {
 	inst := installer.New(cfg)
 
 	if !inst.IsInstalled() {
-		return nil, fmt.Errorf("no installation found at %s. Run 'emergent install' first", ctlFlags.dir)
+		return nil, fmt.Errorf("no installation found at %s. Run 'memory install' first", ctlFlags.dir)
 	}
 
 	output := &installer.DefaultOutput{}
@@ -135,7 +135,7 @@ func runCtlStart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Println("\033[0;34mStarting Emergent services...\033[0m")
+	fmt.Println("\033[0;34mStarting Memory services...\033[0m")
 	if err := dm.Up(); err != nil {
 		return fmt.Errorf("failed to start services: %w", err)
 	}
@@ -149,7 +149,7 @@ func runCtlStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Println("\033[0;34mStopping Emergent services...\033[0m")
+	fmt.Println("\033[0;34mStopping Memory services...\033[0m")
 	if err := dm.Down(false); err != nil {
 		return fmt.Errorf("failed to stop services: %w", err)
 	}
@@ -163,7 +163,7 @@ func runCtlRestart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Println("\033[0;34mRestarting Emergent services...\033[0m")
+	fmt.Println("\033[0;34mRestarting Memory services...\033[0m")
 
 	composePath := filepath.Join(ctlFlags.dir, "docker", "docker-compose.yml")
 	envPath := filepath.Join(ctlFlags.dir, "config", ".env.local")
@@ -187,7 +187,7 @@ func runCtlStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Println("\033[0;34mEmergent Service Status:\033[0m")
+	fmt.Println("\033[0;34mMemory Service Status:\033[0m")
 
 	composePath := filepath.Join(ctlFlags.dir, "docker", "docker-compose.yml")
 	envPath := filepath.Join(ctlFlags.dir, "config", ".env.local")
