@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,11 +10,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/auth"
 	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // healthResponse represents the server health endpoint response
@@ -124,20 +128,105 @@ func maskAPIKey(key string) string {
 	return key[:8] + "..." + key[len(key)-4:]
 }
 
+// tokenInfoResponse mirrors the server-side TokenInfoResponse for /api/auth/me
+type tokenInfoResponse struct {
+	UserID    string `json:"user_id"`
+	Email     string `json:"email,omitempty"`
+	Type      string `json:"type"`
+	ProjectID string `json:"project_id,omitempty"`
+	OrgID     string `json:"org_id,omitempty"`
+}
+
+// registerCmd is a hidden alias for loginCmd — kept for backwards compatibility.
+var registerCmd = &cobra.Command{
+	Use:    "register",
+	Short:  "Create a new Emergent account (alias for login)",
+	Hidden: true,
+	RunE:   runLogin,
+}
+
+// fetchAuthMe calls GET /api/auth/me with the provided Bearer token and returns
+// the parsed response. Returns an error if the request fails or returns non-200.
+func fetchAuthMe(serverURL, accessToken string) (*tokenInfoResponse, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", serverURL+"/api/auth/me", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+
+	var info tokenInfoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+// issuerResponse mirrors the server-side IssuerResponse for /api/auth/issuer
+type issuerResponse struct {
+	Issuer     string `json:"issuer"`
+	Standalone bool   `json:"standalone"`
+}
+
+// fetchIssuer calls GET /api/auth/issuer on the API server and returns the
+// OIDC issuer URL to use for DiscoverOIDC. Returns an error if the server is
+// in standalone mode (no Zitadel) or if the endpoint is unreachable.
+func fetchIssuer(serverURL string) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(serverURL + "/api/auth/issuer")
+	if err != nil {
+		return "", fmt.Errorf("could not reach server at %s: %w", serverURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("server returned status %d for /api/auth/issuer", resp.StatusCode)
+	}
+
+	var info issuerResponse
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return "", fmt.Errorf("failed to parse issuer response: %w", err)
+	}
+
+	if info.Standalone {
+		return "", fmt.Errorf(
+			"this server is running in standalone mode and does not support OAuth authentication.\n" +
+				"Use an API key instead: emergent config set-api-key <key>",
+		)
+	}
+
+	if info.Issuer == "" {
+		return "", fmt.Errorf("server did not return an OIDC issuer URL")
+	}
+
+	return info.Issuer, nil
+}
+
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Authenticate with the Emergent platform",
-	Long: `Authenticate using OAuth Device Flow.
+	Short: "Sign in or create an Emergent account",
+	Long: `Authenticate using the OAuth Device Authorization flow.
 
-This command will:
-1. Discover OAuth endpoints from your server
-2. Request a device code
-3. Open your browser for authorization
-4. Wait for you to complete the flow
-5. Save your credentials locally`,
+Opens your browser so you can sign in or create a new account.
+Your credentials are saved locally for future CLI use.
+
+If this server is running in standalone mode, use an API key instead:
+  emergent config set-api-key <key>`,
 	RunE: runLogin,
 }
 
+// runLogin runs the OAuth device flow: fetch code → prompt → open browser → poll → save.
+// It is also invoked by the hidden "register" alias.
 func runLogin(cmd *cobra.Command, args []string) error {
 	var configPath string
 	configPath, _ = cmd.Flags().GetString("config")
@@ -154,16 +243,24 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	if cfg.ServerURL == "" {
-		return fmt.Errorf("no server URL configured. Run: emergent-cli config set-server <url>")
+		return fmt.Errorf("no server URL configured. Run: emergent config set-server <url>")
 	}
 
-	clientID := "emergent-cli"
+	clientID := "362800068257972227"
 
-	fmt.Printf("Authenticating with %s...\n\n", cfg.ServerURL)
-
-	oidcConfig, err := auth.DiscoverOIDC(cfg.ServerURL)
+	issuerURL, err := fetchIssuer(cfg.ServerURL)
 	if err != nil {
-		return fmt.Errorf("failed to discover OIDC configuration: %w", err)
+		return fmt.Errorf("login is not available: %w", err)
+	}
+
+	oidcConfig, err := auth.DiscoverOIDC(issuerURL)
+	if err != nil {
+		return fmt.Errorf(
+			"could not discover OAuth endpoints from %s\n\n"+
+				"This server may be running in standalone mode. Use an API key instead:\n"+
+				"  emergent config set-api-key <key>",
+			issuerURL,
+		)
 	}
 
 	deviceResp, err := auth.RequestDeviceCode(oidcConfig, clientID, []string{"openid", "profile", "email"})
@@ -171,29 +268,45 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to request device code: %w", err)
 	}
 
-	fmt.Println("Please visit the following URL and enter the code:")
-	fmt.Printf("\n  URL:  %s\n", deviceResp.VerificationURI)
-	fmt.Printf("  Code: %s\n\n", deviceResp.UserCode)
+	// Display the user code prominently.
+	fmt.Println()
+	fmt.Printf("  Your code:  %s\n", deviceResp.UserCode)
+	fmt.Println()
 
-	if deviceResp.VerificationURIComplete != "" {
-		fmt.Println("Or visit this URL with the code pre-filled:")
-		fmt.Printf("  %s\n\n", deviceResp.VerificationURIComplete)
-
-		if err := auth.OpenBrowser(deviceResp.VerificationURIComplete); err != nil {
-			fmt.Fprintf(os.Stderr, "Note: %v\n\n", err)
-		}
+	// Try to copy the code to the clipboard silently.
+	if err := clipboard.WriteAll(deviceResp.UserCode); err == nil {
+		fmt.Println("  (Copied to clipboard)")
 	}
 
-	fmt.Println("Waiting for authorization...")
-
-	tokenResp, err := auth.PollForToken(oidcConfig, deviceResp.DeviceCode, clientID, deviceResp.Interval, deviceResp.ExpiresIn)
-	if err != nil {
-		return fmt.Errorf("failed to obtain token: %w", err)
+	// Pick the best URL to open: use the complete URI if available.
+	browserURL := deviceResp.VerificationURIComplete
+	if browserURL == "" {
+		browserURL = deviceResp.VerificationURI
 	}
 
-	userInfo, err := auth.GetUserInfo(oidcConfig, tokenResp.AccessToken)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to fetch user info: %v\n", err)
+	// Gate on Enter so the user can read the code before the browser opens.
+	fmt.Printf("  Press Enter to open your browser to sign in or create an account.\n")
+	fmt.Printf("  Or visit manually: %s\n\n", browserURL)
+	waitForEnter()
+
+	if openErr := auth.OpenBrowser(browserURL); openErr != nil {
+		// Non-fatal — the user can use the manual URL above.
+		fmt.Fprintf(os.Stderr, "  Note: could not open browser automatically.\n\n")
+	}
+
+	// Poll for the token with a live spinner.
+	fmt.Print("  Waiting for authorization")
+	tokenResp, pollErr := pollWithSpinner(oidcConfig, deviceResp, clientID)
+	fmt.Println() // end the spinner line
+	if pollErr != nil {
+		return fmt.Errorf("authorization failed: %w", pollErr)
+	}
+
+	// Confirm by calling /api/auth/me — also ensures the server-side profile exists.
+	userInfo, meErr := fetchAuthMe(cfg.ServerURL, tokenResp.AccessToken)
+	if meErr != nil {
+		// Non-fatal.
+		fmt.Fprintf(os.Stderr, "  Warning: could not confirm account details: %v\n", meErr)
 	}
 
 	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
@@ -201,10 +314,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
 		ExpiresAt:    expiresAt,
-		IssuerURL:    cfg.ServerURL,
+		IssuerURL:    issuerURL,
 	}
-
-	if userInfo != nil {
+	if userInfo != nil && userInfo.Email != "" {
 		creds.UserEmail = userInfo.Email
 	}
 
@@ -212,16 +324,56 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
-
 	credsPath := filepath.Join(homeDir, ".emergent", "credentials.json")
 	if err := auth.Save(creds, credsPath); err != nil {
 		return fmt.Errorf("failed to save credentials: %w", err)
 	}
 
-	fmt.Println("\n✓ Successfully authenticated!")
-	fmt.Printf("Credentials saved to: %s\n", credsPath)
-
+	fmt.Println()
+	if userInfo != nil && userInfo.Email != "" {
+		fmt.Printf("  Logged in as %s\n", userInfo.Email)
+	} else {
+		fmt.Println("  Logged in successfully.")
+	}
+	fmt.Println()
+	fmt.Println("  Run 'emergent status' to see your account and available projects.")
+	fmt.Println()
 	return nil
+}
+
+// waitForEnter reads (and discards) a single line from stdin, unblocking when
+// the user presses Enter. It is a no-op when stdin is not a terminal.
+func waitForEnter() {
+	// Only gate on Enter when running interactively.
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return
+	}
+	reader := bufio.NewReader(os.Stdin)
+	_, _ = reader.ReadString('\n')
+}
+
+// pollWithSpinner wraps auth.PollForToken and prints a dot every 2 s so the
+// user sees progress. The spinner goroutine is stopped when polling returns.
+func pollWithSpinner(oidcCfg *auth.OIDCConfig, deviceResp *auth.DeviceCodeResponse, clientID string) (*auth.TokenResponse, error) {
+	var done atomic.Bool
+
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			if done.Load() {
+				return
+			}
+			<-ticker.C
+			if !done.Load() {
+				fmt.Print(".")
+			}
+		}
+	}()
+
+	tokenResp, err := auth.PollForToken(oidcCfg, deviceResp.DeviceCode, clientID, deviceResp.Interval, deviceResp.ExpiresIn)
+	done.Store(true)
+	return tokenResp, err
 }
 
 var statusCmd = &cobra.Command{
@@ -255,7 +407,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Println("Not authenticated.")
-			fmt.Println("\nRun 'emergent login' to authenticate, or configure an API key:")
+			fmt.Println("\nSign in or create a new account:")
+			fmt.Println("  emergent login")
+			fmt.Println("\nOr configure a static API key:")
 			fmt.Println("  export EMERGENT_API_KEY=your-api-key")
 			fmt.Println("  # or add 'api_key: your-api-key' to ~/.emergent/config.yaml")
 			return nil
@@ -905,11 +1059,93 @@ func runLogout(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// setTokenCmd stores a static Bearer token as CLI credentials, bypassing
+// the OAuth device flow. Useful for CI, test harnesses, and development
+// environments that provide a pre-issued token (e.g. an e2e test token).
+//
+// The token is saved to ~/.emergent/credentials.json with a 24-hour expiry so
+// the normal OAuth provider picks it up on the next CLI invocation.
+var setTokenCmd = &cobra.Command{
+	Use:   "set-token <bearer-token>",
+	Short: "Save a static Bearer token as CLI credentials",
+	Long: `Save a static Bearer token to ~/.emergent/credentials.json.
+
+Useful in CI, test harnesses, and dev environments where a token is
+pre-issued rather than obtained via the OAuth device flow.
+
+Example:
+  emergent auth set-token e2e-test-user`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSetToken,
+}
+
+var setTokenDuration string
+
+func runSetToken(cmd *cobra.Command, args []string) error {
+	token := args[0]
+
+	var configPath string
+	configPath, _ = cmd.Flags().GetString("config")
+	if configPath == "" {
+		configPath = config.DiscoverPath("")
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	dur := 24 * time.Hour
+	if setTokenDuration != "" {
+		dur, err = time.ParseDuration(setTokenDuration)
+		if err != nil {
+			return fmt.Errorf("invalid --duration %q: %w", setTokenDuration, err)
+		}
+	}
+
+	issuerURL := ""
+	if cfg != nil {
+		issuerURL = cfg.ServerURL
+	}
+
+	creds := &auth.Credentials{
+		AccessToken: token,
+		ExpiresAt:   time.Now().Add(dur),
+		IssuerURL:   issuerURL,
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	credsPath := filepath.Join(homeDir, ".emergent", "credentials.json")
+	if err := auth.Save(creds, credsPath); err != nil {
+		return fmt.Errorf("failed to save credentials: %w", err)
+	}
+
+	// Clear the api_key in config so the credentials.json path is preferred
+	// over any stale standalone key on subsequent CLI invocations.
+	if cfg != nil && cfg.APIKey != "" {
+		cfg.APIKey = ""
+		if saveErr := config.Save(cfg, configPath); saveErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not clear api_key from config: %v\n", saveErr)
+		}
+	}
+
+	fmt.Printf("Token saved to %s (expires in %s).\n", credsPath, dur)
+	return nil
+}
+
 func init() {
 	rootCmd.AddCommand(loginCmd)
+	rootCmd.AddCommand(registerCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(logoutCmd)
 	rootCmd.AddCommand(mcpGuideCmd)
+
+	setTokenCmd.Flags().StringVar(&setTokenDuration, "duration", "", "Token validity duration (default 24h, e.g. 48h, 168h)")
+	rootCmd.AddCommand(setTokenCmd)
 }
 
 // mcpGuideCmd prints MCP configuration snippets for connecting AI agents to Emergent.
