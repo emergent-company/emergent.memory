@@ -201,10 +201,10 @@ func TestWriteDockerCompose(t *testing.T) {
 	composeContent := string(content)
 	checks := []string{
 		"services:",
-		"emergent-server",
-		"emergent-db",
-		"emergent-minio",
-		"emergent-kreuzberg",
+		"memory-server",
+		"memory-db",
+		"memory-minio",
+		"memory-kreuzberg",
 		"pgvector/pgvector:pg17",
 	}
 
