@@ -70,8 +70,8 @@ docker pull ghcr.io/eyedea-io/emergent-cli:latest
 
 # Run with environment variables
 docker run --rm \
-  -e EMERGENT_SERVER_URL=http://localhost:9090 \
-  -e EMERGENT_API_KEY=your-api-key \
+  -e MEMORY_SERVER_URL=http://localhost:9090 \
+  -e MEMORY_API_KEY=your-api-key \
   ghcr.io/eyedea-io/emergent-cli:latest projects list
 ```
 
@@ -101,8 +101,8 @@ docker run -d -p 9090:9090 \
 2. Configure CLI:
 
 ```bash
-export EMERGENT_SERVER_URL=http://localhost:9090
-export EMERGENT_API_KEY=your-secure-key
+export MEMORY_SERVER_URL=http://localhost:9090
+export MEMORY_API_KEY=your-secure-key
 ```
 
 3. Test connection:
@@ -116,7 +116,7 @@ emergent-cli projects list
 1. Configure server URL:
 
 ```bash
-export EMERGENT_SERVER_URL=https://api.emergent-company.ai
+export MEMORY_SERVER_URL=https://api.memory-company.ai
 ```
 
 2. Login via device flow:
@@ -138,18 +138,18 @@ emergent-cli config show
 ### Environment Variables
 
 ```bash
-EMERGENT_SERVER_URL       # Required: Base URL of Emergent server
-EMERGENT_API_KEY          # Optional: API key for standalone mode
-EMERGENT_ORG_ID          # Optional: Default organization ID
-EMERGENT_PROJECT_ID      # Optional: Default project ID
+MEMORY_SERVER_URL       # Required: Base URL of Memory server
+MEMORY_API_KEY          # Optional: API key for standalone mode
+MEMORY_ORG_ID           # Optional: Default organization ID
+MEMORY_PROJECT_ID       # Optional: Default project ID
 ```
 
 ### Configuration File
 
-Location: `~/.emergent/config.yaml`
+Location: `~/.memory/config.yaml`
 
 ```yaml
-server_url: https://api.emergent-company.ai
+server_url: https://api.memory-company.ai
 org_id: org_abc123
 project_id: proj_xyz789
 
@@ -201,6 +201,46 @@ emergent-cli config show        # Display current configuration
 emergent-cli config set <key> <value>  # Set configuration value
 ```
 
+### Blueprints
+
+Apply a declarative configuration directory (template packs and agent definitions) to a project:
+
+```bash
+memory blueprints ./my-config                          # Apply from local folder
+memory blueprints https://github.com/org/repo          # Apply from GitHub repo
+memory blueprints https://github.com/org/repo#v1.0.0   # Apply from a specific tag/branch
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--project <id>` | Target project. Overrides `MEMORY_PROJECT_ID`. |
+| `--upgrade` | Update resources that already exist (by name). Default: skip. |
+| `--dry-run` | Preview actions without making any API calls. |
+| `--token <tok>` | GitHub PAT for private repos. Falls back to `MEMORY_GITHUB_TOKEN`. |
+
+```bash
+# Preview what would happen
+memory blueprints ./my-config --dry-run
+
+# Apply and update existing resources
+memory blueprints ./my-config --upgrade --project proj_abc123
+
+# Apply from a private GitHub repo
+MEMORY_GITHUB_TOKEN=ghp_... memory blueprints https://github.com/org/private-repo
+```
+
+A blueprint directory has this structure:
+
+```
+my-config/
+  packs/        # one YAML/JSON file per template pack
+  agents/       # one YAML/JSON file per agent definition
+```
+
+See the `blueprint-creator` skill for a full guide on authoring blueprint files.
+
 ### General
 
 ```bash
@@ -217,7 +257,7 @@ emergent-cli help               # Show help
 emergent-cli projects list
 
 # With specific org (override default)
-EMERGENT_ORG_ID=org_123 emergent-cli projects list
+MEMORY_ORG_ID=org_123 memory projects list
 
 # JSON output
 emergent-cli projects list --output json
@@ -241,8 +281,8 @@ emergent-cli projects create \
 #!/bin/bash
 set -e
 
-export EMERGENT_SERVER_URL=https://api.prod.emergent.com
-export EMERGENT_API_KEY=$PROD_API_KEY
+export MEMORY_SERVER_URL=https://api.prod.emergent.com
+export MEMORY_API_KEY=$PROD_API_KEY
 
 PROJECT_ID=$(emergent-cli projects create \
   --name "Automated KB" \
@@ -255,7 +295,7 @@ echo "Created project: $PROJECT_ID"
 
 ### Standalone Mode (API Key)
 
-When `EMERGENT_API_KEY` is set:
+When `MEMORY_API_KEY` is set:
 
 - Uses `X-API-Key` header for all requests
 - No OAuth flow required
@@ -267,7 +307,7 @@ When no API key is set:
 
 1. Runs OAuth 2.0 device flow
 2. Opens browser for login
-3. Stores credentials in `~/.emergent/credentials.json`
+3. Stores credentials in `~/.memory/credentials.json`
 4. Auto-refreshes tokens when expired
 
 Credentials structure:
@@ -286,14 +326,14 @@ Credentials structure:
 
 ```bash
 # Test server connectivity
-curl $EMERGENT_SERVER_URL/health
+curl $MEMORY_SERVER_URL/health
 
 # Check configuration
 emergent-cli config show
 
 # Verify API key
-curl -H "X-API-Key: $EMERGENT_API_KEY" \
-  $EMERGENT_SERVER_URL/api/projects
+curl -H "X-API-Key: $MEMORY_API_KEY" \
+  $MEMORY_SERVER_URL/api/projects
 ```
 
 ### Authentication Issues
@@ -304,7 +344,7 @@ emergent-cli auth logout
 emergent-cli auth login
 
 # API Key: Verify key is correct
-echo $EMERGENT_API_KEY
+echo $MEMORY_API_KEY
 
 # Check server logs for auth errors
 docker logs emergent-server
@@ -317,7 +357,7 @@ docker logs emergent-server
 emergent-cli --debug projects list
 
 # Check credential file
-cat ~/.emergent/credentials.json
+cat ~/.memory/credentials.json
 
 # Verify token validity (OAuth mode)
 emergent-cli auth status
