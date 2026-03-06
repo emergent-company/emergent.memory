@@ -159,13 +159,20 @@ func (c *Client) setHeaders(req *http.Request) error {
 	return nil
 }
 
+// projectPath returns the project-scoped base path for agent definition API calls.
+func (c *Client) projectPath() string {
+	c.mu.RLock()
+	pid := c.projectID
+	c.mu.RUnlock()
+	return c.base + "/api/projects/" + url.PathEscape(pid)
+}
+
 // --- API Methods ---
 
 // List returns all agent definitions for the current project.
-// GET /api/admin/agent-definitions
-// Requires admin:read scope.
+// GET /api/projects/:projectId/agent-definitions
 func (c *Client) List(ctx context.Context) (*APIResponse[[]AgentDefinitionSummary], error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/admin/agent-definitions", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.projectPath()+"/agent-definitions", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -224,15 +231,15 @@ func (c *Client) Get(ctx context.Context, definitionID string) (*APIResponse[Age
 }
 
 // Create creates a new agent definition.
-// POST /api/admin/agent-definitions
-// Requires admin:write scope. Returns 201 on success.
+// POST /api/projects/:projectId/agent-definitions
+// Returns 201 on success.
 func (c *Client) Create(ctx context.Context, createReq *CreateAgentDefinitionRequest) (*APIResponse[AgentDefinition], error) {
 	body, err := json.Marshal(createReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/admin/agent-definitions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.projectPath()+"/agent-definitions", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

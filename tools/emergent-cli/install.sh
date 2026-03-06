@@ -223,7 +223,13 @@ prompt_google_api_key() {
     echo "    3. Copy the generated key"
     echo
     echo -n "  Enter your Google API key (press Enter to skip): "
-    read -r google_api_key
+    # Skip interactive prompt in non-interactive environments (CI=true or non-TTY stdin)
+    if [ "${CI:-false}" = "true" ] || [ ! -t 0 ]; then
+        google_api_key=""
+        echo "(skipped — non-interactive)"
+    else
+        read -r google_api_key
+    fi
     
     if [ -n "$google_api_key" ]; then
         mkdir -p "${INSTALL_DIR%/bin}"

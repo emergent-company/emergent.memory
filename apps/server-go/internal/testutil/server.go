@@ -16,6 +16,7 @@ import (
 
 	"github.com/emergent-company/emergent/domain/agents"
 	"github.com/emergent-company/emergent/domain/apitoken"
+	"github.com/emergent-company/emergent/domain/authinfo"
 	"github.com/emergent-company/emergent/domain/branches"
 	"github.com/emergent-company/emergent/domain/chat"
 	"github.com/emergent-company/emergent/domain/chunks"
@@ -89,6 +90,10 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	e.GET("/healthz", healthHandler.Healthz)
 	e.GET("/ready", healthHandler.Ready)
 	e.GET("/debug", healthHandler.Debug)
+
+	// Register auth info routes
+	authInfoHandler := authinfo.NewHandler(db, testDB.Config)
+	authinfo.RegisterRoutes(e, authInfoHandler, authMiddleware)
 
 	// Register protected test routes for auth testing
 	protected := e.Group("/api/test")

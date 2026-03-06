@@ -6,5 +6,7 @@ use (
 	./tests/api
 	./tools/e2e-suite
 	./tools/emergent-cli
+	./tools/emergent-cli/tests/docker
 	./tools/huma-test-suite
+	./tools/opencode-test-suite
 )

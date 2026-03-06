@@ -41,15 +41,6 @@
       },
       "timeout": 60000
     },
-    "gh_grep": {
-      "type": "remote",
-      "url": "https://mcp.grep.app/sse",
-      "timeout": 60000
-    },
-    //    "react-daisyui Docs": {
-    //      "type": "remote",
-    //      "url": "https://gitmcp.io/daisyui/react-daisyui"
-    //   },
     "chrome-devtools": {
       "type": "local",
       "command": [
@@ -57,51 +48,15 @@
         "-y",
         "chrome-devtools-mcp@latest",
         "--browserUrl",
-        "http://127.0.0.1:9222"
+        "http://100.75.227.125:9222"
       ],
       "timeout": 120000
-    },
-    "daisyui-blueprint": {
-      "type": "local",
-      "command": ["daisyui-blueprint"],
-      "environment": {
-        "LICENSE": "19B37-Q9DO7-1YBUL-SUX2D-VHYR4",
-        "EMAIL": "maciej@kucharz.net"
-      },
-      "timeout": 60000
-    },
-    "logs": {
-      "type": "local",
-      "command": ["npx", "tsx", "tools/logs-mcp/src/index.ts"],
-      "timeout": 60000
-    },
-    "workspace": {
-      "type": "local",
-      "command": ["npx", "tsx", "tools/workspace-mcp/src/index.ts"],
-      "timeout": 60000
-    },
-    "api-client": {
-      "type": "local",
-      "command": ["npx", "tsx", "tools/api-client-mcp/src/index.ts"],
-      "timeout": 60000
     }
-    // "signoz": {
-    //   "type": "local",
-    //   "command": ["./tools/bin/signoz-mcp-server"],
-    //   "environment": {
-    //     "SIGNOZ_URL": "http://localhost:3301",
-    //     "SIGNOZ_API_KEY": "ek35B2Ka34ADSeOMLI+xV/1eZbXi7waouH3LfgafOkM=",
-    //     "LOG_LEVEL": "info"
-    //   },
-    //   "timeout": 60000
-    // }
-    // ,
-    // "nx-mcp": {
-    //   "command": "npx",
-    //   "args": ["nx-mcp@latest"]
-    // }
   },
-  "instructions": [".opencode/instructions.md"],
+  "instructions": [
+    "apps/server-go/docs/agent-context/infrastructure.md",
+    "apps/server-go/docs/agent-context/e2e-testing.md"
+  ],
   "tools": {
     "todowrite": true,
     "webfetch": true
