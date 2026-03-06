@@ -33,7 +33,9 @@ WORKDIR /build/server
 RUN go install github.com/swaggo/swag/cmd/swag@v1.16.4
 
 # Copy go.mod/go.sum first for dependency caching
+# Also copy pkg/sdk go.mod/go.sum needed by the replace directive in apps/server/go.mod
 COPY apps/server/go.mod apps/server/go.sum ./
+COPY apps/server/pkg/sdk/go.mod apps/server/pkg/sdk/go.sum ./pkg/sdk/
 RUN go mod download
 
 # Copy source code (cache invalidation point for source changes)
