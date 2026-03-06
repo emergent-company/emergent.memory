@@ -47,7 +47,7 @@ func TestGetDockerComposeTemplate(t *testing.T) {
 		"minio:",
 		"minio-init:",
 		"server:",
-		"emergent-server",
+		"memory-server",
 		"volumes:",
 		"networks:",
 		"STANDALONE_MODE",

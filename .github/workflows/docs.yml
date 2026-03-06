@@ -62,7 +62,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Deploy as latest
-        run: mike deploy --push --update-aliases latest
+        run: mike deploy --push --update-aliases dev latest
 
       - name: Sync root-level files to gh-pages
         run: |
