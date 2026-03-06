@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
 // AgentGraphQueryLiveSuite tests natural language graph queries against live test data in mcj-emergent.

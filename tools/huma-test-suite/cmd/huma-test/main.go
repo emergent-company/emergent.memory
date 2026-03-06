@@ -11,10 +11,10 @@
 //
 // Environment variables (can be set in .env file):
 //
-//	EMERGENT_API_KEY             Emergent API key (required for upload/verify)
-//	EMERGENT_SERVER_URL          Emergent server URL (default: http://mcj-emergent:3002)
-//	EMERGENT_ORG_ID              Emergent org ID
-//	EMERGENT_PROJECT_ID          Emergent project ID for the huma test project
+//	MEMORY_API_KEY             Emergent API key (required for upload/verify)
+//	MEMORY_SERVER_URL          Emergent server URL (default: http://mcj-emergent:3002)
+//	MEMORY_ORG_ID              Emergent org ID
+//	MEMORY_PROJECT_ID          Emergent project ID for the huma test project
 //	GOOGLE_SERVICE_ACCOUNT_JSON  Path to Google service account key file (optional)
 package main
 
@@ -29,10 +29,10 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/emergent-company/emergent/tools/huma-test-suite/internal/config"
-	"github.com/emergent-company/emergent/tools/huma-test-suite/internal/drive"
-	"github.com/emergent-company/emergent/tools/huma-test-suite/internal/uploader"
-	"github.com/emergent-company/emergent/tools/huma-test-suite/internal/verifier"
+	"github.com/emergent-company/emergent.memory/tools/huma-test-suite/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/huma-test-suite/internal/drive"
+	"github.com/emergent-company/emergent.memory/tools/huma-test-suite/internal/uploader"
+	"github.com/emergent-company/emergent.memory/tools/huma-test-suite/internal/verifier"
 )
 
 func main() {
@@ -55,10 +55,10 @@ func main() {
 		Cleanup:     *cleanup,
 
 		// Emergent SDK config
-		EmergentServerURL: getEnv("EMERGENT_SERVER_URL", "http://mcj-emergent:3002"),
-		EmergentAPIKey:    os.Getenv("EMERGENT_API_KEY"),
-		EmergentOrgID:     os.Getenv("EMERGENT_ORG_ID"),
-		EmergentProjectID: os.Getenv("EMERGENT_PROJECT_ID"),
+		EmergentServerURL: getEnv("MEMORY_SERVER_URL", "http://mcj-emergent:3002"),
+		EmergentAPIKey:    os.Getenv("MEMORY_API_KEY"),
+		EmergentOrgID:     os.Getenv("MEMORY_ORG_ID"),
+		EmergentProjectID: os.Getenv("MEMORY_PROJECT_ID"),
 
 		// Google Drive config
 		GoogleServiceAccountJSON: os.Getenv("GOOGLE_SERVICE_ACCOUNT_JSON"),

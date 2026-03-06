@@ -200,12 +200,12 @@ func (ts *TokenService) exchangeForInstallationToken(jwtToken string, installati
 
 // BotCommitIdentity returns the git user.name and user.email for the GitHub App bot.
 func BotCommitIdentity(appID int64) (name string, email string) {
-	name = "emergent-app[bot]"
-	email = fmt.Sprintf("%d+emergent-app[bot]@users.noreply.github.com", appID)
+	name = "memory-app[bot]"
+	email = fmt.Sprintf("%d+memory-app[bot]@users.noreply.github.com", appID)
 	return
 }
 
 // DefaultCommitIdentity returns the default git identity when no GitHub App is configured.
 func DefaultCommitIdentity() (name string, email string) {
-	return "Emergent Agent", "agent@emergent.local"
+	return "Memory Agent", "agent@memory.local"
 }

@@ -93,10 +93,10 @@ Tags pushed:
 
 CI will build:
   - Cross-platform CLI binaries (linux, darwin, windows, freebsd × amd64/arm64)
-  - Docker images (ghcr.io/emergent-company/emergent-server-with-cli:<new>)
-  - Docker images (ghcr.io/emergent-company/emergent-cli:<new>)
+  - Docker images (ghcr.io/emergent-company/memory-server-with-cli:<new>)
+  - Docker images (ghcr.io/emergent-company/memory-cli:<new>)
 
-Monitor at: https://github.com/emergent-company/emergent/actions
+Monitor at: https://github.com/emergent-company/emergent.memory/actions
 ```
 
 ---

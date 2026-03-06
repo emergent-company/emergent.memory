@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/installer"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/installer"
 	"github.com/spf13/cobra"
 )
 
@@ -53,11 +53,11 @@ func isArchLinux() bool {
 }
 
 func isCLIInPath() bool {
-	path, err := exec.LookPath("emergent")
+	path, err := exec.LookPath("memory")
 	if err != nil {
 		return false
 	}
-	// Verify it's actually the emergent CLI (not just any executable named emergent)
+	// Verify it's actually the memory CLI (not just any executable named memory)
 	cmd := exec.Command(path, "version")
 	if err := cmd.Run(); err != nil {
 		return false
@@ -79,16 +79,16 @@ For CLI-only installations:
   - Upgrades just the CLI binary
 
 Examples:
-  emergent upgrade              # Upgrade everything
-  emergent upgrade --cli-only   # Upgrade CLI only (skip server)
-  emergent upgrade server       # Legacy: upgrade server only`,
+  memory upgrade              # Upgrade everything
+  memory upgrade --cli-only   # Upgrade CLI only (skip server)
+  memory upgrade server       # Legacy: upgrade server only`,
 	Run: runUpgrade,
 }
 
 var upgradeServerCmd = &cobra.Command{
 	Use:   "server",
 	Short: "Upgrade the standalone server installation",
-	Long: `Upgrades the Emergent standalone server installation.
+	Long: `Upgrades the Memory standalone server installation.
 
 This will:
   - Pull the latest Docker images
@@ -96,14 +96,14 @@ This will:
   - Preserve all existing configuration and data
 
 Examples:
-  emergent upgrade server
-  emergent upgrade server --dir ~/.emergent`,
+  memory upgrade server
+  memory upgrade server --dir ~/.memory`,
 	RunE: runUpgradeServer,
 }
 
 func init() {
 	homeDir, _ := os.UserHomeDir()
-	defaultDir := filepath.Join(homeDir, ".emergent")
+	defaultDir := filepath.Join(homeDir, ".memory")
 
 	upgradeCmd.Flags().BoolVarP(&upgradeFlags.force, "force", "f", false, "Force upgrade even for dev versions")
 	upgradeCmd.Flags().BoolVar(&upgradeFlags.cliOnly, "cli-only", false, "Only upgrade CLI, skip server")
@@ -136,7 +136,7 @@ func runUpgradeServer(cmd *cobra.Command, args []string) error {
 	inst := installer.New(cfg)
 
 	if !inst.IsInstalled() {
-		return fmt.Errorf("no installation found at %s. Run 'emergent install' first", upgradeFlags.dir)
+		return fmt.Errorf("no installation found at %s. Run 'memory install' first", upgradeFlags.dir)
 	}
 
 	// Check if Docker images are ready before allowing server upgrade
@@ -179,15 +179,15 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	pkgMgr, installedViaPkgMgr := isPackageManagerInstalled()
 	if installedViaPkgMgr {
 		fmt.Println()
-		fmt.Printf("⚠️  Emergent is installed via %s package manager\n", pkgMgr)
+		fmt.Printf("⚠️  Memory is installed via %s package manager\n", pkgMgr)
 		fmt.Println()
 		fmt.Println("To upgrade, use your system package manager:")
 		switch pkgMgr {
 		case "pacman":
-			fmt.Println("  sudo pacman -Syu emergent")
+			fmt.Println("  sudo pacman -Syu memory")
 		}
 		fmt.Println()
-		fmt.Println("The 'emergent upgrade' command is for standalone installations only.")
+		fmt.Println("The 'memory upgrade' command is for standalone installations only.")
 		fmt.Println()
 		return
 	}
@@ -195,7 +195,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	// Check if CLI is in PATH (for standalone installations)
 	if !isCLIInPath() {
 		fmt.Println()
-		fmt.Println("⚠️  Warning: emergent CLI is not in your PATH")
+		fmt.Println("⚠️  Warning: memory CLI is not in your PATH")
 		fmt.Println()
 		currentExec, err := os.Executable()
 		if err == nil {
@@ -234,7 +234,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 
 	cliNeedsUpgrade := latestVersion != currentVersion || upgradeFlags.force
 
-	// Check current server version (saved to ~/.emergent/version after each upgrade)
+	// Check current server version (saved to ~/.memory/version after each upgrade)
 	var serverNeedsUpgrade bool
 	if serverInstalled && !upgradeFlags.cliOnly {
 		serverVersion := strings.TrimPrefix(inst.GetInstalledVersion(), "v")
@@ -264,7 +264,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		fmt.Println()
 		fmt.Println("Options:")
 		fmt.Println("  1. Wait a few minutes and try again")
-		fmt.Println("  2. Upgrade CLI only now with: emergent upgrade --cli-only")
+		fmt.Println("  2. Upgrade CLI only now with: memory upgrade --cli-only")
 		fmt.Println()
 		return
 	}
@@ -369,7 +369,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 }
 
 func getLatestRelease() (*Release, error) {
-	resp, err := http.Get("https://api.github.com/repos/emergent-company/emergent/releases/latest")
+	resp, err := http.Get("https://api.github.com/repos/emergent-company/emergent.memory/releases/latest")
 	if err != nil {
 		return nil, err
 	}

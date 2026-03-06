@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/testutil"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

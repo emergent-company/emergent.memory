@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
-	"github.com/emergent-company/emergent/domain/documents"
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 const (

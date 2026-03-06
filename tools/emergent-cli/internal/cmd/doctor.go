@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/auth"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/auth"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/client"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +28,7 @@ var doctorFlags struct {
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Check system health and configuration",
-	Long: `Run diagnostic checks on your Emergent CLI installation.
+	Long: `Run diagnostic checks on your Memory CLI installation.
 
 This command verifies:
 - Configuration file exists and is valid
@@ -58,7 +58,7 @@ type checkResult struct {
 func runDoctor(cmd *cobra.Command, args []string) error {
 	var results []checkResult
 
-	fmt.Println("Emergent CLI Diagnostics")
+	fmt.Println("Memory CLI Diagnostics")
 	fmt.Println("========================")
 	fmt.Println()
 
@@ -68,7 +68,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	homeDir, _ := os.UserHomeDir()
-	installDir := filepath.Join(homeDir, ".emergent")
+	installDir := filepath.Join(homeDir, ".memory")
 	isStandalone := isStandaloneInstallation(installDir)
 
 	if doctorFlags.debug {
@@ -144,7 +144,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 			} else if r.fixable && !doctorFlags.fix {
 				fmt.Println()
 				fmt.Printf("Issue '%s' can be fixed automatically.\n", r.name)
-				fmt.Println("Run 'emergent doctor --fix' to attempt repair.")
+				fmt.Println("Run 'memory doctor --fix' to attempt repair.")
 			}
 		}
 	}
@@ -253,7 +253,7 @@ func checkConfigStandalone(configPath string, isStandalone bool, cfg *config.Con
 	fmt.Println("NOT FOUND")
 	msg := fmt.Sprintf("Config file not found at %s", configPath)
 	if isStandalone {
-		msg += "\n         To fix: run 'emergent install' to generate config.yaml"
+		msg += "\n         To fix: run 'memory install' to generate config.yaml"
 		msg += "\n         Or create it manually:"
 		msg += fmt.Sprintf("\n           echo 'server_url: http://localhost:3002' > %s", configPath)
 		msg += fmt.Sprintf("\n           echo 'api_key: <your-api-key>' >> %s", configPath)
@@ -306,13 +306,13 @@ func getShellConfigFiles() (primary string, fallbacks []string) {
 	return primary, fallbacks
 }
 
-// fileContainsEmergentPath checks if a file contains the emergent bin PATH entry.
-func fileContainsEmergentPath(filePath string) bool {
+// fileContainsMemoryPath checks if a file contains the memory bin PATH entry.
+func fileContainsMemoryPath(filePath string) bool {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(content), ".emergent/bin")
+	return strings.Contains(string(content), ".memory/bin")
 }
 
 func checkShellPath(installDir string) checkResult {
@@ -322,7 +322,7 @@ func checkShellPath(installDir string) checkResult {
 	shell := os.Getenv("SHELL")
 	shellName := filepath.Base(shell)
 
-	// Check 1: is ~/.emergent/bin in the current runtime PATH?
+	// Check 1: is ~/.memory/bin in the current runtime PATH?
 	pathEnv := os.Getenv("PATH")
 	inCurrentPath := strings.Contains(pathEnv, binDir)
 
@@ -330,12 +330,12 @@ func checkShellPath(installDir string) checkResult {
 	primary, fallbacks := getShellConfigFiles()
 	configuredIn := ""
 
-	if primary != "" && fileContainsEmergentPath(primary) {
+	if primary != "" && fileContainsMemoryPath(primary) {
 		configuredIn = primary
 	}
 	if configuredIn == "" {
 		for _, fb := range fallbacks {
-			if fileContainsEmergentPath(fb) {
+			if fileContainsMemoryPath(fb) {
 				configuredIn = fb
 				break
 			}
@@ -371,7 +371,7 @@ func checkShellPath(installDir string) checkResult {
 		return checkResult{
 			name:    "Shell PATH",
 			status:  "warn",
-			message: fmt.Sprintf("~/.emergent/bin is in PATH but not persisted in shell config (%s)", shellName),
+			message: fmt.Sprintf("~/.memory/bin is in PATH but not persisted in shell config (%s)", shellName),
 			fixable: true,
 			fixType: "fix_shell_path",
 		}
@@ -385,8 +385,8 @@ func checkShellPath(installDir string) checkResult {
 	return checkResult{
 		name:   "Shell PATH",
 		status: "fail",
-		message: fmt.Sprintf("~/.emergent/bin is not in PATH (shell: %s)\n"+
-			"         Add to %s: export PATH=\"$HOME/.emergent/bin:$PATH\"",
+		message: fmt.Sprintf("~/.memory/bin is not in PATH (shell: %s)\n"+
+			"         Add to %s: export PATH=\"$HOME/.memory/bin:$PATH\"",
 			shellName, targetFile),
 		fixable: true,
 		fixType: "fix_shell_path",
@@ -397,7 +397,7 @@ func fixShellPath(installDir string) error {
 	fmt.Println("Fixing shell PATH configuration...")
 
 	primary, fallbacks := getShellConfigFiles()
-	pathLine := `export PATH="$HOME/.emergent/bin:$PATH"`
+	pathLine := `export PATH="$HOME/.memory/bin:$PATH"`
 
 	// Try primary first, then fallbacks
 	candidates := []string{}
@@ -416,7 +416,7 @@ func fixShellPath(installDir string) error {
 
 	for _, file := range candidates {
 		// Skip if already configured
-		if fileContainsEmergentPath(file) {
+		if fileContainsMemoryPath(file) {
 			fmt.Printf("Already configured in %s\n", shortPath(file))
 			return nil
 		}
@@ -440,13 +440,13 @@ func fixShellPath(installDir string) error {
 	return fmt.Errorf("could not write to any shell config file — add manually: %s", pathLine)
 }
 
-// fileContainsCompletionSetup checks if a file already has emergent completion configured.
+// fileContainsCompletionSetup checks if a file already has memory completion configured.
 func fileContainsCompletionSetup(filePath string) bool {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(content), "emergent completion")
+	return strings.Contains(string(content), "memory completion")
 }
 
 func checkShellCompletion() checkResult {
@@ -496,7 +496,7 @@ func checkShellCompletion() checkResult {
 		name:   "Shell Completion",
 		status: "warn",
 		message: fmt.Sprintf("Shell completion is not configured (shell: %s)\n"+
-			"         Add to %s: source <(emergent completion %s)",
+			"         Add to %s: source <(memory completion %s)",
 			shellName, targetFile, shellName),
 		fixable: true,
 		fixType: "fix_shell_completion",
@@ -519,12 +519,12 @@ func fixShellCompletion() error {
 		if err := os.MkdirAll(fishCompletionDir, 0755); err != nil {
 			return fmt.Errorf("could not create fish completions directory: %w", err)
 		}
-		fishFile := filepath.Join(fishCompletionDir, "emergent.fish")
+		fishFile := filepath.Join(fishCompletionDir, "memory.fish")
 		f, err := os.OpenFile(fishFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
 			return fmt.Errorf("could not write fish completion file: %w", err)
 		}
-		_, err = fmt.Fprintln(f, "emergent completion fish | source")
+		_, err = fmt.Fprintln(f, "memory completion fish | source")
 		f.Close()
 		if err != nil {
 			return fmt.Errorf("could not write fish completion file: %w", err)
@@ -534,7 +534,7 @@ func fixShellCompletion() error {
 	}
 
 	primary, fallbacks := getShellConfigFiles()
-	completionLine := fmt.Sprintf("source <(emergent completion %s)", shellName)
+	completionLine := fmt.Sprintf("source <(memory completion %s)", shellName)
 
 	candidates := []string{}
 	if primary != "" {
@@ -610,7 +610,7 @@ func checkGoogleAPIKey(installDir string) checkResult {
 		message: "Google API key is not configured. It is needed for AI-powered features " +
 			"including semantic search, document analysis, and entity extraction.\n" +
 			"         To get a key: visit https://aistudio.google.com/apikey\n" +
-			"         To set it:   emergent config set google_api_key YOUR_KEY",
+			"         To set it:   memory config set google_api_key YOUR_KEY",
 	}
 }
 
@@ -671,7 +671,7 @@ func checkAuth(cfg *config.Config, configPath string) checkResult {
 		}
 	}
 
-	credsPath := filepath.Join(homeDir, ".emergent", "credentials.json")
+	credsPath := filepath.Join(homeDir, ".memory", "credentials.json")
 	creds, err := auth.Load(credsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -679,7 +679,7 @@ func checkAuth(cfg *config.Config, configPath string) checkResult {
 			return checkResult{
 				name:    "Authentication",
 				status:  "warn",
-				message: "No credentials found. Run 'emergent login' or set API key",
+				message: "No credentials found. Run 'memory login' or set API key",
 			}
 		}
 		fmt.Println("ERROR")
@@ -695,7 +695,7 @@ func checkAuth(cfg *config.Config, configPath string) checkResult {
 		return checkResult{
 			name:    "Authentication",
 			status:  "warn",
-			message: "OAuth token expired. Run 'emergent login' to re-authenticate",
+			message: "OAuth token expired. Run 'memory login' to re-authenticate",
 		}
 	}
 
@@ -764,14 +764,14 @@ func checkDockerContainers(installDir string) checkResult {
 	running, stopped := getContainerStatus(installDir)
 
 	installedVersion := getInstalledVersionFromFile(installDir)
-	containerVersion := getContainerVersion("emergent-server")
+	containerVersion := getContainerVersion("memory-server")
 
 	if installedVersion != "" && containerVersion != "" && installedVersion != containerVersion {
 		fmt.Println("VERSION MISMATCH")
 		return checkResult{
 			name:    "Docker Containers",
 			status:  "warn",
-			message: fmt.Sprintf("Version mismatch detected. Installed: %s, Container: %s. Run 'emergent upgrade' to update.", installedVersion, containerVersion),
+			message: fmt.Sprintf("Version mismatch detected. Installed: %s, Container: %s. Run 'memory upgrade' to update.", installedVersion, containerVersion),
 		}
 	}
 
@@ -796,7 +796,7 @@ func checkDockerContainers(installDir string) checkResult {
 		return checkResult{
 			name:    "Docker Containers",
 			status:  "fail",
-			message: "Server container is not running.\n         To start: emergent ctl restart",
+			message: "Server container is not running.\n         To start: memory ctl restart",
 			fixable: true,
 			fixType: "restart_containers",
 		}
@@ -818,7 +818,7 @@ func checkDockerContainers(installDir string) checkResult {
 		return checkResult{
 			name:    "Docker Containers",
 			status:  "fail",
-			message: "Database connection refused. Containers may not be running.\n         To start: emergent ctl restart",
+			message: "Database connection refused. Containers may not be running.\n         To start: memory ctl restart",
 			fixable: true,
 			fixType: "restart_containers",
 		}
@@ -828,7 +828,7 @@ func checkDockerContainers(installDir string) checkResult {
 	return checkResult{
 		name:    "Docker Containers",
 		status:  "fail",
-		message: "Server container is not running.\n         To start: emergent ctl restart\n         Check logs: docker logs emergent-server",
+		message: "Server container is not running.\n         To start: memory ctl restart\n         Check logs: docker logs memory-server",
 		fixable: true,
 		fixType: "restart_containers",
 	}
@@ -950,12 +950,12 @@ func fixDatabasePassword(installDir string) error {
 	time.Sleep(10 * time.Second)
 
 	fmt.Println()
-	fmt.Println("Password synchronized. Run 'emergent doctor' to verify.")
+	fmt.Println("Password synchronized. Run 'memory doctor' to verify.")
 	return nil
 }
 
 func getPostgresPasswordFromContainer() (string, error) {
-	cmd := exec.Command("docker", "exec", "emergent-db", "printenv", "POSTGRES_PASSWORD")
+	cmd := exec.Command("docker", "exec", "memory-db", "printenv", "POSTGRES_PASSWORD")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -1021,7 +1021,7 @@ func offerDestructiveFix(installDir string) error {
 	}
 
 	fmt.Println("Removing PostgreSQL volume...")
-	volumeCmd := exec.Command("docker", "volume", "rm", "emergent_postgres_data")
+	volumeCmd := exec.Command("docker", "volume", "rm", "memory_postgres_data")
 	_ = volumeCmd.Run() // Ignore error - volume may not exist
 
 	fmt.Println("Starting containers...")
@@ -1033,7 +1033,7 @@ func offerDestructiveFix(installDir string) error {
 	time.Sleep(10 * time.Second)
 
 	fmt.Println()
-	fmt.Println("Database reset complete. Run 'emergent doctor' to verify.")
+	fmt.Println("Database reset complete. Run 'memory doctor' to verify.")
 	return nil
 }
 
@@ -1072,7 +1072,7 @@ func checkMCP(cfg *config.Config) checkResult {
 			"protocolVersion": "2025-11-25",
 			"capabilities":    map[string]interface{}{},
 			"clientInfo": map[string]interface{}{
-				"name":    "emergent-cli-doctor",
+				"name":    "memory-cli-doctor",
 				"version": "1.0.0",
 			},
 		},
@@ -1345,7 +1345,7 @@ func printSystemInfo(installDir string, isStandalone bool) {
 
 	if isStandalone {
 		fmt.Println("\nContainer Versions:")
-		containers := []string{"emergent-server", "emergent-db", "emergent-minio", "emergent-kreuzberg"}
+		containers := []string{"memory-server", "memory-db", "memory-minio", "memory-kreuzberg"}
 		for _, name := range containers {
 			version := getContainerVersion(name)
 			if version == "" {

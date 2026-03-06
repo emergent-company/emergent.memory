@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emergent-company/emergent/tools/opencode-test-suite/internal/runner"
+	"github.com/emergent-company/emergent.memory/tools/opencode-test-suite/internal/runner"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,7 +144,7 @@ func toolNames(result *runner.Result) []string {
 
 // HasTemplatePack asserts that at least one template pack is installed in the
 // project. It runs `emergent template-packs installed --output json` from
-// workspaceDir so the CLI picks up EMERGENT_SERVER and EMERGENT_PROJECT from
+// workspaceDir so the CLI picks up MEMORY_SERVER and MEMORY_PROJECT from
 // .env.local automatically.
 func HasTemplatePack(t *testing.T, workspaceDir string) {
 	t.Helper()
@@ -208,8 +208,8 @@ func HasGraphObjects(t *testing.T, workspaceDir string, minCount int) {
 }
 
 // runCLI runs `emergent <args>` from dir with a 30s timeout and returns
-// combined stdout+stderr output. The CLI picks up EMERGENT_SERVER and
-// EMERGENT_PROJECT from .env.local in dir automatically — no flags needed.
+// combined stdout+stderr output. The CLI picks up MEMORY_SERVER and
+// MEMORY_PROJECT from .env.local in dir automatically — no flags needed.
 func runCLI(dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

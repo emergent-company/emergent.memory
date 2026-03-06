@@ -14,10 +14,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
-	"github.com/emergent-company/emergent/domain/extraction/agents"
-	"github.com/emergent-company/emergent/pkg/apperror"
-	"github.com/emergent-company/emergent/pkg/logger"
-	"github.com/emergent-company/emergent/pkg/mathutil"
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/mathutil"
 )
 
 // ExtractionSchemas contains object and relationship schemas.

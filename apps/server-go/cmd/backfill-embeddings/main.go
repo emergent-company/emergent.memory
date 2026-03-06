@@ -13,9 +13,9 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/emergent-company/emergent/pkg/embeddings"
-	"github.com/emergent-company/emergent/pkg/embeddings/genai"
-	"github.com/emergent-company/emergent/pkg/embeddings/vertex"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings/genai"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 )
 
 // relationshipRow holds the fields scanned from the backfill query.

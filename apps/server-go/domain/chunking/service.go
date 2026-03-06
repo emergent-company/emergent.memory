@@ -9,10 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
-	"github.com/emergent-company/emergent/domain/chunks"
-	"github.com/emergent-company/emergent/pkg/apperror"
-	"github.com/emergent-company/emergent/pkg/logger"
-	"github.com/emergent-company/emergent/pkg/textsplitter"
+	"github.com/emergent-company/emergent.memory/domain/chunks"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/textsplitter"
 )
 
 type Service struct {

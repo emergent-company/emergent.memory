@@ -6,7 +6,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/tui"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +30,7 @@ Minimum terminal size: 80x24
 
 The Traces tab connects to the Grafana Tempo instance that runs alongside the configured
 server. The Tempo URL is derived automatically from the server URL (same host, port 3200).
-Override with --tempo-url or EMERGENT_TEMPO_URL if Tempo runs elsewhere.`,
+Override with --tempo-url or MEMORY_TEMPO_URL if Tempo runs elsewhere.`,
 	RunE: runBrowse,
 }
 
@@ -38,7 +38,7 @@ Override with --tempo-url or EMERGENT_TEMPO_URL if Tempo runs elsewhere.`,
 // It keeps the same hostname but always uses port 3200 over HTTP,
 // since Tempo is an internal service co-located with the server.
 func deriveTempoURL(serverURL string) string {
-	if v := os.Getenv("EMERGENT_TEMPO_URL"); v != "" {
+	if v := os.Getenv("MEMORY_TEMPO_URL"); v != "" {
 		return v
 	}
 	u, err := url.Parse(serverURL)

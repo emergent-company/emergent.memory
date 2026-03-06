@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	sdkgraph "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
+	sdkgraph "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/graph"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
@@ -48,7 +48,7 @@ func nameFromProps(props map[string]any) string {
 var graphCmd = &cobra.Command{
 	Use:   "graph",
 	Short: "Manage graph objects and relationships",
-	Long:  "Commands for managing graph objects and relationships in the Emergent knowledge graph",
+	Long:  "Commands for managing graph objects and relationships in the Memory knowledge graph",
 }
 
 var graphObjectsCmd = &cobra.Command{

@@ -3,7 +3,7 @@ package workspaceimages
 import (
 	"context"
 
-	"github.com/emergent-company/emergent/domain/workspace"
+	"github.com/emergent-company/emergent.memory/domain/workspace"
 )
 
 // imageResolverAdapter wraps Service to implement workspace.ImageResolver.

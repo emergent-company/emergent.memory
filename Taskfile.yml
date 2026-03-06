@@ -79,21 +79,21 @@ tasks:
       - task: server:status
 
   cli:install:
-    desc: Build and install the emergent CLI to ~/.local/bin/emergent
+    desc: Build and install the memory CLI to ~/.local/bin/memory
     dir: tools/emergent-cli
     cmds:
-      - go build -o ~/.local/bin/emergent ./cmd/main.go
-      - echo "Installed emergent CLI → ~/.local/bin/emergent"
+      - go build -o ~/.local/bin/memory ./cmd/main.go
+      - echo "Installed memory CLI → ~/.local/bin/memory"
 
   traces:list:
-    desc: List recent traces from Tempo (emergent traces list)
+    desc: List recent traces from Tempo (memory traces list)
     cmds:
-      - emergent traces list {{.CLI_ARGS}}
+      - memory traces list {{.CLI_ARGS}}
 
   traces:get:
-    desc: Fetch a full trace by ID (emergent traces get <traceID>)
+    desc: Fetch a full trace by ID (memory traces get <traceID>)
     cmds:
-      - emergent traces get {{.CLI_ARGS}}
+      - memory traces get {{.CLI_ARGS}}
 
   release:
     desc: "Cut a release: bump VERSION, commit, tag, push. Usage: task release VERSION=0.X.Y"
@@ -111,5 +111,5 @@ tasks:
         git push origin HEAD
         git push origin v{{.VERSION}}
         echo "Tag v{{.VERSION}} pushed — CI will build binaries and create the GitHub Release."
-        echo "Monitor: gh run list --workflow=emergent-cli.yml"
+        echo "Monitor: gh run list --workflow=memory-cli.yml"
         echo "After CI: verify images-ready.txt is uploaded to the release."

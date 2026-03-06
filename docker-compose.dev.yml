@@ -4,7 +4,7 @@ services:
   # Downloads model on first start (~150MB for base, ~1.5GB for large-v3)
   whisper:
     image: onerahmet/openai-whisper-asr-webservice:latest
-    container_name: emergent-whisper
+    container_name: memory-whisper
     restart: unless-stopped
     ports:
       - '${WHISPER_PORT:-9876}:9000'
@@ -135,7 +135,7 @@ services:
   # ---------------------------------------------------------------------------
   tempo:
     image: grafana/tempo:2.6.1
-    container_name: emergent-tempo
+    container_name: memory-tempo
     command: ["-config.file=/etc/tempo.yaml", "-config.expand-env=true"]
     volumes:
       - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro

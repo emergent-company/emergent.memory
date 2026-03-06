@@ -231,7 +231,7 @@ log_section "Test 5: Vector Database Operations"
 
 log_step "Creating a test document via workspace..."
 # Use a single-line curl command to avoid backslash-newline quoting issues
-DOC_CREATE_CMD="curl -s -w '\\n%{http_code}' -X POST \$EMERGENT_API_URL/api/documents -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}' -H 'Content-Type: application/json' -d '{\"source_type\":\"agent_workspace\",\"title\":\"Agent Test Document\",\"text_content\":\"Test document created by agent workspace test.\",\"metadata\":{\"workspace_id\":\"${WORKSPACE_ID}\",\"test_type\":\"comprehensive\"}}'"
+DOC_CREATE_CMD="curl -s -w '\\n%{http_code}' -X POST \$MEMORY_API_URL/api/documents -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}' -H 'Content-Type: application/json' -d '{\"source_type\":\"agent_workspace\",\"title\":\"Agent Test Document\",\"text_content\":\"Test document created by agent workspace test.\",\"metadata\":{\"workspace_id\":\"${WORKSPACE_ID}\",\"test_type\":\"comprehensive\"}}'"
 
 DOC_CREATE_RESULT=$(workspace_api POST "/${WORKSPACE_ID}/bash" "{
     \"command\": $(echo "$DOC_CREATE_CMD" | jq -Rs .)
@@ -254,7 +254,7 @@ else
 fi
 
 log_step "Listing documents..."
-DOCS_LIST_CMD="curl -s -X GET '\$EMERGENT_API_URL/api/documents?limit=5' -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}'"
+DOCS_LIST_CMD="curl -s -X GET '\$MEMORY_API_URL/api/documents?limit=5' -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}'"
 
 DOCS_LIST=$(workspace_api POST "/${WORKSPACE_ID}/bash" "{
     \"command\": $(echo "$DOCS_LIST_CMD" | jq -Rs .)
@@ -264,7 +264,7 @@ DOC_COUNT=$(echo "$DOCS_LIST" | jq -r '.stdout' | jq -r '.items | length' 2>/dev
 log_success "Found $DOC_COUNT documents in project"
 
 log_step "Creating a graph object..."
-GRAPH_CREATE_CMD="curl -s -w '\\n%{http_code}' -X POST \$EMERGENT_API_URL/api/graph/objects -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}' -H 'Content-Type: application/json' -d '{\"type\":\"test_entity\",\"key\":\"workspace_test_$(date +%s)\",\"properties\":{\"name\":\"Agent Workspace Test Entity\",\"description\":\"Created by comprehensive workspace test\"},\"labels\":[\"test\",\"agent_created\"]}'"
+GRAPH_CREATE_CMD="curl -s -w '\\n%{http_code}' -X POST \$MEMORY_API_URL/api/graph/objects -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}' -H 'Content-Type: application/json' -d '{\"type\":\"test_entity\",\"key\":\"workspace_test_$(date +%s)\",\"properties\":{\"name\":\"Agent Workspace Test Entity\",\"description\":\"Created by comprehensive workspace test\"},\"labels\":[\"test\",\"agent_created\"]}'"
 
 GRAPH_CREATE_RESULT=$(workspace_api POST "/${WORKSPACE_ID}/bash" "{
     \"command\": $(echo "$GRAPH_CREATE_CMD" | jq -Rs .)
@@ -287,7 +287,7 @@ else
 fi
 
 log_step "Performing unified search..."
-SEARCH_CMD="curl -s -X POST \$EMERGENT_API_URL/api/search/unified -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}' -H 'Content-Type: application/json' -d '{\"query\":\"workspace test\",\"limit\":5,\"resultTypes\":\"both\",\"fusionStrategy\":\"rrf\"}'"
+SEARCH_CMD="curl -s -X POST \$MEMORY_API_URL/api/search/unified -H 'X-API-Key: ${API_KEY}' -H 'X-Project-ID: ${PROJECT_ID}' -H 'Content-Type: application/json' -d '{\"query\":\"workspace test\",\"limit\":5,\"resultTypes\":\"both\",\"fusionStrategy\":\"rrf\"}'"
 
 SEARCH_RESULT=$(workspace_api POST "/${WORKSPACE_ID}/bash" "{
     \"command\": $(echo "$SEARCH_CMD" | jq -Rs .)

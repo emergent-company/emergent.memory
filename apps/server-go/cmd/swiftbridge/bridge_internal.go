@@ -13,10 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	sdk "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/chat"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/search"
+	sdk "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/chat"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/documents"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/search"
 )
 
 // ---------------------------------------------------------------------------

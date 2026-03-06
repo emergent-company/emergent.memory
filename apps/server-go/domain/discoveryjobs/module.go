@@ -6,10 +6,10 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/pkg/llm"
-	"github.com/emergent-company/emergent/pkg/llm/vertex"
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/llm"
+	"github.com/emergent-company/emergent.memory/pkg/llm/vertex"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 var Module = fx.Module("discoveryjobs",

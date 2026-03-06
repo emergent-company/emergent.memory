@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
-	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/graph"
+	"github.com/emergent-company/emergent.memory/internal/testutil"
 	"github.com/stretchr/testify/suite"
 )
 

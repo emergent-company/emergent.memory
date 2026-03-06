@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/pkg/crypto"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/crypto"
 )
 
 // newTestCredentialService creates a CredentialService for testing with a nil

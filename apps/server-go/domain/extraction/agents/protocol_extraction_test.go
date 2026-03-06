@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/pkg/adk"
-	"github.com/emergent-company/emergent/pkg/kreuzberg"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
 )
 
 // ProtocolGroundTruth represents the ground truth data from doc-processing-suite.

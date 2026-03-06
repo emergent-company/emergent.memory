@@ -11,7 +11,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // JobsService manages the email job queue.

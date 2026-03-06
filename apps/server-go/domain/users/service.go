@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/emergent-company/emergent/pkg/apperror"
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // Service handles business logic for users

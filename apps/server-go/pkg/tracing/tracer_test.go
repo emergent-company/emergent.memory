@@ -9,7 +9,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/emergent-company/emergent/pkg/tracing"
+	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
 // setupTestTracer registers an in-memory span recorder as the global tracer

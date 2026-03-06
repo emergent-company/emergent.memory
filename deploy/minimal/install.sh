@@ -45,7 +45,7 @@ if [ -d ".git" ]; then
 else
     echo "📦 Downloading Emergent..."
     if command -v git &> /dev/null; then
-        git clone --depth 1 --branch "$EMERGENT_VERSION" https://github.com/emergent-company/emergent.git .
+        git clone --depth 1 --branch "$EMERGENT_VERSION" https://github.com/emergent-company/emergent.memory.git .
     else
         echo "❌ Git is not installed. Please install git first."
         exit 1
@@ -154,7 +154,7 @@ else
     echo ""
     
     # Get project ID for MCP configuration
-    PROJECT_ID=$(docker exec emergent-server emergent-cli projects list --format=json 2>/dev/null | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//g' || echo "<PROJECT_ID>")
+    PROJECT_ID=$(docker exec memory-server memory projects list --format=json 2>/dev/null | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//g' || echo "<PROJECT_ID>")
     
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  📡 MCP Configuration (Claude Desktop, Cursor)"
@@ -164,7 +164,7 @@ else
     echo ""
     echo "{"
     echo "  \"servers\": {"
-    echo "    \"emergent\": {"
+    echo "    \"memory\": {"
     echo "      \"type\": \"sse\","
     echo "      \"url\": \"http://localhost:$SERVER_PORT/api/mcp/sse/$PROJECT_ID\","
     echo "      \"headers\": {"
@@ -177,10 +177,10 @@ else
     
     echo "Quick Commands:"
     echo "  # List projects"
-    echo "  docker exec emergent-server emergent-cli projects list"
+    echo "  docker exec memory-server memory projects list"
     echo ""
     echo "  # Check status"
-    echo "  docker exec emergent-server emergent-cli status"
+    echo "  docker exec memory-server memory status"
     echo ""
     echo "  # View logs"
     echo "  docker compose -f docker-compose.local.yml logs -f"
@@ -210,7 +210,7 @@ API Key: $API_KEY
 MCP Configuration (Claude Desktop, Cursor):
 {
   "servers": {
-    "emergent": {
+    "memory": {
       "type": "sse",
       "url": "http://localhost:$SERVER_PORT/api/mcp/sse/$PROJECT_ID",
       "headers": {
@@ -235,7 +235,7 @@ MinIO:
 Installation Directory: $INSTALL_DIR
 
 Quick Start:
-  docker exec emergent-server emergent-cli projects list
+  docker exec memory-server memory projects list
 EOF
 
 echo "🔐 Credentials saved to: $INSTALL_DIR/deploy/minimal/credentials.txt"

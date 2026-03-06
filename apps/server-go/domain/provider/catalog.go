@@ -10,7 +10,7 @@ import (
 	"cloud.google.com/go/auth/credentials"
 	"google.golang.org/genai"
 
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // ModelCatalogService fetches and caches available models from provider APIs.

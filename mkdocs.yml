@@ -1,9 +1,9 @@
-site_name: Emergent SDK Documentation
-site_url: https://emergent-company.github.io/emergent/
-site_description: Official documentation for the Emergent Go SDK and Swift SDK
+site_name: Memory SDK Documentation
+site_url: https://emergent-company.github.io/emergent.memory/
+site_description: Official documentation for the Memory Go SDK and Swift SDK
 site_author: Emergent Company
-repo_url: https://github.com/emergent-company/emergent
-repo_name: emergent-company/emergent
+repo_url: https://github.com/emergent-company/emergent.memory
+repo_name: emergent-company/emergent.memory
 
 docs_dir: docs/site
 theme:

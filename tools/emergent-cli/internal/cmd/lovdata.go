@@ -1,6 +1,6 @@
 package cmd
 
-// lovdata.go — "emergent db lovdata" command
+// lovdata.go — "memory db lovdata" command
 //
 // Imports the Norwegian law knowledge graph from three public data sources:
 //
@@ -28,14 +28,14 @@ package cmd
 //
 // Connection for the API (first match wins):
 //   1. --server flag
-//   2. EMERGENT_SERVER_URL env var
-//   3. ~/.emergent/config.yaml server_url field
+//   2. MEMORY_SERVER_URL env var
+//   3. ~/.memory/config.yaml server_url field
 //
 // Examples:
-//   emergent db lovdata
-//   emergent db lovdata --seed 20 --skip-eu --dataset laws
-//   emergent db lovdata --server http://mcj-emergent:3002 --workers 40
-//   emergent db lovdata --server http://mcj-emergent:3002 --seed 0 --workers 40
+//   memory db lovdata
+//   memory db lovdata --seed 20 --skip-eu --dataset laws
+//   memory db lovdata --server http://mcj-emergent:3002 --workers 40
+//   memory db lovdata --server http://mcj-emergent:3002 --seed 0 --workers 40
 
 import (
 	"archive/tar"
@@ -55,10 +55,10 @@ import (
 	"sync"
 	"time"
 
-	sdk "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	sdkgraph "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	sdk "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	sdkgraph "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/graph"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/projects"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/net/html"
 )
@@ -113,10 +113,10 @@ Relationship types:
   EU_CITES, EU_MODIFIED_BY, HAS_EUROVOC_DESCRIPTOR
 
 Examples:
-  emergent db lovdata
-  emergent db lovdata --seed 20 --skip-eu --dataset laws
-  emergent db lovdata --server http://mcj-emergent:3002 --workers 40
-  emergent db lovdata --server http://mcj-emergent:3002 --seed 0 --workers 40`,
+  memory db lovdata
+  memory db lovdata --seed 20 --skip-eu --dataset laws
+  memory db lovdata --server http://mcj-emergent:3002 --workers 40
+  memory db lovdata --server http://mcj-emergent:3002 --seed 0 --workers 40`,
 	RunE: runDbLovdata,
 }
 
@@ -148,7 +148,7 @@ func runDbLovdata(_ *cobra.Command, _ []string) error {
 	// ── Resolve server URL ─────────────────────────────────────────────────────
 	svrURL := dbLovdataFlags.server
 	if svrURL == "" {
-		if v := os.Getenv("EMERGENT_SERVER_URL"); v != "" {
+		if v := os.Getenv("MEMORY_SERVER_URL"); v != "" {
 			svrURL = v
 		}
 	}
@@ -163,7 +163,7 @@ func runDbLovdata(_ *cobra.Command, _ []string) error {
 	}
 
 	// ── Resolve API key + org ID ───────────────────────────────────────────────
-	apiKey := os.Getenv("EMERGENT_API_KEY")
+	apiKey := os.Getenv("MEMORY_API_KEY")
 	orgID := dbLovdataFlags.orgID
 	if apiKey == "" || orgID == "" {
 		cfgPath := config.DiscoverPath(dbLovdataFlags.configPath)
@@ -184,7 +184,7 @@ func runDbLovdata(_ *cobra.Command, _ []string) error {
 	logFile := dbLovdataFlags.logFile
 	if logFile == "" {
 		home, _ := os.UserHomeDir()
-		logFile = filepath.Join(home, ".emergent", "lovdata_log.jsonl")
+		logFile = filepath.Join(home, ".memory", "lovdata_log.jsonl")
 	}
 
 	// ── Cap batch size ─────────────────────────────────────────────────────────

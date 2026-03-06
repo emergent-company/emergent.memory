@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/orgs"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/testutil"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/orgs"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/testutil"
 )
 
 func TestOrgsList(t *testing.T) {

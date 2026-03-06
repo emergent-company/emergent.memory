@@ -53,7 +53,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_PREFIX }}/emergent-server-with-cli
+          images: ${{ env.IMAGE_PREFIX }}/memory-server-with-cli
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -87,7 +87,7 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           echo "Docker images built and pushed successfully for $TAG" > images-ready.txt
-          echo "Server image: ghcr.io/${{ github.repository_owner }}/emergent-server-with-cli:${TAG#v}" >> images-ready.txt
+          echo "Server image: ghcr.io/${{ github.repository_owner }}/memory-server-with-cli:${TAG#v}" >> images-ready.txt
           echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> images-ready.txt
 
           # Wait for the release to exist (it's created by the emergent-cli workflow)

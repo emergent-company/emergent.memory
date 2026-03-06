@@ -7,10 +7,10 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
-	"github.com/emergent-company/emergent/domain/scheduler"
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/pkg/adk"
-	"github.com/emergent-company/emergent/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 )
 
 // Module provides the provider domain as an fx module.

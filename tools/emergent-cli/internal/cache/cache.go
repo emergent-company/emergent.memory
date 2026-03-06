@@ -27,7 +27,7 @@ func NewManager(cacheDir string, ttl time.Duration) (*Manager, error) {
 		if err != nil {
 			return nil, err
 		}
-		cacheDir = filepath.Join(home, ".emergent", "cache")
+		cacheDir = filepath.Join(home, ".memory", "cache")
 	}
 
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {

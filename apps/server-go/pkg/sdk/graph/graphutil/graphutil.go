@@ -10,7 +10,7 @@
 package graphutil
 
 import (
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/graph"
 )
 
 // =============================================================================

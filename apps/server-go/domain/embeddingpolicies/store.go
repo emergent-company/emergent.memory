@@ -9,9 +9,9 @@ import (
 	"github.com/lib/pq"
 	"github.com/uptrace/bun"
 
-	"github.com/emergent-company/emergent/pkg/apperror"
-	"github.com/emergent-company/emergent/pkg/logger"
-	"github.com/emergent-company/emergent/pkg/pgutils"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
 
 // Store handles embedding policy database operations

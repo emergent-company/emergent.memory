@@ -12,14 +12,14 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
-	"github.com/emergent-company/emergent/domain/documents"
-	"github.com/emergent-company/emergent/domain/extraction/agents"
-	"github.com/emergent-company/emergent/domain/graph"
-	"github.com/emergent-company/emergent/pkg/adk"
-	"github.com/emergent-company/emergent/pkg/auth"
-	"github.com/emergent-company/emergent/pkg/logger"
-	"github.com/emergent-company/emergent/pkg/syshealth"
-	"github.com/emergent-company/emergent/pkg/tracing"
+	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/syshealth"
+	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
 // ObjectExtractionWorkerConfig holds configuration for the extraction worker.

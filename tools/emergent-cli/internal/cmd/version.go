@@ -16,12 +16,12 @@ var (
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Show version information",
-	Long:  "Display the version, commit hash, and build date of the Emergent CLI",
+	Long:  "Display the version, commit hash, and build date of the Memory CLI",
 	Run:   runVersion,
 }
 
 func runVersion(cmd *cobra.Command, args []string) {
-	fmt.Printf("Emergent CLI\n")
+	fmt.Printf("Memory CLI\n")
 	fmt.Printf("  Version:    %s\n", Version)
 	fmt.Printf("  Commit:     %s\n", Commit)
 	fmt.Printf("  Built:      %s\n", BuildDate)

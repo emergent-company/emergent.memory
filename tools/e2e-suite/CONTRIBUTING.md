@@ -53,8 +53,8 @@ import (
     "fmt"
     "time"
 
-    sdk "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-    "github.com/emergent-company/emergent/tools/e2e-suite/suite"
+    sdk "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+    "github.com/emergent-company/emergent.memory/tools/e2e-suite/suite"
 )
 
 type Suite struct{}
@@ -216,7 +216,7 @@ Open `cmd/e2e-suite/main.go` and add two lines:
 ```go
 import (
     // ... existing imports ...
-    "github.com/emergent-company/emergent/tools/e2e-suite/suites/mydata"
+    "github.com/emergent-company/emergent.memory/tools/e2e-suite/suites/mydata"
 )
 
 func resolveSuites(name string) ([]suite.Suite, error) {
@@ -269,9 +269,9 @@ import (
     "fmt"
     "time"
 
-    sdk "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-    "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph"
-    "github.com/emergent-company/emergent/tools/e2e-suite/suite"
+    sdk "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+    "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/graph"
+    "github.com/emergent-company/emergent.memory/tools/e2e-suite/suite"
 )
 
 type Suite struct{}
@@ -332,7 +332,7 @@ func (s *Suite) Run(ctx context.Context, client *sdk.Client, cfg *suite.Config) 
 Register it in `main.go`:
 
 ```go
-import "github.com/emergent-company/emergent/tools/e2e-suite/suites/graphsmoke"
+import "github.com/emergent-company/emergent.memory/tools/e2e-suite/suites/graphsmoke"
 
 // in resolveSuites:
 case "graphsmoke":

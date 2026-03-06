@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/search"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/client"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/search"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/client"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 )
 
 func main() {
@@ -20,7 +20,7 @@ func main() {
 	orgID := "c9bfa6d1-dc9f-4c3b-ac37-7a0411a0beba"
 
 	// Load credentials from config
-	configPath := os.Getenv("HOME") + "/.emergent/config.json"
+	configPath := os.Getenv("HOME") + "/.memory/config.json"
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
 		log.Fatalf("Failed to read config: %v", err)

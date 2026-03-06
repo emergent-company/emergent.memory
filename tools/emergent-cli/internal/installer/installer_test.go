@@ -319,10 +319,10 @@ func TestGetServerPort(t *testing.T) {
 }
 
 func TestGetEnvPath(t *testing.T) {
-	cfg := Config{InstallDir: "/home/user/.emergent"}
+	cfg := Config{InstallDir: "/home/user/.memory"}
 	inst := New(cfg)
 
-	expected := "/home/user/.emergent/config/.env.local"
+	expected := "/home/user/.memory/config/.env.local"
 	if got := inst.GetEnvPath(); got != expected {
 		t.Errorf("expected %s, got %s", expected, got)
 	}

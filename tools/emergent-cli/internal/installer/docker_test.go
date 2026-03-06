@@ -19,14 +19,14 @@ func TestNewDockerManager(t *testing.T) {
 
 func TestDockerManagerPaths(t *testing.T) {
 	mock := &mockOutput{}
-	dm := NewDockerManager("/home/user/.emergent", mock)
+	dm := NewDockerManager("/home/user/.memory", mock)
 
-	expectedCompose := filepath.Join("/home/user/.emergent", "docker", "docker-compose.yml")
+	expectedCompose := filepath.Join("/home/user/.memory", "docker", "docker-compose.yml")
 	if got := dm.composePath(); got != expectedCompose {
 		t.Errorf("composePath: expected %s, got %s", expectedCompose, got)
 	}
 
-	expectedEnv := filepath.Join("/home/user/.emergent", "config", ".env.local")
+	expectedEnv := filepath.Join("/home/user/.memory", "config", ".env.local")
 	if got := dm.envPath(); got != expectedEnv {
 		t.Errorf("envPath: expected %s, got %s", expectedEnv, got)
 	}

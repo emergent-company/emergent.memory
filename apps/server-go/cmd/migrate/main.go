@@ -11,7 +11,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
-	"github.com/emergent-company/emergent/migrations"
+	"github.com/emergent-company/emergent.memory/migrations"
 )
 
 func main() {

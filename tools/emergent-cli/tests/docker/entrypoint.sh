@@ -11,12 +11,12 @@
 #
 # Environment variables consumed here:
 #   CI=true                 — suppresses the interactive Google API-key prompt in install.sh
-#   EMERGENT_TEST_SERVER    — Emergent API server URL (set by docker-compose.yml)
+#   MEMORY_TEST_SERVER    — Emergent API server URL (set by docker-compose.yml)
 #   TEST_LOG_DIR            — where test session logs are written (default /test-logs)
 
 set -euo pipefail
 
-INSTALL_URL="https://raw.githubusercontent.com/emergent-company/emergent/main/tools/emergent-cli/install.sh"
+INSTALL_URL="https://raw.githubusercontent.com/emergent-company/emergent.memory/main/tools/emergent-cli/install.sh"
 
 echo "=== emergent CLI install test entrypoint ==="
 echo ">>> installing emergent CLI from ${INSTALL_URL} ..."

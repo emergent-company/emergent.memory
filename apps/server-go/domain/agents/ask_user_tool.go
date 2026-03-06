@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/emergent-company/emergent/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 )

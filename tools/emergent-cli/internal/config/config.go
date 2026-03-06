@@ -109,7 +109,7 @@ func DiscoverPath(flagPath string) string {
 		}
 	}
 
-	if envPath := os.Getenv("EMERGENT_CONFIG"); envPath != "" {
+	if envPath := os.Getenv("MEMORY_CONFIG"); envPath != "" {
 		if _, err := os.Stat(envPath); err == nil {
 			return envPath
 		}
@@ -117,17 +117,17 @@ func DiscoverPath(flagPath string) string {
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return ".emergent/config.yaml"
+		return ".memory/config.yaml"
 	}
 
-	defaultPath := filepath.Join(homeDir, ".emergent", "config.yaml")
+	defaultPath := filepath.Join(homeDir, ".memory", "config.yaml")
 	return defaultPath
 }
 
 func LoadWithEnv(path string) (*Config, error) {
 	v := viper.New()
 
-	v.SetEnvPrefix("EMERGENT")
+	v.SetEnvPrefix("MEMORY")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
@@ -161,12 +161,12 @@ func LoadWithEnv(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// EMERGENT_PROJECT holds a project name or slug and is used to scope the
+	// MEMORY_PROJECT holds a project name or slug and is used to scope the
 	// CLI to a single project directory-wide. It is resolved to a project ID
 	// at runtime — it is NOT a token. For a project-scoped API token use
-	// EMERGENT_PROJECT_TOKEN (emt_... value) instead.
+	// MEMORY_PROJECT_TOKEN (emt_... value) instead.
 	if cfg.ProjectID == "" {
-		if name := os.Getenv("EMERGENT_PROJECT"); name != "" {
+		if name := os.Getenv("MEMORY_PROJECT"); name != "" {
 			// Store the name in ProjectName so callers can display it before
 			// the ID has been resolved (resolution happens in root.go).
 			if cfg.ProjectName == "" {

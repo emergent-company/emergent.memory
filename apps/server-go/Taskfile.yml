@@ -142,4 +142,4 @@ tasks:
   docker:build:
     desc: Build Docker image for server
     cmds:
-      - docker build -f Dockerfile -t emergent-server-go:latest ../.. {{.CLI_ARGS}}
+      - docker build -f Dockerfile -t memory-server-go:latest ../.. {{.CLI_ARGS}}

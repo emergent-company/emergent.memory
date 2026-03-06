@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	sdk "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
-	sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
+	sdk "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/documents"
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/errors"
 )
 
 // FileInput describes a file to upload.

@@ -65,7 +65,7 @@ echo "  ✓ Saved to: ${SHA_PATH}"
 # ---------------------------------------------------------------------------
 # Task 7.3 — Print Package.swift remote binary target snippet
 # ---------------------------------------------------------------------------
-RELEASE_URL="https://github.com/emergent-company/emergent/releases/download/sdk-v${SDK_VERSION}/${ZIP_NAME}"
+RELEASE_URL="https://github.com/emergent-company/emergent.memory/releases/download/sdk-v${SDK_VERSION}/${ZIP_NAME}"
 
 cat <<EOF
 

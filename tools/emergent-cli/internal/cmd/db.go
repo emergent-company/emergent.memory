@@ -9,14 +9,14 @@ import (
 var dbCmd = &cobra.Command{
 	Use:   "db",
 	Short: "Database utilities",
-	Long: `Database inspection and performance utilities for Emergent.
+	Long: `Database inspection and performance utilities for Memory.
 
 Examples:
-  emergent db diagnose              Run full query performance analysis
-  emergent db diagnose --verbose    Include full EXPLAIN output for every query
-  emergent db diagnose --slow 50    Flag queries slower than 50ms
-  emergent db bench                 Benchmark write throughput with real IMDb data
-  emergent db bench --seed 500      Seed 500 titles and run EXPLAIN checks`,
+  memory db diagnose              Run full query performance analysis
+  memory db diagnose --verbose    Include full EXPLAIN output for every query
+  memory db diagnose --slow 50    Flag queries slower than 50ms
+  memory db bench                 Benchmark write throughput with real IMDb data
+  memory db bench --seed 500      Seed 500 titles and run EXPLAIN checks`,
 }
 
 func init() {

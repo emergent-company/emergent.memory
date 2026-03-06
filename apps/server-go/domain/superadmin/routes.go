@@ -3,7 +3,7 @@ package superadmin
 import (
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent-company/emergent/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // RegisterRoutes registers superadmin routes

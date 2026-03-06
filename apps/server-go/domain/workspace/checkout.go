@@ -190,8 +190,8 @@ func (cs *CheckoutService) configureGitIdentity(ctx context.Context, provider Pr
 		}
 	}
 	if name == "" || email == "" {
-		name = "Emergent Agent"
-		email = "agent@emergent.local"
+		name = "Memory Agent"
+		email = "agent@memory.local"
 		cs.log.Debug("using default git identity (no GitHub App configured)")
 	}
 

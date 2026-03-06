@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/mcpregistry"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/mcpregistry"
 	"github.com/spf13/cobra"
 )
 
 var mcpServersCmd = &cobra.Command{
 	Use:   "mcp-servers",
 	Short: "Manage MCP servers",
-	Long:  "Commands for managing Model Context Protocol (MCP) servers in the Emergent platform",
+	Long:  "Commands for managing Model Context Protocol (MCP) servers in the Memory platform",
 }
 
 var listMCPServersCmd = &cobra.Command{
@@ -37,9 +37,9 @@ var createMCPServerCmd = &cobra.Command{
 	Long: `Register a new MCP server with the specified configuration.
 
 Examples:
-  emergent-cli mcp-servers create --name "my-server" --type sse --url "http://localhost:8080/sse"
-  emergent-cli mcp-servers create --name "stdio-server" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github"
-  emergent-cli mcp-servers create --name "my-server" --type http --url "http://localhost:8080/mcp" --env "API_KEY=abc123"`,
+  memory mcp-servers create --name "my-server" --type sse --url "http://localhost:8080/sse"
+  memory mcp-servers create --name "stdio-server" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github"
+  memory mcp-servers create --name "my-server" --type http --url "http://localhost:8080/mcp" --env "API_KEY=abc123"`,
 	RunE: runCreateMCPServer,
 }
 

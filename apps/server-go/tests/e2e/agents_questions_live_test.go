@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/emergent-company/emergent/domain/agents"
-	"github.com/emergent-company/emergent/internal/testutil"
+	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
 // AgentsQuestionsLiveSuite tests agent questions against live test data in mcj-emergent.

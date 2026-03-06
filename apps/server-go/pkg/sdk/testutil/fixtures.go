@@ -3,13 +3,13 @@ package testutil
 import (
 	"time"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/agents"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apitokens"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/documents"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/health"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/orgs"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects"
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk/users"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/agents"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/apitokens"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/documents"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/health"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/orgs"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/projects"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/users"
 )
 
 // Fixtures provides common test data.

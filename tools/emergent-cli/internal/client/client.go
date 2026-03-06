@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-	cliauth "github.com/emergent-company/emergent/tools/emergent-cli/internal/auth"
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	cliauth "github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/auth"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/config"
 )
 
 // Client wraps the SDK client for CLI usage
@@ -38,21 +38,21 @@ func New(cfg *config.Config) (*Client, error) {
 		}
 		effectiveToken = cfg.APIKey
 	} else {
-		// Full mode: load token from credentials.json (written by `emergent login`
-		// or `emergent auth set-token`) and use it as a Bearer token. This avoids
+		// Full mode: load token from credentials.json (written by `memory login`
+		// or `memory auth set-token`) and use it as a Bearer token. This avoids
 		// the live OIDC discovery that sdk.NewWithDeviceFlow() requires.
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get home directory: %w", err)
 		}
 
-		credsPath := filepath.Join(homeDir, ".emergent", "credentials.json")
+		credsPath := filepath.Join(homeDir, ".memory", "credentials.json")
 		creds, err := cliauth.Load(credsPath)
 		if err != nil {
-			return nil, fmt.Errorf("not authenticated: %w\nRun 'emergent login' or 'emergent auth set-token <token>'", err)
+			return nil, fmt.Errorf("not authenticated: %w\nRun 'memory login' or 'memory auth set-token <token>'", err)
 		}
 		if creds.IsExpired() {
-			return nil, fmt.Errorf("credentials expired — run 'emergent login' or 'emergent auth set-token <token>'")
+			return nil, fmt.Errorf("credentials expired — run 'memory login' or 'memory auth set-token <token>'")
 		}
 		authConfig = sdk.AuthConfig{
 			Mode:   "apitoken",
@@ -121,15 +121,15 @@ func (c *Client) AuthorizationHeader() string {
 }
 
 // HasProjectToken reports whether the client was configured with a project-scoped
-// token (EMERGENT_PROJECT_TOKEN). When true the token already identifies a single
+// token (MEMORY_PROJECT_TOKEN). When true the token already identifies a single
 // project, so interactive project selection can be skipped.
 func (c *Client) HasProjectToken() bool {
 	return c.cfg.ProjectToken != ""
 }
 
 // HasProjectScope reports whether the client has any project scope set — either
-// via a project token (EMERGENT_PROJECT_TOKEN) or a pre-resolved project ID
-// (EMERGENT_PROJECT_ID / EMERGENT_PROJECT name resolution). When true, interactive
+// via a project token (MEMORY_PROJECT_TOKEN) or a pre-resolved project ID
+// (MEMORY_PROJECT_ID / MEMORY_PROJECT name resolution). When true, interactive
 // project selection can be skipped.
 func (c *Client) HasProjectScope() bool {
 	return c.cfg.ProjectToken != "" || c.cfg.ProjectID != ""

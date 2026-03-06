@@ -9,8 +9,8 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/pkg/auth"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // Module provides workspace dependencies.

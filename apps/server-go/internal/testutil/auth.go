@@ -9,7 +9,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/emergent-company/emergent/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // TestUser represents a test user fixture

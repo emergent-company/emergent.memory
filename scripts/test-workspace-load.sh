@@ -241,7 +241,7 @@ FUNCTIONAL=0
 for ws_id in "${CHECK_IDS[@]}"; do
     STATUS=$(workspace_api GET "/${ws_id}" | jq -r '.status')
     if [ "$STATUS" = "ready" ]; then
-        EXEC_RESULT=$(workspace_api POST "/${ws_id}/bash" '{"command": "echo ok && echo $EMERGENT_API_URL"}')
+        EXEC_RESULT=$(workspace_api POST "/${ws_id}/bash" '{"command": "echo ok && echo $MEMORY_API_URL"}')
         EXIT_CODE=$(echo "$EXEC_RESULT" | jq -r '.exit_code')
         STDOUT=$(echo "$EXEC_RESULT" | jq -r '.stdout')
         if [ "$EXIT_CODE" = "0" ] && echo "$STDOUT" | grep -q "ok"; then

@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/emergent-company/emergent/tools/emergent-cli/internal/installer"
+	"github.com/emergent-company/emergent.memory/tools/emergent-cli/internal/installer"
 	"github.com/spf13/cobra"
 )
 
@@ -19,27 +19,27 @@ var installFlags struct {
 
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Install Emergent standalone server",
-	Long: `Install Emergent standalone server with all required components.
+	Short: "Install Memory standalone server",
+	Long: `Install Memory standalone server with all required components.
 
 This command will:
   - Check Docker and Docker Compose are installed
-  - Create installation directory (~/.emergent by default)
+  - Create installation directory (~/.memory by default)
   - Generate secure configuration (API keys, passwords)
   - Write Docker Compose configuration
   - Pull and start Docker containers
   - Configure the CLI to connect to the local server
 
 Example:
-  emergent install
-  emergent install --port 8080 --google-api-key YOUR_KEY
-  emergent install --dir /opt/emergent --skip-start`,
+  memory install
+  memory install --port 8080 --google-api-key YOUR_KEY
+  memory install --dir /opt/memory --skip-start`,
 	RunE: runInstall,
 }
 
 func init() {
 	homeDir, _ := os.UserHomeDir()
-	defaultDir := filepath.Join(homeDir, ".emergent")
+	defaultDir := filepath.Join(homeDir, ".memory")
 
 	installCmd.Flags().StringVar(&installFlags.dir, "dir", defaultDir, "Installation directory")
 	installCmd.Flags().IntVar(&installFlags.port, "port", 3002, "Server port")
@@ -62,7 +62,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	inst := installer.New(cfg)
 
 	if inst.IsInstalled() && !installFlags.force {
-		fmt.Println("Existing installation detected. Use --force to overwrite or run 'emergent upgrade'.")
+		fmt.Println("Existing installation detected. Use --force to overwrite or run 'memory upgrade'.")
 
 		var confirm string
 		fmt.Print("Run upgrade instead? [y/N]: ")

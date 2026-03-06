@@ -45,9 +45,9 @@ func newBookstoreWorkspace(t *testing.T) *bookstoreWorkspace {
 func (ws *bookstoreWorkspace) writeEnvLocal(serverURL, projectID, projectToken string) {
 	ws.t.Helper()
 
-	content := fmt.Sprintf("EMERGENT_SERVER_URL=%s\nEMERGENT_PROJECT_ID=%s\n", serverURL, projectID)
+	content := fmt.Sprintf("MEMORY_SERVER_URL=%s\nMEMORY_PROJECT_ID=%s\n", serverURL, projectID)
 	if projectToken != "" {
-		content += fmt.Sprintf("EMERGENT_PROJECT_TOKEN=%s\n", projectToken)
+		content += fmt.Sprintf("MEMORY_PROJECT_TOKEN=%s\n", projectToken)
 	}
 	path := filepath.Join(ws.Dir, ".env.local")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

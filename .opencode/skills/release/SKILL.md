@@ -11,7 +11,7 @@ metadata:
 
 # Release Manager Skill
 
-Create and deploy versioned releases of the Emergent platform. Handles version bumping, OpenAPI spec updates, git tagging, CI triggering, and server upgrades.
+Create and deploy versioned releases of the Memory platform. Handles version bumping, OpenAPI spec updates, git tagging, CI triggering, and server upgrades.
 
 ## Architecture Overview
 
@@ -20,7 +20,7 @@ All components share a **single version** derived from the git tag:
 ```
 Git tag v0.X.Y
 ├── CLI binary v0.X.Y (built by CI)
-├── Docker image emergent-server-with-cli:v0.X.Y (built by CI)
+├── Docker image memory-server-with-cli:v0.X.Y (built by CI)
 ├── API /health returns "v0.X.Y" (ldflags at build time)
 └── OpenAPI spec info.version = "0.X.Y" (annotation in main.go)
 ```
@@ -104,7 +104,7 @@ git push origin main --tags
 This triggers CI which takes ~5-10 minutes to:
 
 - Build CLI binaries and **create the GitHub Release** (via `emergent-cli.yml` — the Release appears in GitHub only after CI completes, not immediately after `git tag`)
-- Build and push Docker image to `ghcr.io/emergent-company/emergent-server-with-cli`
+- Build and push Docker image to `ghcr.io/emergent-company/memory-server-with-cli`
 - Upload `images-ready.txt` sentinel when Docker image is ready
 
 > **NOTE:** `git tag` + `git push --tags` does NOT immediately create a GitHub Release. The Release is created by the `emergent-cli.yml` CI workflow. Monitor progress with: `gh run watch`
@@ -113,21 +113,21 @@ This triggers CI which takes ~5-10 minutes to:
 
 If the user wants to deploy to a specific server:
 
-**Option A: SSH and run upgrade command** (if `emergent` CLI is in PATH on the server):
+**Option A: SSH and run upgrade command** (if `memory` CLI is in PATH on the server):
 
 ```bash
-ssh root@<server> "emergent upgrade"
+ssh root@<server> "memory upgrade"
 ```
 
 **Option B: SSH and pull directly** (if CLI is not installed on the host):
 
 ```bash
-ssh root@<server> "cd ~/.emergent/docker && docker compose pull && docker compose up -d"
+ssh root@<server> "cd ~/.memory/docker && docker compose pull && docker compose up -d"
 ```
 
 **Option C: Wait for user to upgrade manually**
 
-> **NOTE:** The `emergent upgrade` command checks for the `images-ready.txt` sentinel in the GitHub Release before proceeding. If CI hasn't finished yet, the upgrade will fail. Either wait or use `--force` flag.
+> **NOTE:** The `memory upgrade` command checks for the `images-ready.txt` sentinel in the GitHub Release before proceeding. If CI hasn't finished yet, the upgrade will fail. Either wait or use `--force` flag.
 
 ### Step 6: Verify deployment
 
@@ -146,7 +146,7 @@ ssh root@<server> "curl -s http://localhost:3002/health | jq '.version'"
 
 | Item               | Location                                            |
 | ------------------ | --------------------------------------------------- |
-| VERSION file       | `/root/emergent/VERSION`                            |
+| VERSION file       | `/root/emergent.memory/VERSION`                     |
 | OpenAPI annotation | `apps/server-go/cmd/server/main.go` line 4          |
 | Swagger docs       | `apps/server-go/docs/swagger/`                      |
 | CI: CLI + Release  | `.github/workflows/emergent-cli.yml`                |
@@ -154,7 +154,7 @@ ssh root@<server> "curl -s http://localhost:3002/health | jq '.version'"
 | Dockerfile         | `deploy/minimal/Dockerfile.server-with-cli`         |
 | Upgrade command    | `tools/emergent-cli/internal/cmd/upgrade.go`        |
 | Versioning docs    | `apps/server-go/VERSIONING.md`                      |
-| Docker registry    | `ghcr.io/emergent-company/emergent-server-with-cli` |
+| Docker registry    | `ghcr.io/emergent-company/memory-server-with-cli`   |
 
 ## Checklist
 

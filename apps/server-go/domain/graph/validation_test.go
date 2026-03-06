@@ -3,7 +3,7 @@ package graph
 import (
 	"testing"
 
-	"github.com/emergent-company/emergent/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/stretchr/testify/assert"
 )
 

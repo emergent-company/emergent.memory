@@ -14,11 +14,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
-	"github.com/emergent-company/emergent/domain/graph"
-	"github.com/emergent-company/emergent/domain/search"
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/internal/database"
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/search"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/database"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // Service handles MCP business logic and tool execution
@@ -762,37 +762,37 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 func (s *Service) GetResourceDefinitions() []ResourceDefinition {
 	return []ResourceDefinition{
 		{
-			URI:         "emergent://schema/entity-types",
+			URI:         "memory://schema/entity-types",
 			Name:        "Entity Type Schema",
 			Description: "Complete catalog of all available entity types in the knowledge graph with their counts and relationship types",
 			MimeType:    "application/json",
 		},
 		{
-			URI:         "emergent://schema/relationships",
+			URI:         "memory://schema/relationships",
 			Name:        "Relationship Types Registry",
 			Description: "All valid relationship types, their constraints, and usage statistics",
 			MimeType:    "application/json",
 		},
 		{
-			URI:         "emergent://templates/catalog",
+			URI:         "memory://templates/catalog",
 			Name:        "Template Pack Catalog",
 			Description: "Available template packs with descriptions, object types, and metadata",
 			MimeType:    "application/json",
 		},
 		{
-			URI:         "emergent://project/{project_id}/metadata",
+			URI:         "memory://project/{project_id}/metadata",
 			Name:        "Project Metadata",
 			Description: "Current project information including entity counts, active templates, and statistics",
 			MimeType:    "application/json",
 		},
 		{
-			URI:         "emergent://project/{project_id}/recent-entities",
+			URI:         "memory://project/{project_id}/recent-entities",
 			Name:        "Recent Entities",
 			Description: "Recently created or modified entities for context (last 50)",
 			MimeType:    "application/json",
 		},
 		{
-			URI:         "emergent://project/{project_id}/templates",
+			URI:         "memory://project/{project_id}/templates",
 			Name:        "Installed Templates",
 			Description: "Templates currently installed and active in this project",
 			MimeType:    "application/json",
@@ -3487,17 +3487,17 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 
 func (s *Service) ReadResource(ctx context.Context, projectID, uri string) (*ResourceReadResult, error) {
 	switch {
-	case uri == "emergent://schema/entity-types":
+	case uri == "memory://schema/entity-types":
 		return s.readEntityTypesResource(ctx, projectID)
-	case uri == "emergent://schema/relationships":
+	case uri == "memory://schema/relationships":
 		return s.readRelationshipsResource(ctx, projectID)
-	case uri == "emergent://templates/catalog":
+	case uri == "memory://templates/catalog":
 		return s.readTemplatesCatalogResource(ctx)
-	case strings.HasPrefix(uri, "emergent://project/") && strings.Contains(uri, "/metadata"):
+	case strings.HasPrefix(uri, "memory://project/") && strings.Contains(uri, "/metadata"):
 		return s.readProjectMetadataResource(ctx, projectID)
-	case strings.HasPrefix(uri, "emergent://project/") && strings.Contains(uri, "/recent-entities"):
+	case strings.HasPrefix(uri, "memory://project/") && strings.Contains(uri, "/recent-entities"):
 		return s.readRecentEntitiesResource(ctx, projectID)
-	case strings.HasPrefix(uri, "emergent://project/") && strings.Contains(uri, "/templates"):
+	case strings.HasPrefix(uri, "memory://project/") && strings.Contains(uri, "/templates"):
 		return s.readProjectTemplatesResource(ctx, projectID)
 	default:
 		return nil, fmt.Errorf("unknown resource URI: %s", uri)
@@ -3518,7 +3518,7 @@ func (s *Service) readEntityTypesResource(ctx context.Context, projectID string)
 	return &ResourceReadResult{
 		Contents: []ResourceContents{
 			{
-				URI:      "emergent://schema/entity-types",
+				URI:      "memory://schema/entity-types",
 				MimeType: "application/json",
 				Text:     string(jsonData),
 			},
@@ -3567,7 +3567,7 @@ func (s *Service) readRelationshipsResource(ctx context.Context, projectID strin
 	return &ResourceReadResult{
 		Contents: []ResourceContents{
 			{
-				URI:      "emergent://schema/relationships",
+				URI:      "memory://schema/relationships",
 				MimeType: "application/json",
 				Text:     string(jsonData),
 			},
@@ -3589,7 +3589,7 @@ func (s *Service) readTemplatesCatalogResource(ctx context.Context) (*ResourceRe
 	return &ResourceReadResult{
 		Contents: []ResourceContents{
 			{
-				URI:      "emergent://templates/catalog",
+				URI:      "memory://templates/catalog",
 				MimeType: "application/json",
 				Text:     string(jsonData),
 			},
@@ -3636,7 +3636,7 @@ func (s *Service) readProjectMetadataResource(ctx context.Context, projectID str
 	return &ResourceReadResult{
 		Contents: []ResourceContents{
 			{
-				URI:      fmt.Sprintf("emergent://project/%s/metadata", projectID),
+				URI:      fmt.Sprintf("memory://project/%s/metadata", projectID),
 				MimeType: "application/json",
 				Text:     string(jsonData),
 			},
@@ -3664,7 +3664,7 @@ func (s *Service) readRecentEntitiesResource(ctx context.Context, projectID stri
 	return &ResourceReadResult{
 		Contents: []ResourceContents{
 			{
-				URI:      fmt.Sprintf("emergent://project/%s/recent-entities", projectID),
+				URI:      fmt.Sprintf("memory://project/%s/recent-entities", projectID),
 				MimeType: "application/json",
 				Text:     string(jsonData),
 			},
@@ -3686,7 +3686,7 @@ func (s *Service) readProjectTemplatesResource(ctx context.Context, projectID st
 	return &ResourceReadResult{
 		Contents: []ResourceContents{
 			{
-				URI:      fmt.Sprintf("emergent://project/%s/templates", projectID),
+				URI:      fmt.Sprintf("memory://project/%s/templates", projectID),
 				MimeType: "application/json",
 				Text:     string(jsonData),
 			},

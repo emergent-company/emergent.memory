@@ -9,8 +9,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/emergent-company/emergent/internal/config"
-	"github.com/emergent-company/emergent/pkg/logger"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // Handler serves developer tools endpoints
@@ -178,7 +178,7 @@ func (h *Handler) serveSwaggerUI(c echo.Context) error {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Emergent API Documentation</title>
+    <title>Memory API Documentation</title>
     <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css">
     <style>
         html { box-sizing: border-box; overflow: -moz-scrollbars-vertical; overflow-y: scroll; }
@@ -244,11 +244,11 @@ func (h *Handler) serveMinimalSpec(c echo.Context) error {
 	spec := map[string]any{
 		"openapi": "3.0.3",
 		"info": map[string]any{
-			"title":       "Emergent API",
-			"description": "Emergent Knowledge Base API - Go Server\n\nOpenAPI spec not yet generated. Run `make swagger` to generate the full spec from annotations.",
+			"title":       "Memory API",
+			"description": "Memory Knowledge Base API - Go Server\n\nOpenAPI spec not yet generated. Run `make swagger` to generate the full spec from annotations.",
 			"version":     "1.0.0",
 			"contact": map[string]any{
-				"name": "Emergent Team",
+				"name": "Memory Team",
 			},
 		},
 		"servers": []map[string]any{

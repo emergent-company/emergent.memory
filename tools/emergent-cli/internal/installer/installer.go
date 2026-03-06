@@ -1,4 +1,4 @@
-// Package installer provides installation, upgrade, and uninstallation logic for Emergent standalone deployments.
+// Package installer provides installation, upgrade, and uninstallation logic for Memory standalone deployments.
 package installer
 
 import (
@@ -14,7 +14,7 @@ import (
 
 // Config holds installation configuration
 type Config struct {
-	// InstallDir is the base directory for installation (default: ~/.emergent)
+	// InstallDir is the base directory for installation (default: ~/.memory)
 	InstallDir string
 	// ServerPort is the port for the server (default: 3002)
 	ServerPort int
@@ -28,7 +28,7 @@ type Config struct {
 	Verbose bool
 }
 
-// Installer handles Emergent installation operations
+// Installer handles Memory installation operations
 type Installer struct {
 	config Config
 	output OutputWriter
@@ -107,7 +107,7 @@ func (i *Installer) CheckPrerequisites() error {
 	return nil
 }
 
-// IsInstalled checks if Emergent is already installed
+// IsInstalled checks if Memory is already installed
 func (i *Installer) IsInstalled() bool {
 	composePath := filepath.Join(i.config.InstallDir, "docker", "docker-compose.yml")
 	_, err := os.Stat(composePath)
@@ -223,8 +223,8 @@ api_key: %s
 
 // Install performs a fresh installation
 func (i *Installer) Install() error {
-	fmt.Printf("%sEmergent Standalone Installer%s\n", colorBold, colorReset)
-	fmt.Println("==============================")
+	fmt.Printf("%sMemory Standalone Installer%s\n", colorBold, colorReset)
+	fmt.Println("=============================")
 	fmt.Println()
 
 	// Check prerequisites
@@ -237,7 +237,7 @@ func (i *Installer) Install() error {
 	// Check for existing installation
 	if i.IsInstalled() && !i.config.Force {
 		i.output.Info("Existing installation detected at %s", i.config.InstallDir)
-		i.output.Info("Use --force to overwrite or run 'emergent upgrade' to update")
+		i.output.Info("Use --force to overwrite or run 'memory upgrade' to update")
 		return fmt.Errorf("installation already exists")
 	}
 
@@ -299,7 +299,7 @@ func (i *Installer) Install() error {
 
 	i.output.Step("Waiting for services to become healthy...")
 	if err := docker.WaitForHealth(i.config.ServerPort, 120); err != nil {
-		i.output.Warn("Health check timeout - check logs with: docker logs emergent-server")
+		i.output.Warn("Health check timeout - check logs with: docker logs memory-server")
 	} else {
 		i.output.Success("Server is healthy!")
 	}
@@ -429,7 +429,7 @@ func (i *Installer) Upgrade(version string) error {
 
 	fmt.Println()
 	fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", colorGreen, colorBold, colorReset)
-	fmt.Printf("%s%s  ✓ Emergent Server Upgrade Complete!%s\n", colorGreen, colorBold, colorReset)
+	fmt.Printf("%s%s  ✓ Memory Server Upgrade Complete!%s\n", colorGreen, colorBold, colorReset)
 	fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", colorGreen, colorBold, colorReset)
 	fmt.Println()
 
@@ -494,13 +494,13 @@ func (i *Installer) Uninstall(keepData bool) error {
 
 	fmt.Println()
 	fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", colorGreen, colorBold, colorReset)
-	fmt.Printf("%s%s  ✓ Emergent Uninstalled%s\n", colorGreen, colorBold, colorReset)
+	fmt.Printf("%s%s  ✓ Memory Uninstalled%s\n", colorGreen, colorBold, colorReset)
 	fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", colorGreen, colorBold, colorReset)
 	fmt.Println()
 
 	if keepData {
 		fmt.Printf("%sNote:%s Docker volumes were preserved. To remove them manually:\n", colorYellow, colorReset)
-		fmt.Println("  docker volume rm docker_postgres_data docker_minio_data docker_emergent_cli_config")
+		fmt.Println("  docker volume rm docker_postgres_data docker_minio_data docker_memory_cli_config")
 	}
 
 	return nil
@@ -530,7 +530,7 @@ func (i *Installer) PromptGoogleAPIKey() {
 
 	if input == "" {
 		fmt.Println()
-		i.output.Warn("Skipped. You can set it later with: emergent provider set-key YOUR_KEY")
+		i.output.Warn("Skipped. You can set it later with: memory provider set-key YOUR_KEY")
 		return
 	}
 
@@ -566,7 +566,7 @@ func (i *Installer) PromptGoogleAPIKey() {
 func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, providerConfigured bool) {
 	fmt.Println()
 	fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", colorGreen, colorBold, colorReset)
-	fmt.Printf("%s%s  ✓ Emergent Installation Complete!%s\n", colorGreen, colorBold, colorReset)
+	fmt.Printf("%s%s  ✓ Memory Installation Complete!%s\n", colorGreen, colorBold, colorReset)
 	fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", colorGreen, colorBold, colorReset)
 	fmt.Println()
 
@@ -577,7 +577,7 @@ func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, 
 	fmt.Printf("%s%sMCP Configuration%s\n", colorCyan, colorBold, colorReset)
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
-	fmt.Println("To connect your AI agent to Emergent, add this configuration:")
+	fmt.Println("To connect your AI agent to Memory, add this configuration:")
 	fmt.Println()
 	fmt.Printf("%sFor Claude Desktop:%s\n", colorBold, colorReset)
 	fmt.Println("  File: ~/.config/claude/claude_desktop_config.json (macOS/Linux)")
@@ -586,15 +586,15 @@ func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, 
 	fmt.Printf("%sConfiguration (copy this JSON):%s\n", colorBold, colorReset)
 	fmt.Println()
 
-	binPath := filepath.Join(i.config.InstallDir, "bin", "emergent")
+	binPath := filepath.Join(i.config.InstallDir, "bin", "memory")
 	fmt.Printf(`{
   "mcpServers": {
-    "emergent": {
+    "memory": {
       "command": "%s",
       "args": ["mcp"],
       "env": {
-        "EMERGENT_SERVER_URL": "http://localhost:%d",
-        "EMERGENT_API_KEY": "%s"
+        "MEMORY_SERVER_URL": "http://localhost:%d",
+        "MEMORY_API_KEY": "%s"
       }
     }
   }
@@ -604,7 +604,7 @@ func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, 
 	fmt.Println()
 	fmt.Printf("%sNote:%s Restart your AI agent (Claude Desktop/VS Code) after adding this config.\n", colorYellow, colorReset)
 	fmt.Println()
-	fmt.Printf("%s📚 Documentation:%s https://github.com/emergent-company/emergent\n", colorCyan, colorReset)
+	fmt.Printf("%s📚 Documentation:%s https://github.com/emergent-company/emergent.memory\n", colorCyan, colorReset)
 	fmt.Println()
 
 	if !providerConfigured {
@@ -616,10 +616,10 @@ func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, 
 		fmt.Println()
 		fmt.Println("To configure Google AI (Gemini):")
 		fmt.Println("  1. Get an API key from https://aistudio.google.com/apikey")
-		fmt.Printf("  2. Run: emergent provider set-key <your-api-key>\n")
+		fmt.Printf("  2. Run: memory provider set-key <your-api-key>\n")
 		fmt.Println()
 		fmt.Println("To configure Vertex AI:")
-		fmt.Printf("  Run: emergent provider set-vertex --project <gcp-project> --location <region>\n")
+		fmt.Printf("  Run: memory provider set-vertex --project <gcp-project> --location <region>\n")
 		fmt.Println()
 	}
 }

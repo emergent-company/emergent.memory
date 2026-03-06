@@ -1,4 +1,4 @@
-# Emergent Minimal Standalone Deployment
+# Memory Minimal Standalone Deployment
 # Single-user deployment with MCP access only (no Admin UI, no Zitadel)
 #
 # Stack:
@@ -35,7 +35,7 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - emergent
+      - memory
 
   # Whisper Audio Transcription Service
   # Based on openai-whisper-asr-webservice (https://github.com/onerahmet/openai-whisper-asr-webservice)
@@ -43,7 +43,7 @@ services:
   # Set WHISPER_ENABLED=false to disable audio transcription
   whisper:
     image: onerahmet/openai-whisper-asr-webservice:latest
-    container_name: emergent-whisper
+    container_name: memory-whisper
     restart: unless-stopped
     ports:
       - '${WHISPER_PORT:-9876}:9000'
@@ -69,12 +69,12 @@ services:
         reservations:
           memory: 1G
     networks:
-      - emergent
+      - memory
 
   # Kreuzberg Document Extraction Service
   kreuzberg:
     image: goldziher/kreuzberg:latest
-    container_name: emergent-kreuzberg
+    container_name: memory-kreuzberg
     restart: unless-stopped
     ports:
       - '${KREUZBERG_PORT:-8000}:8000'
@@ -93,12 +93,12 @@ services:
         reservations:
           memory: 512M
     networks:
-      - emergent
+      - memory
 
   # MinIO S3-Compatible Object Storage
   minio:
     image: minio/minio:latest
-    container_name: emergent-minio
+    container_name: memory-minio
     restart: unless-stopped
     command: server /data --console-address ':9001'
     environment:
@@ -116,12 +116,12 @@ services:
       timeout: 10s
       retries: 3
     networks:
-      - emergent
+      - memory
 
   # MinIO Bucket Initialization
   minio-init:
     image: minio/mc:latest
-    container_name: emergent-minio-init
+    container_name: memory-minio-init
     depends_on:
       minio:
         condition: service_healthy
@@ -138,20 +138,20 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     networks:
-      - emergent
+      - memory
 
   # Tailscale Sidecar - Secure Network Access
   tailscale:
     image: tailscale/tailscale:latest
-    container_name: emergent-tailscale
-    hostname: ${TAILSCALE_HOSTNAME:-emergent}
+    container_name: memory-tailscale
+    hostname: ${TAILSCALE_HOSTNAME:-memory}
     restart: unless-stopped
     environment:
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=false
       - TS_ACCEPT_DNS=true
-      - TS_EXTRA_ARGS=--advertise-tags=tag:emergent
+      - TS_EXTRA_ARGS=--advertise-tags=tag:memory
     volumes:
       - tailscale_data:/var/lib/tailscale
       - /dev/net/tun:/dev/net/tun
@@ -164,7 +164,7 @@ services:
 
   # Emergent Go Backend
   server:
-    image: ghcr.io/emergent-company/emergent-server-with-cli:${VERSION:-latest}
+    image: ghcr.io/emergent-company/memory-server-with-cli:${VERSION:-latest}
     pull_policy: always
     environment:
       # Standalone Mode Configuration
@@ -241,7 +241,7 @@ services:
     volumes:
       - ./logs/server:/app/logs
     networks:
-      - emergent
+      - memory
 
 volumes:
   postgres_data:
@@ -254,5 +254,5 @@ volumes:
     driver: local
 
 networks:
-  emergent:
+  memory:
     driver: bridge
