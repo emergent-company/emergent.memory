@@ -80,17 +80,17 @@ logs
 
 # Duplicate detection reports
 /reports/jscpd/
-apps/server-go/server
+apps/server/server
 spec-server-dev-vertex-ai.json
 .gemini/
 
 # Built CLI binaries
-tools/emergent-cli/emergent-cli-*
-tools/emergent-cli/emergent-darwin-*
-tools/emergent-cli/emergent-linux-*
-tools/emergent-cli/emergent
+tools/cli/emergent-cli-*
+tools/cli/emergent-darwin-*
+tools/cli/emergent-linux-*
+tools/cli/emergent
 bin/
-apps/server-go/tmp/
+apps/server/tmp/
 
 # Go build artifacts and temporary files
 *.exe
@@ -124,11 +124,11 @@ run_*.sh
 get_*.sh
 
 # Benchmark and test runners
-apps/server-go/benchmark_script
-apps/server-go/extraction-bench
-apps/server-go/seed-imdb
-apps/server-go/seed-lovdata
-apps/server-go/main
+apps/server/benchmark_script
+apps/server/extraction-bench
+apps/server/seed-imdb
+apps/server/seed-lovdata
+apps/server/main
 
 # Root level Go module files (should be in subdirectories)
 /go.mod
@@ -149,13 +149,13 @@ tools/niezatapialni-scraper/niezatapialni-scraper
 
 # auto-added by commit skill — 2026-03-01
 /cmd
-tools/emergent-cli/test_search
+tools/cli/test_search
 pids/
-tools/emergent-cli/.env
+tools/cli/.env
 
 # auto-added by commit skill — 2026-03-06
 vertex-sa-key.json
 tui.json
 opencode.jsonc.tui-migration.bak
 docs/hooks/__pycache__/
-apps/server-go/swiftbridge
+apps/server/swiftbridge
