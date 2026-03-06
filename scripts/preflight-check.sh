@@ -97,7 +97,7 @@ echo ""
 # Check 4: Build test
 echo "4️⃣  Testing builds..."
 echo "   Building server (Go)..."
-if cd apps/server-go && go build ./... > /dev/null 2>&1; then
+if cd apps/server && go build ./... > /dev/null 2>&1; then
     echo "   ✅ Server build successful"
     cd ../..
 else
@@ -121,7 +121,7 @@ echo ""
 # Check 5: Tests
 echo "5️⃣  Running tests..."
 echo "   Server tests (Go)..."
-if cd apps/server-go && go test ./... > /dev/null 2>&1; then
+if cd apps/server && go test ./... > /dev/null 2>&1; then
     echo "   ✅ Server tests passed"
     cd ../..
 else

@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	sdk "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+	sdk "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
 	"github.com/emergent-company/emergent.memory/tools/e2e-suite/suite"
 )
 

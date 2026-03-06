@@ -90,7 +90,7 @@ jobs:
           echo "Server image: ghcr.io/${{ github.repository_owner }}/memory-server-with-cli:${TAG#v}" >> images-ready.txt
           echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> images-ready.txt
 
-          # Wait for the release to exist (it's created by the emergent-cli workflow)
+          # Wait for the release to exist (it's created by the cli workflow)
           for i in $(seq 1 30); do
             if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
               echo "Release $TAG found, uploading sentinel..."

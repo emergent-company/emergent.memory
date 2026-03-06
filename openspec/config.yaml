@@ -8,20 +8,20 @@ context: |
   - Auth: Zitadel OIDC, JWT introspection, scope-based authorization
   - AI/ML: Google ADK-Go extraction pipeline, Gemini text-embedding-004, Vertex AI
   - MCP: Custom Echo handlers for Model Context Protocol
-  - Migrations: Goose SQL (apps/server-go/migrations/)
+  - Migrations: Goose SQL (apps/server/migrations/)
   - Frontend (separate repo): React 19, Vite 7, Tailwind 4, DaisyUI 5, TanStack Table
   - Monorepo tooling: Nx 21, npm workspaces, PM2 via workspace-cli
 
   Monorepo structure:
-  - apps/server-go/   — Go backend API
+  - apps/server/   — Go backend API
   - apps/website/     — Public website (Go)
   - tools/workspace-cli/ — PM2 process management
-  - tools/emergent-cli/  — CLI operations
+  - tools/cli/  — CLI operations
   - Frontend lives in separate repo: emergent-company/emergent.memory.ui (/root/emergent.memory.ui)
 
   Backend architecture:
   - Layered: Handler → Service → Store (Bun)
-  - Domain modules under apps/server-go/domain/
+  - Domain modules under apps/server/domain/
   - HTTP middleware chain: RequireAuth() → RequireScopes() → RequireProjectID()
   - Error types via pkg/apperror, converted to JSON by HTTPErrorHandler
   - Background jobs: PostgreSQL queues with FOR UPDATE SKIP LOCKED

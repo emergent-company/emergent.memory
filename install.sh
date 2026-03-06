@@ -170,7 +170,7 @@ install_generic() {
     mkdir -p "${INSTALL_DIR}/logs"
     
     # Construct download URL for CLI
-    DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/emergent-cli-${PLATFORM}.tar.gz"
+    DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/memory-cli-${PLATFORM}.tar.gz"
     
     info "Downloading CLI from: ${DOWNLOAD_URL}"
     
@@ -178,16 +178,16 @@ install_generic() {
     TMP_DIR=$(mktemp -d)
     trap "rm -rf ${TMP_DIR}" EXIT
     
-    curl -fsSL "${DOWNLOAD_URL}" -o "${TMP_DIR}/emergent-cli.tar.gz" || error "Download failed. Check if version ${VERSION} exists."
+    curl -fsSL "${DOWNLOAD_URL}" -o "${TMP_DIR}/memory-cli.tar.gz" || error "Download failed. Check if version ${VERSION} exists."
     
     # Extract
-    tar -xzf "${TMP_DIR}/emergent-cli.tar.gz" -C "${TMP_DIR}"
+    tar -xzf "${TMP_DIR}/memory-cli.tar.gz" -C "${TMP_DIR}"
     
     # Install binary
     if [ -f "${TMP_DIR}/emergent" ]; then
         mv "${TMP_DIR}/emergent" "${INSTALL_DIR}/bin/emergent"
-    elif [ -f "${TMP_DIR}/emergent-cli" ]; then
-        mv "${TMP_DIR}/emergent-cli" "${INSTALL_DIR}/bin/emergent"
+    elif [ -f "${TMP_DIR}/memory" ]; then
+        mv "${TMP_DIR}/memory" "${INSTALL_DIR}/bin/emergent"
     else
         error "Binary not found in tarball"
     fi
