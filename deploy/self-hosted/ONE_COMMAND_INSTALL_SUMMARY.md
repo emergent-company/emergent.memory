@@ -7,7 +7,7 @@ Created a **completely automated installation** that requires just **one command
 ## The Installation Command
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
 ```
 
 ## What the Installer Does
@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/ma
 
 ### 1. Installation Script (`install.sh`)
 
-**Location**: `/root/emergent/deploy/minimal/install.sh`
+**Location**: `/root/emergent/deploy/self-hosted/install.sh`
 
 **Features**:
 
@@ -55,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/ma
 
 ### 2. Verification Script (`verify-install.sh`)
 
-**Location**: `/root/emergent/deploy/minimal/verify-install.sh`
+**Location**: `/root/emergent/deploy/self-hosted/verify-install.sh`
 
 **Features**:
 
@@ -69,12 +69,12 @@ curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/ma
 **Usage**:
 
 ```bash
-~/emergent-standalone/deploy/minimal/verify-install.sh
+~/emergent-standalone/deploy/self-hosted/verify-install.sh
 ```
 
 ### 3. Installation Guide (`INSTALL.md`)
 
-**Location**: `/root/emergent/deploy/minimal/INSTALL.md`
+**Location**: `/root/emergent/deploy/self-hosted/INSTALL.md`
 
 **Content** (400+ lines):
 
@@ -112,7 +112,7 @@ cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 64 | head -n 1
 After installation, user gets:
 
 ```
-~/emergent-standalone/deploy/minimal/
+~/emergent-standalone/deploy/self-hosted/
 ├── .env.local              # Complete configuration
 ├── credentials.txt         # API key, passwords, URLs
 └── [all documentation]
@@ -201,7 +201,7 @@ Show success message
 ```bash
 # 1. Clone repo
 git clone https://github.com/emergent-company/emergent.git
-cd emergent/deploy/minimal
+cd emergent/deploy/self-hosted
 
 # 2. Generate passwords manually
 openssl rand -hex 32  # Run 3 times
@@ -216,7 +216,7 @@ nano .env
 # Save and exit
 
 # 5. Build image
-./build-server-with-cli.sh
+./build.sh
 
 # 6. Start services
 docker compose -f docker-compose.local.yml up -d
@@ -231,14 +231,14 @@ curl http://localhost:3002/health
 ### After (One-Command Installation)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
 
 # Press Enter at Google API key prompt if you don't have one
 # Wait 2-3 minutes
 # Done!
 
 # Credentials automatically saved to:
-~/emergent-standalone/deploy/minimal/credentials.txt
+~/emergent-standalone/deploy/self-hosted/credentials.txt
 ```
 
 **Result**: From ~10 minutes with multiple steps → **1 command, 3 minutes**
@@ -286,7 +286,7 @@ No network exposure without explicit configuration.
 After installation, user can run:
 
 ```bash
-~/emergent-standalone/deploy/minimal/verify-install.sh
+~/emergent-standalone/deploy/self-hosted/verify-install.sh
 ```
 
 Output:
@@ -324,13 +324,13 @@ docker exec emergent-server emergent-cli status
 
 ```bash
 # Run verification script
-~/emergent-standalone/deploy/minimal/verify-install.sh
+~/emergent-standalone/deploy/self-hosted/verify-install.sh
 
 # Check all containers
 docker ps
 
 # View credentials
-cat ~/emergent-standalone/deploy/minimal/credentials.txt
+cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
 ```
 
 ## Documentation Updates
@@ -391,13 +391,13 @@ This installation works on:
 **Production URL** (when merged):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
 ```
 
 **Development URL** (current branch):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/[branch]/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/[branch]/deploy/self-hosted/install.sh | bash
 ```
 
 ## Summary

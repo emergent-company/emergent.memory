@@ -119,7 +119,7 @@ If using docker-compose, you can add CLI service aliases:
 # docker-compose.yml
 services:
   server:
-    image: emergent-server-with-cli:latest
+    image: memory-server:latest
     # ... server config ...
 
 # Usage
@@ -136,7 +136,7 @@ docker run --rm \
   --network emergent \
   -e EMERGENT_SERVER_URL=http://server:3002 \
   -e EMERGENT_API_KEY=test-api-key-12345 \
-  emergent-server-with-cli:latest \
+  memory-server:latest \
   emergent projects list
 
 # Interactive session
@@ -144,7 +144,7 @@ docker run --rm -it \
   --network emergent \
   -e EMERGENT_SERVER_URL=http://server:3002 \
   -e EMERGENT_API_KEY=test-api-key-12345 \
-  emergent-server-with-cli:latest \
+  memory-server:latest \
   sh
 ```
 
@@ -200,7 +200,7 @@ docker exec emergent-server which emergent
 
 # Check if using correct image
 docker inspect emergent-server | grep Image
-# Should show: emergent-server-with-cli
+# Should show: memory-server
 ```
 
 ### Connection Errors
@@ -229,15 +229,15 @@ docker run -v ~/.emergent:/root/.emergent:rw ...
 To build the image with both server and CLI:
 
 ```bash
-cd /root/emergent/deploy/minimal
-./build-server-with-cli.sh
+cd /root/emergent/deploy/self-hosted
+./build.sh
 
 # Tag for registry
-docker tag emergent-server-with-cli:latest \
-  ghcr.io/emergent-company/memory-server-with-cli:latest
+docker tag memory-server:latest \
+  ghcr.io/emergent-company/memory-server:latest
 
 # Push to registry
-docker push ghcr.io/emergent-company/memory-server-with-cli:latest
+docker push ghcr.io/emergent-company/memory-server:latest
 ```
 
 ## Alternative: Separate CLI Container
@@ -310,4 +310,4 @@ echo "✅ Deployment complete"
 
 - GitHub Issues: https://github.com/emergent-company/emergent.memory/issues
 - Full CLI docs: `/root/emergent/tools/emergent-cli/README.md`
-- Server docs: `/root/emergent/deploy/minimal/DEPLOYMENT_REPORT.md`
+- Server docs: `/root/emergent/deploy/self-hosted/DEPLOYMENT_REPORT.md`

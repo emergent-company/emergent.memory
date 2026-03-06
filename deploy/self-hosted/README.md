@@ -7,7 +7,7 @@ Single-user deployment with MCP access and secure Tailscale networking.
 **Copy and paste this into your terminal:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install-online.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install-online.sh | bash
 ```
 
 That's it! The installer will:
@@ -66,7 +66,7 @@ See [CLI_USAGE.md](./CLI_USAGE.md) for complete CLI documentation.
 
    ```bash
    git clone https://github.com/emergent-company/emergent.git
-   cd emergent/deploy/minimal
+   cd emergent/deploy/self-hosted
    ```
 
 2. **Run installer**
@@ -121,7 +121,7 @@ EMERGENT_VERSION=v1.0.0 curl -fsSL ... | bash
 
 ```
 ~/emergent-standalone/
-├── deploy/minimal/
+├── deploy/self-hosted/
 │   ├── .env.local              # Generated configuration
 │   ├── credentials.txt         # Your API keys and passwords
 │   ├── docker-compose.local.yml
@@ -141,14 +141,14 @@ curl http://localhost:3002/health
 docker exec emergent-server emergent-cli projects list
 
 # View all services
-docker compose -f ~/emergent-standalone/deploy/minimal/docker-compose.local.yml ps
+docker compose -f ~/emergent-standalone/deploy/self-hosted/docker-compose.local.yml ps
 ```
 
 ### Get Your Credentials
 
 ```bash
 # View API key and passwords
-cat ~/emergent-standalone/deploy/minimal/credentials.txt
+cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
 ```
 
 ### Common Commands
@@ -236,7 +236,7 @@ Configure your MCP client (Claude Desktop, Cursor, etc.) with SSE transport:
 docker exec emergent-server emergent-cli projects list
 
 # Get your API key (saved during installation)
-cat ~/emergent-standalone/deploy/minimal/credentials.txt
+cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
 ```
 
 **Via Tailscale network:**

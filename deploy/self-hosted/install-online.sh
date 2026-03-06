@@ -5,7 +5,7 @@ REPO_ORG="emergent-company"
 REPO_NAME="emergent.memory"
 REPO_BRANCH="${MEMORY_VERSION:-main}"
 CLI_VERSION="${CLI_VERSION:-latest}"
-BASE_URL="https://raw.githubusercontent.com/${REPO_ORG}/${REPO_NAME}/${REPO_BRANCH}/deploy/minimal"
+BASE_URL="https://raw.githubusercontent.com/${REPO_ORG}/${REPO_NAME}/${REPO_BRANCH}/deploy/self-hosted"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.memory}"
 SERVER_PORT="${SERVER_PORT:-3002}"
 IMAGE_ORG=$(echo "$REPO_ORG" | tr '[:upper:]' '[:lower:]')
@@ -22,7 +22,7 @@ get_image_tag() {
 }
 
 # Will be set after determining CLI_VERSION
-SERVER_IMAGE_BASE="ghcr.io/${IMAGE_ORG}/memory-server-with-cli"
+SERVER_IMAGE_BASE="ghcr.io/${IMAGE_ORG}/memory-server"
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -331,7 +331,7 @@ if [ -f "${INSTALL_DIR}/docker/docker-compose.yml" ]; then
     echo -e "${GREEN}✓${NC} Target version: ${CLI_VERSION} (image tag: ${IMAGE_TAG})"
     
     echo -e "${CYAN}Updating docker-compose.yml with versioned image...${NC}"
-    sed -i.bak "s|image: ghcr.io/.*/memory-server-with-cli:.*|image: ${SERVER_IMAGE}|g" "${INSTALL_DIR}/docker/docker-compose.yml"
+    sed -i.bak "s|image: ghcr.io/.*/memory-server:.*|image: ${SERVER_IMAGE}|g" "${INSTALL_DIR}/docker/docker-compose.yml"
     rm -f "${INSTALL_DIR}/docker/docker-compose.yml.bak"
     
     echo -e "${CYAN}Pulling Docker images...${NC}"

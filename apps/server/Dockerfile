@@ -1,5 +1,5 @@
 # Dockerfile for Go Backend API — LOCAL DEV ONLY
-# ⚠️  CI/CD uses deploy/minimal/Dockerfile.server-with-cli instead.
+# ⚠️  CI/CD uses deploy/self-hosted/Dockerfile.server instead.
 # This file is kept for quick local builds (no CLI, no migration binary).
 #
 # Build context: REPOSITORY ROOT (.) - workspace-aware build

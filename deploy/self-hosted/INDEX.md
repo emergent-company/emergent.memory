@@ -18,7 +18,7 @@ Complete guide to deploying and using Emergent in standalone mode with embedded 
 **Just copy and paste this:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
 ```
 
 Done! See [INSTALL.md](./INSTALL.md) for details.
@@ -45,8 +45,8 @@ Done! See [INSTALL.md](./INSTALL.md) for details.
 
 1. ✅ [CLI_EMBEDDED_SUMMARY.md](./CLI_EMBEDDED_SUMMARY.md) - Architecture details
 2. ✅ [DEPLOYMENT_REPORT.md](./DEPLOYMENT_REPORT.md) - Complete technical analysis
-3. ✅ Build script: `build-server-with-cli.sh`
-4. ✅ Dockerfile: `Dockerfile.server-with-cli`
+3. ✅ Build script: `build.sh`
+4. ✅ Dockerfile: `Dockerfile.server`
 
 ## Document Purposes
 
@@ -122,12 +122,12 @@ Done! See [INSTALL.md](./INSTALL.md) for details.
 
 ### "I'm building custom Docker images"
 
-→ [CLI_EMBEDDED_SUMMARY.md](./CLI_EMBEDDED_SUMMARY.md) → `build-server-with-cli.sh` → `Dockerfile.server-with-cli`
+→ [CLI_EMBEDDED_SUMMARY.md](./CLI_EMBEDDED_SUMMARY.md) → `build.sh` → `Dockerfile.server`
 
 ## File Structure
 
 ```
-deploy/minimal/
+deploy/self-hosted/
 ├── README.md                          # Main deployment guide
 ├── CLI_QUICK_REFERENCE.md            # Command cheat sheet
 ├── CLI_USAGE.md                      # Complete CLI guide
@@ -135,8 +135,8 @@ deploy/minimal/
 ├── DEPLOYMENT_REPORT.md              # Session report
 ├── INDEX.md                          # This file
 ├── docker-compose.local.yml          # Docker Compose config
-├── Dockerfile.server-with-cli        # Enhanced Dockerfile
-├── build-server-with-cli.sh          # Build automation
+├── Dockerfile.server        # Enhanced Dockerfile
+├── build.sh          # Build automation
 └── .env.example                      # Environment template
 ```
 
@@ -145,7 +145,7 @@ deploy/minimal/
 ### Build Image
 
 ```bash
-./build-server-with-cli.sh
+./build.sh
 ```
 
 ### Start Deployment
@@ -188,7 +188,7 @@ docker logs emergent-server
 ## Update History
 
 - **2026-02-06**: Initial embedded CLI implementation
-  - Added Dockerfile.server-with-cli
+  - Added Dockerfile.server
   - Created build automation script
   - Updated docker-compose configuration
   - Wrote complete documentation suite

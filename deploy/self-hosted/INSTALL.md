@@ -5,7 +5,7 @@
 Copy and paste this single command into your terminal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
 ```
 
 ## What Happens During Installation
@@ -65,7 +65,7 @@ Quick Commands:
 ### 1. Get Your Credentials
 
 ```bash
-cat ~/emergent-standalone/deploy/minimal/credentials.txt
+cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
 ```
 
 Output:
@@ -94,7 +94,7 @@ MinIO:
 
 ```bash
 # Automatic verification
-~/emergent-standalone/deploy/minimal/verify-install.sh
+~/emergent-standalone/deploy/self-hosted/verify-install.sh
 
 # Or manually
 curl http://localhost:3002/health
@@ -119,31 +119,31 @@ docker exec emergent-server emergent-cli config show
 ### Custom Installation Directory
 
 ```bash
-INSTALL_DIR=/opt/emergent curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install.sh | bash
+INSTALL_DIR=/opt/emergent curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
 ```
 
 ### Custom Server Port
 
 ```bash
-SERVER_PORT=8080 curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install.sh | bash
+SERVER_PORT=8080 curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
 ```
 
 ### Provide Google API Key
 
 ```bash
-GOOGLE_API_KEY=your-key curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install.sh | bash
+GOOGLE_API_KEY=your-key curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
 ```
 
 ### Specific Version
 
 ```bash
-EMERGENT_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install.sh | bash
+EMERGENT_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
 ```
 
 ### Multiple Options
 
 ```bash
-INSTALL_DIR=/opt/emergent SERVER_PORT=8080 GOOGLE_API_KEY=your-key curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install.sh | bash
+INSTALL_DIR=/opt/emergent SERVER_PORT=8080 GOOGLE_API_KEY=your-key curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
 ```
 
 ## What Gets Installed
@@ -164,7 +164,7 @@ INSTALL_DIR=/opt/emergent SERVER_PORT=8080 GOOGLE_API_KEY=your-key curl -fsSL ht
 ├── .git/                       # Git repository (for updates)
 ├── apps/                       # Source code
 ├── tools/                      # CLI source
-├── deploy/minimal/
+├── deploy/self-hosted/
 │   ├── .env.local             # Generated configuration
 │   ├── credentials.txt        # YOUR API KEYS (keep secure!)
 │   ├── docker-compose.local.yml
@@ -206,21 +206,21 @@ Download from https://docs.docker.com/desktop/install/windows-install/
 ### View Logs
 
 ```bash
-cd ~/emergent-standalone/deploy/minimal
+cd ~/emergent-standalone/deploy/self-hosted
 docker compose -f docker-compose.local.yml logs -f
 ```
 
 ### Stop Services
 
 ```bash
-cd ~/emergent-standalone/deploy/minimal
+cd ~/emergent-standalone/deploy/self-hosted
 docker compose -f docker-compose.local.yml down
 ```
 
 ### Restart Services
 
 ```bash
-cd ~/emergent-standalone/deploy/minimal
+cd ~/emergent-standalone/deploy/self-hosted
 docker compose -f docker-compose.local.yml restart
 ```
 
@@ -229,16 +229,16 @@ docker compose -f docker-compose.local.yml restart
 ```bash
 cd ~/emergent-standalone
 git pull
-cd deploy/minimal
+cd deploy/self-hosted
 docker compose -f docker-compose.local.yml down
-./build-server-with-cli.sh
+./build.sh
 docker compose -f docker-compose.local.yml up -d
 ```
 
 ### Uninstall
 
 ```bash
-cd ~/emergent-standalone/deploy/minimal
+cd ~/emergent-standalone/deploy/self-hosted
 docker compose -f docker-compose.local.yml down -v
 cd ~
 rm -rf ~/emergent-standalone
@@ -258,7 +258,7 @@ docker compose version
 **Check logs:**
 
 ```bash
-cd ~/emergent-standalone/deploy/minimal
+cd ~/emergent-standalone/deploy/self-hosted
 docker compose -f docker-compose.local.yml logs
 ```
 
@@ -272,7 +272,7 @@ docker ps | grep emergent-server
 docker logs emergent-server
 
 # Restart
-cd ~/emergent-standalone/deploy/minimal
+cd ~/emergent-standalone/deploy/self-hosted
 docker compose -f docker-compose.local.yml restart server
 ```
 
@@ -280,7 +280,7 @@ docker compose -f docker-compose.local.yml restart server
 
 ```bash
 # Verify API key
-cat ~/emergent-standalone/deploy/minimal/credentials.txt
+cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
 
 # Test authentication
 docker exec emergent-server emergent-cli status
@@ -295,7 +295,7 @@ Change the port:
 
 ```bash
 # Edit .env.local
-cd ~/emergent-standalone/deploy/minimal
+cd ~/emergent-standalone/deploy/self-hosted
 nano .env.local
 # Change SERVER_PORT=3002 to SERVER_PORT=8080
 
@@ -319,10 +319,10 @@ The installer generates **cryptographically secure passwords** using:
 
 ```bash
 # Keep it secure
-chmod 600 ~/emergent-standalone/deploy/minimal/credentials.txt
+chmod 600 ~/emergent-standalone/deploy/self-hosted/credentials.txt
 
 # Back it up securely
-cp ~/emergent-standalone/deploy/minimal/credentials.txt ~/safe-backup-location/
+cp ~/emergent-standalone/deploy/self-hosted/credentials.txt ~/safe-backup-location/
 ```
 
 ### Network Exposure
@@ -337,7 +337,7 @@ To expose to network, see [README.md](./README.md) Tailscale section.
 
 ## Next Steps
 
-1. **Read the quick reference**: `~/emergent-standalone/deploy/minimal/CLI_QUICK_REFERENCE.md`
+1. **Read the quick reference**: `~/emergent-standalone/deploy/self-hosted/CLI_QUICK_REFERENCE.md`
 2. **Explore CLI commands**: `docker exec emergent-server emergent-cli --help`
 3. **Create a project**: `docker exec -it emergent-server emergent-cli projects create`
 4. **Upload documents**: See [CLI_USAGE.md](./CLI_USAGE.md) for examples
@@ -345,16 +345,16 @@ To expose to network, see [README.md](./README.md) Tailscale section.
 
 ## Support
 
-- **Documentation**: `~/emergent-standalone/deploy/minimal/INDEX.md`
+- **Documentation**: `~/emergent-standalone/deploy/self-hosted/INDEX.md`
 - **GitHub Issues**: https://github.com/emergent-company/emergent.memory/issues
-- **Verification**: `~/emergent-standalone/deploy/minimal/verify-install.sh`
+- **Verification**: `~/emergent-standalone/deploy/self-hosted/verify-install.sh`
 
 ---
 
 **Installation URL**:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/minimal/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
 ```
 
 **That's it! One command, ~3 minutes, ready to use.** 🚀

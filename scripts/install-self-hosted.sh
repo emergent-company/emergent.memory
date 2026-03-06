@@ -240,7 +240,7 @@ create_installation_directory() {
 download_files() {
     log "Downloading configuration files..."
     
-    local base_url="https://raw.githubusercontent.com/emergent-company/emergent.memory/master/deploy/minimal"
+    local base_url="https://raw.githubusercontent.com/emergent-company/emergent.memory/master/deploy/self-hosted"
     
     curl -fsSL "${base_url}/docker-compose.yml" -o "$INSTALL_DIR/docker-compose.yml"
     success "Downloaded docker-compose.yml"
