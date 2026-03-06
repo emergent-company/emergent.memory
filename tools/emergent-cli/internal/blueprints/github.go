@@ -1,4 +1,4 @@
-package apply
+package blueprints
 
 import (
 	"archive/tar"
@@ -45,7 +45,7 @@ func FetchGitHubRepo(rawURL, token string) (localDir string, cleanup func(), err
 
 	if resp.StatusCode == http.StatusNotFound {
 		if token == "" {
-			return "", func() {}, fmt.Errorf("repository not found or requires authentication — set EMERGENT_GITHUB_TOKEN or pass --token")
+			return "", func() {}, fmt.Errorf("repository not found or requires authentication — set MEMORY_GITHUB_TOKEN or pass --token")
 		}
 		return "", func() {}, fmt.Errorf("repository not found: %s", rawURL)
 	}
@@ -54,7 +54,7 @@ func FetchGitHubRepo(rawURL, token string) (localDir string, cleanup func(), err
 	}
 
 	// Extract to a temp directory.
-	tmpDir, err := os.MkdirTemp("", "emergent-apply-*")
+	tmpDir, err := os.MkdirTemp("", "memory-blueprints-*")
 	if err != nil {
 		return "", func() {}, fmt.Errorf("create temp dir: %w", err)
 	}

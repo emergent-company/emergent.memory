@@ -1,4 +1,4 @@
-package apply
+package blueprints
 
 import (
 	"encoding/json"
@@ -15,9 +15,9 @@ import (
 //
 // Files with unknown extensions are silently skipped.
 // Files that fail to parse or fail validation are recorded in the returned
-// results with ActionError — processing continues for remaining files.
+// results with BlueprintsActionError — processing continues for remaining files.
 // Missing packs/ or agents/ subdirectories are not an error.
-func LoadDir(dir string) (packs []PackFile, agents []AgentFile, results []ApplyResult, err error) {
+func LoadDir(dir string) (packs []PackFile, agents []AgentFile, results []BlueprintsResult, err error) {
 	packs, packResults := loadPacks(filepath.Join(dir, "packs"))
 	agents, agentResults := loadAgents(filepath.Join(dir, "agents"))
 	results = append(packResults, agentResults...)
@@ -28,14 +28,14 @@ func LoadDir(dir string) (packs []PackFile, agents []AgentFile, results []ApplyR
 // Internal helpers
 // ──────────────────────────────────────────────
 
-func loadPacks(dir string) ([]PackFile, []ApplyResult) {
+func loadPacks(dir string) ([]PackFile, []BlueprintsResult) {
 	entries, ok := readDir(dir)
 	if !ok {
 		return nil, nil
 	}
 
 	var packs []PackFile
-	var results []ApplyResult
+	var results []BlueprintsResult
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -51,11 +51,11 @@ func loadPacks(dir string) ([]PackFile, []ApplyResult) {
 
 		var pack PackFile
 		if err := decodeFile(path, ext, &pack); err != nil {
-			results = append(results, ApplyResult{
+			results = append(results, BlueprintsResult{
 				ResourceType: "pack",
 				Name:         name,
 				SourceFile:   path,
-				Action:       ActionError,
+				Action:       BlueprintsActionError,
 				Error:        fmt.Errorf("parse error: %w", err),
 			})
 			continue
@@ -63,11 +63,11 @@ func loadPacks(dir string) ([]PackFile, []ApplyResult) {
 		pack.SourceFile = path
 
 		if err := validatePack(&pack); err != nil {
-			results = append(results, ApplyResult{
+			results = append(results, BlueprintsResult{
 				ResourceType: "pack",
 				Name:         pack.Name,
 				SourceFile:   path,
-				Action:       ActionError,
+				Action:       BlueprintsActionError,
 				Error:        fmt.Errorf("validation error: %w", err),
 			})
 			continue
@@ -79,14 +79,14 @@ func loadPacks(dir string) ([]PackFile, []ApplyResult) {
 	return packs, results
 }
 
-func loadAgents(dir string) ([]AgentFile, []ApplyResult) {
+func loadAgents(dir string) ([]AgentFile, []BlueprintsResult) {
 	entries, ok := readDir(dir)
 	if !ok {
 		return nil, nil
 	}
 
 	var agents []AgentFile
-	var results []ApplyResult
+	var results []BlueprintsResult
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -102,11 +102,11 @@ func loadAgents(dir string) ([]AgentFile, []ApplyResult) {
 
 		var agent AgentFile
 		if err := decodeFile(path, ext, &agent); err != nil {
-			results = append(results, ApplyResult{
+			results = append(results, BlueprintsResult{
 				ResourceType: "agent",
 				Name:         name,
 				SourceFile:   path,
-				Action:       ActionError,
+				Action:       BlueprintsActionError,
 				Error:        fmt.Errorf("parse error: %w", err),
 			})
 			continue
@@ -114,11 +114,11 @@ func loadAgents(dir string) ([]AgentFile, []ApplyResult) {
 		agent.SourceFile = path
 
 		if err := validateAgent(&agent); err != nil {
-			results = append(results, ApplyResult{
+			results = append(results, BlueprintsResult{
 				ResourceType: "agent",
 				Name:         agent.Name,
 				SourceFile:   path,
-				Action:       ActionError,
+				Action:       BlueprintsActionError,
 				Error:        fmt.Errorf("validation error: %w", err),
 			})
 			continue
