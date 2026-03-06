@@ -1,4 +1,4 @@
-package apply
+package blueprints
 
 import (
 	"context"
@@ -7,12 +7,12 @@ import (
 	"io"
 	"os"
 
-	sdkagents "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/agentdefinitions"
-	sdktpacks "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/templatepacks"
+	sdkagents "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/agentdefinitions"
+	sdktpacks "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/templatepacks"
 )
 
-// Applier orchestrates creating or updating packs and agent definitions.
-type Applier struct {
+// Blueprinter orchestrates creating or updating packs and agent definitions.
+type Blueprinter struct {
 	packs   *sdktpacks.Client
 	agents  *sdkagents.Client
 	dryRun  bool
@@ -20,19 +20,19 @@ type Applier struct {
 	out     io.Writer
 }
 
-// NewApplier creates an Applier.  out receives human-readable progress lines; if
-// nil, os.Stdout is used.
-func NewApplier(
+// NewBlueprintsApplier creates a Blueprinter. out receives human-readable
+// progress lines; if nil, os.Stdout is used.
+func NewBlueprintsApplier(
 	packs *sdktpacks.Client,
 	agents *sdkagents.Client,
 	dryRun bool,
 	upgrade bool,
 	out io.Writer,
-) *Applier {
+) *Blueprinter {
 	if out == nil {
 		out = os.Stdout
 	}
-	return &Applier{
+	return &Blueprinter{
 		packs:   packs,
 		agents:  agents,
 		dryRun:  dryRun,
@@ -41,44 +41,44 @@ func NewApplier(
 	}
 }
 
-// Run applies the given packs and agents, returning one ApplyResult per resource.
-func (a *Applier) Run(ctx context.Context, packs []PackFile, agents []AgentFile) ([]ApplyResult, error) {
-	var results []ApplyResult
+// Run applies the given packs and agents, returning one BlueprintsResult per resource.
+func (b *Blueprinter) Run(ctx context.Context, packs []PackFile, agents []AgentFile) ([]BlueprintsResult, error) {
+	var results []BlueprintsResult
 
-	if a.dryRun {
+	if b.dryRun {
 		// Dry-run: print what would happen, make zero API calls.
-		results = append(results, a.dryRunPacks(packs)...)
-		results = append(results, a.dryRunAgents(agents)...)
-		a.printSummary(results, true)
+		results = append(results, b.dryRunPacks(packs)...)
+		results = append(results, b.dryRunAgents(agents)...)
+		b.printSummary(results, true)
 		return results, nil
 	}
 
 	// Fetch existing resources once up front.
-	existingPacks, err := a.fetchExistingPacks(ctx)
+	existingPacks, err := b.fetchExistingPacks(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list existing packs: %w", err)
 	}
 
-	existingAgents, err := a.fetchExistingAgents(ctx)
+	existingAgents, err := b.fetchExistingAgents(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list existing agents: %w", err)
 	}
 
 	// Apply packs.
 	for _, p := range packs {
-		r := a.applyPack(ctx, p, existingPacks)
+		r := b.blueprintPack(ctx, p, existingPacks)
 		results = append(results, r)
-		a.printResult(r)
+		b.printResult(r)
 	}
 
 	// Apply agents.
 	for _, ag := range agents {
-		r := a.applyAgent(ctx, ag, existingAgents)
+		r := b.blueprintAgent(ctx, ag, existingAgents)
 		results = append(results, r)
-		a.printResult(r)
+		b.printResult(r)
 	}
 
-	a.printSummary(results, false)
+	b.printSummary(results, false)
 	return results, nil
 }
 
@@ -86,30 +86,30 @@ func (a *Applier) Run(ctx context.Context, packs []PackFile, agents []AgentFile)
 // Pack application
 // ──────────────────────────────────────────────
 
-func (a *Applier) applyPack(ctx context.Context, p PackFile, existing map[string]sdktpacks.TemplatePackListItem) ApplyResult {
+func (b *Blueprinter) blueprintPack(ctx context.Context, p PackFile, existing map[string]sdktpacks.TemplatePackListItem) BlueprintsResult {
 	item, found := existing[p.Name]
 
 	if !found {
-		return a.createPack(ctx, p)
+		return b.createPack(ctx, p)
 	}
 
-	if a.upgrade {
-		return a.updatePack(ctx, p, item.ID)
+	if b.upgrade {
+		return b.updatePack(ctx, p, item.ID)
 	}
 
-	return ApplyResult{
+	return BlueprintsResult{
 		ResourceType: "pack",
 		Name:         p.Name,
 		SourceFile:   p.SourceFile,
-		Action:       ActionSkipped,
+		Action:       BlueprintsActionSkipped,
 	}
 }
 
-func (a *Applier) createPack(ctx context.Context, p PackFile) ApplyResult {
+func (b *Blueprinter) createPack(ctx context.Context, p PackFile) BlueprintsResult {
 	objSchemas, relSchemas, uiCfgs, exPrompts, err := marshalPackSchemas(p)
 	if err != nil {
-		return ApplyResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
-			Action: ActionError, Error: err}
+		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
+			Action: BlueprintsActionError, Error: err}
 	}
 
 	req := &sdktpacks.CreatePackRequest{
@@ -136,28 +136,28 @@ func (a *Applier) createPack(ctx context.Context, p PackFile) ApplyResult {
 		req.DocumentationURL = &p.DocumentationURL
 	}
 
-	created, err := a.packs.CreatePack(ctx, req)
+	created, err := b.packs.CreatePack(ctx, req)
 	if err != nil {
-		return ApplyResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
-			Action: ActionError, Error: fmt.Errorf("create pack: %w", err)}
+		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("create pack: %w", err)}
 	}
 
 	// Assign to current project.
-	if _, err := a.packs.AssignPack(ctx, &sdktpacks.AssignPackRequest{
+	if _, err := b.packs.AssignPack(ctx, &sdktpacks.AssignPackRequest{
 		TemplatePackID: created.ID,
 	}); err != nil {
-		return ApplyResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
-			Action: ActionError, Error: fmt.Errorf("assign pack: %w", err)}
+		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
 	}
 
-	return ApplyResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile, Action: ActionCreated}
+	return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile, Action: BlueprintsActionCreated}
 }
 
-func (a *Applier) updatePack(ctx context.Context, p PackFile, packID string) ApplyResult {
+func (b *Blueprinter) updatePack(ctx context.Context, p PackFile, packID string) BlueprintsResult {
 	objSchemas, relSchemas, uiCfgs, exPrompts, err := marshalPackSchemas(p)
 	if err != nil {
-		return ApplyResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
-			Action: ActionError, Error: err}
+		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
+			Action: BlueprintsActionError, Error: err}
 	}
 
 	ver := p.Version
@@ -184,90 +184,90 @@ func (a *Applier) updatePack(ctx context.Context, p PackFile, packID string) App
 		req.DocumentationURL = &p.DocumentationURL
 	}
 
-	if _, err := a.packs.UpdatePack(ctx, packID, req); err != nil {
-		return ApplyResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
-			Action: ActionError, Error: fmt.Errorf("update pack: %w", err)}
+	if _, err := b.packs.UpdatePack(ctx, packID, req); err != nil {
+		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("update pack: %w", err)}
 	}
 
-	return ApplyResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile, Action: ActionUpdated}
+	return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile, Action: BlueprintsActionUpdated}
 }
 
 // ──────────────────────────────────────────────
 // Agent application
 // ──────────────────────────────────────────────
 
-func (a *Applier) applyAgent(ctx context.Context, ag AgentFile, existing map[string]sdkagents.AgentDefinitionSummary) ApplyResult {
+func (b *Blueprinter) blueprintAgent(ctx context.Context, ag AgentFile, existing map[string]sdkagents.AgentDefinitionSummary) BlueprintsResult {
 	item, found := existing[ag.Name]
 
 	if !found {
-		return a.createAgent(ctx, ag)
+		return b.createAgent(ctx, ag)
 	}
 
-	if a.upgrade {
-		return a.updateAgent(ctx, ag, item.ID)
+	if b.upgrade {
+		return b.updateAgent(ctx, ag, item.ID)
 	}
 
-	return ApplyResult{
+	return BlueprintsResult{
 		ResourceType: "agent",
 		Name:         ag.Name,
 		SourceFile:   ag.SourceFile,
-		Action:       ActionSkipped,
+		Action:       BlueprintsActionSkipped,
 	}
 }
 
-func (a *Applier) createAgent(ctx context.Context, ag AgentFile) ApplyResult {
+func (b *Blueprinter) createAgent(ctx context.Context, ag AgentFile) BlueprintsResult {
 	req := agentFileToCreateRequest(ag)
-	if _, err := a.agents.Create(ctx, req); err != nil {
-		return ApplyResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
-			Action: ActionError, Error: fmt.Errorf("create agent: %w", err)}
+	if _, err := b.agents.Create(ctx, req); err != nil {
+		return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("create agent: %w", err)}
 	}
-	return ApplyResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile, Action: ActionCreated}
+	return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile, Action: BlueprintsActionCreated}
 }
 
-func (a *Applier) updateAgent(ctx context.Context, ag AgentFile, agentID string) ApplyResult {
+func (b *Blueprinter) updateAgent(ctx context.Context, ag AgentFile, agentID string) BlueprintsResult {
 	req := agentFileToUpdateRequest(ag)
-	if _, err := a.agents.Update(ctx, agentID, req); err != nil {
-		return ApplyResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
-			Action: ActionError, Error: fmt.Errorf("update agent: %w", err)}
+	if _, err := b.agents.Update(ctx, agentID, req); err != nil {
+		return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("update agent: %w", err)}
 	}
-	return ApplyResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile, Action: ActionUpdated}
+	return BlueprintsResult{ResourceType: "agent", Name: ag.Name, SourceFile: ag.SourceFile, Action: BlueprintsActionUpdated}
 }
 
 // ──────────────────────────────────────────────
 // Dry-run helpers
 // ──────────────────────────────────────────────
 
-func (a *Applier) dryRunPacks(packs []PackFile) []ApplyResult {
-	results := make([]ApplyResult, 0, len(packs))
+func (b *Blueprinter) dryRunPacks(packs []PackFile) []BlueprintsResult {
+	results := make([]BlueprintsResult, 0, len(packs))
 	for _, p := range packs {
 		action := "create"
-		if a.upgrade {
+		if b.upgrade {
 			action = "create or update"
 		}
-		fmt.Fprintf(a.out, "[dry-run] would %s pack %q (%s)\n", action, p.Name, p.SourceFile)
-		results = append(results, ApplyResult{
+		fmt.Fprintf(b.out, "[dry-run] would %s pack %q (%s)\n", action, p.Name, p.SourceFile)
+		results = append(results, BlueprintsResult{
 			ResourceType: "pack",
 			Name:         p.Name,
 			SourceFile:   p.SourceFile,
-			Action:       ActionCreated, // treat as "would create" for count purposes
+			Action:       BlueprintsActionCreated, // treat as "would create" for count purposes
 		})
 	}
 	return results
 }
 
-func (a *Applier) dryRunAgents(agents []AgentFile) []ApplyResult {
-	results := make([]ApplyResult, 0, len(agents))
+func (b *Blueprinter) dryRunAgents(agents []AgentFile) []BlueprintsResult {
+	results := make([]BlueprintsResult, 0, len(agents))
 	for _, ag := range agents {
 		action := "create"
-		if a.upgrade {
+		if b.upgrade {
 			action = "create or update"
 		}
-		fmt.Fprintf(a.out, "[dry-run] would %s agent %q (%s)\n", action, ag.Name, ag.SourceFile)
-		results = append(results, ApplyResult{
+		fmt.Fprintf(b.out, "[dry-run] would %s agent %q (%s)\n", action, ag.Name, ag.SourceFile)
+		results = append(results, BlueprintsResult{
 			ResourceType: "agent",
 			Name:         ag.Name,
 			SourceFile:   ag.SourceFile,
-			Action:       ActionCreated,
+			Action:       BlueprintsActionCreated,
 		})
 	}
 	return results
@@ -277,39 +277,39 @@ func (a *Applier) dryRunAgents(agents []AgentFile) []ApplyResult {
 // Output helpers
 // ──────────────────────────────────────────────
 
-func (a *Applier) printResult(r ApplyResult) {
+func (b *Blueprinter) printResult(r BlueprintsResult) {
 	switch r.Action {
-	case ActionCreated:
-		fmt.Fprintf(a.out, "  created  %s %q\n", r.ResourceType, r.Name)
-	case ActionUpdated:
-		fmt.Fprintf(a.out, "  updated  %s %q\n", r.ResourceType, r.Name)
-	case ActionSkipped:
-		fmt.Fprintf(a.out, "  skipped  %s %q (already exists; use --upgrade to update)\n", r.ResourceType, r.Name)
-	case ActionError:
-		fmt.Fprintf(a.out, "  error    %s %q: %v\n", r.ResourceType, r.Name, r.Error)
+	case BlueprintsActionCreated:
+		fmt.Fprintf(b.out, "  created  %s %q\n", r.ResourceType, r.Name)
+	case BlueprintsActionUpdated:
+		fmt.Fprintf(b.out, "  updated  %s %q\n", r.ResourceType, r.Name)
+	case BlueprintsActionSkipped:
+		fmt.Fprintf(b.out, "  skipped  %s %q (already exists; use --upgrade to update)\n", r.ResourceType, r.Name)
+	case BlueprintsActionError:
+		fmt.Fprintf(b.out, "  error    %s %q: %v\n", r.ResourceType, r.Name, r.Error)
 	}
 }
 
-func (a *Applier) printSummary(results []ApplyResult, dry bool) {
+func (b *Blueprinter) printSummary(results []BlueprintsResult, dry bool) {
 	var created, updated, skipped, errors int
 	for _, r := range results {
 		switch r.Action {
-		case ActionCreated:
+		case BlueprintsActionCreated:
 			created++
-		case ActionUpdated:
+		case BlueprintsActionUpdated:
 			updated++
-		case ActionSkipped:
+		case BlueprintsActionSkipped:
 			skipped++
-		case ActionError:
+		case BlueprintsActionError:
 			errors++
 		}
 	}
 
-	prefix := "Apply"
+	prefix := "Blueprints"
 	if dry {
 		prefix = "Dry run"
 	}
-	fmt.Fprintf(a.out, "%s complete: %d created, %d updated, %d skipped, %d errors\n",
+	fmt.Fprintf(b.out, "%s complete: %d created, %d updated, %d skipped, %d errors\n",
 		prefix, created, updated, skipped, errors)
 }
 
@@ -318,14 +318,14 @@ func (a *Applier) printSummary(results []ApplyResult, dry bool) {
 // ──────────────────────────────────────────────
 
 // fetchExistingPacks returns a name→item map of all packs visible to the current project.
-func (a *Applier) fetchExistingPacks(ctx context.Context) (map[string]sdktpacks.TemplatePackListItem, error) {
+func (b *Blueprinter) fetchExistingPacks(ctx context.Context) (map[string]sdktpacks.TemplatePackListItem, error) {
 	// GetAvailablePacks returns packs NOT yet installed; we need the installed ones too.
 	// Merge both sets.
-	available, err := a.packs.GetAvailablePacks(ctx)
+	available, err := b.packs.GetAvailablePacks(ctx)
 	if err != nil {
 		return nil, err
 	}
-	installed, err := a.packs.GetInstalledPacks(ctx)
+	installed, err := b.packs.GetInstalledPacks(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -346,8 +346,8 @@ func (a *Applier) fetchExistingPacks(ctx context.Context) (map[string]sdktpacks.
 }
 
 // fetchExistingAgents returns a name→summary map of all agent definitions in the project.
-func (a *Applier) fetchExistingAgents(ctx context.Context) (map[string]sdkagents.AgentDefinitionSummary, error) {
-	resp, err := a.agents.List(ctx)
+func (b *Blueprinter) fetchExistingAgents(ctx context.Context) (map[string]sdkagents.AgentDefinitionSummary, error) {
+	resp, err := b.agents.List(ctx)
 	if err != nil {
 		return nil, err
 	}

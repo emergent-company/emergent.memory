@@ -7,7 +7,7 @@ The CLI already has a top-level `install` command (`internal/cmd/install.go`) th
 ## Goals / Non-Goals
 
 **Goals:**
-- New `emergent apply <path|github-url>` command (see Decision 1 on naming)
+- New `memory blueprints <path|github-url>` command
 - Parse `packs/` and `agents/` subdirectories, one file per resource, JSON or YAML
 - Additive-only by default; `--upgrade` enables updates
 - `--dry-run` previews actions without mutating
@@ -22,27 +22,27 @@ The CLI already has a top-level `install` command (`internal/cmd/install.go`) th
 
 ## Decisions
 
-### Decision 1: Command name — `apply` not `install`
+### Decision 1: Command name — `blueprints`
 
-`emergent install` is taken (standalone server installer). Using `emergent apply <source>` follows the convention of config-as-code tooling (e.g., `kubectl apply`) and clearly signals "apply this config to a running instance."
+`memory install` is taken (standalone server installer). `memory blueprints <source>` is the user-facing command name. The internal package is `internal/blueprints/`. This aligns with the product rename (`emergent` → `memory`) and gives the declarative config workflow a distinct, memorable identity.
 
-**Alternative considered:** `emergent config apply`, `emergent sync`. Rejected as more verbose than needed.
+**Alternative considered:** `memory apply` (original implementation name), `memory config apply`, `memory sync`. Rejected — `blueprints` is more descriptive and product-aligned.
 
-### Decision 2: New package `internal/cmd/apply.go` + `internal/apply/` loader
+### Decision 2: New package `internal/cmd/blueprints.go` + `internal/blueprints/` loader
 
-The loader logic (file discovery, YAML/JSON parsing, GitHub fetching, resource matching) belongs in a dedicated `internal/apply/` package rather than inline in the cobra command. This keeps the command handler thin and makes the loader unit-testable.
+The loader logic (file discovery, YAML/JSON parsing, GitHub fetching, resource matching) belongs in a dedicated `internal/blueprints/` package rather than inline in the cobra command. This keeps the command handler thin and makes the loader unit-testable.
 
 Package layout:
 ```
-tools/emergent-cli/internal/apply/
+tools/emergent-cli/internal/blueprints/
   loader.go       # walk packs/ and agents/, parse files
   github.go       # fetch repo as tar.gz, extract to temp dir
   applier.go      # orchestrate: load → match existing → create/update/skip
   types.go        # PackFile, AgentFile structs (the on-disk schema)
-tools/emergent-cli/internal/cmd/apply.go  # cobra command, flags, output
+tools/emergent-cli/internal/cmd/blueprints.go  # cobra command, flags, output
 ```
 
-**Alternative considered:** Single file in `internal/cmd/apply.go`. Rejected — loader + GitHub fetch logic is substantial enough to warrant isolation.
+**Alternative considered:** Single file in `internal/cmd/blueprints.go`. Rejected — loader + GitHub fetch logic is substantial enough to warrant isolation.
 
 ### Decision 3: Upsert matching by `name` field
 
@@ -56,7 +56,7 @@ Implication: if a pack or agent is renamed in the file, the old resource is left
 
 For `https://github.com/org/repo[#ref]`, the loader downloads `https://codeload.github.com/org/repo/tar.gz/<ref>` (defaulting to `HEAD`), extracts to a temp directory, then applies the same local-folder logic. This avoids the GitHub API rate limits that apply to tree/contents endpoints.
 
-For private repos, an `Authorization: token <tok>` header is added to the archive request. Token source priority: `--token` flag → `EMERGENT_GITHUB_TOKEN` env var.
+For private repos, an `Authorization: token <tok>` header is added to the archive request. Token source priority: `--token` flag → `MEMORY_GITHUB_TOKEN` env var.
 
 **Alternative considered:** GitHub API `/repos/{owner}/{repo}/contents/{path}` per-file. Rejected — requires N API calls for N files and has tighter rate limits.
 
@@ -66,7 +66,7 @@ For private repos, an `Authorization: token <tok>` header is added to the archiv
 
 ### Decision 6: Two-phase run (fetch-all, then apply)
 
-The applier fetches the full list of existing packs and agents once before processing any files. This avoids N+1 API calls during the apply loop and gives `--dry-run` accurate skip/update predictions without any mutations.
+The applier (`Blueprinter`) fetches the full list of existing packs and agents once before processing any files. This avoids N+1 API calls during the apply loop and gives `--dry-run` accurate skip/update predictions without any mutations.
 
 ## Risks / Trade-offs
 
@@ -82,13 +82,13 @@ The applier fetches the full list of existing packs and agents once before proce
 
 No server migrations required. The command is purely additive to the CLI binary.
 
-1. Add `internal/apply/` package with tests
-2. Add `internal/cmd/apply.go` cobra command
+1. Add `internal/blueprints/` package with tests
+2. Add `internal/cmd/blueprints.go` cobra command
 3. Wire into `rootCmd` via `init()`
 4. Update `README.md` in `tools/emergent-cli/` with usage examples
 5. Ship in next CLI release
 
 ## Open Questions
 
-- Should `emergent apply` also support assigning (installing) a pack to the project after creating it, or only create the pack in the global registry? Current template-packs flow requires two steps: create pack → assign to project. The spec says "upsert template packs into the target project" — this likely means create + assign in one shot.
+- Should `memory blueprints` also support assigning (installing) a pack to the project after creating it, or only create the pack in the global registry? Current template-packs flow requires two steps: create pack → assign to project. The spec says "upsert template packs into the target project" — this likely means create + assign in one shot.
 - For `--upgrade` on packs: the existing API has `CreatePack` (global registry) and `AssignPack` (project assignment). Updating a pack definition means calling an update endpoint on the global pack, not on the assignment. We should verify an update endpoint exists on the templatepacks SDK before tasks are written.
