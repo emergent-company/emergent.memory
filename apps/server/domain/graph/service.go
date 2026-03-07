@@ -191,8 +191,22 @@ func (s *Service) CountObjects(ctx context.Context, params ListParams) (int, err
 	return s.repo.Count(ctx, params)
 }
 
+// maxListLimit is the maximum number of items returned per page for list endpoints.
+// It must match the cap applied in repository.go to ensure hasMore detection is consistent.
+const maxListLimit = 200
+
 // List returns graph objects matching the given parameters.
 func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObjectsResponse, error) {
+	// Cap the limit so the service and repository agree on the effective page size.
+	// Without this cap, the repository silently clamps params.Limit in its own stack
+	// frame, causing hasMore to evaluate against the unclamped value and drop next_cursor.
+	if params.Limit <= 0 {
+		params.Limit = 50
+	}
+	if params.Limit > maxListLimit {
+		params.Limit = maxListLimit
+	}
+
 	// Run count and list queries
 	// Note: For better performance, these could be run in parallel with errgroup
 	total, err := s.repo.Count(ctx, params)
@@ -946,6 +960,14 @@ func (s *Service) CountRelationships(ctx context.Context, params RelationshipLis
 }
 
 func (s *Service) ListRelationships(ctx context.Context, params RelationshipListParams) (*SearchRelationshipsResponse, error) {
+	// Cap the limit for the same reason as List — see maxListLimit.
+	if params.Limit <= 0 {
+		params.Limit = 50
+	}
+	if params.Limit > maxListLimit {
+		params.Limit = maxListLimit
+	}
+
 	// Resolve SrcID/DstID to canonical_id values, since relationships store canonical IDs.
 	// The caller may pass either a physical id or a canonical_id.
 	if params.SrcID != nil {
