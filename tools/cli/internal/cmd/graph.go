@@ -46,9 +46,10 @@ func nameFromProps(props map[string]any) string {
 // ─────────────────────────────────────────────
 
 var graphCmd = &cobra.Command{
-	Use:   "graph",
-	Short: "Manage graph objects and relationships",
-	Long:  "Commands for managing graph objects and relationships in the Memory knowledge graph",
+	Use:     "graph",
+	Short:   "Manage graph objects and relationships",
+	Long:    "Commands for managing graph objects and relationships in the Memory knowledge graph",
+	GroupID: "knowledge",
 }
 
 var graphObjectsCmd = &cobra.Command{

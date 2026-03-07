@@ -113,7 +113,6 @@ func init() {
 	upgradeServerCmd.Flags().BoolVarP(&upgradeFlags.force, "force", "f", false, "Force upgrade without confirmation")
 
 	upgradeCmd.AddCommand(upgradeServerCmd)
-	rootCmd.AddCommand(upgradeCmd)
 }
 
 type Release struct {

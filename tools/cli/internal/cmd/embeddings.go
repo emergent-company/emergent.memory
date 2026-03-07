@@ -37,8 +37,9 @@ var embeddingsFlags struct {
 // ─── parent command ───────────────────────────────────────────────────────────
 
 var embeddingsCmd = &cobra.Command{
-	Use:   "embeddings",
-	Short: "Manage embedding workers",
+	Use:     "embeddings",
+	Short:   "Manage embedding workers",
+	GroupID: "knowledge",
 	Long: `Inspect and control the embedding workers running in the Memory server.
 
 Useful for benchmarking: pause all workers before a bench run so embeddings

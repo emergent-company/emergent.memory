@@ -44,7 +44,6 @@ Use --fix to automatically repair common issues.`,
 func init() {
 	doctorCmd.Flags().BoolVar(&doctorFlags.fix, "fix", false, "Attempt to automatically fix detected issues")
 	doctorCmd.Flags().BoolVar(&doctorFlags.debug, "debug", false, "Show detailed debug information (copyable for bug reports)")
-	rootCmd.AddCommand(doctorCmd)
 }
 
 type checkResult struct {

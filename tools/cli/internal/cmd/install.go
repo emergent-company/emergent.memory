@@ -47,7 +47,6 @@ func init() {
 	installCmd.Flags().BoolVar(&installFlags.skipStart, "skip-start", false, "Generate config but don't start services")
 	installCmd.Flags().BoolVar(&installFlags.force, "force", false, "Overwrite existing installation")
 
-	rootCmd.AddCommand(installCmd)
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
