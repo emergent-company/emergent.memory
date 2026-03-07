@@ -121,6 +121,8 @@ func TestGenerateToken(t *testing.T) {
 	}
 }
 
+func strPtr(s string) *string { return &s }
+
 func TestApiToken_ToDTO(t *testing.T) {
 	now := time.Now()
 	lastUsed := now.Add(-time.Hour)
@@ -135,7 +137,7 @@ func TestApiToken_ToDTO(t *testing.T) {
 			name: "basic token (not revoked)",
 			token: &ApiToken{
 				ID:          "token-123",
-				ProjectID:   "proj-456",
+				ProjectID:   strPtr("proj-456"),
 				UserID:      "user-789",
 				Name:        "My API Token",
 				TokenHash:   "hash123",
@@ -170,10 +172,33 @@ func TestApiToken_ToDTO(t *testing.T) {
 			},
 		},
 		{
+			name: "account token (nil project)",
+			token: &ApiToken{
+				ID:          "token-acct",
+				ProjectID:   nil,
+				UserID:      "user-789",
+				Name:        "Account Token",
+				TokenHash:   "hashacct",
+				TokenPrefix: "emt_acct1234",
+				Scopes:      []string{"projects:read"},
+				CreatedAt:   now,
+				LastUsedAt:  nil,
+				RevokedAt:   nil,
+			},
+			checkDTO: func(t *testing.T, dto ApiTokenDTO) {
+				if dto.ProjectID != nil {
+					t.Errorf("ProjectID = %v, want nil for account token", dto.ProjectID)
+				}
+				if dto.IsRevoked {
+					t.Errorf("IsRevoked = true, want false")
+				}
+			},
+		},
+		{
 			name: "token with last used time",
 			token: &ApiToken{
 				ID:          "token-456",
-				ProjectID:   "proj-789",
+				ProjectID:   strPtr("proj-789"),
 				UserID:      "user-012",
 				Name:        "Used Token",
 				TokenHash:   "hash456",
@@ -198,7 +223,7 @@ func TestApiToken_ToDTO(t *testing.T) {
 			name: "revoked token",
 			token: &ApiToken{
 				ID:          "token-789",
-				ProjectID:   "proj-012",
+				ProjectID:   strPtr("proj-012"),
 				UserID:      "user-345",
 				Name:        "Revoked Token",
 				TokenHash:   "hash789",
@@ -218,7 +243,7 @@ func TestApiToken_ToDTO(t *testing.T) {
 			name: "token with empty scopes",
 			token: &ApiToken{
 				ID:          "token-empty",
-				ProjectID:   "proj-empty",
+				ProjectID:   strPtr("proj-empty"),
 				UserID:      "user-empty",
 				Name:        "Empty Scopes",
 				TokenHash:   "hashempty",
@@ -241,7 +266,7 @@ func TestApiToken_ToDTO(t *testing.T) {
 			name: "token with nil scopes",
 			token: &ApiToken{
 				ID:          "token-nil",
-				ProjectID:   "proj-nil",
+				ProjectID:   strPtr("proj-nil"),
 				UserID:      "user-nil",
 				Name:        "Nil Scopes",
 				TokenHash:   "hashnil",
@@ -270,7 +295,7 @@ func TestApiToken_ToDTO(t *testing.T) {
 
 func TestValidApiTokenScopes(t *testing.T) {
 	// Verify the expected scopes are defined
-	expected := []string{"schema:read", "data:read", "data:write", "agents:read", "agents:write"}
+	expected := []string{"schema:read", "data:read", "data:write", "agents:read", "agents:write", "projects:read", "projects:write"}
 	if len(ValidApiTokenScopes) != len(expected) {
 		t.Errorf("ValidApiTokenScopes has %d items, want %d", len(ValidApiTokenScopes), len(expected))
 	}
