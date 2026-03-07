@@ -71,8 +71,8 @@
 
 - [x] 6.1 Run `go build ./tools/cli/...` — zero errors
 - [x] 6.2 Run `go test ./tools/cli/internal/blueprints/...` — all tests pass
-- [ ] 6.3 Manual smoke test: apply a blueprint with a `seed/objects/` directory containing objects; verify created in project
-- [ ] 6.4 Manual smoke test: apply a blueprint with `seed/relationships/` referencing objects by key; verify relationships created
-- [ ] 6.5 Manual smoke test: `--dry-run` on seed apply prints actions without creating objects
-- [ ] 6.6 Manual smoke test: `--upgrade` upserts existing keyed objects; without flag they are skipped
-- [ ] 6.7 Manual smoke test: run `memory blueprints dump ./out` on a project with data; verify `out/seed/objects/` and `out/seed/relationships/` are valid and re-applyable
+- [x] 6.3 Manual smoke test: apply a blueprint with a `seed/objects/` directory containing objects; verify created in project
+- [x] 6.4 Manual smoke test: apply a blueprint with `seed/relationships/` referencing objects by key; verify relationships created
+- [x] 6.5 Manual smoke test: `--dry-run` on seed apply prints actions without creating objects
+- [x] 6.6 Manual smoke test: `--upgrade` upserts existing keyed objects; without flag they are skipped
+- [x] 6.7 Manual smoke test: run `memory blueprints dump ./out` on a project with data; verify `out/seed/objects/` and `out/seed/relationships/` are valid and re-applyable

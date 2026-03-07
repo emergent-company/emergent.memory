@@ -158,11 +158,13 @@ func TestDumper_KeyReferencesUsedWhenAvailable(t *testing.T) {
 	}
 }
 
-func TestDumper_IDFallbackWhenKeyMissing(t *testing.T) {
+func TestDumper_SyntheticKeyForKeylessObjects(t *testing.T) {
+	// Objects without explicit keys should receive synthetic "_id:<entityID>" keys
+	// so that relationships can always be expressed as srcKey/dstKey and survive
+	// a dump→restore round-trip.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/objects/search"):
-			// Objects without keys.
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
 				Items: []*sdkgraph.GraphObject{
@@ -196,6 +198,24 @@ func TestDumper_IDFallbackWhenKeyMissing(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// Object records should have synthetic keys.
+	objFile := filepath.Join(outputDir, "seed", "objects", "Node.jsonl")
+	objData, err := os.ReadFile(objFile)
+	if err != nil {
+		t.Fatalf("read object file: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(objData)), "\n")
+	for _, line := range lines {
+		var obj blueprints.SeedObjectRecord
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Fatalf("unmarshal object record: %v", err)
+		}
+		if !strings.HasPrefix(obj.Key, "_id:") {
+			t.Errorf("expected synthetic _id: key for keyless object, got key=%q", obj.Key)
+		}
+	}
+
+	// Relationship records should use srcKey/dstKey (not srcId/dstId).
 	relFile := filepath.Join(outputDir, "seed", "relationships", "Links.jsonl")
 	data, err := os.ReadFile(relFile)
 	if err != nil {
@@ -205,11 +225,11 @@ func TestDumper_IDFallbackWhenKeyMissing(t *testing.T) {
 	if err := json.Unmarshal(data, &rec); err != nil {
 		t.Fatalf("unmarshal relationship record: %v", err)
 	}
-	if rec.SrcID != "eid-001" || rec.DstID != "eid-002" {
-		t.Errorf("expected SrcID=eid-001 DstID=eid-002, got SrcID=%s DstID=%s", rec.SrcID, rec.DstID)
+	if rec.SrcKey != "_id:eid-001" || rec.DstKey != "_id:eid-002" {
+		t.Errorf("expected SrcKey=_id:eid-001 DstKey=_id:eid-002, got SrcKey=%s DstKey=%s", rec.SrcKey, rec.DstKey)
 	}
-	if rec.SrcKey != "" || rec.DstKey != "" {
-		t.Errorf("expected empty SrcKey/DstKey for keyless objects, got SrcKey=%s DstKey=%s", rec.SrcKey, rec.DstKey)
+	if rec.SrcID != "" || rec.DstID != "" {
+		t.Errorf("expected empty SrcID/DstID when keys available, got SrcID=%s DstID=%s", rec.SrcID, rec.DstID)
 	}
 }
 
