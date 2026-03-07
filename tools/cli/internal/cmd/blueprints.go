@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/blueprints"
 	"github.com/spf13/cobra"
@@ -18,6 +19,9 @@ var (
 	blueprintsUpgradeFlag bool
 	blueprintsDryRunFlag  bool
 	blueprintsTokenFlag   string
+
+	// dump subcommand flags
+	blueprintsDumpTypesFlag string
 )
 
 // ─────────────────────────────────────────────
@@ -26,23 +30,30 @@ var (
 
 var blueprintsCmd = &cobra.Command{
 	Use:   "blueprints <source>",
-	Short: "Apply Blueprints (packs and agents) from a directory or GitHub URL",
-	Long: `Apply Blueprints — template packs and agent definitions — to the current
-project from a structured directory or a GitHub repository URL.
+	Short: "Apply Blueprints (packs, agents, seed data) from a directory or GitHub URL",
+	Long: `Apply Blueprints — template packs, agent definitions, and seed data — to the
+current project from a structured directory or a GitHub repository URL.
 
-The source directory (or GitHub repo root) must contain:
-  packs/    — one file per template pack  (.json, .yaml, .yml)
-  agents/   — one file per agent definition (.json, .yaml, .yml)
+The source directory (or GitHub repo root) may contain:
+  packs/             — one file per template pack  (.json, .yaml, .yml)
+  agents/            — one file per agent definition (.json, .yaml, .yml)
+  seed/objects/      — per-type JSONL files with graph objects to seed
+  seed/relationships/ — per-type JSONL files with graph relationships to seed
 
 By default the command is additive-only: existing resources are skipped.
 Use --upgrade to update resources that already exist.
+
+Use the dump subcommand to export an existing project's data as seed files:
+
+  memory blueprints dump <output-dir>
 
 Examples:
 
   memory blueprints ./my-config
   memory blueprints https://github.com/acme/memory-blueprints
   memory blueprints https://github.com/acme/memory-blueprints#v1.2.0 --upgrade
-  memory blueprints ./my-config --dry-run`,
+  memory blueprints ./my-config --dry-run
+  memory blueprints dump ./exported`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		source := args[0]
@@ -78,7 +89,7 @@ Examples:
 		}
 
 		// ── Load files ─────────────────────────────────────────────────
-		packs, agents, loadResults, err := blueprints.LoadDir(dir)
+		packs, agents, seedObjects, seedRels, loadResults, err := blueprints.LoadDir(dir)
 		if err != nil {
 			return fmt.Errorf("load directory: %w", err)
 		}
@@ -91,7 +102,7 @@ Examples:
 			}
 		}
 
-		if len(packs) == 0 && len(agents) == 0 && len(loadResults) == 0 {
+		if len(packs) == 0 && len(agents) == 0 && len(seedObjects) == 0 && len(seedRels) == 0 && len(loadResults) == 0 {
 			fmt.Fprintln(out, "Nothing to apply — no blueprint files found.")
 			return nil
 		}
@@ -110,6 +121,26 @@ Examples:
 			return err
 		}
 
+		// ── Run seeder (seed objects and relationships) ────────────────
+		if len(seedObjects) > 0 || len(seedRels) > 0 {
+			seeder := blueprints.NewSeeder(
+				c.SDK.Graph,
+				blueprintsDryRunFlag,
+				blueprintsUpgradeFlag,
+				out,
+			)
+			seedResult, err := seeder.Run(context.Background(), seedObjects, seedRels)
+			if err != nil {
+				return fmt.Errorf("seed: %w", err)
+			}
+			if !blueprintsDryRunFlag {
+				fmt.Fprintf(out, "  seed: %d objects created, %d updated, %d skipped, %d failed; %d relationships created, %d failed\n",
+					seedResult.ObjectsCreated, seedResult.ObjectsUpdated, seedResult.ObjectsSkipped, seedResult.ObjectsFailed,
+					seedResult.RelsCreated, seedResult.RelsFailed,
+				)
+			}
+		}
+
 		// Combine load errors with blueprints results for exit-code decision.
 		all := append(loadResults, results...)
 		for _, r := range all {
@@ -118,6 +149,66 @@ Examples:
 			}
 		}
 
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
+// blueprintsDumpCmd — export project data as seed files
+// ─────────────────────────────────────────────
+
+var blueprintsDumpCmd = &cobra.Command{
+	Use:   "dump <output-dir>",
+	Short: "Export project graph objects and relationships as JSONL seed files",
+	Long: `Export the current project's graph objects and relationships as per-type JSONL
+seed files that can be re-applied with "memory blueprints <dir>".
+
+Output layout:
+  <output-dir>/seed/objects/<Type>.jsonl
+  <output-dir>/seed/relationships/<Type>.jsonl
+
+Files exceeding 50 MB are automatically split:
+  <Type>.001.jsonl, <Type>.002.jsonl, …
+
+Examples:
+
+  memory blueprints dump ./exported
+  memory blueprints dump ./exported --types Document,Person
+  memory blueprints dump ./exported --project my-project`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		outputDir := args[0]
+
+		c, err := getClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		projectID, err := resolveProjectContext(cmd, blueprintsProjectFlag)
+		if err != nil {
+			return err
+		}
+		c.SetContext("", projectID)
+
+		var typeFilter []string
+		if blueprintsDumpTypesFlag != "" {
+			for _, t := range strings.Split(blueprintsDumpTypesFlag, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					typeFilter = append(typeFilter, t)
+				}
+			}
+		}
+
+		out := cmd.OutOrStdout()
+		dumper := blueprints.NewDumper(c.SDK.Graph, typeFilter, out)
+
+		result, err := dumper.Run(context.Background(), outputDir)
+		if err != nil {
+			return fmt.Errorf("dump: %w", err)
+		}
+
+		_ = result // summary already printed by dumper.Run
 		return nil
 	},
 }
@@ -132,5 +223,9 @@ func init() {
 	blueprintsCmd.Flags().BoolVar(&blueprintsDryRunFlag, "dry-run", false, "Preview actions without making any API calls")
 	blueprintsCmd.Flags().StringVar(&blueprintsTokenFlag, "token", "", "GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN")
 
+	blueprintsDumpCmd.Flags().StringVar(&blueprintsProjectFlag, "project", "", "Project ID or name (overrides config/env)")
+	blueprintsDumpCmd.Flags().StringVar(&blueprintsDumpTypesFlag, "types", "", "Comma-separated list of object/relationship types to export (default: all types)")
+
+	blueprintsCmd.AddCommand(blueprintsDumpCmd)
 	rootCmd.AddCommand(blueprintsCmd)
 }
