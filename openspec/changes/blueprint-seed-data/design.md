@@ -8,18 +8,17 @@ Currently the graph SDK already exposes `BulkCreateObjects` and `BulkCreateRelat
 
 **Goals:**
 - Add `seed/` directory support to the blueprint format
-- Load seed files (JSON/YAML) defining objects and relationships
+- Load per-type JSONL seed files defining objects and relationships
 - Apply seed data after packs and agents in the same `memory blueprints` command
-- Support large datasets via bulk API calls (chunked batches)
-- Key-based deduplication: skip or update existing objects matched by `key` field
+- Support large datasets via bulk API calls (chunked batches of 100)
+- Key-based deduplication: pre-check existing keys, skip or upsert based on `--upgrade`
 - Honor `--dry-run` and `--upgrade` flags consistently with existing behavior
-- Relationship references: resolve source/target by object `key` within the same seed file (so the file is self-contained and order-independent)
-- New `memory blueprints dump` subcommand: export objects and relationships from an existing project into a seed file (round-trip: dump → edit → re-apply)
-- Dump supports filtering by one or more object types, and outputs JSON or YAML
+- Relationship references: resolve source/target by object `key` within the same seed directory (so files are self-contained and order-independent)
+- New `memory blueprints dump` subcommand: export objects and relationships from an existing project into per-type JSONL seed files (round-trip: dump → edit → re-apply)
+- Dump supports filtering by one or more object types
 
 **Non-Goals:**
-- Cross-file key resolution (relationships cannot reference keys defined in other seed files)
-- Incremental diff / sync of large datasets
+- Cross-directory key resolution (relationships cannot reference keys defined in other seed directories)
 - Rollback of seed data on partial failure
 - UI changes for seed data management
 - Server-side API changes
@@ -27,80 +26,107 @@ Currently the graph SDK already exposes `BulkCreateObjects` and `BulkCreateRelat
 
 ## Decisions
 
-### D1: New `seed/` subdirectory (not extending pack files)
+### D1: Per-type JSONL in seed/objects/ and seed/relationships/
 
-**Decision**: Seed data lives in `seed/<name>.{json,yaml,yml}` — a sibling of `packs/` and `agents/`, not embedded inside pack files.
+**Decision**: Seed data lives in two subdirectories:
+- `seed/objects/<TypeName>.jsonl` — one object per line, all objects of that type
+- `seed/relationships/<TypeName>.jsonl` — one relationship per line, all rels of that type
 
-**Rationale**: Pack files describe *schema* (types), not *data*. Mixing them couples schema versioning with data versioning. A separate directory keeps concerns separated and allows very large seed files (thousands of objects) without bloating pack definitions.
+Files auto-split at 50 MB: `<TypeName>.001.jsonl`, `<TypeName>.002.jsonl`, etc.
 
-**Alternative considered**: `objectInstances` / `relationshipInstances` arrays inside `PackFile`. Rejected because pack files are schema artifacts and embedding data in them would complicate the `--upgrade` logic for type schemas.
+**Rationale**: Per-type files are diffable, streamable, and git-friendly for normal project sizes. Auto-splitting keeps individual files under GitHub's 100 MB hard push limit. Separating objects and relationships into subdirectories makes the apply order explicit and allows the seeder to build the full key→entityID map before processing any relationship file.
+
+**Alternative considered**: Single YAML/JSON file per seed. Rejected — not practical at IMDB scale (400k objects, 2M relationships); a single file would exceed GitHub's hard limit.
+
+**Alternative considered**: Mixed JSONL with `kind` field. Rejected — per-type files are more readable, allow parallel processing by type, and make `--types` filtering trivial.
 
 ### D2: Key-based identity for deduplication
 
-**Decision**: Objects in seed files use an optional `key` string field. Objects with a matching key in the project are skipped (or updated with `--upgrade`); keyless objects are always created.
+**Decision**: Objects in seed files use an optional `key` string field. On apply, the seeder:
+1. Collects all keys in the current batch
+2. Calls `ListObjects` with those keys to find existing objects
+3. Skips existing objects (or upserts with `--upgrade`)
+4. Bulk-creates the remainder via `BulkCreateObjects`
 
-**Rationale**: The graph SDK supports `key` on `CreateObjectRequest` and the server uses upsert semantics when `key` is set. This gives blueprint authors stable, human-readable identifiers without needing to track server-assigned UUIDs.
+Keyless objects are always created (no dedup possible without a stable identity).
 
-**Alternative considered**: Using object `type + properties` fingerprinting. Rejected — too fragile and expensive.
+**Rationale**: The DB enforces a partial unique index on `(project_id, type, key)` for HEAD rows. The `UpsertObject` endpoint uses advisory locking + content-hash no-op detection, making re-seeding safe for keyed objects. Bulk create has no upsert semantics, so pre-checking keys is the correct approach for batch workflows.
 
-### D3: Relationship resolution via local key map
+**Alternative considered**: Call `/api/graph/objects/upsert` per object. Correct, but O(N) API calls for large datasets. Pre-check + bulk-create reduces this to O(N/100) bulk calls plus one key-lookup call per batch.
 
-**Decision**: After all objects from a seed file are applied, the seeder builds a `key → entityID` map from results. Relationships can then reference objects by `srcKey` / `dstKey` fields which are resolved before the API call.
+### D3: Relationship deduplication is automatic
 
-**Rationale**: Allows self-contained seed files where relationships reference objects defined in the same file. Users don't need to know server-side UUIDs.
+**Decision**: Relationships are submitted via `BulkCreateRelationships` without any pre-check. The server uses `INSERT ... ON CONFLICT DO NOTHING` against the HEAD unique index on `(project_id, type, src_id, dst_id)`. Re-seeding relationships is always safe.
 
-**Alternative considered**: Requiring raw UUIDs in `srcId` / `dstId`. Rejected — impractical for human-authored files.
+**Rationale**: The DB schema already enforces relationship deduplication at the HEAD level — only one HEAD row can exist per `(project, type, src, dst)` tuple. The API reflects this: no duplicate can be created. No client-side dedup logic is needed.
 
-### D4: Batch size of 100
+### D4: Relationship references via key map
 
-**Decision**: The seeder chunks bulk API calls to 100 items per request.
+**Decision**: After all objects from all seed files are applied, the seeder builds a `key → entityID` map from results. Relationship JSONL lines use `srcKey`/`dstKey` fields which are resolved before the API call. Raw `srcId`/`dstId` UUIDs are also accepted as a fallback.
 
-**Rationale**: Aligns with practical API limits and avoids request timeouts on large datasets. Value is a constant that can be tuned.
+**Rationale**: Allows self-contained seed directories where relationships reference objects by stable human-readable keys. Dump output uses keys when available, making dump files portable across projects.
 
-### D5: Seed applied after packs and agents
+### D5: Batch size of 100
+
+**Decision**: Both object and relationship bulk API calls chunk at 100 items per request.
+
+**Rationale**: Aligns with the documented maximum for the bulk endpoints. Constant is named `seedBatchSize` for easy tuning.
+
+### D6: Seed applied after packs and agents
 
 **Decision**: Seed is the last phase — packs first, agents second, seed data third.
 
-**Rationale**: Seed data typically depends on object types defined in packs. Applying packs first ensures type definitions exist before objects are created.
+**Rationale**: Seed data depends on object types defined in packs. Applying packs first ensures type definitions exist before objects are created.
 
-### D6: `memory blueprints dump` as a subcommand of `blueprints`
+### D7: `memory blueprints dump` as a subcommand
 
-**Decision**: The dump feature is exposed as `memory blueprints dump <output-dir> [--types type1,type2] [--format yaml|json]` rather than a top-level command or a flag on the main `blueprints` command.
+**Decision**: `memory blueprints dump <output-dir> [--types type1,type2]`
 
-**Rationale**: Dump is the inverse of apply — keeping it under the same `blueprints` group makes discovery natural and keeps the CLI surface small. The output directory mirrors the `seed/` structure so the result can be immediately used with `memory blueprints <output-dir>`.
+Output structure mirrors the seed directory:
+```
+<output-dir>/
+  seed/
+    objects/
+      Movie.jsonl
+      Person.jsonl
+    relationships/
+      ACTED_IN.jsonl
+      DIRECTED.jsonl
+```
 
-**Alternative considered**: `memory graph export` as a separate top-level command. Rejected — coupling it to the blueprint format makes the round-trip workflow explicit.
+**Rationale**: The output is immediately usable as a blueprint source directory. Dump is the inverse of apply — keeping it under `blueprints` makes the round-trip workflow explicit.
 
-### D7: Dump paginates via cursor and streams to file
+### D8: Dump uses cursor pagination and 50 MB auto-split
 
-**Decision**: The dumper uses `ListObjects` and `ListRelationships` with cursor pagination (page size 250), accumulating all results before writing a single seed file.
+**Decision**: Dumper paginates `ListObjects` and `ListRelationships` with cursor (page size 250), streams lines to per-type JSONL files, and opens a new split file when the current file exceeds 50 MB.
 
-**Rationale**: Projects may have thousands of objects. Cursor pagination avoids loading the entire dataset into memory at once — results are accumulated into the output struct and flushed to disk once complete. A single output file per dump keeps the result simple to inspect and re-apply.
+**Rationale**: Projects may have millions of objects. Streaming to disk avoids holding the full dataset in memory. The 50 MB split threshold keeps individual files under GitHub's 100 MB hard limit.
 
-**Alternative considered**: Streaming NDJSON to avoid holding all results in memory. Rejected — the seed file format is a structured JSON/YAML document, not a stream; and typical project sizes fit comfortably in memory.
+### D9: Dump uses object `key` as relationship reference when available
 
-### D8: Dump uses object `key` as the relationship reference if available; falls back to `entityId`
+**Decision**: When dumping relationships, `srcKey`/`dstKey` are populated if the referenced objects have a `key`. Otherwise `srcId`/`dstId` (entityID) are used.
 
-**Decision**: When dumping relationships, `srcKey`/`dstKey` are populated if the referenced objects were also dumped and have a `key`. Otherwise, `srcId`/`dstId` (entityID) are used directly.
+**Rationale**: Files with keys are portable across projects. Files with only UUIDs only work against the same project. When all objects have keys (the recommended practice for seeded data), the dump is fully portable.
 
-**Rationale**: Makes dumped files maximally portable — a file with keys can be re-applied to a different project; a file with UUIDs only works against the same project. When all objects have keys (the recommended practice), the dump is fully portable.
+## DB Schema Facts (verified)
+
+| | graph_objects | graph_relationships |
+|---|---|---|
+| Key uniqueness | Partial unique index on `(project_id, type, key)` WHERE HEAD row | Partial unique index on `(project_id, type, src_id, dst_id)` WHERE HEAD row |
+| Upsert support | `PUT /api/graph/objects/upsert` (advisory lock + content-hash no-op) | `INSERT ON CONFLICT DO NOTHING` via bulk create |
+| Bulk upsert | Not available — bulk create is insert-only | N/A — auto-deduplicated |
+| COPY fast path | Not available — backup domain uses paginated SELECT + NDJSON | Same |
 
 ## Risks / Trade-offs
 
 - **Partial failure on large datasets** → Mitigation: continue processing remaining batches on error; report counts of successes and failures in summary. Do not abort the run.
 - **Relationship references to missing keys** → Mitigation: if `srcKey`/`dstKey` cannot be resolved, record an error result for that relationship and continue.
 - **Duplicate keyless objects** → Mitigation: document clearly that keyless objects are always created. Users who need idempotency must provide keys.
-- **Very large files (>10k objects)** → Mitigation: chunked batching handles this gracefully; memory footprint is bounded by batch size, not file size.
+- **Very large files** → Mitigation: auto-split at 50 MB; streaming write avoids memory pressure.
 - **Dump completeness** → Mitigation: dump always fetches all pages; progress is printed to stderr so users can see it's working on large projects.
 
 ## Migration Plan
 
 - No server migration needed.
-- Existing blueprint directories without a `seed/` directory are unaffected — `LoadDir` returns empty seed list, seeder is a no-op.
+- Existing blueprint directories without a `seed/` directory are unaffected — `LoadDir` returns empty results, seeder is a no-op.
 - CLI binary is deployed via `task cli:install`; no coordinated rollout required.
-
-## Open Questions
-
-- Should seed files support a `labels` array on objects? (The API supports it — include for completeness.)
-- Should the seeder report per-object results or only batch-level summaries? (Per-object is more useful for debugging but verbose on large datasets — use batch summary with error detail.)
-- Should `dump` include deleted objects? Default: no; add `--include-deleted` flag for completeness.

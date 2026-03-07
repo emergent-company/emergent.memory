@@ -1,6 +1,7 @@
 package blueprints
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,18 +11,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LoadDir walks the packs/ and agents/ subdirectories inside dir and returns
-// all successfully parsed PackFile and AgentFile values.
+// LoadDir walks the packs/, agents/, seed/objects/, and seed/relationships/
+// subdirectories inside dir and returns all successfully parsed records.
 //
 // Files with unknown extensions are silently skipped.
 // Files that fail to parse or fail validation are recorded in the returned
 // results with BlueprintsActionError — processing continues for remaining files.
-// Missing packs/ or agents/ subdirectories are not an error.
-func LoadDir(dir string) (packs []PackFile, agents []AgentFile, results []BlueprintsResult, err error) {
+// Missing subdirectories are not an error.
+func LoadDir(dir string) (
+	packs []PackFile,
+	agents []AgentFile,
+	objects []SeedObjectRecord,
+	rels []SeedRelationshipRecord,
+	results []BlueprintsResult,
+	err error,
+) {
 	packs, packResults := loadPacks(filepath.Join(dir, "packs"))
 	agents, agentResults := loadAgents(filepath.Join(dir, "agents"))
+	objects, objResults := loadSeedObjects(filepath.Join(dir, "seed", "objects"))
+	rels, relResults := loadSeedRelationships(filepath.Join(dir, "seed", "relationships"))
 	results = append(packResults, agentResults...)
-	return packs, agents, results, nil
+	results = append(results, objResults...)
+	results = append(results, relResults...)
+	return packs, agents, objects, rels, results, nil
 }
 
 // ──────────────────────────────────────────────
@@ -185,6 +197,146 @@ func validatePack(p *PackFile) error {
 func validateAgent(a *AgentFile) error {
 	if a.Name == "" {
 		return fmt.Errorf("name is required")
+	}
+	return nil
+}
+
+// ──────────────────────────────────────────────
+// Seed loaders
+// ──────────────────────────────────────────────
+
+// loadSeedObjects reads all *.jsonl files (including split files *.001.jsonl,
+// *.002.jsonl, …) from dir and returns parsed SeedObjectRecord values.
+// Missing directory is not an error.
+func loadSeedObjects(dir string) ([]SeedObjectRecord, []BlueprintsResult) {
+	return loadSeedJSONL(dir, func(line []byte, path string) (SeedObjectRecord, error) {
+		var rec SeedObjectRecord
+		if err := decodeJSONLine(line, &rec); err != nil {
+			return rec, err
+		}
+		rec.SourceFile = path
+		return rec, validateSeedObject(&rec)
+	})
+}
+
+// loadSeedRelationships reads all *.jsonl files from dir and returns parsed
+// SeedRelationshipRecord values. Missing directory is not an error.
+func loadSeedRelationships(dir string) ([]SeedRelationshipRecord, []BlueprintsResult) {
+	return loadSeedJSONL(dir, func(line []byte, path string) (SeedRelationshipRecord, error) {
+		var rec SeedRelationshipRecord
+		if err := decodeJSONLine(line, &rec); err != nil {
+			return rec, err
+		}
+		rec.SourceFile = path
+		return rec, validateSeedRelationship(&rec)
+	})
+}
+
+// loadSeedJSONL is the generic JSONL reader. It reads all *.jsonl files in dir
+// (sorted, so split files arrive in order), calls parse for each non-empty line,
+// and accumulates results and errors.
+func loadSeedJSONL[T any](dir string, parse func([]byte, string) (T, error)) ([]T, []BlueprintsResult) {
+	entries, ok := readDir(dir)
+	if !ok {
+		return nil, nil
+	}
+
+	var records []T
+	var results []BlueprintsResult
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".jsonl" {
+			continue
+		}
+		path := filepath.Join(dir, name)
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			results = append(results, BlueprintsResult{
+				ResourceType: "seed",
+				Name:         name,
+				SourceFile:   path,
+				Action:       BlueprintsActionError,
+				Error:        fmt.Errorf("read file: %w", err),
+			})
+			continue
+		}
+
+		lineNum := 0
+		for _, raw := range splitLines(data) {
+			lineNum++
+			if len(raw) == 0 {
+				continue
+			}
+			rec, err := parse(raw, path)
+			if err != nil {
+				results = append(results, BlueprintsResult{
+					ResourceType: "seed",
+					Name:         fmt.Sprintf("%s:%d", name, lineNum),
+					SourceFile:   path,
+					Action:       BlueprintsActionError,
+					Error:        err,
+				})
+				continue
+			}
+			records = append(records, rec)
+		}
+	}
+
+	return records, results
+}
+
+// splitLines splits data on newlines, trimming carriage returns.
+func splitLines(data []byte) [][]byte {
+	var lines [][]byte
+	start := 0
+	for i, b := range data {
+		if b == '\n' {
+			line := bytes.TrimRight(data[start:i], "\r")
+			lines = append(lines, line)
+			start = i + 1
+		}
+	}
+	// trailing line without newline
+	if start < len(data) {
+		line := bytes.TrimRight(data[start:], "\r")
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// decodeJSONLine unmarshals a single JSON line into v.
+func decodeJSONLine(line []byte, v any) error {
+	if err := json.Unmarshal(line, v); err != nil {
+		return fmt.Errorf("json decode: %w", err)
+	}
+	return nil
+}
+
+// validateSeedObject checks required fields for a SeedObjectRecord.
+func validateSeedObject(r *SeedObjectRecord) error {
+	if r.Type == "" {
+		return fmt.Errorf("type is required")
+	}
+	return nil
+}
+
+// validateSeedRelationship checks required fields for a SeedRelationshipRecord.
+func validateSeedRelationship(r *SeedRelationshipRecord) error {
+	if r.Type == "" {
+		return fmt.Errorf("type is required")
+	}
+	hasSrcKey := r.SrcKey != ""
+	hasDstKey := r.DstKey != ""
+	hasSrcID := r.SrcID != ""
+	hasDstID := r.DstID != ""
+	if !((hasSrcKey && hasDstKey) || (hasSrcID && hasDstID)) {
+		return fmt.Errorf("relationship must have either (srcKey+dstKey) or (srcId+dstId)")
 	}
 	return nil
 }
