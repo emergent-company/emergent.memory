@@ -75,6 +75,50 @@ type AgentModel struct {
 }
 
 // ──────────────────────────────────────────────
+// Seed records — seed/objects/<Type>.jsonl
+//                seed/relationships/<Type>.jsonl
+// ──────────────────────────────────────────────
+
+// SeedObjectRecord is one JSONL line from a seed/objects/<Type>.jsonl file.
+// Each line represents one object to create or upsert.
+type SeedObjectRecord struct {
+	Type       string         `json:"type"`
+	Key        string         `json:"key,omitempty"`
+	Status     string         `json:"status,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Labels     []string       `json:"labels,omitempty"`
+
+	// SourceFile is populated by the loader (not serialised).
+	SourceFile string `json:"-"`
+}
+
+// SeedRelationshipRecord is one JSONL line from a seed/relationships/<Type>.jsonl file.
+// Use SrcKey/DstKey to reference objects by key within the same seed directory,
+// or SrcID/DstID to supply raw server-side entity IDs directly.
+type SeedRelationshipRecord struct {
+	Type       string         `json:"type"`
+	SrcKey     string         `json:"srcKey,omitempty"`
+	DstKey     string         `json:"dstKey,omitempty"`
+	SrcID      string         `json:"srcId,omitempty"`
+	DstID      string         `json:"dstId,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Weight     *float32       `json:"weight,omitempty"`
+
+	// SourceFile is populated by the loader (not serialised).
+	SourceFile string `json:"-"`
+}
+
+// SeedResult summarises the outcome of a seed run.
+type SeedResult struct {
+	ObjectsCreated int
+	ObjectsUpdated int
+	ObjectsSkipped int
+	ObjectsFailed  int
+	RelsCreated    int
+	RelsFailed     int
+}
+
+// ──────────────────────────────────────────────
 // BlueprintsResult — outcome of processing one resource
 // ──────────────────────────────────────────────
 

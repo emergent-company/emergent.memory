@@ -23,7 +23,7 @@ objectTypes:
     label: "Document"
 `)
 
-	packs, agents, results, err := blueprints.LoadDir(dir)
+	packs, agents, _, _, results, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestLoadDir_ValidJSONAgent(t *testing.T) {
 	data, _ := json.Marshal(agent)
 	writeFile(t, dir, "agents/my-agent.json", string(data))
 
-	packs, agents, results, err := blueprints.LoadDir(dir)
+	packs, agents, _, _, results, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,7 +82,7 @@ objectTypes:
   - name: Doc
 `)
 
-	packs, _, _, err := blueprints.LoadDir(dir)
+	packs, _, _, _, _, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -100,7 +100,7 @@ objectTypes:
   - name: Doc
 `)
 
-	packs, _, results, err := blueprints.LoadDir(dir)
+	packs, _, _, _, results, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestLoadDir_MissingSubdirsNotError(t *testing.T) {
 	dir := t.TempDir()
 	// No packs/ or agents/ subdirectory at all
 
-	packs, agents, results, err := blueprints.LoadDir(dir)
+	packs, agents, _, _, results, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("expected no error when subdirs are missing, got: %v", err)
 	}
@@ -140,7 +140,7 @@ objectTypes:
   - name: Node
 `)
 
-	packs, _, results, err := blueprints.LoadDir(dir)
+	packs, _, _, _, results, err := blueprints.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,6 +152,160 @@ objectTypes:
 	}
 	if results[0].Action != blueprints.BlueprintsActionError {
 		t.Errorf("expected BlueprintsActionError, got %v", results[0].Action)
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Seed loader tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+func TestLoadDir_SeedObjects_Valid(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "seed/objects/Document.jsonl", `{"type":"Document","key":"doc-1","properties":{"title":"Hello"}}
+{"type":"Document","key":"doc-2"}
+`)
+
+	_, _, objects, rels, results, err := blueprints.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 error results, got %d: %v", len(results), results)
+	}
+	if len(objects) != 2 {
+		t.Fatalf("expected 2 objects, got %d", len(objects))
+	}
+	if objects[0].Type != "Document" || objects[0].Key != "doc-1" {
+		t.Errorf("unexpected first object: %+v", objects[0])
+	}
+	if len(rels) != 0 {
+		t.Errorf("expected 0 relationships, got %d", len(rels))
+	}
+}
+
+func TestLoadDir_SeedRelationships_Valid(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "seed/relationships/Mentions.jsonl", `{"type":"Mentions","srcKey":"doc-1","dstKey":"doc-2"}
+`)
+
+	_, _, objects, rels, results, err := blueprints.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 error results, got %d", len(results))
+	}
+	if len(rels) != 1 {
+		t.Fatalf("expected 1 relationship, got %d", len(rels))
+	}
+	if rels[0].Type != "Mentions" || rels[0].SrcKey != "doc-1" || rels[0].DstKey != "doc-2" {
+		t.Errorf("unexpected relationship: %+v", rels[0])
+	}
+	if len(objects) != 0 {
+		t.Errorf("expected 0 objects, got %d", len(objects))
+	}
+}
+
+func TestLoadDir_SeedMissingDir_NotError(t *testing.T) {
+	dir := t.TempDir()
+	// No seed/ directory at all
+
+	_, _, objects, rels, results, err := blueprints.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("expected no error for missing seed dir, got: %v", err)
+	}
+	if len(objects) != 0 || len(rels) != 0 {
+		t.Errorf("expected empty seed results for missing dir")
+	}
+	if len(results) != 0 {
+		t.Errorf("expected no error results, got %d", len(results))
+	}
+}
+
+func TestLoadDir_SeedObjects_ParseError(t *testing.T) {
+	dir := t.TempDir()
+	// One valid line, one invalid JSON
+	writeFile(t, dir, "seed/objects/Node.jsonl", `{"type":"Node","key":"n1"}
+this is not json
+`)
+
+	_, _, objects, _, results, err := blueprints.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(objects) != 1 {
+		t.Fatalf("expected 1 valid object, got %d", len(objects))
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 error result, got %d", len(results))
+	}
+	if results[0].Action != blueprints.BlueprintsActionError {
+		t.Errorf("expected BlueprintsActionError, got %v", results[0].Action)
+	}
+}
+
+func TestLoadDir_SeedObjects_ValidationError(t *testing.T) {
+	dir := t.TempDir()
+	// Object missing required 'type' field
+	writeFile(t, dir, "seed/objects/Bad.jsonl", `{"key":"x","properties":{}}
+`)
+
+	_, _, objects, _, results, err := blueprints.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(objects) != 0 {
+		t.Errorf("expected 0 valid objects, got %d", len(objects))
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 error result, got %d", len(results))
+	}
+	if results[0].Action != blueprints.BlueprintsActionError {
+		t.Errorf("expected BlueprintsActionError, got %v", results[0].Action)
+	}
+}
+
+func TestLoadDir_SeedObjects_SplitFilesLoadedInOrder(t *testing.T) {
+	dir := t.TempDir()
+	// Split files: 001 comes before 002 lexicographically
+	writeFile(t, dir, "seed/objects/Document.001.jsonl", `{"type":"Document","key":"first"}
+`)
+	writeFile(t, dir, "seed/objects/Document.002.jsonl", `{"type":"Document","key":"second"}
+`)
+
+	_, _, objects, _, results, err := blueprints.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 error results, got %d", len(results))
+	}
+	if len(objects) != 2 {
+		t.Fatalf("expected 2 objects, got %d", len(objects))
+	}
+	if objects[0].Key != "first" {
+		t.Errorf("expected first object key 'first', got %q", objects[0].Key)
+	}
+	if objects[1].Key != "second" {
+		t.Errorf("expected second object key 'second', got %q", objects[1].Key)
+	}
+}
+
+func TestLoadDir_SeedObjects_UnsupportedExtensionSkipped(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "seed/objects/readme.txt", "not a jsonl file")
+	writeFile(t, dir, "seed/objects/Document.jsonl", `{"type":"Document","key":"d1"}
+`)
+
+	_, _, objects, _, results, err := blueprints.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 error results (txt skipped), got %d", len(results))
+	}
+	if len(objects) != 1 {
+		t.Fatalf("expected 1 object (txt skipped), got %d", len(objects))
 	}
 }
 
