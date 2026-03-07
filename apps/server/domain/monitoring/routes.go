@@ -11,7 +11,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// All monitoring routes require authentication and extraction:read scope
 	monitoring := e.Group("/api/monitoring")
 	monitoring.Use(authMiddleware.RequireAuth())
-	monitoring.Use(authMiddleware.RequireScopes("extraction:read"))
+	monitoring.Use(authMiddleware.RequireAPITokenScopes("extraction:read"))
 
 	// Extraction job endpoints
 	monitoring.GET("/extraction-jobs", h.ListExtractionJobs)

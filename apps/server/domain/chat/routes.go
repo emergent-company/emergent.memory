@@ -14,7 +14,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.Use(authMiddleware.RequireProjectID())
 
 	// All chat operations require chat:use scope
-	g.Use(authMiddleware.RequireScopes("chat:use"))
+	g.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 
 	// Streaming endpoint - POST /api/chat/stream
 	g.POST("/stream", h.StreamChat)
@@ -26,7 +26,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Admin operations - require chat:admin scope
 	adminGroup := g.Group("")
-	adminGroup.Use(authMiddleware.RequireScopes("chat:admin"))
+	adminGroup.Use(authMiddleware.RequireAPITokenScopes("chat:admin"))
 	adminGroup.PATCH("/:id", h.UpdateConversation)
 	adminGroup.DELETE("/:id", h.DeleteConversation)
 
@@ -38,6 +38,6 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	queryGroup := e.Group("/api/projects/:projectId/query")
 	queryGroup.Use(authMiddleware.RequireAuth())
 	queryGroup.Use(authMiddleware.RequireProjectScope())
-	queryGroup.Use(authMiddleware.RequireScopes("chat:use"))
+	queryGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 	queryGroup.POST("", h.QueryStream)
 }

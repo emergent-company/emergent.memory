@@ -15,7 +15,7 @@ func RegisterAdminRoutes(e *echo.Echo, h *AdminHandler, authMiddleware *auth.Mid
 
 	// Read operations - require admin:read
 	readGroup := admin.Group("")
-	readGroup.Use(authMiddleware.RequireScopes("admin:read"))
+	readGroup.Use(authMiddleware.RequireAPITokenScopes("admin:read"))
 	readGroup.GET("/projects/:projectId", h.ListJobs)
 	readGroup.GET("/projects/:projectId/statistics", h.GetStatistics)
 	readGroup.GET("/:jobId", h.GetJob)
@@ -23,7 +23,7 @@ func RegisterAdminRoutes(e *echo.Echo, h *AdminHandler, authMiddleware *auth.Mid
 
 	// Write operations - require admin:write
 	writeGroup := admin.Group("")
-	writeGroup.Use(authMiddleware.RequireScopes("admin:write"))
+	writeGroup.Use(authMiddleware.RequireAPITokenScopes("admin:write"))
 	writeGroup.POST("", h.CreateJob)
 	writeGroup.POST("/projects/:projectId/bulk-cancel", h.BulkCancelJobs)
 	writeGroup.DELETE("/projects/:projectId/bulk-delete", h.BulkDeleteJobs)

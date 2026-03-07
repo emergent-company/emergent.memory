@@ -16,14 +16,14 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, l
 
 	// Read operations
 	readGroup := g.Group("")
-	readGroup.Use(authMiddleware.RequireScopes("admin:read"))
+	readGroup.Use(authMiddleware.RequireAPITokenScopes("admin:read"))
 	readGroup.GET("", h.ListWorkspaces)
 	readGroup.GET("/providers", h.ListProviders)
 	readGroup.GET("/:id", h.GetWorkspace)
 
 	// Write operations
 	writeGroup := g.Group("")
-	writeGroup.Use(authMiddleware.RequireScopes("admin:write"))
+	writeGroup.Use(authMiddleware.RequireAPITokenScopes("admin:write"))
 	writeGroup.POST("", h.CreateWorkspace)
 	writeGroup.POST("/from-snapshot", h.CreateFromSnapshot)
 	writeGroup.DELETE("/:id", h.DeleteWorkspace)
@@ -35,7 +35,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, l
 
 	// Tool operations (require write scope + audit logging)
 	toolGroup := g.Group("/:id")
-	toolGroup.Use(authMiddleware.RequireScopes("admin:write"))
+	toolGroup.Use(authMiddleware.RequireAPITokenScopes("admin:write"))
 	toolGroup.Use(ToolAuditMiddleware(log))
 	toolGroup.POST("/bash", h.BashTool)
 	toolGroup.POST("/read", h.ReadTool)

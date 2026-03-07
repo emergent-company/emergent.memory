@@ -13,13 +13,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Read operations - require discovery:read scope
 	readGroup := g.Group("")
-	readGroup.Use(authMiddleware.RequireScopes("discovery:read"))
+	readGroup.Use(authMiddleware.RequireAPITokenScopes("discovery:read"))
 	readGroup.GET("/:jobId", h.GetJobStatus)
 	readGroup.GET("/projects/:projectId", h.ListJobs)
 
 	// Write operations - require discovery:write scope
 	writeGroup := g.Group("")
-	writeGroup.Use(authMiddleware.RequireScopes("discovery:write"))
+	writeGroup.Use(authMiddleware.RequireAPITokenScopes("discovery:write"))
 	writeGroup.POST("/projects/:projectId/start", h.StartDiscovery)
 	writeGroup.DELETE("/:jobId", h.CancelJob)
 	writeGroup.POST("/:jobId/finalize", h.FinalizeDiscovery)

@@ -13,13 +13,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Read operations
 	readGroup := admin.Group("")
-	readGroup.Use(authMiddleware.RequireScopes("admin:read"))
+	readGroup.Use(authMiddleware.RequireAPITokenScopes("admin:read"))
 	readGroup.GET("", h.List)
 	readGroup.GET("/:id", h.Get)
 
 	// Write operations
 	writeGroup := admin.Group("")
-	writeGroup.Use(authMiddleware.RequireScopes("admin:write"))
+	writeGroup.Use(authMiddleware.RequireAPITokenScopes("admin:write"))
 	writeGroup.POST("", h.Create)
 	writeGroup.DELETE("/:id", h.Delete)
 }

@@ -17,7 +17,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Read operations - require agents:read
 	agentsRead := agents.Group("")
-	agentsRead.Use(authMiddleware.RequireScopes("agents:read"))
+	agentsRead.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	agentsRead.GET("", h.ListAgents)
 	agentsRead.GET("/:id", h.GetAgent)
 	agentsRead.GET("/:id/runs", h.GetAgentRuns)
@@ -26,7 +26,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Write operations - require agents:write
 	agentsWrite := agents.Group("")
-	agentsWrite.Use(authMiddleware.RequireScopes("agents:write"))
+	agentsWrite.Use(authMiddleware.RequireAPITokenScopes("agents:write"))
 	agentsWrite.POST("", h.CreateAgent)
 	agentsWrite.PATCH("/:id", h.UpdateAgent)
 	agentsWrite.DELETE("/:id", h.DeleteAgent)
@@ -43,13 +43,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	defs.Use(authMiddleware.RequireProjectScope())
 
 	defsRead := defs.Group("")
-	defsRead.Use(authMiddleware.RequireScopes("agents:read"))
+	defsRead.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	defsRead.GET("", h.ListDefinitions)
 	defsRead.GET("/:id", h.GetDefinition)
 	defsRead.GET("/:id/workspace-config", h.GetWorkspaceConfig)
 
 	defsWrite := defs.Group("")
-	defsWrite.Use(authMiddleware.RequireScopes("agents:write"))
+	defsWrite.Use(authMiddleware.RequireAPITokenScopes("agents:write"))
 	defsWrite.POST("", h.CreateDefinition)
 	defsWrite.PATCH("/:id", h.UpdateDefinition)
 	defsWrite.DELETE("/:id", h.DeleteDefinition)
@@ -59,7 +59,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	runs := e.Group("/api/projects/:projectId/agent-runs")
 	runs.Use(authMiddleware.RequireAuth())
 	runs.Use(authMiddleware.RequireProjectScope())
-	runs.Use(authMiddleware.RequireScopes("agents:read"))
+	runs.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	runs.GET("", h.ListProjectRuns)
 	runs.GET("/:runId", h.GetProjectRun)
 	runs.GET("/:runId/messages", h.GetRunMessages)
@@ -76,14 +76,14 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// --- Agent session status routes ---
 	sessions := e.Group("/api/v1/agent/sessions")
 	sessions.Use(authMiddleware.RequireAuth())
-	sessions.Use(authMiddleware.RequireScopes("agents:read"))
+	sessions.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	sessions.GET("/:id", h.GetSession)
 
 	// --- Project-scoped ADK session routes ---
 	adkSessions := e.Group("/api/projects/:projectId/adk-sessions")
 	adkSessions.Use(authMiddleware.RequireAuth())
 	adkSessions.Use(authMiddleware.RequireProjectScope())
-	adkSessions.Use(authMiddleware.RequireScopes("agents:read"))
+	adkSessions.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	adkSessions.GET("", h.GetADKSessions)
 	adkSessions.GET("/:sessionId", h.GetADKSessionByID)
 

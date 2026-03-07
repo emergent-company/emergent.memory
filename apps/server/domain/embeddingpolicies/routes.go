@@ -14,13 +14,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Read operations - require graph:read scope
 	readGroup := g.Group("")
-	readGroup.Use(authMiddleware.RequireScopes("graph:read"))
+	readGroup.Use(authMiddleware.RequireAPITokenScopes("graph:read"))
 	readGroup.GET("", h.List)
 	readGroup.GET("/:id", h.GetByID)
 
 	// Write operations - require graph:write scope
 	writeGroup := g.Group("")
-	writeGroup.Use(authMiddleware.RequireScopes("graph:write"))
+	writeGroup.Use(authMiddleware.RequireAPITokenScopes("graph:write"))
 	writeGroup.POST("", h.Create)
 	writeGroup.PATCH("/:id", h.Update)
 	writeGroup.DELETE("/:id", h.Delete)
