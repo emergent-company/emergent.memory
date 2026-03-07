@@ -55,9 +55,10 @@ type SkillMeta struct {
 var installSkillsDir string
 
 var installSkillsCmd = &cobra.Command{
-	Use:   "skills",
-	Short: "Manage Agent Skills in this project",
-	Long:  "Install, list, remove, and validate Agent Skills (agentskills.io) for use with AI agents.",
+	Use:     "skills",
+	Short:   "Manage Agent Skills in this project",
+	Long:    "Install, list, remove, and validate Agent Skills (agentskills.io) for use with AI agents.",
+	GroupID: "ai",
 }
 
 var installSkillInstallCmd = &cobra.Command{

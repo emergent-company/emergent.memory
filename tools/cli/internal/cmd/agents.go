@@ -11,9 +11,10 @@ import (
 )
 
 var agentsCmd = &cobra.Command{
-	Use:   "agents",
-	Short: "Manage runtime agents",
-	Long:  "Commands for managing runtime agents (scheduling, triggers, execution state)",
+	Use:     "agents",
+	Short:   "Manage runtime agents",
+	Long:    "Commands for managing runtime agents (scheduling, triggers, execution state)",
+	GroupID: "ai",
 }
 
 var listAgentsCmd = &cobra.Command{

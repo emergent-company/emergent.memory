@@ -21,26 +21,26 @@ type tempoSearchResponse struct {
 }
 
 type tempoTraceSearchResult struct {
-	TraceID            string            `json:"traceID"`
-	RootServiceName    string            `json:"rootServiceName"`
-	RootTraceName      string            `json:"rootTraceName"`
-	StartTimeUnixNano  string            `json:"startTimeUnixNano"`
-	DurationMs         float64           `json:"durationMs"`
-	SpanSets           []tempoSpanSet    `json:"spanSets"`
-	SpanSet            *tempoSpanSet     `json:"spanSet"`
-	Attributes         map[string]string `json:"attributes"`
+	TraceID           string            `json:"traceID"`
+	RootServiceName   string            `json:"rootServiceName"`
+	RootTraceName     string            `json:"rootTraceName"`
+	StartTimeUnixNano string            `json:"startTimeUnixNano"`
+	DurationMs        float64           `json:"durationMs"`
+	SpanSets          []tempoSpanSet    `json:"spanSets"`
+	SpanSet           *tempoSpanSet     `json:"spanSet"`
+	Attributes        map[string]string `json:"attributes"`
 }
 
 type tempoSpanSet struct {
-	Matched int          `json:"matched"`
-	Spans   []tempoSpan  `json:"spans"`
+	Matched int         `json:"matched"`
+	Spans   []tempoSpan `json:"spans"`
 }
 
 type tempoSpan struct {
-	SpanID            string            `json:"spanID"`
-	StartTimeUnixNano string            `json:"startTimeUnixNano"`
-	DurationNanos     string            `json:"durationNanos"`
-	Attributes        []tempoAttribute  `json:"attributes"`
+	SpanID            string           `json:"spanID"`
+	StartTimeUnixNano string           `json:"startTimeUnixNano"`
+	DurationNanos     string           `json:"durationNanos"`
+	Attributes        []tempoAttribute `json:"attributes"`
 }
 
 type tempoAttribute struct {
@@ -85,21 +85,22 @@ type otlpSpan struct {
 // ── Flags ─────────────────────────────────────────────────────────────────────
 
 var (
-	tracesTempoURL    string
-	tracesListSince   string
-	tracesListLimit   int
-	tracesSearchSvc   string
-	tracesSearchRoute string
+	tracesTempoURL     string
+	tracesListSince    string
+	tracesListLimit    int
+	tracesSearchSvc    string
+	tracesSearchRoute  string
 	tracesSearchMinDur string
-	tracesSearchSince string
-	tracesSearchLimit int
+	tracesSearchSince  string
+	tracesSearchLimit  int
 )
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 var tracesCmd = &cobra.Command{
-	Use:   "traces",
-	Short: "Query traces from local Grafana Tempo",
+	Use:    "traces",
+	Short:  "Query traces from local Grafana Tempo",
+	Hidden: true,
 	Long: `Query OpenTelemetry traces stored in a local Grafana Tempo instance.
 
 Tempo must be running (docker compose --profile observability up tempo -d).

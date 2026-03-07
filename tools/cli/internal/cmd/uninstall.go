@@ -40,7 +40,6 @@ func init() {
 	uninstallCmd.Flags().BoolVar(&uninstallFlags.keepData, "keep-data", false, "Keep Docker volumes (preserve data)")
 	uninstallCmd.Flags().BoolVar(&uninstallFlags.force, "force", false, "Skip confirmation prompt")
 
-	rootCmd.AddCommand(uninstallCmd)
 }
 
 func runUninstall(cmd *cobra.Command, args []string) error {

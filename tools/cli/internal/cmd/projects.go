@@ -20,9 +20,10 @@ import (
 )
 
 var projectsCmd = &cobra.Command{
-	Use:   "projects",
-	Short: "Manage projects",
-	Long:  "Commands for managing projects in the Memory platform",
+	Use:     "projects",
+	Short:   "Manage projects",
+	Long:    "Commands for managing projects in the Memory platform",
+	GroupID: "account",
 }
 
 var listProjectsCmd = &cobra.Command{

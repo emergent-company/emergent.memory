@@ -17,9 +17,10 @@ import (
 
 // providerCmd is the root for the `emergent provider` command group.
 var providerCmd = &cobra.Command{
-	Use:   "provider",
-	Short: "Manage LLM provider credentials and models",
-	Long:  "Commands for managing LLM provider credentials, model selections, and usage reporting.",
+	Use:     "provider",
+	Short:   "Manage LLM provider credentials and models",
+	Long:    "Commands for managing LLM provider credentials, model selections, and usage reporting.",
+	GroupID: "ai",
 }
 
 // ── configure (org-level) ─────────────────────────────────────────────────────
