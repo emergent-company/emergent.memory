@@ -15,8 +15,9 @@ var browseFlags struct {
 }
 
 var browseCmd = &cobra.Command{
-	Use:   "browse",
-	Short: "Interactive TUI for browsing projects and documents",
+	Use:     "browse",
+	Short:   "Interactive TUI for browsing projects and documents",
+	GroupID: "knowledge",
 	Long: `Launch an interactive terminal UI (TUI) for browsing projects, documents, and extractions.
 
 The TUI provides:

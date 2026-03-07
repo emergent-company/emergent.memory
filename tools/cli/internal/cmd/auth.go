@@ -213,8 +213,9 @@ func fetchIssuer(serverURL string) (string, error) {
 }
 
 var loginCmd = &cobra.Command{
-	Use:   "login",
-	Short: "Sign in or create a Memory account",
+	Use:     "login",
+	Short:   "Sign in or create a Memory account",
+	GroupID: "account",
 	Long: `Authenticate using the OAuth Device Authorization flow.
 
 Opens your browser so you can sign in or create a new account.
@@ -386,10 +387,11 @@ func pollWithSpinner(oidcCfg *auth.OIDCConfig, deviceResp *auth.DeviceCodeRespon
 }
 
 var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show current authentication status",
-	Long:  "Display information about the current authentication session including token expiry and user details.",
-	RunE:  runStatus,
+	Use:     "status",
+	Short:   "Show current authentication status",
+	Long:    "Display information about the current authentication session including token expiry and user details.",
+	GroupID: "account",
+	RunE:    runStatus,
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
@@ -1034,10 +1036,11 @@ func printMCPConfig(cfg *config.Config, project *projectResponse) {
 
 func newLogoutCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "logout",
-		Short: "Clear stored credentials",
-		Long:  "Remove locally stored OAuth credentials and log out from the Memory platform.",
-		RunE:  runLogout,
+		Use:     "logout",
+		Short:   "Clear stored credentials",
+		Long:    "Remove locally stored OAuth credentials and log out from the Memory platform.",
+		GroupID: "account",
+		RunE:    runLogout,
 	}
 }
 
@@ -1072,8 +1075,9 @@ func runLogout(cmd *cobra.Command, args []string) error {
 // The token is saved to ~/.memory/credentials.json with a 24-hour expiry so
 // the normal OAuth provider picks it up on the next CLI invocation.
 var setTokenCmd = &cobra.Command{
-	Use:   "set-token <bearer-token>",
-	Short: "Save a static Bearer token as CLI credentials",
+	Use:     "set-token <bearer-token>",
+	Short:   "Save a static Bearer token as CLI credentials",
+	GroupID: "account",
 	Long: `Save a static Bearer token to ~/.memory/credentials.json.
 
 Useful in CI, test harnesses, and dev environments where a token is
@@ -1156,10 +1160,11 @@ func init() {
 
 // mcpGuideCmd prints MCP configuration snippets for connecting AI agents to Memory.
 var mcpGuideCmd = &cobra.Command{
-	Use:   "mcp-guide",
-	Short: "Show MCP configuration for AI agents",
-	Long:  "Print MCP server configuration snippets for connecting AI agents (Claude Desktop, Cursor, etc.) to Memory.",
-	RunE:  runMCPGuide,
+	Use:     "mcp-guide",
+	Short:   "Show MCP configuration for AI agents",
+	Long:    "Print MCP server configuration snippets for connecting AI agents (Claude Desktop, Cursor, etc.) to Memory.",
+	GroupID: "ai",
+	RunE:    runMCPGuide,
 }
 
 func runMCPGuide(cmd *cobra.Command, args []string) error {

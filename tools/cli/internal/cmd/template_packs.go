@@ -16,9 +16,10 @@ import (
 // ─────────────────────────────────────────────
 
 var templatePacksCmd = &cobra.Command{
-	Use:   "template-packs",
-	Short: "Manage template packs",
-	Long:  "Commands for managing template packs in the Memory platform",
+	Use:     "template-packs",
+	Short:   "Manage template packs",
+	Long:    "Commands for managing template packs in the Memory platform",
+	GroupID: "knowledge",
 }
 
 // ─────────────────────────────────────────────

@@ -19,8 +19,9 @@ import (
 )
 
 var queryCmd = &cobra.Command{
-	Use:   "query <question>",
-	Short: "Query a project using natural language",
+	Use:     "query <question>",
+	Short:   "Query a project using natural language",
+	GroupID: "knowledge",
 	Long: `Query a project using natural language.
 
 By default, uses the graph-query-agent — an AI agent that reasons over the knowledge

@@ -7,8 +7,9 @@ import (
 // dbCmd is the parent for all database-related subcommands.
 // Subcommands: diagnose, bench
 var dbCmd = &cobra.Command{
-	Use:   "db",
-	Short: "Database utilities",
+	Use:    "db",
+	Short:  "Database utilities",
+	Hidden: true,
 	Long: `Database inspection and performance utilities for Memory.
 
 Examples:

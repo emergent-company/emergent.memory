@@ -15,6 +15,7 @@ var agentDefsCmd = &cobra.Command{
 	Aliases: []string{"agent-defs", "defs"},
 	Short:   "Manage agent definitions",
 	Long:    "Commands for managing agent definitions (system prompts, tools, model config, flow type, visibility)",
+	GroupID: "ai",
 }
 
 var listAgentDefsCmd = &cobra.Command{
