@@ -96,13 +96,13 @@ func TestSeeder_Create_NewObject(t *testing.T) {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/objects/search"):
 			// Key lookup — return empty (no existing object).
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{Items: nil, Total: 0})
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{Items: nil, Total: 0})
 
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/objects/bulk"):
 			// Bulk create — return one success.
 			obj := &sdkgraph.GraphObject{EntityID: entityID, Type: "Document"}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.BulkCreateObjectsResponse{
+			_ = json.NewEncoder(w).Encode(sdkgraph.BulkCreateObjectsResponse{
 				Success: 1,
 				Results: []sdkgraph.BulkCreateObjectResult{
 					{Index: 0, Success: true, Object: obj},
@@ -144,7 +144,7 @@ func TestSeeder_Skip_ExistingKey_NoUpgrade(t *testing.T) {
 		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/objects/search") {
 			obj := &sdkgraph.GraphObject{EntityID: entityID, Type: "Document"}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
 				Items: []*sdkgraph.GraphObject{obj}, Total: 1,
 			})
 			return
@@ -191,7 +191,7 @@ func TestSeeder_Update_ExistingKey_WithUpgrade(t *testing.T) {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/objects/search"):
 			obj := &sdkgraph.GraphObject{EntityID: entityID, Type: "Document"}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
 				Items: []*sdkgraph.GraphObject{obj}, Total: 1,
 			})
 
@@ -199,7 +199,7 @@ func TestSeeder_Update_ExistingKey_WithUpgrade(t *testing.T) {
 			upsertCalled = true
 			obj := &sdkgraph.GraphObject{EntityID: entityID, Type: "Document"}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(obj)
+			_ = json.NewEncoder(w).Encode(obj)
 
 		default:
 			http.NotFound(w, r)
@@ -234,13 +234,13 @@ func TestSeeder_UnresolvableKey_RelationshipFails(t *testing.T) {
 		// No objects — empty search results.
 		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/objects/search") {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{Items: nil, Total: 0})
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{Items: nil, Total: 0})
 			return
 		}
 		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/objects/bulk") {
 			// Create returns empty result set (simulate no objects to create).
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.BulkCreateObjectsResponse{})
+			_ = json.NewEncoder(w).Encode(sdkgraph.BulkCreateObjectsResponse{})
 			return
 		}
 		http.NotFound(w, r)
@@ -281,7 +281,7 @@ func TestSeeder_RelationshipDedup_ServerSucceeds(t *testing.T) {
 		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/relationships/bulk") {
 			relCallCount++
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.BulkCreateRelationshipsResponse{
+			_ = json.NewEncoder(w).Encode(sdkgraph.BulkCreateRelationshipsResponse{
 				Success: 1,
 				Results: []sdkgraph.BulkCreateRelationshipResult{
 					{Index: 0, Success: true},
