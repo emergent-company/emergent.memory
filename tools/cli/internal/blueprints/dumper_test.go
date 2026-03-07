@@ -29,13 +29,13 @@ func TestDumper_OutputFilesCreated(t *testing.T) {
 				Properties: map[string]any{"title": "Hello"},
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
 				Items: []*sdkgraph.GraphObject{obj}, Total: 1,
 			})
 
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/relationships/search"):
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchRelationshipsResponse{Items: nil, Total: 0})
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchRelationshipsResponse{Items: nil, Total: 0})
 
 		default:
 			http.NotFound(w, r)
@@ -74,13 +74,13 @@ func TestDumper_TypeFilterApplied(t *testing.T) {
 			}
 			obj := &sdkgraph.GraphObject{EntityID: "eid-001", Type: "Document", Key: &key}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
 				Items: []*sdkgraph.GraphObject{obj}, Total: 1,
 			})
 
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/relationships/search"):
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchRelationshipsResponse{Items: nil, Total: 0})
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchRelationshipsResponse{Items: nil, Total: 0})
 
 		default:
 			http.NotFound(w, r)
@@ -104,7 +104,7 @@ func TestDumper_KeyReferencesUsedWhenAvailable(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/objects/search"):
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
 				Items: []*sdkgraph.GraphObject{
 					{EntityID: "eid-001", Type: "Document", Key: &srcKey},
 					{EntityID: "eid-002", Type: "Document", Key: &dstKey},
@@ -114,7 +114,7 @@ func TestDumper_KeyReferencesUsedWhenAvailable(t *testing.T) {
 
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/relationships/search"):
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchRelationshipsResponse{
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchRelationshipsResponse{
 				Items: []*sdkgraph.GraphRelationship{
 					{EntityID: "rid-001", Type: "Mentions", SrcID: "eid-001", DstID: "eid-002"},
 				},
@@ -164,7 +164,7 @@ func TestDumper_IDFallbackWhenKeyMissing(t *testing.T) {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/objects/search"):
 			// Objects without keys.
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
 				Items: []*sdkgraph.GraphObject{
 					{EntityID: "eid-001", Type: "Node"},
 					{EntityID: "eid-002", Type: "Node"},
@@ -174,7 +174,7 @@ func TestDumper_IDFallbackWhenKeyMissing(t *testing.T) {
 
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/relationships/search"):
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchRelationshipsResponse{
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchRelationshipsResponse{
 				Items: []*sdkgraph.GraphRelationship{
 					{EntityID: "rid-001", Type: "Links", SrcID: "eid-001", DstID: "eid-002"},
 				},
@@ -241,11 +241,11 @@ func TestDumper_SplitTriggeredAt50MBBoundary(t *testing.T) {
 				}
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{Items: items, Total: len(items)})
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{Items: items, Total: len(items)})
 
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/relationships/search"):
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sdkgraph.SearchRelationshipsResponse{Items: nil, Total: 0})
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchRelationshipsResponse{Items: nil, Total: 0})
 
 		default:
 			http.NotFound(w, r)
