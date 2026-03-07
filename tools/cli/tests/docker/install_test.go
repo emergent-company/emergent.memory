@@ -1,15 +1,15 @@
 // Package dockertests contains end-to-end tests that run inside a Docker
-// container where the emergent CLI has been installed from the GitHub release
+// container where the memory CLI has been installed from the GitHub release
 // via install.sh — exactly as a real end-user would.
 //
 // # Test environment
 //
-// Each test runs against a real Emergent server whose URL is provided via:
+// Each test runs against a real Memory server whose URL is provided via:
 //
 //	MEMORY_TEST_SERVER  (default: http://localhost:5300)
 //
 // The container is expected to have these binaries on PATH:
-//   - emergent  — installed by install.sh from the GitHub release
+//   - memory    — installed by install.sh from the GitHub release
 //   - opencode  — installed during Docker image build
 //
 // # Running locally (outside Docker, against your dev server)
@@ -20,7 +20,7 @@
 //
 // Each test writes a structured log of all CLI invocations and their output to
 // the directory specified by TEST_LOG_DIR (default: /test-logs inside Docker,
-// or /tmp/emergent-cli-docker-tests locally).  Logs are named
+// or /tmp/memory-cli-docker-tests locally).  Logs are named
 // <TestName>_<unix-timestamp>.log so they survive across runs.
 package dockertests
 
@@ -66,30 +66,30 @@ const (
 // Test: verify the emergent binary is on PATH and responds to basic commands
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestCLIInstalled_Version verifies that the emergent binary installed via
+// TestCLIInstalled_Version verifies that the memory binary installed via
 // install.sh is on PATH and prints a recognisable version string.
-// The CLI exposes version as a sub-command (`emergent version`), not `--version`.
+// The CLI exposes version as a sub-command (`memory version`), not `--version`.
 func TestCLIInstalled_Version(t *testing.T) {
 	logStatusPreamble(t)
 	out := mustRunCLI(t, "version")
-	t.Logf("emergent version: %s", strings.TrimSpace(out))
+	t.Logf("memory version: %s", strings.TrimSpace(out))
 
-	if !strings.Contains(out, "emergent") && !strings.Contains(out, "version") {
-		t.Errorf("expected version output to contain 'emergent' or 'version', got: %q", out)
+	if !strings.Contains(out, "memory") && !strings.Contains(out, "version") {
+		t.Errorf("expected version output to contain 'memory' or 'version', got: %q", out)
 	}
 }
 
-// TestCLIInstalled_Help verifies that `emergent --help` exits 0 and lists known
+// TestCLIInstalled_Help verifies that `memory --help` exits 0 and lists known
 // top-level sub-commands so we know the binary is functionally intact.
 func TestCLIInstalled_Help(t *testing.T) {
 	logStatusPreamble(t)
 	out := mustRunCLI(t, "--help")
-	t.Logf("emergent --help output:\n%s", out)
+	t.Logf("memory --help output:\n%s", out)
 
 	requiredSubcommands := []string{
 		"skills",
 		"projects",
-		"auth",
+		"login",
 	}
 	for _, sub := range requiredSubcommands {
 		if !strings.Contains(out, sub) {
@@ -128,7 +128,7 @@ func TestCLIInstalled_SetToken(t *testing.T) {
 // Test: emergent skills install
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestCLIInstalled_SkillsInstall verifies that `emergent skills install --force`
+// TestCLIInstalled_SkillsInstall verifies that `memory skills install --force`
 // creates the expected emergent-* skill directories under .agents/skills/ in the
 // workspace.
 func TestCLIInstalled_SkillsInstall(t *testing.T) {
@@ -233,8 +233,8 @@ func TestCLIInstalled_SkillsValid(t *testing.T) {
 // Test: emergent skills list
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestCLIInstalled_SkillsList verifies that `emergent skills list` reports the
-// installed skills after `emergent skills install` has run.
+// TestCLIInstalled_SkillsList verifies that `memory skills list` reports the
+// installed skills after `memory skills install` has run.
 func TestCLIInstalled_SkillsList(t *testing.T) {
 	logStatusPreamble(t)
 	srv := serverURL()
@@ -437,14 +437,14 @@ func skipIfServerDown(t *testing.T) {
 	}
 }
 
-// mustRunCLI runs `emergent <args>` from the current directory and fails the
+// mustRunCLI runs `memory <args>` from the current directory and fails the
 // test if the command exits non-zero.  Returns combined stdout+stderr.
 func mustRunCLI(t *testing.T, args ...string) string {
 	t.Helper()
 	return mustRunCLIInDir(t, "", args...)
 }
 
-// mustRunCLIInDir runs `emergent <args>` from dir (empty = inherit).
+// mustRunCLIInDir runs `memory <args>` from dir (empty = inherit).
 // It fails the test if the command exits non-zero and logs all output.
 func mustRunCLIInDir(t *testing.T, dir string, args ...string) string {
 	t.Helper()
@@ -452,7 +452,7 @@ func mustRunCLIInDir(t *testing.T, dir string, args ...string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "emergent", args...)
+	cmd := exec.CommandContext(ctx, "memory", args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -467,7 +467,7 @@ func mustRunCLIInDir(t *testing.T, dir string, args ...string) string {
 	err := cmd.Run()
 	out := buf.String()
 
-	invocation := fmt.Sprintf("emergent %s", strings.Join(args, " "))
+	invocation := fmt.Sprintf("memory %s", strings.Join(args, " "))
 	logSession(t, invocation, out)
 
 	if err != nil {
@@ -493,7 +493,7 @@ func filteredEnv() []string {
 	return filtered
 }
 
-// logStatusPreamble runs `emergent status` and records the output as the first
+// logStatusPreamble runs `memory status` and records the output as the first
 // log entry for the test.  It is called at the top of every test so that each
 // log file starts with the current authentication / server state, making it
 // easy to diagnose failures without context-switching to a separate run.
@@ -506,7 +506,7 @@ func logStatusPreamble(t *testing.T) {
 	defer cancel()
 
 	args := []string{"status", "--server", serverURL()}
-	cmd := exec.CommandContext(ctx, "emergent", args...)
+	cmd := exec.CommandContext(ctx, "memory", args...)
 	cmd.Env = filteredEnv()
 
 	var buf bytes.Buffer
@@ -516,8 +516,8 @@ func logStatusPreamble(t *testing.T) {
 	_ = cmd.Run() // intentionally ignore exit code — status may fail with no token
 	out := buf.String()
 
-	t.Logf("emergent status:\n%s", strings.TrimSpace(out))
-	logSession(t, "emergent "+strings.Join(args, " "), out)
+	t.Logf("memory status:\n%s", strings.TrimSpace(out))
+	logSession(t, "memory "+strings.Join(args, " "), out)
 }
 
 // logSession writes a structured log of the CLI invocation and its output to
@@ -541,7 +541,7 @@ func logSession(t *testing.T, invocation, output string) {
 		} else if _, err := os.Stat("/test-logs"); err == nil {
 			logDir = "/test-logs"
 		} else {
-			logDir = filepath.Join(os.TempDir(), "emergent-cli-docker-tests")
+			logDir = filepath.Join(os.TempDir(), "memory-cli-docker-tests")
 		}
 	}
 
