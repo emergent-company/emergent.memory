@@ -11,7 +11,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Project-scoped token routes
 	g := e.Group("/api/projects/:projectId/tokens")
 	g.Use(authMiddleware.RequireAuth())
-	g.Use(authMiddleware.RequireScopes("project:read"))
+	g.Use(authMiddleware.RequireAPITokenScopes("project:read"))
 
 	g.POST("", h.Create)
 	g.GET("", h.List)
