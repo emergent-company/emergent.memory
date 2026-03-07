@@ -2,12 +2,17 @@
 
 ### Requirement: Seed directory in blueprint format
 
-The Blueprint directory format SHALL support an optional `seed/` subdirectory alongside `packs/` and `agents/`. Each file in `seed/` defines graph objects and/or relationships to create when the blueprint is applied.
+The Blueprint directory format SHALL support an optional `seed/` subdirectory alongside `packs/` and `agents/`. The `seed/` directory SHALL contain two subdirectories:
+
+- `seed/objects/` — JSONL files where each line is a graph object record
+- `seed/relationships/` — JSONL files where each line is a relationship record
+
+Files with extensions other than `.jsonl` SHALL be silently skipped.
 
 #### Scenario: Blueprint with seed directory is loaded
 
-- **WHEN** `memory blueprints <dir>` is run on a directory that contains a `seed/` subdirectory
-- **THEN** the CLI SHALL parse all `.json`, `.yaml`, and `.yml` files in `seed/`
+- **WHEN** `memory blueprints <dir>` is run on a directory that contains a `seed/objects/` or `seed/relationships/` subdirectory
+- **THEN** the CLI SHALL parse all `.jsonl` files in those directories (including split files like `<Type>.001.jsonl`)
 - **AND** files with unsupported extensions SHALL be silently skipped
 - **AND** parse errors SHALL be reported as warnings and processing SHALL continue for remaining files
 
@@ -17,25 +22,25 @@ The Blueprint directory format SHALL support an optional `seed/` subdirectory al
 - **THEN** the CLI SHALL apply packs and agents normally with no error
 - **AND** the seed phase SHALL be a no-op
 
-### Requirement: Seed file format
+### Requirement: Seed file format (JSONL)
 
-Each seed file SHALL conform to a documented schema defining objects and relationships.
+Each line in a seed file SHALL be a JSON object (JSONL format).
 
-#### Scenario: Valid seed file with objects only
+#### Scenario: Valid object record
 
-- **WHEN** a seed file contains a list of object definitions under the `objects` key
-- **THEN** each object SHALL have at minimum a `type` field
+- **WHEN** a `.jsonl` file in `seed/objects/` is parsed
+- **THEN** each line SHALL be a JSON object with at minimum a `type` field
 - **AND** optional fields SHALL include: `key` (string), `properties` (map), `labels` (list of strings), `status` (string)
 
-#### Scenario: Valid seed file with relationships
+#### Scenario: Valid relationship record
 
-- **WHEN** a seed file contains a list of relationship definitions under the `relationships` key
-- **THEN** each relationship SHALL have `type`, and either (`srcId` + `dstId`) or (`srcKey` + `dstKey`) to identify endpoints
-- **AND** `srcKey`/`dstKey` SHALL be resolved against objects defined in the same seed file
+- **WHEN** a `.jsonl` file in `seed/relationships/` is parsed
+- **THEN** each line SHALL be a JSON object with at minimum a `type` field
+- **AND** relationship endpoints SHALL be expressed as either (`srcId` + `dstId`) or (`srcKey` + `dstKey`)
 
 #### Scenario: Relationship with unresolvable key
 
-- **WHEN** a relationship references a `srcKey` or `dstKey` that does not match any object in the seed file
+- **WHEN** a relationship references a `srcKey` or `dstKey` that cannot be resolved to an object in the project
 - **THEN** the CLI SHALL record an error result for that relationship
 - **AND** processing SHALL continue for the remaining relationships
 
@@ -56,7 +61,7 @@ The seeder SHALL create objects via the bulk API in batches, to support large da
 
 #### Scenario: Object batch size
 
-- **WHEN** a seed file contains more than 100 objects
+- **WHEN** a seed directory contains more than 100 objects
 - **THEN** objects SHALL be sent to the API in batches of at most 100 per request
 - **AND** all batches SHALL be processed even if an earlier batch returns errors
 
