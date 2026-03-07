@@ -182,7 +182,7 @@ func (s *UserProfileService) EnsureProfile(ctx context.Context, subjectID string
 		On("CONFLICT (zitadel_user_id) DO UPDATE").
 		Set("updated_at = NOW()").
 		Returning("id, created_at, updated_at").
-		Scan(ctx) // Use Scan to populate newProfile with RETURNING values
+		Scan(ctx, newProfile)
 
 	if err != nil {
 		return nil, err
