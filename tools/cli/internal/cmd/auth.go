@@ -428,7 +428,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("Authentication Status:")
 	fmt.Println()
-	fmt.Println("  Mode:        OAuth (Zitadel)")
+	fmt.Println("  Mode:        OAuth")
 
 	if creds.UserEmail != "" {
 		fmt.Printf("  User:        %s\n", creds.UserEmail)
@@ -438,14 +438,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Issuer:      %s\n", creds.IssuerURL)
 	}
 
-	fmt.Printf("  Expires At:  %s\n", creds.ExpiresAt.Format(time.RFC1123))
-
 	if creds.IsExpired() {
 		fmt.Println("  Status:      ⚠️  EXPIRED")
 		fmt.Println("\nYour session has expired. Run 'memory login' to re-authenticate.")
 	} else {
-		timeUntilExpiry := time.Until(creds.ExpiresAt)
-		fmt.Printf("  Status:      ✓ Valid (expires in %s)\n", timeUntilExpiry.Round(time.Minute))
+		fmt.Println("  Status:      ✓ Authenticated")
 	}
 
 	return nil
