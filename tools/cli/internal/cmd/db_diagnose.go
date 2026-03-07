@@ -83,11 +83,14 @@ func runDbDiagnose(cmd *cobra.Command, _ []string) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	// Get server URL correctly from parent flags
-	serverURL, _ := cmd.Flags().GetString("server")
-	if serverURL == "" {
-		serverURL = "http://localhost:3002" // default fallback
+	diagServerURL, _ := cmd.Flags().GetString("server")
+	if diagServerURL == "" && serverURL != "" {
+		diagServerURL = serverURL
 	}
-	url := fmt.Sprintf("%s/api/diagnostics", serverURL)
+	if diagServerURL == "" {
+		diagServerURL = "https://memory.emergent-company.ai"
+	}
+	url := fmt.Sprintf("%s/api/diagnostics", diagServerURL)
 
 	fmt.Printf("Fetching server diagnostics from %s ... ", url)
 	resp, err := client.Get(url)

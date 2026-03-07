@@ -78,7 +78,7 @@ func Save(cfg *Config, path string) error {
 
 func defaults() *Config {
 	return &Config{
-		ServerURL: "http://localhost:3002",
+		ServerURL: "https://memory.emergent-company.ai",
 		Email:     "",
 		OrgID:     "",
 		ProjectID: "",
