@@ -170,3 +170,100 @@ func (h *Handler) Revoke(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "revoked"})
 }
+
+// CreateAccountToken creates a new account-level API token
+// @Summary      Create account API token
+// @Description  Creates a new API token bound to the authenticated user (not to a specific project). The token can be used across all projects the user has access to.
+// @Tags         api-tokens
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateAccountTokenRequest true "Token creation request"
+// @Success      201 {object} CreateApiTokenResponseDTO "Token created (includes full token value)"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens [post]
+// @Security     bearerAuth
+func (h *Handler) CreateAccountToken(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	var req CreateAccountTokenRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Name == "" {
+		return apperror.ErrBadRequest.WithMessage("name is required")
+	}
+	if len(req.Name) > 255 {
+		return apperror.ErrBadRequest.WithMessage("name must be at most 255 characters")
+	}
+	if len(req.Scopes) == 0 {
+		return apperror.ErrBadRequest.WithMessage("at least one scope is required")
+	}
+
+	result, err := h.svc.CreateAccountToken(c.Request().Context(), user.ID, req.Name, req.Scopes)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// ListAccountTokens returns all account-level tokens for the authenticated user
+// @Summary      List account API tokens
+// @Description  Returns all account-level API tokens (not bound to any project) for the authenticated user.
+// @Tags         api-tokens
+// @Produce      json
+// @Success      200 {object} ApiTokenListResponseDTO "List of tokens"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens [get]
+// @Security     bearerAuth
+func (h *Handler) ListAccountTokens(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	result, err := h.svc.ListAccountTokens(c.Request().Context(), user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// RevokeAccountToken revokes an account-level API token
+// @Summary      Revoke account API token
+// @Description  Revokes an account-level API token owned by the authenticated user
+// @Tags         api-tokens
+// @Produce      json
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Success      200 {object} map[string]string "Revocation status"
+// @Failure      400 {object} apperror.Error "Invalid token ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens/{tokenId} [delete]
+// @Security     bearerAuth
+func (h *Handler) RevokeAccountToken(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	tokenID := c.Param("tokenId")
+	if tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("tokenId is required")
+	}
+
+	if err := h.svc.RevokeAccountToken(c.Request().Context(), tokenID, user.ID); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "revoked"})
+}

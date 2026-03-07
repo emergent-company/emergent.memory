@@ -189,6 +189,23 @@ func CreateTestAPIToken(ctx context.Context, db bun.IDB, userID string, token st
 	return err
 }
 
+// CreateTestAccountAPIToken creates an account-level API token (no project binding) for a test user.
+// The token has no project_id, allowing it to access any project.
+func CreateTestAccountAPIToken(ctx context.Context, db bun.IDB, userID string, token string, scopes []string) error {
+	hash := sha256.Sum256([]byte(token))
+	tokenHash := hex.EncodeToString(hash[:])
+	tokenPrefix := token[:min(12, len(token))]
+
+	pgArray := "{" + strings.Join(scopes, ",") + "}"
+
+	_, err := db.NewRaw(`
+		INSERT INTO core.api_tokens (user_id, project_id, name, token_hash, token_prefix, scopes, created_at)
+		VALUES (?, NULL, 'test-account-token', ?, ?, ?::text[], NOW())
+	`, userID, tokenHash, tokenPrefix, pgArray).Exec(ctx)
+
+	return err
+}
+
 // CreateExpiredAPIToken creates an expired API token for testing
 // Note: The actual schema doesn't have expires_at, so we create a revoked token instead
 func CreateExpiredAPIToken(ctx context.Context, db bun.IDB, userID string, token string, projectID string) error {

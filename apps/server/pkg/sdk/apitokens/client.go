@@ -197,3 +197,94 @@ func (c *Client) Revoke(ctx context.Context, projectID, tokenID string) error {
 
 	return nil
 }
+
+// CreateAccountToken creates a new account-level API token (not bound to any project).
+func (c *Client) CreateAccountToken(ctx context.Context, req *CreateTokenRequest) (*CreateTokenResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/tokens", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.auth.Authenticate(httpReq); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var token CreateTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &token, nil
+}
+
+// ListAccountTokens returns all account-level API tokens for the authenticated user.
+func (c *Client) ListAccountTokens(ctx context.Context) (*ListResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/tokens", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result ListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// RevokeAccountToken revokes an account-level API token.
+func (c *Client) RevokeAccountToken(ctx context.Context, tokenID string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/tokens/"+url.PathEscape(tokenID), nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return nil
+}

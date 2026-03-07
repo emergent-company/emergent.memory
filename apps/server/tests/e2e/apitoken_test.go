@@ -422,3 +422,194 @@ func (s *ApiTokenSuite) TestCreateToken_DuplicateNameNotAllowedAfterRevoke() {
 func TestApiTokenSuite(t *testing.T) {
 	suite.Run(t, new(ApiTokenSuite))
 }
+
+// ============ Account Token Suite ============
+
+type AccountApiTokenSuite struct {
+	testutil.BaseSuite
+	// SecondProjectID is a second project used in cross-project access tests.
+	SecondProjectID string
+}
+
+func (s *AccountApiTokenSuite) SetupSuite() {
+	s.SetDBSuffix("accountapitoken")
+	s.BaseSuite.SetupSuite()
+}
+
+func (s *AccountApiTokenSuite) SetupTest() {
+	s.BaseSuite.SetupTest()
+
+	if s.IsExternal() {
+		// Create a second project via API for external mode
+		projectID, err := s.Client.CreateProject("Test Project 2", s.OrgID, "e2e-test-user")
+		s.Require().NoError(err, "Failed to create second project via API")
+		s.SecondProjectID = projectID
+		return
+	}
+
+	// Create a second project in the same org for cross-project tests
+	s.SecondProjectID = uuid.New().String()
+	err := testutil.CreateTestProject(s.Ctx, s.DB(), testutil.TestProject{
+		ID:    s.SecondProjectID,
+		OrgID: s.OrgID,
+		Name:  "Second Test Project",
+	}, testutil.AdminUser.ID)
+	s.Require().NoError(err)
+
+	err = testutil.CreateTestProjectMembership(s.Ctx, s.DB(), s.SecondProjectID, testutil.AdminUser.ID, "project_admin")
+	s.Require().NoError(err)
+}
+
+// TestCreateAccountToken_Success verifies the account-token creation endpoint
+// returns a 201 with a valid emt_* token and no project_id.
+func (s *AccountApiTokenSuite) TestCreateAccountToken_Success() {
+	s.SkipIfExternalServer("account token routes require direct test-server access")
+
+	rec := s.Client.POST(
+		"/api/tokens",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"name":   "My Account Token " + uuid.New().String()[:8],
+			"scopes": []string{"projects:read"},
+		}),
+	)
+
+	s.Equal(http.StatusCreated, rec.StatusCode)
+
+	var response apitoken.CreateApiTokenResponseDTO
+	err := json.Unmarshal(rec.Body, &response)
+	s.Require().NoError(err)
+
+	s.NotEmpty(response.ID)
+	s.True(len(response.Token) == 68, "token should be 68 chars (emt_ + 64 hex)")
+	s.Equal("emt_", response.Token[:4])
+	s.Nil(response.ProjectID, "account token should have nil project_id")
+	s.Equal([]string{"projects:read"}, response.Scopes)
+	s.False(response.IsRevoked)
+}
+
+// TestAccountToken_AccessesTwoProjects verifies an account token (with projects:read)
+// can access resources in two different projects.
+func (s *AccountApiTokenSuite) TestAccountToken_AccessesTwoProjects() {
+	s.SkipIfExternalServer("account token routes require direct test-server access")
+
+	// Create an account-level token in the DB using the testutil helper
+	rawToken := "emt_acct_crossproject_testtoken0000000000000000000000000000"
+	err := testutil.CreateTestAccountAPIToken(
+		s.Ctx, s.DB(),
+		testutil.AdminUser.ID,
+		rawToken,
+		[]string{"projects:read"},
+	)
+	s.Require().NoError(err)
+
+	// Access project 1 via GET /api/projects/:projectId
+	rec1 := s.Client.GET(
+		"/api/projects/"+s.ProjectID,
+		testutil.WithAPIToken(rawToken),
+	)
+	s.Equal(http.StatusOK, rec1.StatusCode, "account token should access project 1")
+
+	// Access project 2
+	rec2 := s.Client.GET(
+		"/api/projects/"+s.SecondProjectID,
+		testutil.WithAPIToken(rawToken),
+	)
+	s.Equal(http.StatusOK, rec2.StatusCode, "account token should access project 2")
+}
+
+// TestAccountToken_WithoutProjectsRead_CannotListProjects verifies that an account
+// token lacking projects:read is rejected with 403 on GET /api/projects.
+func (s *AccountApiTokenSuite) TestAccountToken_WithoutProjectsRead_CannotListProjects() {
+	s.SkipIfExternalServer("account token routes require direct test-server access")
+
+	rawToken := "emt_acct_noscope_testtoken00000000000000000000000000000000"
+	err := testutil.CreateTestAccountAPIToken(
+		s.Ctx, s.DB(),
+		testutil.AdminUser.ID,
+		rawToken,
+		[]string{"data:read"}, // no projects:read
+	)
+	s.Require().NoError(err)
+
+	rec := s.Client.GET(
+		"/api/projects/"+s.ProjectID,
+		testutil.WithAPIToken(rawToken),
+	)
+	// RequireAPITokenScopes("projects:read") should block this
+	s.Equal(http.StatusForbidden, rec.StatusCode)
+}
+
+// TestAccountToken_RevokedTokenReturns401 verifies that after revoking an account
+// token via DELETE /api/tokens/:tokenId, subsequent requests return 401.
+func (s *AccountApiTokenSuite) TestAccountToken_RevokedTokenReturns401() {
+	s.SkipIfExternalServer("account token routes require direct test-server access")
+
+	// 1. Create account token via the API
+	tokenName := "Revoke Me " + uuid.New().String()[:8]
+	createRec := s.Client.POST(
+		"/api/tokens",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"name":   tokenName,
+			"scopes": []string{"projects:read"},
+		}),
+	)
+	s.Require().Equal(http.StatusCreated, createRec.StatusCode)
+
+	var created apitoken.CreateApiTokenResponseDTO
+	s.Require().NoError(json.Unmarshal(createRec.Body, &created))
+
+	// 2. Revoke via the account token endpoint
+	revokeRec := s.Client.DELETE(
+		"/api/tokens/"+created.ID,
+		testutil.WithAuth("e2e-test-user"),
+	)
+	s.Require().Equal(http.StatusOK, revokeRec.StatusCode)
+
+	// 3. Using the raw token now should return 401
+	rec := s.Client.GET(
+		"/api/projects/"+s.ProjectID,
+		testutil.WithAPIToken(created.Token),
+	)
+	s.Equal(http.StatusUnauthorized, rec.StatusCode)
+}
+
+// TestListAccountTokens_ReturnsCreatedToken verifies GET /api/tokens returns the
+// tokens created by the authenticated user.
+func (s *AccountApiTokenSuite) TestListAccountTokens_ReturnsCreatedToken() {
+	s.SkipIfExternalServer("account token routes require direct test-server access")
+
+	tokenName := "List Me " + uuid.New().String()[:8]
+	s.Client.POST(
+		"/api/tokens",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"name":   tokenName,
+			"scopes": []string{"projects:read"},
+		}),
+	)
+
+	listRec := s.Client.GET(
+		"/api/tokens",
+		testutil.WithAuth("e2e-test-user"),
+	)
+	s.Require().Equal(http.StatusOK, listRec.StatusCode)
+
+	var listResp apitoken.ApiTokenListResponseDTO
+	s.Require().NoError(json.Unmarshal(listRec.Body, &listResp))
+
+	s.GreaterOrEqual(listResp.Total, 1)
+	found := false
+	for _, tok := range listResp.Tokens {
+		if tok.Name == tokenName {
+			found = true
+			s.Nil(tok.ProjectID, "account token should have nil project_id in list")
+		}
+	}
+	s.True(found, "created account token should appear in list")
+}
+
+func TestAccountApiTokenSuite(t *testing.T) {
+	suite.Run(t, new(AccountApiTokenSuite))
+}

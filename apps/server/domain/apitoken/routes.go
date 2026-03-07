@@ -8,7 +8,7 @@ import (
 
 // RegisterRoutes registers API token routes
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
-	// All routes require authentication and project:read scope
+	// Project-scoped token routes
 	g := e.Group("/api/projects/:projectId/tokens")
 	g.Use(authMiddleware.RequireAuth())
 	g.Use(authMiddleware.RequireScopes("project:read"))
@@ -17,4 +17,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.GET("", h.List)
 	g.GET("/:tokenId", h.Get)
 	g.DELETE("/:tokenId", h.Revoke)
+
+	// Account-level token routes (not bound to a project)
+	ag := e.Group("/api/tokens")
+	ag.Use(authMiddleware.RequireAuth())
+
+	ag.POST("", h.CreateAccountToken)
+	ag.GET("", h.ListAccountTokens)
+	ag.DELETE("/:tokenId", h.RevokeAccountToken)
 }

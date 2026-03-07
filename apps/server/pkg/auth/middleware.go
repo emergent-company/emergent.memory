@@ -256,6 +256,9 @@ var scopeImplies = map[string][]string{
 	"agents:write": {
 		"chat:admin",
 	},
+	"projects:write": {
+		"projects:read",
+	},
 }
 
 // expandScopes returns the full set of scopes a user effectively has,
@@ -269,6 +272,51 @@ func expandScopes(scopes []string) map[string]bool {
 		}
 	}
 	return result
+}
+
+// RequireAPITokenScopes returns middleware that requires specific scopes ONLY when the
+// request is authenticated via an emt_* API token. For Zitadel/OAuth sessions the check
+// is skipped, preserving backward compatibility.
+// Use this on routes that should be accessible to account-level API tokens but only when
+// the token explicitly carries the right scope (e.g. projects:read on GET /api/projects).
+func (m *Middleware) RequireAPITokenScopes(scopes ...string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			user := GetUser(c)
+			if user == nil {
+				return apperror.ErrUnauthorized
+			}
+
+			// Only enforce for API token auth (emt_* tokens identified by APITokenID)
+			if user.APITokenID == "" {
+				return next(c)
+			}
+
+			// Build the effective scope set, expanding umbrella scopes.
+			userScopes := expandScopes(user.Scopes)
+
+			missing := []string{}
+			for _, required := range scopes {
+				if !userScopes[required] {
+					missing = append(missing, required)
+				}
+			}
+
+			if len(missing) > 0 {
+				return echo.NewHTTPError(http.StatusForbidden, map[string]any{
+					"error": map[string]any{
+						"code":    "forbidden",
+						"message": "Insufficient permissions",
+						"details": map[string]any{
+							"missing": missing,
+						},
+					},
+				})
+			}
+
+			return next(c)
+		}
+	}
 }
 
 // RequireScopes returns middleware that requires specific scopes

@@ -138,19 +138,19 @@ CREATE FUNCTION kb.update_tsv() RETURNS trigger
       $$;
 SET default_tablespace = '';
 SET default_table_access_method = heap;
-CREATE TABLE core.api_tokens (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    project_id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    name character varying(255) NOT NULL,
-    token_hash character varying(64) NOT NULL,
-    token_prefix character varying(12) NOT NULL,
-    scopes text[] DEFAULT '{}'::text[] NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_used_at timestamp with time zone,
-    revoked_at timestamp with time zone,
-    token_encrypted text
-);
+ CREATE TABLE core.api_tokens (
+     id uuid DEFAULT gen_random_uuid() NOT NULL,
+     project_id uuid,
+     user_id uuid NOT NULL,
+     name character varying(255) NOT NULL,
+     token_hash character varying(64) NOT NULL,
+     token_prefix character varying(12) NOT NULL,
+     scopes text[] DEFAULT '{}'::text[] NOT NULL,
+     created_at timestamp with time zone DEFAULT now() NOT NULL,
+     last_used_at timestamp with time zone,
+     revoked_at timestamp with time zone,
+     token_encrypted text
+ );
 CREATE TABLE core.superadmins (
     user_id uuid NOT NULL,
     granted_by uuid,
@@ -1213,8 +1213,6 @@ ALTER TABLE ONLY core.user_emails
 ALTER TABLE ONLY core.api_tokens
     ADD CONSTRAINT api_tokens_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY core.api_tokens
-    ADD CONSTRAINT api_tokens_project_name_unique UNIQUE (project_id, name);
-ALTER TABLE ONLY core.api_tokens
     ADD CONSTRAINT api_tokens_token_hash_unique UNIQUE (token_hash);
 ALTER TABLE ONLY core.superadmins
     ADD CONSTRAINT superadmins_pkey PRIMARY KEY (user_id);
@@ -1394,6 +1392,7 @@ CREATE UNIQUE INDEX "IDX_6594597afde633cfeab9a806e4" ON core.user_emails USING b
 CREATE INDEX idx_api_tokens_project_id ON core.api_tokens USING btree (project_id);
 CREATE INDEX idx_api_tokens_token_hash ON core.api_tokens USING btree (token_hash);
 CREATE INDEX idx_api_tokens_user_id ON core.api_tokens USING btree (user_id);
+CREATE UNIQUE INDEX api_tokens_user_name_unique ON core.api_tokens USING btree (user_id, name) WHERE (revoked_at IS NULL);
 CREATE INDEX idx_superadmins_active ON core.superadmins USING btree (user_id) WHERE (revoked_at IS NULL);
 CREATE INDEX idx_user_email_preferences_token ON core.user_email_preferences USING btree (unsubscribe_token);
 CREATE INDEX idx_user_email_preferences_user ON core.user_email_preferences USING btree (user_id);

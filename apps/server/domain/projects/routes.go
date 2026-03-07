@@ -11,6 +11,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// All project endpoints require authentication
 	g := e.Group("/api/projects")
 	g.Use(authMiddleware.RequireAuth())
+	// When accessed via emt_* API token, require projects:read scope.
+	// Zitadel/OAuth sessions bypass this check.
+	g.Use(authMiddleware.RequireAPITokenScopes("projects:read"))
 
 	// List projects (user must be authenticated)
 	// Scope: project:read
