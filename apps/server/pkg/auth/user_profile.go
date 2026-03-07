@@ -175,14 +175,13 @@ func (s *UserProfileService) EnsureProfile(ctx context.Context, subjectID string
 		}
 	}
 
-	err = s.db.NewInsert().
-		TableExpr("core.user_profiles").
+	_, err = s.db.NewInsert().
 		Model(newProfile).
 		ExcludeColumn("id"). // Let database generate UUID
 		On("CONFLICT (zitadel_user_id) DO UPDATE").
 		Set("updated_at = NOW()").
 		Returning("id, created_at, updated_at").
-		Scan(ctx, newProfile)
+		Exec(ctx)
 
 	if err != nil {
 		return nil, err
