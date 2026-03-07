@@ -402,7 +402,7 @@ func findAsset(assets []Asset) (string, string, error) {
 	osName := runtime.GOOS
 	archName := runtime.GOARCH
 
-	target := fmt.Sprintf("emergent-cli-%s-%s", osName, archName)
+	target := fmt.Sprintf("memory-cli-%s-%s", osName, archName)
 	if osName == "windows" {
 		target += ".zip"
 	} else {
@@ -523,8 +523,10 @@ func extractTarGz(filepath string) ([]byte, error) {
 			}
 
 			// Match various binary naming patterns
-			if baseName == "emergent" || baseName == "emergent.exe" ||
+			if baseName == "memory" || baseName == "memory.exe" ||
+				baseName == "emergent" || baseName == "emergent.exe" ||
 				baseName == "emergent-cli" || baseName == "emergent-cli.exe" ||
+				strings.HasPrefix(baseName, "memory-cli-") ||
 				strings.HasPrefix(baseName, "emergent-cli-") {
 				return io.ReadAll(tr)
 			}
@@ -547,8 +549,10 @@ func extractZip(filepath string) ([]byte, error) {
 			baseName = parts[len(parts)-1]
 		}
 
-		if baseName == "emergent" || baseName == "emergent.exe" ||
+		if baseName == "memory" || baseName == "memory.exe" ||
+			baseName == "emergent" || baseName == "emergent.exe" ||
 			baseName == "emergent-cli" || baseName == "emergent-cli.exe" ||
+			strings.HasPrefix(baseName, "memory-cli-") ||
 			strings.HasPrefix(baseName, "emergent-cli-") {
 			rc, err := f.Open()
 			if err != nil {
