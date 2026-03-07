@@ -15,12 +15,12 @@ func RegisterRoutes(e *echo.Echo, handler *Handler, authMiddleware *auth.Middlew
 
 	// List chunks (requires chunks:read scope)
 	chunksRead := chunks.Group("")
-	chunksRead.Use(authMiddleware.RequireScopes("chunks:read"))
+	chunksRead.Use(authMiddleware.RequireAPITokenScopes("chunks:read"))
 	chunksRead.GET("", handler.List)
 
 	// Write operations (requires chunks:write scope)
 	chunksWrite := chunks.Group("")
-	chunksWrite.Use(authMiddleware.RequireScopes("chunks:write"))
+	chunksWrite.Use(authMiddleware.RequireAPITokenScopes("chunks:write"))
 	chunksWrite.DELETE("/:id", handler.Delete)
 	chunksWrite.DELETE("", handler.BulkDelete)
 	chunksWrite.DELETE("/by-document/:documentId", handler.DeleteByDocument)

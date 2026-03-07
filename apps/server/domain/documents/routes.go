@@ -18,20 +18,20 @@ func RegisterRoutes(e *echo.Echo, h *Handler, uploadHandler *UploadHandler, auth
 	g.Use(authMiddleware.RequireProjectID())
 
 	readGroup := g.Group("")
-	readGroup.Use(authMiddleware.RequireScopes("documents:read"))
+	readGroup.Use(authMiddleware.RequireAPITokenScopes("documents:read"))
 	readGroup.GET("", h.List)
 	readGroup.GET("/:id", h.GetByID)
 	readGroup.GET("/:id/content", h.GetContent)
 	readGroup.GET("/:id/download", h.Download)
 
 	writeGroup := g.Group("")
-	writeGroup.Use(authMiddleware.RequireScopes("documents:write"))
+	writeGroup.Use(authMiddleware.RequireAPITokenScopes("documents:write"))
 	writeGroup.POST("", h.Create)
 	writeGroup.POST("/upload", uploadHandler.Upload)
 	writeGroup.POST("/upload/batch", uploadHandler.UploadBatch)
 
 	deleteGroup := g.Group("")
-	deleteGroup.Use(authMiddleware.RequireScopes("documents:delete"))
+	deleteGroup.Use(authMiddleware.RequireAPITokenScopes("documents:delete"))
 	deleteGroup.DELETE("", h.BulkDelete)
 	deleteGroup.DELETE("/:id", h.Delete)
 	deleteGroup.GET("/:id/deletion-impact", h.GetDeletionImpact)
@@ -40,6 +40,6 @@ func RegisterRoutes(e *echo.Echo, h *Handler, uploadHandler *UploadHandler, auth
 	legacyUpload := e.Group("/api/document-parsing-jobs")
 	legacyUpload.Use(authMiddleware.RequireAuth())
 	legacyUpload.Use(authMiddleware.RequireProjectID())
-	legacyUpload.Use(authMiddleware.RequireScopes("documents:write"))
+	legacyUpload.Use(authMiddleware.RequireAPITokenScopes("documents:write"))
 	legacyUpload.POST("/upload", uploadHandler.Upload)
 }

@@ -13,7 +13,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Read operations - require admin:read
 	readGroup := admin.Group("")
-	readGroup.Use(authMiddleware.RequireScopes("admin:read"))
+	readGroup.Use(authMiddleware.RequireAPITokenScopes("admin:read"))
 	readGroup.GET("", h.ListServers)
 	readGroup.GET("/:id", h.GetServer)
 	readGroup.GET("/:id/tools", h.ListServerTools)
@@ -21,7 +21,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Write operations - require admin:write
 	writeGroup := admin.Group("")
-	writeGroup.Use(authMiddleware.RequireScopes("admin:write"))
+	writeGroup.Use(authMiddleware.RequireAPITokenScopes("admin:write"))
 	writeGroup.POST("", h.CreateServer)
 	writeGroup.PATCH("/:id", h.UpdateServer)
 	writeGroup.DELETE("/:id", h.DeleteServer)
@@ -34,12 +34,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Read operations - search/get from public registry
 	registryRead := registry.Group("")
-	registryRead.Use(authMiddleware.RequireScopes("admin:read"))
+	registryRead.Use(authMiddleware.RequireAPITokenScopes("admin:read"))
 	registryRead.GET("/search", h.SearchRegistry)
 	registryRead.GET("/servers/:name", h.GetRegistryServer)
 
 	// Write operations - install from registry into project
 	registryWrite := registry.Group("")
-	registryWrite.Use(authMiddleware.RequireScopes("admin:write"))
+	registryWrite.Use(authMiddleware.RequireAPITokenScopes("admin:write"))
 	registryWrite.POST("/install", h.InstallFromRegistry)
 }

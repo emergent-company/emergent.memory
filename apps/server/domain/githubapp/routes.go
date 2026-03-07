@@ -14,13 +14,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Read operations — connection status
 	readGroup := g.Group("")
 	readGroup.Use(authMiddleware.RequireAuth())
-	readGroup.Use(authMiddleware.RequireScopes("admin:read"))
+	readGroup.Use(authMiddleware.RequireAPITokenScopes("admin:read"))
 	readGroup.GET("", h.GetStatus)
 
 	// Write operations — connect, disconnect, CLI setup
 	writeGroup := g.Group("")
 	writeGroup.Use(authMiddleware.RequireAuth())
-	writeGroup.Use(authMiddleware.RequireScopes("admin:write"))
+	writeGroup.Use(authMiddleware.RequireAPITokenScopes("admin:write"))
 	writeGroup.POST("/connect", h.Connect)
 	writeGroup.GET("/callback", h.Callback)
 	writeGroup.DELETE("", h.Disconnect)
