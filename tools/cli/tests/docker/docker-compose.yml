@@ -1,7 +1,7 @@
-# docker-compose.yml for emergent CLI Docker-based installation tests.
+# docker-compose.yml for memory CLI Docker-based installation tests.
 #
 # This compose file spins up:
-#   - test-emergent-server:  the Emergent backend API (the test server)
+#   - test-emergent-server:  the Memory backend API (the test server)
 #   - test-emergent-client:  the Go test container that installs the CLI via install.sh
 #                            and runs all tests against the live server
 #
@@ -14,17 +14,17 @@
 # Test logs are written to ./test-logs/ on the host (mounted into the container).
 #
 # Environment variables you can override:
-#   MEMORY_SERVER_IMAGE   - Emergent server Docker image (default: ghcr.io/emergent-company/memory:latest)
+#   MEMORY_SERVER_IMAGE   - Memory server Docker image (default: ghcr.io/emergent-company/memory-server:latest)
 #   MEMORY_TEST_TOKEN     - static Bearer token for the dev server (default: e2e-test-user)
 
 services:
   # ─────────────────────────────────────────────────────────────────────────
-  # Emergent API server
+  # Memory API server
   # The test server uses the same image as staging but with local-dev
   # environment variables so the static e2e-test-user token is accepted.
   # ─────────────────────────────────────────────────────────────────────────
   test-emergent-server:
-    image: ${MEMORY_SERVER_IMAGE:-ghcr.io/emergent-company/memory:latest}
+    image: ${MEMORY_SERVER_IMAGE:-ghcr.io/emergent-company/memory-server:latest}
     container_name: test-emergent-server
     environment:
       # Accept the static e2e-test-user Bearer token

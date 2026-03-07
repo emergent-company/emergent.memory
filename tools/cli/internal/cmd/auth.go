@@ -242,6 +242,15 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		cfg = &config.Config{}
 	}
 
+	// Apply the --server flag override. The flag is registered on the root
+	// command so we traverse up to find it.
+	if flagServer, _ := cmd.Flags().GetString("server"); flagServer != "" {
+		cfg.ServerURL = flagServer
+	} else if serverURL != "" {
+		// serverURL is the package-level var bound to --server in root.go.
+		cfg.ServerURL = serverURL
+	}
+
 	if cfg.ServerURL == "" {
 		return fmt.Errorf("no server URL configured. Run: memory config set-server <url>")
 	}
