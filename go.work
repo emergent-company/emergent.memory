@@ -6,7 +6,6 @@ use (
 	./tests/api
 	./tools/e2e-suite
 	./tools/cli
-	./tools/cli/tests/docker
 	./tools/huma-test-suite
 	./tools/opencode-test-suite
 )
