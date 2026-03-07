@@ -17,6 +17,7 @@ import (
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var projectsCmd = &cobra.Command{
@@ -182,6 +183,17 @@ func getClient(cmd *cobra.Command) (*client.Client, error) {
 	cfg, err := config.LoadWithEnv(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Apply persistent flag values from global viper. LoadWithEnv uses a
+	// separate viper instance (env vars + config file only), so CLI flags
+	// bound in root.go init() are not visible to it. Read them here and
+	// let them override whatever was loaded from the config file.
+	if v := viper.GetString("server"); v != "" {
+		cfg.ServerURL = v
+	}
+	if v := viper.GetString("project_token"); v != "" {
+		cfg.ProjectToken = v
 	}
 
 	if cfg.ServerURL == "" {
