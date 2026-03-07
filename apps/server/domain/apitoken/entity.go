@@ -11,7 +11,7 @@ type ApiToken struct {
 	bun.BaseModel `bun:"table:core.api_tokens,alias:at"`
 
 	ID             string     `bun:"id,pk,type:uuid,default:uuid_generate_v4()"`
-	ProjectID      string     `bun:"project_id,notnull,type:uuid"`
+	ProjectID      *string    `bun:"project_id,type:uuid"`
 	UserID         string     `bun:"user_id,notnull,type:uuid"`
 	Name           string     `bun:"name,notnull"`
 	TokenHash      string     `bun:"token_hash,notnull"`
@@ -26,6 +26,7 @@ type ApiToken struct {
 // ApiTokenDTO is the response DTO for API token endpoints (without sensitive data)
 type ApiTokenDTO struct {
 	ID          string     `json:"id"`
+	ProjectID   *string    `json:"projectId,omitempty"`
 	Name        string     `json:"name"`
 	TokenPrefix string     `json:"tokenPrefix"`
 	Scopes      []string   `json:"scopes"`
@@ -55,7 +56,13 @@ type ApiTokenListResponseDTO struct {
 // CreateApiTokenRequest is the request body for creating a token
 type CreateApiTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read data:read data:write agents:read agents:write"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read data:read data:write agents:read agents:write projects:read projects:write"`
+}
+
+// CreateAccountTokenRequest is the request body for creating an account-level token (no project binding)
+type CreateAccountTokenRequest struct {
+	Name   string   `json:"name" validate:"required,min=1,max=255"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read data:read data:write agents:read agents:write projects:read projects:write"`
 }
 
 // Available scopes for API tokens
@@ -65,12 +72,15 @@ var ValidApiTokenScopes = []string{
 	"data:write",
 	"agents:read",
 	"agents:write",
+	"projects:read",
+	"projects:write",
 }
 
 // ToDTO converts an ApiToken entity to ApiTokenDTO
 func (t *ApiToken) ToDTO() ApiTokenDTO {
 	return ApiTokenDTO{
 		ID:          t.ID,
+		ProjectID:   t.ProjectID,
 		Name:        t.Name,
 		TokenPrefix: t.TokenPrefix,
 		Scopes:      t.Scopes,

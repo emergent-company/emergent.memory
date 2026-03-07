@@ -104,7 +104,7 @@ func (s *Service) Create(ctx context.Context, projectID, userID, name string, sc
 
 	// Create token record
 	token := &ApiToken{
-		ProjectID:      projectID,
+		ProjectID:      &projectID,
 		UserID:         userID,
 		Name:           name,
 		TokenHash:      hashToken(rawToken),
@@ -203,6 +203,125 @@ func (s *Service) Revoke(ctx context.Context, tokenID, projectID, userID string)
 	}
 
 	s.log.Info("revoked API token",
+		slog.String("name", token.Name),
+		slog.String("tokenPrefix", token.TokenPrefix),
+		slog.String("userID", userID))
+
+	return nil
+}
+
+// CreateAccountToken creates a new account-level (non-project-bound) API token
+func (s *Service) CreateAccountToken(ctx context.Context, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
+	// Validate scopes
+	for _, scope := range scopes {
+		valid := false
+		for _, validScope := range ValidApiTokenScopes {
+			if scope == validScope {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid scope: " + scope)
+		}
+	}
+
+	// Check for duplicate name (among active account tokens for this user)
+	existing, err := s.repo.FindByUserAndName(ctx, userID, name)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, apperror.New(409, "token_name_exists", "An account token named \""+name+"\" already exists")
+	}
+
+	// Generate token
+	rawToken, err := generateToken()
+	if err != nil {
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+
+	// Encrypt the raw token for later retrieval
+	var tokenEncrypted *string
+	if s.enc != nil && s.enc.IsConfigured() {
+		encrypted, encErr := s.enc.EncryptJSON(ctx, rawToken)
+		if encErr != nil {
+			s.log.Warn("failed to encrypt token for storage, token will not be retrievable later",
+				slog.String("error", encErr.Error()))
+		} else {
+			tokenEncrypted = &encrypted
+		}
+	}
+
+	// Create token record with project_id = NULL
+	token := &ApiToken{
+		ProjectID:      nil, // account-level: no project binding
+		UserID:         userID,
+		Name:           name,
+		TokenHash:      hashToken(rawToken),
+		TokenPrefix:    getTokenPrefix(rawToken),
+		TokenEncrypted: tokenEncrypted,
+		Scopes:         scopes,
+	}
+
+	if err := s.repo.CreateAccountToken(ctx, token); err != nil {
+		return nil, err
+	}
+
+	s.log.Info("created account API token",
+		slog.String("name", name),
+		slog.String("tokenPrefix", token.TokenPrefix),
+		slog.String("userID", userID))
+
+	return &CreateApiTokenResponseDTO{
+		ApiTokenDTO: token.ToDTO(),
+		Token:       rawToken,
+	}, nil
+}
+
+// ListAccountTokens returns all account-level tokens for a user
+func (s *Service) ListAccountTokens(ctx context.Context, userID string) (*ApiTokenListResponseDTO, error) {
+	tokens, err := s.repo.ListByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	dtos := make([]ApiTokenDTO, len(tokens))
+	for i, t := range tokens {
+		dtos[i] = t.ToDTO()
+	}
+
+	return &ApiTokenListResponseDTO{
+		Tokens: dtos,
+		Total:  len(dtos),
+	}, nil
+}
+
+// RevokeAccountToken revokes an account-level token owned by the user
+func (s *Service) RevokeAccountToken(ctx context.Context, tokenID, userID string) error {
+	// Check if token exists
+	token, err := s.repo.GetByIDAndUser(ctx, tokenID, userID)
+	if err != nil {
+		return err
+	}
+	if token == nil {
+		return apperror.ErrNotFound.WithMessage("Token not found")
+	}
+
+	// Check if already revoked
+	if token.RevokedAt != nil {
+		return apperror.New(409, "token_already_revoked", "Token is already revoked")
+	}
+
+	revoked, err := s.repo.RevokeByUser(ctx, tokenID, userID)
+	if err != nil {
+		return err
+	}
+	if !revoked {
+		return apperror.ErrNotFound.WithMessage("Token not found")
+	}
+
+	s.log.Info("revoked account API token",
 		slog.String("name", token.Name),
 		slog.String("tokenPrefix", token.TokenPrefix),
 		slog.String("userID", userID))
