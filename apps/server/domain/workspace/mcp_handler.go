@@ -244,13 +244,13 @@ func RegisterMCPHostingRoutes(e *echo.Echo, h *MCPHostingHandler, authMiddleware
 
 	// Read operations
 	readGroup := g.Group("")
-	readGroup.Use(authMiddleware.RequireScopes("admin:read"))
+	readGroup.Use(authMiddleware.RequireAPITokenScopes("admin:read"))
 	readGroup.GET("", h.ListServers)
 	readGroup.GET("/:id", h.GetServer)
 
 	// Write operations
 	writeGroup := g.Group("")
-	writeGroup.Use(authMiddleware.RequireScopes("admin:write"))
+	writeGroup.Use(authMiddleware.RequireAPITokenScopes("admin:write"))
 	writeGroup.POST("", h.RegisterServer)
 	writeGroup.POST("/:id/call", h.CallServer)
 	writeGroup.POST("/:id/restart", h.RestartServer)
