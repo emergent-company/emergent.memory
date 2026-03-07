@@ -29,10 +29,10 @@ type PackFile struct {
 
 // ObjectTypeDef represents a single object type definition inside a pack file.
 type ObjectTypeDef struct {
-	Name        string          `json:"name"        yaml:"name"`
-	Label       string          `json:"label"       yaml:"label"`
-	Description string          `json:"description" yaml:"description"`
-	Properties  json.RawMessage `json:"properties"  yaml:"properties"`
+	Name        string         `json:"name"        yaml:"name"`
+	Label       string         `json:"label"       yaml:"label"`
+	Description string         `json:"description" yaml:"description"`
+	Properties  map[string]any `json:"properties"  yaml:"properties"`
 }
 
 // RelationshipTypeDef represents a single relationship type definition inside a pack file.
