@@ -691,11 +691,29 @@ func checkAuth(cfg *config.Config, configPath string) checkResult {
 	}
 
 	if creds.IsExpired() {
-		fmt.Println("EXPIRED")
-		return checkResult{
-			name:    "Authentication",
-			status:  "warn",
-			message: "OAuth token expired. Run 'memory login' to re-authenticate",
+		// Attempt silent refresh before giving up.
+		const oauthClientID = "362800068257972227"
+		refreshed := false
+		if creds.RefreshToken != "" && creds.IssuerURL != "" {
+			if oidcConfig, err := auth.DiscoverOIDC(creds.IssuerURL); err == nil {
+				if tokenResp, err := auth.RefreshToken(oidcConfig, creds.RefreshToken, oauthClientID); err == nil {
+					creds.AccessToken = tokenResp.AccessToken
+					creds.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+					if tokenResp.RefreshToken != "" {
+						creds.RefreshToken = tokenResp.RefreshToken
+					}
+					_ = auth.Save(creds, credsPath)
+					refreshed = true
+				}
+			}
+		}
+		if !refreshed {
+			fmt.Println("EXPIRED")
+			return checkResult{
+				name:    "Authentication",
+				status:  "warn",
+				message: "OAuth token expired. Run 'memory login' to re-authenticate",
+			}
 		}
 	}
 
@@ -703,7 +721,7 @@ func checkAuth(cfg *config.Config, configPath string) checkResult {
 	return checkResult{
 		name:    "Authentication",
 		status:  "pass",
-		message: fmt.Sprintf("OAuth token valid until %s", creds.ExpiresAt.Format("2006-01-02 15:04")),
+		message: fmt.Sprintf("Authenticated (token valid until %s)", creds.ExpiresAt.Format("2006-01-02 15:04")),
 	}
 }
 
