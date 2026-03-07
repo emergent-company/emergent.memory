@@ -113,8 +113,6 @@ func init() {
 	ctlCmd.AddCommand(ctlHealthCmd)
 	ctlCmd.AddCommand(ctlShellCmd)
 	ctlCmd.AddCommand(ctlPullCmd)
-
-	rootCmd.AddCommand(ctlCmd)
 }
 
 func getDockerManager() (*installer.DockerManager, error) {

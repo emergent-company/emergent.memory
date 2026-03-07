@@ -11,9 +11,10 @@ import (
 )
 
 var mcpServersCmd = &cobra.Command{
-	Use:   "mcp-servers",
-	Short: "Manage MCP servers",
-	Long:  "Commands for managing Model Context Protocol (MCP) servers in the Memory platform",
+	Use:     "mcp-servers",
+	Short:   "Manage MCP servers",
+	Long:    "Commands for managing Model Context Protocol (MCP) servers in the Memory platform",
+	GroupID: "ai",
 }
 
 var listMCPServersCmd = &cobra.Command{

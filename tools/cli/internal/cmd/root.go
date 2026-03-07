@@ -26,11 +26,11 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "memory",
 	Short: "CLI tool for Memory platform",
-	Long: `Command-line interface for interacting with the Memory knowledge base API.
+	Long: `Command-line interface for the Memory knowledge base platform.
 
-The Memory CLI provides commands to manage projects, documents, and other
-resources in your Memory knowledge base. It supports both interactive and
-non-interactive workflows with flexible output formats.`,
+Manage projects, documents, graph objects, AI agents, and MCP integrations.
+
+For self-hosted deployments, use 'memory server' to install and manage your server.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		configPath, _ := cmd.Flags().GetString("config")
 		if configPath == "" {
@@ -97,6 +97,13 @@ func init() {
 	_ = viper.BindPFlag("ui.compact", rootCmd.PersistentFlags().Lookup("compact"))
 	_ = viper.BindPFlag("project_id", rootCmd.PersistentFlags().Lookup("project"))
 	_ = viper.BindPFlag("project_token", rootCmd.PersistentFlags().Lookup("project-token"))
+
+	// Command groups for organized help output
+	rootCmd.AddGroup(
+		&cobra.Group{ID: "knowledge", Title: "Knowledge Base"},
+		&cobra.Group{ID: "ai", Title: "Agents & AI"},
+		&cobra.Group{ID: "account", Title: "Account & Access"},
+	)
 
 	// Register completion functions for flags
 	_ = rootCmd.RegisterFlagCompletionFunc("output", completion.OutputFormatCompletionFunc())

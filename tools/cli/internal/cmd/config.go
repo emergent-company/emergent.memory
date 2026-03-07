@@ -12,9 +12,10 @@ import (
 )
 
 var configCmd = &cobra.Command{
-	Use:   "config",
-	Short: "Manage CLI configuration",
-	Long:  "Configure server URL, credentials, and other settings for the Memory CLI",
+	Use:     "config",
+	Short:   "Manage CLI configuration",
+	Long:    "Configure server URL, credentials, and other settings for the Memory CLI",
+	GroupID: "account",
 }
 
 func newConfigSetServerCmd() *cobra.Command {

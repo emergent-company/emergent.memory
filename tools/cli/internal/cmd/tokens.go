@@ -10,9 +10,10 @@ import (
 )
 
 var tokensCmd = &cobra.Command{
-	Use:   "tokens",
-	Short: "Manage API tokens",
-	Long:  "Commands for managing API tokens (emt_* keys). Tokens can be account-level (cross-project) or project-scoped.",
+	Use:     "tokens",
+	Short:   "Manage API tokens",
+	Long:    "Commands for managing API tokens (emt_* keys). Tokens can be account-level (cross-project) or project-scoped.",
+	GroupID: "account",
 }
 
 var listTokensCmd = &cobra.Command{

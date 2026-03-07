@@ -16,9 +16,10 @@ import (
 // ─────────────────────────────────────────────
 
 var documentsCmd = &cobra.Command{
-	Use:   "documents",
-	Short: "Manage project documents",
-	Long:  "Commands for managing documents in the Memory platform",
+	Use:     "documents",
+	Short:   "Manage project documents",
+	Long:    "Commands for managing documents in the Memory platform",
+	GroupID: "knowledge",
 }
 
 // ─────────────────────────────────────────────

@@ -16,6 +16,7 @@ func newADKSessionsCmd() *cobra.Command {
 		Use:     "adk-sessions",
 		Short:   "Manage and inspect ADK sessions",
 		Aliases: []string{"sessions"},
+		GroupID: "ai",
 	}
 
 	cmd.PersistentFlags().StringVar(&adkSessionsProjectID, "project", "", "Project name or ID")
