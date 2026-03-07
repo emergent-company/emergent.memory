@@ -4,11 +4,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
 	cliauth "github.com/emergent-company/emergent.memory/tools/cli/internal/auth"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 )
+
+// oauthClientID is the client ID for the memory-cli OAuth app.
+const oauthClientID = "362800068257972227"
 
 // Client wraps the SDK client for CLI usage
 type Client struct {
@@ -52,7 +56,23 @@ func New(cfg *config.Config) (*Client, error) {
 			return nil, fmt.Errorf("not authenticated: %w\nRun 'memory login' or 'memory auth set-token <token>'", err)
 		}
 		if creds.IsExpired() {
-			return nil, fmt.Errorf("credentials expired — run 'memory login' or 'memory auth set-token <token>'")
+			if creds.RefreshToken == "" || creds.IssuerURL == "" {
+				return nil, fmt.Errorf("credentials expired — run 'memory login' or 'memory auth set-token <token>'")
+			}
+			oidcConfig, err := cliauth.DiscoverOIDC(creds.IssuerURL)
+			if err != nil {
+				return nil, fmt.Errorf("credentials expired and could not refresh — run 'memory login'")
+			}
+			tokenResp, err := cliauth.RefreshToken(oidcConfig, creds.RefreshToken, oauthClientID)
+			if err != nil {
+				return nil, fmt.Errorf("credentials expired and refresh failed — run 'memory login'")
+			}
+			creds.AccessToken = tokenResp.AccessToken
+			creds.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+			if tokenResp.RefreshToken != "" {
+				creds.RefreshToken = tokenResp.RefreshToken
+			}
+			_ = cliauth.Save(creds, credsPath) // persist silently; ignore error
 		}
 		authConfig = sdk.AuthConfig{
 			Mode:   "apitoken",
