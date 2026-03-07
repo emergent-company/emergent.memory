@@ -122,6 +122,13 @@ func (d *Dumper) dumpObjects(ctx context.Context, outputDir string) (map[string]
 			if obj.Key != nil {
 				rec.Key = *obj.Key
 				entityKeyMap[obj.EntityID] = *obj.Key
+			} else {
+				// Assign a synthetic key so relationships can be re-anchored on restore.
+				// The seeder resolves these via key lookup; the synthetic value is stable
+				// within a dump and carries no meaning beyond that.
+				syntheticKey := "_id:" + obj.EntityID
+				rec.Key = syntheticKey
+				entityKeyMap[obj.EntityID] = syntheticKey
 			}
 			if obj.Status != nil {
 				rec.Status = *obj.Status
