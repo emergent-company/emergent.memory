@@ -12,9 +12,10 @@ var serverCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(serverCmd)
+	rootCmd.AddCommand(upgradeCmd)
 
 	serverCmd.AddCommand(installCmd)
-	serverCmd.AddCommand(upgradeCmd)
+	serverCmd.AddCommand(serverUpgradeCmd)
 	serverCmd.AddCommand(uninstallCmd)
 	serverCmd.AddCommand(ctlCmd)
 	serverCmd.AddCommand(doctorCmd)
