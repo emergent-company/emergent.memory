@@ -51,9 +51,9 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags="-s -w \
-      -X github.com/emergent-company/emergent.memory/apps/server/internal/version.Version=${VERSION} \
-      -X github.com/emergent-company/emergent.memory/apps/server/internal/version.GitCommit=${GIT_COMMIT} \
-      -X github.com/emergent-company/emergent.memory/apps/server/internal/version.BuildTime=${BUILD_TIME}" \
+      -X github.com/emergent-company/emergent.memory/internal/version.Version=${VERSION} \
+      -X github.com/emergent-company/emergent.memory/internal/version.GitCommit=${GIT_COMMIT} \
+      -X github.com/emergent-company/emergent.memory/internal/version.BuildTime=${BUILD_TIME}" \
     -o /out/emergent-server \
     ./cmd/server
 
