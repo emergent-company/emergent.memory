@@ -44,6 +44,14 @@ tasks:
     cmds:
       - go build -o dist/server ./cmd/server
 
+  build:swiftbridge:
+    desc: Build the CGO static archive for the Swift/native SDK (libEmergentGoCore.a + .h)
+    cmds:
+      - mkdir -p dist/swiftbridge
+      - CGO_ENABLED=1 go build -buildmode=c-archive -o dist/swiftbridge/libEmergentGoCore.a ./cmd/swiftbridge
+    env:
+      CGO_ENABLED: "1"
+
   lint:
     desc: Run linter
     cmds:

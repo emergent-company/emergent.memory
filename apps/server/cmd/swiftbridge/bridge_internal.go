@@ -16,7 +16,10 @@ import (
 	sdk "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/chat"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/documents"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/search"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/tasks"
 )
 
 // ---------------------------------------------------------------------------
@@ -368,4 +371,272 @@ func goCancel(opID uint64) {
 		cancel()
 		bridgeLog(1, fmt.Sprintf("CancelOperation: opID=%d cancelled", opID))
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Async GetProjects
+// ---------------------------------------------------------------------------
+
+// GetProjectsRequest is the JSON payload for the GetProjects call.
+type GetProjectsRequest struct {
+	Limit        int  `json:"limit,omitempty"`
+	IncludeStats bool `json:"include_stats,omitempty"`
+}
+
+func goGetProjects(id uint32, requestJSON string, callback func(opID uint64, result string)) uint64 {
+	clientsMu.RLock()
+	client, ok := clients[id]
+	clientsMu.RUnlock()
+	if !ok {
+		go callback(0, goErrJSONStr(fmt.Sprintf("unknown client handle: %d", id)))
+		return 0
+	}
+
+	var req GetProjectsRequest
+	if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
+		go callback(0, goErrJSONStr(fmt.Sprintf("invalid request JSON: %s", err)))
+		return 0
+	}
+	if req.Limit <= 0 {
+		req.Limit = 50
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	opID := registerCancel(cancel)
+
+	go func() {
+		defer deregisterCancel(opID)
+		projs, err := client.Projects.List(ctx, &projects.ListOptions{
+			Limit:        req.Limit,
+			IncludeStats: req.IncludeStats,
+		})
+		var result string
+		if err != nil {
+			result = goErrJSON(err)
+		} else {
+			result = goOKJSON(projs)
+		}
+		callback(opID, result)
+	}()
+
+	return opID
+}
+
+// ---------------------------------------------------------------------------
+// Async SearchObjects (graph hybrid search)
+// ---------------------------------------------------------------------------
+
+// SearchObjectsRequest is the JSON payload for the SearchObjects call.
+type SearchObjectsRequest struct {
+	Query         string  `json:"query"`
+	Limit         int     `json:"limit,omitempty"`
+	LexicalWeight float32 `json:"lexical_weight,omitempty"`
+	VectorWeight  float32 `json:"vector_weight,omitempty"`
+}
+
+func goSearchObjects(id uint32, requestJSON string, callback func(opID uint64, result string)) uint64 {
+	clientsMu.RLock()
+	client, ok := clients[id]
+	clientsMu.RUnlock()
+	if !ok {
+		go callback(0, goErrJSONStr(fmt.Sprintf("unknown client handle: %d", id)))
+		return 0
+	}
+
+	var req SearchObjectsRequest
+	if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
+		go callback(0, goErrJSONStr(fmt.Sprintf("invalid request JSON: %s", err)))
+		return 0
+	}
+	if req.Query == "" {
+		go callback(0, goErrJSONStr("query is required"))
+		return 0
+	}
+	if req.Limit <= 0 {
+		req.Limit = 10
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	opID := registerCancel(cancel)
+
+	go func() {
+		defer deregisterCancel(opID)
+		sdkReq := &graph.HybridSearchRequest{
+			Query: req.Query,
+			Limit: req.Limit,
+		}
+		if req.LexicalWeight != 0 {
+			sdkReq.LexicalWeight = &req.LexicalWeight
+		}
+		if req.VectorWeight != 0 {
+			sdkReq.VectorWeight = &req.VectorWeight
+		}
+		results, err := client.Graph.HybridSearch(ctx, sdkReq)
+		var result string
+		if err != nil {
+			result = goErrJSON(err)
+		} else {
+			result = goOKJSON(results)
+		}
+		callback(opID, result)
+	}()
+
+	return opID
+}
+
+// ---------------------------------------------------------------------------
+// Async GetProjectStats
+// ---------------------------------------------------------------------------
+
+// GetProjectStatsRequest is the JSON payload for the GetProjectStats call.
+type GetProjectStatsRequest struct {
+	ProjectID string `json:"project_id"`
+}
+
+func goGetProjectStats(id uint32, requestJSON string, callback func(opID uint64, result string)) uint64 {
+	clientsMu.RLock()
+	client, ok := clients[id]
+	clientsMu.RUnlock()
+	if !ok {
+		go callback(0, goErrJSONStr(fmt.Sprintf("unknown client handle: %d", id)))
+		return 0
+	}
+
+	var req GetProjectStatsRequest
+	if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
+		go callback(0, goErrJSONStr(fmt.Sprintf("invalid request JSON: %s", err)))
+		return 0
+	}
+	if req.ProjectID == "" {
+		go callback(0, goErrJSONStr("project_id is required"))
+		return 0
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	opID := registerCancel(cancel)
+
+	go func() {
+		defer deregisterCancel(opID)
+		proj, err := client.Projects.Get(ctx, req.ProjectID, &projects.GetOptions{IncludeStats: true})
+		var result string
+		if err != nil {
+			result = goErrJSON(err)
+		} else {
+			result = goOKJSON(proj)
+		}
+		callback(opID, result)
+	}()
+
+	return opID
+}
+
+// ---------------------------------------------------------------------------
+// Async GetAccountStats (task counts across all projects)
+// ---------------------------------------------------------------------------
+
+func goGetAccountStats(id uint32, callback func(opID uint64, result string)) uint64 {
+	clientsMu.RLock()
+	client, ok := clients[id]
+	clientsMu.RUnlock()
+	if !ok {
+		go callback(0, goErrJSONStr(fmt.Sprintf("unknown client handle: %d", id)))
+		return 0
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	opID := registerCancel(cancel)
+
+	go func() {
+		defer deregisterCancel(opID)
+		counts, err := client.Tasks.GetAllCounts(ctx)
+		var result string
+		if err != nil {
+			result = goErrJSON(err)
+		} else {
+			result = goOKJSON(counts)
+		}
+		callback(opID, result)
+	}()
+
+	return opID
+}
+
+// ---------------------------------------------------------------------------
+// Async GetWorkers (active/queued tasks for a project)
+// ---------------------------------------------------------------------------
+
+// GetWorkersRequest is the JSON payload for the GetWorkers call.
+type GetWorkersRequest struct {
+	ProjectID string `json:"project_id"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
+func goGetWorkers(id uint32, requestJSON string, callback func(opID uint64, result string)) uint64 {
+	clientsMu.RLock()
+	client, ok := clients[id]
+	clientsMu.RUnlock()
+	if !ok {
+		go callback(0, goErrJSONStr(fmt.Sprintf("unknown client handle: %d", id)))
+		return 0
+	}
+
+	var req GetWorkersRequest
+	if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
+		go callback(0, goErrJSONStr(fmt.Sprintf("invalid request JSON: %s", err)))
+		return 0
+	}
+	if req.Limit <= 0 {
+		req.Limit = 50
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	opID := registerCancel(cancel)
+
+	go func() {
+		defer deregisterCancel(opID)
+		taskList, err := client.Tasks.List(ctx, &tasks.ListOptions{
+			ProjectID: req.ProjectID,
+			Limit:     req.Limit,
+		})
+		var result string
+		if err != nil {
+			result = goErrJSON(err)
+		} else {
+			result = goOKJSON(taskList)
+		}
+		callback(opID, result)
+	}()
+
+	return opID
+}
+
+// ---------------------------------------------------------------------------
+// Async GetUserProfile
+// ---------------------------------------------------------------------------
+
+func goGetUserProfile(id uint32, callback func(opID uint64, result string)) uint64 {
+	clientsMu.RLock()
+	client, ok := clients[id]
+	clientsMu.RUnlock()
+	if !ok {
+		go callback(0, goErrJSONStr(fmt.Sprintf("unknown client handle: %d", id)))
+		return 0
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	opID := registerCancel(cancel)
+
+	go func() {
+		defer deregisterCancel(opID)
+		profile, err := client.Users.GetProfile(ctx)
+		var result string
+		if err != nil {
+			result = goErrJSON(err)
+		} else {
+			result = goOKJSON(profile)
+		}
+		callback(opID, result)
+	}()
+
+	return opID
 }
