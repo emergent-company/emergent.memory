@@ -1214,6 +1214,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 
 	type entityRow struct {
 		ID              uuid.UUID      `bun:"id"`
+		CanonicalID     uuid.UUID      `bun:"canonical_id"`
 		Key             string         `bun:"key"`
 		Name            string         `bun:"name"`
 		TypeName        string         `bun:"type_name"`
@@ -1231,10 +1232,12 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			return err
 		}
 
-		// Query entities (latest version only: supersedes_id IS NULL means no newer version exists)
+		// Query entities (latest version only: supersedes_id IS NULL means no newer version exists,
+		// branch_id IS NULL restricts to the main branch)
 		err := tx.NewRaw(`
 			SELECT 
 				go.id,
+				go.canonical_id,
 				go.key,
 				COALESCE(go.properties->>'name', '') as name,
 				go.properties,
@@ -1248,6 +1251,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				AND go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
+				AND go.branch_id IS NULL
 			ORDER BY `+orderExpr+`
 			LIMIT ? OFFSET ?
 		`, typeName, projectUUID, limit, offset).Scan(ctx, &entities)
@@ -1255,7 +1259,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			return err
 		}
 
-		// Get total count (latest version only)
+		// Get total count (latest version only, main branch)
 		err = tx.NewRaw(`
 			SELECT COUNT(*)
 			FROM kb.graph_objects go
@@ -1263,6 +1267,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				AND go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
+				AND go.branch_id IS NULL
 		`, typeName, projectUUID).Scan(ctx, &total)
 		return err
 	})
@@ -1275,7 +1280,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	resultEntities := make([]Entity, len(entities))
 	for i, e := range entities {
 		resultEntities[i] = Entity{
-			ID:         e.ID.String(),
+			ID:         e.CanonicalID.String(),
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,

@@ -1093,9 +1093,9 @@ func (c *Client) ListADKSessions(ctx context.Context, projectID string) ([]*ADKS
 		return nil, fmt.Errorf("projectID is required")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/projects/%s/adk-sessions", projectID), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/projects/%s/adk-sessions", c.base, projectID), nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	var res struct {
@@ -1119,9 +1119,9 @@ func (c *Client) GetADKSession(ctx context.Context, projectID, sessionID string)
 		return nil, fmt.Errorf("projectID is required")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/projects/%s/adk-sessions/%s", projectID, sessionID), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/projects/%s/adk-sessions/%s", c.base, projectID, sessionID), nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	var res struct {
@@ -1140,11 +1140,11 @@ func doRequest(c *Client, req *http.Request, v interface{}) error {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("API error: %d", resp.StatusCode)
+		return sdkerrors.ParseErrorResponse(resp)
 	}
 	return json.NewDecoder(resp.Body).Decode(v)
 }

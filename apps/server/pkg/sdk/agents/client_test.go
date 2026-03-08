@@ -401,3 +401,215 @@ func TestAgentsRespondToQuestionError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+// =============================================================================
+// Tests for ListADKSessions and GetADKSession (issue #55)
+// These tests verify that the server base URL is included in request URLs,
+// not just a relative path without a host.
+// =============================================================================
+
+func TestListADKSessions_UsesBaseURL(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	projectID := "proj_adk123"
+	fixtureSessions := []*agents.ADKSession{
+		{
+			ID:     "session_001",
+			UserID: "user_001",
+		},
+		{
+			ID:     "session_002",
+			UserID: "user_002",
+		},
+	}
+
+	apiResponse := map[string]interface{}{
+		"items":      fixtureSessions,
+		"totalCount": 2,
+	}
+	mock.OnJSON("GET", "/api/projects/"+projectID+"/adk-sessions", http.StatusOK, apiResponse)
+
+	client, err := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	sessions, err := client.Agents.ListADKSessions(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("ListADKSessions() error = %v", err)
+	}
+
+	if len(sessions) != 2 {
+		t.Errorf("expected 2 sessions, got %d", len(sessions))
+	}
+	if sessions[0].ID != "session_001" {
+		t.Errorf("expected session ID session_001, got %s", sessions[0].ID)
+	}
+	if sessions[1].ID != "session_002" {
+		t.Errorf("expected session ID session_002, got %s", sessions[1].ID)
+	}
+}
+
+func TestListADKSessions_UsesClientProjectID(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	projectID := "proj_default456"
+	apiResponse := map[string]interface{}{
+		"items":      []*agents.ADKSession{},
+		"totalCount": 0,
+	}
+	mock.OnJSON("GET", "/api/projects/"+projectID+"/adk-sessions", http.StatusOK, apiResponse)
+
+	// Create SDK client with a project context; pass empty string to ListADKSessions
+	// to verify it falls back to the client's stored projectID.
+	sdkClient, err := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	sdkClient.Agents.SetContext("", projectID)
+
+	sessions, err := sdkClient.Agents.ListADKSessions(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListADKSessions() with empty projectID error = %v", err)
+	}
+	if sessions == nil {
+		t.Error("expected non-nil sessions slice")
+	}
+}
+
+func TestListADKSessions_MissingProjectID(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+
+	_, err := client.Agents.ListADKSessions(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty projectID, got nil")
+	}
+}
+
+func TestGetADKSession_UsesBaseURL(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	projectID := "proj_adk123"
+	sessionID := "session_abc"
+	fixtureSession := &agents.ADKSession{
+		ID:     sessionID,
+		UserID: "user_xyz",
+		Events: []*agents.ADKEvent{
+			{ID: "event_001"},
+		},
+	}
+
+	apiResponse := map[string]interface{}{
+		"data": fixtureSession,
+	}
+	mock.OnJSON("GET", "/api/projects/"+projectID+"/adk-sessions/"+sessionID, http.StatusOK, apiResponse)
+
+	client, err := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	session, err := client.Agents.GetADKSession(context.Background(), projectID, sessionID)
+	if err != nil {
+		t.Fatalf("GetADKSession() error = %v", err)
+	}
+
+	if session.ID != sessionID {
+		t.Errorf("expected session ID %s, got %s", sessionID, session.ID)
+	}
+	if session.UserID != "user_xyz" {
+		t.Errorf("expected user ID user_xyz, got %s", session.UserID)
+	}
+	if len(session.Events) != 1 {
+		t.Errorf("expected 1 event, got %d", len(session.Events))
+	}
+}
+
+func TestGetADKSession_NotFound(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	projectID := "proj_adk123"
+	sessionID := "nonexistent_session"
+
+	errorResponse := map[string]interface{}{
+		"success": false,
+		"error": map[string]interface{}{
+			"code":    "NOT_FOUND",
+			"message": "ADK session not found",
+		},
+	}
+	mock.OnJSON("GET", "/api/projects/"+projectID+"/adk-sessions/"+sessionID, http.StatusNotFound, errorResponse)
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+
+	_, err := client.Agents.GetADKSession(context.Background(), projectID, sessionID)
+	if err == nil {
+		t.Fatal("expected error for 404 response, got nil")
+	}
+}
+
+func TestListADKSessions_RelativeURLPrevented(t *testing.T) {
+	// This test verifies the exact bug from issue #55:
+	// Before the fix, requests were made to "/api/projects/..." (relative URL)
+	// which caused "unsupported protocol scheme """ errors.
+	// After the fix, the server's base URL is prepended.
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	projectID := "proj_test_relative"
+	requestReceived := false
+
+	mock.On("GET", "/api/projects/"+projectID+"/adk-sessions", func(w http.ResponseWriter, r *http.Request) {
+		requestReceived = true
+		// Verify the request arrived with a proper host (not a relative URL)
+		if r.Host == "" {
+			t.Error("expected non-empty Host header — request used a relative URL without a host")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
+			"items":      []interface{}{},
+			"totalCount": 0,
+		}); err != nil {
+			t.Fatalf("failed to encode response: %v", err)
+		}
+	})
+
+	client, err := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	_, err = client.Agents.ListADKSessions(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("ListADKSessions() should not fail with a proper base URL: %v", err)
+	}
+	if !requestReceived {
+		t.Error("mock server never received the request — URL was not routed to the server")
+	}
+}
