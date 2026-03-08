@@ -212,20 +212,17 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 		}
 	}
 
-	testCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
 	clientCfg, err := buildClientConfig(provider, cred)
 	if err != nil {
 		return "", "", err
 	}
 
-	client, err := genai.NewClient(testCtx, clientCfg)
+	client, err := genai.NewClient(ctx, clientCfg)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create genai client: %w", err)
 	}
 
-	resp, err := client.Models.GenerateContent(testCtx, model, genai.Text("Say hello in one sentence."), nil)
+	resp, err := client.Models.GenerateContent(ctx, model, genai.Text("Say hello in one sentence."), nil)
 	if err != nil {
 		return "", "", fmt.Errorf("generate call failed: %w", err)
 	}
