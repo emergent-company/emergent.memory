@@ -53,9 +53,9 @@ RUN /go/bin/swag init -g cmd/server/main.go -o docs/swagger --parseDependency --
 # -ldflags injects version info at build time
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-s -w \
-      -X github.com/emergent-company/emergent.memory/apps/server/internal/version.Version=${VERSION} \
-      -X github.com/emergent-company/emergent.memory/apps/server/internal/version.GitCommit=${GIT_COMMIT} \
-      -X github.com/emergent-company/emergent.memory/apps/server/internal/version.BuildTime=${BUILD_TIME}" \
+      -X github.com/emergent-company/emergent.memory/internal/version.Version=${VERSION} \
+      -X github.com/emergent-company/emergent.memory/internal/version.GitCommit=${GIT_COMMIT} \
+      -X github.com/emergent-company/emergent.memory/internal/version.BuildTime=${BUILD_TIME}" \
     -o /server \
     ./cmd/server
 
