@@ -52,8 +52,8 @@ nx run server-go:build
    ```bash
    VERSION=$(git describe --tags --always)
    COMMIT=$(git rev-parse --short HEAD)
-   go build -ldflags="-X github.com/emergent/emergent-core/internal/version.Version=$VERSION \
-                      -X github.com/emergent/emergent-core/internal/version.GitCommit=$COMMIT"
+   go build -ldflags="-X github.com/emergent-company/emergent.memory/apps/server/internal/version.Version=$VERSION \
+                      -X github.com/emergent-company/emergent.memory/apps/server/internal/version.GitCommit=$COMMIT"
    ```
 3. Binary embeds git tag at compile time
 
