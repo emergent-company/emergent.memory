@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/crypto"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -265,8 +266,8 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 		return nil, fmt.Errorf("model catalog sync failed: %w", err)
 	}
 
-	// Live test using a model from the freshly synced catalog (5s timeout).
-	testCtx, testCancel := context.WithTimeout(ctx, 5*time.Second)
+	// Live test using a model from the freshly synced catalog (15s timeout).
+	testCtx, testCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer testCancel()
 	if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
 		return nil, fmt.Errorf("credential test failed: %w", err)
@@ -410,8 +411,8 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 		return nil, fmt.Errorf("model catalog sync failed: %w", err)
 	}
 
-	// Live test using a model from the freshly synced catalog (5s timeout).
-	testCtx, testCancel := context.WithTimeout(ctx, 5*time.Second)
+	// Live test using a model from the freshly synced catalog (15s timeout).
+	testCtx, testCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer testCancel()
 	if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
 		return nil, fmt.Errorf("credential test failed: %w", err)
@@ -510,22 +511,22 @@ func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertPr
 	switch provider {
 	case ProviderGoogleAI:
 		if req.APIKey == "" {
-			return nil, fmt.Errorf("apiKey is required for google-ai")
+			return nil, apperror.NewBadRequest("apiKey is required for google-ai")
 		}
 		return []byte(req.APIKey), nil
 	case ProviderVertexAI:
 		if req.ServiceAccountJSON == "" {
-			return nil, fmt.Errorf("serviceAccountJson is required for vertex-ai")
+			return nil, apperror.NewBadRequest("serviceAccountJson is required for vertex-ai")
 		}
 		if req.GCPProject == "" {
-			return nil, fmt.Errorf("gcpProject is required for vertex-ai")
+			return nil, apperror.NewBadRequest("gcpProject is required for vertex-ai")
 		}
 		if req.Location == "" {
-			return nil, fmt.Errorf("location is required for vertex-ai")
+			return nil, apperror.NewBadRequest("location is required for vertex-ai")
 		}
 		return []byte(req.ServiceAccountJSON), nil
 	default:
-		return nil, fmt.Errorf("unsupported provider: %s", provider)
+		return nil, apperror.NewBadRequest(fmt.Sprintf("unsupported provider: %s", provider))
 	}
 }
 
@@ -593,5 +594,5 @@ func (s *CredentialService) validateModelInCatalog(ctx context.Context, provider
 	for i, m := range models {
 		names[i] = m.ModelName
 	}
-	return fmt.Errorf("model %q not found in %s catalog for provider %s; available: %v", modelName, modelType, provider, names)
+	return apperror.NewBadRequest(fmt.Sprintf("model %q not found in %s catalog for provider %s; available: %v", modelName, modelType, provider, names))
 }
