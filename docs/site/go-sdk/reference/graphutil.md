@@ -1,6 +1,6 @@
 # graph/graphutil
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph/graphutil`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph/graphutil`
 
 The `graphutil` package provides utilities for working with the dual-ID graph model — where each object has a version-specific `VersionID` and a stable `EntityID`.
 

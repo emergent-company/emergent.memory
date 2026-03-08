@@ -24,7 +24,7 @@ Reference for developers integrating with or extending Memory — provider setup
 
 The Go SDK provides a fully type-safe client library covering the complete Emergent API surface — 30 service clients, dual authentication, multi-tenancy, streaming SSE, and structured error handling.
 
-**Module:** `github.com/emergent-company/emergent/apps/server-go/pkg/sdk`
+**Module:** `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk`
 
 [Get Started with Go SDK](go-sdk/index.md){ .md-button .md-button--primary }
 [Reference](go-sdk/reference/graph.md){ .md-button }

@@ -110,7 +110,7 @@ POST /api/data-source-integrations/{id}/sync-jobs/{jobId}/cancel
 For structured data sources (e.g. databases, APIs), you can run a **discovery job** to infer object types from the source schema:
 
 ```http
-POST /discovery-jobs/projects/{projectId}/start
+POST /api/discovery-jobs/projects/{projectId}/start
 {
   "integrationId": "<data-source-id>"
 }
@@ -119,13 +119,13 @@ POST /discovery-jobs/projects/{projectId}/start
 Monitor the discovery job:
 
 ```http
-GET /discovery-jobs/{jobId}
+GET /api/discovery-jobs/{jobId}
 ```
 
 Finalize (apply discovered types to the type registry):
 
 ```http
-POST /discovery-jobs/{jobId}/finalize
+POST /api/discovery-jobs/{jobId}/finalize
 ```
 
 ---

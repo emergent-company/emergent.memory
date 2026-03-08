@@ -1,6 +1,6 @@
 # Type Registry
 
-**Package:** `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/typeregistry`
+**Package:** `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/typeregistry`
 
 **Client field:** `client.TypeRegistry`
 

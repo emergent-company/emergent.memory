@@ -30,7 +30,7 @@ client, err := sdk.New(sdk.Config{
 
 ### Context-Scoped (25 clients)
 
-These clients send `X-Org-ID` and `X-Project-ID` on every request. They have a `SetContext` method and are updated when you call `client.SetContext`.
+These clients send `X-Org-ID` and `X-Project-ID` on every request. **21 of them** have a `SetContext` method and are updated atomically when you call `client.SetContext`. The remaining 4 (Projects, Orgs, Users, APITokens) use the org/project set at construction time and require re-initialization to change context.
 
 | Field | Package |
 |-------|---------|

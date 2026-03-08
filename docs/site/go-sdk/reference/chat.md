@@ -1,6 +1,6 @@
 # chat
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/chat`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/chat`
 
 The `chat` client manages AI conversations and provides SSE streaming for real-time token delivery.
 

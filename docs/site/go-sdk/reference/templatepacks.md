@@ -1,6 +1,6 @@
 # Template Packs
 
-**Package:** `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/templatepacks`
+**Package:** `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/templatepacks`
 
 **Client field:** `client.TemplatePacks`
 

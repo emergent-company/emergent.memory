@@ -1,6 +1,6 @@
 # mcpregistry
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/mcpregistry`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcpregistry`
 
 The `mcpregistry` client manages the MCP server registry — external MCP servers that are registered with a project and made available to agents.
 

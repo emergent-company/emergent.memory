@@ -1,6 +1,6 @@
 # projects
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/projects`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects`
 
 The `projects` client manages Emergent projects — the primary unit of organization for graph data, documents, and agents.
 

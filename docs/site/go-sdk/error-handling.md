@@ -5,7 +5,7 @@ The SDK wraps all non-2xx API responses into a structured `*errors.Error` type a
 ## Import
 
 ```go
-import sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
+import sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 ```
 
 ## The `errors.Error` Type
@@ -39,8 +39,8 @@ import (
     "fmt"
     "log"
 
-    sdk "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-    sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
+    sdk "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
+    sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 )
 
 func getObject(client *sdk.Client, id string) {

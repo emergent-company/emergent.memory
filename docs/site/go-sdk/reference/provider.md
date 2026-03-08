@@ -9,7 +9,7 @@ Supported providers: **Google AI** (`google-ai`) and **Vertex AI** (`vertex-ai`)
 ## Import
 
 ```go
-import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/provider"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider"
 ```
 
 ## Client
