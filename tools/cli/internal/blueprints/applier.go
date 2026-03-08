@@ -53,15 +53,18 @@ func (b *Blueprinter) Run(ctx context.Context, packs []PackFile, agents []AgentF
 		return results, nil
 	}
 
-	// Fetch existing resources once up front.
+	// Fetch existing resources once up front (only when there are items to apply).
 	existingPacks, err := b.fetchExistingPacks(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list existing packs: %w", err)
 	}
 
-	existingAgents, err := b.fetchExistingAgents(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list existing agents: %w", err)
+	var existingAgents map[string]sdkagents.AgentDefinitionSummary
+	if len(agents) > 0 {
+		existingAgents, err = b.fetchExistingAgents(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list existing agents: %w", err)
+		}
 	}
 
 	// Apply packs.
