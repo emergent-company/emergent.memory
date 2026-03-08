@@ -226,9 +226,97 @@ func SetContext(handle C.uint32_t, requestJSON *C.char) *C.char {
 	return C.CString(result)
 }
 
+// GetProjects returns the list of projects accessible by the authenticated user.
+//
+// Input JSON: {"limit":50,"include_stats":false}
+//
+// See HealthCheck for the callback memory contract.
+//
+//export GetProjects
+func GetProjects(handle C.uint32_t, requestJSON *C.char, cb C.ResultCallback, ctx unsafe.Pointer) C.uint64_t {
+	opID := goGetProjects(uint32(handle), C.GoString(requestJSON), func(id uint64, result string) {
+		cResult := C.CString(result)
+		C.invokeResultCallback(cb, C.uint64_t(id), cResult, ctx)
+	})
+	return C.uint64_t(opID)
+}
+
+// SearchObjects performs a hybrid (lexical + vector) search over graph objects
+// in the project bound to this client handle.
+//
+// Input JSON: {"query":"…","limit":10,"lexical_weight":0.5,"vector_weight":0.5}
+//
+// See HealthCheck for the callback memory contract.
+//
+//export SearchObjects
+func SearchObjects(handle C.uint32_t, requestJSON *C.char, cb C.ResultCallback, ctx unsafe.Pointer) C.uint64_t {
+	opID := goSearchObjects(uint32(handle), C.GoString(requestJSON), func(id uint64, result string) {
+		cResult := C.CString(result)
+		C.invokeResultCallback(cb, C.uint64_t(id), cResult, ctx)
+	})
+	return C.uint64_t(opID)
+}
+
+// GetProjectStats returns a single project with aggregate statistics.
+//
+// Input JSON: {"project_id":"…"}
+//
+// See HealthCheck for the callback memory contract.
+//
+//export GetProjectStats
+func GetProjectStats(handle C.uint32_t, requestJSON *C.char, cb C.ResultCallback, ctx unsafe.Pointer) C.uint64_t {
+	opID := goGetProjectStats(uint32(handle), C.GoString(requestJSON), func(id uint64, result string) {
+		cResult := C.CString(result)
+		C.invokeResultCallback(cb, C.uint64_t(id), cResult, ctx)
+	})
+	return C.uint64_t(opID)
+}
+
+// GetAccountStats returns aggregate task counts across all projects for the
+// authenticated user.
+//
+// See HealthCheck for the callback memory contract.
+//
+//export GetAccountStats
+func GetAccountStats(handle C.uint32_t, cb C.ResultCallback, ctx unsafe.Pointer) C.uint64_t {
+	opID := goGetAccountStats(uint32(handle), func(id uint64, result string) {
+		cResult := C.CString(result)
+		C.invokeResultCallback(cb, C.uint64_t(id), cResult, ctx)
+	})
+	return C.uint64_t(opID)
+}
+
+// GetWorkers returns active and queued tasks for a project (the "workers" view).
+//
+// Input JSON: {"project_id":"…","limit":50}
+//
+// See HealthCheck for the callback memory contract.
+//
+//export GetWorkers
+func GetWorkers(handle C.uint32_t, requestJSON *C.char, cb C.ResultCallback, ctx unsafe.Pointer) C.uint64_t {
+	opID := goGetWorkers(uint32(handle), C.GoString(requestJSON), func(id uint64, result string) {
+		cResult := C.CString(result)
+		C.invokeResultCallback(cb, C.uint64_t(id), cResult, ctx)
+	})
+	return C.uint64_t(opID)
+}
+
+// GetUserProfile returns the profile of the currently authenticated user.
+//
+// See HealthCheck for the callback memory contract.
+//
+//export GetUserProfile
+func GetUserProfile(handle C.uint32_t, cb C.ResultCallback, ctx unsafe.Pointer) C.uint64_t {
+	opID := goGetUserProfile(uint32(handle), func(id uint64, result string) {
+		cResult := C.CString(result)
+		C.invokeResultCallback(cb, C.uint64_t(id), cResult, ctx)
+	})
+	return C.uint64_t(opID)
+}
+
 // main is required for c-archive packages but is never called.
 func main() {}
 
-// Ensure context is imported (used for WithCancel in bridge_internal.go).
+// Ensure context and fmt are imported (used for WithCancel/Sprintf in bridge_internal.go).
 var _ = context.Background
 var _ = fmt.Sprintf

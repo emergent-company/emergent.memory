@@ -464,7 +464,7 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 	var result struct {
 		ID        string   `bun:"id"`
 		UserID    string   `bun:"user_id"`
-		ProjectID string   `bun:"project_id"`
+		ProjectID *string  `bun:"project_id"` // nullable: nil for account-level tokens
 		Scopes    []string `bun:"scopes,array"`
 	}
 
@@ -485,12 +485,18 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 		return nil, apperror.ErrInvalidToken.WithInternal(err)
 	}
 
+	// Resolve project ID: account-level tokens have a nil project_id
+	projectID := ""
+	if result.ProjectID != nil {
+		projectID = *result.ProjectID
+	}
+
 	return &AuthUser{
 		ID:                user.ID,
 		Sub:               user.ZitadelUserID,
 		Email:             user.Email,
 		Scopes:            result.Scopes,
-		APITokenProjectID: result.ProjectID,
+		APITokenProjectID: projectID,
 		APITokenID:        result.ID,
 	}, nil
 }
