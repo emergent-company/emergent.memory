@@ -1,6 +1,22 @@
-# Emergent SDK Documentation
+# Emergent Documentation
 
-**Emergent** is a graph-native AI memory platform. This site documents the official SDKs for building applications on top of the Emergent API.
+**Emergent** is a graph-native AI memory platform. This site documents how to use the platform, integrate with it, and build on top of it.
+
+## Guides
+
+### User Guide
+
+Step-by-step guides for end users of the Memory platform — knowledge graph, documents, agents, chat, and more.
+
+[User Guide](user-guide/index.md){ .md-button .md-button--primary }
+
+### Developer Guide
+
+Reference for developers integrating with or extending Memory — provider setup, type registry, MCP servers, extraction pipeline, security scopes.
+
+[Developer Guide](developer-guide/index.md){ .md-button .md-button--primary }
+
+---
 
 ## SDKs
 

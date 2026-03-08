@@ -61,6 +61,32 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Developer Guide:
+    - Overview: developer-guide/index.md
+    - Provider Setup: developer-guide/provider-setup.md
+    - Type Registry: developer-guide/type-registry.md
+    - Template Packs: developer-guide/template-packs.md
+    - MCP Servers: developer-guide/mcp-servers.md
+    - Workspaces: developer-guide/workspace.md
+    - Extraction Pipeline: developer-guide/extraction.md
+    - Email Setup: developer-guide/email-setup.md
+    - Health & Ops: developer-guide/health-ops.md
+    - Security Scopes: developer-guide/security-scopes.md
+    - Background Scheduler: developer-guide/scheduler.md
+  - User Guide:
+    - Overview: user-guide/index.md
+    - Getting Started: user-guide/getting-started.md
+    - Knowledge Graph: user-guide/knowledge-graph.md
+    - Documents: user-guide/documents.md
+    - Chat: user-guide/chat.md
+    - Agents: user-guide/agents.md
+    - Branches: user-guide/branches.md
+    - Data Sources: user-guide/datasources.md
+    - API Tokens: user-guide/api-tokens.md
+    - Backups: user-guide/backups.md
+    - Notifications: user-guide/notifications.md
+    - Tasks: user-guide/tasks.md
+    - Integrations: user-guide/integrations.md
   - Go SDK:
     - Overview: go-sdk/index.md
     - Authentication: go-sdk/authentication.md
