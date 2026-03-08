@@ -1028,7 +1028,7 @@ func (h *Handler) ListDefinitions(c echo.Context) error {
 	return c.JSON(http.StatusOK, SuccessResponse(dtos))
 }
 
-// GetDefinition handles GET /api/admin/agent-definitions/:id
+// GetDefinition handles GET /api/projects/:projectId/agent-definitions/:id
 func (h *Handler) GetDefinition(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -1131,7 +1131,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 	return c.JSON(http.StatusCreated, SuccessResponse(def.ToDTO()))
 }
 
-// UpdateDefinition handles PATCH /api/admin/agent-definitions/:id
+// UpdateDefinition handles PATCH /api/projects/:projectId/agent-definitions/:id
 func (h *Handler) UpdateDefinition(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -1209,7 +1209,7 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	return c.JSON(http.StatusOK, SuccessResponse(def.ToDTO()))
 }
 
-// DeleteDefinition handles DELETE /api/admin/agent-definitions/:id
+// DeleteDefinition handles DELETE /api/projects/:projectId/agent-definitions/:id
 func (h *Handler) DeleteDefinition(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
