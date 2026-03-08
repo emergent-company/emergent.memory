@@ -1,0 +1,529 @@
+name: multi-agent-task-pack
+version: "1.0.0"
+description: >
+  Schema for dynamic multi-agent task management and orchestration.
+  Encodes two knowledge layers: a Domain Layer (work packages, tasks, results,
+  feedback) and a System Layer (agent registries, pools, experiments, KPIs,
+  janitor proposals). Designed for use with the Emergent multi-agent orchestration
+  architecture described in docs/multi-agent-blueprint-spec.md.
+author: Emergent
+license: MIT
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OBJECT TYPES
+# ─────────────────────────────────────────────────────────────────────────────
+
+objectTypes:
+
+  # ── Domain Layer ─────────────────────────────────────────────────────────
+
+  - name: WorkPackage
+    label: Work Package
+    description: >
+      Top-level unit of work. Owns a full execution tree of subtasks.
+      Created by the orchestrator when a new piece of work is initiated.
+    properties:
+      title:
+        type: string
+        description: Human-readable title of the work package
+      status:
+        type: string
+        description: "Lifecycle status: created | in_progress | blocked | complete | rejected"
+      priority:
+        type: integer
+        description: "1 = highest, 5 = lowest"
+      tokensUsed:
+        type: integer
+        description: Total tokens consumed across the entire execution tree
+      timeSpentMs:
+        type: integer
+        description: Total wall-clock time spent on this work package (ms)
+      rejectionCount:
+        type: integer
+        description: Total number of task rejections within this work package
+      humanApprovalRate:
+        type: number
+        description: Fraction of orchestrator checkpoints that received human approval (0.0–1.0)
+      closedAt:
+        type: string
+        description: ISO-8601 timestamp when the work package was closed
+
+  - name: Task
+    label: Task
+    description: >
+      Any unit of work within the system. May be a leaf task (executed by a leaf agent)
+      or a coordination task (managed by an orchestrator). Forms a tree via has_subtask
+      relationships. Can carry its own acceptance criteria.
+    properties:
+      title:
+        type: string
+        description: Short description of what needs to be done
+      type:
+        type: string
+        description: "Task category: research | enrichment | coding | review | planning | design | coordination"
+      status:
+        type: string
+        description: "Lifecycle status: created | in_progress | blocked | complete | rejected"
+      priority:
+        type: integer
+        description: "1 = highest, 5 = lowest"
+      tokensUsed:
+        type: integer
+        description: Tokens consumed for this specific task
+      timeSpentMs:
+        type: integer
+        description: Wall-clock time for this task (ms)
+      rejectionCount:
+        type: integer
+        description: How many times this task was rejected before completion
+      parentKey:
+        type: string
+        description: Key of the parent Task or WorkPackage (null for root tasks)
+      workPackageKey:
+        type: string
+        description: Key of the owning WorkPackage (denormalised for query efficiency)
+      blockedBy:
+        type: string
+        description: Key of the task blocking this one (if status = blocked)
+      notes:
+        type: string
+        description: Free-text orchestrator notes about this task
+
+  - name: AcceptanceCriteria
+    label: Acceptance Criteria
+    description: >
+      A single checklist item defining what "done" looks like for a task.
+      Linked to the task via has_criteria. Referenced by FeedbackSignal on rejection
+      so that failure patterns are queryable without parsing free text.
+    properties:
+      description:
+        type: string
+        description: What must be true for this criterion to be satisfied
+      satisfied:
+        type: boolean
+        description: Whether this criterion was marked as met in the final review
+      order:
+        type: integer
+        description: Display order within the criteria list
+
+  - name: TaskResult
+    label: Task Result
+    description: >
+      Structured output produced by an agent when completing a task.
+      Contains the agent's deliverable and a self-assessment against acceptance criteria.
+    properties:
+      summary:
+        type: string
+        description: Human-readable summary of what was produced
+      content:
+        type: string
+        description: Full content or artifact produced (code, research text, design doc, etc.)
+      selfAssessment:
+        type: string
+        description: Agent's own evaluation of how well it met each acceptance criterion
+      tokensUsed:
+        type: integer
+        description: Tokens consumed producing this result
+      producedAt:
+        type: string
+        description: ISO-8601 timestamp
+
+  - name: FeedbackSignal
+    label: Feedback Signal
+    description: >
+      An accept or reject signal attached to a TaskResult. Includes explanation
+      and references specific AcceptanceCriteria that were not met (on rejection).
+      Human feedback carries the highest weight in performance scoring.
+    properties:
+      verdict:
+        type: string
+        description: "accept | reject"
+      explanation:
+        type: string
+        description: Optional explanation; required if verdict = reject
+      source:
+        type: string
+        description: "agent | human"
+      weight:
+        type: number
+        description: "Scoring weight: 1.0 for agent feedback, 3.0 for human feedback"
+      createdAt:
+        type: string
+        description: ISO-8601 timestamp
+
+  # ── System Layer ──────────────────────────────────────────────────────────
+
+  - name: AgentDefinitionRecord
+    label: Agent Definition
+    description: >
+      Registry entry for a specific agent variant. Represents the data identity of
+      an agent — its type, skills, tools, model tier, and pool membership — stored
+      in the graph so the janitor can analyze and propose changes without modifying
+      operational agent definitions directly.
+    properties:
+      agentType:
+        type: string
+        description: "leaf | pool_manager | orchestrator | janitor"
+      skills:
+        type: string
+        description: "Comma-separated list of skill names"
+      tools:
+        type: string
+        description: "Comma-separated list of tool names"
+      modelName:
+        type: string
+        description: LLM model identifier (e.g. gpt-4o-mini)
+      tier:
+        type: string
+        description: "cheap | standard | premium"
+      taskTypes:
+        type: string
+        description: "Comma-separated list of task types this agent handles"
+      isActive:
+        type: boolean
+        description: Whether this agent variant is currently in active use
+      operationalDefinitionId:
+        type: string
+        description: ID of the corresponding Emergent agent definition (for cross-reference)
+      createdAt:
+        type: string
+        description: ISO-8601 timestamp
+      retiredAt:
+        type: string
+        description: ISO-8601 timestamp when this variant was retired
+
+  - name: AgentPool
+    label: Agent Pool
+    description: >
+      A named collection of agent variants that serve the same task type.
+      Managed by a pool manager agent that handles selection, A/B testing,
+      and performance monitoring for the pool.
+    properties:
+      name:
+        type: string
+        description: Human-readable pool name (e.g. "Research Pool")
+      taskType:
+        type: string
+        description: The task type this pool serves (e.g. "research")
+      selectionStrategy:
+        type: string
+        description: "cheapest_first | round_robin | weighted | experiment_driven"
+      proactiveTestRate:
+        type: number
+        description: "Fraction of tasks to proactively A/B test (0.0–1.0)"
+      isActive:
+        type: boolean
+        description: Whether this pool is accepting new task assignments
+
+  - name: AgentRun
+    label: Agent Run
+    description: >
+      A single execution of an agent against a task. Records timing, token cost,
+      and links to both the task and the result. Used for KPI calculation and
+      experiment analysis.
+    properties:
+      status:
+        type: string
+        description: "running | completed | failed | timed_out"
+      startedAt:
+        type: string
+        description: ISO-8601 timestamp
+      completedAt:
+        type: string
+        description: ISO-8601 timestamp
+      tokensUsed:
+        type: integer
+        description: Total tokens consumed in this run
+      durationMs:
+        type: integer
+        description: Wall-clock duration (ms)
+      errorMessage:
+        type: string
+        description: Error message if the run failed
+
+  - name: Experiment
+    label: Experiment
+    description: >
+      An A/B test: multiple agent variants run against the same task branch.
+      Bound to a specific task — not the whole work package — to keep experiments
+      contained. Results are scored and stored here for janitor analysis.
+    properties:
+      status:
+        type: string
+        description: "running | concluded"
+      trigger:
+        type: string
+        description: "rejection | proactive | manual"
+      variantCount:
+        type: integer
+        description: Number of variants being compared
+      winnerId:
+        type: string
+        description: Key of the AgentDefinitionRecord that won (set on conclusion)
+      configRate:
+        type: number
+        description: "The proactive test rate in effect when this experiment was triggered"
+      startedAt:
+        type: string
+        description: ISO-8601 timestamp
+      concludedAt:
+        type: string
+        description: ISO-8601 timestamp
+
+  - name: ExperimentVariant
+    label: Experiment Variant
+    description: >
+      One arm of an experiment. Links an AgentRun to the parent Experiment and
+      records the score of that variant against acceptance criteria.
+    properties:
+      score:
+        type: number
+        description: "Quality score 0.0–1.0 against acceptance criteria"
+      rank:
+        type: integer
+        description: "Final rank within the experiment (1 = best)"
+      notes:
+        type: string
+        description: Evaluator notes on this variant's performance
+
+  - name: KPI
+    label: KPI
+    description: >
+      A tracked performance metric. Can be scoped to a specific pool or to the
+      whole system. Snapshots record point-in-time readings for trend analysis.
+    properties:
+      name:
+        type: string
+        description: Human-readable metric name
+      unit:
+        type: string
+        description: "percent | ms | tokens | count"
+      targetValue:
+        type: number
+        description: The goal value for this metric
+      scope:
+        type: string
+        description: "pool | system"
+      description:
+        type: string
+        description: What this KPI measures and why it matters
+
+  - name: KPISnapshot
+    label: KPI Snapshot
+    description: >
+      A point-in-time reading of a KPI. Snapshots are written after each closed
+      work package and after each janitor run to enable trend analysis.
+    properties:
+      value:
+        type: number
+        description: The observed value
+      sampleSize:
+        type: integer
+        description: Number of data points used to compute this value
+      workPackageKey:
+        type: string
+        description: Key of the work package that triggered this snapshot (if applicable)
+      recordedAt:
+        type: string
+        description: ISO-8601 timestamp
+
+  - name: JanitorProposal
+    label: Janitor Proposal
+    description: >
+      A structural change proposed by the janitor orchestrator after analyzing
+      closed work package trails. All proposals require human approval before
+      any operational change is made. Human accept/reject is itself a feedback
+      signal fed back into janitor performance scoring.
+    properties:
+      summary:
+        type: string
+        description: One-paragraph summary of what is being proposed and why
+      changeType:
+        type: string
+        description: "new_agent_type | model_swap | template_update | tool_addition | retire_agent | pool_restructure"
+      detail:
+        type: string
+        description: Full proposal content including evidence, expected impact, and rollback plan
+      status:
+        type: string
+        description: "pending_approval | approved | rejected | implemented"
+      humanFeedback:
+        type: string
+        description: Human's explanation of their accept/reject decision
+      evidenceSummary:
+        type: string
+        description: Summary of the data patterns that motivated this proposal
+      proposedAt:
+        type: string
+        description: ISO-8601 timestamp
+      resolvedAt:
+        type: string
+        description: ISO-8601 timestamp
+
+  - name: Model
+    label: Model
+    description: >
+      A registered LLM model available as a resource in the system.
+      The janitor can propose assigning new models to agent variants based on
+      performance data and cost/quality trade-offs.
+    properties:
+      provider:
+        type: string
+        description: "openai | anthropic | google | mistral | local"
+      contextWindow:
+        type: integer
+        description: Maximum context window in tokens
+      tier:
+        type: string
+        description: "cheap | standard | premium"
+      costPer1kTokens:
+        type: number
+        description: Approximate cost in USD per 1000 tokens (combined input+output estimate)
+      isAvailable:
+        type: boolean
+        description: Whether this model is currently accessible in the project's provider config
+      capabilities:
+        type: string
+        description: "Comma-separated: text | code | vision | function_calling | long_context"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RELATIONSHIP TYPES
+# ─────────────────────────────────────────────────────────────────────────────
+
+relationshipTypes:
+
+  # ── Task tree structure ───────────────────────────────────────────────────
+
+  - name: has_subtask
+    label: Has Subtask
+    description: >
+      Connects a WorkPackage or Task to a child Task, forming the execution tree.
+      Traversing this relationship gives the full work breakdown structure.
+    sourceType: Task
+    targetType: Task
+
+  - name: has_criteria
+    label: Has Criteria
+    description: Links a Task to each of its AcceptanceCriteria checklist items.
+    sourceType: Task
+    targetType: AcceptanceCriteria
+
+  - name: assigned_to
+    label: Assigned To
+    description: Records which AgentDefinitionRecord variant is handling this Task.
+    sourceType: Task
+    targetType: AgentDefinitionRecord
+
+  # ── Results and feedback ──────────────────────────────────────────────────
+
+  - name: produced_result
+    label: Produced Result
+    description: Links an AgentRun to the TaskResult it produced on completion.
+    sourceType: AgentRun
+    targetType: TaskResult
+
+  - name: received_feedback
+    label: Received Feedback
+    description: Links a TaskResult to a FeedbackSignal (accept or reject).
+    sourceType: TaskResult
+    targetType: FeedbackSignal
+
+  - name: failed_criteria
+    label: Failed Criteria
+    description: >
+      On rejection, links the FeedbackSignal to each AcceptanceCriteria that
+      was not met. Enables structured rejection pattern analysis.
+    sourceType: FeedbackSignal
+    targetType: AcceptanceCriteria
+
+  # ── Agent pools ───────────────────────────────────────────────────────────
+
+  - name: member_of_pool
+    label: Member Of Pool
+    description: Records that an AgentDefinitionRecord is a variant in an AgentPool.
+    sourceType: AgentDefinitionRecord
+    targetType: AgentPool
+
+  - name: managed_by
+    label: Managed By
+    description: Links an AgentPool to the pool manager AgentDefinitionRecord that owns it.
+    sourceType: AgentPool
+    targetType: AgentDefinitionRecord
+
+  # ── Run linkages ──────────────────────────────────────────────────────────
+
+  - name: ran_for_task
+    label: Ran For Task
+    description: Links an AgentRun to the Task it was executing.
+    sourceType: AgentRun
+    targetType: Task
+
+  - name: run_by_agent
+    label: Run By Agent
+    description: Links an AgentRun to the AgentDefinitionRecord that performed it.
+    sourceType: AgentRun
+    targetType: AgentDefinitionRecord
+
+  # ── Experiments ───────────────────────────────────────────────────────────
+
+  - name: tested_in
+    label: Tested In
+    description: Marks that an AgentRun was part of an A/B Experiment.
+    sourceType: AgentRun
+    targetType: Experiment
+
+  - name: experiment_for_task
+    label: Experiment For Task
+    description: Scopes an Experiment to the specific Task branch being tested.
+    sourceType: Experiment
+    targetType: Task
+
+  - name: has_variant
+    label: Has Variant
+    description: Links an Experiment to each of its ExperimentVariant arms.
+    sourceType: Experiment
+    targetType: ExperimentVariant
+
+  - name: variant_run
+    label: Variant Run
+    description: Links an ExperimentVariant to the AgentRun that constitutes that arm.
+    sourceType: ExperimentVariant
+    targetType: AgentRun
+
+  # ── KPIs ──────────────────────────────────────────────────────────────────
+
+  - name: kpi_for_pool
+    label: KPI For Pool
+    description: Associates a KPI metric with the AgentPool it measures.
+    sourceType: KPI
+    targetType: AgentPool
+
+  - name: kpi_snapshot_of
+    label: KPI Snapshot Of
+    description: Links a KPISnapshot to the KPI it records a reading for.
+    sourceType: KPISnapshot
+    targetType: KPI
+
+  # ── Janitor proposals ─────────────────────────────────────────────────────
+
+  - name: proposes_change_to
+    label: Proposes Change To
+    description: >
+      Links a JanitorProposal to its target — an AgentDefinitionRecord, AgentPool,
+      or Model — indicating what resource the proposal would modify.
+    sourceType: JanitorProposal
+    targetType: AgentDefinitionRecord
+
+  - name: triggered_by_kpi
+    label: Triggered By KPI
+    description: Records which KPI trend(s) motivated a JanitorProposal.
+    sourceType: JanitorProposal
+    targetType: KPI
+
+  # ── Model bindings ────────────────────────────────────────────────────────
+
+  - name: uses_model
+    label: Uses Model
+    description: Binds an AgentDefinitionRecord to the Model it runs on.
+    sourceType: AgentDefinitionRecord
+    targetType: Model
