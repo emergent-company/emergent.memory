@@ -1,6 +1,6 @@
 # chunking
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/chunking`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/chunking`
 
 The `chunking` client re-runs the chunking pipeline on an already-ingested document, using the project's current chunking strategy.
 

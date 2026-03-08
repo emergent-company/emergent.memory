@@ -1,6 +1,6 @@
 # auth
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth`
 
 The `auth` package provides pluggable authentication for the SDK. The SDK uses it internally, but you can import it directly for advanced scenarios.
 

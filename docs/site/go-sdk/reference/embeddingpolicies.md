@@ -1,6 +1,6 @@
 # Embedding Policies
 
-**Package:** `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/embeddingpolicies`
+**Package:** `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/embeddingpolicies`
 
 **Client field:** `client.EmbeddingPolicies`
 

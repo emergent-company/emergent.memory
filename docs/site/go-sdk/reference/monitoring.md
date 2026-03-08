@@ -7,7 +7,7 @@ The monitoring client surfaces detailed telemetry for extraction jobs — the ba
 ## Import
 
 ```go
-import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/monitoring"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/monitoring"
 ```
 
 ## Client

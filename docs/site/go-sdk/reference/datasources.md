@@ -1,6 +1,6 @@
 # datasources
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/datasources`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/datasources`
 
 The `datasources` client manages data source integrations — connections to external systems (Google Drive, Notion, Confluence, etc.) that sync documents into the Emergent platform.
 

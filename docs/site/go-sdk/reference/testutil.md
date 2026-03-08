@@ -1,6 +1,6 @@
 # testutil
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/testutil`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/testutil`
 
 The `testutil` package provides test infrastructure for writing unit tests against SDK clients. It is intended for use in `_test.go` files only.
 

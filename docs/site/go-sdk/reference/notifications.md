@@ -7,7 +7,7 @@ Notifications inform users of events such as completed jobs, system alerts, and 
 ## Import
 
 ```go
-import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/notifications"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/notifications"
 ```
 
 ## Client

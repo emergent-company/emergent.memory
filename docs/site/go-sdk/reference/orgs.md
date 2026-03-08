@@ -1,6 +1,6 @@
 # orgs
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/orgs`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/orgs`
 
 The `orgs` client manages Emergent organizations — the top-level containers for projects.
 

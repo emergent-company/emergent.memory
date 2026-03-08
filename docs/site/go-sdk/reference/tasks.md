@@ -9,7 +9,7 @@ Tasks are human-review items — such as AI-generated suggestions or flagged con
 ## Import
 
 ```go
-import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/tasks"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/tasks"
 ```
 
 ## Client

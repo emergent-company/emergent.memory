@@ -7,7 +7,7 @@ The health client is a **non-context client** — it requires no org or project 
 ## Import
 
 ```go
-import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/health"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/health"
 ```
 
 ## Client

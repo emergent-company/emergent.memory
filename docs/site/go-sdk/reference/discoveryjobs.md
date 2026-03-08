@@ -1,6 +1,6 @@
 # Discovery Jobs
 
-**Package:** `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/discoveryjobs`
+**Package:** `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/discoveryjobs`
 
 **Client field:** `client.DiscoveryJobs`
 

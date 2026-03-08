@@ -89,7 +89,7 @@ type AuthConfig struct {
 For advanced use, the `auth` package is importable directly:
 
 ```go
-import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/auth"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
 ```
 
 See the [auth reference](reference/auth.md) for the full `Provider` interface, credential

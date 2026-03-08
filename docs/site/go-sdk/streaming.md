@@ -12,8 +12,8 @@ import (
     "fmt"
     "log"
 
-    sdk "github.com/emergent-company/emergent/apps/server-go/pkg/sdk"
-    "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/chat"
+    sdk "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
+    "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/chat"
 )
 
 func streamResponse(client *sdk.Client, conversationID string) {
