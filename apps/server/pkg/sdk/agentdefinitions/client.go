@@ -200,10 +200,9 @@ func (c *Client) List(ctx context.Context) (*APIResponse[[]AgentDefinitionSummar
 }
 
 // Get returns an agent definition by ID.
-// GET /api/admin/agent-definitions/:id
-// Requires admin:read scope.
+// GET /api/projects/:projectId/agent-definitions/:id
 func (c *Client) Get(ctx context.Context, definitionID string) (*APIResponse[AgentDefinition], error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/admin/agent-definitions/"+url.PathEscape(definitionID), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.projectPath()+"/agent-definitions/"+url.PathEscape(definitionID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -268,15 +267,14 @@ func (c *Client) Create(ctx context.Context, createReq *CreateAgentDefinitionReq
 }
 
 // Update updates an agent definition (partial update via PATCH).
-// PATCH /api/admin/agent-definitions/:id
-// Requires admin:write scope.
+// PATCH /api/projects/:projectId/agent-definitions/:id
 func (c *Client) Update(ctx context.Context, definitionID string, updateReq *UpdateAgentDefinitionRequest) (*APIResponse[AgentDefinition], error) {
 	body, err := json.Marshal(updateReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/admin/agent-definitions/"+url.PathEscape(definitionID), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "PATCH", c.projectPath()+"/agent-definitions/"+url.PathEscape(definitionID), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -305,10 +303,9 @@ func (c *Client) Update(ctx context.Context, definitionID string, updateReq *Upd
 }
 
 // Delete deletes an agent definition by ID.
-// DELETE /api/admin/agent-definitions/:id
-// Requires admin:write scope.
+// DELETE /api/projects/:projectId/agent-definitions/:id
 func (c *Client) Delete(ctx context.Context, definitionID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/admin/agent-definitions/"+url.PathEscape(definitionID), nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.projectPath()+"/agent-definitions/"+url.PathEscape(definitionID), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
