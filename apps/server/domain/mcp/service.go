@@ -1231,7 +1231,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			return err
 		}
 
-		// Query entities
+		// Query entities (latest version only: supersedes_id IS NULL means no newer version exists)
 		err := tx.NewRaw(`
 			SELECT 
 				go.id,
@@ -1247,6 +1247,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			WHERE go.type = ?
 				AND go.deleted_at IS NULL
 				AND go.project_id = ?
+				AND go.supersedes_id IS NULL
 			ORDER BY `+orderExpr+`
 			LIMIT ? OFFSET ?
 		`, typeName, projectUUID, limit, offset).Scan(ctx, &entities)
@@ -1254,13 +1255,14 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			return err
 		}
 
-		// Get total count
+		// Get total count (latest version only)
 		err = tx.NewRaw(`
 			SELECT COUNT(*)
 			FROM kb.graph_objects go
 			WHERE go.type = ?
 				AND go.deleted_at IS NULL
 				AND go.project_id = ?
+				AND go.supersedes_id IS NULL
 		`, typeName, projectUUID).Scan(ctx, &total)
 		return err
 	})
