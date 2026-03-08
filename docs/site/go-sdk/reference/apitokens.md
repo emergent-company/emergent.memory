@@ -1,6 +1,6 @@
 # apitokens
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apitokens`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/apitokens`
 
 The `apitokens` client manages project-scoped API tokens (`emt_*` prefix). Tokens are used to authenticate SDK clients with `Mode: "apitoken"` or `Mode: "apikey"`.
 

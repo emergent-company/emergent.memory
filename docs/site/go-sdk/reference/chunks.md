@@ -1,6 +1,6 @@
 # chunks
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/chunks`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/chunks`
 
 The `chunks` client provides access to document chunks — the text segments produced by the chunking pipeline after document ingestion.
 

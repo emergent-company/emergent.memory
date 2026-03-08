@@ -2,7 +2,7 @@
 
 The Emergent Go SDK follows [Semantic Versioning](https://semver.org/) and [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-Source: [`apps/server-go/pkg/sdk/CHANGELOG.md`](https://github.com/emergent-company/emergent/blob/main/apps/server-go/pkg/sdk/CHANGELOG.md)
+Source: [`apps/server/pkg/sdk/CHANGELOG.md`](https://github.com/emergent-company/emergent.memory/blob/main/apps/server/pkg/sdk/CHANGELOG.md)
 
 ---
 
@@ -63,7 +63,7 @@ Source: [`apps/server-go/pkg/sdk/CHANGELOG.md`](https://github.com/emergent-comp
 
 First public release. 11 service clients, dual authentication, 43 test cases, 4 example programs.
 
-- Module path corrected to `github.com/emergent-company/emergent/apps/server-go/pkg/sdk`
+- Module path corrected to `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk`
 - Documents, Chunks, Search, Graph, Chat, Projects, Orgs, Users, APITokens, Health, MCP clients
 - OAuth device flow authentication
 - SSE streaming for chat

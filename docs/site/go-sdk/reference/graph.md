@@ -1,6 +1,6 @@
 # graph
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph`
 
 The `graph` client provides full access to the Emergent knowledge graph — objects, relationships, search, traversal, analytics, and branch merging.
 
@@ -47,7 +47,24 @@ func (c *Client) TraverseGraph(ctx context.Context, req *TraverseGraphRequest) (
 
 ## Relationship Methods
 
-Methods for creating and managing relationships are called on the same `graph.Client` — see the `CreateRelationshipRequest` / `ListRelationshipsOptions` types below.
+```go
+func (c *Client) CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) (*GraphRelationship, error)
+func (c *Client) BulkCreateRelationships(ctx context.Context, req *BulkCreateRelationshipsRequest) (*BulkCreateRelationshipsResponse, error)
+func (c *Client) GetRelationship(ctx context.Context, id string) (*GraphRelationship, error)
+func (c *Client) UpdateRelationship(ctx context.Context, id string, req *UpdateRelationshipRequest) (*GraphRelationship, error)
+func (c *Client) DeleteRelationship(ctx context.Context, id string) error
+func (c *Client) RestoreRelationship(ctx context.Context, id string) (*GraphRelationship, error)
+func (c *Client) GetRelationshipHistory(ctx context.Context, id string) (*RelationshipHistoryResponse, error)
+func (c *Client) ListRelationships(ctx context.Context, opts *ListRelationshipsOptions) (*SearchRelationshipsResponse, error)
+func (c *Client) HasRelationship(ctx context.Context, relType, srcID, dstID string) (bool, error)
+```
+
+## Analytics Methods
+
+```go
+func (c *Client) GetMostAccessed(ctx context.Context, opts *AnalyticsOptions) (*MostAccessedResponse, error)
+func (c *Client) GetUnused(ctx context.Context, opts *UnusedOptions) (*UnusedObjectsResponse, error)
+```
 
 ## Branch Methods
 
@@ -170,5 +187,157 @@ type GraphExpandRequest struct {
 type BranchMergeRequest struct {
     SourceBranchID string
     Strategy       string // "merge", "replace"
+}
+```
+
+### GraphRelationship
+
+```go
+type GraphRelationship struct {
+    VersionID   string         // Preferred: version-specific ID (changes on update)
+    EntityID    string         // Preferred: stable ID (never changes)
+    ID          string         // Deprecated: use VersionID
+    CanonicalID string         // Deprecated: use EntityID
+    ProjectID   string
+    BranchID    *string
+    Version     int
+    Type        string
+    SrcID       string
+    DstID       string
+    Properties  map[string]any
+    Weight      *float32
+    DeletedAt   *time.Time
+    CreatedAt   time.Time
+    // InverseRelationship is set when an inverse was auto-created from template pack config
+    InverseRelationship *GraphRelationship
+}
+```
+
+### CreateRelationshipRequest
+
+!!! tip
+    Use `CanonicalID` (not `ID`) for `SrcID` and `DstID` to avoid stale version-specific IDs after an `UpdateObject` call.
+
+```go
+type CreateRelationshipRequest struct {
+    Type       string
+    SrcID      string
+    DstID      string
+    Properties map[string]any
+    Weight     *float32
+    BranchID   *string
+}
+```
+
+### UpdateRelationshipRequest
+
+```go
+type UpdateRelationshipRequest struct {
+    Properties map[string]any
+    Weight     *float32
+}
+```
+
+### ListRelationshipsOptions
+
+```go
+type ListRelationshipsOptions struct {
+    Type           string   // Single type filter
+    Types          []string // Multiple type filter
+    SrcID          string
+    DstID          string
+    ObjectID       string   // Either side
+    BranchID       string
+    IncludeDeleted bool
+    Limit          int
+    Cursor         string
+}
+```
+
+### SearchRelationshipsResponse
+
+```go
+type SearchRelationshipsResponse struct {
+    Items      []*GraphRelationship
+    NextCursor *string
+    Total      int
+}
+```
+
+### BulkCreateRelationshipsRequest / Response
+
+```go
+type BulkCreateRelationshipsRequest struct {
+    Items []CreateRelationshipRequest // Max 100
+}
+
+type BulkCreateRelationshipsResponse struct {
+    Success int
+    Failed  int
+    Results []BulkCreateRelationshipResult
+}
+
+type BulkCreateRelationshipResult struct {
+    Index        int
+    Success      bool
+    Relationship *GraphRelationship
+    Error        *string
+}
+```
+
+### RelationshipHistoryResponse
+
+```go
+type RelationshipHistoryResponse struct {
+    Versions []*GraphRelationship
+}
+```
+
+### AnalyticsOptions / UnusedOptions
+
+```go
+type AnalyticsOptions struct {
+    Limit    int
+    Types    []string
+    Labels   []string
+    BranchID string
+    Order    string
+}
+
+type UnusedOptions struct {
+    Limit    int
+    Types    []string
+    Labels   []string
+    BranchID string
+    DaysIdle int
+}
+```
+
+### MostAccessedResponse / UnusedObjectsResponse
+
+```go
+type MostAccessedResponse struct {
+    Items []AnalyticsObjectItem
+    Total int
+    Meta  map[string]any
+}
+
+type UnusedObjectsResponse struct {
+    Items []AnalyticsObjectItem
+    Total int
+    Meta  map[string]any
+}
+
+type AnalyticsObjectItem struct {
+    ID              string
+    CanonicalID     string
+    Type            string
+    Key             *string
+    Properties      map[string]any
+    Labels          []string
+    LastAccessedAt  *time.Time
+    AccessCount     *int64
+    DaysSinceAccess *int
+    CreatedAt       time.Time
 }
 ```

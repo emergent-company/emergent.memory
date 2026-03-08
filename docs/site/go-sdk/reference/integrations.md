@@ -1,6 +1,6 @@
 # Integrations
 
-**Package:** `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/integrations`
+**Package:** `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/integrations`
 
 **Client field:** `client.Integrations`
 

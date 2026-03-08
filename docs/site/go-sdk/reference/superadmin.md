@@ -7,7 +7,7 @@ The superadmin client is a **non-context client** — it requires no org or proj
 ## Import
 
 ```go
-import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/superadmin"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/superadmin"
 ```
 
 ## Client

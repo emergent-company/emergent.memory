@@ -1,6 +1,6 @@
 # branches
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/branches`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/branches`
 
 The `branches` client manages graph branches — isolated copies of the graph for staging changes before merging to main.
 

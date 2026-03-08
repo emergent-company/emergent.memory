@@ -7,7 +7,7 @@ The user activity client tracks recently accessed resources per user — such as
 ## Import
 
 ```go
-import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/useractivity"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/useractivity"
 ```
 
 ## Client

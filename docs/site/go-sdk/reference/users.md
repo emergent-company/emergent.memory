@@ -1,6 +1,6 @@
 # users
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/users`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/users`
 
 The `users` client manages the authenticated user's profile.
 

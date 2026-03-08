@@ -72,7 +72,7 @@ obj, err := client.Graph.GetByAnyID(ctx, anyKindOfID)
 The `graph/graphutil` package provides helpers designed for the dual-ID model:
 
 ```go
-import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph/graphutil"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph/graphutil"
 
 // Create an ID set for membership testing
 ids := graphutil.NewIDSet(obj)

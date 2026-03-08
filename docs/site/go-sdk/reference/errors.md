@@ -1,6 +1,6 @@
 # errors
 
-Package `github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors`
+Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors`
 
 The `errors` package provides structured error handling for SDK API responses.
 
@@ -43,7 +43,7 @@ Reads the response body and returns a `*Error` populated with the status code an
 ## Usage
 
 ```go
-import sdkerrors "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors"
+import sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 
 obj, err := client.Graph.GetObject(ctx, id)
 if err != nil {

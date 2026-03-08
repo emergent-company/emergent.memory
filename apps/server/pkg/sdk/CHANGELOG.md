@@ -63,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Module path** - Corrected from `github.com/emergent/emergent-core/pkg/sdk` to `github.com/emergent-company/emergent/apps/server-go/pkg/sdk`
+- **Module path** - Corrected from `github.com/emergent/emergent-core/pkg/sdk` to `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk`
   - This fixes `go get` resolution to match the actual GitHub repository structure
   - All internal imports updated to use correct path
   - Installation instructions updated with proper module path
@@ -81,7 +81,7 @@ This is the **first public release** of the Emergent Go SDK. The SDK is producti
 **Installation:**
 
 ```bash
-go get github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk@v0.4.12
+go get github.com/emergent-company/emergent.memory/apps/server/pkg/sdk@v0.4.12
 ```
 
 **Breaking Changes:** None (first release)
