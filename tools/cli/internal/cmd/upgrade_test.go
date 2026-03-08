@@ -18,11 +18,11 @@ func TestUpgradeCommand_Structure(t *testing.T) {
 }
 
 func TestUpgradeCommand_ServerSubcommand(t *testing.T) {
-	cmd := upgradeServerCmd
+	cmd := serverUpgradeCmd
 
-	assert.Equal(t, "server", cmd.Use)
+	assert.Equal(t, "upgrade", cmd.Use)
 	assert.Contains(t, cmd.Short, "standalone server")
-	assert.Contains(t, cmd.Long, "Pull the latest Docker images")
+	assert.Contains(t, cmd.Long, "Docker images")
 
 	dirFlag := cmd.Flag("dir")
 	require.NotNil(t, dirFlag)
@@ -32,15 +32,15 @@ func TestUpgradeCommand_ServerSubcommand(t *testing.T) {
 	assert.Equal(t, "false", forceFlag.DefValue)
 }
 
-func TestUpgradeCommand_HasServerSubcommand(t *testing.T) {
+func TestServerCommand_HasUpgradeSubcommand(t *testing.T) {
 	found := false
-	for _, subcmd := range upgradeCmd.Commands() {
-		if subcmd.Name() == "server" {
+	for _, subcmd := range serverCmd.Commands() {
+		if subcmd.Name() == "upgrade" {
 			found = true
 			break
 		}
 	}
-	assert.True(t, found, "upgrade should have 'server' subcommand")
+	assert.True(t, found, "server should have 'upgrade' subcommand")
 }
 
 func TestUpgradeCommand_DevVersion(t *testing.T) {
