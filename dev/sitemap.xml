@@ -2,190 +2,190 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/api-reference/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/authentication/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/changelog/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/error-handling/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/graph-id-model/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/multi-tenancy/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/streaming/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/agentdefinitions/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/agents/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/apidocs/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/apitokens/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/auth/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/branches/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/chat/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/chunking/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/chunks/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/datasources/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/discoveryjobs/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/documents/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/embeddingpolicies/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/errors/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/graph/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/graphutil/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/health/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/integrations/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/mcp/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/mcpregistry/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/monitoring/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/notifications/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/orgs/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/projects/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/provider/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/search/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/superadmin/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/tasks/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/templatepacks/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/testutil/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/typeregistry/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/useractivity/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/go-sdk/reference/users/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/swift-sdk/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/swift-sdk/api-client/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/swift-sdk/errors/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/swift-sdk/models/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
     <url>
          <loc>https://emergent-company.github.io/emergent.memory/dev/swift-sdk/roadmap/</loc>
-         <lastmod>2026-03-06</lastmod>
+         <lastmod>2026-03-08</lastmod>
     </url>
 </urlset>
