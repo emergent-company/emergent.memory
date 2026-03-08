@@ -2442,7 +2442,7 @@
 </code></pre></div>
 <h2 id="context-scoped-vs-non-context-clients">Context-Scoped vs Non-Context Clients<a class="headerlink" href="#context-scoped-vs-non-context-clients" title="Permanent link">&para;</a></h2>
 <h3 id="context-scoped-25-clients">Context-Scoped (25 clients)<a class="headerlink" href="#context-scoped-25-clients" title="Permanent link">&para;</a></h3>
-<p>These clients send <code>X-Org-ID</code> and <code>X-Project-ID</code> on every request. They have a <code>SetContext</code> method and are updated when you call <code>client.SetContext</code>.</p>
+<p>These clients send <code>X-Org-ID</code> and <code>X-Project-ID</code> on every request. <strong>21 of them</strong> have a <code>SetContext</code> method and are updated atomically when you call <code>client.SetContext</code>. The remaining 4 (Projects, Orgs, Users, APITokens) use the org/project set at construction time and require re-initialization to change context.</p>
 <table>
 <thead>
 <tr>

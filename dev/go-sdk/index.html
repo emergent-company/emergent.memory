@@ -2361,14 +2361,14 @@
 <h1 id="go-sdk">Go SDK<a class="headerlink" href="#go-sdk" title="Permanent link">&para;</a></h1>
 <p>The Emergent Go SDK is a fully type-safe client library for the Emergent API, providing 29 service clients that cover the complete API surface.</p>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>go<span class="w"> </span>get<span class="w"> </span>github.com/emergent-company/emergent/apps/server-go/pkg/sdk@latest
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>go<span class="w"> </span>get<span class="w"> </span>github.com/emergent-company/emergent.memory/apps/server/pkg/sdk@latest
 </code></pre></div>
-<p><strong>Module path:</strong> <code>github.com/emergent-company/emergent/apps/server-go/pkg/sdk</code></p>
+<p><strong>Module path:</strong> <code>github.com/emergent-company/emergent.memory/apps/server/pkg/sdk</code></p>
 <div class="admonition note">
 <p class="admonition-title">Sub-module tags</p>
-<p>The SDK lives inside the <code>emergent</code> monorepo as a Go sub-module. Tags follow the pattern
-<code>apps/server-go/pkg/sdk/vX.Y.Z</code>. Use <code>@latest</code> or a specific tag like
-<code>@apps/server-go/pkg/sdk/v0.8.0</code>.</p>
+<p>The SDK lives inside the <code>emergent.memory</code> monorepo as a Go sub-module. Tags follow the pattern
+<code>apps/server/pkg/sdk/vX.Y.Z</code>. Use <code>@latest</code> or a specific tag like
+<code>@apps/server/pkg/sdk/v0.8.0</code>.</p>
 </div>
 <h2 id="current-version">Current Version<a class="headerlink" href="#current-version" title="Permanent link">&para;</a></h2>
 <p><strong>v0.8.0</strong> (unreleased) — See <a href="changelog/">Changelog</a> for full history.</p>
@@ -2391,7 +2391,7 @@
 </tr>
 <tr>
 <td><strong>Multi-tenancy</strong></td>
-<td><code>SetContext(orgID, projectID)</code> propagates to all 25 context-scoped clients</td>
+<td><code>SetContext(orgID, projectID)</code> propagates to 21 context-scoped clients</td>
 </tr>
 <tr>
 <td><strong>Streaming</strong></td>
@@ -2419,7 +2419,7 @@
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="s">&quot;fmt&quot;</span>
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="s">&quot;log&quot;</span>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="nx">sdk</span><span class="w"> </span><span class="s">&quot;github.com/emergent-company/emergent/apps/server-go/pkg/sdk&quot;</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="nx">sdk</span><span class="w"> </span><span class="s">&quot;github.com/emergent-company/emergent.memory/apps/server/pkg/sdk&quot;</span>
 <a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">)</span>
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
@@ -2447,7 +2447,7 @@
 </code></pre></div>
 <h2 id="service-clients">Service Clients<a class="headerlink" href="#service-clients" title="Permanent link">&para;</a></h2>
 <h3 id="context-scoped-25-clients">Context-Scoped (25 clients)<a class="headerlink" href="#context-scoped-25-clients" title="Permanent link">&para;</a></h3>
-<p>These clients send <code>X-Org-ID</code> and <code>X-Project-ID</code> headers on every request. Call <code>client.SetContext(orgID, projectID)</code> to update all of them atomically.</p>
+<p>These clients send <code>X-Org-ID</code> and <code>X-Project-ID</code> headers on every request. Call <code>client.SetContext(orgID, projectID)</code> to update 21 of them atomically (Projects, Orgs, Users, and APITokens require re-initialization to change context).</p>
 <table>
 <thead>
 <tr>

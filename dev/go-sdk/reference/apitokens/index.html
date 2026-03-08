@@ -2459,7 +2459,7 @@
 
 
 <h1 id="apitokens">apitokens<a class="headerlink" href="#apitokens" title="Permanent link">&para;</a></h1>
-<p>Package <code>github.com/emergent-company/emergent/apps/server-go/pkg/sdk/apitokens</code></p>
+<p>Package <code>github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/apitokens</code></p>
 <p>The <code>apitokens</code> client manages project-scoped API tokens (<code>emt_*</code> prefix). Tokens are used to authenticate SDK clients with <code>Mode: "apitoken"</code> or <code>Mode: "apikey"</code>.</p>
 <h2 id="methods">Methods<a class="headerlink" href="#methods" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">Create</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">req</span><span class="w"> </span><span class="o">*</span><span class="nx">CreateTokenRequest</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">CreateTokenResponse</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>

@@ -2705,16 +2705,16 @@
 <hr />
 <h2 id="schema-discovery">Schema Discovery<a class="headerlink" href="#schema-discovery" title="Permanent link">&para;</a></h2>
 <p>For structured data sources (e.g. databases, APIs), you can run a <strong>discovery job</strong> to infer object types from the source schema:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">POST /discovery-jobs/projects/{projectId}/start</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">POST /api/discovery-jobs/projects/{projectId}/start</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="err">{</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="err">  &quot;integrationId&quot;: &quot;&lt;data-source-id&gt;&quot;</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="err">}</span>
 </code></pre></div>
 <p>Monitor the discovery job:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">GET /discovery-jobs/{jobId}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">GET /api/discovery-jobs/{jobId}</span>
 </code></pre></div>
 <p>Finalize (apply discovered types to the type registry):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">POST /discovery-jobs/{jobId}/finalize</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">POST /api/discovery-jobs/{jobId}/finalize</span>
 </code></pre></div>
 <hr />
 <h2 id="listing-data-sources">Listing Data Sources<a class="headerlink" href="#listing-data-sources" title="Permanent link">&para;</a></h2>

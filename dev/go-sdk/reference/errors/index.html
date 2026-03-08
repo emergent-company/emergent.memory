@@ -2411,7 +2411,7 @@
 
 
 <h1 id="errors">errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h1>
-<p>Package <code>github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors</code></p>
+<p>Package <code>github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors</code></p>
 <p>The <code>errors</code> package provides structured error handling for SDK API responses.</p>
 <h2 id="the-error-type">The Error Type<a class="headerlink" href="#the-error-type" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">Error</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
@@ -2437,7 +2437,7 @@
 </code></pre></div>
 <p>Reads the response body and returns a <code>*Error</code> populated with the status code and any message from the JSON body. Useful when using <code>client.Do</code> for raw HTTP requests.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nx">sdkerrors</span><span class="w"> </span><span class="s">&quot;github.com/emergent-company/emergent/apps/server-go/pkg/sdk/errors&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nx">sdkerrors</span><span class="w"> </span><span class="s">&quot;github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors&quot;</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nx">obj</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Graph</span><span class="p">.</span><span class="nx">GetObject</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
