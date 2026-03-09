@@ -520,7 +520,7 @@ func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, se
 		)
 	}
 
-	tools := h.svc.GetToolDefinitions()
+	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), session.ProjectID)
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 

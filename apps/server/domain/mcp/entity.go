@@ -65,6 +65,11 @@ type AgentToolHandler interface {
 
 	// GetAgentToolDefinitions returns tool definitions for all agent tools
 	GetAgentToolDefinitions() []ToolDefinition
+
+	// GetAgentToolDefinitionsForProject returns tool definitions with the trigger_agent
+	// description dynamically enriched with the live agent catalog for the given project.
+	// Falls back to GetAgentToolDefinitions when projectID is empty.
+	GetAgentToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition
 }
 
 // InitializeParams represents the params for initialize method
