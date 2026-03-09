@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -82,10 +81,9 @@ func (h *Handler) Health(c echo.Context) error {
 
 	var tracingInfo *TracingInfo
 	if h.cfg.Otel.Enabled() {
-		tempoURL := strings.Replace(h.cfg.Otel.ExporterEndpoint, ":4318", ":3200", 1)
 		tracingInfo = &TracingInfo{
 			Enabled:  true,
-			TempoURL: tempoURL,
+			TempoURL: h.cfg.Otel.ResolvedTempoURL(),
 		}
 	}
 
