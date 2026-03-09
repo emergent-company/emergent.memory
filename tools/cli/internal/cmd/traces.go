@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -130,6 +131,8 @@ var tracesGetCmd = &cobra.Command{
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // tracesGet calls the server's Tempo proxy at /api/traces<path> with auth.
+// It uses the SDK client's Do() method so that the correct auth header is set
+// regardless of auth mode (standalone X-API-Key vs Bearer token).
 func tracesGet(cmd *cobra.Command, path string, params url.Values) ([]byte, error) {
 	c, err := getClient(cmd)
 	if err != nil {
@@ -139,14 +142,11 @@ func tracesGet(cmd *cobra.Command, path string, params url.Values) ([]byte, erro
 	if len(params) > 0 {
 		u += "?" + params.Encode()
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
+	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	if auth := c.AuthorizationHeader(); auth != "" {
-		req.Header.Set("Authorization", auth)
-	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.SDK.Do(context.Background(), req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot reach server traces endpoint at %s: %w", u, err)
 	}
@@ -201,6 +201,11 @@ func printTraceTable(traces []tempoTraceSearchResult) {
 		fmt.Println("No traces found.")
 		return
 	}
+	sort.Slice(traces, func(i, j int) bool {
+		ni, _ := strconv.ParseInt(traces[i].StartTimeUnixNano, 10, 64)
+		nj, _ := strconv.ParseInt(traces[j].StartTimeUnixNano, 10, 64)
+		return ni > nj
+	})
 	fmt.Printf("%-32s  %-32s  %-8s  %-10s  %s\n",
 		"TRACE ID", "ROOT SPAN", "DURATION", "TIMESTAMP", "SERVICE")
 	fmt.Println(strings.Repeat("─", 104))
