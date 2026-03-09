@@ -22,6 +22,57 @@ type CoordinationToolDeps struct {
 	ParentRunID string
 	Depth       int
 	MaxDepth    int
+	// SpawnPolicy is an optional allowlist of agent names this caller is permitted
+	// to spawn. When non-empty, any attempt to spawn an agent not in this list is
+	// rejected and the catalog returned by list_available_agents is also filtered.
+	// When empty (nil/zero-length), all agents are reachable (open policy).
+	SpawnPolicy []string
+}
+
+// extractSpawnPolicy reads the spawnPolicy.allow list from an AgentDefinition's Config.
+// Returns nil (open policy — all agents reachable) if the definition is nil,
+// has no config, or has no spawnPolicy key.
+func extractSpawnPolicy(def *AgentDefinition) []string {
+	if def == nil || def.Config == nil {
+		return nil
+	}
+	policyRaw, ok := def.Config["spawnPolicy"]
+	if !ok {
+		return nil
+	}
+	policyMap, ok := policyRaw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	allowRaw, ok := policyMap["allow"]
+	if !ok {
+		return nil
+	}
+	allowList, ok := allowRaw.([]any)
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(allowList))
+	for _, item := range allowList {
+		if name, ok := item.(string); ok && name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// spawnAllowed returns true when the agent name is permitted by the policy.
+// An empty/nil policy means all agents are allowed.
+func spawnAllowed(policy []string, agentName string) bool {
+	if len(policy) == 0 {
+		return true
+	}
+	for _, allowed := range policy {
+		if allowed == agentName {
+			return true
+		}
+	}
+	return false
 }
 
 // --- list_available_agents ---
@@ -62,6 +113,10 @@ func BuildListAvailableAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) 
 
 			agents := make([]AgentSummary, 0, len(defs))
 			for _, def := range defs {
+				// Filter to the spawn policy allowlist when one is set
+				if !spawnAllowed(deps.SpawnPolicy, def.Name) {
+					continue
+				}
 				desc := ""
 				if def.Description != nil {
 					desc = *def.Description
@@ -172,6 +227,15 @@ func executeSpawns(ctx context.Context, deps CoordinationToolDeps, requests []Sp
 
 // executeSingleSpawn handles a single sub-agent spawn request.
 func executeSingleSpawn(ctx context.Context, deps CoordinationToolDeps, req SpawnRequest) SpawnResult {
+	// Enforce spawn policy — reject if the target is not in the allowlist
+	if !spawnAllowed(deps.SpawnPolicy, req.AgentName) {
+		return SpawnResult{
+			AgentName: req.AgentName,
+			Status:    RunStatusError,
+			Error:     fmt.Sprintf("agent %q is not in the spawn policy for this agent", req.AgentName),
+		}
+	}
+
 	// Look up the agent definition by name
 	def, err := deps.Repo.FindDefinitionByName(ctx, deps.ProjectID, req.AgentName)
 	if err != nil {

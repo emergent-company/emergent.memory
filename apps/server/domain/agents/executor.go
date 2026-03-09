@@ -1053,6 +1053,7 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 		ParentRunID: runID,
 		Depth:       req.Depth,
 		MaxDepth:    maxDepth,
+		SpawnPolicy: extractSpawnPolicy(req.AgentDefinition),
 	}
 
 	var tools []tool.Tool
