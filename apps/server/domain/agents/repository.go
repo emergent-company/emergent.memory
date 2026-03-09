@@ -204,8 +204,6 @@ func (r *Repository) MarkOrphanedRunsAsError(ctx context.Context) (int, error) {
 	n, _ := res.RowsAffected()
 	return int(n), nil
 }
-
-// GetRecentRuns returns recent runs for an agent
 func (r *Repository) GetRecentRuns(ctx context.Context, agentID string, limit int) ([]*AgentRun, error) {
 	if limit <= 0 {
 		limit = 10
@@ -1071,4 +1069,209 @@ func (r *Repository) FindADKSessionByIDForProject(ctx context.Context, sessionID
 	}
 
 	return session, events, nil
+}
+
+// ============================================================================
+// Worker Pool Repository Methods (agent_run_jobs)
+// ============================================================================
+
+// CreateRunQueued creates an agent_runs row with status=queued and an
+// agent_run_jobs row in the same transaction. Returns the new run.
+func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAttempts int) (*AgentRun, error) {
+	run := &AgentRun{
+		AgentID:   agentID,
+		Status:    RunStatusQueued,
+		StartedAt: time.Now(),
+		Summary:   make(map[string]any),
+	}
+
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewInsert().Model(run).Returning("*").Exec(ctx); err != nil {
+			return fmt.Errorf("insert agent_runs: %w", err)
+		}
+		job := &AgentRunJob{
+			RunID:       run.ID,
+			Status:      JobStatusPending,
+			MaxAttempts: maxAttempts,
+			NextRunAt:   time.Now(),
+		}
+		if _, err := tx.NewInsert().Model(job).Exec(ctx); err != nil {
+			return fmt.Errorf("insert agent_run_jobs: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
+// CreateRunJob inserts a new agent_run_jobs row for an existing run.
+func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts int) error {
+	job := &AgentRunJob{
+		RunID:       runID,
+		Status:      JobStatusPending,
+		MaxAttempts: maxAttempts,
+		NextRunAt:   time.Now(),
+	}
+	_, err := r.db.NewInsert().Model(job).Exec(ctx)
+	return err
+}
+
+// ClaimNextJob atomically claims the next pending job using FOR UPDATE SKIP LOCKED,
+// transitions job→processing and run→running in a single transaction.
+// Returns nil, nil when no job is available.
+func (r *Repository) ClaimNextJob(ctx context.Context) (*AgentRunJob, error) {
+	var job *AgentRunJob
+
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		j := new(AgentRunJob)
+		err := tx.NewSelect().
+			Model(j).
+			Where("arj.status = ?", JobStatusPending).
+			Where("arj.next_run_at <= now()").
+			OrderExpr("arj.next_run_at ASC").
+			Limit(1).
+			For("UPDATE SKIP LOCKED").
+			Scan(ctx)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil // no job available
+			}
+			return fmt.Errorf("select next job: %w", err)
+		}
+
+		// Transition job to processing
+		if _, err := tx.NewUpdate().
+			Model(j).
+			Set("status = ?", JobStatusProcessing).
+			Set("attempt_count = attempt_count + 1").
+			WherePK().
+			Returning("*").
+			Exec(ctx); err != nil {
+			return fmt.Errorf("claim job: %w", err)
+		}
+
+		// Transition run to running
+		if _, err := tx.NewUpdate().
+			Model((*AgentRun)(nil)).
+			Set("status = ?", RunStatusRunning).
+			Where("id = ?", j.RunID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("update run to running: %w", err)
+		}
+
+		job = j
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+// CompleteJob marks a job as completed and the run as success.
+func (r *Repository) CompleteJob(ctx context.Context, jobID, runID string) error {
+	now := time.Now()
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewUpdate().
+			Model((*AgentRunJob)(nil)).
+			Set("status = ?", JobStatusCompleted).
+			Set("completed_at = ?", now).
+			Where("id = ?", jobID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("complete job: %w", err)
+		}
+		if _, err := tx.NewUpdate().
+			Model((*AgentRun)(nil)).
+			Set("status = ?", RunStatusSuccess).
+			Set("completed_at = ?", now).
+			Where("id = ?", runID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("complete run: %w", err)
+		}
+		return nil
+	})
+}
+
+// FailJob marks a job failed. If requeue=true and attempt_count < max_attempts,
+// sets job back to pending with exponential backoff; otherwise marks job failed and run error.
+func (r *Repository) FailJob(ctx context.Context, jobID, runID, errMsg string, requeue bool, nextRunAt time.Time) error {
+	now := time.Now()
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if requeue {
+			if _, err := tx.NewUpdate().
+				Model((*AgentRunJob)(nil)).
+				Set("status = ?", JobStatusPending).
+				Set("next_run_at = ?", nextRunAt).
+				Where("id = ?", jobID).
+				Exec(ctx); err != nil {
+				return fmt.Errorf("requeue job: %w", err)
+			}
+			// Run goes back to queued
+			if _, err := tx.NewUpdate().
+				Model((*AgentRun)(nil)).
+				Set("status = ?", RunStatusQueued).
+				Where("id = ?", runID).
+				Exec(ctx); err != nil {
+				return fmt.Errorf("requeue run: %w", err)
+			}
+		} else {
+			if _, err := tx.NewUpdate().
+				Model((*AgentRunJob)(nil)).
+				Set("status = ?", JobStatusFailed).
+				Set("completed_at = ?", now).
+				Where("id = ?", jobID).
+				Exec(ctx); err != nil {
+				return fmt.Errorf("fail job: %w", err)
+			}
+			if _, err := tx.NewUpdate().
+				Model((*AgentRun)(nil)).
+				Set("status = ?", RunStatusError).
+				Set("completed_at = ?", now).
+				Set("error_message = ?", errMsg).
+				Where("id = ?", runID).
+				Exec(ctx); err != nil {
+				return fmt.Errorf("fail run: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// FindRunByIDForAgent returns a run by ID scoped to a project (via agent join).
+// Returns nil, nil if not found or belongs to different project.
+func (r *Repository) FindRunByIDProjectScoped(ctx context.Context, runID, projectID string) (*AgentRun, error) {
+	return r.FindRunByIDForProject(ctx, runID, projectID)
+}
+
+// RequeueOrphanedQueuedRuns finds agent_runs with status=queued that have no
+// active agent_run_jobs row (pending or processing) and inserts a new job row
+// for each. Called at startup after MarkOrphanedRunsAsError.
+func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error) {
+	// Find queued runs that have no pending/processing job
+	type runRow struct {
+		ID string `bun:"id"`
+	}
+	var runs []runRow
+	err := r.db.NewSelect().
+		TableExpr("kb.agent_runs AS ar").
+		ColumnExpr("ar.id").
+		Where("ar.status = ?", RunStatusQueued).
+		Where(`NOT EXISTS (
+			SELECT 1 FROM kb.agent_run_jobs arj
+			WHERE arj.run_id = ar.id
+			  AND arj.status IN ('pending', 'processing')
+		)`).
+		Scan(ctx, &runs)
+	if err != nil {
+		return 0, fmt.Errorf("find orphaned queued runs: %w", err)
+	}
+
+	for _, row := range runs {
+		if err := r.CreateRunJob(ctx, row.ID, 1); err != nil {
+			return 0, fmt.Errorf("re-enqueue run %s: %w", row.ID, err)
+		}
+	}
+	return len(runs), nil
 }

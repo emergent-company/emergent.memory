@@ -64,6 +64,7 @@ type AgentDefinition struct {
 	MaxSteps       *int           `json:"maxSteps,omitempty"`
 	DefaultTimeout *int           `json:"defaultTimeout,omitempty"`
 	Visibility     string         `json:"visibility"`
+	DispatchMode   string         `json:"dispatchMode,omitempty"`
 	ACPConfig      *ACPConfig     `json:"acpConfig,omitempty"`
 	Config         map[string]any `json:"config,omitempty"`
 	CreatedAt      time.Time      `json:"createdAt"`
@@ -120,6 +121,7 @@ type CreateAgentDefinitionRequest struct {
 	MaxSteps       *int           `json:"maxSteps,omitempty"`
 	DefaultTimeout *int           `json:"defaultTimeout,omitempty"`
 	Visibility     string         `json:"visibility,omitempty"`
+	DispatchMode   string         `json:"dispatchMode,omitempty"`
 	ACPConfig      *ACPConfig     `json:"acpConfig,omitempty"`
 	Config         map[string]any `json:"config,omitempty"`
 }
@@ -136,6 +138,7 @@ type UpdateAgentDefinitionRequest struct {
 	MaxSteps       *int           `json:"maxSteps,omitempty"`
 	DefaultTimeout *int           `json:"defaultTimeout,omitempty"`
 	Visibility     *string        `json:"visibility,omitempty"`
+	DispatchMode   *string        `json:"dispatchMode,omitempty"`
 	ACPConfig      *ACPConfig     `json:"acpConfig,omitempty"`
 	Config         map[string]any `json:"config,omitempty"`
 }

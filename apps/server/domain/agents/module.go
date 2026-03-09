@@ -30,11 +30,13 @@ var Module = fx.Module("agents",
 		provideTriggerService,
 		provideMCPToolHandler,
 		provideWebhookRateLimiter,
+		provideWorkerPool,
 	),
 	fx.Invoke(
 		RegisterRoutes,
 		registerAgentTriggers,
 		registerOrphanRecovery,
+		registerWorkerPool,
 		registerAgentToolHandler,
 		registerToolPoolInvalidator,
 		registerOrgToolPoolInvalidator,
@@ -100,7 +102,8 @@ func registerAgentToolHandler(mcpService *mcp.Service, handler *MCPToolHandler) 
 }
 
 // registerOrphanRecovery marks any agent runs that were left in "running" status
-// (due to an unclean server shutdown) as errored on startup.
+// (due to an unclean server shutdown) as errored on startup, and re-enqueues
+// any queued runs that lost their job row.
 func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, log *slog.Logger) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
@@ -114,6 +117,20 @@ func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, log *slog.Logger)
 			if n > 0 {
 				log.Warn("marked orphaned agent runs as error on startup",
 					slog.Int("count", n),
+				)
+			}
+
+			// Re-enqueue queued runs that lost their job row (e.g. due to crash mid-enqueue)
+			m, err := repo.RequeueOrphanedQueuedRuns(ctx)
+			if err != nil {
+				log.Warn("failed to re-enqueue orphaned queued runs on startup",
+					slog.String("error", err.Error()),
+				)
+				return nil // best-effort
+			}
+			if m > 0 {
+				log.Warn("re-enqueued orphaned queued runs on startup",
+					slog.Int("count", m),
 				)
 			}
 			return nil
@@ -147,4 +164,22 @@ func registerToolPoolInvalidator(registryService *mcpregistry.Service, toolPool 
 // so that org-level tool setting changes automatically invalidate the ToolPool cache.
 func registerOrgToolPoolInvalidator(orgService *orgs.Service, toolPool *ToolPool) {
 	orgService.SetToolPoolInvalidator(toolPool)
+}
+
+// provideWorkerPool creates a WorkerPool from fx dependencies.
+func provideWorkerPool(repo *Repository, executor *AgentExecutor, cfg *config.Config, log *slog.Logger) *WorkerPool {
+	return NewWorkerPool(repo, executor, log, cfg.AgentWorkerPoolSize, cfg.AgentWorkerPollInterval)
+}
+
+// registerWorkerPool wires the WorkerPool into the fx lifecycle.
+func registerWorkerPool(lc fx.Lifecycle, pool *WorkerPool) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			return pool.Start(ctx)
+		},
+		OnStop: func(ctx context.Context) error {
+			pool.Stop()
+			return nil
+		},
+	})
 }
