@@ -1,10 +1,11 @@
 package health
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,6 +31,12 @@ func NewHandler(pool *pgxpool.Pool, cfg *config.Config) *Handler {
 	}
 }
 
+// TracingInfo holds tracing configuration exposed in the health response.
+type TracingInfo struct {
+	Enabled  bool   `json:"enabled"`
+	TempoURL string `json:"tempo_url,omitempty"`
+}
+
 // HealthResponse represents the health check response
 type HealthResponse struct {
 	Status    string           `json:"status"`
@@ -37,6 +44,7 @@ type HealthResponse struct {
 	Uptime    string           `json:"uptime"`
 	Version   string           `json:"version"`
 	Checks    map[string]Check `json:"checks"`
+	Tracing   *TracingInfo     `json:"tracing,omitempty"`
 }
 
 // Check represents an individual health check result
@@ -72,6 +80,15 @@ func (h *Handler) Health(c echo.Context) error {
 		overallStatus = "unhealthy"
 	}
 
+	var tracingInfo *TracingInfo
+	if h.cfg.Otel.Enabled() {
+		tempoURL := strings.Replace(h.cfg.Otel.ExporterEndpoint, ":4318", ":3200", 1)
+		tracingInfo = &TracingInfo{
+			Enabled:  true,
+			TempoURL: tempoURL,
+		}
+	}
+
 	response := HealthResponse{
 		Status:    overallStatus,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -83,6 +100,7 @@ func (h *Handler) Health(c echo.Context) error {
 				Message: dbMessage,
 			},
 		},
+		Tracing: tracingInfo,
 	}
 
 	statusCode := http.StatusOK
