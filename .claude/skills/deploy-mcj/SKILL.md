@@ -1,9 +1,9 @@
 ---
 name: deploy-mcj
-description: Upgrade the mcj-emergent test server via SSH. Runs "emergent upgrade", monitors output, then runs "emergent ctl status" and "emergent doctor" to verify the deployment. Use when the user says "upgrade mcj", "deploy to mcj", "update the test server", or "upgrade mcj-emergent".
+description: Upgrade the mcj-emergent test server via SSH. Runs "memory server upgrade", monitors output, then runs "memory server ctl status" and "memory server doctor" to verify the deployment. Use when the user says "upgrade mcj", "deploy to mcj", "update the test server", or "upgrade mcj-emergent".
 metadata:
   author: emergent
-  version: "1.0"
+  version: "1.1"
 ---
 
 Upgrade the `mcj-emergent` test server: SSH in, run the upgrade, verify containers are healthy, run diagnostics, and report.
@@ -17,10 +17,10 @@ Upgrade the `mcj-emergent` test server: SSH in, run the upgrade, verify containe
 | Field | Value |
 |-------|-------|
 | SSH host | `root@mcj-emergent` |
-| Emergent install | `~/.emergent` |
-| Upgrade command | `emergent upgrade --force` |
-| Status command | `emergent ctl status` |
-| Diagnostics command | `emergent doctor` |
+| CLI binary | `/usr/local/bin/memory` |
+| Upgrade command | `memory server upgrade --force` |
+| Status command | `memory server ctl status` |
+| Diagnostics command | `memory server doctor` |
 
 ---
 
@@ -31,8 +31,8 @@ Upgrade the `mcj-emergent` test server: SSH in, run the upgrade, verify containe
 Run these two commands in parallel via SSH to snapshot the baseline:
 
 ```bash
-ssh root@mcj-emergent 'emergent version'
-ssh root@mcj-emergent 'emergent ctl status 2>&1'
+ssh root@mcj-emergent 'memory version'
+ssh root@mcj-emergent 'memory server ctl status 2>&1'
 ```
 
 Parse and show:
@@ -50,7 +50,7 @@ If SSH connection fails entirely, stop and report:
 Before running the upgrade, verify that Docker images are ready (the `images-ready.txt` sentinel on the latest GitHub release):
 
 ```bash
-ssh root@mcj-emergent 'emergent upgrade --force 2>&1 | head -5'
+ssh root@mcj-emergent 'memory server upgrade --force 2>&1 | head -5'
 ```
 
 If the output contains `Docker images for this release are still being built`, stop and report:
@@ -63,7 +63,7 @@ Otherwise proceed.
 ```bash
 ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
     root@mcj-emergent \
-    'emergent upgrade --force 2>&1'
+    'memory server upgrade --force 2>&1'
 ```
 
 **Timeout**: 15 minutes — Docker image pulls can be slow on the first run.
@@ -82,7 +82,7 @@ Stream the output and watch for these indicators in real-time:
 | `Upgrade canceled.` | --force not working, investigate |
 | `Error` / `failed` | Failure — capture full context |
 
-If `--cli-only` was passed, use: `emergent upgrade --force --cli-only`
+If `--cli-only` was passed, use: `memory server upgrade --force --cli-only`
 
 Show live output as it streams. If the command takes longer than 15 minutes or the SSH connection drops, report the timeout and skip to step 5.
 
@@ -106,20 +106,20 @@ ssh root@mcj-emergent '
 '
 ```
 
-If the server doesn't come up, continue to diagnostics anyway — `emergent doctor` will capture why.
+If the server doesn't come up, continue to diagnostics anyway — `memory server doctor` will capture why.
 
 ### 5. Run post-upgrade diagnostics
 
 Run these in parallel:
 
 ```bash
-ssh root@mcj-emergent 'emergent ctl status 2>&1'
-ssh root@mcj-emergent 'emergent doctor 2>&1'
+ssh root@mcj-emergent 'memory server ctl status 2>&1'
+ssh root@mcj-emergent 'memory server doctor 2>&1'
 ```
 
 ### 6. Parse and report
 
-Parse `emergent doctor` output. The summary line looks like:
+Parse `memory server doctor` output. The summary line looks like:
 ```
 Checks: N passed[, M warnings][, P failed]
 ```
@@ -136,12 +136,12 @@ Individual check lines use prefix icons:
 
 ### Version
   Before:  <pre_version>
-  After:   <post_version from ctl status or emergent version>
+  After:   <post_version from ctl status or memory version>
 
-### Container Status (emergent ctl status)
+### Container Status (memory server ctl status)
 <formatted table of containers and their states>
 
-### Diagnostics (emergent doctor)
+### Diagnostics (memory server doctor)
 <pass/warn/fail lines from doctor>
 
 ### Summary
@@ -152,7 +152,7 @@ Individual check lines use prefix icons:
 ```
 
 **Verdict rules:**
-- `SUCCESSFUL` — `emergent doctor` summary shows 0 failed AND the server container is listed as running
+- `SUCCESSFUL` — `memory server doctor` summary shows 0 failed AND the server container is listed as running
 - `DEGRADED` — doctor has only warnings, no failures, server is up
 - `FAILED` — any `✗` checks in doctor, or server container is not running after the wait
 
@@ -160,10 +160,10 @@ Individual check lines use prefix icons:
 
 | Doctor check | Common cause | Suggested action |
 |-------------|--------------|-----------------|
-| Server Connectivity FAILED | Container not yet up | `ssh root@mcj-emergent 'emergent ctl restart'` |
-| Docker Containers — VERSION MISMATCH | Old container still running | `ssh root@mcj-emergent 'emergent upgrade server --force'` |
+| Server Connectivity FAILED | Container not yet up | `ssh root@mcj-emergent 'memory server ctl restart'` |
+| Docker Containers — VERSION MISMATCH | Old container still running | `ssh root@mcj-emergent 'memory server upgrade --force'` |
 | Docker Containers — NOT RUNNING | Crash on start | `ssh root@mcj-emergent 'docker logs emergent-server --tail 50'` |
-| API Access FAILED | Server up but not accepting requests yet | Wait 30s and re-run `emergent doctor` |
+| API Access FAILED | Server up but not accepting requests yet | Wait 30s and re-run `memory server doctor` |
 | Google API Key NOT SET | Config not migrated | Check `~/.emergent/config/.env.local` on the server |
 
 ---
@@ -173,5 +173,5 @@ Individual check lines use prefix icons:
 - **Never run `docker rm` or `docker volume rm`** without explicit user instruction — data loss risk
 - **Never modify `.env.local`** on the server without explicit user instruction
 - **Never force-pull an unbuilt image** — if `images-ready.txt` is not in the release assets, the upgrade will pull the wrong tag
-- If upgrade fails midway (partial CLI upgrade, server not restarted), report the partial state clearly and suggest `ssh root@mcj-emergent 'emergent upgrade server --force'` to complete only the server portion
-- If the SSH connection times out during the image pull, don't assume failure — SSH back in and run `ssh root@mcj-emergent 'emergent ctl status && emergent doctor'` to check the actual state
+- If upgrade fails midway (partial CLI upgrade, server not restarted), report the partial state clearly and suggest `ssh root@mcj-emergent 'memory server upgrade --force'` to complete only the server portion
+- If the SSH connection times out during the image pull, don't assume failure — SSH back in and run `ssh root@mcj-emergent 'memory server ctl status && memory server doctor'` to check the actual state

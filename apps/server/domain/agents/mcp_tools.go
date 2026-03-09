@@ -524,8 +524,17 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 
 	// Dispatch routing: queued vs sync
 	if agentDef != nil && agentDef.DispatchMode == DispatchModeQueued {
-		// Queued branch: create run + job atomically and return immediately
-		run, err := h.repo.CreateRunQueued(ctx, agent.ID, 1)
+		// Queued branch: create run + job atomically and return immediately.
+		// Pass the caller's run ID as ParentRunID so the server can re-enqueue
+		// the parent when this child run completes. Pass the user message as
+		// TriggerMessage so the worker uses it instead of the agent's prompt.
+		queuedOpts := CreateRunQueuedOptions{
+			TriggerMessage: &userMessage,
+		}
+		if callerRunID := callerRunIDFromContext(ctx); callerRunID != "" {
+			queuedOpts.ParentRunID = &callerRunID
+		}
+		run, err := h.repo.CreateRunQueued(ctx, agent.ID, 1, queuedOpts)
 		if err != nil {
 			return errResult("failed to enqueue agent run: " + err.Error())
 		}
@@ -533,7 +542,7 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 			"success": true,
 			"run_id":  run.ID,
 			"status":  string(RunStatusQueued),
-			"message": "Agent run queued; use get_run_status to poll for completion",
+			"message": "Agent run queued. The server will notify the calling agent when the run completes — do NOT poll get_run_status. Proceed with other work or exit.",
 		})
 	}
 
