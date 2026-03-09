@@ -233,6 +233,7 @@ type graphObjectRow struct {
 func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddingJob) error {
 	ctx, span := tracing.Start(ctx, "extraction.graph_embedding",
 		attribute.String("emergent.job.id", job.ID),
+		attribute.String("emergent.object.id", job.ObjectID),
 	)
 	defer span.End()
 
@@ -247,12 +248,12 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		Scan(ctx, obj)
 
 	if err == sql.ErrNoRows {
-		// Object doesn't exist, mark as failed with a short error
+		// Object doesn't exist — terminal failure, don't retry
 		objErr := fmt.Errorf("object not found: %s", job.ObjectID)
 		span.RecordError(objErr)
 		span.SetStatus(codes.Error, objErr.Error())
-		if markErr := w.jobs.MarkFailed(ctx, job.ID, fmt.Errorf("object_missing")); markErr != nil {
-			w.log.Error("failed to mark job as failed",
+		if markErr := w.jobs.MarkPermanentlyFailed(ctx, job.ID, fmt.Errorf("object_missing")); markErr != nil {
+			w.log.Error("failed to mark job as permanently failed",
 				slog.String("job_id", job.ID),
 				slog.String("error", markErr.Error()))
 		}
@@ -272,8 +273,16 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		return fmt.Errorf("fetch object: %w", err)
 	}
 
-	// Now we have the project ID from the fetched object
-	span.SetAttributes(attribute.String("emergent.project.id", obj.ProjectID))
+	// Now we have the full object — set remaining span attributes
+	keyVal := ""
+	if obj.Key != nil {
+		keyVal = *obj.Key
+	}
+	span.SetAttributes(
+		attribute.String("emergent.project.id", obj.ProjectID),
+		attribute.String("emergent.object.type", obj.Type),
+		attribute.String("emergent.object.key", keyVal),
+	)
 
 	// Inject project ID into context so the credential resolver can look up
 	// per-project LLM provider configuration (e.g. Vertex AI credentials).
@@ -351,6 +360,13 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 	}
 
 	totalDurationMs := time.Since(startTime).Milliseconds()
+
+	span.SetAttributes(
+		attribute.Int("emergent.embedding.text_length", textLength),
+		attribute.Int("emergent.embedding.dims", len(result.Embedding)),
+		attribute.Int64("emergent.embedding.duration_ms", embeddingDurationMs),
+		attribute.Int64("emergent.total_duration_ms", totalDurationMs),
+	)
 
 	w.log.Debug("generated embedding for graph object",
 		slog.String("object_id", obj.ID),

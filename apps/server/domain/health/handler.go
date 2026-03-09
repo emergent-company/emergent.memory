@@ -32,8 +32,8 @@ func NewHandler(pool *pgxpool.Pool, cfg *config.Config) *Handler {
 
 // TracingInfo holds tracing configuration exposed in the health response.
 type TracingInfo struct {
-	Enabled  bool   `json:"enabled"`
-	TempoURL string `json:"tempo_url,omitempty"`
+	Enabled   bool   `json:"enabled"`
+	TracesURL string `json:"traces_url,omitempty"`
 }
 
 // HealthResponse represents the health check response
@@ -82,8 +82,8 @@ func (h *Handler) Health(c echo.Context) error {
 	var tracingInfo *TracingInfo
 	if h.cfg.Otel.Enabled() {
 		tracingInfo = &TracingInfo{
-			Enabled:  true,
-			TempoURL: h.cfg.Otel.ResolvedTempoURL(),
+			Enabled:   true,
+			TracesURL: "/api/traces",
 		}
 	}
 
