@@ -271,9 +271,7 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 	}
 
 	var conditions []string
-	var projectID string
 	if id, err := resolveProjectContext(cmd, ""); err == nil && id != "" {
-		projectID = id
 		conditions = append(conditions, fmt.Sprintf(`.emergent.project.id = "%s"`, id))
 	}
 	if len(conditions) > 0 {
@@ -290,9 +288,6 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("unexpected Tempo response: %w", err)
 	}
 	fmt.Printf("Recent traces (last %s, limit %d)\n\n", tracesListSince, tracesListLimit)
-	if len(resp.Traces) == 0 && projectID != "" {
-		fmt.Fprintf(os.Stderr, "Warning: no traces found for project %s — the project ID in your config may be incorrect or stale.\nUse --project to specify a different project, or run without a project context to see all traces.\n\n", projectID)
-	}
 	printTraceTable(resp.Traces)
 	return nil
 }
@@ -300,9 +295,7 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 func runTracesSearch(cmd *cobra.Command, _ []string) error {
 	// Build TraceQL query from flags
 	var conditions []string
-	var projectID string
 	if id, err := resolveProjectContext(cmd, ""); err == nil && id != "" {
-		projectID = id
 		conditions = append(conditions, fmt.Sprintf(`.emergent.project.id = "%s"`, id))
 	}
 	if tracesSearchSvc != "" {
@@ -340,9 +333,6 @@ func runTracesSearch(cmd *cobra.Command, _ []string) error {
 		label = "{ " + strings.Join(conditions, " && ") + " }"
 	}
 	fmt.Printf("Search: %s (last %s, limit %d)\n\n", label, tracesSearchSince, tracesSearchLimit)
-	if len(resp.Traces) == 0 && projectID != "" {
-		fmt.Fprintf(os.Stderr, "Warning: no traces found for project %s — the project ID in your config may be incorrect or stale.\nUse --project to specify a different project, or run without a project context to see all traces.\n\n", projectID)
-	}
 	printTraceTable(resp.Traces)
 	return nil
 }

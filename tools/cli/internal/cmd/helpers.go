@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -114,8 +115,16 @@ func resolveProjectContext(cmd *cobra.Command, flagValue string) (string, error)
 		return "", fmt.Errorf("project is required. Use --project flag, set MEMORY_PROJECT in .env.local, or configure it in your config file")
 	}
 
-	// If it's already a UUID, return directly
+	// If it's already a UUID, validate it exists on the server.
 	if isUUID(nameOrID) {
+		c, err := getClient(cmd)
+		if err != nil {
+			// Can't reach server — return the ID optimistically.
+			return nameOrID, nil
+		}
+		if _, err := c.SDK.Projects.Get(context.Background(), nameOrID, nil); err != nil {
+			return "", fmt.Errorf("project %s not found — it may have been deleted or belong to a different server.\nUpdate your config with: memory config set project_id <id>", nameOrID)
+		}
 		return nameOrID, nil
 	}
 
