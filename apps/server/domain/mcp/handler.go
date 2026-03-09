@@ -222,7 +222,7 @@ func (h *Handler) handleToolsList(c echo.Context, req *Request, user *auth.AuthU
 		)
 	}
 
-	tools := h.svc.GetToolDefinitions()
+	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 

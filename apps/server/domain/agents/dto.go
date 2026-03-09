@@ -196,6 +196,28 @@ type PaginatedResponse[T any] struct {
 	Offset     int `json:"offset"`
 }
 
+// AgentWithDefinitionDTO enriches AgentDTO with fields from the agent's definition.
+// Returned by list_agents MCP tool so callers get name, description, and config
+// in a single call without a separate list_agent_definitions lookup.
+type AgentWithDefinitionDTO struct {
+	// Runtime fields (from kb.agents)
+	ID            string             `json:"id"`
+	ProjectID     string             `json:"projectId"`
+	Name          string             `json:"name"`
+	Enabled       bool               `json:"enabled"`
+	TriggerType   AgentTriggerType   `json:"triggerType"`
+	ExecutionMode AgentExecutionMode `json:"executionMode"`
+	LastRunAt     *time.Time         `json:"lastRunAt,omitempty"`
+	LastRunStatus *string            `json:"lastRunStatus,omitempty"`
+
+	// Definition fields (from kb.agent_definitions, may be nil if no definition)
+	Description *string       `json:"description,omitempty"`
+	FlowType    AgentFlowType `json:"flowType,omitempty"`
+	Model       *ModelConfig  `json:"model,omitempty"`
+	AgentType   *string       `json:"agentType,omitempty"`
+	Tier        *string       `json:"tier,omitempty"`
+}
+
 // --- Agent Definition DTOs ---
 
 // AgentDefinitionDTO is the full response DTO for an agent definition

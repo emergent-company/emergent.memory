@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 )
@@ -253,16 +254,41 @@ func (h *MCPToolHandler) ExecuteDeleteAgentDefinition(ctx context.Context, proje
 // Agent (Runtime) Tools
 // ============================================================================
 
-// ExecuteListAgents lists all agents for a project.
+// ExecuteListAgents lists all agents for a project, enriched with definition metadata.
 func (h *MCPToolHandler) ExecuteListAgents(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
 	agents, err := h.repo.FindAll(ctx, projectID)
 	if err != nil {
 		return errResult("failed to list agents: " + err.Error())
 	}
 
-	dtos := make([]*AgentDTO, len(agents))
+	dtos := make([]*AgentWithDefinitionDTO, len(agents))
 	for i, agent := range agents {
-		dtos[i] = agent.ToDTO()
+		dto := &AgentWithDefinitionDTO{
+			ID:            agent.ID,
+			ProjectID:     agent.ProjectID,
+			Name:          agent.Name,
+			Enabled:       agent.Enabled,
+			TriggerType:   agent.TriggerType,
+			ExecutionMode: agent.ExecutionMode,
+			LastRunAt:     agent.LastRunAt,
+			LastRunStatus: agent.LastRunStatus,
+		}
+
+		// Enrich with definition metadata (best-effort; ignore errors)
+		if def, defErr := h.repo.FindDefinitionByName(ctx, projectID, agent.Name); defErr == nil && def != nil {
+			dto.Description = def.Description
+			dto.FlowType = def.FlowType
+			dto.Model = def.Model
+			// Extract agentType and tier from definition config
+			if agentType, ok := def.Config["agentType"].(string); ok && agentType != "" {
+				dto.AgentType = &agentType
+			}
+			if tier, ok := def.Config["tier"].(string); ok && tier != "" {
+				dto.Tier = &tier
+			}
+		}
+
+		dtos[i] = dto
 	}
 
 	return wrapResult(dtos)
@@ -424,24 +450,42 @@ func (h *MCPToolHandler) ExecuteDeleteAgent(ctx context.Context, projectID strin
 }
 
 // ExecuteTriggerAgent triggers an immediate run of an agent.
+// Accepts either agent_id (UUID) or agent_name (string); agent_name is resolved to an ID.
 func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
-	id, _ := args["agent_id"].(string)
-	if id == "" {
-		return errResult("agent_id is required")
-	}
+	var agent *Agent
 
-	agent, err := h.repo.FindByID(ctx, id, &projectID)
-	if err != nil {
-		return errResult("failed to get agent: " + err.Error())
-	}
-	if agent == nil {
-		return errResult(fmt.Sprintf("agent not found: %s", id))
+	agentName, hasName := args["agent_name"].(string)
+	agentID, hasID := args["agent_id"].(string)
+
+	switch {
+	case hasName && agentName != "":
+		// Resolve name → runtime agent
+		var err error
+		agent, err = h.repo.FindByName(ctx, projectID, agentName)
+		if err != nil {
+			return errResult("failed to look up agent by name: " + err.Error())
+		}
+		if agent == nil {
+			return errResult(fmt.Sprintf("agent not found with name %q", agentName))
+		}
+	case hasID && agentID != "":
+		// Legacy UUID path
+		var err error
+		agent, err = h.repo.FindByID(ctx, agentID, &projectID)
+		if err != nil {
+			return errResult("failed to get agent: " + err.Error())
+		}
+		if agent == nil {
+			return errResult(fmt.Sprintf("agent not found: %s", agentID))
+		}
+	default:
+		return errResult("either agent_id or agent_name is required")
 	}
 
 	// Check if executor is available
 	if h.executor == nil {
 		// Stub mode: create a run record but skip execution
-		run, err := h.repo.CreateRun(ctx, id)
+		run, err := h.repo.CreateRun(ctx, agent.ID)
 		if err != nil {
 			return errResult("failed to create run: " + err.Error())
 		}
@@ -801,7 +845,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 		// --- Agents (runtime) ---
 		{
 			Name:        "list_agents",
-			Description: "List all runtime agents for the current project. Agents track runtime state like last_run_at, cron_schedule, and enabled status.",
+			Description: "List all runtime agents for the current project, enriched with definition metadata. Each entry includes: id, name, enabled, triggerType, executionMode, lastRunAt, lastRunStatus, description, flowType, model, agentType, and tier. Use agent_name (not id) with trigger_agent.",
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
 				Properties: map[string]mcp.PropertySchema{},
@@ -933,20 +977,24 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 		},
 		{
 			Name:        "trigger_agent",
-			Description: "Trigger an immediate run of an agent. Optionally provide a custom message for this run. Returns the run ID and execution status.",
+			Description: "Trigger an immediate run of an agent. Provide either agent_name (preferred) or agent_id (UUID). Optionally provide a custom message for this run. Returns the run ID and execution status.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
+					"agent_name": {
+						Type:        "string",
+						Description: "The name of the agent to trigger (e.g. \"pool-manager-research\"). Preferred over agent_id.",
+					},
 					"agent_id": {
 						Type:        "string",
-						Description: "The UUID of the agent to trigger",
+						Description: "The UUID of the agent to trigger. Use agent_name instead when possible.",
 					},
 					"message": {
 						Type:        "string",
 						Description: "Optional custom message/instructions for this specific run",
 					},
 				},
-				Required: []string{"agent_id"},
+				Required: []string{},
 			},
 		},
 
@@ -1037,6 +1085,50 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 			},
 		},
 	}
+}
+
+// GetAgentToolDefinitionsForProject returns tool definitions with the trigger_agent
+// description dynamically enriched with the live agent catalog for the given project.
+// Falls back to GetAgentToolDefinitions when projectID is empty or the catalog cannot
+// be fetched.
+func (h *MCPToolHandler) GetAgentToolDefinitionsForProject(ctx context.Context, projectID string) []mcp.ToolDefinition {
+	defs := h.GetAgentToolDefinitions()
+	if projectID == "" {
+		return defs
+	}
+
+	// Build a compact catalog string: "- name: description\n" per agent
+	agents, err := h.repo.FindAllDefinitions(ctx, projectID, true)
+	if err != nil || len(agents) == 0 {
+		return defs
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n\nAvailable agents in this project:\n")
+	for _, a := range agents {
+		desc := ""
+		if a.Description != nil {
+			desc = *a.Description
+		}
+		// Trim whitespace from multi-line YAML descriptions
+		desc = strings.TrimSpace(strings.ReplaceAll(desc, "\n", " "))
+		if desc != "" {
+			fmt.Fprintf(&sb, "- %s: %s\n", a.Name, desc)
+		} else {
+			fmt.Fprintf(&sb, "- %s\n", a.Name)
+		}
+	}
+	catalog := sb.String()
+
+	// Inject catalog into trigger_agent description
+	for i, tool := range defs {
+		if tool.Name == "trigger_agent" {
+			defs[i].Description = tool.Description + catalog
+			break
+		}
+	}
+
+	return defs
 }
 
 // intPtr returns a pointer to an int value.

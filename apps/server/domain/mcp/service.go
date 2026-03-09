@@ -759,6 +759,33 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 	return tools
 }
 
+// GetToolDefinitionsForProject returns tool definitions with dynamic content (e.g. agent
+// catalog injected into trigger_agent description) for a specific project.
+// Falls back to GetToolDefinitions when projectID is empty.
+func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition {
+	if projectID == "" || s.agentToolHandler == nil {
+		return s.GetToolDefinitions()
+	}
+
+	// Start with the full static tool list (includes static agent tools)
+	tools := s.GetToolDefinitions()
+
+	// Find the range of agent tools and replace them with project-enriched versions
+	enriched := s.agentToolHandler.GetAgentToolDefinitionsForProject(ctx, projectID)
+	enrichedByName := make(map[string]ToolDefinition, len(enriched))
+	for _, t := range enriched {
+		enrichedByName[t.Name] = t
+	}
+
+	for i, tool := range tools {
+		if et, ok := enrichedByName[tool.Name]; ok {
+			tools[i] = et
+		}
+	}
+
+	return tools
+}
+
 func (s *Service) GetResourceDefinitions() []ResourceDefinition {
 	return []ResourceDefinition{
 		{
