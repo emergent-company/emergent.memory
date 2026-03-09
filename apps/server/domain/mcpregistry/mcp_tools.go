@@ -604,3 +604,19 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 		},
 	}
 }
+
+// ============================================================================
+// Inheritance Resolver — MCPRegistryToolHandler interface methods
+// ============================================================================
+
+// ResolveBuiltinToolSettings delegates to the service resolver.
+// Satisfies the mcp.MCPRegistryToolHandler interface.
+func (h *MCPRegistryToolHandler) ResolveBuiltinToolSettings(ctx context.Context, projectID, toolName string) (bool, map[string]any, string, error) {
+	return h.service.ResolveBuiltinToolSettings(ctx, projectID, toolName)
+}
+
+// ResolveBuiltinToolConfig delegates to the service resolver.
+// Satisfies the mcp.MCPRegistryToolHandler interface.
+func (h *MCPRegistryToolHandler) ResolveBuiltinToolConfig(ctx context.Context, projectID, toolName string) (map[string]any, string, error) {
+	return h.service.ResolveBuiltinToolConfig(ctx, projectID, toolName)
+}

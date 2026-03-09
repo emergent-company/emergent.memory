@@ -239,7 +239,109 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	return result, nil
 }
 
-// Resume continues a previously paused agent run from its saved state.
+// ExecuteWithRun executes an agent using a pre-created run record.
+// This is used by the HTTP trigger endpoint to decouple run creation
+// (synchronous, returns immediately) from actual execution (async).
+func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
+	startTime := time.Now()
+
+	// Validate depth
+	maxDepth := req.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxDepth
+	}
+	if req.Depth > maxDepth {
+		return nil, fmt.Errorf("max agent depth %d exceeded (current depth: %d)", maxDepth, req.Depth)
+	}
+
+	// Determine max steps for this run
+	maxSteps := MaxTotalStepsPerRun
+	if req.MaxSteps != nil && *req.MaxSteps > 0 && *req.MaxSteps < maxSteps {
+		maxSteps = *req.MaxSteps
+	}
+
+	// Start OTel span
+	ctx, span := tracing.Start(ctx, "agent.run",
+		attribute.String("emergent.agent.id", ae.resolveAgentID(req)),
+		attribute.String("emergent.agent.run_id", run.ID),
+		attribute.String("emergent.project.id", req.ProjectID),
+	)
+	defer span.End()
+
+	ae.log.Info("executing agent (async)",
+		slog.String("run_id", run.ID),
+		slog.String("project_id", req.ProjectID),
+		slog.String("agent_name", ae.resolveAgentName(req)),
+		slog.Int("depth", req.Depth),
+		slog.Int("max_steps", maxSteps),
+	)
+
+	// Provision workspace if configured
+	hasWorkspaceConfig := ae.wsEnabled && ae.provisioner != nil &&
+		req.AgentDefinition != nil && len(req.AgentDefinition.WorkspaceConfig) > 0
+	if hasWorkspaceConfig {
+		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusProvisioning); err != nil {
+			ae.log.Warn("failed to update session status to provisioning",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	wsResult := ae.provisionWorkspace(ctx, run.ID, req)
+	if wsResult != nil && wsResult.Workspace != nil {
+		defer ae.teardownWorkspace(ctx, wsResult)
+	}
+
+	if hasWorkspaceConfig {
+		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
+			ae.log.Warn("failed to update session status to active",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	result, err := ae.runPipeline(ctx, run, req, maxSteps, 0, startTime, wsResult, nil)
+	if err != nil {
+		_ = ae.repo.FailRunWithSteps(ctx, run.ID, err.Error(), 0)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(
+			attribute.Int("emergent.agent.step_count", 0),
+			attribute.String("emergent.agent.run_status", string(RunStatusError)),
+		)
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusError,
+			Summary:  map[string]any{"error": err.Error()},
+			Steps:    0,
+			Duration: time.Since(startTime),
+		}, nil
+	}
+
+	span.SetAttributes(
+		attribute.Int("emergent.agent.step_count", result.Steps),
+		attribute.String("emergent.agent.run_status", string(result.Status)),
+	)
+	switch result.Status {
+	case RunStatusPaused:
+		span.AddEvent("agent.max_steps_reached", trace.WithAttributes(
+			attribute.Int("emergent.agent.step_count", result.Steps),
+		))
+		span.SetStatus(codes.Ok, "")
+	case RunStatusError:
+		errMsg := ""
+		if e, ok := result.Summary["error"].(string); ok {
+			errMsg = e
+		}
+		span.SetStatus(codes.Error, errMsg)
+	default:
+		span.SetStatus(codes.Ok, "")
+	}
+
+	return result, nil
+}
 func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
 
