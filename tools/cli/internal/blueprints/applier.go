@@ -400,6 +400,9 @@ func agentFileToCreateRequest(ag AgentFile) *sdkagents.CreateAgentDefinitionRequ
 		DefaultTimeout: ag.DefaultTimeout,
 		Config:         ag.Config,
 	}
+	if ag.DispatchMode != "" {
+		req.DispatchMode = ag.DispatchMode
+	}
 	if ag.Description != "" {
 		req.Description = &ag.Description
 	}
@@ -424,6 +427,9 @@ func agentFileToUpdateRequest(ag AgentFile) *sdkagents.UpdateAgentDefinitionRequ
 		MaxSteps:       ag.MaxSteps,
 		DefaultTimeout: ag.DefaultTimeout,
 		Config:         ag.Config,
+	}
+	if ag.DispatchMode != "" {
+		req.DispatchMode = &ag.DispatchMode
 	}
 	if ag.Description != "" {
 		req.Description = &ag.Description

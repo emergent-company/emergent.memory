@@ -42,10 +42,23 @@ const (
 	ConcurrencyParallel ConcurrencyStrategy = "parallel"
 )
 
+// AgentDispatchMode controls how trigger_agent schedules execution of an agent.
+// This is distinct from AgentExecutionMode (which is the UI interaction mode).
+type AgentDispatchMode string
+
+const (
+	// DispatchModeSync is the default: trigger_agent blocks until the run completes.
+	DispatchModeSync AgentDispatchMode = "sync"
+	// DispatchModeQueued: trigger_agent enqueues the run and returns run_id immediately.
+	// A worker pool picks up and executes the run asynchronously.
+	DispatchModeQueued AgentDispatchMode = "queued"
+)
+
 // AgentRunStatus defines the status of an agent run
 type AgentRunStatus string
 
 const (
+	RunStatusQueued    AgentRunStatus = "queued" // enqueued, waiting for a worker
 	RunStatusRunning   AgentRunStatus = "running"
 	RunStatusSuccess   AgentRunStatus = "success"
 	RunStatusSkipped   AgentRunStatus = "skipped"
@@ -253,24 +266,25 @@ type ModelConfig struct {
 type AgentDefinition struct {
 	bun.BaseModel `bun:"table:kb.agent_definitions,alias:ad"`
 
-	ID              string          `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	ProductID       *string         `bun:"product_id,type:uuid" json:"productId,omitempty"`
-	ProjectID       string          `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	Name            string          `bun:"name,notnull" json:"name"`
-	Description     *string         `bun:"description" json:"description,omitempty"`
-	SystemPrompt    *string         `bun:"system_prompt" json:"systemPrompt,omitempty"`
-	Model           *ModelConfig    `bun:"model,type:jsonb,default:'{}'" json:"model,omitempty"`
-	Tools           []string        `bun:"tools,array" json:"tools"`
-	FlowType        AgentFlowType   `bun:"flow_type,notnull,default:'single'" json:"flowType"`
-	IsDefault       bool            `bun:"is_default,notnull,default:false" json:"isDefault"`
-	MaxSteps        *int            `bun:"max_steps" json:"maxSteps,omitempty"`
-	DefaultTimeout  *int            `bun:"default_timeout" json:"defaultTimeout,omitempty"`
-	Visibility      AgentVisibility `bun:"visibility,notnull,default:'project'" json:"visibility"`
-	ACPConfig       *ACPConfig      `bun:"acp_config,type:jsonb" json:"acpConfig,omitempty"`
-	Config          map[string]any  `bun:"config,type:jsonb,default:'{}'" json:"config,omitempty"`
-	WorkspaceConfig map[string]any  `bun:"workspace_config,type:jsonb" json:"workspaceConfig,omitempty"`
-	CreatedAt       time.Time       `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt       time.Time       `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	ID              string            `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProductID       *string           `bun:"product_id,type:uuid" json:"productId,omitempty"`
+	ProjectID       string            `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	Name            string            `bun:"name,notnull" json:"name"`
+	Description     *string           `bun:"description" json:"description,omitempty"`
+	SystemPrompt    *string           `bun:"system_prompt" json:"systemPrompt,omitempty"`
+	Model           *ModelConfig      `bun:"model,type:jsonb,default:'{}'" json:"model,omitempty"`
+	Tools           []string          `bun:"tools,array" json:"tools"`
+	FlowType        AgentFlowType     `bun:"flow_type,notnull,default:'single'" json:"flowType"`
+	IsDefault       bool              `bun:"is_default,notnull,default:false" json:"isDefault"`
+	MaxSteps        *int              `bun:"max_steps" json:"maxSteps,omitempty"`
+	DefaultTimeout  *int              `bun:"default_timeout" json:"defaultTimeout,omitempty"`
+	Visibility      AgentVisibility   `bun:"visibility,notnull,default:'project'" json:"visibility"`
+	ACPConfig       *ACPConfig        `bun:"acp_config,type:jsonb" json:"acpConfig,omitempty"`
+	Config          map[string]any    `bun:"config,type:jsonb,default:'{}'" json:"config,omitempty"`
+	WorkspaceConfig map[string]any    `bun:"workspace_config,type:jsonb" json:"workspaceConfig,omitempty"`
+	DispatchMode    AgentDispatchMode `bun:"dispatch_mode,notnull,default:'sync'" json:"dispatchMode"`
+	CreatedAt       time.Time         `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt       time.Time         `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }
 
 // AgentRunMessage stores a single LLM message exchanged during an agent run.
@@ -350,4 +364,33 @@ type AgentQuestion struct {
 	// Relations
 	Run   *AgentRun `bun:"rel:belongs-to,join:run_id=id" json:"-"`
 	Agent *Agent    `bun:"rel:belongs-to,join:agent_id=id" json:"-"`
+}
+
+// AgentJobStatus defines the status of an agent run job in the dispatch queue.
+type AgentJobStatus string
+
+const (
+	JobStatusPending    AgentJobStatus = "pending"
+	JobStatusProcessing AgentJobStatus = "processing"
+	JobStatusCompleted  AgentJobStatus = "completed"
+	JobStatusFailed     AgentJobStatus = "failed"
+)
+
+// AgentRunJob is the dispatch ledger entry for a queued agent run.
+// Workers claim rows using FOR UPDATE SKIP LOCKED.
+// Table: kb.agent_run_jobs
+type AgentRunJob struct {
+	bun.BaseModel `bun:"table:kb.agent_run_jobs,alias:arj"`
+
+	ID           string         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	RunID        string         `bun:"run_id,type:uuid,notnull" json:"runId"`
+	Status       AgentJobStatus `bun:"status,notnull,default:'pending'" json:"status"`
+	AttemptCount int            `bun:"attempt_count,notnull,default:0" json:"attemptCount"`
+	MaxAttempts  int            `bun:"max_attempts,notnull,default:1" json:"maxAttempts"`
+	NextRunAt    time.Time      `bun:"next_run_at,notnull,default:now()" json:"nextRunAt"`
+	CreatedAt    time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	CompletedAt  *time.Time     `bun:"completed_at" json:"completedAt,omitempty"`
+
+	// Relations
+	Run *AgentRun `bun:"rel:belongs-to,join:run_id=id" json:"-"`
 }

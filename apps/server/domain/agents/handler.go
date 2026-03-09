@@ -1127,6 +1127,11 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		config = map[string]any{}
 	}
 
+	dispatchMode := DispatchModeSync
+	if dto.DispatchMode != "" {
+		dispatchMode = dto.DispatchMode
+	}
+
 	def := &AgentDefinition{
 		ProjectID:       projectID,
 		Name:            dto.Name,
@@ -1139,6 +1144,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		MaxSteps:        dto.MaxSteps,
 		DefaultTimeout:  dto.DefaultTimeout,
 		Visibility:      visibility,
+		DispatchMode:    dispatchMode,
 		ACPConfig:       dto.ACPConfig,
 		Config:          config,
 		WorkspaceConfig: dto.WorkspaceConfig,
@@ -1211,6 +1217,9 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.Visibility != nil {
 		def.Visibility = *dto.Visibility
+	}
+	if dto.DispatchMode != nil {
+		def.DispatchMode = *dto.DispatchMode
 	}
 	if dto.ACPConfig != nil {
 		def.ACPConfig = dto.ACPConfig

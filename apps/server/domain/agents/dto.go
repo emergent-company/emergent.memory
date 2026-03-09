@@ -222,24 +222,25 @@ type AgentWithDefinitionDTO struct {
 
 // AgentDefinitionDTO is the full response DTO for an agent definition
 type AgentDefinitionDTO struct {
-	ID              string          `json:"id"`
-	ProductID       *string         `json:"productId,omitempty"`
-	ProjectID       string          `json:"projectId"`
-	Name            string          `json:"name"`
-	Description     *string         `json:"description,omitempty"`
-	SystemPrompt    *string         `json:"systemPrompt,omitempty"`
-	Model           *ModelConfig    `json:"model,omitempty"`
-	Tools           []string        `json:"tools"`
-	FlowType        AgentFlowType   `json:"flowType"`
-	IsDefault       bool            `json:"isDefault"`
-	MaxSteps        *int            `json:"maxSteps,omitempty"`
-	DefaultTimeout  *int            `json:"defaultTimeout,omitempty"`
-	Visibility      AgentVisibility `json:"visibility"`
-	ACPConfig       *ACPConfig      `json:"acpConfig,omitempty"`
-	Config          map[string]any  `json:"config,omitempty"`
-	WorkspaceConfig map[string]any  `json:"workspaceConfig,omitempty"`
-	CreatedAt       time.Time       `json:"createdAt"`
-	UpdatedAt       time.Time       `json:"updatedAt"`
+	ID              string            `json:"id"`
+	ProductID       *string           `json:"productId,omitempty"`
+	ProjectID       string            `json:"projectId"`
+	Name            string            `json:"name"`
+	Description     *string           `json:"description,omitempty"`
+	SystemPrompt    *string           `json:"systemPrompt,omitempty"`
+	Model           *ModelConfig      `json:"model,omitempty"`
+	Tools           []string          `json:"tools"`
+	FlowType        AgentFlowType     `json:"flowType"`
+	IsDefault       bool              `json:"isDefault"`
+	MaxSteps        *int              `json:"maxSteps,omitempty"`
+	DefaultTimeout  *int              `json:"defaultTimeout,omitempty"`
+	Visibility      AgentVisibility   `json:"visibility"`
+	DispatchMode    AgentDispatchMode `json:"dispatchMode"`
+	ACPConfig       *ACPConfig        `json:"acpConfig,omitempty"`
+	Config          map[string]any    `json:"config,omitempty"`
+	WorkspaceConfig map[string]any    `json:"workspaceConfig,omitempty"`
+	CreatedAt       time.Time         `json:"createdAt"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
 }
 
 // AgentDefinitionSummaryDTO is a lightweight DTO for listing agent definitions
@@ -259,36 +260,38 @@ type AgentDefinitionSummaryDTO struct {
 
 // CreateAgentDefinitionDTO is the request DTO for creating an agent definition
 type CreateAgentDefinitionDTO struct {
-	Name            string          `json:"name" validate:"required"`
-	Description     *string         `json:"description"`
-	SystemPrompt    *string         `json:"systemPrompt"`
-	Model           *ModelConfig    `json:"model"`
-	Tools           []string        `json:"tools"`
-	FlowType        AgentFlowType   `json:"flowType"`
-	IsDefault       *bool           `json:"isDefault"`
-	MaxSteps        *int            `json:"maxSteps"`
-	DefaultTimeout  *int            `json:"defaultTimeout"`
-	Visibility      AgentVisibility `json:"visibility"`
-	ACPConfig       *ACPConfig      `json:"acpConfig"`
-	Config          map[string]any  `json:"config"`
-	WorkspaceConfig map[string]any  `json:"workspaceConfig"`
+	Name            string            `json:"name" validate:"required"`
+	Description     *string           `json:"description"`
+	SystemPrompt    *string           `json:"systemPrompt"`
+	Model           *ModelConfig      `json:"model"`
+	Tools           []string          `json:"tools"`
+	FlowType        AgentFlowType     `json:"flowType"`
+	IsDefault       *bool             `json:"isDefault"`
+	MaxSteps        *int              `json:"maxSteps"`
+	DefaultTimeout  *int              `json:"defaultTimeout"`
+	Visibility      AgentVisibility   `json:"visibility"`
+	DispatchMode    AgentDispatchMode `json:"dispatchMode"`
+	ACPConfig       *ACPConfig        `json:"acpConfig"`
+	Config          map[string]any    `json:"config"`
+	WorkspaceConfig map[string]any    `json:"workspaceConfig"`
 }
 
 // UpdateAgentDefinitionDTO is the request DTO for updating an agent definition
 type UpdateAgentDefinitionDTO struct {
-	Name            *string          `json:"name"`
-	Description     *string          `json:"description"`
-	SystemPrompt    *string          `json:"systemPrompt"`
-	Model           *ModelConfig     `json:"model"`
-	Tools           []string         `json:"tools"`
-	FlowType        *AgentFlowType   `json:"flowType"`
-	IsDefault       *bool            `json:"isDefault"`
-	MaxSteps        *int             `json:"maxSteps"`
-	DefaultTimeout  *int             `json:"defaultTimeout"`
-	Visibility      *AgentVisibility `json:"visibility"`
-	ACPConfig       *ACPConfig       `json:"acpConfig"`
-	Config          map[string]any   `json:"config"`
-	WorkspaceConfig map[string]any   `json:"workspaceConfig"`
+	Name            *string            `json:"name"`
+	Description     *string            `json:"description"`
+	SystemPrompt    *string            `json:"systemPrompt"`
+	Model           *ModelConfig       `json:"model"`
+	Tools           []string           `json:"tools"`
+	FlowType        *AgentFlowType     `json:"flowType"`
+	IsDefault       *bool              `json:"isDefault"`
+	MaxSteps        *int               `json:"maxSteps"`
+	DefaultTimeout  *int               `json:"defaultTimeout"`
+	Visibility      *AgentVisibility   `json:"visibility"`
+	DispatchMode    *AgentDispatchMode `json:"dispatchMode"`
+	ACPConfig       *ACPConfig         `json:"acpConfig"`
+	Config          map[string]any     `json:"config"`
+	WorkspaceConfig map[string]any     `json:"workspaceConfig"`
 }
 
 // --- Agent Run Message / Tool Call DTOs ---
@@ -335,6 +338,7 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		MaxSteps:        d.MaxSteps,
 		DefaultTimeout:  d.DefaultTimeout,
 		Visibility:      d.Visibility,
+		DispatchMode:    d.DispatchMode,
 		ACPConfig:       d.ACPConfig,
 		Config:          d.Config,
 		WorkspaceConfig: d.WorkspaceConfig,
