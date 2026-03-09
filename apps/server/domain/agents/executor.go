@@ -983,8 +983,24 @@ func (ae *AgentExecutor) augmentInstructionWithWorkspace(instruction string, wsR
 		wsContext += "- Working directory: /workspace\n"
 	}
 
-	wsContext += "\nWorkspace tools are prefixed with workspace_ (e.g. workspace_bash, workspace_read, etc.).\n" +
-		"Use these tools to interact with files and run commands in the sandboxed container.\n"
+	wsContext += `
+Workspace tools are prefixed with workspace_ and run inside the sandboxed container.
+
+### Tool preference rules
+- Reading files:    workspace_read   (NOT workspace_bash with cat/head/tail)
+- Writing files:    workspace_write  (NOT workspace_bash with echo > or cat <<EOF)
+- Editing files:    workspace_edit   (NOT workspace_bash with sed/awk)
+- Finding files:    workspace_glob   (NOT workspace_bash with find or ls)
+- Searching code:   workspace_grep   (NOT workspace_bash with grep)
+- Terminal ops:     workspace_bash   (builds, tests, package managers, git via workspace_git)
+- Git operations:   workspace_git    (structured git: status, diff, commit, checkout, clone)
+
+### workspace_bash guidance
+- Use the workdir parameter instead of "cd <dir> && <command>".
+- Chain dependent commands with &&; independent commands can be parallel tool calls.
+- Default timeout is 120 seconds. Increase timeout_ms for long builds or test suites.
+- Avoid echo/printf for file creation — use workspace_write instead.
+`
 
 	return instruction + wsContext
 }
@@ -1010,11 +1026,12 @@ func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *workspace.ProvisioningR
 	}
 
 	return BuildWorkspaceTools(WorkspaceToolDeps{
-		Provider:    provider,
-		ProviderID:  wsResult.Workspace.ProviderWorkspaceID,
-		WorkspaceID: wsResult.Workspace.ID,
-		Config:      wsCfg,
-		Logger:      ae.log,
+		Provider:        provider,
+		ProviderID:      wsResult.Workspace.ProviderWorkspaceID,
+		WorkspaceID:     wsResult.Workspace.ID,
+		Config:          wsCfg,
+		Logger:          ae.log,
+		CheckoutService: ae.provisioner.CheckoutService(),
 	})
 }
 
