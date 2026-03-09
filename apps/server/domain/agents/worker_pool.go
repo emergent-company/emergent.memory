@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"sync"
 	"time"
 )
@@ -159,12 +160,22 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		log.Info("queued agent run completed successfully")
 	}
 
-	// Re-enqueue parent run (if any) with child's result as trigger_message
+	// Re-enqueue parent run (if any) with child's result as trigger_message.
+	// If the agent's final response contains "DEFER_PARENT", the agent is
+	// signalling that it has re-triggered a new child and does not want its
+	// parent woken yet — the parent will be woken when that next child finishes.
 	finalResponse := ""
 	if result != nil {
 		if fr, ok := result.Summary["final_response"].(string); ok {
 			finalResponse = fr
 		}
+	}
+	if strings.Contains(finalResponse, "DEFER_PARENT") {
+		log.Info("agent deferred parent re-enqueue via DEFER_PARENT sentinel",
+			slog.String("agent", agent.Name),
+			slog.String("run_id", run.ID),
+		)
+		return
 	}
 	p.reenqueueParent(ctx, log, run, agent.Name, finalResponse, "success")
 }
