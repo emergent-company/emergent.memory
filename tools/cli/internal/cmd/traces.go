@@ -1,12 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -85,7 +85,6 @@ type otlpSpan struct {
 // ── Flags ─────────────────────────────────────────────────────────────────────
 
 var (
-	tracesTempoURL     string
 	tracesListSince    string
 	tracesListLimit    int
 	tracesSearchSvc    string
@@ -98,20 +97,18 @@ var (
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 var tracesCmd = &cobra.Command{
-	Use:    "traces",
-	Short:  "Query traces from local Grafana Tempo",
-	Hidden: true,
-	Long: `Query OpenTelemetry traces stored in a local Grafana Tempo instance.
+	Use:   "traces",
+	Short: "Query traces",
+	Long: `Query OpenTelemetry traces via the server's built-in Tempo proxy.
 
-The Tempo URL is auto-discovered from the server's /health endpoint when
-OTEL_EXPORTER_OTLP_ENDPOINT is configured on the server. Override with
---tempo-url or the MEMORY_TEMPO_URL environment variable.`,
+Traces are proxied through the configured --server endpoint so no direct
+access to Tempo is required.`,
 }
 
 var tracesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List recent traces",
-	Long:  "List recent traces from Tempo (default: last 1 hour, up to 20 results).",
+	Long:  "List recent traces (default: last 1 hour, up to 20 results).",
 	RunE:  runTracesList,
 }
 
@@ -132,71 +129,37 @@ var tracesGetCmd = &cobra.Command{
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-var cachedTempoURL string
-
-func tempoURL() string {
-	if tracesTempoURL != "" {
-		return strings.TrimRight(tracesTempoURL, "/")
-	}
-	if v := os.Getenv("MEMORY_TEMPO_URL"); v != "" {
-		return strings.TrimRight(v, "/")
-	}
-	// Auto-discover from server health endpoint
-	if cachedTempoURL != "" {
-		return cachedTempoURL
-	}
-	if u := tempoURLFromServer(serverURL); u != "" {
-		cachedTempoURL = u
-		return cachedTempoURL
-	}
-	return "http://localhost:3200"
-}
-
-// tempoURLFromServer calls GET /health on the configured server and returns
-// the Tempo query URL if the server exposes one.
-func tempoURLFromServer(srv string) string {
-	srvURL := strings.TrimRight(srv, "/")
-	if srvURL == "" {
-		return ""
-	}
-	resp, err := http.Get(srvURL + "/health") //nolint:gosec
+// tracesGet calls the server's Tempo proxy at /api/traces<path> with auth.
+func tracesGet(cmd *cobra.Command, path string, params url.Values) ([]byte, error) {
+	c, err := getClient(cmd)
 	if err != nil {
-		return ""
+		return nil, fmt.Errorf("cannot initialise client: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-	var h struct {
-		Tracing *struct {
-			TempoURL string `json:"tempo_url"`
-		} `json:"tracing"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
-		return ""
-	}
-	if h.Tracing != nil && h.Tracing.TempoURL != "" {
-		return strings.TrimRight(h.Tracing.TempoURL, "/")
-	}
-	return ""
-}
-
-func tempoGet(path string, params url.Values) ([]byte, error) {
-	u := tempoURL() + path
+	u := strings.TrimRight(c.BaseURL(), "/") + "/api/traces" + path
 	if len(params) > 0 {
 		u += "?" + params.Encode()
 	}
-	resp, err := http.Get(u) //nolint:gosec
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
 	if err != nil {
-		return nil, fmt.Errorf("cannot reach Tempo at %s: %w\nIs Tempo running? Check that OTEL_EXPORTER_OTLP_ENDPOINT is set on the server.", u, err)
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	if auth := c.AuthorizationHeader(); auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reach server traces endpoint at %s: %w", u, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return nil, fmt.Errorf("tracing is not enabled on the server (OTEL_EXPORTER_OTLP_ENDPOINT not configured)")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Tempo returned HTTP %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return body, nil
 }
@@ -279,13 +242,13 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 		params.Set("q", q)
 	}
 
-	body, err := tempoGet("/api/search", params)
+	body, err := tracesGet(cmd, "/search", params)
 	if err != nil {
 		return err
 	}
 	var resp tempoSearchResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return fmt.Errorf("unexpected Tempo response: %w", err)
+		return fmt.Errorf("unexpected response: %w", err)
 	}
 	fmt.Printf("Recent traces (last %s, limit %d)\n\n", tracesListSince, tracesListLimit)
 	printTraceTable(resp.Traces)
@@ -319,7 +282,7 @@ func runTracesSearch(cmd *cobra.Command, _ []string) error {
 		params.Set("q", q)
 	}
 
-	body, err := tempoGet("/api/search", params)
+	body, err := tracesGet(cmd, "/search", params)
 	if err != nil {
 		return err
 	}
@@ -337,16 +300,16 @@ func runTracesSearch(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func runTracesGet(_ *cobra.Command, args []string) error {
+func runTracesGet(cmd *cobra.Command, args []string) error {
 	traceID := args[0]
-	body, err := tempoGet("/api/traces/"+traceID, nil)
+	body, err := tracesGet(cmd, "/"+traceID, nil)
 	if err != nil {
 		return err
 	}
 
 	var resp otlpTraceResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return fmt.Errorf("unexpected Tempo response: %w", err)
+		return fmt.Errorf("unexpected response: %w", err)
 	}
 
 	// Collect all spans
@@ -417,9 +380,6 @@ func runTracesGet(_ *cobra.Command, args []string) error {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 func init() {
-	// Persistent: tempo URL applies to all subcommands
-	tracesCmd.PersistentFlags().StringVar(&tracesTempoURL, "tempo-url", "", "Tempo query API URL (default: $MEMORY_TEMPO_URL or http://localhost:3200)")
-
 	// list flags
 	tracesListCmd.Flags().StringVar(&tracesListSince, "since", "1h", "Show traces from the last duration (e.g. 30m, 2h, 24h)")
 	tracesListCmd.Flags().IntVar(&tracesListLimit, "limit", 20, "Maximum number of traces to return")

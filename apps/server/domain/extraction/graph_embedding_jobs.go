@@ -304,6 +304,26 @@ func (s *GraphEmbeddingJobsService) MarkFailed(ctx context.Context, id string, j
 	return nil
 }
 
+// MarkPermanentlyFailed marks a job as failed without scheduling a retry.
+// Use this for terminal errors where retrying will never succeed (e.g. the
+// referenced object has been deleted).
+func (s *GraphEmbeddingJobsService) MarkPermanentlyFailed(ctx context.Context, id string, jobErr error) error {
+	errorMessage := truncateError(jobErr.Error())
+	_, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+		SET status = 'failed',
+			last_error = ?,
+			updated_at = now()
+		WHERE id = ?`,
+		errorMessage, id).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("mark permanently failed: %w", err)
+	}
+	s.log.Warn("graph embedding job permanently failed (no retry)",
+		slog.String("job_id", id),
+		slog.String("error", errorMessage))
+	return nil
+}
+
 // RecoverStaleJobs recovers jobs stuck in 'processing' status.
 // This can happen when the server restarts while jobs are being processed.
 func (s *GraphEmbeddingJobsService) RecoverStaleJobs(ctx context.Context, staleThresholdMinutes int) (int, error) {

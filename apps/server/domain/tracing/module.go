@@ -22,8 +22,10 @@ import (
 // It installs a TracerProvider (OTLP or no-op) and registers the Echo middleware.
 var Module = fx.Module("tracing",
 	fx.Provide(NewTracerProvider),
+	fx.Provide(NewHandler),
 	fx.Invoke(RegisterTracingLifecycle),
 	fx.Invoke(RegisterEchoMiddleware),
+	fx.Invoke(RegisterRoutes),
 )
 
 // tracerProviderResult is returned by NewTracerProvider.

@@ -215,6 +215,7 @@ func (w *GraphRelationshipEmbeddingWorker) processBatch(ctx context.Context) err
 func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *GraphRelationshipEmbeddingJob) error {
 	ctx, span := tracing.Start(ctx, "extraction.relationship_embedding",
 		attribute.String("emergent.job.id", job.ID),
+		attribute.String("emergent.relationship.id", job.RelationshipID),
 	)
 	defer span.End()
 
@@ -243,9 +244,10 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 		relErr := fmt.Errorf("relationship not found: %s", job.RelationshipID)
 		span.RecordError(relErr)
 		span.SetStatus(codes.Error, relErr.Error())
-		markErr := w.jobs.MarkFailed(ctx, job.ID, fmt.Errorf("relationship_missing"))
+		// Terminal failure — the relationship is gone, don't retry
+		markErr := w.jobs.MarkPermanentlyFailed(ctx, job.ID, fmt.Errorf("relationship_missing"))
 		if markErr != nil {
-			w.log.Error("failed to mark rel embedding job as failed", slog.String("job_id", job.ID), slog.String("error", markErr.Error()))
+			w.log.Error("failed to mark rel embedding job as permanently failed", slog.String("job_id", job.ID), slog.String("error", markErr.Error()))
 		}
 		w.incrementFailure()
 		return relErr
@@ -268,7 +270,12 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	// per-project LLM provider configuration (e.g. Vertex AI credentials).
 	if rel.ProjectID != "" {
 		ctx = auth.ContextWithProjectID(ctx, rel.ProjectID)
-		span.SetAttributes(attribute.String("emergent.project.id", rel.ProjectID))
+		span.SetAttributes(
+			attribute.String("emergent.project.id", rel.ProjectID),
+			attribute.String("emergent.relationship.type", rel.Type),
+			attribute.String("emergent.relationship.src_name", rel.SrcName),
+			attribute.String("emergent.relationship.dst_name", rel.DstName),
+		)
 	}
 
 	embeddingStartTime := time.Now()
@@ -327,6 +334,14 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	}
 
 	totalDurationMs := time.Since(startTime).Milliseconds()
+
+	span.SetAttributes(
+		attribute.Int("emergent.embedding.text_length", len(text)),
+		attribute.Int("emergent.embedding.dims", len(result.Embedding)),
+		attribute.Int64("emergent.embedding.duration_ms", embeddingDurationMs),
+		attribute.Int64("emergent.total_duration_ms", totalDurationMs),
+	)
+
 	w.log.Debug("generated embedding for graph relationship",
 		slog.String("relationship_id", rel.ID),
 		slog.String("type", rel.Type),
