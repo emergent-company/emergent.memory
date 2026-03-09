@@ -57,7 +57,123 @@ The built-in server exposes tools including:
 
 ### Brave Search integration
 
-The built-in server includes a web-search tool when the environment variable `BRAVE_SEARCH_API_KEY` is set. When configured, agents gain access to a `web_search` tool backed by the Brave Search API.
+The built-in server includes a `brave_web_search` tool backed by the Brave Search API. The API key can be set globally (via environment variable) or overridden per-org or per-project — see [Built-in tool configuration](#built-in-tool-configuration) below.
+
+---
+
+## Built-in tool configuration
+
+Built-in tools can be enabled/disabled and configured at three levels. The most specific level wins:
+
+```
+project setting  →  org default  →  global env var
+```
+
+If a project has no explicit setting, it inherits from the org default. If neither is set, the global environment variable is used.
+
+### Available built-in tools
+
+| Tool | Env var (global fallback) | Config field |
+|---|---|---|
+| `brave_web_search` | `BRAVE_SEARCH_API_KEY` | `api_key` |
+
+### Project-level configuration
+
+List the builtin server and its tools for your project:
+
+```bash
+# 1. Find the builtin server ID (auto-created on first list)
+curl "https://api.dev.emergent-company.ai/api/admin/mcp-servers?projectId=<projectId>" \
+  -H "Authorization: Bearer <token>"
+# → find the entry with "type": "builtin"
+
+# 2. List its tools (includes inheritedFrom field)
+curl https://api.dev.emergent-company.ai/api/admin/mcp-servers/<builtinServerId>/tools \
+  -H "Authorization: Bearer <token>"
+```
+
+Each tool in the response includes an `inheritedFrom` field: `"project"`, `"org"`, or `"global"`, indicating where the current effective setting comes from.
+
+**Enable/disable a built-in tool at project level:**
+
+```bash
+curl -X PATCH "https://api.dev.emergent-company.ai/api/admin/mcp-servers/<builtinServerId>/tools/<toolId>" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+```
+
+**Set a per-project API key for `brave_web_search`:**
+
+```bash
+curl -X PATCH "https://api.dev.emergent-company.ai/api/admin/mcp-servers/<builtinServerId>/tools/<toolId>" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "enabled": true,
+    "config": { "api_key": "BSA..." }
+  }'
+```
+
+Once set, this project's agent runs use this API key instead of the global `BRAVE_SEARCH_API_KEY`.
+
+### Org-level defaults
+
+Org defaults apply to all projects in the org that have no project-level override.
+
+**List current org defaults:**
+
+```bash
+curl https://api.dev.emergent-company.ai/api/admin/orgs/<orgId>/tool-settings \
+  -H "Authorization: Bearer <token>"
+```
+
+**Set an org default (enable + API key):**
+
+```bash
+curl -X PUT "https://api.dev.emergent-company.ai/api/admin/orgs/<orgId>/tool-settings/brave_web_search" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "enabled": true,
+    "config": { "api_key": "BSA..." }
+  }'
+```
+
+**Disable `brave_web_search` for all projects in the org by default:**
+
+```bash
+curl -X PUT "https://api.dev.emergent-company.ai/api/admin/orgs/<orgId>/tool-settings/brave_web_search" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+```
+
+**Remove an org default** (projects fall back to the global env var):
+
+```bash
+curl -X DELETE "https://api.dev.emergent-company.ai/api/admin/orgs/<orgId>/tool-settings/brave_web_search" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Inheritance example
+
+Suppose you want `brave_web_search` enabled for most projects but one project should use a different API key:
+
+```
+Global env: BRAVE_SEARCH_API_KEY=BSA-global-key
+
+Org default: enabled=true, api_key=BSA-org-key      ← applies to all projects by default
+  Project A: (no override)                          → uses org key (inheritedFrom: "org")
+  Project B: api_key=BSA-project-b-key             → uses project B key (inheritedFrom: "project")
+  Project C: enabled=false                          → tool disabled for this project
+```
+
+### UI
+
+The **MCP Integration** settings page (Project Settings → Integrations → MCP Integration) has a Built-in Tools section where you can toggle tools and set config fields for the current project.
+
+The **Tool Defaults** page (Project Settings → Organization → Tool Defaults) lets org admins set org-wide defaults for all built-in tools.
 
 ---
 
