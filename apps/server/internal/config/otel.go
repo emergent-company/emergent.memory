@@ -20,11 +20,10 @@ func (c OtelConfig) Enabled() bool {
 	return c.ExporterEndpoint != ""
 }
 
-// ResolvedTempoURL returns the Tempo query URL to advertise to clients.
-// Uses OTEL_TEMPO_URL if set, otherwise derives it from OTEL_EXPORTER_OTLP_ENDPOINT.
-func (c OtelConfig) ResolvedTempoURL() string {
-	if c.TempoURL != "" {
-		return c.TempoURL
-	}
+// InternalTempoQueryURL returns the Tempo query URL reachable from within the
+// server process (e.g. inside the Docker network). Derived from the exporter
+// endpoint by substituting the ingest port (4318) for the query port (3200).
+// This is used by the server-side Tempo proxy — never exposed to clients.
+func (c OtelConfig) InternalTempoQueryURL() string {
 	return strings.Replace(c.ExporterEndpoint, ":4318", ":3200", 1)
 }

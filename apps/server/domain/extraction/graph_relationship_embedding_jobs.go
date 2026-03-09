@@ -165,6 +165,26 @@ func (s *GraphRelationshipEmbeddingJobsService) MarkFailed(ctx context.Context, 
 	return err
 }
 
+// MarkPermanentlyFailed marks a job as failed without scheduling a retry.
+// Use this for terminal errors where retrying will never succeed (e.g. the
+// referenced relationship has been deleted).
+func (s *GraphRelationshipEmbeddingJobsService) MarkPermanentlyFailed(ctx context.Context, jobID string, jobErr error) error {
+	_, err := s.db.NewUpdate().
+		TableExpr("kb.graph_relationship_embedding_jobs").
+		Set("status = 'failed'").
+		Set("last_error = ?", jobErr.Error()).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", jobID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("mark rel embedding permanently failed: %w", err)
+	}
+	s.log.Warn("relationship embedding job permanently failed (no retry)",
+		slog.String("job_id", jobID),
+		slog.String("error", jobErr.Error()))
+	return nil
+}
+
 // RecoverStaleJobs resets processing jobs that appear stuck (started > 10 minutes ago).
 func (s *GraphRelationshipEmbeddingJobsService) RecoverStaleJobs(ctx context.Context, limit int) (int, error) {
 	staleThreshold := time.Now().Add(-10 * time.Minute)
