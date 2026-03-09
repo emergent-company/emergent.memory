@@ -176,13 +176,6 @@ func formatDuration(ms float64) string {
 	return fmt.Sprintf("%.2fs", ms/1000)
 }
 
-func shortTraceID(id string) string {
-	if len(id) > 16 {
-		return id[:16] + "…"
-	}
-	return id
-}
-
 func nanoToTime(nano string) time.Time {
 	n, _ := strconv.ParseInt(nano, 10, 64)
 	return time.Unix(0, n)
