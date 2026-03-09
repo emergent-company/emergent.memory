@@ -1013,6 +1013,8 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
 	case "get_agent_run_tool_calls":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "get_run_status":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
 
 	// Agent Catalog tools
 	case "list_available_agents":
@@ -4259,6 +4261,8 @@ func (s *Service) delegateAgentTool(ctx context.Context, projectID, toolName str
 		return s.agentToolHandler.ExecuteGetAgentRunMessages(ctx, projectID, args)
 	case "get_agent_run_tool_calls":
 		return s.agentToolHandler.ExecuteGetAgentRunToolCalls(ctx, projectID, args)
+	case "get_run_status":
+		return s.agentToolHandler.ExecuteGetRunStatus(ctx, projectID, args)
 
 	// Agent Catalog
 	case "list_available_agents":

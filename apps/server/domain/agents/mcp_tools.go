@@ -500,14 +500,44 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 	// Look up the agent definition for this agent (if one exists)
 	agentDef, _ := h.repo.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
 
-	// Build the user message
+	// Build the user message from structured input
+	// Accepts: message as a JSON object { instructions, task_id } or legacy plain string
 	userMessage := "Execute agent tasks"
-	if msg, ok := args["message"].(string); ok && msg != "" {
-		userMessage = msg
+	var taskID string
+	if msgObj, ok := args["message"].(map[string]any); ok {
+		if instr, ok := msgObj["instructions"].(string); ok && instr != "" {
+			userMessage = instr
+		}
+		if tid, ok := msgObj["task_id"].(string); ok && tid != "" {
+			taskID = tid
+		}
+	} else if msgStr, ok := args["message"].(string); ok && msgStr != "" {
+		// Legacy plain-string fallback
+		userMessage = msgStr
 	} else if agent.Prompt != nil && *agent.Prompt != "" {
 		userMessage = *agent.Prompt
 	}
+	// Prepend task_id hint when present
+	if taskID != "" {
+		userMessage = fmt.Sprintf("[task_id: %s] %s", taskID, userMessage)
+	}
 
+	// Dispatch routing: queued vs sync
+	if agentDef != nil && agentDef.DispatchMode == DispatchModeQueued {
+		// Queued branch: create run + job atomically and return immediately
+		run, err := h.repo.CreateRunQueued(ctx, agent.ID, 1)
+		if err != nil {
+			return errResult("failed to enqueue agent run: " + err.Error())
+		}
+		return wrapResult(map[string]any{
+			"success": true,
+			"run_id":  run.ID,
+			"status":  string(RunStatusQueued),
+			"message": "Agent run queued; use get_run_status to poll for completion",
+		})
+	}
+
+	// Sync branch (default): block until execution completes
 	result, err := h.executor.Execute(ctx, ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: agentDef,
@@ -591,6 +621,36 @@ func (h *MCPToolHandler) ExecuteGetAgentRun(ctx context.Context, projectID strin
 	}
 
 	return wrapResult(run.ToDTO())
+}
+
+// ExecuteGetRunStatus returns the status of a queued or running agent run.
+// Intended for polling after trigger_agent returns status=queued.
+func (h *MCPToolHandler) ExecuteGetRunStatus(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	runID, _ := args["run_id"].(string)
+	if runID == "" {
+		return errResult("run_id is required")
+	}
+
+	run, err := h.repo.FindRunByIDForProject(ctx, runID, projectID)
+	if err != nil {
+		return errResult("failed to get run status: " + err.Error())
+	}
+	if run == nil {
+		return errResult(fmt.Sprintf("agent run not found: %s", runID))
+	}
+
+	result := map[string]any{
+		"run_id": run.ID,
+		"status": string(run.Status),
+	}
+	if run.ErrorMessage != nil && *run.ErrorMessage != "" {
+		result["error"] = *run.ErrorMessage
+	}
+	if len(run.Summary) > 0 {
+		result["summary"] = run.Summary
+	}
+
+	return wrapResult(result)
 }
 
 // ExecuteGetAgentRunMessages gets messages for an agent run.
@@ -977,7 +1037,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 		},
 		{
 			Name:        "trigger_agent",
-			Description: "Trigger an immediate run of an agent. Provide either agent_name (preferred) or agent_id (UUID). Optionally provide a custom message for this run. Returns the run ID and execution status.",
+			Description: "Trigger a run of an agent. Provide either agent_name (preferred) or agent_id (UUID). Optionally provide a structured message object with instructions and/or a task_id hint. For agents with dispatch_mode=queued, returns immediately with run_id and status=queued; use get_run_status to poll for completion. For sync agents, blocks until execution completes.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -990,8 +1050,8 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 						Description: "The UUID of the agent to trigger. Use agent_name instead when possible.",
 					},
 					"message": {
-						Type:        "string",
-						Description: "Optional custom message/instructions for this specific run",
+						Type:        "object",
+						Description: "Optional structured message for this run. Provide { \"instructions\": \"...\", \"task_id\": \"...\" }. Both fields are optional. task_id is an advisory hint. Alternatively, a plain string is also accepted for backward compatibility.",
 					},
 				},
 				Required: []string{},
@@ -1012,7 +1072,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 					"status": {
 						Type:        "string",
 						Description: "Filter by run status",
-						Enum:        []string{"running", "success", "skipped", "error", "paused", "cancelled"},
+						Enum:        []string{"queued", "running", "success", "skipped", "error", "paused", "cancelled"},
 					},
 					"limit": {
 						Type:        "integer",
@@ -1068,6 +1128,20 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 					"run_id": {
 						Type:        "string",
 						Description: "The UUID of the agent run",
+					},
+				},
+				Required: []string{"run_id"},
+			},
+		},
+		{
+			Name:        "get_run_status",
+			Description: "Poll the status of an agent run by ID. Intended for use after trigger_agent returns status=queued. Returns run_id, status, and optionally error/summary fields.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"run_id": {
+						Type:        "string",
+						Description: "The UUID of the agent run to poll",
 					},
 				},
 				Required: []string{"run_id"},

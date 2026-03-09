@@ -59,6 +59,7 @@ type AgentToolHandler interface {
 	ExecuteGetAgentRun(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteGetAgentRunMessages(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteGetAgentRunToolCalls(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetRunStatus(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 
 	// Agent Catalog
 	ExecuteListAvailableAgents(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)

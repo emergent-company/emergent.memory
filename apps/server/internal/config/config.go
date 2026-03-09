@@ -55,6 +55,10 @@ type Config struct {
 	// Agent workspace configuration
 	Workspace WorkspaceConfig
 
+	// Agent worker pool configuration
+	AgentWorkerPoolSize     int           `env:"AGENT_WORKER_POOL_SIZE" envDefault:"5"`
+	AgentWorkerPollInterval time.Duration `env:"AGENT_WORKER_POLL_INTERVAL" envDefault:"5s"`
+
 	// Brave Search API configuration
 	BraveSearch BraveSearchConfig
 

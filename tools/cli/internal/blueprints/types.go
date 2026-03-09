@@ -60,6 +60,7 @@ type AgentFile struct {
 	MaxSteps        *int           `json:"maxSteps"        yaml:"maxSteps"`
 	DefaultTimeout  *int           `json:"defaultTimeout"  yaml:"defaultTimeout"`
 	Visibility      string         `json:"visibility"      yaml:"visibility"`
+	DispatchMode    string         `json:"dispatchMode"    yaml:"dispatchMode"`
 	Config          map[string]any `json:"config"          yaml:"config"`
 	WorkspaceConfig map[string]any `json:"workspaceConfig" yaml:"workspaceConfig"`
 
