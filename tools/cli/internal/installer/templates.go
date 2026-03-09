@@ -160,6 +160,24 @@ func GetDockerComposeTemplateWithVersion(version string) string {
     networks:
       - memory
 
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: memory-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "127.0.0.1:3200:3200"
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:3200/ready']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - memory
+
   server:
     image: ` + serverImage + `
     container_name: memory-server
@@ -202,12 +220,16 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
       DB_AUTOINIT: 'true'
       SCOPES_DISABLED: 'true'
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_TEMPO_URL: ${OTEL_TEMPO_URL:-http://localhost:3200}
     depends_on:
       db:
         condition: service_healthy
       kreuzberg:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      tempo:
         condition: service_healthy
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:3002/health']
@@ -220,10 +242,44 @@ func GetDockerComposeTemplateWithVersion(version string) string {
 volumes:
   postgres_data:
   minio_data:
+  tempo_data:
   memory_cli_config:
 
 networks:
   memory:
+`
+}
+
+// GetTempoConfigTemplate returns the Grafana Tempo configuration file content.
+// Retention defaults to 720h (30 days); override with OTEL_RETENTION_HOURS in .env.
+func GetTempoConfigTemplate() string {
+	return `server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: ${OTEL_RETENTION_HOURS:-720}h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
 `
 }
 

@@ -198,6 +198,19 @@ func (i *Installer) WriteDockerCompose() error {
 	return nil
 }
 
+// WriteTempoConfig writes the Grafana Tempo configuration file.
+func (i *Installer) WriteTempoConfig() error {
+	tempoDir := filepath.Join(i.config.InstallDir, "docker", "tempo")
+	if err := os.MkdirAll(tempoDir, 0755); err != nil {
+		return fmt.Errorf("failed to create tempo directory: %w", err)
+	}
+	tempoPath := filepath.Join(tempoDir, "tempo.yaml")
+	if err := os.WriteFile(tempoPath, []byte(GetTempoConfigTemplate()), 0644); err != nil {
+		return fmt.Errorf("failed to write tempo.yaml: %w", err)
+	}
+	return nil
+}
+
 // WriteInitSQL writes the init.sql file for PostgreSQL initialization
 func (i *Installer) WriteInitSQL() error {
 	initPath := filepath.Join(i.config.InstallDir, "docker", "init.sql")
@@ -262,6 +275,9 @@ func (i *Installer) Install() error {
 		return err
 	}
 	if err := i.WriteInitSQL(); err != nil {
+		return err
+	}
+	if err := i.WriteTempoConfig(); err != nil {
 		return err
 	}
 	i.output.Success("Docker configuration created")
@@ -367,6 +383,11 @@ func (i *Installer) Upgrade(version string) error {
 	initPath := filepath.Join(i.config.InstallDir, "docker", "init.sql")
 	if err := os.WriteFile(initPath, []byte(GetInitSQLTemplate()), 0644); err != nil {
 		i.output.Warn("Could not update init.sql: %v", err)
+	}
+
+	// Regenerate tempo/tempo.yaml — ensures Tempo config is always present and up to date.
+	if err := i.WriteTempoConfig(); err != nil {
+		i.output.Warn("Could not update tempo/tempo.yaml: %v", err)
 	}
 
 	docker := NewDockerManager(i.config.InstallDir, i.output)
