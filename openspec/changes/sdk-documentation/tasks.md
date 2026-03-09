@@ -101,7 +101,7 @@
 
 ## 12. Verification
 
-- [ ] 12.1 Run `mkdocs serve` locally and manually navigate: home page, Go SDK quickstart, at least 3 reference pages, Swift SDK overview
+- [x] 12.1 Run `mkdocs serve` locally and manually navigate: home page, Go SDK quickstart, at least 3 reference pages, Swift SDK overview
 - [x] 12.2 Run `mkdocs build --strict` locally — confirm zero errors
 - [x] 12.3 Open PR against `main`; confirm `docs.yml` CI build-check passes (build-only, no deploy)
 - [x] 12.4 Confirm all 33 Go SDK reference pages are present under `docs/site/go-sdk/reference/`
