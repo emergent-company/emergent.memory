@@ -103,8 +103,9 @@ var tracesCmd = &cobra.Command{
 	Hidden: true,
 	Long: `Query OpenTelemetry traces stored in a local Grafana Tempo instance.
 
-Tempo must be running (docker compose --profile observability up tempo -d).
-Configure the Tempo URL via --tempo-url flag or MEMORY_TEMPO_URL env var.`,
+The Tempo URL is auto-discovered from the server's /health endpoint when
+OTEL_EXPORTER_OTLP_ENDPOINT is configured on the server. Override with
+--tempo-url or the MEMORY_TEMPO_URL environment variable.`,
 }
 
 var tracesListCmd = &cobra.Command{
@@ -131,6 +132,8 @@ var tracesGetCmd = &cobra.Command{
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+var cachedTempoURL string
+
 func tempoURL() string {
 	if tracesTempoURL != "" {
 		return strings.TrimRight(tracesTempoURL, "/")
@@ -138,7 +141,44 @@ func tempoURL() string {
 	if v := os.Getenv("MEMORY_TEMPO_URL"); v != "" {
 		return strings.TrimRight(v, "/")
 	}
+	// Auto-discover from server health endpoint
+	if cachedTempoURL != "" {
+		return cachedTempoURL
+	}
+	if u := tempoURLFromServer(serverURL); u != "" {
+		cachedTempoURL = u
+		return cachedTempoURL
+	}
 	return "http://localhost:3200"
+}
+
+// tempoURLFromServer calls GET /health on the configured server and returns
+// the Tempo query URL if the server exposes one.
+func tempoURLFromServer(srv string) string {
+	srvURL := strings.TrimRight(srv, "/")
+	if srvURL == "" {
+		return ""
+	}
+	resp, err := http.Get(srvURL + "/health") //nolint:gosec
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var h struct {
+		Tracing *struct {
+			TempoURL string `json:"tempo_url"`
+		} `json:"tracing"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
+		return ""
+	}
+	if h.Tracing != nil && h.Tracing.TempoURL != "" {
+		return strings.TrimRight(h.Tracing.TempoURL, "/")
+	}
+	return ""
 }
 
 func tempoGet(path string, params url.Values) ([]byte, error) {
@@ -148,7 +188,7 @@ func tempoGet(path string, params url.Values) ([]byte, error) {
 	}
 	resp, err := http.Get(u) //nolint:gosec
 	if err != nil {
-		return nil, fmt.Errorf("cannot reach Tempo at %s: %w\nIs Tempo running? docker compose --profile observability up tempo -d", u, err)
+		return nil, fmt.Errorf("cannot reach Tempo at %s: %w\nIs Tempo running? Check that OTEL_EXPORTER_OTLP_ENDPOINT is set on the server.", u, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
