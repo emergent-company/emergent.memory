@@ -98,13 +98,13 @@ apps/server/tmp/
 *.dll
 *.so
 *.dylib
-server
-extraction-bench
-imdb-bench
-seed-imdb
-seed-lovdata
-imdb-benchmark-runner
-lovdata-benchmark-runner
+/server
+/extraction-bench
+/imdb-bench
+/seed-imdb
+/seed-lovdata
+/imdb-benchmark-runner
+/lovdata-benchmark-runner
 
 # Temporary Go scripts and patches
 fix_*.go

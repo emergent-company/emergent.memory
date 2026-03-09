@@ -109,8 +109,45 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 		builtinTools: make(map[string]bool),
 	}
 
-	// 1. Built-in MCP tools from domain/mcp/service.go
-	if tp.mcpService != nil {
+	// 1. Built-in MCP tools — load from DB (respects per-project enabled flag).
+	//    EnsureBuiltinServer is called inside GetEnabledBuiltinToolsForProject so
+	//    tools are always present in the DB before we query them.
+	if tp.registryService != nil {
+		builtinTools, err := tp.registryService.GetEnabledBuiltinToolsForProject(context.Background(), projectID)
+		if err != nil {
+			tp.log.Warn("failed to load builtin tools from DB, falling back to mcpService",
+				slog.String("project_id", projectID),
+				slog.String("error", err.Error()),
+			)
+			// Fallback: load all builtin tools unconditionally from mcp.Service
+			if tp.mcpService != nil {
+				builtinDefs := tp.mcpService.GetToolDefinitions()
+				for _, td := range builtinDefs {
+					cache.toolDefs[td.Name] = td
+					cache.toolNames = append(cache.toolNames, td.Name)
+					cache.builtinTools[td.Name] = true
+				}
+			}
+		} else {
+			for _, bt := range builtinTools {
+				td := mcp.ToolDefinition{
+					Name:        bt.ToolName,
+					InputSchema: mapToInputSchema(bt.InputSchema),
+				}
+				if bt.Description != nil {
+					td.Description = *bt.Description
+				}
+				cache.toolDefs[bt.ToolName] = td
+				cache.toolNames = append(cache.toolNames, bt.ToolName)
+				cache.builtinTools[bt.ToolName] = true
+			}
+			tp.log.Debug("loaded built-in MCP tools from DB into pool",
+				slog.String("project_id", projectID),
+				slog.Int("count", len(builtinTools)),
+			)
+		}
+	} else if tp.mcpService != nil {
+		// No registry service — fall back to unconditional mcp.Service load
 		builtinDefs := tp.mcpService.GetToolDefinitions()
 		for _, td := range builtinDefs {
 			cache.toolDefs[td.Name] = td

@@ -322,6 +322,12 @@ func (s *Service) ListTools(ctx context.Context, serverID string) ([]*MCPServerT
 
 // ToggleTool enables or disables a specific tool.
 func (s *Service) ToggleTool(ctx context.Context, toolID string, enabled bool) error {
+	return s.UpdateTool(ctx, toolID, &enabled, nil)
+}
+
+// UpdateTool updates enabled and/or config for a tool and invalidates the tool pool cache.
+// Pass nil for fields that should not be changed.
+func (s *Service) UpdateTool(ctx context.Context, toolID string, enabled *bool, config *map[string]any) error {
 	tool, err := s.repo.FindToolByID(ctx, toolID)
 	if err != nil {
 		return fmt.Errorf("fetching tool: %w", err)
@@ -330,7 +336,7 @@ func (s *Service) ToggleTool(ctx context.Context, toolID string, enabled bool) e
 		return fmt.Errorf("tool not found")
 	}
 
-	if err := s.repo.UpdateToolEnabled(ctx, toolID, enabled); err != nil {
+	if err := s.repo.UpdateTool(ctx, toolID, enabled, config); err != nil {
 		return err
 	}
 
@@ -391,6 +397,16 @@ func (s *Service) SyncServerTools(ctx context.Context, serverID string, discover
 // (non-builtin) servers for a project. Used by ToolPool.buildCache().
 func (s *Service) GetEnabledToolsForProject(ctx context.Context, projectID string) ([]*EnabledServerTool, error) {
 	return s.repo.FindAllEnabledTools(ctx, projectID)
+}
+
+// GetEnabledBuiltinToolsForProject calls EnsureBuiltinServer (so all tools exist in DB)
+// then returns only the enabled builtin tools for a project from the DB.
+// This lets per-project enable/disable overrides be honoured by ToolPool.
+func (s *Service) GetEnabledBuiltinToolsForProject(ctx context.Context, projectID string) ([]*EnabledServerTool, error) {
+	if err := s.EnsureBuiltinServer(ctx, projectID); err != nil {
+		return nil, fmt.Errorf("ensuring builtin server: %w", err)
+	}
+	return s.repo.FindAllEnabledBuiltinTools(ctx, projectID)
 }
 
 // --- External Tool Proxy ---
@@ -831,4 +847,77 @@ func schemaToMap(schema mcp.InputSchema) map[string]any {
 		return map[string]any{}
 	}
 	return result
+}
+
+// ============================================================================
+// Tool Settings Inheritance Resolver
+// ============================================================================
+
+// ResolveBuiltinToolSettings resolves the effective enabled/config for a builtin
+// tool for a given project, applying three-tier inheritance:
+//
+//  1. Project-level override (kb.mcp_server_tools for the builtin server)
+//  2. Org-level default (kb.org_tool_settings)
+//  3. Global env fallback — enabled=true, config=nil
+//
+// The returned source is one of "project", "org", or "global".
+func (s *Service) ResolveBuiltinToolSettings(ctx context.Context, projectID, toolName string) (enabled bool, config map[string]any, source string, err error) {
+	// 1. Project level
+	projectTool, err := s.repo.FindBuiltinToolByProjectAndName(ctx, projectID, toolName)
+	if err != nil {
+		return false, nil, "", fmt.Errorf("resolve builtin tool project level: %w", err)
+	}
+	if projectTool != nil {
+		// A project-level row exists — check if config is explicitly set
+		if projectTool.Config != nil {
+			return projectTool.Enabled, projectTool.Config, "project", nil
+		}
+		// Row exists but no config override — check org for config, but use project enabled state
+		orgID, err := s.repo.FindOrgIDByProjectID(ctx, projectID)
+		if err != nil {
+			s.log.Warn("failed to find org for project, using project row only",
+				slog.String("projectID", projectID), slog.String("error", err.Error()))
+			return projectTool.Enabled, nil, "project", nil
+		}
+		if orgID != "" {
+			orgSetting, err := s.repo.FindOrgToolSetting(ctx, orgID, toolName)
+			if err != nil {
+				s.log.Warn("failed to find org tool setting",
+					slog.String("orgID", orgID), slog.String("error", err.Error()))
+			}
+			if orgSetting != nil && orgSetting.Config != nil {
+				return projectTool.Enabled, orgSetting.Config, "project", nil
+			}
+		}
+		return projectTool.Enabled, nil, "project", nil
+	}
+
+	// 2. Org level
+	orgID, err := s.repo.FindOrgIDByProjectID(ctx, projectID)
+	if err != nil {
+		s.log.Warn("failed to find org for project, falling back to global",
+			slog.String("projectID", projectID), slog.String("error", err.Error()))
+		return true, nil, "global", nil
+	}
+	if orgID != "" {
+		orgSetting, err := s.repo.FindOrgToolSetting(ctx, orgID, toolName)
+		if err != nil {
+			s.log.Warn("failed to find org tool setting, falling back to global",
+				slog.String("orgID", orgID), slog.String("error", err.Error()))
+		}
+		if orgSetting != nil {
+			return orgSetting.Enabled, orgSetting.Config, "org", nil
+		}
+	}
+
+	// 3. Global fallback
+	return true, nil, "global", nil
+}
+
+// ResolveBuiltinToolConfig is a convenience wrapper that returns only the
+// effective config map and source for a builtin tool in a project.
+// Used by tool executors that only need config (e.g. api_key injection).
+func (s *Service) ResolveBuiltinToolConfig(ctx context.Context, projectID, toolName string) (config map[string]any, source string, err error) {
+	_, cfg, src, err := s.ResolveBuiltinToolSettings(ctx, projectID, toolName)
+	return cfg, src, err
 }

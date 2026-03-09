@@ -18,8 +18,9 @@ const (
 
 // Service handles business logic for organizations
 type Service struct {
-	repo *Repository
-	log  *slog.Logger
+	repo                *Repository
+	log                 *slog.Logger
+	toolPoolInvalidator ToolPoolInvalidator
 }
 
 // NewService creates a new organization service
@@ -28,6 +29,12 @@ func NewService(repo *Repository, log *slog.Logger) *Service {
 		repo: repo,
 		log:  log.With(logger.Scope("orgs.svc")),
 	}
+}
+
+// SetToolPoolInvalidator sets the callback used to invalidate the ToolPool cache
+// when org-level tool settings change. Called from fx wiring after both services are created.
+func (s *Service) SetToolPoolInvalidator(inv ToolPoolInvalidator) {
+	s.toolPoolInvalidator = inv
 }
 
 // List returns all organizations the user is a member of

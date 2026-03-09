@@ -58,6 +58,7 @@ type MCPServerTool struct {
 	Description *string        `bun:"description" json:"description,omitempty"`
 	InputSchema map[string]any `bun:"input_schema,type:jsonb,default:'{}'" json:"inputSchema"`
 	Enabled     bool           `bun:"enabled,notnull,default:true" json:"enabled"`
+	Config      map[string]any `bun:"config,type:jsonb" json:"config,omitempty"`
 	CreatedAt   time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 
 	// Relations
@@ -85,13 +86,15 @@ type MCPServerDTO struct {
 
 // MCPServerToolDTO is the response DTO for an MCP server tool.
 type MCPServerToolDTO struct {
-	ID          string         `json:"id"`
-	ServerID    string         `json:"serverId"`
-	ToolName    string         `json:"toolName"`
-	Description *string        `json:"description,omitempty"`
-	InputSchema map[string]any `json:"inputSchema,omitempty"`
-	Enabled     bool           `json:"enabled"`
-	CreatedAt   time.Time      `json:"createdAt"`
+	ID            string         `json:"id"`
+	ServerID      string         `json:"serverId"`
+	ToolName      string         `json:"toolName"`
+	Description   *string        `json:"description,omitempty"`
+	InputSchema   map[string]any `json:"inputSchema,omitempty"`
+	Enabled       bool           `json:"enabled"`
+	Config        map[string]any `json:"config,omitempty"`
+	InheritedFrom string         `json:"inheritedFrom,omitempty"` // "project", "org", or "global"
+	CreatedAt     time.Time      `json:"createdAt"`
 }
 
 // MCPServerDetailDTO includes the server and its tools.
@@ -123,9 +126,10 @@ type UpdateMCPServerDTO struct {
 	Headers map[string]any `json:"headers"`
 }
 
-// UpdateMCPServerToolDTO is the request DTO for toggling a tool.
+// UpdateMCPServerToolDTO is the request DTO for toggling a tool and/or updating its config.
 type UpdateMCPServerToolDTO struct {
-	Enabled *bool `json:"enabled" validate:"required"`
+	Enabled *bool           `json:"enabled"`
+	Config  *map[string]any `json:"config,omitempty"`
 }
 
 // InstallFromRegistryDTO is the request DTO for installing a server from the official MCP registry.

@@ -950,7 +950,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 
 	// Web search tools
 	case "brave_web_search":
-		return s.executeBraveWebSearch(ctx, args)
+		return s.executeBraveWebSearch(ctx, projectID, args)
 
 	// Agent Definition tools
 	case "list_agent_definitions":

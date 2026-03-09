@@ -9,6 +9,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 	"github.com/emergent-company/emergent.memory/domain/workspace"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -35,6 +36,7 @@ var Module = fx.Module("agents",
 		registerAgentTriggers,
 		registerAgentToolHandler,
 		registerToolPoolInvalidator,
+		registerOrgToolPoolInvalidator,
 	),
 )
 
@@ -116,4 +118,10 @@ func registerAgentTriggers(lc fx.Lifecycle, ts *TriggerService) {
 // automatically invalidate the ToolPool cache for the affected project.
 func registerToolPoolInvalidator(registryService *mcpregistry.Service, toolPool *ToolPool) {
 	registryService.SetToolPoolInvalidator(toolPool)
+}
+
+// registerOrgToolPoolInvalidator injects the ToolPool into the orgs service
+// so that org-level tool setting changes automatically invalidate the ToolPool cache.
+func registerOrgToolPoolInvalidator(orgService *orgs.Service, toolPool *ToolPool) {
+	orgService.SetToolPoolInvalidator(toolPool)
 }
