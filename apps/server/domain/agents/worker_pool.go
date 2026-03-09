@@ -202,6 +202,7 @@ func (p *WorkerPool) reenqueueParent(ctx context.Context, log *slog.Logger, run 
 
 	_, err = p.repo.CreateRunQueued(ctx, parentRun.AgentID, 1, CreateRunQueuedOptions{
 		TriggerMessage: &triggerMsg,
+		ParentRunID:    parentRun.ParentRunID, // propagate grandparent so the chain continues
 	})
 	if err != nil {
 		log.Warn("failed to re-enqueue parent run",
