@@ -588,6 +588,7 @@ func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOpt
 		StepCount:       opts.InitialStepCount,
 		TriggerSource:   opts.TriggerSource,
 		TriggerMetadata: opts.TriggerMetadata,
+		TriggerMessage:  opts.TriggerMessage,
 	}
 	_, err := r.db.NewInsert().
 		Model(run).
@@ -1077,12 +1078,20 @@ func (r *Repository) FindADKSessionByIDForProject(ctx context.Context, sessionID
 
 // CreateRunQueued creates an agent_runs row with status=queued and an
 // agent_run_jobs row in the same transaction. Returns the new run.
-func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAttempts int) (*AgentRun, error) {
+func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAttempts int, opts ...CreateRunQueuedOptions) (*AgentRun, error) {
+	var parentRunID *string
+	var triggerMessage *string
+	if len(opts) > 0 {
+		parentRunID = opts[0].ParentRunID
+		triggerMessage = opts[0].TriggerMessage
+	}
 	run := &AgentRun{
-		AgentID:   agentID,
-		Status:    RunStatusQueued,
-		StartedAt: time.Now(),
-		Summary:   make(map[string]any),
+		AgentID:        agentID,
+		Status:         RunStatusQueued,
+		StartedAt:      time.Now(),
+		Summary:        make(map[string]any),
+		ParentRunID:    parentRunID,
+		TriggerMessage: triggerMessage,
 	}
 
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {

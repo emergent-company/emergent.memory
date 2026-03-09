@@ -184,10 +184,11 @@ type AgentRun struct {
 	SessionStatus SessionStatus `bun:"session_status,notnull,default:'active'" json:"sessionStatus"`
 
 	// Multi-agent coordination fields
-	ParentRunID *string `bun:"parent_run_id,type:uuid" json:"parentRunId,omitempty"`
-	StepCount   int     `bun:"step_count,notnull,default:0" json:"stepCount"`
-	MaxSteps    *int    `bun:"max_steps" json:"maxSteps,omitempty"`
-	ResumedFrom *string `bun:"resumed_from,type:uuid" json:"resumedFrom,omitempty"`
+	ParentRunID    *string `bun:"parent_run_id,type:uuid" json:"parentRunId,omitempty"`
+	StepCount      int     `bun:"step_count,notnull,default:0" json:"stepCount"`
+	MaxSteps       *int    `bun:"max_steps" json:"maxSteps,omitempty"`
+	ResumedFrom    *string `bun:"resumed_from,type:uuid" json:"resumedFrom,omitempty"`
+	TriggerMessage *string `bun:"trigger_message" json:"triggerMessage,omitempty"`
 
 	// Relations
 	Agent     *Agent    `bun:"rel:belongs-to,join:agent_id=id" json:"-"`
@@ -203,6 +204,13 @@ type CreateRunOptions struct {
 	InitialStepCount int // for resumed runs, start from prior run's step_count
 	TriggerSource    *string
 	TriggerMetadata  map[string]any
+	TriggerMessage   *string // optional message injected as user message on wakeup
+}
+
+// CreateRunQueuedOptions holds optional parameters for CreateRunQueued.
+type CreateRunQueuedOptions struct {
+	ParentRunID    *string // parent run to re-enqueue when this run completes
+	TriggerMessage *string // message injected as user message when worker picks up this run
 }
 
 // AgentProcessingLog tracks which graph objects have been processed by reaction agents

@@ -53,6 +53,24 @@ type StreamEvent struct {
 // When set on ExecuteRequest, it enables real-time streaming of text tokens and tool calls.
 type StreamCallback func(event StreamEvent)
 
+// callerRunIDKey is the context key used to propagate the calling agent's run ID
+// through the execution pipeline so that tool calls (e.g. trigger_agent) can
+// identify which run is making the request.
+type callerRunIDKey struct{}
+
+// contextWithCallerRunID stores the current run's ID in context so downstream
+// tool handlers can read it without needing it in their function signatures.
+func contextWithCallerRunID(ctx context.Context, runID string) context.Context {
+	return context.WithValue(ctx, callerRunIDKey{}, runID)
+}
+
+// callerRunIDFromContext retrieves the calling run's ID from context.
+// Returns empty string if not set.
+func callerRunIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(callerRunIDKey{}).(string)
+	return v
+}
+
 // ExecuteRequest defines the parameters for executing an agent.
 type ExecuteRequest struct {
 	Agent           *Agent
@@ -517,6 +535,11 @@ func (ae *AgentExecutor) runPipeline(
 ) (*ExecuteResult, error) {
 	// Identify the root session ID
 	sessionID := ae.getRootRunID(ctx, run)
+
+	// Inject the current run ID into context so downstream tools (e.g. trigger_agent)
+	// can propagate it as the parent_run_id when spawning child runs.
+	ctx = contextWithCallerRunID(ctx, run.ID)
+
 	// Apply timeout if specified
 	if req.Timeout != nil && *req.Timeout > 0 {
 		var cancel context.CancelFunc
