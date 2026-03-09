@@ -26,6 +26,14 @@ type MCPRegistryToolHandler interface {
 
 	// GetMCPRegistryToolDefinitions returns tool definitions for all MCP registry tools
 	GetMCPRegistryToolDefinitions() []ToolDefinition
+
+	// ResolveBuiltinToolSettings resolves the effective enabled/config for a builtin tool
+	// using three-tier inheritance: project → org → global.
+	// source is one of "project", "org", or "global".
+	ResolveBuiltinToolSettings(ctx context.Context, projectID, toolName string) (enabled bool, config map[string]any, source string, err error)
+
+	// ResolveBuiltinToolConfig resolves only the effective config map for a builtin tool.
+	ResolveBuiltinToolConfig(ctx context.Context, projectID, toolName string) (config map[string]any, source string, err error)
 }
 
 // AgentToolHandler is the interface for executing agent-related MCP tools.

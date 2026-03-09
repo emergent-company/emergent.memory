@@ -237,6 +237,37 @@ func (r *Repository) UpdateToolEnabled(ctx context.Context, id string, enabled b
 	return err
 }
 
+// UpdateToolConfig updates the config of a tool.
+func (r *Repository) UpdateToolConfig(ctx context.Context, id string, config map[string]any) error {
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.mcp_server_tools").
+		Set("config = ?", config).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+// UpdateTool updates both enabled and config for a tool atomically.
+// Pass nil for fields that should not be changed.
+func (r *Repository) UpdateTool(ctx context.Context, id string, enabled *bool, config *map[string]any) error {
+	q := r.db.NewUpdate().
+		Model((*MCPServerTool)(nil)).
+		Where("id = ?", id)
+
+	if enabled != nil {
+		q = q.Set("enabled = ?", *enabled)
+	}
+	if config != nil {
+		q = q.Set("config = ?", *config)
+	}
+	if enabled == nil && config == nil {
+		return nil // nothing to update
+	}
+
+	_, err := q.Exec(ctx)
+	return err
+}
+
 // DeleteToolsByServerID removes all tools for a server.
 func (r *Repository) DeleteToolsByServerID(ctx context.Context, serverID string) error {
 	_, err := r.db.NewDelete().
@@ -283,6 +314,7 @@ type EnabledServerTool struct {
 	ToolName    string         `bun:"tool_name"`
 	Description *string        `bun:"description"`
 	InputSchema map[string]any `bun:"input_schema"`
+	Config      map[string]any `bun:"config"`
 }
 
 // FindAllEnabledTools returns all enabled tools from enabled servers for a project.
@@ -297,11 +329,37 @@ func (r *Repository) FindAllEnabledTools(ctx context.Context, projectID string) 
 		ColumnExpr("mst.tool_name AS tool_name").
 		ColumnExpr("mst.description AS description").
 		ColumnExpr("mst.input_schema AS input_schema").
+		ColumnExpr("mst.config AS config").
 		Where("ms.project_id = ?", projectID).
 		Where("ms.enabled = true").
 		Where("mst.enabled = true").
 		Where("ms.type != ?", ServerTypeBuiltin). // exclude builtins — they come from mcp.Service
 		Order("ms.name ASC", "mst.tool_name ASC").
+		Scan(ctx, &tools)
+	if err != nil {
+		return nil, err
+	}
+	return tools, nil
+}
+
+// FindAllEnabledBuiltinTools returns all enabled builtin tools for a project.
+// Used by ToolPool.buildCache() to honour per-project enable/disable overrides.
+func (r *Repository) FindAllEnabledBuiltinTools(ctx context.Context, projectID string) ([]*EnabledServerTool, error) {
+	var tools []*EnabledServerTool
+	err := r.db.NewSelect().
+		TableExpr("kb.mcp_server_tools AS mst").
+		Join("JOIN kb.mcp_servers AS ms ON ms.id = mst.server_id").
+		ColumnExpr("ms.name AS server_name").
+		ColumnExpr("ms.type AS server_type").
+		ColumnExpr("mst.tool_name AS tool_name").
+		ColumnExpr("mst.description AS description").
+		ColumnExpr("mst.input_schema AS input_schema").
+		ColumnExpr("mst.config AS config").
+		Where("ms.project_id = ?", projectID).
+		Where("ms.enabled = true").
+		Where("mst.enabled = true").
+		Where("ms.type = ?", ServerTypeBuiltin).
+		Order("mst.tool_name ASC").
 		Scan(ctx, &tools)
 	if err != nil {
 		return nil, err
@@ -315,4 +373,64 @@ func (r *Repository) CountToolsByServerID(ctx context.Context, serverID string) 
 		Model((*MCPServerTool)(nil)).
 		Where("server_id = ?", serverID).
 		Count(ctx)
+}
+
+// FindOrgIDByProjectID returns the organization_id for a given project.
+func (r *Repository) FindOrgIDByProjectID(ctx context.Context, projectID string) (string, error) {
+	var orgID string
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("organization_id").
+		Where("id = ?", projectID).
+		Scan(ctx, &orgID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return orgID, nil
+}
+
+// FindBuiltinToolByProjectAndName returns the kb.mcp_server_tools row for a builtin tool in a project.
+func (r *Repository) FindBuiltinToolByProjectAndName(ctx context.Context, projectID, toolName string) (*MCPServerTool, error) {
+	var tool MCPServerTool
+	err := r.db.NewSelect().
+		Model(&tool).
+		Join("JOIN kb.mcp_servers AS ms ON ms.id = mst.server_id").
+		Where("ms.project_id = ?", projectID).
+		Where("ms.type = ?", ServerTypeBuiltin).
+		Where("mst.tool_name = ?", toolName).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &tool, nil
+}
+
+// FindOrgToolSetting returns the org-level tool setting for a given org and tool.
+func (r *Repository) FindOrgToolSetting(ctx context.Context, orgID, toolName string) (*orgToolSettingRow, error) {
+	var row orgToolSettingRow
+	err := r.db.NewSelect().
+		TableExpr("kb.org_tool_settings").
+		ColumnExpr("enabled, config").
+		Where("org_id = ?", orgID).
+		Where("tool_name = ?", toolName).
+		Scan(ctx, &row.Enabled, &row.Config)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &row, nil
+}
+
+// orgToolSettingRow is a lightweight struct for reading org tool settings in the resolver.
+type orgToolSettingRow struct {
+	Enabled bool
+	Config  map[string]any
 }

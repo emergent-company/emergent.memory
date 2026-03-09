@@ -2,6 +2,7 @@ package mcpregistry
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -37,6 +38,12 @@ func (h *Handler) ListServers(c echo.Context) error {
 	}
 	if user.ProjectID == "" {
 		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
+
+	// Ensure the builtin server exists for this project so it appears in the list.
+	if err := h.svc.EnsureBuiltinServer(c.Request().Context(), user.ProjectID); err != nil {
+		// Non-fatal: log and proceed — listing still works for external servers.
+		slog.Warn("failed to ensure builtin server on list", "error", err, "project_id", user.ProjectID)
 	}
 
 	servers, err := h.svc.ListServers(c.Request().Context(), user.ProjectID)
@@ -234,7 +241,15 @@ func (h *Handler) ListServerTools(c echo.Context) error {
 
 	dtos := make([]*MCPServerToolDTO, 0, len(tools))
 	for _, t := range tools {
-		dtos = append(dtos, t.ToDTO())
+		dto := t.ToDTO()
+		// For builtin servers, enrich each tool with its inheritance source.
+		if server.Type == ServerTypeBuiltin {
+			_, _, source, resolveErr := h.svc.ResolveBuiltinToolSettings(c.Request().Context(), user.ProjectID, t.ToolName)
+			if resolveErr == nil {
+				dto.InheritedFrom = source
+			}
+		}
+		dtos = append(dtos, dto)
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(dtos))
@@ -256,11 +271,11 @@ func (h *Handler) ToggleTool(c echo.Context) error {
 	if err := c.Bind(&dto); err != nil {
 		return apperror.NewBadRequest("invalid request body")
 	}
-	if dto.Enabled == nil {
-		return apperror.NewBadRequest("enabled field is required")
+	if dto.Enabled == nil && dto.Config == nil {
+		return apperror.NewBadRequest("at least one of enabled or config must be provided")
 	}
 
-	if err := h.svc.ToggleTool(c.Request().Context(), toolID, *dto.Enabled); err != nil {
+	if err := h.svc.UpdateTool(c.Request().Context(), toolID, dto.Enabled, dto.Config); err != nil {
 		return apperror.NewBadRequest(err.Error())
 	}
 

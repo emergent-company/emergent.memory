@@ -465,20 +465,40 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 		userMessage = *agent.Prompt
 	}
 
-	result, err := h.executor.Execute(c.Request().Context(), ExecuteRequest{
-		Agent:           agent,
-		AgentDefinition: agentDef,
-		ProjectID:       agent.ProjectID,
-		UserMessage:     userMessage,
+	// Create a run record synchronously so we can return the run ID immediately.
+	triggerSource := "manual"
+	run, err := h.repo.CreateRunWithOptions(c.Request().Context(), CreateRunOptions{
+		AgentID:       agent.ID,
+		TriggerSource: &triggerSource,
 	})
 	if err != nil {
-		return apperror.NewInternal("failed to execute agent", err)
+		return apperror.NewInternal("failed to create agent run", err)
 	}
 
-	msg := "Agent triggered successfully (run ID: " + result.RunID + ")"
+	// Launch execution asynchronously — manual triggers are fire-and-forget
+	// from the caller's perspective. We use context.Background() so the run
+	// is not cancelled when the HTTP response is sent.
+	go func() {
+		bgCtx := context.Background()
+		_, execErr := h.executor.ExecuteWithRun(bgCtx, run, ExecuteRequest{
+			Agent:           agent,
+			AgentDefinition: agentDef,
+			ProjectID:       agent.ProjectID,
+			UserMessage:     userMessage,
+		})
+		if execErr != nil {
+			h.executor.log.Error("async agent execution failed",
+				slog.String("run_id", run.ID),
+				slog.String("agent_id", agent.ID),
+				slog.String("error", execErr.Error()),
+			)
+		}
+	}()
+
+	msg := "Agent triggered successfully (run ID: " + run.ID + ")"
 	return c.JSON(http.StatusOK, TriggerResponseDTO{
 		Success: true,
-		RunID:   &result.RunID,
+		RunID:   &run.ID,
 		Message: &msg,
 	})
 }

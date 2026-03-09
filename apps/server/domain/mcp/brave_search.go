@@ -66,11 +66,22 @@ type braveSearchResultEntry struct {
 	Age         string `json:"age,omitempty"`
 }
 
-// executeBraveWebSearch executes a Brave Search API web search
-func (s *Service) executeBraveWebSearch(ctx context.Context, args map[string]any) (*ToolResult, error) {
-	if s.braveSearchAPIKey == "" {
+// executeBraveWebSearch executes a Brave Search API web search.
+// API key is resolved via 3-tier inheritance: project config → org default → global env.
+func (s *Service) executeBraveWebSearch(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	// Resolve API key: project → org → global env (fallback)
+	apiKey := s.braveSearchAPIKey
+	if s.mcpRegistryToolHandler != nil && projectID != "" {
+		if cfg, _, err := s.mcpRegistryToolHandler.ResolveBuiltinToolConfig(ctx, projectID, "brave_web_search"); err == nil {
+			if k, ok := cfg["api_key"].(string); ok && k != "" {
+				apiKey = k
+			}
+		}
+	}
+
+	if apiKey == "" {
 		return &ToolResult{
-			Content: []ContentBlock{{Type: "text", Text: "Brave Search is not configured. Set the BRAVE_SEARCH_API_KEY environment variable."}},
+			Content: []ContentBlock{{Type: "text", Text: "Brave Search is not configured. Set the BRAVE_SEARCH_API_KEY environment variable or configure a project-level api_key."}},
 			IsError: true,
 		}, nil
 	}
@@ -113,7 +124,7 @@ func (s *Service) executeBraveWebSearch(ctx context.Context, args map[string]any
 	}
 
 	// Execute the search
-	results, err := s.callBraveSearchAPI(ctx, req)
+	results, err := s.callBraveSearchAPI(ctx, req, apiKey)
 	if err != nil {
 		s.log.Error("brave search API call failed", "error", err, "query", query)
 		return &ToolResult{
@@ -126,7 +137,7 @@ func (s *Service) executeBraveWebSearch(ctx context.Context, args map[string]any
 }
 
 // callBraveSearchAPI makes the HTTP request to the Brave Search API
-func (s *Service) callBraveSearchAPI(ctx context.Context, req braveSearchRequest) (*braveSearchToolResult, error) {
+func (s *Service) callBraveSearchAPI(ctx context.Context, req braveSearchRequest, apiKey string) (*braveSearchToolResult, error) {
 	// Build URL with query parameters
 	params := url.Values{}
 	params.Set("q", req.Query)
@@ -151,7 +162,7 @@ func (s *Service) callBraveSearchAPI(ctx context.Context, req braveSearchRequest
 
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Accept-Encoding", "gzip")
-	httpReq.Header.Set("X-Subscription-Token", s.braveSearchAPIKey)
+	httpReq.Header.Set("X-Subscription-Token", apiKey)
 
 	client := &http.Client{
 		Timeout: s.braveSearchTimeout,
