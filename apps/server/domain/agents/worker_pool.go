@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"sync"
@@ -127,11 +128,13 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 	agentDef, _ := p.repo.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
 
 	userMessage := "Execute agent tasks"
-	if agent.Prompt != nil && *agent.Prompt != "" {
+	if run.TriggerMessage != nil && *run.TriggerMessage != "" {
+		userMessage = *run.TriggerMessage
+	} else if agent.Prompt != nil && *agent.Prompt != "" {
 		userMessage = *agent.Prompt
 	}
 
-	_, execErr := p.executor.ExecuteWithRun(ctx, run, ExecuteRequest{
+	result, execErr := p.executor.ExecuteWithRun(ctx, run, ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: agentDef,
 		ProjectID:       agent.ProjectID,
@@ -144,6 +147,8 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		if err := p.repo.FailJob(ctx, job.ID, job.RunID, execErr.Error(), requeue, nextRunAt); err != nil {
 			log.Warn("failed to update job status after failure", slog.String("error", err.Error()))
 		}
+		// Still wake parent on failure so it can handle the error
+		p.reenqueueParent(ctx, log, run, agent.Name, "", "error")
 		return
 	}
 
@@ -153,6 +158,52 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 	} else {
 		log.Info("queued agent run completed successfully")
 	}
+
+	// Re-enqueue parent run (if any) with child's result as trigger_message
+	finalResponse := ""
+	if result != nil {
+		if fr, ok := result.Summary["final_response"].(string); ok {
+			finalResponse = fr
+		}
+	}
+	p.reenqueueParent(ctx, log, run, agent.Name, finalResponse, "success")
+}
+
+// reenqueueParent re-enqueues the parent run of this run (if any) with a
+// trigger_message containing the child's result. This implements the
+// "child-triggers-parent" async coordination pattern: the parent wakes up
+// with the result already in its trigger_message, so it doesn't need to poll.
+func (p *WorkerPool) reenqueueParent(ctx context.Context, log *slog.Logger, run *AgentRun, childAgentName, finalResponse, status string) {
+	if run.ParentRunID == nil {
+		return
+	}
+
+	parentRun, err := p.repo.FindRunByID(ctx, *run.ParentRunID)
+	if err != nil || parentRun == nil {
+		log.Warn("failed to find parent run for re-enqueue",
+			slog.String("parent_run_id", *run.ParentRunID),
+		)
+		return
+	}
+
+	triggerMsg := fmt.Sprintf("AGENT_COMPLETE\nagent: %s\nstatus: %s\n\nResult:\n%s",
+		childAgentName, status, finalResponse)
+
+	_, err = p.repo.CreateRunQueued(ctx, parentRun.AgentID, 1, CreateRunQueuedOptions{
+		TriggerMessage: &triggerMsg,
+	})
+	if err != nil {
+		log.Warn("failed to re-enqueue parent run",
+			slog.String("parent_run_id", *run.ParentRunID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	log.Info("re-enqueued parent run after child completion",
+		slog.String("parent_run_id", *run.ParentRunID),
+		slog.String("child_agent", childAgentName),
+		slog.String("child_status", status),
+	)
 }
 
 // sleep pauses the worker for the poll interval or until context is cancelled.
