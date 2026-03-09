@@ -72,13 +72,13 @@ type otlpSpan struct {
 	SpanID            string           `json:"spanId"`
 	ParentSpanID      string           `json:"parentSpanId"`
 	Name              string           `json:"name"`
-	Kind              int              `json:"kind"`
+	Kind              json.RawMessage  `json:"kind"`
 	StartTimeUnixNano string           `json:"startTimeUnixNano"`
 	EndTimeUnixNano   string           `json:"endTimeUnixNano"`
 	Attributes        []tempoAttribute `json:"attributes"`
 	Status            struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
+		Code    json.RawMessage `json:"code"`
+		Message string          `json:"message"`
 	} `json:"status"`
 }
 
@@ -205,9 +205,9 @@ func printTraceTable(traces []tempoTraceSearchResult) {
 		fmt.Println("No traces found.")
 		return
 	}
-	fmt.Printf("%-18s  %-32s  %-8s  %-10s  %s\n",
+	fmt.Printf("%-32s  %-32s  %-8s  %-10s  %s\n",
 		"TRACE ID", "ROOT SPAN", "DURATION", "TIMESTAMP", "SERVICE")
-	fmt.Println(strings.Repeat("─", 90))
+	fmt.Println(strings.Repeat("─", 104))
 	for _, t := range traces {
 		ts := ""
 		if t.StartTimeUnixNano != "" {
@@ -217,8 +217,8 @@ func printTraceTable(traces []tempoTraceSearchResult) {
 		if len(root) > 32 {
 			root = root[:31] + "…"
 		}
-		fmt.Printf("%-18s  %-32s  %-8s  %-10s  %s\n",
-			shortTraceID(t.TraceID),
+		fmt.Printf("%-32s  %-32s  %-8s  %-10s  %s\n",
+			t.TraceID,
 			root,
 			formatDuration(t.DurationMs),
 			ts,
@@ -352,7 +352,8 @@ func runTracesGet(_ *cobra.Command, args []string) error {
 		durMs := float64(endNs-startNs) / 1e6
 
 		statusIcon := "✓"
-		if s.Status.Code == 2 { // ERROR
+		statusCode := strings.Trim(string(s.Status.Code), `"`)
+		if statusCode == "2" || statusCode == "STATUS_CODE_ERROR" {
 			statusIcon = "✗"
 		}
 
