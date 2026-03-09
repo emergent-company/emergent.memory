@@ -161,7 +161,6 @@ func (s *Service) callBraveSearchAPI(ctx context.Context, req braveSearchRequest
 	}
 
 	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("Accept-Encoding", "gzip")
 	httpReq.Header.Set("X-Subscription-Token", apiKey)
 
 	client := &http.Client{
