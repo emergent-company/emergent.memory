@@ -175,7 +175,9 @@ func provideWorkerPool(repo *Repository, executor *AgentExecutor, cfg *config.Co
 func registerWorkerPool(lc fx.Lifecycle, pool *WorkerPool) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			return pool.Start(ctx)
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns, which would immediately kill all worker goroutines.
+			return pool.Start(context.Background())
 		},
 		OnStop: func(ctx context.Context) error {
 			pool.Stop()
