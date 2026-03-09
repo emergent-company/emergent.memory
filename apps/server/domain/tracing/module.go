@@ -71,9 +71,16 @@ func NewTracerProvider(cfg *config.Config, log *slog.Logger) (tracerProviderResu
 		resource.WithProcess(),
 	)
 	if err != nil {
-		// Non-fatal — fall back to empty resource
+		// Non-fatal — partial resource may still be returned despite the error
+		// (e.g. conflicting schema URLs from detectors). Use it if non-nil so
+		// that service.name is preserved; fall back to a minimal resource only
+		// when nothing was returned at all.
 		log.Warn("OTel resource detection failed", slog.String("error", err.Error()))
-		res = resource.Empty()
+		if res == nil {
+			res, _ = resource.New(context.Background(),
+				resource.WithAttributes(semconv.ServiceName(oc.ServiceName)),
+			)
+		}
 	}
 
 	var sampler sdktrace.Sampler
