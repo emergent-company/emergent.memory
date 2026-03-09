@@ -251,7 +251,7 @@ networks:
 }
 
 // GetTempoConfigTemplate returns the Grafana Tempo configuration file content.
-// Retention defaults to 720h (30 days); override with OTEL_RETENTION_HOURS in .env.
+// Retention is set to 720h (30 days).
 func GetTempoConfigTemplate() string {
 	return `server:
   http_listen_port: 3200
@@ -271,7 +271,7 @@ ingester:
 
 compactor:
   compaction:
-    block_retention: ${OTEL_RETENTION_HOURS:-720}h
+    block_retention: 720h
 
 storage:
   trace:
