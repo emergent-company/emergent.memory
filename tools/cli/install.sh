@@ -18,17 +18,17 @@ detect_platform() {
     case "$(uname -s)" in
         Linux*)  os=linux;;
         Darwin*) os=darwin;;
-        CYGWIN*|MINGW*|MSYS_NT*) os=windows;;
-        FreeBSD*) os=freebsd;;
-        *) error "Unsupported OS: $(uname -s)";;
+        *) error "Unsupported OS: $(uname -s). Supported: linux, darwin";;
     esac
     case "$(uname -m)" in
         x86_64|amd64)  arch=amd64;;
         aarch64|arm64) arch=arm64;;
-        armv7l)        arch=arm;;
-        i386|i686)     arch=386;;
-        *) error "Unsupported architecture: $(uname -m)";;
+        *) error "Unsupported architecture: $(uname -m). Supported: amd64, arm64";;
     esac
+    # linux/arm64 not distributed — only linux/amd64 and darwin/{amd64,arm64}
+    if [ "$os" = "linux" ] && [ "$arch" != "amd64" ]; then
+        error "Linux is only supported on amd64. Got: linux/$arch"
+    fi
     echo "${os}/${arch}"
 }
 
@@ -46,7 +46,6 @@ main() {
     local os=${platform%/*}
     local arch=${platform#*/}
     local ext="tar.gz"
-    [ "$os" = "windows" ] && ext="zip"
     
     download_url="https://github.com/${GITHUB_REPO}/releases/download/${version}/memory-cli-${os}-${arch}.${ext}"
     
@@ -57,11 +56,7 @@ main() {
     curl -fsSL "$download_url" -o "${tmp_dir}/archive.${ext}" || error "Download failed"
     
     cd "$tmp_dir"
-    if [ "$os" = "windows" ]; then
-        unzip -q "archive.${ext}"
-    else
-        tar xzf "archive.${ext}"
-    fi
+    tar xzf "archive.${ext}"
     
     mkdir -p "$INSTALL_DIR"
     

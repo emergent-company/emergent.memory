@@ -74,16 +74,12 @@ jobs:
     needs: [lint, test]
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest]
         include:
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
             ext: ''
-          - os: windows-latest
-            goos: windows
-            goarch: amd64
-            ext: '.exe'
           - os: macos-latest
             goos: darwin
             goarch: amd64
@@ -144,23 +140,11 @@ jobs:
           # Linux
           - goos: linux
             goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: linux
-            goarch: arm
           # macOS
           - goos: darwin
             goarch: amd64
           - goos: darwin
             goarch: arm64
-          # Windows
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
-          # FreeBSD
-          - goos: freebsd
-            goarch: amd64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -208,11 +192,7 @@ jobs:
       - name: Create archive
         working-directory: tools/cli/dist
         run: |
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.zip memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.exe
-          else
-            tar czf memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
-          fi
+          tar czf memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
@@ -337,13 +317,8 @@ jobs:
           | OS | Architecture | Download |
           |----|-------------|----------|
           | Linux | amd64 | [memory-cli-linux-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-linux-amd64.tar.gz) |
-          | Linux | arm64 | [memory-cli-linux-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-linux-arm64.tar.gz) |
-          | Linux | arm | [memory-cli-linux-arm.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-linux-arm.tar.gz) |
           | macOS | Apple Silicon | [memory-cli-darwin-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-darwin-arm64.tar.gz) |
           | macOS | Intel | [memory-cli-darwin-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-darwin-amd64.tar.gz) |
-          | Windows | amd64 | [memory-cli-windows-amd64.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-windows-amd64.zip) |
-          | Windows | arm64 | [memory-cli-windows-arm64.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-windows-arm64.zip) |
-          | FreeBSD | amd64 | [memory-cli-freebsd-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-freebsd-amd64.tar.gz) |
 
           Verify downloads: `sha256sum -c checksums.txt`
 
@@ -371,7 +346,7 @@ jobs:
           docker pull ghcr.io/${{ steps.owner.outputs.lc }}/memory-server:${{ steps.version.outputs.version }}
           ```
 
-          Available platforms: `linux/amd64`, `linux/arm64`
+          Available platforms: `linux/amd64`
 
           Includes: Memory API server, CLI, migration tooling, and Swagger docs.
 
@@ -419,9 +394,6 @@ jobs:
           # Extract Linux amd64 binary
           tar xzf artifacts/memory-cli-linux-amd64.tar.gz -C .
 
-          # Extract Linux arm64 binary
-          tar xzf artifacts/memory-cli-linux-arm64.tar.gz -C .
-
           echo "=== Extracted binaries ==="
           ls -la memory-cli-linux-*
 
@@ -444,14 +416,15 @@ jobs:
           echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "owner_lc=$OWNER_LC" >> $GITHUB_OUTPUT
 
-      - name: Build and push Docker image (amd64)
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: tools/cli
           file: tools/cli/Dockerfile.prebuilt
           push: true
           tags: |
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-amd64
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:latest
           build-args: |
             TARGETARCH=amd64
             VERSION=${{ steps.version.outputs.version }}
@@ -463,35 +436,3 @@ jobs:
             org.opencontainers.image.title=Memory CLI
             org.opencontainers.image.description=Command-line interface for Memory Knowledge Base
           platforms: linux/amd64
-
-      - name: Build and push Docker image (arm64)
-        uses: docker/build-push-action@v5
-        with:
-          context: tools/cli
-          file: tools/cli/Dockerfile.prebuilt
-          push: true
-          tags: |
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-arm64
-          build-args: |
-            TARGETARCH=arm64
-            VERSION=${{ steps.version.outputs.version }}
-            GIT_COMMIT=${{ steps.version.outputs.commit }}
-          labels: |
-            org.opencontainers.image.version=${{ steps.version.outputs.version }}
-            org.opencontainers.image.revision=${{ steps.version.outputs.commit }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.title=Memory CLI
-            org.opencontainers.image.description=Command-line interface for Memory Knowledge Base
-          platforms: linux/arm64
-
-      - name: Create and push multi-arch manifest
-        run: |
-          # Create manifest list combining both architectures
-          docker buildx imagetools create -t ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }} \
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-amd64 \
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-arm64
-
-          # Also tag as latest
-          docker buildx imagetools create -t ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:latest \
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-amd64 \
-            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}-arm64
