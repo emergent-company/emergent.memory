@@ -21,6 +21,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/workspace"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
@@ -539,6 +540,12 @@ func (ae *AgentExecutor) runPipeline(
 	// Inject the current run ID into context so downstream tools (e.g. trigger_agent)
 	// can propagate it as the parent_run_id when spawning child runs.
 	ctx = contextWithCallerRunID(ctx, run.ID)
+
+	// Inject project ID into context so the credential resolver can look up
+	// the org-level provider config via the DB hierarchy (project → org).
+	if req.ProjectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, req.ProjectID)
+	}
 
 	// Apply timeout if specified
 	if req.Timeout != nil && *req.Timeout > 0 {
