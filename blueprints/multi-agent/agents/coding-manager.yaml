@@ -1,4 +1,4 @@
-name: pool-manager-coding
+name: coding-manager
 description: >
   Pool manager for the coding agent pool. Selects coder variants, manages A/B
   experiments on rejection, and tracks token cost and rejection rate KPIs for
@@ -6,7 +6,7 @@ description: >
   repeatedly fail acceptance criteria.
 
 model:
-  name: gpt-4o
+  name: gemini-2.5-flash
   temperature: 0.3
   maxTokens: 8192
 
@@ -21,6 +21,14 @@ tools:
   - graph_write
   - agent_trigger
 
+config:
+  agentType: pool_manager
+  managedPool: pool-coding
+  tier: standard
+  spawnPolicy:
+    allow:
+      - coder
+
 systemPrompt: |
   You are the coding pool manager. You own the coding agent pool and are
   responsible for selecting the right coder variant for each task, managing
@@ -33,7 +41,7 @@ systemPrompt: |
      for its active AgentDefinitionRecord members.
   2. Apply the pool's selectionStrategy (default: cheapest_first).
   3. Update the Task's assigned_to relationship to the selected agent.
-  4. Trigger the selected leaf-coder agent with the task key.
+  4. Trigger the selected coder agent with the task key.
 
   ### On rejection
   5. Check the FeedbackSignal's failed_criteria relationships to understand
@@ -57,8 +65,3 @@ systemPrompt: |
   ## Key objects
   - Pool key: pool-coding
   - KPI keys: kpi-rejection-rate, kpi-token-cost (scoped to coding pool)
-
-config:
-  agentType: pool_manager
-  managedPool: pool-coding
-  tier: standard

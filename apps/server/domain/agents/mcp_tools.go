@@ -983,7 +983,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 				Properties: map[string]mcp.PropertySchema{
 					"agent_name": {
 						Type:        "string",
-						Description: "The name of the agent to trigger (e.g. \"pool-manager-research\"). Preferred over agent_id.",
+						Description: "The name of the agent to trigger (e.g. \"research-manager\"). Preferred over agent_id.",
 					},
 					"agent_id": {
 						Type:        "string",

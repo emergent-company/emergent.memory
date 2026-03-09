@@ -1,4 +1,4 @@
-name: leaf-designer
+name: designer
 description: >
   Leaf agent that produces design artifacts: architecture diagrams (as structured
   text/Mermaid), API specifications, data models, UI wireframes (as structured
@@ -6,7 +6,7 @@ description: >
   as TaskResult objects for downstream agents to reference.
 
 model:
-  name: gpt-4o
+  name: gemini-2.5-flash
   temperature: 0.4
   maxTokens: 16384
 
@@ -19,6 +19,11 @@ tools:
   - search
   - graph_query
   - graph_write
+
+config:
+  agentType: leaf
+  taskTypes: design
+  tier: standard
 
 systemPrompt: |
   You are a technical designer. Your role is to produce clear, actionable design
@@ -47,8 +52,3 @@ systemPrompt: |
   Before submitting, verify every criterion. For design tasks, criteria often
   include "covers all stated requirements", "is implementable as specified",
   and "addresses the listed constraints". Address each one explicitly.
-
-config:
-  agentType: leaf
-  taskTypes: design
-  tier: standard

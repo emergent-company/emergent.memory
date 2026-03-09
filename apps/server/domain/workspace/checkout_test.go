@@ -49,6 +49,6 @@ func TestCheckoutService_BuildCloneURL_NoProvider(t *testing.T) {
 
 func TestCheckoutService_CloneRepository_EmptyURL(t *testing.T) {
 	cs := &CheckoutService{}
-	err := cs.CloneRepository(nil, nil, "", "", "")
+	err := cs.CloneRepository(nil, nil, "", "", "", "")
 	assert.NoError(t, err) // No-op for empty URL
 }

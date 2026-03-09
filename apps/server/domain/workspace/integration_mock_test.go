@@ -487,7 +487,7 @@ func TestIntegration_Checkout_SuccessfulClone(t *testing.T) {
 
 	cs := NewCheckoutService(cred, testLogger())
 
-	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/repo", "main")
+	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/repo", "main", "/workspace")
 	assert.NoError(t, err)
 
 	// Verify the clone command was called with token-injected URL and branch
@@ -522,7 +522,7 @@ func TestIntegration_Checkout_CloneFailure_Retries(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 
-	err := cs.CloneRepository(ctx, cp, "container-1", "https://github.com/org/repo", "main")
+	err := cs.CloneRepository(ctx, cp, "container-1", "https://github.com/org/repo", "main", "/workspace")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "git clone failed")
 
@@ -557,7 +557,7 @@ func TestIntegration_Checkout_SHACheckout(t *testing.T) {
 	cs := NewCheckoutService(cred, testLogger())
 
 	sha := "abc123def456789012345678901234567890abcd"
-	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/repo", sha)
+	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/repo", sha, "/workspace")
 	assert.NoError(t, err)
 
 	// Verify: clone (without --branch), fetch --unshallow, git checkout SHA
@@ -585,7 +585,7 @@ func TestIntegration_Checkout_SHACheckout(t *testing.T) {
 
 func TestIntegration_Checkout_EmptyURL_NoOp(t *testing.T) {
 	cs := NewCheckoutService(nil, testLogger())
-	err := cs.CloneRepository(t.Context(), nil, "", "", "")
+	err := cs.CloneRepository(t.Context(), nil, "", "", "", "")
 	assert.NoError(t, err)
 }
 
@@ -605,7 +605,7 @@ func TestIntegration_Checkout_NoCredentials_FallsBackToPublic(t *testing.T) {
 
 	cs := NewCheckoutService(cred, testLogger())
 
-	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/public-repo", "main")
+	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/public-repo", "main", "/workspace")
 	assert.NoError(t, err)
 
 	// Clone should use unauthenticated URL (no token)
