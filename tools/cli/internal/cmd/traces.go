@@ -272,7 +272,7 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 
 	var conditions []string
 	if id, err := resolveProjectContext(cmd, ""); err == nil && id != "" {
-		conditions = append(conditions, fmt.Sprintf(`.project.id = "%s"`, id))
+		conditions = append(conditions, fmt.Sprintf(`.emergent.project.id = "%s"`, id))
 	}
 	if len(conditions) > 0 {
 		q := "{ " + strings.Join(conditions, " && ") + " }"
@@ -296,7 +296,7 @@ func runTracesSearch(cmd *cobra.Command, _ []string) error {
 	// Build TraceQL query from flags
 	var conditions []string
 	if id, err := resolveProjectContext(cmd, ""); err == nil && id != "" {
-		conditions = append(conditions, fmt.Sprintf(`.project.id = "%s"`, id))
+		conditions = append(conditions, fmt.Sprintf(`.emergent.project.id = "%s"`, id))
 	}
 	if tracesSearchSvc != "" {
 		conditions = append(conditions, fmt.Sprintf(`.service.name = "%s"`, tracesSearchSvc))
