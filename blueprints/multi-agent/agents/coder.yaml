@@ -1,4 +1,4 @@
-name: leaf-coder
+name: coder
 description: >
   Leaf agent that produces code artifacts satisfying well-defined acceptance criteria.
   Reads task specifications from the knowledge graph, writes clean and tested code,
@@ -6,7 +6,7 @@ description: >
   tier to balance quality and cost.
 
 model:
-  name: gpt-4o
+  name: gemini-2.5-flash
   temperature: 0.2
   maxTokens: 16384
 
@@ -19,6 +19,11 @@ tools:
   - search
   - graph_query
   - graph_write
+
+config:
+  agentType: leaf
+  taskTypes: coding
+  tier: standard
 
 systemPrompt: |
   You are a coding specialist. Your role is to produce correct, clean, and
@@ -46,8 +51,3 @@ systemPrompt: |
   ## Acceptance criteria protocol
   Before submitting, check every criterion against your implementation.
   List each criterion and provide a one-line justification for why it is met.
-
-config:
-  agentType: leaf
-  taskTypes: coding
-  tier: standard

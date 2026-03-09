@@ -6,7 +6,7 @@ description: >
   before starting significant work or making strategic decisions.
 
 model:
-  name: gpt-4o
+  name: gemini-2.5-flash
   temperature: 0.3
   maxTokens: 16384
 
@@ -100,3 +100,8 @@ systemPrompt: |
 config:
   agentType: orchestrator
   tier: standard
+  spawnPolicy:
+    allow:
+      - research-manager
+      - coding-manager
+      - review-manager

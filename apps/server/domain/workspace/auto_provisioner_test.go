@@ -830,7 +830,7 @@ func TestIntegration_AutoProvision_FullPipeline_FixedRepo(t *testing.T) {
 
 	// Step 6: Clone repository
 	checkoutSvc := NewCheckoutService(nil, testLogger()) // nil cred provider = public clone
-	err = checkoutSvc.CloneRepository(t.Context(), pp, containerResult.ProviderID, url, branch)
+	err = checkoutSvc.CloneRepository(t.Context(), pp, containerResult.ProviderID, url, branch, "/workspace")
 	assert.NoError(t, err)
 
 	// Step 7: Run setup commands
@@ -1072,7 +1072,7 @@ func TestE2E_AgentType_WorkspaceConfig_SessionFlow(t *testing.T) {
 
 	// Clone repository
 	checkoutSvc := NewCheckoutService(nil, testLogger())
-	err = checkoutSvc.CloneRepository(t.Context(), pp, providerID, url, branch)
+	err = checkoutSvc.CloneRepository(t.Context(), pp, providerID, url, branch, "/workspace")
 	assert.NoError(t, err)
 
 	// Run setup commands
@@ -1195,7 +1195,7 @@ func TestE2E_AgentType_WorkspaceConfig_SessionFlow_WithTaskContext(t *testing.T)
 
 	// Clone with task-context-provided URL/branch
 	checkoutSvc := NewCheckoutService(nil, testLogger())
-	err = checkoutSvc.CloneRepository(t.Context(), pp, containerResult.ProviderID, url, branch)
+	err = checkoutSvc.CloneRepository(t.Context(), pp, containerResult.ProviderID, url, branch, "/workspace")
 	assert.NoError(t, err)
 
 	// Run setup
@@ -1348,7 +1348,7 @@ func TestE2E_AgentType_WorkspaceConfig_MultipleSessionsSequential(t *testing.T) 
 
 		// Clone
 		checkoutSvc := NewCheckoutService(nil, testLogger())
-		err = checkoutSvc.CloneRepository(t.Context(), gv, containerResult.ProviderID, url, branch)
+		err = checkoutSvc.CloneRepository(t.Context(), gv, containerResult.ProviderID, url, branch, "/workspace")
 		assert.NoError(t, err)
 
 		// Simulate session end — destroy

@@ -34,6 +34,7 @@ var Module = fx.Module("agents",
 	fx.Invoke(
 		RegisterRoutes,
 		registerAgentTriggers,
+		registerOrphanRecovery,
 		registerAgentToolHandler,
 		registerToolPoolInvalidator,
 		registerOrgToolPoolInvalidator,
@@ -96,6 +97,28 @@ func provideMCPToolHandler(repo *Repository, executor *AgentExecutor, log *slog.
 // via setter injection to break the circular dependency (agents → mcp).
 func registerAgentToolHandler(mcpService *mcp.Service, handler *MCPToolHandler) {
 	mcpService.SetAgentToolHandler(handler)
+}
+
+// registerOrphanRecovery marks any agent runs that were left in "running" status
+// (due to an unclean server shutdown) as errored on startup.
+func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, log *slog.Logger) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			n, err := repo.MarkOrphanedRunsAsError(ctx)
+			if err != nil {
+				log.Warn("failed to mark orphaned agent runs as error on startup",
+					slog.String("error", err.Error()),
+				)
+				return nil // best-effort, don't block startup
+			}
+			if n > 0 {
+				log.Warn("marked orphaned agent runs as error on startup",
+					slog.Int("count", n),
+				)
+			}
+			return nil
+		},
+	})
 }
 
 // registerAgentTriggers syncs all agent triggers on startup.

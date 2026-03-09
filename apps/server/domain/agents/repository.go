@@ -186,6 +186,25 @@ func (r *Repository) FailRun(ctx context.Context, runID string, errorMessage str
 	return err
 }
 
+// MarkOrphanedRunsAsError finds all runs stuck in "running" status and marks
+// them as errored. This is called on server startup to recover from unclean
+// shutdowns where the agent goroutine was killed mid-execution.
+func (r *Repository) MarkOrphanedRunsAsError(ctx context.Context) (int, error) {
+	now := time.Now()
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusError).
+		Set("completed_at = ?", now).
+		Set("error_message = ?", "server restarted while run was in progress").
+		Where("status = ?", RunStatusRunning).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // GetRecentRuns returns recent runs for an agent
 func (r *Repository) GetRecentRuns(ctx context.Context, agentID string, limit int) ([]*AgentRun, error) {
 	if limit <= 0 {

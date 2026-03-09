@@ -7,7 +7,7 @@ description: >
   modify AgentDefinitionRecord objects in the graph.
 
 model:
-  name: gpt-4o
+  name: gemini-2.5-flash
   temperature: 0.2
   maxTokens: 16384
 

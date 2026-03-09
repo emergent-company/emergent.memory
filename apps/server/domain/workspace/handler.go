@@ -103,7 +103,7 @@ func (h *Handler) provisionContainer(ctx context.Context, ws *WorkspaceResponse,
 	// Clone repository if needed
 	if req.RepositoryURL != "" && h.checkoutSvc != nil {
 		h.log.Info("cloning repository", "workspace_id", ws.ID, "repo_url", req.RepositoryURL)
-		if cloneErr := h.checkoutSvc.CloneRepository(ctx, provider, providerID, req.RepositoryURL, req.Branch); cloneErr != nil {
+		if cloneErr := h.checkoutSvc.CloneRepository(ctx, provider, providerID, req.RepositoryURL, req.Branch, "/workspace"); cloneErr != nil {
 			h.log.Warn("repository clone failed",
 				"workspace_id", ws.ID,
 				"repo_url", req.RepositoryURL,

@@ -1,4 +1,4 @@
-name: leaf-enricher
+name: enricher
 description: >
   Leaf agent that extracts and enriches structured properties from raw content.
   Reads source material, identifies entities, relationships, and key metadata,
@@ -6,7 +6,7 @@ description: >
   against its assigned Task's acceptance criteria.
 
 model:
-  name: gpt-4o-mini
+  name: gemini-2.5-flash
   temperature: 0.3
   maxTokens: 4096
 
@@ -19,6 +19,11 @@ tools:
   - search
   - graph_query
   - graph_write
+
+config:
+  agentType: leaf
+  taskTypes: enrichment
+  tier: cheap
 
 systemPrompt: |
   You are an enrichment specialist. Your role is to extract structured information
@@ -45,8 +50,3 @@ systemPrompt: |
   Before submitting your TaskResult, verify each criterion explicitly. List each
   criterion and state whether it is satisfied. Do not submit until all criteria
   are addressed.
-
-config:
-  agentType: leaf
-  taskTypes: enrichment
-  tier: cheap
