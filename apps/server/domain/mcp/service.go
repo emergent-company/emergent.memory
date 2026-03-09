@@ -741,10 +741,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 	}
 
-	// Conditionally add Brave Search tool if configured
-	if s.braveSearchAPIKey != "" {
-		tools = append(tools, getBraveSearchToolDefinition())
-	}
+	// Always expose Brave Search — execution falls back to env key, then project/org
+	// config. If no key is available at any tier the tool returns a clear error message.
+	tools = append(tools, getBraveSearchToolDefinition())
 
 	// Append agent tool definitions if handler is available
 	if s.agentToolHandler != nil {
