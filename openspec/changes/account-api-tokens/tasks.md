@@ -52,7 +52,7 @@
 - [x] 9.3 Add API e2e test: create account token → use it to access two different projects → verify both succeed
 - [x] 9.4 Add API e2e test: account token without `projects:read` cannot call `GET /api/projects`
 - [x] 9.5 Add API e2e test: revoke account token → subsequent request returns 401
-- [ ] 9.6 Add CLI test: `memory tokens create --name t --scopes projects:read` (no `--project`) creates account token
+- [x] 9.6 Add CLI test: `memory tokens create --name t --scopes projects:read` (no `--project`) creates account token
 
 ## 10. Verification
 

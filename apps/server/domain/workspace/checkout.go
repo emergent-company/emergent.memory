@@ -40,11 +40,15 @@ func NewCheckoutService(credProvider GitCredentialProvider, log *slog.Logger) *C
 }
 
 // CloneRepository clones a repository into a workspace container.
+// destPath is the absolute path inside the container to clone into (e.g. "/workspace").
 // Handles public/private repos, branch/SHA checkout, and retries.
 // Returns nil on success or if no repository URL is provided.
-func (cs *CheckoutService) CloneRepository(ctx context.Context, provider Provider, providerID string, repoURL string, branch string) error {
+func (cs *CheckoutService) CloneRepository(ctx context.Context, provider Provider, providerID string, repoURL string, branch string, destPath string) error {
 	if repoURL == "" {
 		return nil // No repo to clone
+	}
+	if destPath == "" {
+		destPath = "/workspace"
 	}
 
 	// Build clone URL (with credentials for private repos)
@@ -70,9 +74,9 @@ func (cs *CheckoutService) CloneRepository(ctx context.Context, provider Provide
 			}
 		}
 
-		cmd := fmt.Sprintf("git clone --depth 1 %q /workspace 2>&1", cloneURL)
+		cmd := fmt.Sprintf("git clone --depth 1 %q %q 2>&1", cloneURL, destPath)
 		if branch != "" && !isSHA(branch) {
-			cmd = fmt.Sprintf("git clone --depth 1 --branch %q %q /workspace 2>&1", branch, cloneURL)
+			cmd = fmt.Sprintf("git clone --depth 1 --branch %q %q %q 2>&1", branch, cloneURL, destPath)
 		}
 
 		result, err := provider.Exec(ctx, providerID, &ExecRequest{
@@ -93,13 +97,13 @@ func (cs *CheckoutService) CloneRepository(ctx context.Context, provider Provide
 			// Need full history for SHA checkout
 			_, _ = provider.Exec(ctx, providerID, &ExecRequest{
 				Command:   "git fetch --unshallow 2>&1 || true",
-				Workdir:   "/workspace",
+				Workdir:   destPath,
 				TimeoutMs: cloneTimeoutMs,
 			})
 
 			checkoutResult, err := provider.Exec(ctx, providerID, &ExecRequest{
 				Command:   fmt.Sprintf("git checkout %q 2>&1", branch),
-				Workdir:   "/workspace",
+				Workdir:   destPath,
 				TimeoutMs: 30000,
 			})
 			if err != nil {
@@ -116,6 +120,7 @@ func (cs *CheckoutService) CloneRepository(ctx context.Context, provider Provide
 		cs.log.Info("repository cloned successfully",
 			"repo", repoURL,
 			"branch", branch,
+			"dest", destPath,
 		)
 		return nil
 	}

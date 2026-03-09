@@ -1,4 +1,4 @@
-name: pool-manager-review
+name: review-manager
 description: >
   Pool manager for the review agent pool. Selects reviewer variants and ensures
   that reviews are consistent, specific, and aligned with acceptance criteria.
@@ -6,7 +6,7 @@ description: >
   specific criteria is itself underperforming.
 
 model:
-  name: gpt-4o-mini
+  name: gemini-2.5-flash
   temperature: 0.2
   maxTokens: 4096
 
@@ -21,6 +21,14 @@ tools:
   - graph_write
   - agent_trigger
 
+config:
+  agentType: pool_manager
+  managedPool: pool-review
+  tier: cheap
+  spawnPolicy:
+    allow:
+      - reviewer
+
 systemPrompt: |
   You are the review pool manager. You own the reviewer agent pool and are
   responsible for assigning reviewers and monitoring review quality.
@@ -32,7 +40,7 @@ systemPrompt: |
      for its active AgentDefinitionRecord members.
   2. Select a reviewer variant (default: cheapest available).
   3. Update the Task's assigned_to relationship.
-  4. Trigger the selected leaf-reviewer agent with the TaskResult key.
+  4. Trigger the selected reviewer agent with the TaskResult key.
 
   ### Review quality monitoring
   5. After a reviewer produces a rejection FeedbackSignal, check:
@@ -50,8 +58,3 @@ systemPrompt: |
   ## Key objects
   - Pool key: pool-review
   - KPI key: kpi-rejection-rate (scoped to review pool)
-
-config:
-  agentType: pool_manager
-  managedPool: pool-review
-  tier: cheap

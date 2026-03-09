@@ -172,7 +172,7 @@ objectTypes:
         description: "Comma-separated list of tool names"
       modelName:
         type: string
-        description: LLM model identifier (e.g. gpt-4o-mini)
+        description: LLM model identifier (e.g. gemini-2.5-flash)
       tier:
         type: string
         description: "cheap | standard | premium"

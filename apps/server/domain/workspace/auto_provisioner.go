@@ -65,6 +65,12 @@ func (ap *AutoProvisioner) SetImageResolver(resolver ImageResolver) {
 	ap.imageResolver = resolver
 }
 
+// CheckoutService returns the checkout service used by this provisioner.
+// Used by the agent executor to pass credential-aware cloning into workspace tools.
+func (ap *AutoProvisioner) CheckoutService() *CheckoutService {
+	return ap.checkoutSvc
+}
+
 // ProvisionForSession provisions a workspace based on an agent definition's workspace config.
 // This is called when an agent session starts.
 //
@@ -355,7 +361,7 @@ func (ap *AutoProvisioner) attemptProvision(
 			"repo_url", repoURL,
 			"branch", branch,
 		)
-		if cloneErr := ap.checkoutSvc.CloneRepository(ctx, provider, containerProviderID, repoURL, branch); cloneErr != nil {
+		if cloneErr := ap.checkoutSvc.CloneRepository(ctx, provider, containerProviderID, repoURL, branch, "/workspace"); cloneErr != nil {
 			ap.log.Warn("repository clone failed",
 				"workspace_id", ws.ID,
 				"repo_url", repoURL,
