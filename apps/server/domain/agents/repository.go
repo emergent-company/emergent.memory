@@ -1100,17 +1100,20 @@ func (r *Repository) FindADKSessionByIDForProject(ctx context.Context, sessionID
 func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAttempts int, opts ...CreateRunQueuedOptions) (*AgentRun, error) {
 	var parentRunID *string
 	var triggerMessage *string
+	var triggerMetadata map[string]any
 	if len(opts) > 0 {
 		parentRunID = opts[0].ParentRunID
 		triggerMessage = opts[0].TriggerMessage
+		triggerMetadata = opts[0].TriggerMetadata
 	}
 	run := &AgentRun{
-		AgentID:        agentID,
-		Status:         RunStatusQueued,
-		StartedAt:      time.Now(),
-		Summary:        make(map[string]any),
-		ParentRunID:    parentRunID,
-		TriggerMessage: triggerMessage,
+		AgentID:         agentID,
+		Status:          RunStatusQueued,
+		StartedAt:       time.Now(),
+		Summary:         make(map[string]any),
+		ParentRunID:     parentRunID,
+		TriggerMessage:  triggerMessage,
+		TriggerMetadata: triggerMetadata,
 	}
 
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -1348,4 +1351,23 @@ func (r *Repository) GetRunTokenUsage(ctx context.Context, runID string) (*RunTo
 		TotalOutputTokens: result.TotalOutput,
 		EstimatedCostUSD:  result.TotalCost,
 	}, nil
+}
+
+// GetOrgIDByProjectID returns the organization ID for the given project ID.
+// It queries kb.projects directly. Returns an empty string (no error) when
+// the project is not found.
+func (r *Repository) GetOrgIDByProjectID(ctx context.Context, projectID string) (string, error) {
+	var orgID string
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("organization_id").
+		Where("id = ?", projectID).
+		Scan(ctx, &orgID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("GetOrgIDByProjectID: %w", err)
+	}
+	return orgID, nil
 }

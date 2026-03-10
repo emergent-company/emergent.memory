@@ -209,8 +209,9 @@ type CreateRunOptions struct {
 
 // CreateRunQueuedOptions holds optional parameters for CreateRunQueued.
 type CreateRunQueuedOptions struct {
-	ParentRunID    *string // parent run to re-enqueue when this run completes
-	TriggerMessage *string // message injected as user message when worker picks up this run
+	ParentRunID     *string        // parent run to re-enqueue when this run completes
+	TriggerMessage  *string        // message injected as user message when worker picks up this run
+	TriggerMetadata map[string]any // structured metadata propagated from parent run
 }
 
 // AgentProcessingLog tracks which graph objects have been processed by reaction agents

@@ -27,6 +27,10 @@ type CoordinationToolDeps struct {
 	// rejected and the catalog returned by list_available_agents is also filtered.
 	// When empty (nil/zero-length), all agents are reachable (open policy).
 	SpawnPolicy []string
+	// ParentMetadata is the TriggerMetadata of the parent run. It is merged with
+	// any per-spawn Context supplied by the LLM (per-spawn keys take precedence)
+	// to form the child run's TriggerMetadata.
+	ParentMetadata map[string]any
 }
 
 // extractSpawnPolicy reads the spawnPolicy.allow list from an AgentDefinition's Config.
@@ -73,6 +77,23 @@ func spawnAllowed(policy []string, agentName string) bool {
 		}
 	}
 	return false
+}
+
+// mergeMaps returns a new map that contains all entries from base, with any
+// keys in override taking precedence. Returns nil when both inputs are nil or
+// empty, so that NULL (not '{}') is written to the database.
+func mergeMaps(base, override map[string]any) map[string]any {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	merged := make(map[string]any, len(base)+len(override))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range override {
+		merged[k] = v
+	}
+	return merged
 }
 
 // --- list_available_agents ---
@@ -152,6 +173,10 @@ type SpawnRequest struct {
 	Task        string  `json:"task"`
 	Timeout     *int    `json:"timeout,omitempty"`       // timeout in seconds
 	ResumeRunID *string `json:"resume_run_id,omitempty"` // for resuming paused runs
+	// Context is an optional per-spawn metadata map. Keys are merged with the
+	// parent's TriggerMetadata (these per-spawn keys take precedence) and
+	// propagated to the child run as its TriggerMetadata.
+	Context map[string]any `json:"context,omitempty"`
 }
 
 // SpawnResult is the result of a single sub-agent execution.
@@ -298,6 +323,7 @@ func executeSingleSpawn(ctx context.Context, deps CoordinationToolDeps, req Spaw
 		Timeout:         timeout,
 		Depth:           deps.Depth + 1,
 		MaxDepth:        deps.MaxDepth,
+		TriggerMetadata: mergeMaps(deps.ParentMetadata, req.Context),
 	}
 
 	// Handle resume_run_id: resume a paused prior run instead of starting fresh
@@ -419,6 +445,13 @@ func parseSpawnRequests(args map[string]any) ([]SpawnRequest, error) {
 		// Optional resume_run_id
 		if resumeID, ok := m["resume_run_id"].(string); ok && resumeID != "" {
 			req.ResumeRunID = &resumeID
+		}
+
+		// Optional per-spawn context map
+		if ctxRaw, ok := m["context"]; ok {
+			if ctxMap, ok := ctxRaw.(map[string]any); ok {
+				req.Context = ctxMap
+			}
 		}
 
 		requests = append(requests, req)
