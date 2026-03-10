@@ -20,19 +20,21 @@ var Module = fx.Module("adk",
 	fx.Provide(provideModelFactory),
 )
 
-// modelFactoryParams allows optional injection of a CredentialResolver via fx.
+// modelFactoryParams allows optional injection of a CredentialResolver and
+// ModelWrapper via fx.
 type modelFactoryParams struct {
 	fx.In
 
 	Cfg      *config.Config
 	Log      *slog.Logger
 	Resolver CredentialResolver `optional:"true"`
+	Wrapper  ModelWrapper       `optional:"true"`
 }
 
 // provideModelFactory creates a ModelFactory from the main config, with an
-// optional CredentialResolver injected by domain/provider.Module.
+// optional CredentialResolver and ModelWrapper injected by domain/provider.Module.
 func provideModelFactory(p modelFactoryParams) *ModelFactory {
-	return NewModelFactory(&p.Cfg.LLM, p.Log, p.Resolver)
+	return NewModelFactory(&p.Cfg.LLM, p.Log, p.Resolver, p.Wrapper)
 }
 
 // ModelFactory creates ADK-compatible LLM models from configuration.
@@ -40,15 +42,18 @@ type ModelFactory struct {
 	cfg      *config.LLMConfig
 	log      *slog.Logger
 	resolver CredentialResolver // optional; nil → env-var-only mode
+	wrapper  ModelWrapper       // optional; nil → no usage tracking
 }
 
 // NewModelFactory creates a new ModelFactory with the given configuration.
 // resolver may be nil for env-var-only setups (tests, local dev without DB creds).
-func NewModelFactory(cfg *config.LLMConfig, log *slog.Logger, resolver CredentialResolver) *ModelFactory {
+// wrapper may be nil; when provided it wraps every created model with usage tracking.
+func NewModelFactory(cfg *config.LLMConfig, log *slog.Logger, resolver CredentialResolver, wrapper ModelWrapper) *ModelFactory {
 	return &ModelFactory{
 		cfg:      cfg,
 		log:      log,
 		resolver: resolver,
+		wrapper:  wrapper,
 	}
 }
 
@@ -71,6 +76,8 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 //     domain/provider.Module is registered.
 //  2. Fall back to static env-var config (GCP_PROJECT_ID+VERTEX_AI_LOCATION or
 //     GOOGLE_API_KEY). Used in tests and env-var-only setups.
+//
+// If a ModelWrapper is configured the returned LLM is wrapped for usage tracking.
 func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string) (model.LLM, error) {
 	if modelName == "" {
 		return nil, fmt.Errorf("model name is required")
@@ -123,7 +130,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				if err != nil {
 					return nil, fmt.Errorf("failed to create Gemini model via Vertex AI (DB cred): %w", err)
 				}
-				return llm, nil
+				return f.wrapModel(llm, "vertex-ai"), nil
 			}
 
 			if cred.IsGoogleAI && cred.APIKey != "" {
@@ -139,7 +146,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				if err != nil {
 					return nil, fmt.Errorf("failed to create Gemini model via Google AI (DB cred): %w", err)
 				}
-				return llm, nil
+				return f.wrapModel(llm, "google-ai"), nil
 			}
 		}
 		// cred == nil means no DB credential found — fall through to env vars
@@ -161,7 +168,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 
 		llm, err := gemini.NewModel(ctx, modelName, clientCfg)
 		if err == nil {
-			return llm, nil
+			return f.wrapModel(llm, "vertex-ai"), nil
 		}
 
 		// If Vertex AI fails and we have an API key, fall back
@@ -187,10 +194,19 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Gemini model via Google AI: %w", err)
 		}
-		return llm, nil
+		return f.wrapModel(llm, "google-ai"), nil
 	}
 
 	return nil, fmt.Errorf("no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI")
+}
+
+// wrapModel applies the optional ModelWrapper to the given LLM.
+// If no wrapper is configured the model is returned unchanged.
+func (f *ModelFactory) wrapModel(llm model.LLM, provider string) model.LLM {
+	if f.wrapper == nil {
+		return llm
+	}
+	return f.wrapper.WrapModel(llm, provider)
 }
 
 // DefaultGenerateConfig returns a default GenerateContentConfig for extraction tasks.

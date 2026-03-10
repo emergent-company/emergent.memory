@@ -652,7 +652,7 @@ func TestSchemaVariantComparison(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	modelFactory := adk.NewModelFactory(llmConfig, logger, nil)
+	modelFactory := adk.NewModelFactory(llmConfig, logger, nil, nil)
 
 	llm, err := modelFactory.CreateModel(ctx)
 	require.NoError(t, err, "Failed to create model")
