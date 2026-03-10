@@ -103,6 +103,11 @@ func (m *TrackingModel) recordUsage(ctx context.Context, req *adkmodel.LLMReques
 		CreatedAt:    time.Now().UTC(),
 	}
 
+	// Attach the agent run ID when present in context.
+	if runID := RunIDFromContext(ctx); runID != "" {
+		event.RunID = &runID
+	}
+
 	// Extract per-modality prompt tokens when the breakdown is available.
 	// This is present when the model response includes PromptTokensDetails.
 	if len(meta.PromptTokensDetails) > 0 {
