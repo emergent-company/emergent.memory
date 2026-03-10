@@ -29,15 +29,20 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	}
 }
 
-// FindAll returns all skills for listing. If projectID is nil, returns only global skills.
-// If projectID is set, returns only project-scoped skills for that project.
-func (r *Repository) FindAll(ctx context.Context, projectID *string) ([]*Skill, error) {
+// FindAll returns skills for listing. Exactly one of projectID or orgID should be set:
+//   - projectID non-nil: returns only project-scoped skills for that project.
+//   - orgID non-nil: returns only org-scoped skills for that org.
+//   - both nil: returns only global skills (project_id IS NULL AND org_id IS NULL).
+func (r *Repository) FindAll(ctx context.Context, projectID *string, orgID *string) ([]*Skill, error) {
 	var skills []*Skill
 	q := r.db.NewSelect().Model(&skills)
-	if projectID == nil {
-		q = q.Where("s.project_id IS NULL")
-	} else {
+	switch {
+	case projectID != nil:
 		q = q.Where("s.project_id = ?", *projectID)
+	case orgID != nil:
+		q = q.Where("s.org_id = ? AND s.project_id IS NULL", *orgID)
+	default:
+		q = q.Where("s.project_id IS NULL AND s.org_id IS NULL")
 	}
 	q = q.OrderExpr("s.name ASC")
 	if err := q.Scan(ctx); err != nil {
@@ -46,25 +51,43 @@ func (r *Repository) FindAll(ctx context.Context, projectID *string) ([]*Skill, 
 	return skills, nil
 }
 
-// FindForAgent returns the merged set of global + project-scoped skills for a given project.
-// Project-scoped skills win on name collision (project_id NOT NULL sorts first via NULLS LAST).
-// Returns one skill per name: if both global and project exist, project version is returned.
-func (r *Repository) FindForAgent(ctx context.Context, projectID string) ([]*Skill, error) {
+// FindForAgent returns the merged set of global + org-scoped + project-scoped skills for a
+// given project. Resolution order (project wins over org wins over global):
+//  1. Fetch all rows where project_id = projectID OR (org_id = orgID AND project_id IS NULL) OR
+//     (project_id IS NULL AND org_id IS NULL)
+//  2. De-duplicate by name: first occurrence wins when ordered project → org → global.
+//
+// If orgID is empty, org-scoped skills are not included.
+func (r *Repository) FindForAgent(ctx context.Context, projectID string, orgID string) ([]*Skill, error) {
 	var all []*Skill
 
-	// Fetch global skills first, then project skills so we can apply project-wins logic in Go
-	// via a single query ordered by project_id NULLS LAST: project rows sort before nulls.
-	err := r.db.NewSelect().
-		Model(&all).
-		Where("s.project_id = ? OR s.project_id IS NULL", projectID).
-		OrderExpr("s.project_id NULLS LAST, s.name ASC").
-		Scan(ctx)
-	if err != nil {
+	q := r.db.NewSelect().Model(&all)
+	if orgID != "" {
+		q = q.Where(
+			"s.project_id = ? OR (s.org_id = ? AND s.project_id IS NULL) OR (s.project_id IS NULL AND s.org_id IS NULL)",
+			projectID, orgID,
+		)
+	} else {
+		q = q.Where(
+			"s.project_id = ? OR (s.project_id IS NULL AND s.org_id IS NULL)",
+			projectID,
+		)
+	}
+
+	// Sort so project rows appear first, then org rows, then global (NULL sorts last).
+	// Use CASE to define priority: project=1, org=2, global=3.
+	q = q.OrderExpr(`
+		CASE
+			WHEN s.project_id IS NOT NULL THEN 1
+			WHEN s.org_id IS NOT NULL THEN 2
+			ELSE 3
+		END ASC, s.name ASC`)
+
+	if err := q.Scan(ctx); err != nil {
 		return nil, apperror.NewInternal("failed to list agent skills", err)
 	}
 
-	// De-duplicate: project-scoped wins on name collision.
-	// Since project rows sort before NULL rows, the first occurrence of each name wins.
+	// De-duplicate: first occurrence of each name wins (project > org > global).
 	seen := make(map[string]struct{}, len(all))
 	result := make([]*Skill, 0, len(all))
 	for _, s := range all {
@@ -78,10 +101,10 @@ func (r *Repository) FindForAgent(ctx context.Context, projectID string) ([]*Ski
 }
 
 // FindRelevant performs cosine similarity search against description embeddings.
-// Returns the topK most relevant skills for the given project (global + project-scoped).
+// Returns the topK most relevant skills for the given project (global + org + project-scoped).
 // Uses IVFFlat with probes=10 for high recall (~90%+) with low latency.
 // Only considers skills with a non-NULL description_embedding.
-func (r *Repository) FindRelevant(ctx context.Context, projectID string, vec []float32, topK int) ([]*Skill, error) {
+func (r *Repository) FindRelevant(ctx context.Context, projectID string, orgID string, vec []float32, topK int) ([]*Skill, error) {
 	tx, err := r.beginTxWithIVFFlatProbes(ctx, 10)
 	if err != nil {
 		return nil, err
@@ -91,14 +114,26 @@ func (r *Repository) FindRelevant(ctx context.Context, projectID string, vec []f
 	vectorStr := pgutils.FormatVector(vec)
 
 	var skills []*Skill
-	err = tx.NewSelect().
+	q := tx.NewSelect().
 		Model(&skills).
-		Where("(s.project_id = ? OR s.project_id IS NULL)", projectID).
-		Where("s.description_embedding IS NOT NULL").
-		OrderExpr("s.description_embedding <=> ?::vector ASC", vectorStr).
-		Limit(topK).
-		Scan(ctx)
-	if err != nil {
+		Where("s.description_embedding IS NOT NULL")
+
+	if orgID != "" {
+		q = q.Where(
+			"s.project_id = ? OR (s.org_id = ? AND s.project_id IS NULL) OR (s.project_id IS NULL AND s.org_id IS NULL)",
+			projectID, orgID,
+		)
+	} else {
+		q = q.Where(
+			"s.project_id = ? OR (s.project_id IS NULL AND s.org_id IS NULL)",
+			projectID,
+		)
+	}
+
+	q = q.OrderExpr("s.description_embedding <=> ?::vector ASC", vectorStr).
+		Limit(topK)
+
+	if err := q.Scan(ctx); err != nil {
 		return nil, apperror.NewInternal("failed to find relevant skills", err)
 	}
 
@@ -133,17 +168,24 @@ func (r *Repository) Create(ctx context.Context, s *Skill, embedding []float32) 
 	if embedding != nil {
 		vectorStr := pgutils.FormatVector(embedding)
 		_, err := r.db.ExecContext(ctx,
-			`INSERT INTO kb.skills (id, name, description, content, metadata, description_embedding, project_id, created_at, updated_at)
-			 VALUES (gen_random_uuid(), ?, ?, ?, ?, ?::vector, ?, now(), now())
+			`INSERT INTO kb.skills (id, name, description, content, metadata, description_embedding, project_id, org_id, created_at, updated_at)
+			 VALUES (gen_random_uuid(), ?, ?, ?, ?, ?::vector, ?, ?, now(), now())
 			 RETURNING id, created_at, updated_at`,
-			s.Name, s.Description, s.Content, s.Metadata, vectorStr, s.ProjectID,
+			s.Name, s.Description, s.Content, s.Metadata, vectorStr, s.ProjectID, s.OrgID,
 		)
 		if err != nil {
 			return r.wrapDBError("failed to create skill", err)
 		}
 		// Fetch to populate id/timestamps
-		return r.db.NewSelect().Model(s).Where("s.name = ? AND (s.project_id = ? OR (s.project_id IS NULL AND ? IS NULL))",
-			s.Name, s.ProjectID, s.ProjectID).OrderExpr("s.created_at DESC").Limit(1).Scan(ctx)
+		q := r.db.NewSelect().Model(s)
+		if s.ProjectID != nil {
+			q = q.Where("s.name = ? AND s.project_id = ?", s.Name, *s.ProjectID)
+		} else if s.OrgID != nil {
+			q = q.Where("s.name = ? AND s.org_id = ? AND s.project_id IS NULL", s.Name, *s.OrgID)
+		} else {
+			q = q.Where("s.name = ? AND s.project_id IS NULL AND s.org_id IS NULL", s.Name)
+		}
+		return q.OrderExpr("s.created_at DESC").Limit(1).Scan(ctx)
 	}
 
 	// No embedding: use Bun ORM insert
@@ -227,12 +269,18 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// Count returns total number of skills accessible to an agent for a project (global + project).
-func (r *Repository) Count(ctx context.Context, projectID string) (int, error) {
-	n, err := r.db.NewSelect().
-		Model((*Skill)(nil)).
-		Where("project_id = ? OR project_id IS NULL", projectID).
-		Count(ctx)
+// Count returns total number of skills accessible to an agent for a project (global + org + project).
+func (r *Repository) Count(ctx context.Context, projectID string, orgID string) (int, error) {
+	q := r.db.NewSelect().Model((*Skill)(nil))
+	if orgID != "" {
+		q = q.Where(
+			"project_id = ? OR (org_id = ? AND project_id IS NULL) OR (project_id IS NULL AND org_id IS NULL)",
+			projectID, orgID,
+		)
+	} else {
+		q = q.Where("project_id = ? OR (project_id IS NULL AND org_id IS NULL)", projectID)
+	}
+	n, err := q.Count(ctx)
 	if err != nil {
 		return 0, apperror.NewInternal("failed to count skills", err)
 	}

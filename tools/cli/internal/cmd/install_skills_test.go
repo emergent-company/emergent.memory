@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +35,7 @@ Some content here.
 `
 
 // ---------------------------------------------------------------------------
-// 2.3 — validateSkillFrontmatter
+// validateSkillFrontmatter
 // ---------------------------------------------------------------------------
 
 func TestValidateSkillFrontmatter_Valid(t *testing.T) {
@@ -170,7 +169,7 @@ func TestValidateSkillFrontmatter_DirNameMatch(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 2.1 — parseSkillFrontmatter
+// parseSkillFrontmatter
 // ---------------------------------------------------------------------------
 
 func TestParseSkillFrontmatter_Valid(t *testing.T) {
@@ -203,355 +202,64 @@ func TestParseSkillFrontmatter_MalformedFrontmatter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3.3 — validate subcommand
+// discoverSkillsInDir
 // ---------------------------------------------------------------------------
 
-func TestInstallSkillsValidate_ValidSkill(t *testing.T) {
+func TestDiscoverSkillsInDir_SingleSkill(t *testing.T) {
 	dir := makeSkillDir(t, validSkillMD)
-
-	cmd := installSkillValidateCmd
-	var out strings.Builder
-	cmd.SetOut(&out)
-
-	err := runValidateSkill(cmd, []string{dir})
+	skills, err := discoverSkillsInDir(dir)
 	require.NoError(t, err)
+	require.Len(t, skills, 1)
+	assert.Equal(t, "my-skill", skills[0].Name)
+	assert.Equal(t, "A test skill for unit tests", skills[0].Description)
+	assert.Contains(t, skills[0].Content, "# My Skill")
 }
 
-func TestInstallSkillsValidate_InvalidSkill(t *testing.T) {
-	dir := makeSkillDir(t, "---\nname: \ndescription: \n---\n")
-
-	cmd := installSkillValidateCmd
-	err := runValidateSkill(cmd, []string{dir})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "validation failed")
-}
-
-func TestInstallSkillsValidate_DefaultsToCurrentDir(t *testing.T) {
-	// Create a valid skill in a temp dir and chdir there
-	dir := makeSkillDir(t, validSkillMD)
-	orig, err := os.Getwd()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.Chdir(orig) })
-	require.NoError(t, os.Chdir(dir))
-
-	cmd := installSkillValidateCmd
-	err = runValidateSkill(cmd, []string{})
-	require.NoError(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// 4.6 — installFromLocalPath
-// ---------------------------------------------------------------------------
-
-func TestInstallFromLocalPath_HappyPath(t *testing.T) {
-	src := makeSkillDir(t, validSkillMD)
-	// add a second file to verify full tree copy
-	err := os.WriteFile(filepath.Join(src, "extra.txt"), []byte("extra"), 0o644)
-	require.NoError(t, err)
-
-	targetDir := t.TempDir()
-	err = installFromLocalPath(src, targetDir, false, false)
-	require.NoError(t, err)
-
-	dest := filepath.Join(targetDir, "my-skill")
-	assert.DirExists(t, dest)
-	assert.FileExists(t, filepath.Join(dest, "SKILL.md"))
-	assert.FileExists(t, filepath.Join(dest, "extra.txt"))
-}
-
-func TestInstallFromLocalPath_AlreadyExists_NonInteractive_NoForce(t *testing.T) {
-	src := makeSkillDir(t, validSkillMD)
-	targetDir := t.TempDir()
-
-	// First install
-	err := installFromLocalPath(src, targetDir, false, false)
-	require.NoError(t, err)
-
-	// Second install without force — non-interactive (CI/test env has no TTY)
-	err = installFromLocalPath(src, targetDir, false, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already installed")
-	assert.Contains(t, err.Error(), "--force")
-}
-
-func TestInstallFromLocalPath_AlreadyExists_WithForce(t *testing.T) {
-	src := makeSkillDir(t, validSkillMD)
-	targetDir := t.TempDir()
-
-	// First install
-	err := installFromLocalPath(src, targetDir, false, false)
-	require.NoError(t, err)
-
-	// Modify source to simulate an update
-	err = os.WriteFile(filepath.Join(src, "new-file.txt"), []byte("new"), 0o644)
-	require.NoError(t, err)
-
-	// Second install with force
-	err = installFromLocalPath(src, targetDir, true, false)
-	require.NoError(t, err)
-
-	// New file should be present
-	assert.FileExists(t, filepath.Join(targetDir, "my-skill", "new-file.txt"))
-}
-
-func TestInstallFromLocalPath_MissingSKILLmd(t *testing.T) {
-	src := t.TempDir() // empty dir — no SKILL.md, no subdirs
-	targetDir := t.TempDir()
-
-	err := installFromLocalPath(src, targetDir, false, false)
-	require.Error(t, err)
-	// Empty dir with no SKILL.md and no skill subdirs → catalog mode, no skills found
-	assert.True(t,
-		strings.Contains(err.Error(), "no SKILL.md found") || strings.Contains(err.Error(), "no skill subdirectories detected"),
-		"unexpected error: %v", err)
-}
-
-func TestInstallFromLocalPath_InvalidSKILLmd(t *testing.T) {
-	src := makeSkillDir(t, "---\nname: \ndescription: \n---\n")
-	targetDir := t.TempDir()
-
-	err := installFromLocalPath(src, targetDir, false, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "validation failed")
-}
-
-func TestInstallFromLocalPath_CreatesTargetDir(t *testing.T) {
-	src := makeSkillDir(t, validSkillMD)
-	// Use a nested non-existent target
-	targetDir := filepath.Join(t.TempDir(), "a", "b", "c")
-
-	err := installFromLocalPath(src, targetDir, false, false)
-	require.NoError(t, err)
-	assert.DirExists(t, filepath.Join(targetDir, "my-skill"))
-}
-
-func TestInstallFromLocalPath_SkipsGitDir(t *testing.T) {
-	src := makeSkillDir(t, validSkillMD)
-	gitDir := filepath.Join(src, ".git")
-	require.NoError(t, os.MkdirAll(gitDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte("git config"), 0o644))
-
-	targetDir := t.TempDir()
-	err := installFromLocalPath(src, targetDir, false, false)
-	require.NoError(t, err)
-
-	assert.NoDirExists(t, filepath.Join(targetDir, "my-skill", ".git"))
-}
-
-func TestInstallFromLocalPath_NonExistentSrc(t *testing.T) {
-	err := installFromLocalPath("/nonexistent/path", t.TempDir(), false, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not exist")
-}
-
-func TestInstallFromLocalPath_SrcIsFile(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "not-a-dir-*.txt")
-	require.NoError(t, err)
-	f.Close()
-
-	err = installFromLocalPath(f.Name(), t.TempDir(), false, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not a directory")
-}
-
-// ---------------------------------------------------------------------------
-// Catalog install mode
-// ---------------------------------------------------------------------------
-
-func TestInstallFromLocalPath_CatalogHappyPath(t *testing.T) {
-	// Build a catalog dir with two skill subdirs
+func TestDiscoverSkillsInDir_Catalog(t *testing.T) {
 	catalog := t.TempDir()
 	for _, name := range []string{"skill-a", "skill-b"} {
-		skillMD := "---\nname: " + name + "\ndescription: Skill " + name + "\n---\n"
+		skillMD := "---\nname: " + name + "\ndescription: Skill " + name + "\n---\n# " + name + "\n"
 		d := filepath.Join(catalog, name)
 		require.NoError(t, os.MkdirAll(d, 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(d, "SKILL.md"), []byte(skillMD), 0o644))
 	}
-
-	targetDir := t.TempDir()
-	err := installFromLocalPath(catalog, targetDir, false, false)
-	require.NoError(t, err)
-	assert.DirExists(t, filepath.Join(targetDir, "skill-a"))
-	assert.DirExists(t, filepath.Join(targetDir, "skill-b"))
-}
-
-func TestInstallFromLocalPath_CatalogSkipsNonSkillDirs(t *testing.T) {
-	catalog := t.TempDir()
-	// One real skill
-	require.NoError(t, os.MkdirAll(filepath.Join(catalog, "real-skill"), 0o755))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(catalog, "real-skill", "SKILL.md"),
-		[]byte("---\nname: real-skill\ndescription: Real\n---\n"), 0o644))
-	// One dir without SKILL.md
+	// A dir without SKILL.md should be skipped
 	require.NoError(t, os.MkdirAll(filepath.Join(catalog, "not-a-skill"), 0o755))
 
-	targetDir := t.TempDir()
-	err := installFromLocalPath(catalog, targetDir, false, false)
+	skills, err := discoverSkillsInDir(catalog)
 	require.NoError(t, err)
-	assert.DirExists(t, filepath.Join(targetDir, "real-skill"))
-	assert.NoDirExists(t, filepath.Join(targetDir, "not-a-skill"))
+	require.Len(t, skills, 2)
+	names := []string{skills[0].Name, skills[1].Name}
+	assert.Contains(t, names, "skill-a")
+	assert.Contains(t, names, "skill-b")
 }
 
-func TestInstallFromLocalPath_CatalogEmptyDir(t *testing.T) {
-	catalog := t.TempDir() // no subdirs
-	targetDir := t.TempDir()
-
-	err := installFromLocalPath(catalog, targetDir, false, false)
-	require.Error(t, err)
-	assert.True(t,
-		strings.Contains(err.Error(), "no SKILL.md found") || strings.Contains(err.Error(), "no skill subdirectories"),
-		"unexpected error: %v", err)
+func TestDiscoverSkillsInDir_NonExistent(t *testing.T) {
+	skills, err := discoverSkillsInDir("/nonexistent/path/xyz")
+	require.NoError(t, err) // non-existent returns empty, not error
+	assert.Empty(t, skills)
 }
 
-func TestRunInstallSkill_DefaultsToEmbedded(t *testing.T) {
-	targetDir := t.TempDir()
-	installSkillsDir = targetDir
-
-	// No args — should install only emergent-* skills from the built-in catalog.
-	err := runInstallSkill(installSkillInstallCmd, []string{})
+func TestDiscoverSkillsInDir_Empty(t *testing.T) {
+	dir := t.TempDir()
+	skills, err := discoverSkillsInDir(dir)
 	require.NoError(t, err)
-
-	// emergent-* skills should be present.
-	assert.DirExists(t, filepath.Join(targetDir, "emergent-onboard"))
-	assert.DirExists(t, filepath.Join(targetDir, "emergent-query"))
-
-	// Non-emergent skills should NOT be installed.
-	assert.NoDirExists(t, filepath.Join(targetDir, "commit"))
-	assert.NoDirExists(t, filepath.Join(targetDir, "release"))
+	assert.Empty(t, skills)
 }
 
 // ---------------------------------------------------------------------------
-// 6.6 — list subcommand
+// skillContentFromBytes
 // ---------------------------------------------------------------------------
 
-func TestRunListSkills_Empty(t *testing.T) {
-	skillsDir := t.TempDir()
-	installSkillsDir = skillsDir
-
-	var out strings.Builder
-	installSkillListCmd.SetOut(&out)
-
-	err := runListSkills(installSkillListCmd, []string{})
-	require.NoError(t, err)
-	assert.Contains(t, out.String(), "No skills installed")
+func TestSkillContentFromBytes_ExtractsContent(t *testing.T) {
+	content := skillContentFromBytes([]byte(validSkillMD))
+	assert.Contains(t, content, "# My Skill")
+	assert.Contains(t, content, "Some content here.")
+	assert.NotContains(t, content, "name: my-skill")
 }
 
-func TestRunListSkills_NonExistentDir(t *testing.T) {
-	installSkillsDir = filepath.Join(t.TempDir(), "does-not-exist")
-
-	var out strings.Builder
-	installSkillListCmd.SetOut(&out)
-
-	err := runListSkills(installSkillListCmd, []string{})
-	require.NoError(t, err)
-	assert.Contains(t, out.String(), "No skills installed")
-}
-
-func TestRunListSkills_WithSkills(t *testing.T) {
-	skillsDir := t.TempDir()
-	// Install a skill manually
-	dest := filepath.Join(skillsDir, "my-skill")
-	require.NoError(t, os.MkdirAll(dest, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dest, "SKILL.md"), []byte(validSkillMD), 0o644))
-
-	installSkillsDir = skillsDir
-
-	var out strings.Builder
-	installSkillListCmd.SetOut(&out)
-
-	err := runListSkills(installSkillListCmd, []string{})
-	require.NoError(t, err)
-	assert.Contains(t, out.String(), "my-skill")
-}
-
-func TestRunListSkills_JSONOutput(t *testing.T) {
-	skillsDir := t.TempDir()
-	dest := filepath.Join(skillsDir, "my-skill")
-	require.NoError(t, os.MkdirAll(dest, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dest, "SKILL.md"), []byte(validSkillMD), 0o644))
-
-	installSkillsDir = skillsDir
-
-	// Set --output json flag
-	require.NoError(t, installSkillListCmd.Flags().Set("output", "json"))
-	t.Cleanup(func() { _ = installSkillListCmd.Flags().Set("output", "table") })
-
-	var out strings.Builder
-	installSkillListCmd.SetOut(&out)
-	t.Cleanup(func() { installSkillListCmd.SetOut(nil) })
-
-	err := runListSkills(installSkillListCmd, []string{})
-	require.NoError(t, err)
-
-	var skills []SkillMeta
-	require.NoError(t, json.Unmarshal([]byte(out.String()), &skills))
-	require.Len(t, skills, 1)
-	assert.Equal(t, "my-skill", skills[0].Name)
-}
-
-func TestRunListSkills_SkipsInvalidSkillDirs(t *testing.T) {
-	skillsDir := t.TempDir()
-	// A dir with no SKILL.md — should be silently skipped
-	require.NoError(t, os.MkdirAll(filepath.Join(skillsDir, "not-a-skill"), 0o755))
-	// A valid skill
-	dest := filepath.Join(skillsDir, "my-skill")
-	require.NoError(t, os.MkdirAll(dest, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dest, "SKILL.md"), []byte(validSkillMD), 0o644))
-
-	installSkillsDir = skillsDir
-
-	var out strings.Builder
-	installSkillListCmd.SetOut(&out)
-
-	err := runListSkills(installSkillListCmd, []string{})
-	require.NoError(t, err)
-	assert.Contains(t, out.String(), "my-skill")
-	assert.NotContains(t, out.String(), "not-a-skill")
-}
-
-// ---------------------------------------------------------------------------
-// 7.4 — remove subcommand
-// ---------------------------------------------------------------------------
-
-func TestRunRemoveSkill_HappyPath(t *testing.T) {
-	skillsDir := t.TempDir()
-	dest := filepath.Join(skillsDir, "my-skill")
-	require.NoError(t, os.MkdirAll(dest, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dest, "SKILL.md"), []byte(validSkillMD), 0o644))
-
-	installSkillsDir = skillsDir
-
-	// Set --force to skip interactive prompt
-	require.NoError(t, installSkillRemoveCmd.Flags().Set("force", "true"))
-	t.Cleanup(func() { _ = installSkillRemoveCmd.Flags().Set("force", "false") })
-
-	err := runRemoveSkill(installSkillRemoveCmd, []string{"my-skill"})
-	require.NoError(t, err)
-	assert.NoDirExists(t, dest)
-}
-
-func TestRunRemoveSkill_NotInstalled(t *testing.T) {
-	skillsDir := t.TempDir()
-	installSkillsDir = skillsDir
-
-	err := runRemoveSkill(installSkillRemoveCmd, []string{"nonexistent"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not installed")
-}
-
-func TestRunRemoveSkill_ForceSkipsPrompt(t *testing.T) {
-	skillsDir := t.TempDir()
-	dest := filepath.Join(skillsDir, "my-skill")
-	require.NoError(t, os.MkdirAll(dest, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dest, "SKILL.md"), []byte(validSkillMD), 0o644))
-
-	installSkillsDir = skillsDir
-
-	require.NoError(t, installSkillRemoveCmd.Flags().Set("force", "true"))
-	t.Cleanup(func() { _ = installSkillRemoveCmd.Flags().Set("force", "false") })
-
-	// Should succeed without needing stdin input
-	err := runRemoveSkill(installSkillRemoveCmd, []string{"my-skill"})
-	require.NoError(t, err)
-	assert.NoDirExists(t, dest)
+func TestSkillContentFromBytes_NoFrontmatter(t *testing.T) {
+	raw := "# Just content\nNo frontmatter."
+	content := skillContentFromBytes([]byte(raw))
+	assert.Equal(t, raw, content)
 }
