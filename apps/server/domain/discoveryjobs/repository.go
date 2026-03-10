@@ -162,25 +162,25 @@ func (r *Repository) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 	return nil
 }
 
-// GetProjectKBPurpose retrieves the KB purpose for a project
-func (r *Repository) GetProjectKBPurpose(ctx context.Context, projectID uuid.UUID) (string, error) {
-	var kbPurpose string
+// GetProjectInfo retrieves the KB purpose for a project
+func (r *Repository) GetProjectInfo(ctx context.Context, projectID uuid.UUID) (string, error) {
+	var projectInfo string
 	err := r.db.NewSelect().
 		Table("kb.projects").
-		Column("kb_purpose").
+		Column("project_info").
 		Where("id = ?", projectID).
-		Scan(ctx, &kbPurpose)
+		Scan(ctx, &projectInfo)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return "", apperror.ErrNotFound.WithMessage("project not found")
 		}
-		r.log.Error("failed to get project KB purpose", logger.Error(err))
+		r.log.Error("failed to get project info", logger.Error(err))
 		return "", apperror.ErrInternal.WithInternal(err)
 	}
-	if kbPurpose == "" {
-		kbPurpose = "General purpose knowledge base for project documentation and knowledge management."
+	if projectInfo == "" {
+		projectInfo = "General purpose knowledge base for project documentation and knowledge management."
 	}
-	return kbPurpose, nil
+	return projectInfo, nil
 }
 
 // CreateTypeCandidate creates a new type candidate

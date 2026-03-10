@@ -54,7 +54,7 @@ type Project struct {
 	ID                 string                 `json:"id"`
 	Name               string                 `json:"name"`
 	OrgID              string                 `json:"orgId"`
-	KBPurpose          *string                `json:"kb_purpose,omitempty"`
+	ProjectInfo        *string                `json:"project_info,omitempty"`
 	ChatPromptTemplate *string                `json:"chat_prompt_template,omitempty"`
 	AutoExtractObjects *bool                  `json:"auto_extract_objects,omitempty"`
 	AutoExtractConfig  map[string]interface{} `json:"auto_extract_config,omitempty"`
@@ -82,7 +82,7 @@ type CreateProjectRequest struct {
 // UpdateProjectRequest represents a project update request
 type UpdateProjectRequest struct {
 	Name               *string                `json:"name,omitempty"`
-	KBPurpose          *string                `json:"kb_purpose,omitempty"`
+	ProjectInfo        *string                `json:"project_info,omitempty"`
 	ChatPromptTemplate *string                `json:"chat_prompt_template,omitempty"`
 	AutoExtractObjects *bool                  `json:"auto_extract_objects,omitempty"`
 	AutoExtractConfig  map[string]interface{} `json:"auto_extract_config,omitempty"`

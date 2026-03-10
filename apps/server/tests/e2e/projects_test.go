@@ -416,11 +416,11 @@ func (s *ProjectsTestSuite) TestUpdateProject_PartialUpdate() {
 	// Create a project to update
 	projectID := s.createProjectViaAPI(s.OrgID, "Original Name for Partial")
 
-	// Update only kb_purpose
+	// Update only project_info
 	resp := s.Client.PATCH("/api/projects/"+projectID,
 		testutil.WithAuth("e2e-test-user"),
 		testutil.WithJSON(),
-		testutil.WithBody(`{"kb_purpose": "Test purpose"}`),
+		testutil.WithBody(`{"project_info": "Test purpose"}`),
 	)
 
 	s.Equal(http.StatusOK, resp.StatusCode)
@@ -429,7 +429,7 @@ func (s *ProjectsTestSuite) TestUpdateProject_PartialUpdate() {
 	err := json.Unmarshal(resp.Body, &project)
 	s.NoError(err)
 	s.Equal("Original Name for Partial", project["name"]) // Name unchanged
-	s.Equal("Test purpose", project["kb_purpose"])
+	s.Equal("Test purpose", project["project_info"])
 }
 
 func (s *ProjectsTestSuite) TestUpdateProject_EmptyUpdate() {

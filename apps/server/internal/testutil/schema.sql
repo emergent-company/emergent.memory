@@ -2069,7 +2069,7 @@ CREATE TABLE kb.projects (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     organization_id uuid NOT NULL,
     name text NOT NULL,
-    kb_purpose text,
+    project_info text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     auto_extract_objects boolean DEFAULT false NOT NULL,
