@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -916,31 +917,105 @@ func (ae *AgentExecutor) runPipeline(
 	// When the LLM emits a malformed function call we inject a recovery turn
 	// ("Your previous response was malformed — please try again") and restart
 	// the iterator on the same ADK session, up to maxMalformedRetries times.
+	// Similarly, when the LLM calls an unknown/hallucinated tool name we inject
+	// a correction turn listing the available tools.
 	const maxMalformedRetries = 3
+	const maxTransientRetries = 5
 	var lastEvent *session.Event
-	var lastTextEvent *session.Event // fallback: last non-partial event with text content
+	var lastTextEvent *session.Event // fallback: last non-empty text event
 	runCfg := agent.RunConfig{}
 	if req.StreamCallback != nil {
 		runCfg.StreamingMode = agent.StreamingModeSSE
 	}
 	malformedCount := 0
+	unknownToolCount := 0
+	transientErrCount := 0
 	currentContent := userContent
 	for {
 		malformed := false
+		unknownTool := false
+		transientErr := false
 		for event, eventErr := range r.Run(ctx, "system", sess.ID(), currentContent, runCfg) {
 			if eventErr != nil {
 				steps := tracker.current()
+				errStr := eventErr.Error()
+				// Retry on transient Google AI API errors (503 UNAVAILABLE, 429 rate-limit)
+				// without injecting a new message — simply re-run from current content.
+				isTransient := strings.Contains(errStr, "503") ||
+					strings.Contains(errStr, "UNAVAILABLE") ||
+					strings.Contains(errStr, "429") ||
+					strings.Contains(errStr, "RESOURCE_EXHAUSTED")
+				if isTransient && transientErrCount < maxTransientRetries {
+					transientErrCount++
+					// Fixed 5s delay — rate limit errors need a brief pause, not
+					// an escalating backoff that burns through test timeouts.
+					const transientDelay = 5 * time.Second
+					ae.log.Warn("agent run received transient API error, retrying",
+						slog.String("run_id", run.ID),
+						slog.String("error", errStr),
+						slog.Int("attempt", transientErrCount),
+						slog.Int("max_retries", maxTransientRetries),
+						slog.Duration("backoff", transientDelay),
+					)
+					transientErr = true
+					time.Sleep(transientDelay)
+					break // break inner loop to restart r.Run() with same content
+				}
+				// Retry when the LLM calls a hallucinated/unknown tool name.
+				// Extract the bad name, suggest the closest real tool, and inject
+				// a helpful correction message.
+				if strings.Contains(errStr, "unknown tool:") && unknownToolCount < maxMalformedRetries {
+					unknownToolCount++
+					var toolNames []string
+					for _, t := range resolvedTools {
+						toolNames = append(toolNames, t.Name())
+					}
+					// Extract the called name from the error string (format: `unknown tool: "foo"`)
+					calledName := errStr
+					if idx := strings.Index(errStr, "unknown tool:"); idx >= 0 {
+						calledName = strings.TrimSpace(errStr[idx+len("unknown tool:"):])
+						calledName = strings.Trim(calledName, `"`)
+					}
+					// Find the closest real tool name by edit distance.
+					suggestion := closestToolName(calledName, toolNames)
+					var suggestionMsg string
+					if suggestion != "" {
+						suggestionMsg = fmt.Sprintf(
+							" Did you mean %q? That tool can help you accomplish the same goal.",
+							suggestion,
+						)
+					}
+					correction := fmt.Sprintf(
+						"You called a tool named %q which does not exist.%s "+
+							"The tools available to you are: %s. "+
+							"Please try again using only those tools.",
+						calledName,
+						suggestionMsg,
+						strings.Join(toolNames, ", "),
+					)
+					ae.log.Warn("agent called unknown tool, injecting correction",
+						slog.String("run_id", run.ID),
+						slog.String("called_tool", calledName),
+						slog.String("suggestion", suggestion),
+						slog.Int("attempt", unknownToolCount),
+						slog.Int("max_retries", maxMalformedRetries),
+					)
+					currentContent = genai.NewContentFromText(correction, genai.RoleUser)
+					unknownTool = true
+					time.Sleep(time.Duration(unknownToolCount) * 2 * time.Second)
+					break
+				}
 				if req.StreamCallback != nil {
 					req.StreamCallback(StreamEvent{
 						Type:  StreamEventError,
-						Error: eventErr.Error(),
+						Error: errStr,
 					})
 				}
-				_ = ae.repo.FailRunWithSteps(ctx, run.ID, eventErr.Error(), steps)
+				_ = ae.repo.FailRunWithSteps(ctx, run.ID, errStr, steps)
 				return &ExecuteResult{
 					RunID:    run.ID,
 					Status:   RunStatusError,
-					Summary:  map[string]any{"error": eventErr.Error()},
+					Summary:  map[string]any{"error": errStr},
 					Steps:    steps,
 					Duration: time.Since(startTime),
 				}, nil
@@ -1039,11 +1114,15 @@ func (ae *AgentExecutor) runPipeline(
 				}
 			}
 		} // end inner for-range r.Run(...)
-		if !malformed {
+		if !malformed && !transientErr && !unknownTool {
 			break // normal completion — exit outer retry loop
 		}
 		// MALFORMED_FUNCTION_CALL retry: brief pause then re-enter inner loop
-		time.Sleep(time.Duration(malformedCount) * 2 * time.Second)
+		// (transient errors already slept their backoff above before breaking;
+		// unknown tool errors already slept before breaking too)
+		if malformed {
+			time.Sleep(time.Duration(malformedCount) * 2 * time.Second)
+		}
 	} // end outer retry loop
 
 	// Check if we exited due to context cancellation (timeout or manual cancellation)
@@ -1533,6 +1612,31 @@ type doomLoopDetector struct {
 
 func newDoomLoopDetector(log *slog.Logger) *doomLoopDetector {
 	return &doomLoopDetector{log: log}
+}
+
+// closestToolName returns the tool name from candidates that is most similar
+// to called (by Levenshtein edit distance). Returns "" if candidates is empty.
+func closestToolName(called string, candidates []string) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	best := candidates[0]
+	bestDist := levenshtein(called, best)
+	for _, c := range candidates[1:] {
+		if d := levenshtein(called, c); d < bestDist {
+			bestDist = d
+			best = c
+		}
+	}
+	// Only suggest if reasonably close — threshold: half the longer string's length.
+	maxLen := len(called)
+	if len(best) > maxLen {
+		maxLen = len(best)
+	}
+	if maxLen == 0 || bestDist > maxLen/2 {
+		return ""
+	}
+	return best
 }
 
 // recordCall records a tool call and returns an action recommendation.
