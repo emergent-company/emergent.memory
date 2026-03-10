@@ -491,7 +491,100 @@ func init() {
 	mcpServersCmd.AddCommand(syncMCPServerCmd)
 	mcpServersCmd.AddCommand(inspectMCPServerCmd)
 	mcpServersCmd.AddCommand(toolsMCPServerCmd)
+	mcpServersCmd.AddCommand(configureMCPServerCmd)
 
 	// Register with root command
 	rootCmd.AddCommand(mcpServersCmd)
+}
+
+var configureMCPServerCmd = &cobra.Command{
+	Use:   "configure [tool-name] [key=value ...]",
+	Short: "Configure a tool's runtime settings",
+	Long: `Set runtime configuration key/value pairs for a named MCP tool.
+
+The command searches all MCP servers in the current project to find the tool
+by name, then patches its config with the provided key=value pairs.
+
+Examples:
+  memory mcp-servers configure brave_web_search api_key=YOUR_KEY --project <id>
+  memory mcp-servers configure reddit_search client_id=YOUR_ID client_secret=YOUR_SECRET --project <id>`,
+	Args: cobra.MinimumNArgs(2),
+	RunE: runConfigureMCPServer,
+}
+
+func runConfigureMCPServer(cmd *cobra.Command, args []string) error {
+	toolName := args[0]
+	kvPairs := args[1:]
+
+	config := make(map[string]any, len(kvPairs))
+	for _, kv := range kvPairs {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid key=value pair %q (expected KEY=VALUE)", kv)
+		}
+		config[parts[0]] = parts[1]
+	}
+
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	// Find the server and tool ID by tool name
+	serversResult, err := c.SDK.MCPRegistry.List(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to list MCP servers: %w", err)
+	}
+
+	var foundServerID, foundToolID string
+	for _, server := range serversResult.Data {
+		toolsResult, err := c.SDK.MCPRegistry.ListTools(context.Background(), server.ID)
+		if err != nil {
+			continue
+		}
+		for _, tool := range toolsResult.Data {
+			if tool.ToolName == toolName {
+				foundServerID = server.ID
+				foundToolID = tool.ID
+				break
+			}
+		}
+		if foundToolID != "" {
+			break
+		}
+	}
+
+	if foundToolID == "" {
+		return fmt.Errorf("tool %q not found in any MCP server for this project", toolName)
+	}
+
+	result, err := c.SDK.MCPRegistry.ConfigureTool(context.Background(), foundServerID, foundToolID, config)
+	if err != nil {
+		return fmt.Errorf("failed to configure tool: %w", err)
+	}
+
+	tool := result.Data
+	fmt.Printf("Tool %q configured successfully.\n", tool.ToolName)
+	fmt.Printf("  Server ID: %s\n", tool.ServerID)
+	fmt.Printf("  Tool ID:   %s\n", tool.ID)
+	fmt.Printf("  Keys set:  %s\n", strings.Join(keysOf(config), ", "))
+	if tool.InheritedFrom != "" {
+		fmt.Printf("  Config tier: %s\n", tool.InheritedFrom)
+	}
+
+	return nil
+}
+
+func keysOf(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

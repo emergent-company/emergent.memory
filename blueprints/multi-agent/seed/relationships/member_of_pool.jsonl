@@ -1,0 +1,6 @@
+{"type":"member_of_pool","srcKey":"agent-def-enricher","dstKey":"pool-enrichment"}
+{"type":"member_of_pool","srcKey":"agent-def-web-researcher","dstKey":"pool-research"}
+{"type":"member_of_pool","srcKey":"agent-def-code-researcher","dstKey":"pool-research"}
+{"type":"member_of_pool","srcKey":"agent-def-coder","dstKey":"pool-coding"}
+{"type":"member_of_pool","srcKey":"agent-def-reviewer","dstKey":"pool-review"}
+{"type":"member_of_pool","srcKey":"agent-def-designer","dstKey":"pool-design"}

@@ -78,13 +78,15 @@ type MCPServer struct {
 
 // MCPServerTool is the response DTO for an MCP server tool.
 type MCPServerTool struct {
-	ID          string         `json:"id"`
-	ServerID    string         `json:"serverId"`
-	ToolName    string         `json:"toolName"`
-	Description *string        `json:"description,omitempty"`
-	InputSchema map[string]any `json:"inputSchema,omitempty"`
-	Enabled     bool           `json:"enabled"`
-	CreatedAt   time.Time      `json:"createdAt"`
+	ID            string         `json:"id"`
+	ServerID      string         `json:"serverId"`
+	ToolName      string         `json:"toolName"`
+	Description   *string        `json:"description,omitempty"`
+	InputSchema   map[string]any `json:"inputSchema,omitempty"`
+	Enabled       bool           `json:"enabled"`
+	Config        map[string]any `json:"config,omitempty"`
+	InheritedFrom string         `json:"inheritedFrom,omitempty"`
+	CreatedAt     time.Time      `json:"createdAt"`
 }
 
 // MCPServerDetail includes the server and its tools.
@@ -502,4 +504,49 @@ func (c *Client) ToggleTool(ctx context.Context, serverID, toolID string, enable
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	return nil
+}
+
+// ConfigureToolRequest is the request body for configuring a tool.
+type ConfigureToolRequest struct {
+	Config map[string]any `json:"config"`
+}
+
+// ConfigureTool sets runtime configuration key/value pairs for a specific tool on an MCP server.
+// Keys are merged with existing config — only provided keys are updated.
+// PATCH /api/admin/mcp-servers/:id/tools/:toolId
+func (c *Client) ConfigureTool(ctx context.Context, serverID, toolID string, config map[string]any) (*APIResponse[MCPServerTool], error) {
+	payload := ConfigureToolRequest{Config: config}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PATCH",
+		c.base+"/api/admin/mcp-servers/"+url.PathEscape(serverID)+"/tools/"+url.PathEscape(toolID),
+		bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[MCPServerTool]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
 }
