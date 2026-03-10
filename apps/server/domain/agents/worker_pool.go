@@ -153,6 +153,29 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		return
 	}
 
+	// If the run terminated with an error status (e.g. MALFORMED_FUNCTION_CALL,
+	// LLM safety block, timeout absorbed into the result), fail the job and
+	// re-enqueue the parent with status:error so it can retry or escalate.
+	// This must happen BEFORE CompleteJob, which would otherwise overwrite the
+	// error status already set by FailRunWithSteps inside runPipeline.
+	if result != nil && result.Status == RunStatusError {
+		errMsg := ""
+		if e, ok := result.Summary["error"].(string); ok {
+			errMsg = e
+		}
+		log.Warn("queued agent run returned error status",
+			slog.String("agent", agent.Name),
+			slog.String("run_id", run.ID),
+			slog.String("error", errMsg),
+		)
+		// Mark the job failed (no requeue — the parent decides whether to retry).
+		if err := p.repo.FailJob(ctx, job.ID, job.RunID, errMsg, false, time.Time{}); err != nil {
+			log.Warn("failed to mark job failed after run error", slog.String("error", err.Error()))
+		}
+		p.reenqueueParent(ctx, log, run, agent.Name, errMsg, "error")
+		return
+	}
+
 	// Mark job and run as complete
 	if err := p.repo.CompleteJob(ctx, job.ID, job.RunID); err != nil {
 		log.Warn("failed to mark job completed", slog.String("error", err.Error()))
@@ -199,6 +222,23 @@ func (p *WorkerPool) reenqueueParent(ctx context.Context, log *slog.Logger, run 
 
 	triggerMsg := fmt.Sprintf("AGENT_COMPLETE\nagent: %s\nstatus: %s\n\nResult:\n%s",
 		childAgentName, status, finalResponse)
+
+	// Append the child's own trigger message so the parent can recover any
+	// IDs or context it embedded there (e.g. TASK_ID, WP_ID). This is purely
+	// structural — the server does not interpret the contents.
+	//
+	// Strip any nested "Child trigger message:" section from the child's own
+	// trigger before appending, so the chain never grows beyond one level deep.
+	// Without this, each re-enqueue would wrap the previous wrapper, causing the
+	// context window to balloon on deep pipelines.
+	if run.TriggerMessage != nil && *run.TriggerMessage != "" {
+		childTrigger := *run.TriggerMessage
+		const nestedMarker = "\n\n---\nChild trigger message:"
+		if idx := strings.Index(childTrigger, nestedMarker); idx != -1 {
+			childTrigger = childTrigger[:idx]
+		}
+		triggerMsg += fmt.Sprintf("\n\n---\nChild trigger message:\n%s", childTrigger)
+	}
 
 	_, err = p.repo.CreateRunQueued(ctx, parentRun.AgentID, 1, CreateRunQueuedOptions{
 		TriggerMessage: &triggerMsg,
