@@ -213,8 +213,8 @@ func TestRegisterMCPServerRequest_Defaults(t *testing.T) {
 func TestMCPServerStatus_Fields(t *testing.T) {
 	status := MCPServerStatus{
 		WorkspaceID:     "ws-123",
-		Name:            "langfuse-mcp",
-		Image:           "emergent/mcp-langfuse:latest",
+		Name:            "test-mcp",
+		Image:           "emergent/mcp-test:latest",
 		Status:          StatusReady,
 		Provider:        ProviderGVisor,
 		StdioBridge:     true,
@@ -227,7 +227,7 @@ func TestMCPServerStatus_Fields(t *testing.T) {
 	data, err := json.Marshal(status)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"workspace_id":"ws-123"`)
-	assert.Contains(t, string(data), `"name":"langfuse-mcp"`)
+	assert.Contains(t, string(data), `"name":"test-mcp"`)
 	assert.Contains(t, string(data), `"bridge_connected":true`)
 	assert.Contains(t, string(data), `"restart_count":2`)
 }
@@ -305,7 +305,7 @@ func TestCrashBackoffProgression(t *testing.T) {
 func TestCreateContainerRequest_MCPFields(t *testing.T) {
 	req := CreateContainerRequest{
 		ContainerType: ContainerTypeMCPServer,
-		BaseImage:     "emergent/mcp-langfuse:latest",
+		BaseImage:     "emergent/mcp-test:latest",
 		Cmd:           []string{"node", "index.js"},
 		Env:           map[string]string{"API_KEY": "secret"},
 		ExtraVolumes:  []string{"/data", "/config"},
@@ -480,8 +480,8 @@ func TestStdioBridge_SerializesConcurrentCalls(t *testing.T) {
 
 func TestMCPConfig_Serialization(t *testing.T) {
 	cfg := MCPConfig{
-		Name:          "langfuse-mcp",
-		Image:         "emergent/mcp-langfuse:latest",
+		Name:          "test-mcp",
+		Image:         "emergent/mcp-test:latest",
 		StdioBridge:   true,
 		RestartPolicy: "always",
 		Environment:   map[string]string{"API_KEY": "secret"},
@@ -490,7 +490,7 @@ func TestMCPConfig_Serialization(t *testing.T) {
 
 	data, err := json.Marshal(cfg)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), `"name":"langfuse-mcp"`)
+	assert.Contains(t, string(data), `"name":"test-mcp"`)
 	assert.Contains(t, string(data), `"stdio_bridge":true`)
 	assert.Contains(t, string(data), `"restart_policy":"always"`)
 

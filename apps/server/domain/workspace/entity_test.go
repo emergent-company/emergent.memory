@@ -180,16 +180,16 @@ func TestResolveProvider(t *testing.T) {
 
 func TestMCPConfig_Fields(t *testing.T) {
 	config := MCPConfig{
-		Name:          "langfuse-mcp",
-		Image:         "emergent/mcp-langfuse:latest",
+		Name:          "test-mcp",
+		Image:         "emergent/mcp-test:latest",
 		StdioBridge:   true,
 		RestartPolicy: "always",
 		Environment:   map[string]string{"API_KEY": "test-key"},
 		Volumes:       []string{"/data"},
 	}
 
-	assert.Equal(t, "langfuse-mcp", config.Name)
-	assert.Equal(t, "emergent/mcp-langfuse:latest", config.Image)
+	assert.Equal(t, "test-mcp", config.Name)
+	assert.Equal(t, "emergent/mcp-test:latest", config.Image)
 	assert.True(t, config.StdioBridge)
 	assert.Equal(t, "always", config.RestartPolicy)
 	assert.Equal(t, "test-key", config.Environment["API_KEY"])
