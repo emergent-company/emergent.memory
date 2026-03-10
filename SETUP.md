@@ -59,11 +59,6 @@ curl http://localhost:5300/health
 
 ## 6) Observability (Optional)
 
-### Langfuse
-To enable LLM trace debugging for extraction jobs:
-1. Configure `LANGFUSE_ENABLED=true` in your `.env`.
-2. Provide your Langfuse host, public key, and secret key.
-
 ### OpenTelemetry
 To enable tracing with Grafana Tempo:
 1. Start the observability profile: `docker compose -f docker/docker-compose.dev.yml --profile observability up -d`.

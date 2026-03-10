@@ -175,8 +175,116 @@ Agents can be given access to tools from the following categories:
 | Workspace (bash/file) | `workspace_bash`, `workspace_read`, `workspace_write`, `workspace_edit`, `workspace_glob`, `workspace_grep`, `workspace_git` |
 | Human-in-the-loop | `ask_user` |
 | Coordination | `spawn_agents`, `list_available_agents` |
+| Skills | `skill` |
 
 Specify tools as a comma-separated list in the agent definition. Glob patterns are supported (e.g. `graph_*`).
+
+---
+
+## Skills
+
+Skills are reusable Markdown workflow instructions stored in the database. An agent with the `skill` tool can load any skill by name at runtime, keeping system prompts lean and instructions easy to update without redeploying agents.
+
+### How it works
+
+1. At run start, the executor retrieves the skills available to the agent (global + project-scoped, with project skills winning on name collision).
+2. If the total skill count is ≤ 50, all skill names and descriptions are listed in the tool description. If > 50, the executor embeds the agent's trigger message and surfaces the top-10 semantically relevant skills.
+3. The agent calls `skill({name: "..."})` to load a skill's full Markdown content.
+
+### Opt in via the agent definition
+
+Add `"skill"` to the agent's tools list:
+
+```bash
+memory defs create \
+  --name "onboarding-agent" \
+  --system-prompt "You onboard new team members. Use the skill tool to load relevant playbooks." \
+  --model "gemini-2.0-flash" \
+  --tools "skill,graph_query,graph_create_object"
+```
+
+Or update an existing definition:
+
+```bash
+memory defs update <definition-id> --tools "skill,search,graph_query"
+```
+
+### Manage skills via the CLI
+
+Skills use a lowercase slug name (e.g. `my-skill`, max 64 characters).
+
+**List skills**
+
+```bash
+memory skills list                        # global skills
+memory skills list --project <project-id> # global + project-scoped, merged
+```
+
+**Create a skill**
+
+```bash
+memory skills create \
+  --name "deploy-checklist" \
+  --description "Step-by-step deployment checklist for production releases" \
+  --content-file ./deploy-checklist.md
+
+# Project-scoped (overrides a global skill with the same name within this project)
+memory skills create \
+  --name "deploy-checklist" \
+  --description "Custom deploy steps for this project" \
+  --content-file ./my-deploy.md \
+  --project <project-id>
+```
+
+**Import from a SKILL.md file** (YAML frontmatter format)
+
+```bash
+memory skills import ./path/to/SKILL.md
+memory skills import ./path/to/SKILL.md --project <project-id>
+```
+
+The file must have `name` and `description` in YAML frontmatter:
+
+```markdown
+---
+name: deploy-checklist
+description: Step-by-step deployment checklist for production releases
+---
+# Deploy Checklist
+
+1. Run tests
+2. Tag the release
+...
+```
+
+**Get, update, delete**
+
+```bash
+memory skills get <id>
+memory skills update <id> --description "Updated description"
+memory skills update <id> --content-file ./new-content.md
+memory skills delete <id>
+memory skills delete <id> --confirm   # skip confirmation prompt
+```
+
+### Scope and visibility
+
+| Scope | Created via | Visible to |
+|---|---|---|
+| Global | `POST /api/skills` (no project) | All agents in all projects |
+| Project-scoped | `POST /api/projects/:id/skills` | Agents in that project only |
+
+When a project-scoped skill has the same name as a global skill, the project-scoped version takes precedence for agents in that project.
+
+### Seed from existing SKILL.md files
+
+If you have existing `.agents/skills/*/SKILL.md` files following the OpenCode format, import them all at once:
+
+```bash
+for f in .agents/skills/*/SKILL.md; do
+  memory skills import "$f"
+done
+```
 
 ---
 
@@ -326,6 +434,14 @@ memory agents questions respond <question-id> "<answer>"
 memory agents hooks list <agent-id>
 memory agents hooks create <agent-id> --label <l>
 memory agents hooks delete <agent-id> <hook-id>
+
+# Skills
+memory skills list [--project <id>] [--global]
+memory skills get <id>
+memory skills create --name <n> --description <d> --content-file <path> [--project <id>]
+memory skills update <id> [--description <d>] [--content-file <path>]
+memory skills delete <id> [--confirm]
+memory skills import <path/to/SKILL.md> [--project <id>]
 ```
 
 ---

@@ -68,32 +68,11 @@ Check Docker container logs for infrastructure issues:
    - Use `workspace_docker_logs` with `container=zitadel`, `since=3h`, `lines=200`
    - Look for: auth failures, token errors, OIDC issues
 
-3. **Langfuse**
-
-   - Use `workspace_docker_logs` with `container=langfuse`, `since=3h`, `lines=100`
-   - Look for: trace ingestion errors, API failures
-
-4. **Redis** (if applicable)
+3. **Redis** (if applicable)
    - Use `workspace_docker_logs` with `container=redis`, `since=3h`, `lines=100`
    - Look for: memory warnings, connection issues
 
-### Phase 4: Observability Platform Analysis
-
-1. **SigNoz Error Logs**
-
-   - Use `signoz_get_error_logs` with `timeRange=3h`, `limit=50`
-   - Correlate with application logs
-
-2. **SigNoz Trace Errors**
-
-   - Use `signoz_get_trace_error_analysis` with `timeRange=3h`
-   - Identify error patterns across services
-
-3. **Langfuse AI Traces**
-   - Use `langfuse_list_traces` with `fromTimestamp` set to 3 hours ago, `limit=30`
-   - Look for failed AI operations, high latency LLM calls
-
-### Phase 5: Pattern Detection
+### Phase 4: Pattern Detection
 
 While analyzing, specifically look for:
 

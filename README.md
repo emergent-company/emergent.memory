@@ -68,7 +68,6 @@ The chat system integrates with the Model Context Protocol (MCP) to provide inte
 ## Observability
 
 The system supports integration with:
-- **Langfuse**: For tracing LLM extraction jobs.
 - **Grafana Tempo**: For OpenTelemetry tracing (opt-in via `OTEL_ENABLED=true`).
 
 ## Production Deployment
