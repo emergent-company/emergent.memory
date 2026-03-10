@@ -54,38 +54,7 @@ retry_config = google.api_core.retry.Retry(
 )
 ```
 
-### 3. With Langchain/Langfuse Integration
-
-```python
-from langchain_google_vertexai import ChatVertexAI
-from langfuse.callback import CallbackHandler
-
-# Configure with appropriate timeout and retries
-llm = ChatVertexAI(
-    model="gemini-2.0-flash-001",
-    project="your-project-id",
-    location="us-central1",
-    max_retries=3,
-    request_timeout=60,  # Per-request timeout
-    # Use streaming for more consistent time-to-first-token
-    streaming=True,
-)
-
-# Langfuse callback for observability
-langfuse_handler = CallbackHandler(
-    public_key="your-public-key",
-    secret_key="your-secret-key",
-    host="https://cloud.langfuse.com",  # or self-hosted URL
-)
-
-# Invoke with callbacks
-response = llm.invoke(
-    messages,
-    config={"callbacks": [langfuse_handler]}
-)
-```
-
-### 4. Using Vercel AI SDK (TypeScript)
+### 3. Using Vercel AI SDK (TypeScript)
 
 ```typescript
 import { createVertex } from '@ai-sdk/google-vertex';
@@ -272,4 +241,3 @@ async def instrumented_call(prompt, **kwargs):
 - [Error Code 429](https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429)
 - [Provisioned Throughput Overview](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/overview)
 - [Purchase Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/purchase-provisioned-throughput)
-- [Langfuse Vertex AI Integration](https://langfuse.com/docs/integrations/llm-frameworks/langchain)
