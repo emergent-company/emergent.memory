@@ -819,8 +819,7 @@ CREATE TABLE kb.llm_call_logs (
     cost_usd numeric(10,6),
     started_at timestamp with time zone DEFAULT now() NOT NULL,
     completed_at timestamp with time zone,
-    duration_ms integer,
-    langfuse_observation_id text
+    duration_ms integer
 );
 CREATE TABLE kb.merge_provenance (
     child_version_id uuid NOT NULL,
@@ -1086,8 +1085,7 @@ CREATE TABLE kb.system_process_logs (
     level text NOT NULL,
     message text NOT NULL,
     metadata jsonb,
-    "timestamp" timestamp with time zone DEFAULT now() NOT NULL,
-    langfuse_trace_id text
+    "timestamp" timestamp with time zone DEFAULT now() NOT NULL
 );
 CREATE TABLE kb.tags (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
