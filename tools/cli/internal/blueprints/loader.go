@@ -11,8 +11,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LoadDir walks the packs/, agents/, seed/objects/, and seed/relationships/
-// subdirectories inside dir and returns all successfully parsed records.
+// LoadDir walks the packs/, agents/, skills/, seed/objects/, and
+// seed/relationships/ subdirectories inside dir and returns all successfully
+// parsed records.
+//
+// Skills follow the agentskills.io open standard: each skill is a subdirectory
+// containing a SKILL.md file with YAML frontmatter and Markdown content.
 //
 // Files with unknown extensions are silently skipped.
 // Files that fail to parse or fail validation are recorded in the returned
@@ -21,6 +25,7 @@ import (
 func LoadDir(dir string) (
 	packs []PackFile,
 	agents []AgentFile,
+	skills []SkillFile,
 	objects []SeedObjectRecord,
 	rels []SeedRelationshipRecord,
 	results []BlueprintsResult,
@@ -28,12 +33,14 @@ func LoadDir(dir string) (
 ) {
 	packs, packResults := loadPacks(filepath.Join(dir, "packs"))
 	agents, agentResults := loadAgents(filepath.Join(dir, "agents"))
+	skills, skillResults := loadSkills(filepath.Join(dir, "skills"))
 	objects, objResults := loadSeedObjects(filepath.Join(dir, "seed", "objects"))
 	rels, relResults := loadSeedRelationships(filepath.Join(dir, "seed", "relationships"))
 	results = append(packResults, agentResults...)
+	results = append(results, skillResults...)
 	results = append(results, objResults...)
 	results = append(results, relResults...)
-	return packs, agents, objects, rels, results, nil
+	return packs, agents, skills, objects, rels, results, nil
 }
 
 // ──────────────────────────────────────────────
@@ -140,6 +147,122 @@ func loadAgents(dir string) ([]AgentFile, []BlueprintsResult) {
 	}
 
 	return agents, results
+}
+
+// loadSkills reads all skill subdirectories inside dir. Each subdirectory must
+// contain a SKILL.md file with YAML frontmatter (name, description) followed by
+// Markdown content. This follows the agentskills.io open standard where a skill
+// is a directory containing SKILL.md (plus optional scripts/, references/, assets/).
+func loadSkills(dir string) ([]SkillFile, []BlueprintsResult) {
+	entries, ok := readDir(dir)
+	if !ok {
+		return nil, nil
+	}
+
+	var skills []SkillFile
+	var results []BlueprintsResult
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue // only process subdirectories
+		}
+		skillDir := filepath.Join(dir, entry.Name())
+		skillMD := filepath.Join(skillDir, "SKILL.md")
+
+		data, err := os.ReadFile(skillMD)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// subdirectory has no SKILL.md — silently skip
+				continue
+			}
+			results = append(results, BlueprintsResult{
+				ResourceType: "skill",
+				Name:         entry.Name(),
+				SourceFile:   skillMD,
+				Action:       BlueprintsActionError,
+				Error:        fmt.Errorf("read SKILL.md: %w", err),
+			})
+			continue
+		}
+
+		skill, err := parseSkillMD(data)
+		if err != nil {
+			results = append(results, BlueprintsResult{
+				ResourceType: "skill",
+				Name:         entry.Name(),
+				SourceFile:   skillMD,
+				Action:       BlueprintsActionError,
+				Error:        fmt.Errorf("parse error: %w", err),
+			})
+			continue
+		}
+		skill.SourceFile = skillMD
+
+		if err := validateSkill(skill); err != nil {
+			results = append(results, BlueprintsResult{
+				ResourceType: "skill",
+				Name:         skill.Name,
+				SourceFile:   skillMD,
+				Action:       BlueprintsActionError,
+				Error:        fmt.Errorf("validation error: %w", err),
+			})
+			continue
+		}
+
+		skills = append(skills, *skill)
+	}
+
+	return skills, results
+}
+
+// parseSkillMD splits a SKILL.md file into YAML frontmatter and Markdown body.
+// The file must start with "---\n", contain YAML, and close with "---\n" or "---".
+func parseSkillMD(data []byte) (*SkillFile, error) {
+	const delim = "---"
+
+	trimmed := bytes.TrimSpace(data)
+	if !bytes.HasPrefix(trimmed, []byte(delim)) {
+		return nil, fmt.Errorf("file does not begin with YAML frontmatter (expected '---')")
+	}
+
+	// Skip past the opening ---
+	rest := trimmed[len(delim):]
+	if len(rest) > 0 && rest[0] == '\r' {
+		rest = rest[1:]
+	}
+	if len(rest) > 0 && rest[0] == '\n' {
+		rest = rest[1:]
+	}
+
+	// Find the closing ---
+	closeIdx := bytes.Index(rest, []byte("\n"+delim))
+	if closeIdx < 0 {
+		return nil, fmt.Errorf("frontmatter closing '---' not found")
+	}
+
+	yamlPart := rest[:closeIdx]
+	after := rest[closeIdx+1+len(delim):]
+	after = bytes.TrimPrefix(after, []byte("\r"))
+	after = bytes.TrimPrefix(after, []byte("\n"))
+
+	var sf SkillFile
+	if err := yaml.Unmarshal(yamlPart, &sf); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML frontmatter: %w", err)
+	}
+	sf.Content = string(after)
+
+	return &sf, nil
+}
+
+// validateSkill checks required fields for a SkillFile.
+func validateSkill(s *SkillFile) error {
+	if s.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if s.Description == "" {
+		return fmt.Errorf("description is required")
+	}
+	return nil
 }
 
 // readDir reads directory entries. Returns (entries, true) on success,

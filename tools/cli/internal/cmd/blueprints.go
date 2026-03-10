@@ -32,14 +32,18 @@ var blueprintsCmd = &cobra.Command{
 	Use:     "blueprints <source>",
 	Short:   "Apply Blueprints (packs, agents, seed data) from a directory or GitHub URL",
 	GroupID: "knowledge",
-	Long: `Apply Blueprints — template packs, agent definitions, and seed data — to the
+	Long: `Apply Blueprints — template packs, agent definitions, skills, and seed data — to the
 current project from a structured directory or a GitHub repository URL.
 
 The source directory (or GitHub repo root) may contain:
   packs/             — one file per template pack  (.json, .yaml, .yml)
   agents/            — one file per agent definition (.json, .yaml, .yml)
+  skills/            — one subdirectory per skill, each containing a SKILL.md file
   seed/objects/      — per-type JSONL files with graph objects to seed
   seed/relationships/ — per-type JSONL files with graph relationships to seed
+
+Skills follow the agentskills.io open standard: each skill is a directory with a
+SKILL.md file containing YAML frontmatter (name, description) and Markdown content.
 
 By default the command is additive-only: existing resources are skipped.
 Use --upgrade to update resources that already exist.
@@ -90,7 +94,7 @@ Examples:
 		}
 
 		// ── Load files ─────────────────────────────────────────────────
-		packs, agents, seedObjects, seedRels, loadResults, err := blueprints.LoadDir(dir)
+		packs, agents, skills, seedObjects, seedRels, loadResults, err := blueprints.LoadDir(dir)
 		if err != nil {
 			return fmt.Errorf("load directory: %w", err)
 		}
@@ -103,7 +107,7 @@ Examples:
 			}
 		}
 
-		if len(packs) == 0 && len(agents) == 0 && len(seedObjects) == 0 && len(seedRels) == 0 && len(loadResults) == 0 {
+		if len(packs) == 0 && len(agents) == 0 && len(skills) == 0 && len(seedObjects) == 0 && len(seedRels) == 0 && len(loadResults) == 0 {
 			fmt.Fprintln(out, "Nothing to apply — no blueprint files found.")
 			return nil
 		}
@@ -112,12 +116,13 @@ Examples:
 		applier := blueprints.NewBlueprintsApplier(
 			c.SDK.TemplatePacks,
 			c.SDK.AgentDefinitions,
+			c.SDK.Skills,
 			blueprintsDryRunFlag,
 			blueprintsUpgradeFlag,
 			out,
 		)
 
-		results, err := applier.Run(context.Background(), packs, agents)
+		results, err := applier.Run(context.Background(), packs, agents, skills)
 		if err != nil {
 			return err
 		}
