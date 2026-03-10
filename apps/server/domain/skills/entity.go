@@ -81,7 +81,7 @@ func (s *Skill) ToDTO() *SkillDTO {
 
 // ListSkillsResponse is the paginated list response.
 type ListSkillsResponse struct {
-	Data []*SkillDTO `json:"data"`
+	Data []*SkillDTO `json:"skills"`
 }
 
 // CreateSkillDTO is the request body for creating a skill.

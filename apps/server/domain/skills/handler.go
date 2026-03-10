@@ -339,13 +339,13 @@ func (h *Handler) DeleteProjectSkill(c echo.Context) error {
 // validateSkillName checks that the name matches the slug pattern and length constraints.
 func validateSkillName(name string) error {
 	if name == "" {
-		return apperror.ErrBadRequest.WithMessage("name is required")
+		return apperror.ErrValidation.WithMessage("name is required")
 	}
 	if len(name) > 64 {
-		return apperror.ErrBadRequest.WithMessage("name must be 64 characters or fewer")
+		return apperror.ErrValidation.WithMessage("name must be 64 characters or fewer")
 	}
 	if !nameRegex.MatchString(name) {
-		return apperror.ErrBadRequest.WithMessage("name must be a lowercase alphanumeric slug (e.g. my-skill)")
+		return apperror.ErrValidation.WithMessage("name must be a lowercase alphanumeric slug (e.g. my-skill)")
 	}
 	return nil
 }
