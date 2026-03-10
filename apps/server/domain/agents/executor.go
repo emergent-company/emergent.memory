@@ -852,6 +852,7 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Run the agent
 	var lastEvent *session.Event
+	var lastTextEvent *session.Event // fallback: last non-partial event with text content
 	runCfg := agent.RunConfig{}
 	if req.StreamCallback != nil {
 		runCfg.StreamingMode = agent.StreamingModeSSE
@@ -879,6 +880,42 @@ func (ae *AgentExecutor) runPipeline(
 			continue
 		}
 
+		// Treat non-empty ErrorCode that indicates a genuine LLM malfunction as
+		// a fatal run error, so the result is properly marked RunStatusError and
+		// the parent is re-enqueued with status:error rather than status:success.
+		//
+		// "STOP" and "FINISH_REASON_UNSPECIFIED" are normal terminations: the
+		// model finished cleanly but produced no content (e.g. it called tools
+		// and then stopped). All other codes represent abnormal terminations —
+		// safety blocks, malformed function calls, recitation filters, etc.
+		if event.ErrorCode != "" && event.ErrorCode != "STOP" && event.ErrorCode != "FINISH_REASON_UNSPECIFIED" {
+			steps := tracker.current()
+			errMsg := fmt.Sprintf("LLM returned error: %s", event.ErrorCode)
+			if event.ErrorMessage != "" {
+				errMsg = fmt.Sprintf("LLM returned error: %s: %s", event.ErrorCode, event.ErrorMessage)
+			}
+			ae.log.Warn("agent run aborted due to LLM error code",
+				slog.String("run_id", run.ID),
+				slog.String("error_code", event.ErrorCode),
+				slog.String("error_message", event.ErrorMessage),
+				slog.Int("steps", steps),
+			)
+			if req.StreamCallback != nil {
+				req.StreamCallback(StreamEvent{
+					Type:  StreamEventError,
+					Error: errMsg,
+				})
+			}
+			_ = ae.repo.FailRunWithSteps(ctx, run.ID, errMsg, steps)
+			return &ExecuteResult{
+				RunID:    run.ID,
+				Status:   RunStatusError,
+				Summary:  map[string]any{"error": errMsg, "error_code": event.ErrorCode},
+				Steps:    steps,
+				Duration: time.Since(startTime),
+			}, nil
+		}
+
 		// Stream partial text deltas to the callback
 		if event.Partial && event.Content != nil && req.StreamCallback != nil {
 			for _, part := range event.Content.Parts {
@@ -898,6 +935,17 @@ func (ae *AgentExecutor) runPipeline(
 
 		if event.IsFinalResponse() {
 			lastEvent = event
+		}
+
+		// Track the last non-partial event that carries text — used as fallback
+		// when IsFinalResponse() never fires (e.g. agent ends with a tool call).
+		if !event.Partial && event.Content != nil {
+			for _, part := range event.Content.Parts {
+				if part != nil && part.Text != "" {
+					lastTextEvent = event
+					break
+				}
+			}
 		}
 	}
 
@@ -956,7 +1004,7 @@ func (ae *AgentExecutor) runPipeline(
 	}
 
 	// Build summary from the last event
-	summary := ae.buildSummary(lastEvent, steps)
+	summary := ae.buildSummary(lastEvent, lastTextEvent, steps)
 
 	// Include workspace info in summary if provisioned
 	if wsResult != nil && wsResult.Workspace != nil {
@@ -1275,22 +1323,34 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 }
 
 // buildSummary creates a summary map from the final event.
-func (ae *AgentExecutor) buildSummary(lastEvent *session.Event, steps int) map[string]any {
+// If lastEvent has no text content (e.g. agent ended with a tool call),
+// falls back to lastTextEvent — the last non-partial event that carried text.
+func (ae *AgentExecutor) buildSummary(lastEvent *session.Event, lastTextEvent *session.Event, steps int) map[string]any {
 	summary := map[string]any{
 		"steps": steps,
 	}
 
-	if lastEvent != nil && lastEvent.Content != nil {
-		var textParts []string
-		for _, part := range lastEvent.Content.Parts {
+	// Helper to extract the last text part from an event.
+	extractText := func(ev *session.Event) string {
+		if ev == nil || ev.Content == nil {
+			return ""
+		}
+		var last string
+		for _, part := range ev.Content.Parts {
 			if part != nil && part.Text != "" {
-				textParts = append(textParts, part.Text)
+				last = part.Text
 			}
 		}
-		if len(textParts) > 0 {
-			// Take the last text part as the final response
-			summary["final_response"] = textParts[len(textParts)-1]
-		}
+		return last
+	}
+
+	// Prefer the canonical final-response event; fall back to last text event.
+	text := extractText(lastEvent)
+	if text == "" {
+		text = extractText(lastTextEvent)
+	}
+	if text != "" {
+		summary["final_response"] = text
 	}
 
 	return summary
