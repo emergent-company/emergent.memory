@@ -1,35 +1,37 @@
 # provider-cli Specification
 
 ## Purpose
-Defines the `emergent provider` CLI command group for managing organization-level LLM provider credentials, model selections, and usage summaries, as well as the `emergent projects set-provider` subcommand for per-project policy management.
+Defines the `memory provider` CLI command group for managing organization-level and project-level LLM provider credentials and model selections via a unified `configure` command.
 
 ## Requirements
 
 ### Requirement: Provider Management CLI Commands
-The system SHALL provide a suite of CLI commands under the `emergent provider` group to manage organization-level LLM provider credentials, models, and usage summaries.
+The system SHALL provide CLI commands under `memory provider` to configure organization-level and project-level provider credentials and model selections via a single `configure` command per scope.
 
-#### Scenario: Setting Google AI credentials via CLI
-- **WHEN** an administrator runs `emergent provider set-key <api-key>`
-- **THEN** the CLI SHALL submit the API key to the backend via the Go SDK
-- **AND** the backend SHALL securely save the credentials for the Google AI provider
+#### Scenario: Configure Google AI credentials via CLI
+- **WHEN** an administrator runs `memory provider configure google-ai --api-key <key>` from a project directory
+- **THEN** the CLI SHALL submit the API key to `PUT /api/v1/organizations/:orgId/providers/google-ai`
+- **AND** the system SHALL encrypt, test, catalog-sync, and save credentials + auto-selected models in one operation
+- **AND** the CLI SHALL print the effective config (provider, generative model, embedding model) after save
 
-#### Scenario: Setting Vertex AI credentials via CLI
-- **WHEN** an administrator runs `emergent provider set-vertex --project <project-id> --location <location> --key-file <path-to-json>`
-- **THEN** the CLI SHALL submit the Service Account JSON and metadata to the backend via the Go SDK
-- **AND** the backend SHALL securely save the credentials for the Vertex AI provider
+#### Scenario: Configure Vertex AI credentials via CLI
+- **WHEN** an administrator runs `memory provider configure vertex-ai --gcp-project <project> --location <loc> --key-file <path>`
+- **THEN** the CLI SHALL read the service account JSON from the file and submit to `PUT /api/v1/organizations/:orgId/providers/vertex-ai`
+
+#### Scenario: Configure project-level override via CLI
+- **WHEN** an administrator runs `memory provider configure-project <provider> --api-key <key>` from a project directory
+- **THEN** the CLI SHALL submit credentials to `PUT /api/v1/projects/:projectId/providers/:provider`
+- **AND** the CLI SHALL print the effective project config after save
+
+#### Scenario: Remove project-level override via CLI
+- **WHEN** an administrator runs `memory provider configure-project <provider> --remove`
+- **THEN** the CLI SHALL call `DELETE /api/v1/projects/:projectId/providers/:provider`
+- **AND** the project SHALL revert to using the org-level config
 
 #### Scenario: Listing available models via CLI
-- **WHEN** an administrator runs `emergent provider models --provider <provider>`
-- **THEN** the CLI SHALL fetch from the Go SDK and display the list of supported embedding and generative models for that provider
+- **WHEN** an administrator runs `memory provider models --provider <provider>`
+- **THEN** the CLI SHALL fetch and display the list of supported embedding and generative models for that provider
 
 #### Scenario: Viewing usage and cost summaries via CLI
-- **WHEN** an administrator runs `emergent provider usage`
+- **WHEN** an administrator runs `memory provider usage`
 - **THEN** the CLI SHALL output an aggregated summary of tokens used and estimated costs per project, provider, and model
-
-### Requirement: Project Policy Management via CLI
-The system SHALL extend the existing `projects` CLI subgroup with commands to configure per-project, per-provider policies and override credentials and model selections.
-
-#### Scenario: Setting project policy via CLI
-- **WHEN** an administrator runs `emergent projects set-provider --project <project-id> --provider <provider> --policy <policy>`
-- **THEN** the CLI SHALL submit the policy (`none`, `organization`, or `project`) to the backend via the Go SDK
-- **AND** the system SHALL enforce the specified policy for the project

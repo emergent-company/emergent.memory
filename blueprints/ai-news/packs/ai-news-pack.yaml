@@ -1,0 +1,231 @@
+name: ai-news
+version: "1.0.0"
+description: >
+  Schema for tracking AI news, research, and industry developments across six
+  topic categories. Enables daily automated gathering of AI news items via
+  research agents and morning digest delivery.
+author: Emergent
+license: MIT
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OBJECT TYPES
+# ─────────────────────────────────────────────────────────────────────────────
+
+objectTypes:
+
+  - name: AIResearchPaper
+    label: AI Research Paper
+    description: >
+      An academic paper, preprint, or technical report related to AI/ML research.
+      Typically sourced from arxiv, conference proceedings, or research lab publications.
+    properties:
+      title:
+        type: string
+        description: Title of the paper
+      summary:
+        type: string
+        description: 2-3 sentence summary of the paper's contribution and significance
+      url:
+        type: string
+        description: Direct URL to the paper (arxiv, PDF, or abstract page)
+      authors:
+        type: string
+        description: Comma-separated list of authors
+      published_date:
+        type: string
+        description: Publication or preprint date (YYYY-MM-DD)
+      source:
+        type: string
+        description: "Source venue: arxiv | NeurIPS | ICML | ICLR | ACL | other"
+      topics:
+        type: string
+        description: Comma-separated topic tags (e.g. LLMs, reasoning, vision, RL)
+      discovered_date:
+        type: string
+        description: Date this item was discovered by the research agent (YYYY-MM-DD)
+
+  - name: AIModelRelease
+    label: AI Model Release
+    description: >
+      A new AI model release, update, or benchmark result. Covers model drops
+      from major labs, open-source releases, and significant capability announcements.
+    properties:
+      title:
+        type: string
+        description: Name and version of the model release (e.g. "GPT-5 released by OpenAI")
+      summary:
+        type: string
+        description: 2-3 sentence summary of what's new and why it matters
+      url:
+        type: string
+        description: URL to the announcement, blog post, or model card
+      provider:
+        type: string
+        description: "Organization that released the model (e.g. OpenAI, Anthropic, Google, Meta)"
+      model_family:
+        type: string
+        description: Model family or series (e.g. GPT, Claude, Gemini, Llama)
+      release_date:
+        type: string
+        description: Official release date (YYYY-MM-DD)
+      benchmark_highlights:
+        type: string
+        description: Key benchmark results or capability highlights mentioned in the announcement
+      access_type:
+        type: string
+        description: "How the model is available: open-source | API | closed | research-preview"
+      discovered_date:
+        type: string
+        description: Date this item was discovered by the research agent (YYYY-MM-DD)
+
+  - name: AIToolRelease
+    label: AI Tool Release
+    description: >
+      A new AI-powered tool, product, API, library, or integration. Covers developer
+      tools, productivity apps, APIs, and notable open-source releases.
+    properties:
+      title:
+        type: string
+        description: Name and brief description of the tool (e.g. "Cursor 1.0 launches with agent mode")
+      summary:
+        type: string
+        description: 2-3 sentence summary of what the tool does and what's notable about the release
+      url:
+        type: string
+        description: URL to the product page, announcement, or GitHub repo
+      maker:
+        type: string
+        description: Company or individual who made the tool
+      category:
+        type: string
+        description: "Category: IDE | coding-assistant | image-gen | video-gen | data | infra | productivity | other"
+      release_date:
+        type: string
+        description: Release or launch date (YYYY-MM-DD)
+      pricing:
+        type: string
+        description: "Pricing model: free | freemium | paid | open-source | enterprise"
+      discovered_date:
+        type: string
+        description: Date this item was discovered by the research agent (YYYY-MM-DD)
+
+  - name: AIIndustryEvent
+    label: AI Industry Event
+    description: >
+      A significant business or industry development in AI. Covers funding rounds,
+      acquisitions, partnerships, policy decisions, regulations, and executive moves.
+    properties:
+      title:
+        type: string
+        description: Concise description of the event (e.g. "Anthropic raises $3B Series E")
+      summary:
+        type: string
+        description: 2-3 sentence summary of what happened and its industry significance
+      url:
+        type: string
+        description: URL to the news article or official announcement
+      companies_involved:
+        type: string
+        description: Comma-separated list of companies or organizations involved
+      event_type:
+        type: string
+        description: "Type of event: funding | acquisition | partnership | regulation | policy | hiring | other"
+      date:
+        type: string
+        description: Date of the event (YYYY-MM-DD)
+      significance:
+        type: string
+        description: Why this event matters — market impact, strategic implications, etc.
+      discovered_date:
+        type: string
+        description: Date this item was discovered by the research agent (YYYY-MM-DD)
+
+  - name: AIEthicsUpdate
+    label: AI Ethics Update
+    description: >
+      A development in AI safety, alignment, ethics, or governance. Covers
+      safety research findings, incidents, regulatory actions, and policy debates.
+    properties:
+      title:
+        type: string
+        description: Title of the ethics/safety development
+      summary:
+        type: string
+        description: 2-3 sentence summary of the development and its implications
+      url:
+        type: string
+        description: URL to the report, paper, news article, or policy document
+      topic_area:
+        type: string
+        description: "Topic: alignment | safety | bias | regulation | governance | incident | privacy | other"
+      stakeholders:
+        type: string
+        description: Comma-separated list of organizations or groups involved
+      date:
+        type: string
+        description: Date of the development (YYYY-MM-DD)
+      implications:
+        type: string
+        description: What this means for AI development, deployment, or policy
+      discovered_date:
+        type: string
+        description: Date this item was discovered by the research agent (YYYY-MM-DD)
+
+  - name: AIApplicationDemo
+    label: AI Application Demo
+    description: >
+      An impressive AI application, demo, creative use-case, or real-world deployment.
+      Covers viral demos, novel use-cases, creative AI work, and surprising applications.
+    properties:
+      title:
+        type: string
+        description: Title or description of the demo or application
+      summary:
+        type: string
+        description: 2-3 sentence summary of what was demonstrated and why it's impressive
+      url:
+        type: string
+        description: URL to the demo, video, post, or project
+      demo_type:
+        type: string
+        description: "Type: video | interactive | paper | project | tweet | product | other"
+      technology_used:
+        type: string
+        description: Comma-separated list of AI technologies or models used
+      date:
+        type: string
+        description: Date of the demo or publication (YYYY-MM-DD)
+      wow_factor:
+        type: string
+        description: What makes this particularly surprising, creative, or impressive
+      discovered_date:
+        type: string
+        description: Date this item was discovered by the research agent (YYYY-MM-DD)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RELATIONSHIP TYPES
+# ─────────────────────────────────────────────────────────────────────────────
+
+relationshipTypes:
+
+  - name: covers_topic
+    label: Covers Topic
+    description: >
+      Links an AI news object to a topic cluster or another AI news object that
+      shares the same subject area. Used for thematic grouping and discovery.
+
+  - name: relates_to
+    label: Relates To
+    description: >
+      Connects two AI news objects that reference the same technology, event,
+      person, or concept. Enables cross-category linking (e.g. a paper that
+      leads to a tool release, or a model release tied to a funding round).
+
+  - name: supersedes
+    label: Supersedes
+    description: >
+      Indicates that a newer AI news object replaces or makes obsolete an older
+      one. Typically used between AIModelRelease objects (new version supersedes
+      old) or AIToolRelease objects (new product replaces a prior one).
+    sourceType: AIModelRelease
+    targetType: AIModelRelease
