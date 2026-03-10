@@ -696,6 +696,25 @@ func (r *Repository) FindChildRuns(ctx context.Context, parentRunID string) ([]*
 	return runs, nil
 }
 
+// FindFirstChildRunForAgent returns the earliest run for a specific agent that
+// has the given parent run ID. This is used to recover the original trigger
+// message the parent sent to the child, even when the child has been re-enqueued
+// multiple times (e.g. research-manager woken by web-researcher).
+func (r *Repository) FindFirstChildRunForAgent(ctx context.Context, parentRunID, agentID string) (*AgentRun, error) {
+	var run AgentRun
+	err := r.db.NewSelect().
+		Model(&run).
+		Where("parent_run_id = ?", parentRunID).
+		Where("agent_id = ?", agentID).
+		Order("started_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
 // --- Agent Run Messages ---
 
 // CreateMessage creates a new agent run message.
