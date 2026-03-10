@@ -83,6 +83,7 @@ type ExecuteRequest struct {
 	OrgID           string
 	UserMessage     string
 	ParentRunID     *string
+	RootRunID       *string // top-level orchestration run ID; propagated unchanged through all sub-agent spawns
 	MaxSteps        *int
 	Timeout         *time.Duration
 	Depth           int
@@ -175,10 +176,16 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		return nil, fmt.Errorf("failed to create agent run: %w", err)
 	}
 
+	// Establish root_run_id: top-level runs own it; sub-agents receive it from the parent.
+	if req.RootRunID == nil {
+		req.RootRunID = &run.ID
+	}
+
 	// Start OTel span now that we have the run ID
 	ctx, span := tracing.Start(ctx, "agent.run",
 		attribute.String("emergent.agent.id", ae.resolveAgentID(req)),
 		attribute.String("emergent.agent.run_id", run.ID),
+		attribute.String("emergent.agent.root_run_id", *req.RootRunID),
 		attribute.String("emergent.project.id", req.ProjectID),
 	)
 	defer span.End()
@@ -283,10 +290,16 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		maxSteps = *req.MaxSteps
 	}
 
+	// Establish root_run_id: top-level runs own it; sub-agents receive it from the parent.
+	if req.RootRunID == nil {
+		req.RootRunID = &run.ID
+	}
+
 	// Start OTel span
 	ctx, span := tracing.Start(ctx, "agent.run",
 		attribute.String("emergent.agent.id", ae.resolveAgentID(req)),
 		attribute.String("emergent.agent.run_id", run.ID),
+		attribute.String("emergent.agent.root_run_id", *req.RootRunID),
 		attribute.String("emergent.project.id", req.ProjectID),
 	)
 	defer span.End()
@@ -393,6 +406,11 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resumed run: %w", err)
+	}
+
+	// Establish root_run_id for resumed runs: inherit from caller or default to own ID.
+	if req.RootRunID == nil {
+		req.RootRunID = &newRun.ID
 	}
 
 	ae.log.Info("resuming agent",
@@ -548,6 +566,11 @@ func (ae *AgentExecutor) runPipeline(
 	// Also inject into the provider context so the tracking model can attribute
 	// LLM usage events to this run.
 	ctx = provider.ContextWithRunID(ctx, run.ID)
+	// Inject the root orchestration run ID so the tracking model can attribute
+	// cost to the full orchestration tree, not just the immediate run.
+	if req.RootRunID != nil {
+		ctx = provider.ContextWithRootRunID(ctx, *req.RootRunID)
+	}
 
 	// Inject project and org IDs into context so the credential resolver can look up
 	// the org-level provider config via the DB hierarchy (project → org), and so
@@ -1322,6 +1345,7 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 		Logger:         ae.log,
 		ProjectID:      req.ProjectID,
 		ParentRunID:    runID,
+		RootRunID:      derefString(req.RootRunID),
 		Depth:          req.Depth,
 		MaxDepth:       maxDepth,
 		SpawnPolicy:    extractSpawnPolicy(req.AgentDefinition),
@@ -1637,6 +1661,15 @@ func closestToolName(called string, candidates []string) string {
 		return ""
 	}
 	return best
+}
+
+// derefString safely dereferences a *string pointer.
+// Returns the pointed-to value or "" if the pointer is nil.
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // recordCall records a tool call and returns an action recommendation.
