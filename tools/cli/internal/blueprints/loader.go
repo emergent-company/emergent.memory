@@ -22,7 +22,7 @@ import (
 // Files that fail to parse or fail validation are recorded in the returned
 // results with BlueprintsActionError — processing continues for remaining files.
 // Missing subdirectories are not an error.
-func LoadDir(dir string) (
+func LoadDir(dir string, envVars map[string]string) (
 	packs []PackFile,
 	agents []AgentFile,
 	skills []SkillFile,
@@ -31,11 +31,11 @@ func LoadDir(dir string) (
 	results []BlueprintsResult,
 	err error,
 ) {
-	packs, packResults := loadPacks(filepath.Join(dir, "packs"))
-	agents, agentResults := loadAgents(filepath.Join(dir, "agents"))
-	skills, skillResults := loadSkills(filepath.Join(dir, "skills"))
-	objects, objResults := loadSeedObjects(filepath.Join(dir, "seed", "objects"))
-	rels, relResults := loadSeedRelationships(filepath.Join(dir, "seed", "relationships"))
+	packs, packResults := loadPacks(filepath.Join(dir, "packs"), envVars)
+	agents, agentResults := loadAgents(filepath.Join(dir, "agents"), envVars)
+	skills, skillResults := loadSkills(filepath.Join(dir, "skills"), envVars)
+	objects, objResults := loadSeedObjects(filepath.Join(dir, "seed", "objects"), envVars)
+	rels, relResults := loadSeedRelationships(filepath.Join(dir, "seed", "relationships"), envVars)
 	results = append(packResults, agentResults...)
 	results = append(results, skillResults...)
 	results = append(results, objResults...)
@@ -47,7 +47,7 @@ func LoadDir(dir string) (
 // Internal helpers
 // ──────────────────────────────────────────────
 
-func loadPacks(dir string) ([]PackFile, []BlueprintsResult) {
+func loadPacks(dir string, envVars map[string]string) ([]PackFile, []BlueprintsResult) {
 	entries, ok := readDir(dir)
 	if !ok {
 		return nil, nil
@@ -69,7 +69,7 @@ func loadPacks(dir string) ([]PackFile, []BlueprintsResult) {
 		}
 
 		var pack PackFile
-		if err := decodeFile(path, ext, &pack); err != nil {
+		if err := decodeFile(path, ext, envVars, &pack); err != nil {
 			results = append(results, BlueprintsResult{
 				ResourceType: "pack",
 				Name:         name,
@@ -98,7 +98,7 @@ func loadPacks(dir string) ([]PackFile, []BlueprintsResult) {
 	return packs, results
 }
 
-func loadAgents(dir string) ([]AgentFile, []BlueprintsResult) {
+func loadAgents(dir string, envVars map[string]string) ([]AgentFile, []BlueprintsResult) {
 	entries, ok := readDir(dir)
 	if !ok {
 		return nil, nil
@@ -120,7 +120,7 @@ func loadAgents(dir string) ([]AgentFile, []BlueprintsResult) {
 		}
 
 		var agent AgentFile
-		if err := decodeFile(path, ext, &agent); err != nil {
+		if err := decodeFile(path, ext, envVars, &agent); err != nil {
 			results = append(results, BlueprintsResult{
 				ResourceType: "agent",
 				Name:         name,
@@ -153,7 +153,7 @@ func loadAgents(dir string) ([]AgentFile, []BlueprintsResult) {
 // contain a SKILL.md file with YAML frontmatter (name, description) followed by
 // Markdown content. This follows the agentskills.io open standard where a skill
 // is a directory containing SKILL.md (plus optional scripts/, references/, assets/).
-func loadSkills(dir string) ([]SkillFile, []BlueprintsResult) {
+func loadSkills(dir string, envVars map[string]string) ([]SkillFile, []BlueprintsResult) {
 	entries, ok := readDir(dir)
 	if !ok {
 		return nil, nil
@@ -185,6 +185,7 @@ func loadSkills(dir string) ([]SkillFile, []BlueprintsResult) {
 			continue
 		}
 
+		data = ExpandEnvVars(data, envVars)
 		skill, err := parseSkillMD(data)
 		if err != nil {
 			results = append(results, BlueprintsResult{
@@ -281,11 +282,12 @@ func readDir(dir string) ([]os.DirEntry, bool) {
 
 // decodeFile reads the file at path and decodes it into v using JSON or YAML
 // depending on ext (.json, .yaml/.yml).
-func decodeFile(path, ext string, v any) error {
+func decodeFile(path, ext string, envVars map[string]string, v any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read file: %w", err)
 	}
+	data = ExpandEnvVars(data, envVars)
 
 	switch ext {
 	case ".json":
@@ -331,8 +333,8 @@ func validateAgent(a *AgentFile) error {
 // loadSeedObjects reads all *.jsonl files (including split files *.001.jsonl,
 // *.002.jsonl, …) from dir and returns parsed SeedObjectRecord values.
 // Missing directory is not an error.
-func loadSeedObjects(dir string) ([]SeedObjectRecord, []BlueprintsResult) {
-	return loadSeedJSONL(dir, func(line []byte, path string) (SeedObjectRecord, error) {
+func loadSeedObjects(dir string, envVars map[string]string) ([]SeedObjectRecord, []BlueprintsResult) {
+	return loadSeedJSONL(dir, envVars, func(line []byte, path string) (SeedObjectRecord, error) {
 		var rec SeedObjectRecord
 		if err := decodeJSONLine(line, &rec); err != nil {
 			return rec, err
@@ -344,8 +346,8 @@ func loadSeedObjects(dir string) ([]SeedObjectRecord, []BlueprintsResult) {
 
 // loadSeedRelationships reads all *.jsonl files from dir and returns parsed
 // SeedRelationshipRecord values. Missing directory is not an error.
-func loadSeedRelationships(dir string) ([]SeedRelationshipRecord, []BlueprintsResult) {
-	return loadSeedJSONL(dir, func(line []byte, path string) (SeedRelationshipRecord, error) {
+func loadSeedRelationships(dir string, envVars map[string]string) ([]SeedRelationshipRecord, []BlueprintsResult) {
+	return loadSeedJSONL(dir, envVars, func(line []byte, path string) (SeedRelationshipRecord, error) {
 		var rec SeedRelationshipRecord
 		if err := decodeJSONLine(line, &rec); err != nil {
 			return rec, err
@@ -358,7 +360,7 @@ func loadSeedRelationships(dir string) ([]SeedRelationshipRecord, []BlueprintsRe
 // loadSeedJSONL is the generic JSONL reader. It reads all *.jsonl files in dir
 // (sorted, so split files arrive in order), calls parse for each non-empty line,
 // and accumulates results and errors.
-func loadSeedJSONL[T any](dir string, parse func([]byte, string) (T, error)) ([]T, []BlueprintsResult) {
+func loadSeedJSONL[T any](dir string, envVars map[string]string, parse func([]byte, string) (T, error)) ([]T, []BlueprintsResult) {
 	entries, ok := readDir(dir)
 	if !ok {
 		return nil, nil
@@ -396,6 +398,7 @@ func loadSeedJSONL[T any](dir string, parse func([]byte, string) (T, error)) ([]
 			if len(raw) == 0 {
 				continue
 			}
+			raw = ExpandEnvVars(raw, envVars)
 			rec, err := parse(raw, path)
 			if err != nil {
 				results = append(results, BlueprintsResult{

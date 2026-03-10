@@ -148,6 +148,7 @@ tools/niezatapialni-scraper/niezatapialni-scraper
 
 # Large data files
 *.jsonl
+!blueprints/**/seed/**/*.jsonl
 *.log
 .claude/settings.local.json
 
