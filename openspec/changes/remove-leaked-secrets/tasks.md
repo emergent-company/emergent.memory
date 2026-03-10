@@ -57,45 +57,46 @@
 
 ## 8. Git History Rewrite — `emergent.memory`
 
-- [ ] 8.1 Install `git-filter-repo` if not present: `pip install git-filter-repo` or `brew install git-filter-repo`
-- [ ] 8.2 Create a `replacements.txt` file mapping each old secret value to `[REDACTED]`:
+- [x] 8.1 Install `git-filter-repo` if not present: `pip install git-filter-repo` or `brew install git-filter-repo`
+- [x] 8.2 Create a `replacements.txt` file mapping each old secret value to `[REDACTED]`:
   - The full `ZITADEL_API_KEY` RSA JSON blob (old value before rotation)
   - The full `ZITADEL_CLIENT_JWT` RSA JSON blob (old value before rotation)
   - The old Zitadel PAT value `nPn3djEyet1NlWGpE2WCC...`
   - The old Context7 key `[REDACTED_CONTEXT7_KEY]`
   - The old Langfuse secret key `sk-lf-4793a6ae...`
   - The DaisyUI license key `[REDACTED_DAISYUI_LICENSE]`
-- [ ] 8.3 Create a local backup tag: `git tag pre-secret-cleanup`
-- [ ] 8.4 Run the rewrite: `git filter-repo --replace-text replacements.txt --force`
-- [ ] 8.5 Verify no secrets remain in any commit: `git log --all -p | grep -E "ctx7sk-77ad3f0a|sk-lf-4793a6ae|nPn3djEyet1N|MIIEpAIBAAKCAQEA4oh6"` — confirm zero matches
-- [ ] 8.6 Notify all active contributors that a force-push is imminent and they must re-clone
-- [ ] 8.7 Force-push: `git push origin main --force`
-- [ ] 8.8 Delete the local `replacements.txt` file (it contains the old secret values)
+  - Two Vertex AI Express API keys (`AQ.Ab8RN6IPwK...`, `AQ.Ab8RN6KJRRd...`) — found via GitHub Secret Scanning alerts, removed in round 4
+- [x] 8.3 Create a local backup tag: `git tag pre-secret-cleanup`
+- [x] 8.4 Run the rewrite: `git filter-repo --replace-text replacements.txt --force` (4 passes total)
+- [x] 8.5 Verify no secrets remain in any commit — confirmed zero matches for all known secret patterns
+- [x] 8.6 Notify all active contributors that a force-push is imminent and they must re-clone
+- [x] 8.7 Force-push: `git push origin --force --all && git push origin --force --tags`
+- [x] 8.8 Delete the local `replacements.txt` file (it contains the old secret values)
 
 ## 9. Git History Rewrite — `emergent.strategy`
 
-- [ ] 9.1 Clone or switch to the `emergent.strategy` repository
-- [ ] 9.2 Create a `replacements.txt` for that repo mapping the old SigNoz key (`ek35B2Ka34ADSeOMLI+xV/...`) and old Brave API key to `[REDACTED]`
-- [ ] 9.3 Create backup tag: `git tag pre-secret-cleanup`
-- [ ] 9.4 Run `git filter-repo --replace-text replacements.txt --force`
-- [ ] 9.5 Verify: `git log --all -p | grep -E "ek35B2Ka34AD"` — confirm zero matches
-- [ ] 9.6 Force-push: `git push origin main --force`
-- [ ] 9.7 Delete the local `replacements.txt` file
+- [x] 9.1 Clone or switch to the `emergent.strategy` repository
+- [x] 9.2 Create a `replacements.txt` for that repo mapping the old SigNoz key, old Brave API key, 4 Google API keys, LangSmith key, GitHub OAuth token, Vertex AI Express key, and Google service account private key to `[REDACTED]`
+- [x] 9.3 Create backup tag: `git tag pre-secret-cleanup`
+- [x] 9.4 Run `git filter-repo --replace-text replacements.txt --force` (2 passes total)
+- [x] 9.5 Verify: confirmed zero matches for all known secret patterns
+- [x] 9.6 Force-push: `git push origin main --force`
+- [x] 9.7 Delete the local `replacements.txt` file
 
 ## 10. GitHub Secret Scanning
 
-- [ ] 10.1 Navigate to GitHub org settings → Security → Code security → Secret scanning
-- [ ] 10.2 Enable "Secret scanning" at the organization level (covers all 15 repos)
-- [ ] 10.3 Enable "Push protection" to block future pushes containing secrets
-- [ ] 10.4 Verify the setting applies to: `emergent.memory`, `emergent.memory.ui`, `emergent.memory.e2e`, and all other org repos
-- [ ] 10.5 Check the Secret Scanning alerts tab on `emergent.memory` — confirm no new alerts for the now-cleaned repo
+- [x] 10.1 Navigate to GitHub org settings → Security → Code security → Secret scanning
+- [x] 10.2 Enable "Secret scanning" at the organization level — enabled on all 11 public repos via API (4 private repos require GHAS license)
+- [x] 10.3 Enable "Push protection" to block future pushes containing secrets — enabled on same 11 repos
+- [x] 10.4 Verified setting applies to: `emergent.memory`, `emergent.memory.ui`, `emergent.memory.e2e`, and 8 other public org repos
+- [x] 10.5 Checked Secret Scanning alerts — found and remediated 2 Vertex AI Express keys (emergent.memory) and 8 additional secrets (emergent.strategy, including Google API keys, LangSmith key, GitHub OAuth token, GCP service account credentials)
 
 ## 11. Verification
 
-- [ ] 11.1 Do a fresh clone of `emergent.memory` and run `git log --all -p | grep -E "ctx7sk-77ad3f0a|sk-lf-4793a6ae|nPn3djEyet1N|MIIEpAIBAAKCAQEA"` — confirm zero matches
-- [ ] 11.2 Confirm `docker/.env` in the fresh clone contains only placeholder values
-- [ ] 11.3 Confirm `.env` in the fresh clone does not contain `LANGFUSE_SECRET_KEY`
-- [ ] 11.4 Confirm `opencode.jsonc` shows `"{env:CONTEXT7_API_KEY}"` not the literal key
-- [ ] 11.5 Confirm `.vscode/mcp.json` shows no literal API keys
-- [ ] 11.6 Confirm `docs/integrations/mcp/MCP_INSPECTOR_QUICKSTART.md` shows only `<YOUR_CONTEXT7_API_KEY>` placeholders
-- [ ] 11.7 Test that opencode starts and the context7 MCP server is usable with `CONTEXT7_API_KEY` set in the environment
+- [x] 11.1 Do a fresh clone of `emergent.memory` and run `git log --all -p | grep -E "ctx7sk-77ad3f0a|sk-lf-4793a6ae|nPn3djEyet1N|MIIEpAIBAAKCAQEA"` — confirm zero matches
+- [x] 11.2 Confirm `docker/.env` in the fresh clone contains only placeholder values
+- [x] 11.3 Confirm `.env` in the fresh clone does not contain `LANGFUSE_SECRET_KEY`
+- [x] 11.4 Confirm `opencode.jsonc` shows `"{env:CONTEXT7_API_KEY}"` not the literal key
+- [x] 11.5 Confirm `.vscode/mcp.json` shows no literal API keys
+- [x] 11.6 Confirm `docs/integrations/mcp/MCP_INSPECTOR_QUICKSTART.md` shows only `<YOUR_CONTEXT7_API_KEY>` placeholders
+- [ ] 11.7 Test that opencode starts and the context7 MCP server is usable with `CONTEXT7_API_KEY` set in the environment (manual — do this once credential rotation is complete)
