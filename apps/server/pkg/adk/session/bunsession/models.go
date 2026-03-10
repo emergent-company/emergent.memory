@@ -1,6 +1,7 @@
 package bunsession
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -27,18 +28,18 @@ type ADKEvent struct {
 	UserID    string `bun:"user_id,notnull,type:text"`
 	SessionID string `bun:"session_id,notnull,type:text"`
 
-	InvocationID           string    `bun:"invocation_id,type:text"`
-	Author                 string    `bun:"author,type:text"`
-	Actions                []byte    `bun:"actions,type:jsonb"`
-	LongRunningToolIDsJSON []byte    `bun:"long_running_tool_ids_json,type:jsonb"`
-	Branch                 *string   `bun:"branch,type:text"`
-	Timestamp              time.Time `bun:"timestamp,notnull,default:current_timestamp"`
+	InvocationID           string          `bun:"invocation_id,type:text"`
+	Author                 string          `bun:"author,type:text"`
+	Actions                json.RawMessage `bun:"actions,type:jsonb"`
+	LongRunningToolIDsJSON json.RawMessage `bun:"long_running_tool_ids_json,type:jsonb"`
+	Branch                 *string         `bun:"branch,type:text"`
+	Timestamp              time.Time       `bun:"timestamp,notnull,default:current_timestamp"`
 
-	Content           []byte `bun:"content,type:jsonb"`
-	GroundingMetadata []byte `bun:"grounding_metadata,type:jsonb"`
-	CustomMetadata    []byte `bun:"custom_metadata,type:jsonb"`
-	UsageMetadata     []byte `bun:"usage_metadata,type:jsonb"`
-	CitationMetadata  []byte `bun:"citation_metadata,type:jsonb"`
+	Content           json.RawMessage `bun:"content,type:jsonb"`
+	GroundingMetadata json.RawMessage `bun:"grounding_metadata,type:jsonb"`
+	CustomMetadata    json.RawMessage `bun:"custom_metadata,type:jsonb"`
+	UsageMetadata     json.RawMessage `bun:"usage_metadata,type:jsonb"`
+	CitationMetadata  json.RawMessage `bun:"citation_metadata,type:jsonb"`
 
 	Partial      *bool   `bun:"partial"`
 	TurnComplete *bool   `bun:"turn_complete"`
