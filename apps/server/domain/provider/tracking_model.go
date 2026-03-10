@@ -83,7 +83,13 @@ func (m *TrackingModel) recordUsage(ctx context.Context, req *adkmodel.LLMReques
 	orgID := auth.OrgIDFromContext(ctx)
 
 	if projectID == "" || orgID == "" {
-		// No tenant context — skip tracking (e.g. background jobs, tests)
+		// No tenant context — skip tracking (e.g. background jobs, tests).
+		// Log a warning so missing context is visible in server logs.
+		m.log.Warn("trackingModel: skipping usage record — missing tenant context",
+			"project_id", projectID,
+			"org_id", orgID,
+			"model", m.inner.Name(),
+		)
 		return
 	}
 

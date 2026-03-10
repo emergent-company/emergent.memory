@@ -468,11 +468,20 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 	// Create a run record synchronously so we can return the run ID immediately.
 	triggerSource := "manual"
 	run, err := h.repo.CreateRunWithOptions(c.Request().Context(), CreateRunOptions{
-		AgentID:       agent.ID,
-		TriggerSource: &triggerSource,
+		AgentID:         agent.ID,
+		TriggerSource:   &triggerSource,
+		TriggerMetadata: triggerReq.Context,
 	})
 	if err != nil {
 		return apperror.NewInternal("failed to create agent run", err)
+	}
+
+	// Resolve org ID for the agent's project so the tracking model can
+	// attribute LLM usage events to the correct tenant. user.OrgID may be
+	// empty for static test tokens and admin users without an X-Org-ID header.
+	orgID := user.OrgID
+	if orgID == "" {
+		orgID, _ = h.repo.GetOrgIDByProjectID(c.Request().Context(), agent.ProjectID)
 	}
 
 	// Launch execution asynchronously — manual triggers are fire-and-forget
@@ -484,7 +493,9 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			Agent:           agent,
 			AgentDefinition: agentDef,
 			ProjectID:       agent.ProjectID,
+			OrgID:           orgID,
 			UserMessage:     userMessage,
+			TriggerMetadata: triggerReq.Context,
 		})
 		if execErr != nil {
 			h.executor.log.Error("async agent execution failed",
@@ -994,11 +1005,16 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 		userMessage = *agent.Prompt
 	}
 
+	// Resolve org ID for the agent's project so the tracking model can attribute
+	// LLM usage events to the correct tenant.
+	orgID, _ := h.repo.GetOrgIDByProjectID(c.Request().Context(), agent.ProjectID)
+
 	// Execute
 	req := ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: agentDef,
 		ProjectID:       agent.ProjectID,
+		OrgID:           orgID,
 		UserMessage:     userMessage,
 		TriggerSource:   &triggerSource,
 		TriggerMetadata: metadata,
