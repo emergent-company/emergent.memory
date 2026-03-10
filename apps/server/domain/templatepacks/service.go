@@ -36,8 +36,10 @@ func (s *Service) GetInstalledPacks(ctx context.Context, projectID string) ([]In
 	return s.repo.GetInstalledPacks(ctx, projectID)
 }
 
-// AssignPack assigns a template pack to a project and registers its types
-func (s *Service) AssignPack(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*ProjectTemplatePack, error) {
+// AssignPack assigns a template pack to a project and registers its types.
+// When req.DryRun is true, returns a preview without making any changes.
+// When req.Merge is true, additively merges incoming schemas into existing types.
+func (s *Service) AssignPack(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*AssignPackResult, error) {
 	return s.repo.AssignPackWithTypes(ctx, projectID, userID, req)
 }
 

@@ -117,13 +117,16 @@ func (h *Handler) GetInstalledPacks(c echo.Context) error {
 
 // AssignPack handles POST /api/template-packs/projects/:projectId/assign
 // @Summary      Assign template pack
-// @Description  Assigns a template pack to a project, making its types available for use
+// @Description  Assigns a template pack to a project, making its types available for use.
+// @Description  When dry_run=true, returns a full conflict/merge preview (HTTP 200) without making changes.
+// @Description  When merge=true, additively merges incoming type schemas into existing registered types.
 // @Tags         template-packs
 // @Accept       json
 // @Produce      json
 // @Param        projectId path string true "Project ID (UUID)"
 // @Param        request body AssignPackRequest true "Assignment request"
-// @Success      201 {object} ProjectTemplatePack "Created assignment"
+// @Success      200 {object} AssignPackResult "Dry-run preview (when dry_run=true)"
+// @Success      201 {object} AssignPackResult "Created assignment"
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
@@ -149,12 +152,15 @@ func (h *Handler) AssignPack(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("template_pack_id is required")
 	}
 
-	assignment, err := h.svc.AssignPack(c.Request().Context(), projectID, user.ID, &req)
+	result, err := h.svc.AssignPack(c.Request().Context(), projectID, user.ID, &req)
 	if err != nil {
 		return err
 	}
 
-	return c.JSON(http.StatusCreated, assignment)
+	if req.DryRun {
+		return c.JSON(http.StatusOK, result)
+	}
+	return c.JSON(http.StatusCreated, result)
 }
 
 // UpdateAssignment handles PATCH /api/template-packs/projects/:projectId/assignments/:assignmentId

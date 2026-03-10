@@ -100,6 +100,53 @@ type InstalledPackItem struct {
 type AssignPackRequest struct {
 	TemplatePackID string                 `json:"template_pack_id"`
 	Customizations map[string]interface{} `json:"customizations"`
+	// DryRun, when true, computes and returns the full conflict/merge preview
+	// without making any database changes. The response uses HTTP 200.
+	DryRun bool `json:"dry_run,omitempty"`
+	// Merge, when true, additively merges incoming type schemas into existing
+	// registered types rather than skipping conflicting type names.
+	Merge bool `json:"merge,omitempty"`
+}
+
+// PropertyConflict describes a single property-level conflict during a merge.
+type PropertyConflict struct {
+	Property    string          `json:"property"`
+	ExistingDef json.RawMessage `json:"existing_def"`
+	IncomingDef json.RawMessage `json:"incoming_def"`
+	// Resolution is always "existing_wins" — existing properties are never overwritten.
+	Resolution string `json:"resolution"`
+}
+
+// SchemaConflict describes a type-level conflict when assigning a pack whose
+// type names overlap with types already registered in the project.
+type SchemaConflict struct {
+	TypeName              string             `json:"type_name"`
+	ExistingSchema        json.RawMessage    `json:"existing_schema"`
+	IncomingSchema        json.RawMessage    `json:"incoming_schema"`
+	MergedSchema          json.RawMessage    `json:"merged_schema,omitempty"`
+	AddedProperties       []string           `json:"added_properties,omitempty"`
+	ConflictingProperties []PropertyConflict `json:"conflicting_properties,omitempty"`
+}
+
+// AssignPackResult is the response from AssignPack / dry-run.
+// Replaces the bare *ProjectTemplatePack return so callers get conflict details.
+type AssignPackResult struct {
+	// DryRun mirrors the request flag so callers can distinguish the response mode.
+	DryRun bool `json:"dry_run"`
+	// AssignmentID is empty for dry-run responses.
+	AssignmentID string `json:"assignment_id,omitempty"`
+	PackID       string `json:"pack_id"`
+	PackName     string `json:"pack_name"`
+	// InstalledTypes are type names newly written to the registry.
+	InstalledTypes []string `json:"installed_types"`
+	// SkippedTypes are type names that already existed and were not merged.
+	SkippedTypes []string `json:"skipped_types,omitempty"`
+	// MergedTypes are type names whose schemas were additively extended.
+	MergedTypes []string `json:"merged_types,omitempty"`
+	// Conflicts contains full diff detail for each conflicting type.
+	Conflicts []SchemaConflict `json:"conflicts,omitempty"`
+	// AlreadyInstalled is true when merge=true and the pack was already assigned.
+	AlreadyInstalled bool `json:"already_installed,omitempty"`
 }
 
 // UpdateAssignmentRequest is the request to update a pack assignment
