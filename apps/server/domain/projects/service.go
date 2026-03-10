@@ -234,8 +234,8 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 		}
 	}
 
-	if req.KBPurpose != nil {
-		project.KBPurpose = req.KBPurpose
+	if req.ProjectInfo != nil {
+		project.ProjectInfo = req.ProjectInfo
 		hasUpdates = true
 	}
 

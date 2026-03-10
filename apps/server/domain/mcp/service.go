@@ -39,6 +39,7 @@ type Service struct {
 	braveSearchAPIKey  string
 	braveSearchTimeout time.Duration
 
+
 	// Schema version caching
 	cacheMu       sync.RWMutex
 	cachedVersion string
@@ -74,6 +75,15 @@ func (s *Service) SetMCPRegistryToolHandler(h MCPRegistryToolHandler) {
 // GetToolDefinitions returns all available MCP tools
 func (s *Service) GetToolDefinitions() []ToolDefinition {
 	tools := []ToolDefinition{
+		{
+			Name:        "get_project_info",
+			Description: "Returns the project info document — a markdown document describing this knowledge base's purpose, goals, audience, and context. Call this to understand what this project is about before working with its data.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		},
 		{
 			Name:        "schema_version",
 			Description: "Get the current schema version and metadata. Returns version hash, timestamp, total types, and relationships.",
@@ -694,6 +704,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 	// Always expose webfetch — no API key required, fetches any public URL.
 	tools = append(tools, getWebFetchToolDefinition())
 
+	// Expose Reddit search — returns error if credentials not configured.
+	tools = append(tools, getRedditSearchToolDefinition())
+
 	// Append agent tool definitions if handler is available
 	if s.agentToolHandler != nil {
 		tools = append(tools, s.agentToolHandler.GetAgentToolDefinitions()...)
@@ -858,6 +871,8 @@ func (s *Service) GetPromptDefinitions() []PromptDefinition {
 // ExecuteTool executes an MCP tool and returns the result
 func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName string, args map[string]any) (*ToolResult, error) {
 	switch toolName {
+	case "get_project_info":
+		return s.executeGetProjectInfo(ctx, projectID)
 	case "schema_version":
 		return s.executeSchemaVersion(ctx)
 	case "list_entity_types":
@@ -924,6 +939,8 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeBraveWebSearch(ctx, projectID, args)
 	case "webfetch":
 		return s.executeWebFetch(ctx, args)
+	case "reddit_search":
+		return s.executeRedditSearch(ctx, projectID, args)
 
 	// Agent Definition tools
 	case "list_agent_definitions":
@@ -1024,6 +1041,29 @@ func (s *Service) executeSchemaVersion(ctx context.Context) (*ToolResult, error)
 	}
 
 	return s.wrapResult(result)
+}
+
+// executeGetProjectInfo returns the project info document for the given project.
+func (s *Service) executeGetProjectInfo(ctx context.Context, projectID string) (*ToolResult, error) {
+	var info *string
+	err := s.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("project_info").
+		Where("id = ?", projectID).
+		Scan(ctx, &info)
+	if err != nil {
+		return nil, fmt.Errorf("get project info: %w", err)
+	}
+
+	if info == nil || *info == "" {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: "No project info has been configured for this project."}},
+		}, nil
+	}
+
+	return &ToolResult{
+		Content: []ContentBlock{{Type: "text", Text: *info}},
+	}, nil
 }
 
 // executeListEntityTypes returns all entity types with counts

@@ -48,7 +48,7 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID, orgID uuid.UUID
 	}
 
 	// Get KB purpose from project
-	kbPurpose, err := s.repo.GetProjectKBPurpose(ctx, projectID)
+	projectInfo, err := s.repo.GetProjectInfo(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID, orgID uuid.UUID
 			"include_relationships": req.IncludeRelationships,
 			"max_iterations":        req.MaxIterations,
 		},
-		KBPurpose:               kbPurpose,
+		KBPurpose:               projectInfo,
 		DiscoveredTypes:         JSONArray{},
 		DiscoveredRelationships: JSONArray{},
 		CreatedAt:               time.Now(),

@@ -1,7 +1,7 @@
 # product-configuration Specification
 
 ## Purpose
-TBD - created by archiving change add-emergent-product-hierarchy. Update Purpose after archive.
+Define how Emergent products (Core, Personal Assistant, Product Framework) are structured, documented, and configured — covering value proposition documents, product spec files, template pack associations, AI prompt defaults, feature flags, onboarding flows, and multi-product coexistence within a single account.
 ## Requirements
 ### Requirement: Value Proposition Documentation
 

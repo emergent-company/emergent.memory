@@ -13,7 +13,7 @@ type Project struct {
 	ID                 string         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
 	OrganizationID     string         `bun:"organization_id,notnull,type:uuid" json:"organizationId"`
 	Name               string         `bun:"name,notnull" json:"name"`
-	KBPurpose          *string        `bun:"kb_purpose" json:"kb_purpose,omitempty"`
+	ProjectInfo         *string        `bun:"project_info" json:"project_info,omitempty"`
 	ChatPromptTemplate *string        `bun:"chat_prompt_template" json:"chat_prompt_template,omitempty"`
 	AutoExtractObjects bool           `bun:"auto_extract_objects,notnull,default:false" json:"auto_extract_objects"`
 	AutoExtractConfig  map[string]any `bun:"auto_extract_config,type:jsonb,default:'{}'" json:"auto_extract_config,omitempty"`
@@ -94,7 +94,7 @@ type ProjectDTO struct {
 	ID                 string         `json:"id"`
 	Name               string         `json:"name"`
 	OrgID              string         `json:"orgId"`
-	KBPurpose          *string        `json:"kb_purpose,omitempty"`
+	ProjectInfo         *string        `json:"project_info,omitempty"`
 	ChatPromptTemplate *string        `json:"chat_prompt_template,omitempty"`
 	AutoExtractObjects *bool          `json:"auto_extract_objects,omitempty"`
 	AutoExtractConfig  map[string]any `json:"auto_extract_config,omitempty"`
@@ -122,7 +122,7 @@ type CreateProjectRequest struct {
 // UpdateProjectRequest is the request body for updating a project
 type UpdateProjectRequest struct {
 	Name               *string        `json:"name,omitempty" validate:"omitempty,min=1"`
-	KBPurpose          *string        `json:"kb_purpose,omitempty"`
+	ProjectInfo         *string        `json:"project_info,omitempty"`
 	ChatPromptTemplate *string        `json:"chat_prompt_template,omitempty"`
 	AutoExtractObjects *bool          `json:"auto_extract_objects,omitempty"`
 	AutoExtractConfig  map[string]any `json:"auto_extract_config,omitempty"`
@@ -135,7 +135,7 @@ func (p *Project) ToDTO() ProjectDTO {
 		ID:                 p.ID,
 		Name:               p.Name,
 		OrgID:              p.OrganizationID,
-		KBPurpose:          p.KBPurpose,
+		ProjectInfo:         p.ProjectInfo,
 		ChatPromptTemplate: p.ChatPromptTemplate,
 		Stats:              p.Stats,
 	}

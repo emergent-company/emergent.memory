@@ -16,14 +16,14 @@ import (
 
 // FixtureProject returns a sample project for testing.
 func FixtureProject() *projects.Project {
-	purpose := "Test knowledge base"
+	info := "Test knowledge base"
 	template := "You are a helpful assistant"
 	autoExtract := true
 	return &projects.Project{
 		ID:                 "proj_test123",
 		Name:               "Test Project",
 		OrgID:              "org_test456",
-		KBPurpose:          &purpose,
+		ProjectInfo:        &info,
 		ChatPromptTemplate: &template,
 		AutoExtractObjects: &autoExtract,
 		AutoExtractConfig: map[string]interface{}{

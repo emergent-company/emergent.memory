@@ -1,7 +1,7 @@
 # template-packs Specification
 
 ## Purpose
-TBD - created by archiving change add-emergent-product-hierarchy. Update Purpose after archive.
+Define the installable template packs for Emergent products — including the Personal Assistant pack (tasks, life events, contacts), the Product Framework pack (features, goals, value propositions), product-specific AI prompts, template pack discoverability and metadata, and the full Emergent Product Framework (EPF) pack with 19 object types and 29 relationship types across the READY-FIRE-AIM lifecycle.
 ## Requirements
 ### Requirement: Personal Assistant Template Pack
 
