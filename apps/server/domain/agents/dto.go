@@ -120,7 +120,8 @@ type BatchTriggerResponseDTO struct {
 
 // TriggerRequestDTO is the request body for triggering an agent
 type TriggerRequestDTO struct {
-	Prompt string `json:"prompt"`
+	Prompt  string         `json:"prompt"`
+	Context map[string]any `json:"context,omitempty"`
 }
 
 // TriggerResponseDTO is the response for triggering an agent

@@ -135,10 +135,15 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		userMessage = *agent.Prompt
 	}
 
+	// Resolve org ID for the agent's project so the tracking model can attribute
+	// LLM usage events to the correct tenant.
+	orgID, _ := p.repo.GetOrgIDByProjectID(ctx, agent.ProjectID)
+
 	result, execErr := p.executor.ExecuteWithRun(ctx, run, ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: agentDef,
 		ProjectID:       agent.ProjectID,
+		OrgID:           orgID,
 		UserMessage:     userMessage,
 	})
 	if execErr != nil {
@@ -261,8 +266,9 @@ func (p *WorkerPool) reenqueueParent(ctx context.Context, log *slog.Logger, run 
 	}
 
 	_, err = p.repo.CreateRunQueued(ctx, parentRun.AgentID, 1, CreateRunQueuedOptions{
-		TriggerMessage: &triggerMsg,
-		ParentRunID:    parentRun.ParentRunID, // propagate grandparent so the chain continues
+		TriggerMessage:  &triggerMsg,
+		ParentRunID:     parentRun.ParentRunID, // propagate grandparent so the chain continues
+		TriggerMetadata: parentRun.TriggerMetadata,
 	})
 	if err != nil {
 		log.Warn("failed to re-enqueue parent run",

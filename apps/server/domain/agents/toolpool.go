@@ -30,7 +30,7 @@ var coordinationTools = map[string]bool{
 }
 
 // DefaultMaxDepth is the default maximum agent spawning depth.
-const DefaultMaxDepth = 2
+const DefaultMaxDepth = 6
 
 // ToolPoolConfig holds configuration for creating a ToolPool.
 type ToolPoolConfig struct {

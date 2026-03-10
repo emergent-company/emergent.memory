@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // MCPToolHandler implements mcp.AgentToolHandler, providing 16 agent management
@@ -546,11 +547,20 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		})
 	}
 
+	// Resolve org ID for the agent's project so the tracking model can attribute
+	// LLM usage events to the correct tenant. Prefer context (already set by
+	// auth middleware for HTTP paths) and fall back to a DB lookup.
+	orgID := auth.OrgIDFromContext(ctx)
+	if orgID == "" {
+		orgID, _ = h.repo.GetOrgIDByProjectID(ctx, agent.ProjectID)
+	}
+
 	// Sync branch (default): block until execution completes
 	result, err := h.executor.Execute(ctx, ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: agentDef,
 		ProjectID:       agent.ProjectID,
+		OrgID:           orgID,
 		UserMessage:     userMessage,
 	})
 	if err != nil {
