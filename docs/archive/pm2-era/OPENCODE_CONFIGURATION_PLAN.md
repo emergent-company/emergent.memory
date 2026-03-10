@@ -122,7 +122,7 @@ These three changes provide **80% of the accuracy improvement** with minimal eff
         "-y",
         "@upstash/context7-mcp",
         "--api-key",
-        "[REDACTED_CONTEXT7_KEY]"
+        "<YOUR_CONTEXT7_API_KEY>"
       ]
     },
     "gh_grep": {

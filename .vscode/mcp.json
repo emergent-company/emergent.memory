@@ -22,10 +22,11 @@
       "command": "npx",
       "args": [
         "-y",
-        "@upstash/context7-mcp",
-        "--api-key",
-        "[REDACTED_CONTEXT7_KEY]"
-      ]
+        "@upstash/context7-mcp"
+      ],
+      "env": {
+        "CONTEXT7_API_KEY": "${env:CONTEXT7_API_KEY}"
+      }
     },
     "gh_grep": {
       "type": "http",
@@ -39,8 +40,8 @@
       "command": "npx",
       "args": ["-y", "daisyui-blueprint@latest"],
       "env": {
-        "LICENSE": "[REDACTED_DAISYUI_LICENSE]",
-        "EMAIL": "maciej@kucharz.net"
+        "LICENSE": "${env:DAISYUI_LICENSE}",
+        "EMAIL": "${env:DAISYUI_EMAIL}"
       }
     },
     "chrome-devtools": {
