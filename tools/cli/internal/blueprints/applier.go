@@ -8,13 +8,15 @@ import (
 	"os"
 
 	sdkagents "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions"
+	sdkskills "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
 	sdktpacks "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/templatepacks"
 )
 
-// Blueprinter orchestrates creating or updating packs and agent definitions.
+// Blueprinter orchestrates creating or updating packs, agent definitions, and skills.
 type Blueprinter struct {
 	packs   *sdktpacks.Client
 	agents  *sdkagents.Client
+	skills  *sdkskills.Client
 	dryRun  bool
 	upgrade bool
 	out     io.Writer
@@ -25,6 +27,7 @@ type Blueprinter struct {
 func NewBlueprintsApplier(
 	packs *sdktpacks.Client,
 	agents *sdkagents.Client,
+	skills *sdkskills.Client,
 	dryRun bool,
 	upgrade bool,
 	out io.Writer,
@@ -35,20 +38,22 @@ func NewBlueprintsApplier(
 	return &Blueprinter{
 		packs:   packs,
 		agents:  agents,
+		skills:  skills,
 		dryRun:  dryRun,
 		upgrade: upgrade,
 		out:     out,
 	}
 }
 
-// Run applies the given packs and agents, returning one BlueprintsResult per resource.
-func (b *Blueprinter) Run(ctx context.Context, packs []PackFile, agents []AgentFile) ([]BlueprintsResult, error) {
+// Run applies the given packs, agents, and skills, returning one BlueprintsResult per resource.
+func (b *Blueprinter) Run(ctx context.Context, packs []PackFile, agents []AgentFile, skills []SkillFile) ([]BlueprintsResult, error) {
 	var results []BlueprintsResult
 
 	if b.dryRun {
 		// Dry-run: print what would happen, make zero API calls.
 		results = append(results, b.dryRunPacks(packs)...)
 		results = append(results, b.dryRunAgents(agents)...)
+		results = append(results, b.dryRunSkills(skills)...)
 		b.printSummary(results, true)
 		return results, nil
 	}
@@ -67,6 +72,14 @@ func (b *Blueprinter) Run(ctx context.Context, packs []PackFile, agents []AgentF
 		}
 	}
 
+	var existingSkills map[string]*sdkskills.Skill
+	if len(skills) > 0 {
+		existingSkills, err = b.fetchExistingSkills(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list existing skills: %w", err)
+		}
+	}
+
 	// Apply packs.
 	for _, p := range packs {
 		r := b.blueprintPack(ctx, p, existingPacks)
@@ -77,6 +90,13 @@ func (b *Blueprinter) Run(ctx context.Context, packs []PackFile, agents []AgentF
 	// Apply agents.
 	for _, ag := range agents {
 		r := b.blueprintAgent(ctx, ag, existingAgents)
+		results = append(results, r)
+		b.printResult(r)
+	}
+
+	// Apply skills.
+	for _, sk := range skills {
+		r := b.blueprintSkill(ctx, sk, existingSkills)
 		results = append(results, r)
 		b.printResult(r)
 	}
@@ -237,6 +257,59 @@ func (b *Blueprinter) updateAgent(ctx context.Context, ag AgentFile, agentID str
 }
 
 // ──────────────────────────────────────────────
+// Skill application
+// ──────────────────────────────────────────────
+
+func (b *Blueprinter) blueprintSkill(ctx context.Context, sk SkillFile, existing map[string]*sdkskills.Skill) BlueprintsResult {
+	item, found := existing[sk.Name]
+
+	if !found {
+		return b.createSkill(ctx, sk)
+	}
+
+	if b.upgrade {
+		return b.updateSkill(ctx, sk, item.ID)
+	}
+
+	return BlueprintsResult{
+		ResourceType: "skill",
+		Name:         sk.Name,
+		SourceFile:   sk.SourceFile,
+		Action:       BlueprintsActionSkipped,
+	}
+}
+
+func (b *Blueprinter) createSkill(ctx context.Context, sk SkillFile) BlueprintsResult {
+	req := &sdkskills.CreateSkillRequest{
+		Name:        sk.Name,
+		Description: sk.Description,
+		Content:     sk.Content,
+		Metadata:    sk.Metadata,
+	}
+	// Global skill — empty projectID
+	if _, err := b.skills.Create(ctx, "", req); err != nil {
+		return BlueprintsResult{ResourceType: "skill", Name: sk.Name, SourceFile: sk.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("create skill: %w", err)}
+	}
+	return BlueprintsResult{ResourceType: "skill", Name: sk.Name, SourceFile: sk.SourceFile, Action: BlueprintsActionCreated}
+}
+
+func (b *Blueprinter) updateSkill(ctx context.Context, sk SkillFile, skillID string) BlueprintsResult {
+	desc := sk.Description
+	content := sk.Content
+	req := &sdkskills.UpdateSkillRequest{
+		Description: &desc,
+		Content:     &content,
+		Metadata:    sk.Metadata,
+	}
+	if _, err := b.skills.Update(ctx, skillID, req); err != nil {
+		return BlueprintsResult{ResourceType: "skill", Name: sk.Name, SourceFile: sk.SourceFile,
+			Action: BlueprintsActionError, Error: fmt.Errorf("update skill: %w", err)}
+	}
+	return BlueprintsResult{ResourceType: "skill", Name: sk.Name, SourceFile: sk.SourceFile, Action: BlueprintsActionUpdated}
+}
+
+// ──────────────────────────────────────────────
 // Dry-run helpers
 // ──────────────────────────────────────────────
 
@@ -270,6 +343,24 @@ func (b *Blueprinter) dryRunAgents(agents []AgentFile) []BlueprintsResult {
 			ResourceType: "agent",
 			Name:         ag.Name,
 			SourceFile:   ag.SourceFile,
+			Action:       BlueprintsActionCreated,
+		})
+	}
+	return results
+}
+
+func (b *Blueprinter) dryRunSkills(skills []SkillFile) []BlueprintsResult {
+	results := make([]BlueprintsResult, 0, len(skills))
+	for _, sk := range skills {
+		action := "create"
+		if b.upgrade {
+			action = "create or update"
+		}
+		fmt.Fprintf(b.out, "[dry-run] would %s skill %q (%s)\n", action, sk.Name, sk.SourceFile)
+		results = append(results, BlueprintsResult{
+			ResourceType: "skill",
+			Name:         sk.Name,
+			SourceFile:   sk.SourceFile,
 			Action:       BlueprintsActionCreated,
 		})
 	}
@@ -357,6 +448,19 @@ func (b *Blueprinter) fetchExistingAgents(ctx context.Context) (map[string]sdkag
 	m := make(map[string]sdkagents.AgentDefinitionSummary, len(resp.Data))
 	for _, ag := range resp.Data {
 		m[ag.Name] = ag
+	}
+	return m, nil
+}
+
+// fetchExistingSkills returns a name→skill map of all global skills.
+func (b *Blueprinter) fetchExistingSkills(ctx context.Context) (map[string]*sdkskills.Skill, error) {
+	list, err := b.skills.List(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]*sdkskills.Skill, len(list))
+	for _, sk := range list {
+		m[sk.Name] = sk
 	}
 	return m, nil
 }

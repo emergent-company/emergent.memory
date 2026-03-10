@@ -691,6 +691,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 	// config. If no key is available at any tier the tool returns a clear error message.
 	tools = append(tools, getBraveSearchToolDefinition())
 
+	// Always expose webfetch — no API key required, fetches any public URL.
+	tools = append(tools, getWebFetchToolDefinition())
+
 	// Append agent tool definitions if handler is available
 	if s.agentToolHandler != nil {
 		tools = append(tools, s.agentToolHandler.GetAgentToolDefinitions()...)
@@ -916,9 +919,11 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	case "get_migration_archive":
 		return s.executeGetMigrationArchive(ctx, projectID, args)
 
-	// Web search tools
+	// Web tools
 	case "brave_web_search":
 		return s.executeBraveWebSearch(ctx, projectID, args)
+	case "webfetch":
+		return s.executeWebFetch(ctx, args)
 
 	// Agent Definition tools
 	case "list_agent_definitions":

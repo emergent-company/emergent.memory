@@ -120,6 +120,25 @@ type SeedResult struct {
 }
 
 // ──────────────────────────────────────────────
+// SkillFile — skills/<name>.md
+// ──────────────────────────────────────────────
+
+// SkillFile is the top-level structure parsed from a file in the skills/
+// directory. Each file must begin with a YAML frontmatter block delimited by
+// "---", followed by the skill content (Markdown).
+type SkillFile struct {
+	Name        string         `yaml:"name"`
+	Description string         `yaml:"description"`
+	Metadata    map[string]any `yaml:"metadata,omitempty"`
+
+	// Content holds the Markdown body after the closing frontmatter delimiter.
+	Content string `yaml:"-"`
+
+	// SourceFile is the path from which this skill was loaded (not serialised).
+	SourceFile string `yaml:"-"`
+}
+
+// ──────────────────────────────────────────────
 // BlueprintsResult — outcome of processing one resource
 // ──────────────────────────────────────────────
 
