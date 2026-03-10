@@ -20,6 +20,7 @@ type CoordinationToolDeps struct {
 	Logger      *slog.Logger
 	ProjectID   string
 	ParentRunID string
+	RootRunID   string // top-level orchestration run ID; propagated unchanged to all spawned sub-agents
 	Depth       int
 	MaxDepth    int
 	// SpawnPolicy is an optional allowlist of agent names this caller is permitted
@@ -313,12 +314,14 @@ func executeSingleSpawn(ctx context.Context, deps CoordinationToolDeps, req Spaw
 
 	// Build the execute request for the sub-agent
 	parentRunID := deps.ParentRunID
+	rootRunID := deps.RootRunID
 	execReq := ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: def,
 		ProjectID:       deps.ProjectID,
 		UserMessage:     req.Task,
 		ParentRunID:     &parentRunID,
+		RootRunID:       &rootRunID, // propagate root orchestration ID unchanged
 		MaxSteps:        def.MaxSteps,
 		Timeout:         timeout,
 		Depth:           deps.Depth + 1,
