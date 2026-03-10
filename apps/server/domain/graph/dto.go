@@ -685,14 +685,15 @@ type TraverseGraphResponse struct {
 
 // TraverseNode represents a node in the traverse response.
 type TraverseNode struct {
-	ID          uuid.UUID  `json:"id"`
-	CanonicalID uuid.UUID  `json:"canonical_id"`
-	Depth       int        `json:"depth"`
-	Type        string     `json:"type"`
-	Key         *string    `json:"key,omitempty"`
-	Labels      []string   `json:"labels"`
-	PhaseIndex  *int       `json:"phaseIndex,omitempty"`
-	Paths       [][]string `json:"paths,omitempty"`
+	ID          uuid.UUID      `json:"id"`
+	CanonicalID uuid.UUID      `json:"canonical_id"`
+	Depth       int            `json:"depth"`
+	Type        string         `json:"type"`
+	Key         *string        `json:"key,omitempty"`
+	Labels      []string       `json:"labels"`
+	Properties  map[string]any `json:"properties,omitempty"`
+	PhaseIndex  *int           `json:"phaseIndex,omitempty"`
+	Paths       [][]string     `json:"paths,omitempty"`
 }
 
 // MarshalJSON emits both legacy (id, canonical_id) and new (version_id, entity_id)

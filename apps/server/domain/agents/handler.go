@@ -1351,7 +1351,12 @@ func (h *Handler) GetProjectRun(c echo.Context) error {
 		return apperror.NewNotFound("AgentRun", runID)
 	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(run.ToDTO()))
+	dto := run.ToDTO()
+	if usage, uErr := h.repo.GetRunTokenUsage(c.Request().Context(), runID); uErr == nil {
+		dto.TokenUsage = usage
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dto))
 }
 
 // GetRunMessages handles GET /api/projects/:projectId/agent-runs/:runId/messages

@@ -321,6 +321,12 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		ActorID:    actorID,
 	}
 
+	// Sync status column from properties["status"] — properties is the
+	// authoritative store, so it always wins over the req.Status field.
+	if st, ok := validatedProps["status"].(string); ok && st != "" {
+		obj.Status = &st
+	}
+
 	if err := s.repo.Create(ctx, obj); err != nil {
 		return nil, err
 	}
@@ -609,10 +615,16 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		newLabels = current.Labels
 	}
 
-	// Handle status
+	// Handle status: prefer properties["status"] (authoritative JSONB), then
+	// req.Status (explicit field), then keep current.
 	newStatus := current.Status
 	if req.Status != nil {
 		newStatus = req.Status
+	}
+	// Sync from merged properties["status"] — this is the authoritative source
+	// so that update_entity(properties={"status":"complete"}) always wins.
+	if st, ok := newProps["status"].(string); ok && st != "" {
+		newStatus = &st
 	}
 
 	actorType := "user"
@@ -2589,6 +2601,7 @@ func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *T
 			Type:        obj.Type,
 			Key:         obj.Key,
 			Labels:      obj.Labels,
+			Properties:  obj.Properties,
 		}
 		nodes = append(nodes, node)
 	}
