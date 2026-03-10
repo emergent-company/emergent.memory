@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -78,6 +79,7 @@ type ExecuteRequest struct {
 	Agent           *Agent
 	AgentDefinition *AgentDefinition
 	ProjectID       string
+	OrgID           string
 	UserMessage     string
 	ParentRunID     *string
 	MaxSteps        *int
@@ -386,6 +388,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		MaxSteps:         &maxSteps,
 		ResumedFrom:      &resumedFrom,
 		InitialStepCount: priorRun.StepCount,
+		TriggerMetadata:  priorRun.TriggerMetadata,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resumed run: %w", err)
@@ -545,10 +548,14 @@ func (ae *AgentExecutor) runPipeline(
 	// LLM usage events to this run.
 	ctx = provider.ContextWithRunID(ctx, run.ID)
 
-	// Inject project ID into context so the credential resolver can look up
-	// the org-level provider config via the DB hierarchy (project → org).
+	// Inject project and org IDs into context so the credential resolver can look up
+	// the org-level provider config via the DB hierarchy (project → org), and so
+	// the tracking model can attribute LLM usage events to the correct tenant.
 	if req.ProjectID != "" {
 		ctx = auth.ContextWithProjectID(ctx, req.ProjectID)
+	}
+	if req.OrgID != "" {
+		ctx = auth.ContextWithOrgID(ctx, req.OrgID)
 	}
 
 	// Apply timeout if specified
@@ -557,6 +564,11 @@ func (ae *AgentExecutor) runPipeline(
 		ctx, cancel = context.WithTimeout(ctx, *req.Timeout)
 		defer cancel()
 	}
+
+	// Create a cancellable context so the doom loop detector can hard-stop the run.
+	var cancelRun context.CancelFunc
+	ctx, cancelRun = context.WithCancel(ctx)
+	defer cancelRun()
 
 	// Create the LLM model
 	modelName := ""
@@ -631,6 +643,14 @@ func (ae *AgentExecutor) runPipeline(
 	// Build the LLM agent
 	agentName := ae.resolveAgentName(req)
 	instruction := ae.resolveInstruction(req)
+
+	// Inject TriggerMetadata as a <context> block at the top of the system instruction.
+	// Gated on non-empty metadata so runs without context see no change (backward compat).
+	if len(run.TriggerMetadata) > 0 {
+		if ctxJSON, err := json.Marshal(run.TriggerMetadata); err == nil {
+			instruction = "<context>\n" + string(ctxJSON) + "\n</context>\n\n" + instruction
+		}
+	}
 
 	// Augment system instruction with workspace context if available
 	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
@@ -791,6 +811,11 @@ func (ae *AgentExecutor) runPipeline(
 				slog.String("tool", toolName),
 				slog.Int("consecutive", doomDetector.consecutiveCount),
 			)
+			// Cancel the run context so the ADK runner exits cleanly on the next
+			// iteration. The cancellation is caught by the beforeModelCb and by the
+			// r.Run() event loop, which will surface it as a context error, causing
+			// the run to be marked failed.
+			cancelRun()
 			return map[string]any{
 				"error":   "DOOM_LOOP_DETECTED",
 				"message": fmt.Sprintf("Detected %d consecutive identical calls to %q. Agent is stuck in a loop and has been stopped.", doomDetector.consecutiveCount, toolName),
@@ -887,104 +912,139 @@ func (ae *AgentExecutor) runPipeline(
 	// Persist the user message
 	ae.persistMessage(ctx, run.ID, "user", req.UserMessage, initialSteps)
 
-	// Run the agent
+	// Run the agent with MALFORMED_FUNCTION_CALL retry logic.
+	// When the LLM emits a malformed function call we inject a recovery turn
+	// ("Your previous response was malformed — please try again") and restart
+	// the iterator on the same ADK session, up to maxMalformedRetries times.
+	const maxMalformedRetries = 3
 	var lastEvent *session.Event
 	var lastTextEvent *session.Event // fallback: last non-partial event with text content
 	runCfg := agent.RunConfig{}
 	if req.StreamCallback != nil {
 		runCfg.StreamingMode = agent.StreamingModeSSE
 	}
-	for event, eventErr := range r.Run(ctx, "system", sess.ID(), userContent, runCfg) {
-		if eventErr != nil {
-			steps := tracker.current()
-			if req.StreamCallback != nil {
-				req.StreamCallback(StreamEvent{
-					Type:  StreamEventError,
-					Error: eventErr.Error(),
-				})
-			}
-			_ = ae.repo.FailRunWithSteps(ctx, run.ID, eventErr.Error(), steps)
-			return &ExecuteResult{
-				RunID:    run.ID,
-				Status:   RunStatusError,
-				Summary:  map[string]any{"error": eventErr.Error()},
-				Steps:    steps,
-				Duration: time.Since(startTime),
-			}, nil
-		}
-
-		if event == nil {
-			continue
-		}
-
-		// Treat non-empty ErrorCode that indicates a genuine LLM malfunction as
-		// a fatal run error, so the result is properly marked RunStatusError and
-		// the parent is re-enqueued with status:error rather than status:success.
-		//
-		// "STOP" and "FINISH_REASON_UNSPECIFIED" are normal terminations: the
-		// model finished cleanly but produced no content (e.g. it called tools
-		// and then stopped). All other codes represent abnormal terminations —
-		// safety blocks, malformed function calls, recitation filters, etc.
-		if event.ErrorCode != "" && event.ErrorCode != "STOP" && event.ErrorCode != "FINISH_REASON_UNSPECIFIED" {
-			steps := tracker.current()
-			errMsg := fmt.Sprintf("LLM returned error: %s", event.ErrorCode)
-			if event.ErrorMessage != "" {
-				errMsg = fmt.Sprintf("LLM returned error: %s: %s", event.ErrorCode, event.ErrorMessage)
-			}
-			ae.log.Warn("agent run aborted due to LLM error code",
-				slog.String("run_id", run.ID),
-				slog.String("error_code", event.ErrorCode),
-				slog.String("error_message", event.ErrorMessage),
-				slog.Int("steps", steps),
-			)
-			if req.StreamCallback != nil {
-				req.StreamCallback(StreamEvent{
-					Type:  StreamEventError,
-					Error: errMsg,
-				})
-			}
-			_ = ae.repo.FailRunWithSteps(ctx, run.ID, errMsg, steps)
-			return &ExecuteResult{
-				RunID:    run.ID,
-				Status:   RunStatusError,
-				Summary:  map[string]any{"error": errMsg, "error_code": event.ErrorCode},
-				Steps:    steps,
-				Duration: time.Since(startTime),
-			}, nil
-		}
-
-		// Stream partial text deltas to the callback
-		if event.Partial && event.Content != nil && req.StreamCallback != nil {
-			for _, part := range event.Content.Parts {
-				if part != nil && part.Text != "" {
+	malformedCount := 0
+	currentContent := userContent
+	for {
+		malformed := false
+		for event, eventErr := range r.Run(ctx, "system", sess.ID(), currentContent, runCfg) {
+			if eventErr != nil {
+				steps := tracker.current()
+				if req.StreamCallback != nil {
 					req.StreamCallback(StreamEvent{
-						Type: StreamEventTextDelta,
-						Text: part.Text,
+						Type:  StreamEventError,
+						Error: eventErr.Error(),
 					})
 				}
+				_ = ae.repo.FailRunWithSteps(ctx, run.ID, eventErr.Error(), steps)
+				return &ExecuteResult{
+					RunID:    run.ID,
+					Status:   RunStatusError,
+					Summary:  map[string]any{"error": eventErr.Error()},
+					Steps:    steps,
+					Duration: time.Since(startTime),
+				}, nil
 			}
-		}
 
-		// Persist assistant messages from events
-		if event.Content != nil && !event.Partial {
-			ae.persistEventContent(ctx, run.ID, event, tracker.current())
-		}
+			if event == nil {
+				continue
+			}
 
-		if event.IsFinalResponse() {
-			lastEvent = event
-		}
+			// Treat non-empty ErrorCode that indicates a genuine LLM malfunction as
+			// a fatal run error, so the result is properly marked RunStatusError and
+			// the parent is re-enqueued with status:error rather than status:success.
+			//
+			// "STOP" and "FINISH_REASON_UNSPECIFIED" are normal terminations: the
+			// model finished cleanly but produced no content (e.g. it called tools
+			// and then stopped). All other codes represent abnormal terminations —
+			// safety blocks, malformed function calls, recitation filters, etc.
+			//
+			// MALFORMED_FUNCTION_CALL is special: we retry by injecting a recovery
+			// turn, up to maxMalformedRetries times.
+			if event.ErrorCode != "" && event.ErrorCode != "STOP" && event.ErrorCode != "FINISH_REASON_UNSPECIFIED" {
+				steps := tracker.current()
+				errMsg := fmt.Sprintf("LLM returned error: %s", event.ErrorCode)
+				if event.ErrorMessage != "" {
+					errMsg = fmt.Sprintf("LLM returned error: %s: %s", event.ErrorCode, event.ErrorMessage)
+				}
+				if event.ErrorCode == "MALFORMED_FUNCTION_CALL" && malformedCount < maxMalformedRetries {
+					malformedCount++
+					ae.log.Warn("agent run received MALFORMED_FUNCTION_CALL, retrying",
+						slog.String("run_id", run.ID),
+						slog.Int("attempt", malformedCount),
+						slog.Int("max_retries", maxMalformedRetries),
+						slog.Int("steps", steps),
+					)
+					// Inject a recovery turn so the LLM can correct its call.
+					currentContent = genai.NewContentFromText(
+						"Your previous response contained a malformed function call. "+
+							"Please review what you were trying to do and try again with "+
+							"properly formatted arguments.",
+						genai.RoleUser,
+					)
+					malformed = true
+					break // break inner loop to restart r.Run() with recovery message
+				}
+				ae.log.Warn("agent run aborted due to LLM error code",
+					slog.String("run_id", run.ID),
+					slog.String("error_code", event.ErrorCode),
+					slog.String("error_message", event.ErrorMessage),
+					slog.Int("steps", steps),
+				)
+				if req.StreamCallback != nil {
+					req.StreamCallback(StreamEvent{
+						Type:  StreamEventError,
+						Error: errMsg,
+					})
+				}
+				_ = ae.repo.FailRunWithSteps(ctx, run.ID, errMsg, steps)
+				return &ExecuteResult{
+					RunID:    run.ID,
+					Status:   RunStatusError,
+					Summary:  map[string]any{"error": errMsg, "error_code": event.ErrorCode},
+					Steps:    steps,
+					Duration: time.Since(startTime),
+				}, nil
+			}
 
-		// Track the last non-partial event that carries text — used as fallback
-		// when IsFinalResponse() never fires (e.g. agent ends with a tool call).
-		if !event.Partial && event.Content != nil {
-			for _, part := range event.Content.Parts {
-				if part != nil && part.Text != "" {
-					lastTextEvent = event
-					break
+			// Stream partial text deltas to the callback
+			if event.Partial && event.Content != nil && req.StreamCallback != nil {
+				for _, part := range event.Content.Parts {
+					if part != nil && part.Text != "" {
+						req.StreamCallback(StreamEvent{
+							Type: StreamEventTextDelta,
+							Text: part.Text,
+						})
+					}
 				}
 			}
+
+			// Persist assistant messages from events
+			if event.Content != nil && !event.Partial {
+				ae.persistEventContent(ctx, run.ID, event, tracker.current())
+			}
+
+			if event.IsFinalResponse() {
+				lastEvent = event
+			}
+
+			// Track the last non-partial event that carries text — used as fallback
+			// when IsFinalResponse() never fires (e.g. agent ends with a tool call).
+			if !event.Partial && event.Content != nil {
+				for _, part := range event.Content.Parts {
+					if part != nil && part.Text != "" {
+						lastTextEvent = event
+						break
+					}
+				}
+			}
+		} // end inner for-range r.Run(...)
+		if !malformed {
+			break // normal completion — exit outer retry loop
 		}
-	}
+		// MALFORMED_FUNCTION_CALL retry: brief pause then re-enter inner loop
+		time.Sleep(time.Duration(malformedCount) * 2 * time.Second)
+	} // end outer retry loop
 
 	// Check if we exited due to context cancellation (timeout or manual cancellation)
 	if ctx.Err() != nil {
@@ -1178,14 +1238,15 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 	}
 
 	deps := CoordinationToolDeps{
-		Executor:    ae,
-		Repo:        ae.repo,
-		Logger:      ae.log,
-		ProjectID:   req.ProjectID,
-		ParentRunID: runID,
-		Depth:       req.Depth,
-		MaxDepth:    maxDepth,
-		SpawnPolicy: extractSpawnPolicy(req.AgentDefinition),
+		Executor:       ae,
+		Repo:           ae.repo,
+		Logger:         ae.log,
+		ProjectID:      req.ProjectID,
+		ParentRunID:    runID,
+		Depth:          req.Depth,
+		MaxDepth:       maxDepth,
+		SpawnPolicy:    extractSpawnPolicy(req.AgentDefinition),
+		ParentMetadata: req.TriggerMetadata,
 	}
 
 	var tools []tool.Tool

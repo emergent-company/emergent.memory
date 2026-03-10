@@ -372,11 +372,16 @@ func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID str
 		maxSteps = agentDef.MaxSteps
 	}
 
+	// Resolve org ID for the agent's project so the tracking model can attribute
+	// LLM usage events to the correct tenant.
+	orgID, _ := ts.repo.GetOrgIDByProjectID(ctx, projectID)
+
 	// Execute the agent
 	result, err := ts.executor.Execute(ctx, ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: agentDef,
 		ProjectID:       projectID,
+		OrgID:           orgID,
 		UserMessage:     userMessage,
 		MaxSteps:        maxSteps,
 	})
