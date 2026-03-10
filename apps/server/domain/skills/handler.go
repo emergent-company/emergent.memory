@@ -36,7 +36,7 @@ func NewHandler(repo *Repository, embeddingsSvc *embeddings.Service, log *slog.L
 
 // ListGlobalSkills handles GET /api/skills
 // @Summary      List global skills
-// @Description  List all global (project-independent) skills
+// @Description  List all global (built-in, project- and org-independent) skills
 // @Tags         skills
 // @Produce      json
 // @Success      200 {object} ListSkillsResponse
@@ -49,7 +49,7 @@ func (h *Handler) ListGlobalSkills(c echo.Context) error {
 		return apperror.ErrUnauthorized
 	}
 
-	skills, err := h.repo.FindAll(c.Request().Context(), nil)
+	skills, err := h.repo.FindAll(c.Request().Context(), nil, nil)
 	if err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func (h *Handler) ListGlobalSkills(c echo.Context) error {
 
 // CreateGlobalSkill handles POST /api/skills
 // @Summary      Create a global skill
-// @Description  Create a new global skill available to all agents
+// @Description  Create a new global skill available to all agents. Superadmin only.
 // @Tags         skills
 // @Accept       json
 // @Produce      json
@@ -71,6 +71,7 @@ func (h *Handler) ListGlobalSkills(c echo.Context) error {
 // @Success      201 {object} SkillDTO
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
+// @Failure      403 {object} apperror.Error
 // @Failure      409 {object} apperror.Error
 // @Router       /api/skills [post]
 // @Security     bearerAuth
@@ -94,6 +95,7 @@ func (h *Handler) CreateGlobalSkill(c echo.Context) error {
 		Content:     dto.Content,
 		Metadata:    dto.Metadata,
 		ProjectID:   nil, // global
+		OrgID:       nil,
 	}
 
 	embedding := h.generateEmbedding(c, dto.Description)
@@ -210,11 +212,134 @@ func (h *Handler) DeleteSkill(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// --- Org-scoped skill endpoints ---
+
+// ListOrgSkills handles GET /api/orgs/:orgId/skills
+// @Summary      List org skills
+// @Description  List all org-scoped skills for the given organization
+// @Tags         skills
+// @Produce      json
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Success      200 {object} ListSkillsResponse
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Router       /api/orgs/{orgId}/skills [get]
+// @Security     bearerAuth
+func (h *Handler) ListOrgSkills(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	orgID := c.Param("orgId")
+	if orgID == "" {
+		return apperror.ErrBadRequest.WithMessage("orgId is required")
+	}
+
+	skills, err := h.repo.FindAll(c.Request().Context(), nil, &orgID)
+	if err != nil {
+		return err
+	}
+
+	dtos := make([]*SkillDTO, 0, len(skills))
+	for _, s := range skills {
+		dtos = append(dtos, s.ToDTO())
+	}
+	return c.JSON(http.StatusOK, ListSkillsResponse{Data: dtos})
+}
+
+// CreateOrgSkill handles POST /api/orgs/:orgId/skills
+// @Summary      Create an org skill
+// @Description  Create a skill scoped to the given organization
+// @Tags         skills
+// @Accept       json
+// @Produce      json
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Param        body  body CreateSkillDTO true "Skill to create"
+// @Success      201 {object} SkillDTO
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      409 {object} apperror.Error
+// @Router       /api/orgs/{orgId}/skills [post]
+// @Security     bearerAuth
+func (h *Handler) CreateOrgSkill(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	orgID := c.Param("orgId")
+	if orgID == "" {
+		return apperror.ErrBadRequest.WithMessage("orgId is required")
+	}
+
+	var dto CreateSkillDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	if err := validateSkillName(dto.Name); err != nil {
+		return err
+	}
+
+	skill := &Skill{
+		Name:        dto.Name,
+		Description: dto.Description,
+		Content:     dto.Content,
+		Metadata:    dto.Metadata,
+		ProjectID:   nil,
+		OrgID:       &orgID,
+	}
+
+	embedding := h.generateEmbedding(c, dto.Description)
+
+	if err := h.repo.Create(c.Request().Context(), skill, embedding); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, skill.ToDTO())
+}
+
+// UpdateOrgSkill handles PATCH /api/orgs/:orgId/skills/:id
+// @Summary      Update an org skill
+// @Description  Partially update an org-scoped skill
+// @Tags         skills
+// @Accept       json
+// @Produce      json
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Param        id    path string true "Skill ID (UUID)"
+// @Param        body  body UpdateSkillDTO true "Fields to update"
+// @Success      200 {object} SkillDTO
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/orgs/{orgId}/skills/{id} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateOrgSkill(c echo.Context) error {
+	return h.UpdateSkill(c)
+}
+
+// DeleteOrgSkill handles DELETE /api/orgs/:orgId/skills/:id
+// @Summary      Delete an org skill
+// @Description  Delete an org-scoped skill
+// @Tags         skills
+// @Produce      json
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Param        id    path string true "Skill ID (UUID)"
+// @Success      204
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/orgs/{orgId}/skills/{id} [delete]
+// @Security     bearerAuth
+func (h *Handler) DeleteOrgSkill(c echo.Context) error {
+	return h.DeleteSkill(c)
+}
+
 // --- Project-scoped skill endpoints ---
 
 // ListProjectSkills handles GET /api/projects/:projectId/skills
 // @Summary      List project skills
-// @Description  List all skills available to agents in the project (global + project-scoped, merged)
+// @Description  List all skills available to agents in the project (global + org + project-scoped, merged)
 // @Tags         skills
 // @Produce      json
 // @Param        projectId path string true "Project ID (UUID)"
@@ -234,7 +359,10 @@ func (h *Handler) ListProjectSkills(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("projectId is required")
 	}
 
-	skills, err := h.repo.FindForAgent(c.Request().Context(), projectID)
+	// Attempt to resolve org context (best-effort, non-fatal)
+	orgID := auth.OrgIDFromContext(c.Request().Context())
+
+	skills, err := h.repo.FindForAgent(c.Request().Context(), projectID, orgID)
 	if err != nil {
 		return err
 	}
@@ -285,6 +413,7 @@ func (h *Handler) CreateProjectSkill(c echo.Context) error {
 		Content:     dto.Content,
 		Metadata:    dto.Metadata,
 		ProjectID:   &projectID,
+		OrgID:       nil,
 	}
 
 	embedding := h.generateEmbedding(c, dto.Description)
@@ -312,7 +441,6 @@ func (h *Handler) CreateProjectSkill(c echo.Context) error {
 // @Router       /api/projects/{projectId}/skills/{id} [patch]
 // @Security     bearerAuth
 func (h *Handler) UpdateProjectSkill(c echo.Context) error {
-	// Delegate — project auth check is via route middleware
 	return h.UpdateSkill(c)
 }
 
@@ -330,7 +458,6 @@ func (h *Handler) UpdateProjectSkill(c echo.Context) error {
 // @Router       /api/projects/{projectId}/skills/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) DeleteProjectSkill(c echo.Context) error {
-	// Delegate — project auth check is via route middleware
 	return h.DeleteSkill(c)
 }
 

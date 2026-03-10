@@ -30,6 +30,7 @@ type SkillToolDeps struct {
 	EmbeddingsSvc    *embeddings.Service
 	Logger           *slog.Logger
 	ProjectID        string
+	OrgID            string // org context for org-scoped skill resolution
 	TriggerMessage   string // agent run trigger message (used as query for semantic retrieval)
 	AgentName        string
 	AgentDescription string
@@ -38,7 +39,7 @@ type SkillToolDeps struct {
 // BuildSkillTool creates the `skill` ADK tool for an agent run.
 //
 // Selection algorithm:
-//   - Fetch all agent-visible skills (global + project-scoped, merged).
+//   - Fetch all agent-visible skills (global + org-scoped + project-scoped, merged).
 //   - If total ≤ SkillListThreshold: include all in the tool description.
 //   - If total > SkillListThreshold: embed the trigger message and retrieve
 //     the top SkillTopK by cosine similarity. On embedding error, fall back to all.
@@ -47,7 +48,7 @@ type SkillToolDeps struct {
 // construction time. Returns an error if the name is not found.
 func BuildSkillTool(ctx context.Context, deps SkillToolDeps) (tool.Tool, error) {
 	// Fetch all skills accessible to this agent
-	all, err := deps.Repo.FindForAgent(ctx, deps.ProjectID)
+	all, err := deps.Repo.FindForAgent(ctx, deps.ProjectID, deps.OrgID)
 	if err != nil {
 		return nil, fmt.Errorf("skills: failed to load skills for agent: %w", err)
 	}
@@ -131,7 +132,7 @@ func selectRelevantSkills(ctx context.Context, deps SkillToolDeps, all []*Skill)
 		return all
 	}
 
-	relevant, err := deps.Repo.FindRelevant(ctx, deps.ProjectID, vec, SkillTopK)
+	relevant, err := deps.Repo.FindRelevant(ctx, deps.ProjectID, deps.OrgID, vec, SkillTopK)
 	if err != nil {
 		deps.Logger.Warn("skills: semantic retrieval failed, using full skill list",
 			logger.Error(err),

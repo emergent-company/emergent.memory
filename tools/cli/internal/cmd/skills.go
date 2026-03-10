@@ -6,11 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"regexp"
 	"strings"
 
 	sdkskills "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
+	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
+	"github.com/emergent-company/emergent.memory/tools/cli/internal/skillsfs"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -33,6 +36,7 @@ var skillsCmd = &cobra.Command{
 
 var (
 	skillProjectFlag     string
+	skillOrgFlag         string
 	skillGlobalFlag      bool
 	skillJSONFlag        bool
 	skillNameFlag        string
@@ -40,29 +44,42 @@ var (
 	skillContentFlag     string
 	skillContentFileFlag string
 	skillConfirmFlag     bool
+	// import flags
+	skillImportFromDirFlag  string
+	skillImportDiscoverFlag bool
+	skillImportAllFlag      bool
 )
 
 // slug regex must match server-side validation
 var skillSlugRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // ─────────────────────────────────────────────
-// Helper: resolve project ID (empty = global)
+// Helper: resolve skill scope
 // ─────────────────────────────────────────────
 
-func resolveSkillProjectID(cmd *cobra.Command) (string, error) {
+// resolveSkillScope determines where a skill should be created/listed.
+// Resolution priority:
+//  1. --global → (projectID="", orgID="")   — global scope, requires superadmin
+//  2. --org <id> → (projectID="", orgID=id) — org-scoped
+//  3. --project <id> / config project → (projectID=id, orgID="") — project-scoped (default)
+//
+// If none of the above yield a scope, returns an error asking the user to specify.
+func resolveSkillScope(cmd *cobra.Command) (projectID, orgID string, err error) {
 	if skillGlobalFlag {
-		return "", nil
+		return "", "", nil
+	}
+	if skillOrgFlag != "" {
+		return "", skillOrgFlag, nil
 	}
 	if skillProjectFlag != "" {
-		return skillProjectFlag, nil
+		return skillProjectFlag, "", nil
 	}
-	// Try to read from config/env, but don't error if absent (skills can be global)
-	pid, err := resolveProjectContext(cmd, "")
-	if err != nil {
-		// No project context — treat as global
-		return "", nil
+	// Try config/env for project context
+	pid, pidErr := resolveProjectContext(cmd, "")
+	if pidErr == nil && pid != "" {
+		return pid, "", nil
 	}
-	return pid, nil
+	return "", "", fmt.Errorf("scope required: use --project <id>, --org <id>, or --global")
 }
 
 // ─────────────────────────────────────────────
@@ -71,20 +88,25 @@ func resolveSkillProjectID(cmd *cobra.Command) (string, error) {
 
 var skillListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List skills",
-	Long:  "List skills. Use --project to list merged global + project-scoped skills, or --global for global only.",
+	Short: "List skills installed on the server",
+	Long:  "List skills stored on the server and available to agents. Use --project to include project-scoped skills, or --global for global only.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := getClient(cmd)
 		if err != nil {
 			return err
 		}
 
-		projectID, err := resolveSkillProjectID(cmd)
+		projectID, orgID, err := resolveSkillScope(cmd)
 		if err != nil {
 			return err
 		}
 
-		skills, err := c.SDK.Skills.List(context.Background(), projectID)
+		var skills []*sdkskills.Skill
+		if orgID != "" {
+			skills, err = c.SDK.Skills.ListOrgSkills(context.Background(), orgID)
+		} else {
+			skills, err = c.SDK.Skills.List(context.Background(), projectID)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to list skills: %w", err)
 		}
@@ -106,6 +128,8 @@ var skillListCmd = &cobra.Command{
 			scope := "global"
 			if s.ProjectID != nil && *s.ProjectID != "" {
 				scope = "project"
+			} else if s.OrgID != nil && *s.OrgID != "" {
+				scope = "org"
 			}
 			desc := s.Description
 			if len(desc) > 55 {
@@ -145,6 +169,8 @@ var skillGetCmd = &cobra.Command{
 		scope := "global"
 		if skill.ProjectID != nil && *skill.ProjectID != "" {
 			scope = "project (" + *skill.ProjectID + ")"
+		} else if skill.OrgID != nil && *skill.OrgID != "" {
+			scope = "org (" + *skill.OrgID + ")"
 		}
 
 		fmt.Fprintf(out, "ID:          %s\n", skill.ID)
@@ -185,7 +211,7 @@ var skillCreateCmd = &cobra.Command{
 			return fmt.Errorf("provide skill content via --content or --content-file")
 		}
 
-		projectID, err := resolveSkillProjectID(cmd)
+		projectID, orgID, err := resolveSkillScope(cmd)
 		if err != nil {
 			return err
 		}
@@ -201,7 +227,12 @@ var skillCreateCmd = &cobra.Command{
 			Content:     content,
 		}
 
-		skill, err := c.SDK.Skills.Create(context.Background(), projectID, req)
+		var skill *sdkskills.Skill
+		if orgID != "" {
+			skill, err = c.SDK.Skills.CreateOrgSkill(context.Background(), orgID, req)
+		} else {
+			skill, err = c.SDK.Skills.Create(context.Background(), projectID, req)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to create skill: %w", err)
 		}
@@ -309,7 +340,7 @@ var skillDeleteCmd = &cobra.Command{
 }
 
 // ─────────────────────────────────────────────
-// skills import <path>
+// skills import
 // ─────────────────────────────────────────────
 
 // skillFrontmatter is the YAML frontmatter parsed from SKILL.md files.
@@ -320,19 +351,80 @@ type skillFrontmatter struct {
 }
 
 var skillImportCmd = &cobra.Command{
-	Use:   "import <path>",
-	Short: "Import a skill from a SKILL.md file",
-	Long: `Import a skill from a SKILL.md file with YAML frontmatter.
+	Use:   "import [path]",
+	Short: "Import skills from a SKILL.md file or directory",
+	Long: `Import one or more skills and register them on the server so agents can use them.
 
-The file must begin with a YAML frontmatter block delimited by "---":
+Import a single SKILL.md file:
+  memory skills import path/to/SKILL.md
 
-  ---
-  name: my-skill
-  description: Does something useful
-  ---
-  # Skill content goes here`,
-	Args: cobra.ExactArgs(1),
+Import all skills found in a directory (scans one level deep for SKILL.md files):
+  memory skills import --from-dir .agents/skills/
+
+Auto-discover skills from well-known locations (.agents/skills/, ~/.claude/skills/, etc.):
+  memory skills import --discover
+
+Import all discovered skills without prompting:
+  memory skills import --discover --all
+
+Import built-in Memory skills from the embedded catalog:
+  memory skills import --builtin`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		projectID, orgID, err := resolveSkillScope(cmd)
+		if err != nil {
+			return err
+		}
+		_ = orgID // used below when routing to org-scoped import
+
+		c, err := getClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		// --- built-in embedded catalog ---
+		builtinFlag, _ := cmd.Flags().GetBool("builtin")
+		if builtinFlag {
+			return importFromEmbeddedCatalog(cmd, c, projectID, orgID)
+		}
+
+		// --- directory scan ---
+		if skillImportFromDirFlag != "" {
+			skills, err := discoverSkillsInDir(skillImportFromDirFlag)
+			if err != nil {
+				return fmt.Errorf("scanning directory: %w", err)
+			}
+			if len(skills) == 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "No SKILL.md files found in %s\n", skillImportFromDirFlag)
+				return nil
+			}
+			return importFoundSkills(cmd, c, projectID, orgID, skills, skillImportAllFlag)
+		}
+
+		// --- auto-discover from known locations ---
+		if skillImportDiscoverFlag {
+			var all []FoundSkill
+			for _, dir := range knownSkillDirs() {
+				found, err := discoverSkillsInDir(dir)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: skipping %s: %v\n", dir, err)
+					continue
+				}
+				all = append(all, found...)
+			}
+			if len(all) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No skills found in well-known locations.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Searched:", strings.Join(knownSkillDirs(), ", "))
+				return nil
+			}
+			return importFoundSkills(cmd, c, projectID, orgID, all, skillImportAllFlag)
+		}
+
+		// --- single file import ---
+		if len(args) == 0 {
+			return fmt.Errorf("provide a SKILL.md path, --from-dir, --discover, or --builtin")
+		}
+
 		data, err := os.ReadFile(args[0])
 		if err != nil {
 			return fmt.Errorf("failed to read file %s: %w", args[0], err)
@@ -356,16 +448,6 @@ The file must begin with a YAML frontmatter block delimited by "---":
 			return fmt.Errorf("skill content (after frontmatter) is empty")
 		}
 
-		projectID, err := resolveSkillProjectID(cmd)
-		if err != nil {
-			return err
-		}
-
-		c, err := getClient(cmd)
-		if err != nil {
-			return err
-		}
-
 		req := &sdkskills.CreateSkillRequest{
 			Name:        fm.Name,
 			Description: fm.Description,
@@ -373,7 +455,12 @@ The file must begin with a YAML frontmatter block delimited by "---":
 			Metadata:    fm.Metadata,
 		}
 
-		skill, err := c.SDK.Skills.Create(context.Background(), projectID, req)
+		var skill *sdkskills.Skill
+		if orgID != "" {
+			skill, err = c.SDK.Skills.CreateOrgSkill(context.Background(), orgID, req)
+		} else {
+			skill, err = c.SDK.Skills.Create(context.Background(), projectID, req)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to import skill: %w", err)
 		}
@@ -389,6 +476,113 @@ The file must begin with a YAML frontmatter block delimited by "---":
 		fmt.Fprintf(out, "  Name: %s\n", skill.Name)
 		return nil
 	},
+}
+
+// importFoundSkills imports a list of FoundSkills to the server.
+// If all is true, imports without prompting. Otherwise prompts for each.
+func importFoundSkills(cmd *cobra.Command, c *client.Client, projectID, orgID string, skills []FoundSkill, all bool) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Found %d skill(s):\n", len(skills))
+	for _, s := range skills {
+		ver := ""
+		if s.Version != "" {
+			ver = " (v" + s.Version + ")"
+		}
+		fmt.Fprintf(out, "  • %s%s — %s\n", s.Name, ver, truncate(s.Description, 60))
+	}
+	fmt.Fprintln(out)
+
+	imported := 0
+	skipped := 0
+	errors := 0
+	var err error
+
+	for _, s := range skills {
+		if !all && isInteractiveTerminal() {
+			ok, err := promptYesNo(fmt.Sprintf("Import '%s'? [y/N]: ", s.Name))
+			if err != nil {
+				return fmt.Errorf("reading input: %w", err)
+			}
+			if !ok {
+				fmt.Fprintf(out, "Skipped '%s'\n", s.Name)
+				skipped++
+				continue
+			}
+		}
+
+		req := &sdkskills.CreateSkillRequest{
+			Name:        s.Name,
+			Description: s.Description,
+			Content:     s.Content,
+		}
+
+		if orgID != "" {
+			_, err = c.SDK.Skills.CreateOrgSkill(context.Background(), orgID, req)
+		} else {
+			_, err = c.SDK.Skills.Create(context.Background(), projectID, req)
+		}
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error importing '%s': %v\n", s.Name, err)
+			errors++
+			continue
+		}
+
+		fmt.Fprintf(out, "Imported '%s'\n", s.Name)
+		imported++
+	}
+
+	fmt.Fprintf(out, "\nDone: %d imported, %d skipped", imported, skipped)
+	if errors > 0 {
+		fmt.Fprintf(out, ", %d error(s)", errors)
+	}
+	fmt.Fprintln(out)
+
+	if errors > 0 {
+		return fmt.Errorf("%d skill(s) failed to import", errors)
+	}
+	return nil
+}
+
+// importFromEmbeddedCatalog imports skills from the built-in embedded catalog.
+func importFromEmbeddedCatalog(cmd *cobra.Command, c *client.Client, projectID, orgID string) error {
+	out := cmd.OutOrStdout()
+	catalog := skillsfs.Catalog()
+
+	entries, err := fs.ReadDir(catalog, ".")
+	if err != nil {
+		return fmt.Errorf("reading embedded catalog: %w", err)
+	}
+
+	var skills []FoundSkill
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		skillMDPath := e.Name() + "/SKILL.md"
+		data, err := fs.ReadFile(catalog, skillMDPath)
+		if err != nil {
+			continue
+		}
+		fm, err := parseSkillFrontmatterFromBytes(data, e.Name())
+		if err != nil {
+			continue
+		}
+		content := skillContentFromBytes(data)
+		skills = append(skills, FoundSkill{
+			Path:        skillMDPath,
+			Name:        fm.Name,
+			Description: fm.Description,
+			Version:     fm.EffectiveVersion(),
+			Content:     content,
+		})
+	}
+
+	if len(skills) == 0 {
+		fmt.Fprintln(out, "No skills found in the embedded catalog.")
+		return nil
+	}
+
+	return importFoundSkills(cmd, c, projectID, orgID, skills, skillImportAllFlag)
 }
 
 // ─────────────────────────────────────────────
@@ -450,6 +644,14 @@ func parseSkillFile(data []byte) (*skillFrontmatter, string, error) {
 	return &fm, string(after), nil
 }
 
+// truncate shortens s to max chars, appending "…" if truncated.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
+}
+
 // ─────────────────────────────────────────────
 // init — wire up the command tree
 // ─────────────────────────────────────────────
@@ -457,7 +659,8 @@ func parseSkillFile(data []byte) (*skillFrontmatter, string, error) {
 func init() {
 	// Persistent flags on the parent command
 	skillsCmd.PersistentFlags().StringVar(&skillProjectFlag, "project", "", "Project ID (creates/lists project-scoped skill)")
-	skillsCmd.PersistentFlags().BoolVar(&skillGlobalFlag, "global", false, "Use global scope (overrides --project)")
+	skillsCmd.PersistentFlags().StringVar(&skillOrgFlag, "org", "", "Organization ID (creates/lists org-scoped skill)")
+	skillsCmd.PersistentFlags().BoolVar(&skillGlobalFlag, "global", false, "Use global scope (built-in skills only, superadmin)")
 	skillsCmd.PersistentFlags().BoolVar(&skillJSONFlag, "json", false, "Output as JSON")
 
 	// Per-subcommand flags
@@ -472,7 +675,11 @@ func init() {
 
 	skillDeleteCmd.Flags().BoolVar(&skillConfirmFlag, "confirm", false, "Skip confirmation prompt")
 
-	skillImportCmd.Flags().StringVar(&skillProjectFlag, "project", "", "Project ID (imports as project-scoped skill)")
+	// import flags
+	skillImportCmd.Flags().StringVar(&skillImportFromDirFlag, "from-dir", "", "Scan a directory for SKILL.md files and import all found skills")
+	skillImportCmd.Flags().BoolVar(&skillImportDiscoverFlag, "discover", false, "Auto-discover skills from well-known locations (.agents/skills/, ~/.claude/skills/, etc.)")
+	skillImportCmd.Flags().BoolVar(&skillImportAllFlag, "all", false, "Import all found skills without prompting")
+	skillImportCmd.Flags().Bool("builtin", false, "Import from the built-in embedded Memory skill catalog")
 
 	// Assemble
 	skillsCmd.AddCommand(skillListCmd)

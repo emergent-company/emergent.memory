@@ -22,6 +22,7 @@ type Skill struct {
 	Metadata             *SkillMetadata `bun:"metadata,type:jsonb"                       json:"metadata,omitempty"`
 	DescriptionEmbedding []byte         `bun:"description_embedding,type:vector(768)"    json:"-"`
 	ProjectID            *string        `bun:"project_id,type:uuid"                      json:"projectId,omitempty"`
+	OrgID                *string        `bun:"org_id,type:uuid"                          json:"orgId,omitempty"`
 	CreatedAt            time.Time      `bun:"created_at,notnull,default:now()"          json:"createdAt"`
 	UpdatedAt            time.Time      `bun:"updated_at,notnull,default:now()"          json:"updatedAt"`
 }
@@ -45,6 +46,17 @@ func (m *SkillMetadata) Scan(src interface{}) error {
 	return nil
 }
 
+// Scope returns the scope label for this skill.
+func (s *Skill) Scope() string {
+	if s.ProjectID != nil {
+		return "project"
+	}
+	if s.OrgID != nil {
+		return "org"
+	}
+	return "global"
+}
+
 // SkillDTO is the API response representation of a skill.
 type SkillDTO struct {
 	ID           string         `json:"id"`
@@ -54,17 +66,14 @@ type SkillDTO struct {
 	Metadata     *SkillMetadata `json:"metadata,omitempty"`
 	HasEmbedding bool           `json:"hasEmbedding"`
 	ProjectID    *string        `json:"projectId,omitempty"`
-	Scope        string         `json:"scope"` // "global" or "project"
+	OrgID        *string        `json:"orgId,omitempty"`
+	Scope        string         `json:"scope"` // "global", "org", or "project"
 	CreatedAt    string         `json:"createdAt"`
 	UpdatedAt    string         `json:"updatedAt"`
 }
 
 // ToDTO converts a Skill to a SkillDTO.
 func (s *Skill) ToDTO() *SkillDTO {
-	scope := "global"
-	if s.ProjectID != nil {
-		scope = "project"
-	}
 	return &SkillDTO{
 		ID:           s.ID.String(),
 		Name:         s.Name,
@@ -73,7 +82,8 @@ func (s *Skill) ToDTO() *SkillDTO {
 		Metadata:     s.Metadata,
 		HasEmbedding: len(s.DescriptionEmbedding) > 0,
 		ProjectID:    s.ProjectID,
-		Scope:        scope,
+		OrgID:        s.OrgID,
+		Scope:        s.Scope(),
 		CreatedAt:    s.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:    s.UpdatedAt.Format(time.RFC3339),
 	}

@@ -56,6 +56,7 @@ type Skill struct {
 	Content     string         `json:"content"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
 	ProjectID   *string        `json:"projectId,omitempty"`
+	OrgID       *string        `json:"orgId,omitempty"`
 	CreatedAt   time.Time      `json:"createdAt"`
 	UpdatedAt   time.Time      `json:"updatedAt"`
 }
@@ -233,4 +234,42 @@ func (c *Client) Update(ctx context.Context, id string, req *UpdateSkillRequest)
 // Delete deletes a skill by ID.
 func (c *Client) Delete(ctx context.Context, id string) error {
 	return c.doDelete(ctx, c.skillsPath()+"/"+url.PathEscape(id))
+}
+
+// --- Org-scoped skill methods ---
+
+func (c *Client) orgSkillsPath(orgID string) string {
+	return c.base + "/api/orgs/" + url.PathEscape(orgID) + "/skills"
+}
+
+// ListOrgSkills returns all org-scoped skills for the given organization.
+func (c *Client) ListOrgSkills(ctx context.Context, orgID string) ([]*Skill, error) {
+	var result ListSkillsResponse
+	if err := c.getJSON(ctx, c.orgSkillsPath(orgID), &result); err != nil {
+		return nil, err
+	}
+	return result.Skills, nil
+}
+
+// CreateOrgSkill creates a new skill scoped to the given organization.
+func (c *Client) CreateOrgSkill(ctx context.Context, orgID string, req *CreateSkillRequest) (*Skill, error) {
+	var result Skill
+	if err := c.postJSON(ctx, c.orgSkillsPath(orgID), req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateOrgSkill partially updates an org-scoped skill by ID.
+func (c *Client) UpdateOrgSkill(ctx context.Context, orgID string, id string, req *UpdateSkillRequest) (*Skill, error) {
+	var result Skill
+	if err := c.patchJSON(ctx, c.orgSkillsPath(orgID)+"/"+url.PathEscape(id), req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteOrgSkill deletes an org-scoped skill by ID.
+func (c *Client) DeleteOrgSkill(ctx context.Context, orgID string, id string) error {
+	return c.doDelete(ctx, c.orgSkillsPath(orgID)+"/"+url.PathEscape(id))
 }
