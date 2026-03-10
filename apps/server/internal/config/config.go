@@ -62,6 +62,7 @@ type Config struct {
 	// Brave Search API configuration
 	BraveSearch BraveSearchConfig
 
+
 	// OpenTelemetry tracing configuration
 	Otel OtelConfig
 
@@ -366,6 +367,7 @@ type BraveSearchConfig struct {
 func (b *BraveSearchConfig) IsConfigured() bool {
 	return b.APIKey != ""
 }
+
 
 // StandaloneConfig holds configuration for standalone minimal deployment mode
 type StandaloneConfig struct {

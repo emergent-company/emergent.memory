@@ -13,7 +13,7 @@ type ProjectWithRole struct {
 	Name              string                 `json:"name"`
 	OrgID             string                 `json:"orgId"`
 	Role              string                 `json:"role"`
-	KBPurpose         *string                `json:"kb_purpose,omitempty"`
+	ProjectInfo        *string                `json:"project_info,omitempty"`
 	AutoExtractConfig map[string]interface{} `json:"auto_extract_config,omitempty"`
 }
 
@@ -46,7 +46,7 @@ type projectRow struct {
 	ProjectName       string                 `bun:"project_name"`
 	OrgID             string                 `bun:"org_id"`
 	Role              string                 `bun:"role"`
-	KBPurpose         *string                `bun:"kb_purpose"`
+	ProjectInfo        *string                `bun:"project_info"`
 	AutoExtractConfig map[string]interface{} `bun:"auto_extract_config,type:jsonb"`
 }
 
@@ -73,7 +73,7 @@ func (s *Service) GetAccessTree(ctx context.Context, userID string) ([]OrgWithPr
 	var projectRows []projectRow
 	err = s.db.NewRaw(`
 		SELECT p.id as project_id, p.name as project_name, p.organization_id as org_id,
-		       pm.role, p.kb_purpose, p.auto_extract_config
+		       pm.role, p.project_info, p.auto_extract_config
 		FROM kb.projects p
 		INNER JOIN kb.project_memberships pm ON p.id = pm.project_id
 		WHERE pm.user_id = ?
@@ -105,8 +105,8 @@ func (s *Service) GetAccessTree(ctx context.Context, userID string) ([]OrgWithPr
 				OrgID: proj.OrgID,
 				Role:  proj.Role,
 			}
-			if proj.KBPurpose != nil {
-				project.KBPurpose = proj.KBPurpose
+			if proj.ProjectInfo != nil {
+				project.ProjectInfo = proj.ProjectInfo
 			}
 			if proj.AutoExtractConfig != nil {
 				project.AutoExtractConfig = proj.AutoExtractConfig

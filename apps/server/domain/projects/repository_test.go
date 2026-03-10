@@ -234,7 +234,7 @@ func TestProject_ToDTO(t *testing.T) {
 		assert.Equal(t, "project-123", dto.ID)
 		assert.Equal(t, "Test Project", dto.Name)
 		assert.Equal(t, "org-456", dto.OrgID)
-		assert.Nil(t, dto.KBPurpose)
+		assert.Nil(t, dto.ProjectInfo)
 		assert.Nil(t, dto.AutoExtractObjects) // false should result in nil
 		assert.Nil(t, dto.AutoExtractConfig)
 	})
@@ -245,13 +245,13 @@ func TestProject_ToDTO(t *testing.T) {
 			ID:               "project-123",
 			Name:             "Test Project",
 			OrganizationID:   "org-456",
-			KBPurpose:        &purpose,
+			ProjectInfo:       &purpose,
 		}
 
 		dto := project.ToDTO()
 
-		assert.NotNil(t, dto.KBPurpose)
-		assert.Equal(t, purpose, *dto.KBPurpose)
+		assert.NotNil(t, dto.ProjectInfo)
+		assert.Equal(t, purpose, *dto.ProjectInfo)
 	})
 
 	t.Run("project with auto extract enabled", func(t *testing.T) {

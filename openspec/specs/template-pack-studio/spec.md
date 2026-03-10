@@ -1,7 +1,7 @@
 # template-pack-studio Specification
 
 ## Purpose
-TBD - created by archiving change add-template-pack-studio. Update Purpose after archive.
+Define the AI-assisted Template Pack Studio — an interactive tool that lets users create and edit template packs through a streaming chat interface, real-time schema preview, accept/reject suggestion workflow, save and version management, LangGraph agent integration for schema generation and validation, REST API endpoints, and Langfuse observability.
 ## Requirements
 ### Requirement: Studio Session Management
 
