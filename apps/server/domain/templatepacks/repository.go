@@ -495,8 +495,10 @@ func (r *Repository) DeletePack(ctx context.Context, packID string) error {
 }
 
 // AssignPackWithTypes assigns a template pack to a project AND populates the type registry.
-// This fixes the bug where the REST AssignPack endpoint did not register types.
-func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*ProjectTemplatePack, error) {
+// When req.DryRun is true, no database changes are made — only the preview is returned.
+// When req.Merge is true, incoming type schemas are additively merged into existing types
+// instead of being silently skipped.
+func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*AssignPackResult, error) {
 	// Get the full template pack with schemas
 	var pack GraphTemplatePack
 	err := r.db.NewSelect().
@@ -509,20 +511,22 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 	}
 
 	// Check if already assigned
-	exists, err := r.db.NewSelect().
-		Model((*ProjectTemplatePack)(nil)).
+	var existingAssignment ProjectTemplatePack
+	alreadyAssigned := false
+	err = r.db.NewSelect().
+		Model(&existingAssignment).
 		Where("project_id = ?", projectID).
 		Where("template_pack_id = ?", req.TemplatePackID).
-		Exists(ctx)
-	if err != nil {
-		r.log.Error("failed to check pack assignment", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		Scan(ctx)
+	if err == nil {
+		alreadyAssigned = true
 	}
-	if exists {
+
+	if alreadyAssigned && !req.Merge && !req.DryRun {
 		return nil, apperror.ErrBadRequest.WithMessage("template pack already assigned to project")
 	}
 
-	// Parse object type schemas to get type names
+	// Parse object type schemas
 	var objectTypeSchemas map[string]json.RawMessage
 	if len(pack.ObjectTypeSchemas) > 0 {
 		if err := json.Unmarshal(pack.ObjectTypeSchemas, &objectTypeSchemas); err != nil {
@@ -538,7 +542,6 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 			r.log.Warn("failed to parse ui_configs", logger.Error(err))
 		}
 	}
-
 	var extractionPrompts map[string]json.RawMessage
 	if len(pack.ExtractionPrompts) > 0 {
 		if err := json.Unmarshal(pack.ExtractionPrompts, &extractionPrompts); err != nil {
@@ -546,6 +549,106 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		}
 	}
 
+	// Build result scaffold
+	result := &AssignPackResult{
+		DryRun:           req.DryRun,
+		PackID:           pack.ID,
+		PackName:         pack.Name,
+		InstalledTypes:   []string{},
+		SkippedTypes:     []string{},
+		MergedTypes:      []string{},
+		Conflicts:        []SchemaConflict{},
+		AlreadyInstalled: alreadyAssigned,
+	}
+
+	// If already installed and merge=true and not dry-run, return early with the existing assignment.
+	if alreadyAssigned && req.Merge && !req.DryRun {
+		result.AssignmentID = existingAssignment.ID
+		return result, nil
+	}
+
+	// Pre-compute per-type actions: new / skip / merge
+	type typeAction struct {
+		name           string
+		incomingSchema json.RawMessage
+		action         string // "install", "skip", "merge"
+		conflict       *SchemaConflict
+		mergedSchema   json.RawMessage
+	}
+
+	var actions []typeAction
+
+	for typeName, incomingSchema := range objectTypeSchemas {
+		// Read existing registry entry (if any)
+		var existingJSON string
+		scanErr := r.db.NewRaw(`
+			SELECT json_schema FROM kb.project_object_type_registry
+			WHERE project_id = ? AND type_name = ?
+		`, projectID, typeName).Scan(ctx, &existingJSON)
+
+		typeExists := scanErr == nil
+
+		if !typeExists {
+			actions = append(actions, typeAction{
+				name:           typeName,
+				incomingSchema: incomingSchema,
+				action:         "install",
+			})
+			continue
+		}
+
+		// Type exists — compute conflict diff regardless (needed for dry-run + merge output)
+		existing := json.RawMessage(existingJSON)
+		merged, added, propConflicts, mergeErr := mergeSchemas(existing, incomingSchema)
+		conflict := SchemaConflict{
+			TypeName:              typeName,
+			ExistingSchema:        existing,
+			IncomingSchema:        incomingSchema,
+			ConflictingProperties: propConflicts,
+			AddedProperties:       added,
+		}
+		if mergeErr == nil && (req.Merge || req.DryRun) {
+			conflict.MergedSchema = merged
+		}
+
+		if req.Merge {
+			actions = append(actions, typeAction{
+				name:           typeName,
+				incomingSchema: incomingSchema,
+				action:         "merge",
+				conflict:       &conflict,
+				mergedSchema:   merged,
+			})
+		} else {
+			actions = append(actions, typeAction{
+				name:           typeName,
+				incomingSchema: incomingSchema,
+				action:         "skip",
+				conflict:       &conflict,
+			})
+		}
+	}
+
+	// Populate result summary from actions
+	for _, a := range actions {
+		switch a.action {
+		case "install":
+			result.InstalledTypes = append(result.InstalledTypes, a.name)
+		case "skip":
+			result.SkippedTypes = append(result.SkippedTypes, a.name)
+			result.Conflicts = append(result.Conflicts, *a.conflict)
+		case "merge":
+			result.MergedTypes = append(result.MergedTypes, a.name)
+			result.Conflicts = append(result.Conflicts, *a.conflict)
+		}
+	}
+
+	// Dry-run: return preview without touching the database
+	if req.DryRun {
+		return result, nil
+	}
+
+	// Execute in a transaction
 	now := time.Now()
 	assignment := &ProjectTemplatePack{
 		ProjectID:      projectID,
@@ -556,55 +659,56 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		UpdatedAt:      now,
 	}
 
-	// Run in a transaction to ensure atomicity of assignment + type registration
 	err = r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		// Create the assignment
-		_, err := tx.NewInsert().Model(assignment).Returning("id").Exec(ctx)
-		if err != nil {
-			return err
+		if !alreadyAssigned {
+			if _, err := tx.NewInsert().Model(assignment).Returning("id").Exec(ctx); err != nil {
+				return err
+			}
+		} else {
+			assignment.ID = existingAssignment.ID
 		}
 
-		// Register types from the pack into project_object_type_registry
-		if objectTypeSchemas != nil {
-			for typeName, schema := range objectTypeSchemas {
-				// Check if type already exists for this project (skip if so)
-				typeExists, err := tx.NewSelect().
-					TableExpr("kb.project_object_type_registry").
-					Where("project_id = ?", projectID).
-					Where("type_name = ?", typeName).
-					Exists(ctx)
-				if err != nil {
-					return err
+		for _, a := range actions {
+			uiConfigJSON := "{}"
+			if uiConfigs != nil {
+				if cfg, ok := uiConfigs[a.name]; ok {
+					uiConfigJSON = string(cfg)
 				}
-				if typeExists {
-					r.log.Info("type already registered, skipping",
-						slog.String("typeName", typeName),
-						slog.String("projectId", projectID))
-					continue
+			}
+			extractionConfigJSON := "{}"
+			if extractionPrompts != nil {
+				if cfg, ok := extractionPrompts[a.name]; ok {
+					extractionConfigJSON = string(cfg)
 				}
+			}
 
-				schemaJSON := string(schema)
-				uiConfigJSON := "{}"
-				if uiConfigs != nil {
-					if cfg, ok := uiConfigs[typeName]; ok {
-						uiConfigJSON = string(cfg)
-					}
-				}
-				extractionConfigJSON := "{}"
-				if extractionPrompts != nil {
-					if cfg, ok := extractionPrompts[typeName]; ok {
-						extractionConfigJSON = string(cfg)
-					}
-				}
-
-				_, err = tx.NewRaw(`
-					INSERT INTO kb.project_object_type_registry 
+			switch a.action {
+			case "install":
+				_, err := tx.NewRaw(`
+					INSERT INTO kb.project_object_type_registry
 					(project_id, type_name, source, template_pack_id, json_schema, ui_config, extraction_config, enabled, created_by)
 					VALUES (?, ?, 'template', ?, ?, ?, ?, true, ?)
-				`, projectID, typeName, req.TemplatePackID, schemaJSON, uiConfigJSON, extractionConfigJSON, userID).Exec(ctx)
+				`, projectID, a.name, req.TemplatePackID, string(a.incomingSchema), uiConfigJSON, extractionConfigJSON, userID).Exec(ctx)
 				if err != nil {
 					return err
 				}
+
+			case "merge":
+				if len(a.mergedSchema) > 0 {
+					_, err := tx.NewRaw(`
+						UPDATE kb.project_object_type_registry
+						SET json_schema = ?, updated_at = ?
+						WHERE project_id = ? AND type_name = ?
+					`, string(a.mergedSchema), now, projectID, a.name).Exec(ctx)
+					if err != nil {
+						return err
+					}
+				}
+
+			case "skip":
+				r.log.Info("type already registered, skipping",
+					slog.String("typeName", a.name),
+					slog.String("projectId", projectID))
 			}
 		}
 
@@ -616,5 +720,75 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	return assignment, nil
+	result.AssignmentID = assignment.ID
+	return result, nil
+}
+
+// mergeSchemas additively merges incomingSchema properties into existingSchema.
+// New properties from incoming are added; existing properties are never overwritten.
+// Returns the merged schema, the list of added property names, and any property-level conflicts.
+func mergeSchemas(existing, incoming json.RawMessage) (merged json.RawMessage, added []string, conflicts []PropertyConflict, err error) {
+	var existingMap map[string]json.RawMessage
+	var incomingMap map[string]json.RawMessage
+
+	if err = json.Unmarshal(existing, &existingMap); err != nil {
+		return nil, nil, nil, err
+	}
+	if err = json.Unmarshal(incoming, &incomingMap); err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Work on the "properties" sub-object if present (JSON Schema draft-07 style)
+	existingProps, _ := extractProperties(existingMap)
+	incomingProps, _ := extractProperties(incomingMap)
+
+	mergedProps := make(map[string]json.RawMessage, len(existingProps))
+	for k, v := range existingProps {
+		mergedProps[k] = v
+	}
+
+	for propName, incomingDef := range incomingProps {
+		if existingDef, exists := mergedProps[propName]; exists {
+			// Conflict: same property name — existing wins
+			conflicts = append(conflicts, PropertyConflict{
+				Property:    propName,
+				ExistingDef: existingDef,
+				IncomingDef: incomingDef,
+				Resolution:  "existing_wins",
+			})
+		} else {
+			mergedProps[propName] = incomingDef
+			added = append(added, propName)
+		}
+	}
+
+	// Reconstruct merged schema
+	mergedMap := make(map[string]json.RawMessage, len(existingMap))
+	for k, v := range existingMap {
+		mergedMap[k] = v
+	}
+	if len(mergedProps) > 0 {
+		propsBytes, marshalErr := json.Marshal(mergedProps)
+		if marshalErr != nil {
+			return nil, nil, nil, marshalErr
+		}
+		mergedMap["properties"] = propsBytes
+	}
+
+	merged, err = json.Marshal(mergedMap)
+	return merged, added, conflicts, err
+}
+
+// extractProperties pulls the "properties" key from a JSON Schema map.
+// Returns nil map if key is absent or not an object.
+func extractProperties(schemaMap map[string]json.RawMessage) (map[string]json.RawMessage, bool) {
+	raw, ok := schemaMap["properties"]
+	if !ok {
+		return map[string]json.RawMessage{}, false
+	}
+	var props map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &props); err != nil {
+		return map[string]json.RawMessage{}, false
+	}
+	return props, true
 }

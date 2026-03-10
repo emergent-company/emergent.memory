@@ -149,6 +149,43 @@ type ProjectTemplatePack struct {
 type AssignPackRequest struct {
 	TemplatePackID string                 `json:"template_pack_id"`
 	Customizations map[string]interface{} `json:"customizations,omitempty"`
+	// DryRun requests a preview without making any database changes.
+	DryRun bool `json:"dry_run,omitempty"`
+	// Merge requests additive schema merging for conflicting type names.
+	Merge bool `json:"merge,omitempty"`
+}
+
+// PropertyConflict describes a single property-level conflict during a schema merge.
+type PropertyConflict struct {
+	Property    string          `json:"property"`
+	ExistingDef json.RawMessage `json:"existing_def"`
+	IncomingDef json.RawMessage `json:"incoming_def"`
+	Resolution  string          `json:"resolution"` // "existing_wins"
+}
+
+// SchemaConflict describes a type-level conflict when assigning a pack whose
+// type names overlap with types already registered in the project.
+type SchemaConflict struct {
+	TypeName              string             `json:"type_name"`
+	ExistingSchema        json.RawMessage    `json:"existing_schema"`
+	IncomingSchema        json.RawMessage    `json:"incoming_schema"`
+	MergedSchema          json.RawMessage    `json:"merged_schema,omitempty"`
+	AddedProperties       []string           `json:"added_properties,omitempty"`
+	ConflictingProperties []PropertyConflict `json:"conflicting_properties,omitempty"`
+}
+
+// AssignPackResult is the response from the assign endpoint.
+// Replaces the bare ProjectTemplatePack return so callers get conflict details.
+type AssignPackResult struct {
+	DryRun           bool             `json:"dry_run"`
+	AssignmentID     string           `json:"assignment_id,omitempty"`
+	PackID           string           `json:"pack_id"`
+	PackName         string           `json:"pack_name"`
+	InstalledTypes   []string         `json:"installed_types"`
+	SkippedTypes     []string         `json:"skipped_types,omitempty"`
+	MergedTypes      []string         `json:"merged_types,omitempty"`
+	Conflicts        []SchemaConflict `json:"conflicts,omitempty"`
+	AlreadyInstalled bool             `json:"already_installed,omitempty"`
 }
 
 // UpdateAssignmentRequest is the request to update a pack assignment.
@@ -338,9 +375,10 @@ func (c *Client) GetInstalledPacks(ctx context.Context) ([]InstalledPackItem, er
 }
 
 // AssignPack assigns a template pack to the current project.
+// When req.DryRun is true, returns a preview (HTTP 200) without changes.
 // POST /api/template-packs/projects/:projectId/assign
-func (c *Client) AssignPack(ctx context.Context, req *AssignPackRequest) (*ProjectTemplatePack, error) {
-	var result ProjectTemplatePack
+func (c *Client) AssignPack(ctx context.Context, req *AssignPackRequest) (*AssignPackResult, error) {
+	var result AssignPackResult
 	if err := c.postJSON(ctx, c.projectPath()+"/assign", req, &result); err != nil {
 		return nil, err
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	sdktpacks "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/templatepacks"
 	"github.com/olekukonko/tablewriter"
@@ -30,6 +31,8 @@ var (
 	tpackProjectFlag string
 	tpackOutputFlag  string
 	tpackFileFlag    string
+	tpackDryRunFlag  bool
+	tpackMergeFlag   bool
 )
 
 // ─────────────────────────────────────────────
@@ -302,8 +305,10 @@ Two modes:
 			return err
 		}
 
-		assignment, err := tp.AssignPack(context.Background(), &sdktpacks.AssignPackRequest{
+		result, err := tp.AssignPack(context.Background(), &sdktpacks.AssignPackRequest{
 			TemplatePackID: packID,
+			DryRun:         tpackDryRunFlag,
+			Merge:          tpackMergeFlag,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to install template pack: %w", err)
@@ -312,13 +317,64 @@ Two modes:
 		out := cmd.OutOrStdout()
 
 		if tpackOutputFlag == "json" {
-			return json.NewEncoder(out).Encode(assignment)
+			return json.NewEncoder(out).Encode(result)
 		}
 
+		if tpackDryRunFlag {
+			// Dry-run output
+			fmt.Fprintf(out, "[dry-run] Pack %q — %d type(s) would install, %d conflict(s)\n",
+				result.PackName, len(result.InstalledTypes), len(result.Conflicts))
+			if len(result.InstalledTypes) > 0 {
+				fmt.Fprintf(out, "\nTypes to install (%d):\n", len(result.InstalledTypes))
+				for _, t := range result.InstalledTypes {
+					fmt.Fprintf(out, "  + %s\n", t)
+				}
+			}
+			if len(result.SkippedTypes) > 0 {
+				fmt.Fprintf(out, "\nTypes to skip — already registered (%d):\n", len(result.SkippedTypes))
+				for _, t := range result.SkippedTypes {
+					fmt.Fprintf(out, "  ~ %s\n", t)
+				}
+			}
+			if len(result.MergedTypes) > 0 {
+				fmt.Fprintf(out, "\nTypes to merge (%d):\n", len(result.MergedTypes))
+				for _, t := range result.MergedTypes {
+					fmt.Fprintf(out, "  ↑ %s\n", t)
+				}
+			}
+			if len(result.Conflicts) > 0 {
+				fmt.Fprintf(out, "\nConflicts (%d):\n", len(result.Conflicts))
+				for _, c := range result.Conflicts {
+					fmt.Fprintf(out, "  [%s]\n", c.TypeName)
+					if len(c.AddedProperties) > 0 {
+						fmt.Fprintf(out, "    added properties:    %s\n", strings.Join(c.AddedProperties, ", "))
+					}
+					if len(c.ConflictingProperties) > 0 {
+						propNames := make([]string, len(c.ConflictingProperties))
+						for i, p := range c.ConflictingProperties {
+							propNames[i] = p.Property + " (existing_wins)"
+						}
+						fmt.Fprintf(out, "    property conflicts:  %s\n", strings.Join(propNames, ", "))
+					}
+				}
+			}
+			return nil
+		}
+
+		// Normal (non dry-run) output
 		fmt.Fprintf(out, "Template pack installed.\n")
-		fmt.Fprintf(out, "  Assignment ID:  %s\n", assignment.ID)
-		fmt.Fprintf(out, "  Pack ID:        %s\n", assignment.TemplatePackID)
-		fmt.Fprintf(out, "  Active:         %v\n", assignment.Active)
+		fmt.Fprintf(out, "  Assignment ID:  %s\n", result.AssignmentID)
+		fmt.Fprintf(out, "  Pack ID:        %s\n", result.PackID)
+		fmt.Fprintf(out, "  Pack Name:      %s\n", result.PackName)
+		if len(result.InstalledTypes) > 0 {
+			fmt.Fprintf(out, "  Installed types (%d): %s\n", len(result.InstalledTypes), strings.Join(result.InstalledTypes, ", "))
+		}
+		if len(result.SkippedTypes) > 0 {
+			fmt.Fprintf(out, "  Skipped types   (%d): %s\n", len(result.SkippedTypes), strings.Join(result.SkippedTypes, ", "))
+		}
+		if len(result.MergedTypes) > 0 {
+			fmt.Fprintf(out, "  Merged types    (%d): %s\n", len(result.MergedTypes), strings.Join(result.MergedTypes, ", "))
+		}
 		return nil
 	},
 }
@@ -445,6 +501,8 @@ func init() {
 	// Per-subcommand flags
 	templatePacksCreateCmd.Flags().StringVar(&tpackFileFlag, "file", "", "Path to template pack JSON file (required)")
 	templatePacksInstallCmd.Flags().StringVar(&tpackFileFlag, "file", "", "Create pack from JSON file and install in one step")
+	templatePacksInstallCmd.Flags().BoolVar(&tpackDryRunFlag, "dry-run", false, "Preview what would be installed without making changes")
+	templatePacksInstallCmd.Flags().BoolVar(&tpackMergeFlag, "merge", false, "Additively merge incoming type schemas into existing registered types")
 
 	// Assemble
 	templatePacksCmd.AddCommand(templatePacksListCmd)
