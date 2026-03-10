@@ -13,7 +13,6 @@ tools:
   bash: false
   # MCP tools - explicitly enable diagnostic tools
   logs_*: true
-  langfuse_*: true
   workspace_*: true
 ---
 
@@ -44,14 +43,6 @@ Use these tools to browse application logs:
 - `tail_debug_logs` - Tail debug output (debug.log)
 - `tail_error_logs` - Tail all error logs
 
-### Langfuse MCP Server (`langfuse_*`)
-
-Use these tools to browse AI coding assistant traces:
-
-- `list_traces` - List traces with filtering (name, user, session, time range, tags)
-- `get_trace` - Get full trace details including observations, scores, and costs
-- `list_sessions` - List available sessions for browsing
-
 ### Workspace MCP Server (`workspace_*`)
 
 Use these tools to check infrastructure health and Docker container logs:
@@ -60,11 +51,11 @@ Use these tools to check infrastructure health and Docker container logs:
 - `list_services` - List configured application services
 - `health_check` - Check specific service or dependency health
   - Services: `admin`, `server`
-  - Dependencies: `postgres`, `zitadel`, `vertex`, `langfuse`, `langsmith`
+  - Dependencies: `postgres`, `zitadel`, `vertex`
 - `get_config` - View environment configuration (secrets masked)
 - `docker_logs` - Query Docker container logs with filtering
   - Parameters: `container` (required), `lines`, `since`, `grep`
-  - Aliases: `postgres`, `zitadel`, `langfuse`, `langfuse-worker`, `redis`, `clickhouse`, `minio`, `nli-verifier`
+  - Aliases: `postgres`, `zitadel`, `redis`, `clickhouse`, `minio`, `nli-verifier`
 - `list_containers` - List running Docker containers
 
 ## Investigation Workflow
@@ -86,12 +77,11 @@ Use these tools to check infrastructure health and Docker container logs:
    - Start with `get_errors` to see recent error patterns
    - Use `search_logs` to find specific error messages
    - Check `tail_server_logs` or `tail_admin_logs` for application context
-   - Use `docker_logs` to check infrastructure container logs (postgres, zitadel, langfuse)
+   - Use `docker_logs` to check infrastructure container logs (postgres, zitadel)
 
 4. **Check AI Traces (if applicable)**
 
-   - Use `list_traces` to find relevant AI coding sessions
-   - Use `get_trace` to examine specific trace details
+   - Use Tempo tracing tools if available to examine LLM/agent traces
 
 5. **Analyze Findings**
 

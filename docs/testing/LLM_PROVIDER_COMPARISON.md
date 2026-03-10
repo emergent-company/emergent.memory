@@ -252,23 +252,6 @@ LLM_CALL_TIMEOUT_MS=300000
 3. Run `--size=all` periodically to catch regressions
 4. Always test both providers before deploying changes
 
-## Langfuse Integration
-
-The script automatically logs to Langfuse when configured:
-
-- **Trace ID**: Unique per test session
-- **Generation spans**: Per extraction call with timing
-- **Tags**: `test` environment, provider, method
-- **Output**: Summary statistics per provider/method/size
-
-Required environment variables:
-
-```
-LANGFUSE_PUBLIC_KEY=...
-LANGFUSE_SECRET_KEY=...
-LANGFUSE_HOST=http://localhost:3011
-```
-
 ## Environment Setup
 
 Required environment variables:
@@ -281,11 +264,6 @@ GOOGLE_API_KEY=your-api-key
 GCP_PROJECT_ID=your-project-id
 VERTEX_AI_LOCATION=europe-central2  # or your region
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-
-# Optional: Langfuse tracing
-LANGFUSE_PUBLIC_KEY=...
-LANGFUSE_SECRET_KEY=...
-LANGFUSE_HOST=...
 ```
 
 ## Output Format
