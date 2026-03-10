@@ -223,16 +223,21 @@ func (p *WorkerPool) reenqueueParent(ctx context.Context, log *slog.Logger, run 
 	triggerMsg := fmt.Sprintf("AGENT_COMPLETE\nagent: %s\nstatus: %s\n\nResult:\n%s",
 		childAgentName, status, finalResponse)
 
-	// Append the child's own trigger message so the parent can recover any
-	// IDs or context it embedded there (e.g. TASK_ID, WP_ID). This is purely
-	// structural — the server does not interpret the contents.
+	// Append the original trigger message the parent sent to this child so the
+	// parent can recover any IDs or context it embedded there (e.g. TASK_ID,
+	// WP_ID, CODING_TASK_ID). We always use the FIRST run for this child+parent
+	// pair — that run holds the original message from the parent, regardless of
+	// how many times the child was subsequently re-enqueued by its own children.
 	//
-	// Strip any nested "Child trigger message:" section from the child's own
-	// trigger before appending, so the chain never grows beyond one level deep.
-	// Without this, each re-enqueue would wrap the previous wrapper, causing the
-	// context window to balloon on deep pipelines.
-	if run.TriggerMessage != nil && *run.TriggerMessage != "" {
-		childTrigger := *run.TriggerMessage
+	// Strip any nested "Child trigger message:" section before appending so the
+	// chain never grows beyond one level deep (prevents context-window ballooning
+	// on deep pipelines).
+	originalTrigger := run.TriggerMessage
+	if firstRun, ferr := p.repo.FindFirstChildRunForAgent(ctx, *run.ParentRunID, run.AgentID); ferr == nil && firstRun != nil && firstRun.TriggerMessage != nil {
+		originalTrigger = firstRun.TriggerMessage
+	}
+	if originalTrigger != nil && *originalTrigger != "" {
+		childTrigger := *originalTrigger
 		const nestedMarker = "\n\n---\nChild trigger message:"
 		if idx := strings.Index(childTrigger, nestedMarker); idx != -1 {
 			childTrigger = childTrigger[:idx]
