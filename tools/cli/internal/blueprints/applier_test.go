@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	sdkagents "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions"
+	sdkskills "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
 	sdktpacks "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/templatepacks"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/blueprints"
 )
@@ -50,9 +51,9 @@ func TestBlueprintsApplier_DryRun(t *testing.T) {
 
 	var buf bytes.Buffer
 	// nil SDK clients — dry-run must not call them
-	a := blueprints.NewBlueprintsApplier(nil, nil, true /* dryRun */, false /* upgrade */, &buf)
+	a := blueprints.NewBlueprintsApplier(nil, nil, nil, true /* dryRun */, false /* upgrade */, &buf)
 
-	results, err := a.Run(context.Background(), packs, agents)
+	results, err := a.Run(context.Background(), packs, agents, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -84,8 +85,8 @@ func TestBlueprintsApplier_DryRunWithUpgrade(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	a := blueprints.NewBlueprintsApplier(nil, nil, true, true, &buf)
-	results, err := a.Run(context.Background(), packs, nil)
+	a := blueprints.NewBlueprintsApplier(nil, nil, nil, true, true, &buf)
+	results, err := a.Run(context.Background(), packs, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -106,8 +107,9 @@ func TestBlueprintsApplier_AcceptsSDKClientTypes(t *testing.T) {
 	// compile. We pass typed nils to confirm the constructor signature is correct.
 	var tp *sdktpacks.Client
 	var ag *sdkagents.Client
+	var sk *sdkskills.Client
 
-	a := blueprints.NewBlueprintsApplier(tp, ag, true, false, nil)
+	a := blueprints.NewBlueprintsApplier(tp, ag, sk, true, false, nil)
 	if a == nil {
 		t.Fatal("expected non-nil blueprinter")
 	}
