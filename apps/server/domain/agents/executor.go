@@ -765,6 +765,17 @@ func (ae *AgentExecutor) runPipeline(
 			)
 		}
 
+		// If ask_user was just called, pause the run immediately so the LLM
+		// cannot produce a final response that would mark the run as success
+		// before beforeModelCb fires (race condition fix).
+		if toolName == ToolNameAskUser && askPauseState != nil && askPauseState.ShouldPause() {
+			ae.log.Info("ask_user afterToolCb: pausing run immediately",
+				slog.String("run_id", run.ID),
+				slog.String("question_id", askPauseState.QuestionID()),
+			)
+			_ = ae.repo.PauseRun(ctx, run.ID, currentStep)
+		}
+
 		// Check for doom loop
 		action := doomDetector.recordCall(toolName, args)
 		switch action {
@@ -835,10 +846,16 @@ func (ae *AgentExecutor) runPipeline(
 				slog.Int("history_events", sess.Events().Len()),
 			)
 		} else {
-			ae.log.Warn("failed to load existing ADK session, falling back to new session",
+			ae.log.Warn("failed to load existing ADK session, deleting stale session before creating fresh one",
 				slog.String("session_id", sessionID),
 				slog.String("error", err.Error()),
 			)
+			// Delete the stale session so the Create below can succeed.
+			_ = sessionService.Delete(ctx, &session.DeleteRequest{
+				AppName:   "agents",
+				UserID:    "system",
+				SessionID: sessionID,
+			})
 		}
 	}
 
