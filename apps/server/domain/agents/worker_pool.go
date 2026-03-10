@@ -176,6 +176,21 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		return
 	}
 
+	// If the run paused awaiting human input, mark the job completed (to prevent
+	// reprocessing) but do NOT overwrite the run status (already set to paused)
+	// and do NOT re-enqueue the parent — the parent will be woken when the human
+	// responds and the resumed run completes.
+	if result != nil && result.Status == RunStatusPaused {
+		log.Info("queued agent run paused awaiting human input",
+			slog.String("agent", agent.Name),
+			slog.String("run_id", run.ID),
+		)
+		if err := p.repo.PauseJob(ctx, job.ID); err != nil {
+			log.Warn("failed to mark job paused", slog.String("error", err.Error()))
+		}
+		return
+	}
+
 	// Mark job and run as complete
 	if err := p.repo.CompleteJob(ctx, job.ID, job.RunID); err != nil {
 		log.Warn("failed to mark job completed", slog.String("error", err.Error()))

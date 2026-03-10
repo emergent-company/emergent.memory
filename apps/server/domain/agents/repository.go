@@ -1222,6 +1222,19 @@ func (r *Repository) CompleteJob(ctx context.Context, jobID, runID string) error
 	})
 }
 
+// PauseJob marks a job as completed (preventing reprocessing) without overwriting
+// the run status, which has already been set to paused by PauseRun.
+func (r *Repository) PauseJob(ctx context.Context, jobID string) error {
+	now := time.Now()
+	_, err := r.db.NewUpdate().
+		Model((*AgentRunJob)(nil)).
+		Set("status = ?", JobStatusCompleted).
+		Set("completed_at = ?", now).
+		Where("id = ?", jobID).
+		Exec(ctx)
+	return err
+}
+
 // FailJob marks a job failed. If requeue=true and attempt_count < max_attempts,
 // sets job back to pending with exponential backoff; otherwise marks job failed and run error.
 func (r *Repository) FailJob(ctx context.Context, jobID, runID, errMsg string, requeue bool, nextRunAt time.Time) error {
