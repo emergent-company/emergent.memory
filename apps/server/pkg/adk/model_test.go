@@ -20,7 +20,7 @@ func TestNewModelFactory(t *testing.T) {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	factory := NewModelFactory(cfg, log, nil)
+	factory := NewModelFactory(cfg, log, nil, nil)
 
 	if factory == nil {
 		t.Fatal("NewModelFactory returned nil")
@@ -73,7 +73,7 @@ func TestModelFactoryCreateModelWithName_ValidationErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			factory := NewModelFactory(tt.cfg, log, nil)
+			factory := NewModelFactory(tt.cfg, log, nil, nil)
 			_, err := factory.CreateModelWithName(context.Background(), tt.modelName)
 
 			if err == nil {
@@ -91,7 +91,7 @@ func TestModelFactoryDefaultGenerateConfig(t *testing.T) {
 		MaxOutputTokens: 4096,
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log, nil)
+	factory := NewModelFactory(cfg, log, nil, nil)
 
 	config := factory.DefaultGenerateConfig()
 
@@ -115,7 +115,7 @@ func TestModelFactoryExtractionGenerateConfig(t *testing.T) {
 		MaxOutputTokens: 8192,
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log, nil)
+	factory := NewModelFactory(cfg, log, nil, nil)
 
 	config := factory.ExtractionGenerateConfig()
 
@@ -173,7 +173,7 @@ func TestModelFactoryIsEnabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			factory := NewModelFactory(tt.cfg, log, nil)
+			factory := NewModelFactory(tt.cfg, log, nil, nil)
 			got := factory.IsEnabled()
 			if got != tt.want {
 				t.Errorf("IsEnabled() = %v, want %v", got, tt.want)
@@ -187,7 +187,7 @@ func TestModelFactoryModelName(t *testing.T) {
 		Model: "gemini-1.5-flash",
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log, nil)
+	factory := NewModelFactory(cfg, log, nil, nil)
 
 	got := factory.ModelName()
 	if got != "gemini-1.5-flash" {
@@ -283,7 +283,7 @@ func TestModelFactoryCreateModel_ValidationErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			factory := NewModelFactory(tt.cfg, log, nil)
+			factory := NewModelFactory(tt.cfg, log, nil, nil)
 			_, err := factory.CreateModel(context.Background())
 
 			if err == nil {
@@ -301,7 +301,7 @@ func TestModelFactoryExtractionGenerateConfigWithSchema(t *testing.T) {
 		MaxOutputTokens: 8192,
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log, nil)
+	factory := NewModelFactory(cfg, log, nil, nil)
 
 	schema := &genai.Schema{
 		Type:        genai.TypeObject,
@@ -354,7 +354,7 @@ func TestModelFactoryExtractionGenerateConfigWithSchema_NilSchema(t *testing.T) 
 		MaxOutputTokens: 4096,
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log, nil)
+	factory := NewModelFactory(cfg, log, nil, nil)
 
 	config := factory.ExtractionGenerateConfigWithSchema(nil)
 
@@ -377,7 +377,7 @@ func TestModelFactoryExtractionGenerateConfigWithSchema_SchemaWithEnumConstraint
 		MaxOutputTokens: 8192,
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	factory := NewModelFactory(cfg, log, nil)
+	factory := NewModelFactory(cfg, log, nil, nil)
 
 	schema := &genai.Schema{
 		Type:     genai.TypeObject,

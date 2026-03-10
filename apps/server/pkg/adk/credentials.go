@@ -1,6 +1,10 @@
 package adk
 
-import "context"
+import (
+	"context"
+
+	adkmodel "google.golang.org/adk/model"
+)
 
 // ResolvedCredential holds the decrypted credential material needed to
 // instantiate an LLM client for a specific request context.
@@ -24,4 +28,16 @@ type ResolvedCredential struct {
 // and is injected via fx.
 type CredentialResolver interface {
 	ResolveAny(ctx context.Context) (*ResolvedCredential, error)
+}
+
+// ModelWrapper wraps a raw LLM with usage tracking.
+// Implemented by domain/provider.UsageTrackerAdapter to avoid an import cycle:
+// pkg/adk cannot import domain/provider, so the adapter satisfies this interface
+// and is injected optionally via fx.
+//
+// The provider parameter is one of "google-ai" or "vertex-ai" (the string values
+// of domain/provider.ProviderType). It is passed as a plain string to avoid
+// exporting domain types through this package.
+type ModelWrapper interface {
+	WrapModel(inner adkmodel.LLM, provider string) adkmodel.LLM
 }

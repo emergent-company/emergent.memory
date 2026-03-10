@@ -33,6 +33,7 @@ var Module = fx.Module("provider",
 		providePricingSyncService,
 		provideADKCredentialAdapter,
 		provideEmbeddingCredentialAdapter,
+		provideUsageTrackerAdapter,
 		NewHandler,
 	),
 	fx.Invoke(
@@ -92,4 +93,11 @@ func provideADKCredentialAdapter(svc *CredentialService) adk.CredentialResolver 
 // via the EmbeddingCredentialAdapter. Consumed by embeddings.Module.
 func provideEmbeddingCredentialAdapter(svc *CredentialService) embeddings.EmbeddingResolver {
 	return NewEmbeddingCredentialAdapter(svc)
+}
+
+// provideUsageTrackerAdapter exposes UsageService as adk.ModelWrapper via the
+// UsageTrackerAdapter. This is consumed by the adk.Module to inject usage tracking
+// into ModelFactory so every LLM created by the factory is automatically wrapped.
+func provideUsageTrackerAdapter(svc *UsageService, log *slog.Logger) adk.ModelWrapper {
+	return NewUsageTrackerAdapter(svc, log)
 }
