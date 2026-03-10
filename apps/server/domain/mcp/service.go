@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -125,6 +126,11 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Description: "Sort direction (default: \"desc\")",
 						Enum:        []string{"asc", "desc"},
 						Default:     "desc",
+					},
+					"include_relationships": {
+						Type:        "boolean",
+						Description: "When true, each entity result includes its outgoing relationships (type, target_id, target_type, target_key). Eliminates the need for a separate traverse_graph call in simple cases.",
+						Default:     false,
 					},
 				},
 				Required: []string{"type_name"},
@@ -345,62 +351,30 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "create_entity",
-			Description: "Create a new entity (graph object) in the project. The entity type should match a type defined in an installed template pack.",
+			Description: "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed template pack. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create outgoing relationships atomically in the same call, avoiding a separate create_relationship call.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
-					"type": {
-						Type:        "string",
-						Description: "Entity type (e.g., \"Person\", \"Company\")",
-					},
-					"properties": {
-						Type:        "object",
-						Description: "Entity properties as key-value pairs matching the type schema",
-					},
-					"key": {
-						Type:        "string",
-						Description: "Optional unique key/identifier for the entity",
-					},
-					"status": {
-						Type:        "string",
-						Description: "Optional status (e.g., \"draft\", \"published\")",
-					},
-					"labels": {
+					"entities": {
 						Type:        "array",
-						Description: "Optional labels/tags for the entity",
+						Description: "Array of entity specifications to create. Each item: {type (required), properties, key, status, labels, relationships?: [{type, source_id|target_id, properties}]}. Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id).",
 					},
 				},
-				Required: []string{"type"},
+				Required: []string{"entities"},
 			},
 		},
 		{
 			Name:        "create_relationship",
-			Description: "Create a relationship between two entities. The relationship type should match a type defined in an installed template pack.",
+			Description: "Create one or more relationships between entities. Always pass a 'relationships' array — use a single-element array for one relationship. Each relationship type should match a type defined in an installed template pack. Returns slim {id, type, source_id, target_id} per relationship. TIP: for creating an entity and linking it in one call, use the 'relationships' field on the entity spec in create_entity instead.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
-					"type": {
-						Type:        "string",
-						Description: "Relationship type (e.g., \"WORKS_AT\", \"KNOWS\")",
-					},
-					"source_id": {
-						Type:        "string",
-						Description: "UUID of the source entity",
-					},
-					"target_id": {
-						Type:        "string",
-						Description: "UUID of the target entity",
-					},
-					"properties": {
-						Type:        "object",
-						Description: "Optional relationship properties",
-					},
-					"weight": {
-						Type:        "number",
-						Description: "Optional relationship weight (default: 1.0)",
+					"relationships": {
+						Type:        "array",
+						Description: "Array of relationship specifications to create. Each item: {type (required), source_id (required), target_id (required), properties, weight}",
 					},
 				},
-				Required: []string{"type", "source_id", "target_id"},
+				Required: []string{"relationships"},
 			},
 		},
 		{
@@ -647,34 +621,6 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
 				Required:   []string{},
-			},
-		},
-		{
-			Name:        "batch_create_entities",
-			Description: "Create multiple entities in a single request. Much more efficient than individual creates.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]PropertySchema{
-					"entities": {
-						Type:        "array",
-						Description: "Array of entity specifications to create",
-					},
-				},
-				Required: []string{"entities"},
-			},
-		},
-		{
-			Name:        "batch_create_relationships",
-			Description: "Create multiple relationships in a single request. Efficient for building graph structures.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]PropertySchema{
-					"relationships": {
-						Type:        "array",
-						Description: "Array of relationship specifications to create",
-					},
-				},
-				Required: []string{"relationships"},
 			},
 		},
 		{
@@ -938,9 +884,9 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	case "delete_template_pack":
 		return s.executeDeleteTemplatePack(ctx, args)
 	case "create_entity":
-		return s.executeCreateEntity(ctx, projectID, args)
+		return s.executeBatchCreateEntities(ctx, projectID, args)
 	case "create_relationship":
-		return s.executeCreateRelationship(ctx, projectID, args)
+		return s.executeBatchCreateRelationships(ctx, projectID, args)
 	case "update_entity":
 		return s.executeUpdateEntity(ctx, projectID, args)
 	case "delete_entity":
@@ -963,10 +909,6 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeDeleteRelationship(ctx, projectID, args)
 	case "list_tags":
 		return s.executeListTags(ctx, projectID)
-	case "batch_create_entities":
-		return s.executeBatchCreateEntities(ctx, projectID, args)
-	case "batch_create_relationships":
-		return s.executeBatchCreateRelationships(ctx, projectID, args)
 	case "preview_schema_migration":
 		return s.executePreviewSchemaMigration(ctx, projectID, args)
 	case "list_migration_archives":
@@ -1318,6 +1260,113 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		}
 	}
 
+	// Detect unrecognized parameters and surface them as a warning so callers
+	// know their extra keys (e.g. filter, status, entity_type) had no effect.
+	knownQueryEntitiesParams := map[string]struct{}{
+		"type_name": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {},
+	}
+	var unknownParams []string
+	for k := range args {
+		if _, known := knownQueryEntitiesParams[k]; !known {
+			unknownParams = append(unknownParams, k)
+		}
+	}
+	var queryEntitiesWarning string
+	if len(unknownParams) > 0 {
+		sort.Strings(unknownParams)
+		queryEntitiesWarning = fmt.Sprintf(
+			"unrecognized parameters ignored (query_entities does not support server-side filtering): %s. "+
+				"Filter results client-side by inspecting entity properties.",
+			strings.Join(unknownParams, ", "),
+		)
+	}
+
+	// Optionally enrich each entity with its outgoing relationships.
+	includeRels, _ := args["include_relationships"].(bool)
+	if includeRels && len(resultEntities) > 0 {
+		// Build a list of canonical IDs to query relationships for.
+		canonicalIDs := make([]uuid.UUID, len(resultEntities))
+		for i, e := range resultEntities {
+			id, _ := uuid.Parse(e.ID)
+			canonicalIDs[i] = id
+		}
+
+		type relRow struct {
+			SrcID   uuid.UUID `bun:"src_id"`
+			RelType string    `bun:"rel_type"`
+			DstID   uuid.UUID `bun:"dst_id"`
+			DstType string    `bun:"dst_type"`
+			DstKey  string    `bun:"dst_key"`
+		}
+		var relRows []relRow
+
+		_ = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
+				return err
+			}
+			return tx.NewRaw(`
+				SELECT
+					gr.src_id,
+					gr.type AS rel_type,
+					gr.dst_id,
+					dst.type AS dst_type,
+					COALESCE(dst.key, '') AS dst_key
+				FROM kb.graph_relationships gr
+				JOIN kb.graph_objects dst ON dst.canonical_id = gr.dst_id
+					AND dst.supersedes_id IS NULL AND dst.branch_id IS NULL AND dst.deleted_at IS NULL
+				WHERE gr.src_id = ANY(?)
+					AND gr.deleted_at IS NULL
+					AND gr.project_id = ?
+					AND gr.supersedes_id IS NULL
+					AND gr.branch_id IS NULL
+			`, bun.In(canonicalIDs), projectUUID).Scan(ctx, &relRows)
+		})
+
+		// Build an index from entity ID → edges
+		type edgeRef struct {
+			Type       string `json:"type"`
+			TargetID   string `json:"target_id"`
+			TargetType string `json:"target_type"`
+			TargetKey  string `json:"target_key,omitempty"`
+		}
+		edgesByEntityID := make(map[string][]edgeRef, len(resultEntities))
+		for _, row := range relRows {
+			srcStr := row.SrcID.String()
+			edgesByEntityID[srcStr] = append(edgesByEntityID[srcStr], edgeRef{
+				Type:       row.RelType,
+				TargetID:   row.DstID.String(),
+				TargetType: row.DstType,
+				TargetKey:  row.DstKey,
+			})
+		}
+
+		// Attach to result entities via a wrapper type that includes edges.
+		type entityWithRels struct {
+			Entity
+			Relationships []edgeRef `json:"relationships,omitempty"`
+		}
+		enriched := make([]entityWithRels, len(resultEntities))
+		for i, e := range resultEntities {
+			enriched[i] = entityWithRels{
+				Entity:        e,
+				Relationships: edgesByEntityID[e.ID],
+			}
+		}
+
+		result := struct {
+			ProjectID  string           `json:"projectId"`
+			Entities   []entityWithRels `json:"entities"`
+			Pagination *PaginationInfo  `json:"pagination"`
+			Warning    string           `json:"warning,omitempty"`
+		}{
+			ProjectID:  projectID,
+			Entities:   enriched,
+			Pagination: &PaginationInfo{Total: total, Limit: limit, Offset: offset, HasMore: offset+limit < total},
+			Warning:    queryEntitiesWarning,
+		}
+		return s.wrapResult(result)
+	}
+
 	result := QueryEntitiesResult{
 		ProjectID: projectID,
 		Entities:  resultEntities,
@@ -1327,6 +1376,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			Offset:  offset,
 			HasMore: offset+limit < total,
 		},
+		Warning: queryEntitiesWarning,
 	}
 
 	return s.wrapResult(result)
@@ -1885,7 +1935,15 @@ func (s *Service) executeTraverseGraph(ctx context.Context, projectID string, ar
 
 	direction := "both"
 	if d, ok := args["direction"].(string); ok {
-		direction = d
+		// Normalize human-readable aliases to the values expected by ExpandGraph.
+		switch d {
+		case "outgoing":
+			direction = "out"
+		case "incoming":
+			direction = "in"
+		default:
+			direction = d
+		}
 	}
 
 	var relationshipTypes []string
@@ -2056,15 +2114,34 @@ func (s *Service) executeListTags(ctx context.Context, projectID string) (*ToolR
 	})
 }
 
-// executeBatchCreateEntities creates multiple entities in one request
+// executeBatchCreateEntities creates one or more entities. Always expects an "entities" array.
+// Backward-compat: if flat fields (type, properties, etc.) are passed instead, wraps them as a single-element array.
+//
+// Each entity spec may include an optional "relationships" array to atomically create relationships
+// from the new entity to existing entities in the same call:
+//
+//	{
+//	  "type": "TaskResult",
+//	  "properties": {...},
+//	  "relationships": [
+//	    {"type": "has_result", "target_id": "<existing-entity-id>", "properties": {}}
+//	  ]
+//	}
 func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
-	entitiesRaw, ok := args["entities"].([]any)
-	if !ok || len(entitiesRaw) == 0 {
+	// Support flat single-entity form for backward compat
+	var entitiesRaw []any
+	if arr, ok := args["entities"].([]any); ok {
+		entitiesRaw = arr
+	} else if _, hasType := args["type"]; hasType {
+		entitiesRaw = []any{args}
+	}
+
+	if len(entitiesRaw) == 0 {
 		return nil, fmt.Errorf("missing or empty entities array")
 	}
 
@@ -2072,11 +2149,23 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		return nil, fmt.Errorf("batch size exceeded: maximum 100 entities per request")
 	}
 
+	// slimEntity is the minimal response for a created entity.
+	type slimRelationship struct {
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		TargetID string `json:"target_id"`
+	}
+	type slimEntity struct {
+		ID            string             `json:"id"`
+		Type          string             `json:"type"`
+		Key           string             `json:"key,omitempty"`
+		Relationships []slimRelationship `json:"relationships,omitempty"`
+	}
 	type batchResult struct {
-		Success bool                       `json:"success"`
-		Entity  *graph.GraphObjectResponse `json:"entity,omitempty"`
-		Error   string                     `json:"error,omitempty"`
-		Index   int                        `json:"index"`
+		Success bool        `json:"success"`
+		Entity  *slimEntity `json:"entity,omitempty"`
+		Error   string      `json:"error,omitempty"`
+		Index   int         `json:"index"`
 	}
 
 	results := make([]batchResult, 0, len(entitiesRaw))
@@ -2111,14 +2200,21 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			key = &k
 		}
 
-		var status *string
-		if st, ok := entityMap["status"].(string); ok && st != "" {
-			status = &st
-		}
-
 		properties, _ := entityMap["properties"].(map[string]any)
 		if properties == nil {
 			properties = make(map[string]any)
+		}
+
+		// status flows through properties JSONB; the graph layer syncs the
+		// status column from properties["status"] at creation time.
+		// Also support top-level "status" field on the entity map — mirror it
+		// into properties so it is stored in JSONB.
+		var status *string
+		if st, ok := entityMap["status"].(string); ok && st != "" {
+			status = &st
+			properties["status"] = st
+		} else if st, ok := properties["status"].(string); ok && st != "" {
+			status = &st
 		}
 
 		var labels []string
@@ -2149,9 +2245,75 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			continue
 		}
 
+		slim := &slimEntity{
+			ID:   result.CanonicalID.String(),
+			Type: result.Type,
+		}
+		if result.Key != nil {
+			slim.Key = *result.Key
+		}
+
+		// Create any inline relationships declared on this entity spec.
+		if relsRaw, ok := entityMap["relationships"].([]any); ok && len(relsRaw) > 0 {
+			for _, relRaw := range relsRaw {
+				relMap, ok := relRaw.(map[string]any)
+				if !ok {
+					continue
+				}
+				relType, _ := relMap["type"].(string)
+				if relType == "" {
+					continue
+				}
+				relProps, _ := relMap["properties"].(map[string]any)
+
+				// Support both source_id and target_id in inline relationship specs.
+				// source_id: the pre-existing entity is the src (source_id → new_entity as dst).
+				// target_id: the new entity is the src (new_entity → target_id as dst).
+				var relSrcID, relDstID uuid.UUID
+				if sourceIDStr, ok := relMap["source_id"].(string); ok && sourceIDStr != "" {
+					sourceID, err := uuid.Parse(sourceIDStr)
+					if err != nil {
+						s.log.Warn("skipping inline relationship: invalid source_id",
+							"rel_type", relType, "source_id", sourceIDStr)
+						continue
+					}
+					relSrcID = sourceID
+					relDstID = result.CanonicalID
+				} else {
+					targetIDStr, _ := relMap["target_id"].(string)
+					targetID, err := uuid.Parse(targetIDStr)
+					if err != nil {
+						s.log.Warn("skipping inline relationship: invalid target_id",
+							"rel_type", relType, "target_id", targetIDStr)
+						continue
+					}
+					relSrcID = result.CanonicalID
+					relDstID = targetID
+				}
+
+				relReq := &graph.CreateGraphRelationshipRequest{
+					Type:       relType,
+					SrcID:      relSrcID,
+					DstID:      relDstID,
+					Properties: relProps,
+				}
+				relResult, err := s.graphService.CreateRelationship(ctx, projectUUID, relReq)
+				if err != nil {
+					s.log.Warn("failed to create inline relationship",
+						"rel_type", relType, "src", relSrcID, "dst", relDstID, logger.Error(err))
+					continue
+				}
+				slim.Relationships = append(slim.Relationships, slimRelationship{
+					ID:       relResult.CanonicalID.String(),
+					Type:     relResult.Type,
+					TargetID: relResult.DstID.String(),
+				})
+			}
+		}
+
 		results = append(results, batchResult{
 			Success: true,
-			Entity:  result,
+			Entity:  slim,
 			Index:   i,
 		})
 		successCount++
@@ -2166,15 +2328,23 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	})
 }
 
-// executeBatchCreateRelationships creates multiple relationships in one request
+// executeBatchCreateRelationships creates one or more relationships. Always expects a "relationships" array.
+// Backward-compat: if flat fields (type, source_id, target_id, etc.) are passed instead, wraps them as a single-element array.
 func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
-	relationshipsRaw, ok := args["relationships"].([]any)
-	if !ok || len(relationshipsRaw) == 0 {
+	// Support flat single-relationship form for backward compat
+	var relationshipsRaw []any
+	if arr, ok := args["relationships"].([]any); ok {
+		relationshipsRaw = arr
+	} else if _, hasType := args["type"]; hasType {
+		relationshipsRaw = []any{args}
+	}
+
+	if len(relationshipsRaw) == 0 {
 		return nil, fmt.Errorf("missing or empty relationships array")
 	}
 
@@ -2182,11 +2352,18 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		return nil, fmt.Errorf("batch size exceeded: maximum 100 relationships per request")
 	}
 
+	// slimRelationship is the minimal response for a created relationship.
+	type slimRelationship struct {
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		SourceID string `json:"source_id"`
+		TargetID string `json:"target_id"`
+	}
 	type batchResult struct {
-		Success      bool                             `json:"success"`
-		Relationship *graph.GraphRelationshipResponse `json:"relationship,omitempty"`
-		Error        string                           `json:"error,omitempty"`
-		Index        int                              `json:"index"`
+		Success      bool              `json:"success"`
+		Relationship *slimRelationship `json:"relationship,omitempty"`
+		Error        string            `json:"error,omitempty"`
+		Index        int               `json:"index"`
 	}
 
 	results := make([]batchResult, 0, len(relationshipsRaw))
@@ -2207,6 +2384,9 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 
 		relType, _ := relMap["type"].(string)
 		if relType == "" {
+			relType, _ = relMap["relationship_type"].(string)
+		}
+		if relType == "" {
 			results = append(results, batchResult{
 				Success: false,
 				Error:   "missing relationship type",
@@ -2217,6 +2397,9 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		}
 
 		srcIDStr, _ := relMap["source_id"].(string)
+		if srcIDStr == "" {
+			srcIDStr, _ = relMap["from_id"].(string)
+		}
 		srcID, err := uuid.Parse(srcIDStr)
 		if err != nil {
 			results = append(results, batchResult{
@@ -2229,6 +2412,9 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		}
 
 		dstIDStr, _ := relMap["target_id"].(string)
+		if dstIDStr == "" {
+			dstIDStr, _ = relMap["to_id"].(string)
+		}
 		dstID, err := uuid.Parse(dstIDStr)
 		if err != nil {
 			results = append(results, batchResult{
@@ -2271,9 +2457,14 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		}
 
 		results = append(results, batchResult{
-			Success:      true,
-			Relationship: result,
-			Index:        i,
+			Success: true,
+			Relationship: &slimRelationship{
+				ID:       result.CanonicalID.String(),
+				Type:     result.Type,
+				SourceID: result.SrcID.String(),
+				TargetID: result.DstID.String(),
+			},
+			Index: i,
 		})
 		successCount++
 	}
@@ -3271,153 +3462,6 @@ func (s *Service) executeDeleteTemplatePack(ctx context.Context, args map[string
 	return s.wrapResult(result)
 }
 
-func (s *Service) executeCreateEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	projectUUID, err := uuid.Parse(projectID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
-	}
-
-	typeName, _ := args["type"].(string)
-	if typeName == "" {
-		return nil, fmt.Errorf("missing required parameter: type")
-	}
-
-	properties, _ := args["properties"].(map[string]any)
-
-	var key *string
-	if k, ok := args["key"].(string); ok && k != "" {
-		key = &k
-	}
-
-	var status *string
-	if st, ok := args["status"].(string); ok && st != "" {
-		status = &st
-	}
-
-	var labels []string
-	if l, ok := args["labels"].([]any); ok {
-		for _, v := range l {
-			if str, ok := v.(string); ok {
-				labels = append(labels, str)
-			}
-		}
-	}
-
-	req := &graph.CreateGraphObjectRequest{
-		Type:       typeName,
-		Key:        key,
-		Status:     status,
-		Properties: properties,
-		Labels:     labels,
-	}
-
-	result, err := s.graphService.Create(ctx, projectUUID, req, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create entity: %w", err)
-	}
-
-	var statusStr string
-	if result.Status != nil {
-		statusStr = *result.Status
-	}
-	var keyStr string
-	if result.Key != nil {
-		keyStr = *result.Key
-	}
-
-	entityResult := CreateEntityResult{
-		Success: true,
-		Entity: &CreatedEntity{
-			ID:          result.ID.String(),
-			CanonicalID: result.CanonicalID.String(),
-			Type:        result.Type,
-			Key:         keyStr,
-			Status:      statusStr,
-			Properties:  result.Properties,
-			Labels:      result.Labels,
-			Version:     result.Version,
-			CreatedAt:   result.CreatedAt.Format(time.RFC3339),
-		},
-		Message: fmt.Sprintf("Entity of type \"%s\" created successfully", typeName),
-	}
-
-	return s.wrapResult(entityResult)
-}
-
-func (s *Service) executeCreateRelationship(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	projectUUID, err := uuid.Parse(projectID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
-	}
-
-	typeName, _ := args["type"].(string)
-	if typeName == "" {
-		return nil, fmt.Errorf("missing required parameter: type")
-	}
-
-	sourceIDStr, _ := args["source_id"].(string)
-	if sourceIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: source_id")
-	}
-	sourceID, err := uuid.Parse(sourceIDStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid source_id: %w", err)
-	}
-
-	targetIDStr, _ := args["target_id"].(string)
-	if targetIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: target_id")
-	}
-	targetID, err := uuid.Parse(targetIDStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid target_id: %w", err)
-	}
-
-	properties, _ := args["properties"].(map[string]any)
-
-	var weight *float32
-	if w, ok := args["weight"].(float64); ok {
-		wf := float32(w)
-		weight = &wf
-	}
-
-	req := &graph.CreateGraphRelationshipRequest{
-		Type:       typeName,
-		SrcID:      sourceID,
-		DstID:      targetID,
-		Properties: properties,
-		Weight:     weight,
-	}
-
-	result, err := s.graphService.CreateRelationship(ctx, projectUUID, req)
-	if err != nil {
-		return nil, fmt.Errorf("create relationship: %w", err)
-	}
-
-	var weightVal float64
-	if result.Weight != nil {
-		weightVal = float64(*result.Weight)
-	}
-
-	relResult := CreateRelationshipResult{
-		Success: true,
-		Relationship: &CreatedRelationship{
-			ID:          result.ID.String(),
-			CanonicalID: result.CanonicalID.String(),
-			Type:        result.Type,
-			SourceID:    result.SrcID.String(),
-			TargetID:    result.DstID.String(),
-			Properties:  result.Properties,
-			Weight:      weightVal,
-			Version:     result.Version,
-			CreatedAt:   result.CreatedAt.Format(time.RFC3339),
-		},
-		Message: fmt.Sprintf("Relationship \"%s\" created successfully", typeName),
-	}
-
-	return s.wrapResult(relResult)
-}
-
 func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
@@ -3435,9 +3479,17 @@ func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, arg
 
 	properties, _ := args["properties"].(map[string]any)
 
+	// status is intentionally kept inside properties so it flows through
+	// to the JSONB properties column. The graph layer syncs the status
+	// column from properties["status"] after the merge.
 	var status *string
 	if st, ok := args["status"].(string); ok && st != "" {
 		status = &st
+		// Mirror into properties so the JSONB is kept in sync.
+		if properties == nil {
+			properties = make(map[string]any)
+		}
+		properties["status"] = st
 	}
 
 	var labels []string

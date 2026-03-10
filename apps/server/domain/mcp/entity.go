@@ -286,6 +286,7 @@ type QueryEntitiesResult struct {
 	ProjectID  string          `json:"projectId"`
 	Entities   []Entity        `json:"entities"`
 	Pagination *PaginationInfo `json:"pagination"`
+	Warning    string          `json:"warning,omitempty"`
 }
 
 // SearchEntitiesResult represents the result of search_entities tool
