@@ -21,10 +21,12 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/domain/workspace"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
@@ -114,6 +116,8 @@ type AgentExecutor struct {
 	modelFactory   *adk.ModelFactory
 	toolPool       *ToolPool
 	repo           *Repository
+	skillRepo      *skills.Repository
+	embeddingsSvc  *embeddings.Service
 	provisioner    *workspace.AutoProvisioner // nil if workspaces are disabled
 	wsEnabled      bool                       // cached feature flag
 	sessionService session.Service
@@ -125,6 +129,8 @@ func NewAgentExecutor(
 	modelFactory *adk.ModelFactory,
 	toolPool *ToolPool,
 	repo *Repository,
+	skillRepo *skills.Repository,
+	embeddingsSvc *embeddings.Service,
 	provisioner *workspace.AutoProvisioner,
 	cfg *config.Config,
 	sessionService session.Service,
@@ -138,6 +144,8 @@ func NewAgentExecutor(
 		modelFactory:   modelFactory,
 		toolPool:       toolPool,
 		repo:           repo,
+		skillRepo:      skillRepo,
+		embeddingsSvc:  embeddingsSvc,
 		provisioner:    provisioner,
 		wsEnabled:      wsEnabled,
 		sessionService: sessionService,
@@ -660,6 +668,19 @@ func (ae *AgentExecutor) runPipeline(
 	} else if askUserTool != nil {
 		resolvedTools = append(resolvedTools, askUserTool)
 		ae.log.Info("ask_user tool added to agent pipeline",
+			slog.String("run_id", run.ID),
+		)
+	}
+
+	// Add skill tool if opted in via agent definition
+	if skillTool, skillErr := ae.buildSkillTool(ctx, run, req); skillErr != nil {
+		ae.log.Warn("failed to build skill tool, continuing without it",
+			slog.String("run_id", run.ID),
+			slog.String("error", skillErr.Error()),
+		)
+	} else if skillTool != nil {
+		resolvedTools = append(resolvedTools, skillTool)
+		ae.log.Info("skill tool added to agent pipeline",
 			slog.String("run_id", run.ID),
 		)
 	}
@@ -1400,6 +1421,53 @@ func (ae *AgentExecutor) buildAskUserTool(req ExecuteRequest, runID string, paus
 	}
 
 	return BuildAskUserTool(deps)
+}
+
+// buildSkillTool constructs the skill tool for an agent run if "skill" is
+// listed in the agent definition's Tools whitelist. Returns (nil, nil) when
+// skill tool is not opted in. Non-fatal: callers should log + continue on error.
+func (ae *AgentExecutor) buildSkillTool(ctx context.Context, run *AgentRun, req ExecuteRequest) (tool.Tool, error) {
+	if req.AgentDefinition == nil {
+		return nil, nil
+	}
+
+	hasSkill := false
+	for _, t := range req.AgentDefinition.Tools {
+		if t == "skill" {
+			hasSkill = true
+			break
+		}
+	}
+	if !hasSkill {
+		return nil, nil
+	}
+
+	// Extract trigger message for semantic retrieval query
+	triggerMsg := ""
+	if run.TriggerMessage != nil {
+		triggerMsg = *run.TriggerMessage
+	}
+
+	agentName := ""
+	agentDesc := ""
+	if req.AgentDefinition != nil {
+		agentName = req.AgentDefinition.Name
+		if req.AgentDefinition.Description != nil {
+			agentDesc = *req.AgentDefinition.Description
+		}
+	}
+
+	deps := skills.SkillToolDeps{
+		Repo:             ae.skillRepo,
+		EmbeddingsSvc:    ae.embeddingsSvc,
+		Logger:           ae.log,
+		ProjectID:        req.ProjectID,
+		TriggerMessage:   triggerMsg,
+		AgentName:        agentName,
+		AgentDescription: agentDesc,
+	}
+
+	return skills.BuildSkillTool(ctx, deps)
 }
 
 // resolveAgentID returns the agent ID for the run record.
