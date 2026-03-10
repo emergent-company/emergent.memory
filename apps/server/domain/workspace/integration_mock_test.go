@@ -851,8 +851,8 @@ func TestIntegration_MCP_BuildStatusFromWorkspace_WithResources(t *testing.T) {
 		CreatedAt:  time.Now(),
 		LastUsedAt: time.Now(),
 		MCPConfig: &MCPConfig{
-			Name:          "langfuse",
-			Image:         "emergent/mcp-langfuse:v1",
+			Name:          "test-mcp",
+			Image:         "emergent/mcp-test:v1",
 			StdioBridge:   true,
 			RestartPolicy: "on-failure",
 		},
@@ -864,8 +864,8 @@ func TestIntegration_MCP_BuildStatusFromWorkspace_WithResources(t *testing.T) {
 	}
 
 	status := svc.buildStatusFromWorkspace(ws)
-	assert.Equal(t, "langfuse", status.Name)
-	assert.Equal(t, "emergent/mcp-langfuse:v1", status.Image)
+	assert.Equal(t, "test-mcp", status.Name)
+	assert.Equal(t, "emergent/mcp-test:v1", status.Image)
 	assert.True(t, status.StdioBridge)
 	assert.Equal(t, "on-failure", status.RestartPolicy)
 	require.NotNil(t, status.ResourceLimits)
