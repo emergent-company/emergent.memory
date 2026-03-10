@@ -94,7 +94,9 @@ Examples:
 		}
 
 		// ── Load files ─────────────────────────────────────────────────
-		packs, agents, skills, seedObjects, seedRels, loadResults, err := blueprints.LoadDir(dir)
+		// Load .env and .env.local from blueprint dir (secrets, API keys).
+		envVars := blueprints.LoadEnvFiles(dir)
+		packs, agents, skills, seedObjects, seedRels, loadResults, err := blueprints.LoadDir(dir, envVars)
 		if err != nil {
 			return fmt.Errorf("load directory: %w", err)
 		}
