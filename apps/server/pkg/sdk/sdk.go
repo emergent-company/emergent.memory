@@ -55,6 +55,7 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/search"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/superadmin"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/tasks"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/templatepacks"
@@ -97,6 +98,7 @@ type Client struct {
 	EmbeddingPolicy  *embeddingpolicies.Client
 	Integrations     *integrations.Client
 	TemplatePacks    *templatepacks.Client
+	Skills           *skills.Client
 	Chunking         *chunking.Client
 
 	// Service clients — non-context (no org/project needed)
@@ -271,6 +273,7 @@ func initClients(c *Client) {
 	c.EmbeddingPolicy = embeddingpolicies.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Integrations = integrations.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.TemplatePacks = templatepacks.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Skills = skills.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Chunking = chunking.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 
 	// Non-context clients
@@ -312,6 +315,7 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.EmbeddingPolicy.SetContext(orgID, projectID)
 	c.Integrations.SetContext(orgID, projectID)
 	c.TemplatePacks.SetContext(orgID, projectID)
+	c.Skills.SetContext(orgID, projectID)
 	c.Chunking.SetContext(orgID, projectID)
 	// Note: Health, Superadmin, APIDocs are non-context clients — no SetContext needed
 	// Note: Projects, Orgs, Users, APITokens don't use org/project context in requests

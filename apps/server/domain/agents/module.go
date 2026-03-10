@@ -11,10 +11,12 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/domain/workspace"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/uptrace/bun"
 	"google.golang.org/adk/session"
 )
@@ -66,12 +68,14 @@ func provideAgentExecutor(
 	modelFactory *adk.ModelFactory,
 	toolPool *ToolPool,
 	repo *Repository,
+	skillRepo *skills.Repository,
+	embeddingsSvc *embeddings.Service,
 	provisioner *workspace.AutoProvisioner,
 	cfg *config.Config,
 	sessionService session.Service,
 	log *slog.Logger,
 ) *AgentExecutor {
-	return NewAgentExecutor(modelFactory, toolPool, repo, provisioner, cfg, sessionService, log)
+	return NewAgentExecutor(modelFactory, toolPool, repo, skillRepo, embeddingsSvc, provisioner, cfg, sessionService, log)
 }
 
 // provideHandler creates a Handler with both repo and executor.
