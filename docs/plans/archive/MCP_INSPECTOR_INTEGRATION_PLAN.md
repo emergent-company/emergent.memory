@@ -100,7 +100,7 @@ npx @modelcontextprotocol/inspector \
 ```bash
 npx @modelcontextprotocol/inspector \
   npx -y @upstash/context7-mcp \
-  --api-key [REDACTED_CONTEXT7_KEY]
+  --api-key <YOUR_CONTEXT7_API_KEY>
 ```
 
 **What you'll see**:
