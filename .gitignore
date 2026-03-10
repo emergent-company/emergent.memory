@@ -20,6 +20,9 @@ docker/.env
 .env.staging
 .env.production
 
+# Backup and temporary files
+*.bak
+
 # Backup and temporary env files (never commit)
 *.env.bak
 *.env.backup*
