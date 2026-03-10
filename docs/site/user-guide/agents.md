@@ -39,6 +39,8 @@ memory defs create \
 | `--visibility` | `project` (default), `internal` (system only), `external` (ACP-exposed) |
 | `--max-steps` | Hard cap on LLM steps per run (default: 500) |
 
+To configure Google native tools or fine-tune temperature and token limits, use the **Agent Definitions** settings page in the Admin UI — see [Google Native Tools](#google-native-tools) below.
+
 ---
 
 ## Step 2 — Create a Runtime Agent
@@ -190,6 +192,84 @@ memory defs create \
 ```
 
 The coordinator discovers available agents with `list_available_agents` and delegates work to them. Each sub-agent run is linked to the parent via `parentRunId`.
+
+---
+
+## Google Native Tools
+
+Gemini models expose a set of **built-in tools** that are invoked directly by the model — no function-calling round-trip required. You opt into them per agent definition.
+
+| Tool | What it does | Minimum model |
+|---|---|---|
+| `google_search` | Live web search via Google | Gemini 2.0 Flash |
+| `code_execution` | Runs Python in a sandboxed environment; output is returned to the model | Gemini 2.0 Flash |
+| `url_context` | Fetches and reads the content of URLs mentioned in the conversation | Gemini 2.5 Flash |
+
+!!! note "Gemini only"
+    Native tools are ignored when the agent runs on a non-Gemini provider (OpenAI, Anthropic, etc.).
+
+!!! note "Model capability check"
+    If a tool is requested but the selected model does not support it, it is silently skipped at runtime. For example, requesting `url_context` on `gemini-2.0-flash` has no effect.
+
+### Configure via the Admin UI
+
+1. Go to **Settings → Project → Agent Definitions**.
+2. Click **New Definition** or edit an existing one.
+3. Under **Model Configuration**, enter a Gemini model name (e.g. `gemini-2.5-flash-preview-0514`).
+4. Check the native tools you want to enable.
+5. Click **Save Definition**.
+
+### Configure via the API
+
+Include `nativeTools` in the `model` object when creating or updating a definition:
+
+```json
+{
+  "name": "web-researcher",
+  "systemPrompt": "You are a research assistant. Use web search to find current information.",
+  "model": {
+    "name": "gemini-2.5-flash-preview-0514",
+    "temperature": 1.0,
+    "nativeTools": ["google_search", "url_context"]
+  }
+}
+```
+
+`PATCH /api/projects/{projectId}/agent-definitions/{id}` accepts the same shape.
+
+### Configure via Blueprints
+
+```yaml
+# agents/web-researcher.yaml
+name: web-researcher
+systemPrompt: |
+  You are a research assistant. Use web search to find current information.
+model:
+  name: gemini-2.5-flash-preview-0514
+  temperature: 1.0
+  nativeTools:
+    - google_search
+    - url_context
+tools:
+  - graph_create_object
+  - graph_query
+flowType: single
+visibility: project
+```
+
+### Model support matrix
+
+| Model | `google_search` | `url_context` | `code_execution` |
+|---|:---:|:---:|:---:|
+| `gemini-2.5-pro-*` | ✓ | ✓ | ✓ |
+| `gemini-2.5-flash-*` | ✓ | ✓ | ✓ |
+| `gemini-2.5-flash-lite-*` | ✓ | ✓ | ✓ |
+| `gemini-2.0-flash-*` | ✓ | — | ✓ |
+| `gemini-2.0-flash-lite-*` | — | — | — |
+| `gemini-3-flash-*` | ✓ | ✓ | ✓ |
+| `gemini-3-pro-*` | ✓ | ✓ | ✓ |
+
+`url_context` was introduced in the Gemini 2.5 generation. Image generation variants (`*-image-preview`) support `google_search` only.
 
 ---
 
