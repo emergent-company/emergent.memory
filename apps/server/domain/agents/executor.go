@@ -18,6 +18,7 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 
+	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/workspace"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
@@ -540,6 +541,9 @@ func (ae *AgentExecutor) runPipeline(
 	// Inject the current run ID into context so downstream tools (e.g. trigger_agent)
 	// can propagate it as the parent_run_id when spawning child runs.
 	ctx = contextWithCallerRunID(ctx, run.ID)
+	// Also inject into the provider context so the tracking model can attribute
+	// LLM usage events to this run.
+	ctx = provider.ContextWithRunID(ctx, run.ID)
 
 	// Inject project ID into context so the credential resolver can look up
 	// the org-level provider config via the DB hierarchy (project → org).
@@ -640,6 +644,22 @@ func (ae *AgentExecutor) runPipeline(
 		}
 		if req.AgentDefinition.Model.MaxTokens != nil {
 			genConfig.MaxOutputTokens = int32(*req.AgentDefinition.Model.MaxTokens)
+		}
+		// Inject Google-native tools (google_search, url_context, code_execution).
+		// Only tools that are both requested by the agent definition AND supported
+		// by the resolved model are activated — unsupported combinations are skipped.
+		if len(req.AgentDefinition.Model.NativeTools) > 0 {
+			supported := adk.SupportedNativeTools(modelName)
+			enabled := adk.IntersectNativeTools(req.AgentDefinition.Model.NativeTools, supported)
+			if len(enabled) > 0 {
+				nativeGenaiTools := adk.BuildNativeGenaiTools(enabled)
+				genConfig.Tools = append(genConfig.Tools, nativeGenaiTools...)
+				ae.log.Info("google native tools enabled for agent",
+					slog.String("run_id", run.ID),
+					slog.String("model", modelName),
+					slog.Any("tools", enabled),
+				)
+			}
 		}
 	}
 

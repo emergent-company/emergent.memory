@@ -266,6 +266,11 @@ type ModelConfig struct {
 	Name        string   `json:"name,omitempty"`
 	Temperature *float32 `json:"temperature,omitempty"`
 	MaxTokens   *int     `json:"maxTokens,omitempty"`
+	// NativeTools lists Google-native tools to enable when using a Gemini model.
+	// Valid values: "google_search", "url_context", "code_execution".
+	// Tools are only activated if the selected model actually supports them —
+	// unsupported combinations are silently skipped.
+	NativeTools []string `json:"nativeTools,omitempty"`
 }
 
 // AgentDefinition stores agent configurations from product manifests.
