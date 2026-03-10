@@ -1462,6 +1462,7 @@ func (ae *AgentExecutor) buildSkillTool(ctx context.Context, run *AgentRun, req 
 		EmbeddingsSvc:    ae.embeddingsSvc,
 		Logger:           ae.log,
 		ProjectID:        req.ProjectID,
+		OrgID:            req.OrgID,
 		TriggerMessage:   triggerMsg,
 		AgentName:        agentName,
 		AgentDescription: agentDesc,
