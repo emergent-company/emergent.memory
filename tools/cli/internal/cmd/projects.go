@@ -267,8 +267,8 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Found %d project(s):\n\n", len(projectList))
 	for i, p := range projectList {
 		fmt.Printf("%d. %s (%s)\n", i+1, p.Name, p.ID)
-		if p.KBPurpose != nil && *p.KBPurpose != "" {
-			fmt.Printf("   KB Purpose: %s\n", *p.KBPurpose)
+		if p.ProjectInfo != nil && *p.ProjectInfo != "" {
+			fmt.Printf("   Project Info: %s\n", *p.ProjectInfo)
 		}
 
 		// Print stats if requested
@@ -305,8 +305,8 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Project: %s (%s)\n", project.Name, project.ID)
 	fmt.Printf("  Org ID:     %s\n", project.OrgID)
-	if project.KBPurpose != nil && *project.KBPurpose != "" {
-		fmt.Printf("  KB Purpose: %s\n", *project.KBPurpose)
+	if project.ProjectInfo != nil && *project.ProjectInfo != "" {
+		fmt.Printf("  Project Info: %s\n", *project.ProjectInfo)
 	}
 
 	// Print stats if requested

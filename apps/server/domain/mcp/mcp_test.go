@@ -433,6 +433,7 @@ func TestGetToolDefinitions(t *testing.T) {
 	tools := svc.GetToolDefinitions()
 
 	expectedTools := []string{
+		"get_project_info",
 		"schema_version",
 		"list_entity_types",
 		"query_entities",
@@ -447,6 +448,25 @@ func TestGetToolDefinitions(t *testing.T) {
 		"uninstall_template_pack",
 		"create_template_pack",
 		"delete_template_pack",
+		"create_entity",
+		"create_relationship",
+		"update_entity",
+		"delete_entity",
+		"restore_entity",
+		"hybrid_search",
+		"semantic_search",
+		"find_similar",
+		"traverse_graph",
+		"list_relationships",
+		"update_relationship",
+		"delete_relationship",
+		"list_tags",
+		"preview_schema_migration",
+		"list_migration_archives",
+		"get_migration_archive",
+		"brave_web_search",
+		"webfetch",
+		"reddit_search",
 	}
 
 	if len(tools) != len(expectedTools) {

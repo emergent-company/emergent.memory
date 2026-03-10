@@ -1,0 +1,4 @@
+{"type":"kpi_for_pool","srcKey":"kpi-rejection-rate-research","dstKey":"pool-research"}
+{"type":"kpi_for_pool","srcKey":"kpi-rejection-rate-coding","dstKey":"pool-coding"}
+{"type":"kpi_for_pool","srcKey":"kpi-rejection-rate-review","dstKey":"pool-review"}
+{"type":"kpi_for_pool","srcKey":"kpi-token-cost-coding","dstKey":"pool-coding"}
