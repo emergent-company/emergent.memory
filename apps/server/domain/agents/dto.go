@@ -41,6 +41,16 @@ type AgentRunDTO struct {
 	StepCount   int     `json:"stepCount"`
 	MaxSteps    *int    `json:"maxSteps,omitempty"`
 	ResumedFrom *string `json:"resumedFrom,omitempty"`
+
+	// Token usage aggregated from kb.llm_usage_events for this run.
+	TokenUsage *RunTokenUsage `json:"tokenUsage,omitempty"`
+}
+
+// RunTokenUsage holds aggregated LLM token counts and estimated cost for a run.
+type RunTokenUsage struct {
+	TotalInputTokens  int64   `json:"totalInputTokens"`
+	TotalOutputTokens int64   `json:"totalOutputTokens"`
+	EstimatedCostUSD  float64 `json:"estimatedCostUsd"`
 }
 
 // CreateAgentDTO is the request DTO for creating an agent

@@ -1303,3 +1303,36 @@ func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error)
 	}
 	return len(runs), nil
 }
+
+// GetRunTokenUsage returns aggregated LLM token counts and estimated cost for a
+// single agent run, reading from kb.llm_usage_events. Returns nil when no usage
+// events exist for the run (e.g. the run has not yet executed any LLM calls).
+func (r *Repository) GetRunTokenUsage(ctx context.Context, runID string) (*RunTokenUsage, error) {
+	type row struct {
+		TotalInput  int64   `bun:"total_input"`
+		TotalOutput int64   `bun:"total_output"`
+		TotalCost   float64 `bun:"total_cost"`
+	}
+	var result row
+	err := r.db.NewRaw(`
+		SELECT
+			COALESCE(SUM(text_input_tokens + image_input_tokens + video_input_tokens + audio_input_tokens), 0) AS total_input,
+			COALESCE(SUM(output_tokens), 0)        AS total_output,
+			COALESCE(SUM(estimated_cost_usd), 0.0) AS total_cost
+		FROM kb.llm_usage_events
+		WHERE run_id = ?`,
+		runID,
+	).Scan(ctx, &result)
+	if err != nil {
+		return nil, fmt.Errorf("get run token usage: %w", err)
+	}
+	// Return nil when there is no recorded usage for this run.
+	if result.TotalInput == 0 && result.TotalOutput == 0 && result.TotalCost == 0 {
+		return nil, nil
+	}
+	return &RunTokenUsage{
+		TotalInputTokens:  result.TotalInput,
+		TotalOutputTokens: result.TotalOutput,
+		EstimatedCostUSD:  result.TotalCost,
+	}, nil
+}

@@ -126,6 +126,7 @@ type LLMUsageEvent struct {
 	AudioInputTokens int64         `bun:"audio_input_tokens,notnull,default:0" json:"audioInputTokens"`
 	OutputTokens     int64         `bun:"output_tokens,notnull,default:0" json:"outputTokens"`
 	EstimatedCostUSD float64       `bun:"estimated_cost_usd,notnull,default:0" json:"estimatedCostUsd"`
+	RunID            *string       `bun:"run_id,type:uuid,nullzero" json:"runId,omitempty"`
 	CreatedAt        time.Time     `bun:"created_at,notnull,default:now()" json:"createdAt"`
 }
 
