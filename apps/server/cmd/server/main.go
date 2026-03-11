@@ -1,7 +1,7 @@
 // Package main provides the entry point for the Memory API server
 //
 // @title Memory API
-// @version 0.30.33
+// @version 0.30.34
 // @description Memory Knowledge Base API - AI-powered knowledge management system
 // @contact.name Memory Team
 // @contact.url https://emergent-company.ai
@@ -53,6 +53,8 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/sandboximages"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 	"github.com/emergent-company/emergent.memory/domain/schemaregistry"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
@@ -66,8 +68,6 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/useractivity"
 	"github.com/emergent-company/emergent.memory/domain/userprofile"
 	"github.com/emergent-company/emergent.memory/domain/users"
-	"github.com/emergent-company/emergent.memory/domain/sandbox"
-	"github.com/emergent-company/emergent.memory/domain/sandboximages"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/internal/server"
