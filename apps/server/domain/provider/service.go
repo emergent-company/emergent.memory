@@ -16,16 +16,16 @@ import (
 // ResolvedCredential holds the decrypted credential material and metadata
 // needed to instantiate an LLM client for a specific request context.
 type ResolvedCredential struct {
-	// Provider type (google-ai or vertex-ai)
+	// Provider type (google or google-vertex)
 	Provider ProviderType
 
 	// Source describes where the credential was resolved from
 	Source CredentialSource
 
-	// APIKey is set for google-ai (decrypted)
+	// APIKey is set for google (decrypted)
 	APIKey string
 
-	// Vertex AI fields (set for vertex-ai)
+	// Vertex AI fields (set for google-vertex)
 	ServiceAccountJSON string
 	GCPProject         string
 	Location           string
@@ -511,18 +511,18 @@ func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertPr
 	switch provider {
 	case ProviderGoogleAI:
 		if req.APIKey == "" {
-			return nil, apperror.NewBadRequest("apiKey is required for google-ai")
+			return nil, apperror.NewBadRequest("apiKey is required for google")
 		}
 		return []byte(req.APIKey), nil
 	case ProviderVertexAI:
 		if req.ServiceAccountJSON == "" {
-			return nil, apperror.NewBadRequest("serviceAccountJson is required for vertex-ai")
+			return nil, apperror.NewBadRequest("serviceAccountJson is required for google-vertex")
 		}
 		if req.GCPProject == "" {
-			return nil, apperror.NewBadRequest("gcpProject is required for vertex-ai")
+			return nil, apperror.NewBadRequest("gcpProject is required for google-vertex")
 		}
 		if req.Location == "" {
-			return nil, apperror.NewBadRequest("location is required for vertex-ai")
+			return nil, apperror.NewBadRequest("location is required for google-vertex")
 		}
 		return []byte(req.ServiceAccountJSON), nil
 	default:

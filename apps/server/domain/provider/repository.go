@@ -252,6 +252,58 @@ func (r *Repository) DeleteSupportedModelsNotIn(ctx context.Context, provider Pr
 	return nil
 }
 
+// UpdateModelOutputLimits bulk-updates max_output_tokens in provider_supported_models
+// by model name (provider-agnostic, since the same model has the same token limit
+// regardless of whether it's accessed via google or google-vertex).
+func (r *Repository) UpdateModelOutputLimits(ctx context.Context, limits map[string]int) error {
+	if len(limits) == 0 {
+		return nil
+	}
+
+	for modelName, maxTokens := range limits {
+		tokens := maxTokens // capture loop var
+		_, err := r.db.NewUpdate().
+			TableExpr("kb.provider_supported_models").
+			Set("max_output_tokens = ?", tokens).
+			Where("model_name = ?", modelName).
+			Exec(ctx)
+		if err != nil {
+			r.log.Error("failed to update model output limit",
+				logger.Error(err),
+				slog.String("model", modelName),
+			)
+			return apperror.ErrDatabase.WithInternal(err)
+		}
+	}
+	return nil
+}
+
+// GetModelOutputLimit returns the max_output_tokens for a given model name,
+// or 0 if not found / not set.
+func (r *Repository) GetModelOutputLimit(ctx context.Context, modelName string) (int, error) {
+	var limit int
+	err := r.db.NewSelect().
+		TableExpr("kb.provider_supported_models").
+		ColumnExpr("max_output_tokens").
+		Where("model_name = ?", modelName).
+		Where("max_output_tokens IS NOT NULL").
+		OrderExpr("max_output_tokens DESC").
+		Limit(1).
+		Scan(ctx, &limit)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil
+		}
+		r.log.Error("failed to get model output limit",
+			logger.Error(err),
+			slog.String("model", modelName),
+		)
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return limit, nil
+}
+
 // --- LLM Usage Events ---
 
 // InsertUsageEvent records a single LLM usage event.

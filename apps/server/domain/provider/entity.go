@@ -10,8 +10,8 @@ import (
 type ProviderType string
 
 const (
-	ProviderGoogleAI ProviderType = "google-ai"
-	ProviderVertexAI ProviderType = "vertex-ai"
+	ProviderGoogleAI ProviderType = "google"
+	ProviderVertexAI ProviderType = "google-vertex"
 )
 
 // ModelType classifies a model as embedding or generative.
@@ -72,8 +72,8 @@ type ProjectProviderConfig struct {
 
 // UpsertProviderConfigRequest is the request body for creating or updating a
 // provider config (org-level or project-level).
-// For google-ai: set APIKey.
-// For vertex-ai: set ServiceAccountJSON, GCPProject, Location.
+// For google: set APIKey.
+// For google-vertex: set ServiceAccountJSON, GCPProject, Location.
 type UpsertProviderConfigRequest struct {
 	APIKey             string `json:"apiKey,omitempty"`
 	ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
@@ -101,12 +101,13 @@ type ProviderConfigResponse struct {
 type ProviderSupportedModel struct {
 	bun.BaseModel `bun:"table:kb.provider_supported_models,alias:psm"`
 
-	ID          string       `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	Provider    ProviderType `bun:"provider,notnull" json:"provider"`
-	ModelName   string       `bun:"model_name,notnull" json:"modelName"`
-	ModelType   ModelType    `bun:"model_type,notnull" json:"modelType"`
-	DisplayName string       `bun:"display_name" json:"displayName,omitempty"`
-	LastSynced  time.Time    `bun:"last_synced,notnull,default:now()" json:"lastSynced"`
+	ID              string       `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	Provider        ProviderType `bun:"provider,notnull" json:"provider"`
+	ModelName       string       `bun:"model_name,notnull" json:"modelName"`
+	ModelType       ModelType    `bun:"model_type,notnull" json:"modelType"`
+	DisplayName     string       `bun:"display_name" json:"displayName,omitempty"`
+	MaxOutputTokens *int         `bun:"max_output_tokens" json:"maxOutputTokens,omitempty"`
+	LastSynced      time.Time    `bun:"last_synced,notnull,default:now()" json:"lastSynced"`
 }
 
 // LLMUsageEvent records a single LLM operation's token usage and estimated cost.

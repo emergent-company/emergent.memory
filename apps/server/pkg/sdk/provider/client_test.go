@@ -70,7 +70,7 @@ func TestUpsertOrgConfig(t *testing.T) {
 	defer mock.Close()
 
 	fixture := fixtureProviderConfig()
-	mock.On("PUT", "/api/v1/organizations/org_test456/providers/google-ai",
+	mock.On("PUT", "/api/v1/organizations/org_test456/providers/google",
 		func(w http.ResponseWriter, r *http.Request) {
 			testutil.AssertHeader(t, r, "Content-Type", "application/json")
 			w.Header().Set("Content-Type", "application/json")
@@ -99,7 +99,7 @@ func TestGetOrgConfig(t *testing.T) {
 	defer mock.Close()
 
 	fixture := fixtureProviderConfig()
-	mock.OnJSON("GET", "/api/v1/organizations/org_test456/providers/google-ai",
+	mock.OnJSON("GET", "/api/v1/organizations/org_test456/providers/google",
 		http.StatusOK, fixture)
 
 	c := newClient(t, mock)
@@ -116,7 +116,7 @@ func TestDeleteOrgConfig(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.OnJSON("DELETE", "/api/v1/organizations/org_test456/providers/google-ai",
+	mock.OnJSON("DELETE", "/api/v1/organizations/org_test456/providers/google",
 		http.StatusOK, map[string]string{"status": "deleted"})
 
 	c := newClient(t, mock)
@@ -174,7 +174,7 @@ func TestUpsertProjectConfig(t *testing.T) {
 	defer mock.Close()
 
 	fixture := fixtureProviderConfig()
-	mock.On("PUT", "/api/v1/projects/proj_test123/providers/google-ai",
+	mock.On("PUT", "/api/v1/projects/proj_test123/providers/google",
 		func(w http.ResponseWriter, r *http.Request) {
 			testutil.AssertHeader(t, r, "Content-Type", "application/json")
 			w.Header().Set("Content-Type", "application/json")
@@ -200,7 +200,7 @@ func TestGetProjectConfig(t *testing.T) {
 	defer mock.Close()
 
 	fixture := fixtureProviderConfig()
-	mock.OnJSON("GET", "/api/v1/projects/proj_test123/providers/google-ai",
+	mock.OnJSON("GET", "/api/v1/projects/proj_test123/providers/google",
 		http.StatusOK, fixture)
 
 	c := newClient(t, mock)
@@ -217,7 +217,7 @@ func TestDeleteProjectConfig(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.OnJSON("DELETE", "/api/v1/projects/proj_test123/providers/google-ai",
+	mock.OnJSON("DELETE", "/api/v1/projects/proj_test123/providers/google",
 		http.StatusOK, map[string]string{"status": "deleted"})
 
 	c := newClient(t, mock)
@@ -234,7 +234,7 @@ func TestListModels(t *testing.T) {
 	defer mock.Close()
 
 	fixture := []provider.SupportedModel{fixtureModel()}
-	mock.OnJSON("GET", "/api/v1/providers/google-ai/models",
+	mock.OnJSON("GET", "/api/v1/providers/google/models",
 		http.StatusOK, fixture)
 
 	c := newClient(t, mock)
@@ -255,7 +255,7 @@ func TestListModels_WithTypeFilter(t *testing.T) {
 	defer mock.Close()
 
 	fixture := []provider.SupportedModel{fixtureModel()}
-	mock.On("GET", "/api/v1/providers/google-ai/models",
+	mock.On("GET", "/api/v1/providers/google/models",
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Query().Get("type") != provider.ModelTypeGenerative {
 				http.Error(w, "expected type=generative", http.StatusBadRequest)
@@ -354,7 +354,7 @@ func TestUpsertOrgConfig_4xxError(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()
 
-	mock.OnJSON("PUT", "/api/v1/organizations/org_test456/providers/google-ai",
+	mock.OnJSON("PUT", "/api/v1/organizations/org_test456/providers/google",
 		http.StatusBadRequest, map[string]string{"error": "missing api key"})
 
 	c := newClient(t, mock)

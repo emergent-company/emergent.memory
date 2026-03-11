@@ -148,9 +148,9 @@ func parsePricingEntries(raw []pricingEntry) []ProviderPricing {
 	for _, r := range raw {
 		var pt ProviderType
 		switch r.Provider {
-		case "google-ai":
+		case "google":
 			pt = ProviderGoogleAI
-		case "vertex-ai":
+		case "google-vertex":
 			pt = ProviderVertexAI
 		default:
 			continue // skip unknown providers

@@ -35,7 +35,7 @@ type CredentialResolver interface {
 // pkg/adk cannot import domain/provider, so the adapter satisfies this interface
 // and is injected optionally via fx.
 //
-// The provider parameter is one of "google-ai" or "vertex-ai" (the string values
+// The provider parameter is one of "google" or "google-vertex" (the string values
 // of domain/provider.ProviderType). It is passed as a plain string to avoid
 // exporting domain types through this package.
 type ModelWrapper interface {
