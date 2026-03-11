@@ -1,5 +1,5 @@
 ---
-name: emergent-onboard
+name: memory-onboard
 description: Onboard a project into Memory — understand what the project is, choose or create a Memory project, design and install a template pack, then guide on creating objects and relationships. Use when setting up Memory for a new project or codebase for the first time.
 metadata:
   author: emergent
@@ -287,8 +287,8 @@ Remind the user:
 - `.env.local` contains `MEMORY_PROJECT=<id>` — keep this out of git (add to `.gitignore`)
 - The template pack definition is saved at `.memory/templates/<pack-name>/pack.json` — commit this to the repo
 - To modify the schema, edit the JSON and create a new pack version (packs are immutable once created)
-- The `emergent-query` skill can be used to explore the populated graph
-- The `emergent-template-packs` skill has full reference for managing packs
+- The `memory-query` skill can be used to explore the populated graph
+- The `memory-template-packs` skill has full reference for managing packs
 
 ---
 

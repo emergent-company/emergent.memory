@@ -141,15 +141,15 @@ func TestRecordErrorWithType_SetsAttributesAndStatus(t *testing.T) {
 	// Should have emergent.error.type attribute
 	found := false
 	for _, attr := range s.Attributes() {
-		if string(attr.Key) == "emergent.error.type" {
+		if string(attr.Key) == "memory.error.type" {
 			found = true
 			if attr.Value.AsString() == "" {
-				t.Error("emergent.error.type attribute is empty")
+				t.Error("memory.error.type attribute is empty")
 			}
 		}
 	}
 	if !found {
-		t.Error("emergent.error.type attribute not found on span")
+		t.Error("memory.error.type attribute not found on span")
 	}
 
 	// Should have a recorded error event

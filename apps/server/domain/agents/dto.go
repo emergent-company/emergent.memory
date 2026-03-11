@@ -42,6 +42,10 @@ type AgentRunDTO struct {
 	MaxSteps    *int    `json:"maxSteps,omitempty"`
 	ResumedFrom *string `json:"resumedFrom,omitempty"`
 
+	// Observability linkage
+	TraceID   *string `json:"traceId,omitempty"`
+	RootRunID *string `json:"rootRunId,omitempty"`
+
 	// Token usage aggregated from kb.llm_usage_events for this run.
 	TokenUsage *RunTokenUsage `json:"tokenUsage,omitempty"`
 }
@@ -180,6 +184,8 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 		StepCount:     r.StepCount,
 		MaxSteps:      r.MaxSteps,
 		ResumedFrom:   r.ResumedFrom,
+		TraceID:       r.TraceID,
+		RootRunID:     r.RootRunID,
 	}
 }
 
@@ -233,76 +239,76 @@ type AgentWithDefinitionDTO struct {
 
 // AgentDefinitionDTO is the full response DTO for an agent definition
 type AgentDefinitionDTO struct {
-	ID              string            `json:"id"`
-	ProductID       *string           `json:"productId,omitempty"`
-	ProjectID       string            `json:"projectId"`
-	Name            string            `json:"name"`
-	Description     *string           `json:"description,omitempty"`
-	SystemPrompt    *string           `json:"systemPrompt,omitempty"`
-	Model           *ModelConfig      `json:"model,omitempty"`
-	Tools           []string          `json:"tools"`
-	FlowType        AgentFlowType     `json:"flowType"`
-	IsDefault       bool              `json:"isDefault"`
-	MaxSteps        *int              `json:"maxSteps,omitempty"`
-	DefaultTimeout  *int              `json:"defaultTimeout,omitempty"`
-	Visibility      AgentVisibility   `json:"visibility"`
-	DispatchMode    AgentDispatchMode `json:"dispatchMode"`
-	ACPConfig       *ACPConfig        `json:"acpConfig,omitempty"`
-	Config          map[string]any    `json:"config,omitempty"`
-	SandboxConfig map[string]any    `json:"workspaceConfig,omitempty"`
-	CreatedAt       time.Time         `json:"createdAt"`
-	UpdatedAt       time.Time         `json:"updatedAt"`
+	ID             string            `json:"id"`
+	ProductID      *string           `json:"productId,omitempty"`
+	ProjectID      string            `json:"projectId"`
+	Name           string            `json:"name"`
+	Description    *string           `json:"description,omitempty"`
+	SystemPrompt   *string           `json:"systemPrompt,omitempty"`
+	Model          *ModelConfig      `json:"model,omitempty"`
+	Tools          []string          `json:"tools"`
+	FlowType       AgentFlowType     `json:"flowType"`
+	IsDefault      bool              `json:"isDefault"`
+	MaxSteps       *int              `json:"maxSteps,omitempty"`
+	DefaultTimeout *int              `json:"defaultTimeout,omitempty"`
+	Visibility     AgentVisibility   `json:"visibility"`
+	DispatchMode   AgentDispatchMode `json:"dispatchMode"`
+	ACPConfig      *ACPConfig        `json:"acpConfig,omitempty"`
+	Config         map[string]any    `json:"config,omitempty"`
+	SandboxConfig  map[string]any    `json:"workspaceConfig,omitempty"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	UpdatedAt      time.Time         `json:"updatedAt"`
 }
 
 // AgentDefinitionSummaryDTO is a lightweight DTO for listing agent definitions
 type AgentDefinitionSummaryDTO struct {
-	ID                 string          `json:"id"`
-	ProjectID          string          `json:"projectId"`
-	Name               string          `json:"name"`
-	Description        *string         `json:"description,omitempty"`
-	FlowType           AgentFlowType   `json:"flowType"`
-	Visibility         AgentVisibility `json:"visibility"`
-	IsDefault          bool            `json:"isDefault"`
-	ToolCount          int             `json:"toolCount"`
+	ID               string          `json:"id"`
+	ProjectID        string          `json:"projectId"`
+	Name             string          `json:"name"`
+	Description      *string         `json:"description,omitempty"`
+	FlowType         AgentFlowType   `json:"flowType"`
+	Visibility       AgentVisibility `json:"visibility"`
+	IsDefault        bool            `json:"isDefault"`
+	ToolCount        int             `json:"toolCount"`
 	HasSandboxConfig bool            `json:"hasSandboxConfig"`
-	CreatedAt          time.Time       `json:"createdAt"`
-	UpdatedAt          time.Time       `json:"updatedAt"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	UpdatedAt        time.Time       `json:"updatedAt"`
 }
 
 // CreateAgentDefinitionDTO is the request DTO for creating an agent definition
 type CreateAgentDefinitionDTO struct {
-	Name            string            `json:"name" validate:"required"`
-	Description     *string           `json:"description"`
-	SystemPrompt    *string           `json:"systemPrompt"`
-	Model           *ModelConfig      `json:"model"`
-	Tools           []string          `json:"tools"`
-	FlowType        AgentFlowType     `json:"flowType"`
-	IsDefault       *bool             `json:"isDefault"`
-	MaxSteps        *int              `json:"maxSteps"`
-	DefaultTimeout  *int              `json:"defaultTimeout"`
-	Visibility      AgentVisibility   `json:"visibility"`
-	DispatchMode    AgentDispatchMode `json:"dispatchMode"`
-	ACPConfig       *ACPConfig        `json:"acpConfig"`
-	Config          map[string]any    `json:"config"`
-	SandboxConfig map[string]any    `json:"workspaceConfig"`
+	Name           string            `json:"name" validate:"required"`
+	Description    *string           `json:"description"`
+	SystemPrompt   *string           `json:"systemPrompt"`
+	Model          *ModelConfig      `json:"model"`
+	Tools          []string          `json:"tools"`
+	FlowType       AgentFlowType     `json:"flowType"`
+	IsDefault      *bool             `json:"isDefault"`
+	MaxSteps       *int              `json:"maxSteps"`
+	DefaultTimeout *int              `json:"defaultTimeout"`
+	Visibility     AgentVisibility   `json:"visibility"`
+	DispatchMode   AgentDispatchMode `json:"dispatchMode"`
+	ACPConfig      *ACPConfig        `json:"acpConfig"`
+	Config         map[string]any    `json:"config"`
+	SandboxConfig  map[string]any    `json:"workspaceConfig"`
 }
 
 // UpdateAgentDefinitionDTO is the request DTO for updating an agent definition
 type UpdateAgentDefinitionDTO struct {
-	Name            *string            `json:"name"`
-	Description     *string            `json:"description"`
-	SystemPrompt    *string            `json:"systemPrompt"`
-	Model           *ModelConfig       `json:"model"`
-	Tools           []string           `json:"tools"`
-	FlowType        *AgentFlowType     `json:"flowType"`
-	IsDefault       *bool              `json:"isDefault"`
-	MaxSteps        *int               `json:"maxSteps"`
-	DefaultTimeout  *int               `json:"defaultTimeout"`
-	Visibility      *AgentVisibility   `json:"visibility"`
-	DispatchMode    *AgentDispatchMode `json:"dispatchMode"`
-	ACPConfig       *ACPConfig         `json:"acpConfig"`
-	Config          map[string]any     `json:"config"`
-	SandboxConfig map[string]any     `json:"workspaceConfig"`
+	Name           *string            `json:"name"`
+	Description    *string            `json:"description"`
+	SystemPrompt   *string            `json:"systemPrompt"`
+	Model          *ModelConfig       `json:"model"`
+	Tools          []string           `json:"tools"`
+	FlowType       *AgentFlowType     `json:"flowType"`
+	IsDefault      *bool              `json:"isDefault"`
+	MaxSteps       *int               `json:"maxSteps"`
+	DefaultTimeout *int               `json:"defaultTimeout"`
+	Visibility     *AgentVisibility   `json:"visibility"`
+	DispatchMode   *AgentDispatchMode `json:"dispatchMode"`
+	ACPConfig      *ACPConfig         `json:"acpConfig"`
+	Config         map[string]any     `json:"config"`
+	SandboxConfig  map[string]any     `json:"workspaceConfig"`
 }
 
 // --- Agent Run Message / Tool Call DTOs ---
@@ -336,42 +342,42 @@ type AgentRunToolCallDTO struct {
 // ToDTO converts an AgentDefinition entity to AgentDefinitionDTO
 func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 	return &AgentDefinitionDTO{
-		ID:              d.ID,
-		ProductID:       d.ProductID,
-		ProjectID:       d.ProjectID,
-		Name:            d.Name,
-		Description:     d.Description,
-		SystemPrompt:    d.SystemPrompt,
-		Model:           d.Model,
-		Tools:           d.Tools,
-		FlowType:        d.FlowType,
-		IsDefault:       d.IsDefault,
-		MaxSteps:        d.MaxSteps,
-		DefaultTimeout:  d.DefaultTimeout,
-		Visibility:      d.Visibility,
-		DispatchMode:    d.DispatchMode,
-		ACPConfig:       d.ACPConfig,
-		Config:          d.Config,
-		SandboxConfig: d.SandboxConfig,
-		CreatedAt:       d.CreatedAt,
-		UpdatedAt:       d.UpdatedAt,
+		ID:             d.ID,
+		ProductID:      d.ProductID,
+		ProjectID:      d.ProjectID,
+		Name:           d.Name,
+		Description:    d.Description,
+		SystemPrompt:   d.SystemPrompt,
+		Model:          d.Model,
+		Tools:          d.Tools,
+		FlowType:       d.FlowType,
+		IsDefault:      d.IsDefault,
+		MaxSteps:       d.MaxSteps,
+		DefaultTimeout: d.DefaultTimeout,
+		Visibility:     d.Visibility,
+		DispatchMode:   d.DispatchMode,
+		ACPConfig:      d.ACPConfig,
+		Config:         d.Config,
+		SandboxConfig:  d.SandboxConfig,
+		CreatedAt:      d.CreatedAt,
+		UpdatedAt:      d.UpdatedAt,
 	}
 }
 
 // ToSummaryDTO converts an AgentDefinition entity to AgentDefinitionSummaryDTO
 func (d *AgentDefinition) ToSummaryDTO() *AgentDefinitionSummaryDTO {
 	return &AgentDefinitionSummaryDTO{
-		ID:                 d.ID,
-		ProjectID:          d.ProjectID,
-		Name:               d.Name,
-		Description:        d.Description,
-		FlowType:           d.FlowType,
-		Visibility:         d.Visibility,
-		IsDefault:          d.IsDefault,
-		ToolCount:          len(d.Tools),
+		ID:               d.ID,
+		ProjectID:        d.ProjectID,
+		Name:             d.Name,
+		Description:      d.Description,
+		FlowType:         d.FlowType,
+		Visibility:       d.Visibility,
+		IsDefault:        d.IsDefault,
+		ToolCount:        len(d.Tools),
 		HasSandboxConfig: len(d.SandboxConfig) > 0,
-		CreatedAt:          d.CreatedAt,
-		UpdatedAt:          d.UpdatedAt,
+		CreatedAt:        d.CreatedAt,
+		UpdatedAt:        d.UpdatedAt,
 	}
 }
 

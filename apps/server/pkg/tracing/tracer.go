@@ -23,8 +23,8 @@ const tracerName = "emergent"
 // Example:
 //
 //	ctx, span := tracing.Start(ctx, "extraction.document_parsing",
-//	    attribute.String("emergent.job.id", job.ID),
-//	    attribute.String("emergent.project.id", job.ProjectID),
+//	    attribute.String("memory.job.id", job.ID),
+//	    attribute.String("memory.project.id", job.ProjectID),
 //	)
 //	defer span.End()
 func Start(ctx context.Context, spanName string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {

@@ -42,8 +42,8 @@ func NewService(
 // Search executes unified search combining graph and text results
 func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, searchCtx *SearchContext) (*UnifiedSearchResponse, error) {
 	ctx, span := tracing.Start(ctx, "search.execute",
-		attribute.Int("emergent.search.query_length", len(req.Query)),
-		attribute.String("emergent.project.id", projectID.String()),
+		attribute.Int("memory.search.query_length", len(req.Query)),
+		attribute.String("memory.project.id", projectID.String()),
 	)
 	defer span.End()
 
@@ -167,7 +167,7 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 		relationshipElapsed = time.Since(start)
 	}
 
-	span.SetAttributes(attribute.String("emergent.search.strategy", string(fusionStrategy)))
+	span.SetAttributes(attribute.String("memory.search.strategy", string(fusionStrategy)))
 
 	// Fuse results
 	fusionStart := time.Now()
@@ -223,7 +223,7 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 		debug = s.buildDebugInfo(graphRes.rawDebug, textRes.rawDebug, relationshipRes.rawDebug, graphResults, textRes.results, relationshipRes.results, fusionStrategy, req.Weights, len(fusedResults))
 	}
 
-	span.SetAttributes(attribute.Int("emergent.search.result_count", len(fusedResults)))
+	span.SetAttributes(attribute.Int("memory.search.result_count", len(fusedResults)))
 	span.SetStatus(codes.Ok, "")
 
 	return &UnifiedSearchResponse{

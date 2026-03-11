@@ -435,7 +435,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 	// Start chat span before conversation is resolved (conversation_id added below)
 	ctx, span := tracing.Start(ctx, "chat.handle_message",
-		attribute.String("emergent.project.id", user.ProjectID),
+		attribute.String("memory.project.id", user.ProjectID),
 	)
 	defer span.End()
 
@@ -505,7 +505,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	}
 
 	// Annotate span with conversation_id now that we have it
-	span.SetAttributes(attribute.String("emergent.chat.conversation_id", conv.ID.String()))
+	span.SetAttributes(attribute.String("memory.chat.conversation_id", conv.ID.String()))
 
 	// Now that validation is done and conversation is ready, start SSE streaming
 	w := c.Response().Writer
@@ -594,7 +594,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	var llmErr error
 	{
 		llmCtx, llmSpan := tracing.Start(ctx, "chat.llm_generate",
-			attribute.String("emergent.llm.model", h.llmClient.Model()),
+			attribute.String("memory.llm.model", h.llmClient.Model()),
 		)
 		llmErr = h.llmClient.GenerateStreaming(llmCtx, vertex.GenerateRequest{
 			Prompt:       message,

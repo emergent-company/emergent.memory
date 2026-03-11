@@ -190,6 +190,11 @@ type AgentRun struct {
 	ResumedFrom    *string `bun:"resumed_from,type:uuid" json:"resumedFrom,omitempty"`
 	TriggerMessage *string `bun:"trigger_message" json:"triggerMessage,omitempty"`
 
+	// Observability linkage: trace_id links the run back to its OTel trace;
+	// root_run_id links sub-agent runs back to the top-level orchestration run.
+	TraceID   *string `bun:"trace_id" json:"traceId,omitempty"`
+	RootRunID *string `bun:"root_run_id,type:uuid" json:"rootRunId,omitempty"`
+
 	// Relations
 	Agent     *Agent    `bun:"rel:belongs-to,join:agent_id=id" json:"-"`
 	ParentRun *AgentRun `bun:"rel:belongs-to,join:parent_run_id=id" json:"-"`
