@@ -47,6 +47,12 @@ RUN rm -rf docs && mkdir -p docs/swagger && \
     /go/bin/swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
 
 # Cross-compile server binary for target platform
+# Re-declare VERSION/GIT_COMMIT/BUILD_TIME here so BuildKit invalidates
+# the cache when they change (build args don't bust cache inside RUN steps
+# unless re-declared in the same stage scope immediately before use).
+ARG VERSION
+ARG GIT_COMMIT
+ARG BUILD_TIME
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
@@ -88,6 +94,10 @@ RUN go mod download
 COPY tools/cli/ ./
 
 # Cross-compile CLI binary
+# Re-declare version args to bust cache when version changes.
+ARG VERSION
+ARG GIT_COMMIT
+ARG BUILD_TIME
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
