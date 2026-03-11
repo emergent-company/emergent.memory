@@ -35,8 +35,8 @@
 ## 7. Verification
 
 - [x] 7.1 Apply migration locally (`task migrate`) and confirm `kb.llm_usage_events` has `run_id` column and partial index
-- [ ] 7.2 Run a local agent run and confirm `llm_usage_events` rows are written with `run_id` set
-- [ ] 7.3 Call `GET /api/projects/:projectId/agent-runs/:runId` and confirm `tokenUsage` object is present in the response JSON
-- [ ] 7.4 Run `memory traces list` and confirm token/cost columns appear for agent-run traces
-- [ ] 7.5 Run `memory traces get <traceID>` for an agent trace and confirm summary block appears before span tree
+- [x] 7.2 Run a local agent run and confirm `llm_usage_events` rows are written with `run_id` set
+- [x] 7.3 Call `GET /api/projects/:projectId/agent-runs/:runId` and confirm `tokenUsage` object is present in the response JSON
+- [x] 7.4 Run `memory traces list` and confirm token/cost columns appear for agent-run traces
+- [x] 7.5 Run `memory traces get <traceID>` for an agent trace and confirm summary block appears before span tree
 - [x] 7.6 Run `task build` to confirm no compilation errors

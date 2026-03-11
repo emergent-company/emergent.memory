@@ -365,17 +365,23 @@ func runGetAgentRuns(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Fetch agent name for a helpful header (best effort).
+	agentLabel := agentID
+	if a, err := c.SDK.Agents.Get(context.Background(), agentID); err == nil && a != nil {
+		agentLabel = fmt.Sprintf("%s (%s)", a.Data.Name, agentID)
+	}
+
 	result, err := c.SDK.Agents.GetRuns(context.Background(), agentID, agentRunsLimit)
 	if err != nil {
 		return fmt.Errorf("failed to get agent runs: %w", err)
 	}
 
 	if len(result.Data) == 0 {
-		fmt.Println("No runs found for this agent.")
+		fmt.Printf("No runs found for agent %s.\n", agentLabel)
 		return nil
 	}
 
-	fmt.Printf("Found %d run(s):\n\n", len(result.Data))
+	fmt.Printf("Runs for agent: %s\n\n", agentLabel)
 	for i, r := range result.Data {
 		fmt.Printf("%d. Run %s\n", i+1, r.ID)
 		fmt.Printf("   Status:    %s\n", r.Status)
