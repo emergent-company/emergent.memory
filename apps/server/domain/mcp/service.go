@@ -14,11 +14,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/search"
+	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/database"
+	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -44,21 +50,76 @@ type Service struct {
 	cacheMu       sync.RWMutex
 	cachedVersion string
 	cacheExpiry   time.Time
+
+	// Documents service (for document list/get/upload/delete tools)
+	documentsSvc *documents.Service
+
+	// Storage service (for document upload to object store)
+	storageSvc *storage.Service
+
+	// Skills repository (for skill CRUD tools)
+	skillsRepo *skills.Repository
+
+	// Provider services (for provider config and model catalog tools)
+	providerCredSvc    *provider.CredentialService
+	providerCatalogSvc *provider.ModelCatalogService
+
+	// API token service (for token management tools)
+	apitokenSvc *apitoken.Service
+
+	// Embedding worker controller (for pause/resume/config tools)
+	// Typed as interface to avoid import cycle with extraction package.
+	embeddingCtl EmbeddingControlHandler
+
+	// Tempo base URL for trace proxy (empty when tracing disabled)
+	tempoBaseURL string
+
+	// Server port for internal query calls (query_knowledge tool)
+	serverPort int
+}
+
+// ServiceParams bundles optional dependencies for NewService.
+type ServiceParams struct {
+	fx.In
+
+	DB           bun.IDB
+	GraphService *graph.Service
+	SearchSvc    *search.Service
+	Cfg          *config.Config
+	Log          *slog.Logger
+
+	DocumentsSvc       *documents.Service
+	SkillsRepo         *skills.Repository
+	ProviderCredSvc    *provider.CredentialService
+	ProviderCatalogSvc *provider.ModelCatalogService
+	ApitokenSvc        *apitoken.Service
 }
 
 // NewService creates a new MCP service
-func NewService(db bun.IDB, graphService *graph.Service, searchSvc *search.Service, cfg *config.Config, log *slog.Logger) *Service {
+func NewService(p ServiceParams) *Service {
+	cfg := p.Cfg
 	timeout := cfg.BraveSearch.Timeout
 	if timeout == 0 {
 		timeout = braveSearchDefaultTimeout
 	}
+	tempoURL := ""
+	if cfg.Otel.Enabled() {
+		tempoURL = cfg.Otel.InternalTempoQueryURL()
+	}
 	return &Service{
-		db:                 db,
-		graphService:       graphService,
-		searchSvc:          searchSvc,
+		db:                 p.DB,
+		graphService:       p.GraphService,
+		searchSvc:          p.SearchSvc,
 		braveSearchAPIKey:  cfg.BraveSearch.APIKey,
 		braveSearchTimeout: timeout,
-		log:                log.With(logger.Scope("mcp.svc")),
+		log:                p.Log.With(logger.Scope("mcp.svc")),
+		documentsSvc:       p.DocumentsSvc,
+		skillsRepo:         p.SkillsRepo,
+		providerCredSvc:    p.ProviderCredSvc,
+		providerCatalogSvc: p.ProviderCatalogSvc,
+		apitokenSvc:        p.ApitokenSvc,
+		tempoBaseURL:       tempoURL,
+		serverPort:         cfg.ServerPort,
 	}
 }
 
@@ -70,6 +131,11 @@ func (s *Service) SetAgentToolHandler(h AgentToolHandler) {
 // SetMCPRegistryToolHandler sets the MCP registry tool handler (called after construction to break circular init)
 func (s *Service) SetMCPRegistryToolHandler(h MCPRegistryToolHandler) {
 	s.mcpRegistryToolHandler = h
+}
+
+// SetEmbeddingControlHandler sets the embedding worker controller (injected to break import cycle with extraction).
+func (s *Service) SetEmbeddingControlHandler(h EmbeddingControlHandler) {
+	s.embeddingCtl = h
 }
 
 // GetToolDefinitions returns all available MCP tools
@@ -730,10 +796,22 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		tools = append(tools, s.agentToolHandler.GetAgentToolDefinitions()...)
 	}
 
+	// Append agent extension tools (questions, hooks, ADK sessions)
+	tools = append(tools, agentExtToolDefinitions()...)
+
 	// Append MCP registry tool definitions if handler is available
 	if s.mcpRegistryToolHandler != nil {
 		tools = append(tools, s.mcpRegistryToolHandler.GetMCPRegistryToolDefinitions()...)
 	}
+
+	// Append new domain tool definitions
+	tools = append(tools, skillsToolDefinitions()...)
+	tools = append(tools, documentsToolDefinitions()...)
+	tools = append(tools, embeddingsToolDefinitions()...)
+	tools = append(tools, providerToolDefinitions()...)
+	tools = append(tools, tokenToolDefinitions()...)
+	tools = append(tools, traceToolDefinitions()...)
+	tools = append(tools, queryToolDefinitions()...)
 
 	return tools
 }
@@ -1029,6 +1107,90 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
 	case "inspect_mcp_server":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+
+	// Agent Questions, Hooks, and ADK Sessions
+	case "list_agent_questions":
+		return s.executeListAgentQuestions(ctx, projectID, args)
+	case "list_project_agent_questions":
+		return s.executeListProjectAgentQuestions(ctx, projectID, args)
+	case "respond_to_agent_question":
+		return s.executeRespondToAgentQuestion(ctx, projectID, args)
+	case "list_agent_hooks":
+		return s.executeListAgentHooks(ctx, projectID, args)
+	case "create_agent_hook":
+		return s.executeCreateAgentHook(ctx, projectID, args)
+	case "delete_agent_hook":
+		return s.executeDeleteAgentHook(ctx, projectID, args)
+	case "list_adk_sessions":
+		return s.executeListADKSessions(ctx, projectID, args)
+	case "get_adk_session":
+		return s.executeGetADKSession(ctx, projectID, args)
+
+	// Skills tools
+	case "list_skills":
+		return s.executeListSkills(ctx, projectID)
+	case "get_skill":
+		return s.executeGetSkill(ctx, args)
+	case "create_skill":
+		return s.executeCreateSkill(ctx, projectID, args)
+	case "update_skill":
+		return s.executeUpdateSkill(ctx, args)
+	case "delete_skill":
+		return s.executeDeleteSkill(ctx, args)
+
+	// Documents tools
+	case "list_documents":
+		return s.executeListDocuments(ctx, projectID, args)
+	case "get_document":
+		return s.executeGetDocument(ctx, projectID, args)
+	case "upload_document":
+		return s.executeUploadDocument(ctx, projectID, args)
+	case "delete_document":
+		return s.executeDeleteDocument(ctx, projectID, args)
+
+	// Embeddings tools
+	case "get_embedding_status":
+		return s.executeGetEmbeddingStatus(ctx)
+	case "pause_embeddings":
+		return s.executePauseEmbeddings(ctx)
+	case "resume_embeddings":
+		return s.executeResumeEmbeddings(ctx)
+	case "update_embedding_config":
+		return s.executeUpdateEmbeddingConfig(ctx, args)
+
+	// Provider tools
+	case "list_org_providers":
+		return s.executeListOrgProviders(ctx, args)
+	case "configure_org_provider":
+		return s.executeConfigureOrgProvider(ctx, args)
+	case "configure_project_provider":
+		return s.executeConfigureProjectProvider(ctx, projectID, args)
+	case "list_provider_models":
+		return s.executeListProviderModels(ctx, args)
+	case "get_provider_usage":
+		return s.executeGetProviderUsage(ctx, args)
+	case "test_provider":
+		return s.executeTestProvider(ctx, args)
+
+	// API Token tools
+	case "list_project_api_tokens":
+		return s.executeListProjectAPITokens(ctx, projectID)
+	case "create_project_api_token":
+		return s.executeCreateProjectAPIToken(ctx, projectID, args)
+	case "get_project_api_token":
+		return s.executeGetProjectAPIToken(ctx, projectID, args)
+	case "revoke_project_api_token":
+		return s.executeRevokeProjectAPIToken(ctx, projectID, args)
+
+	// Trace tools
+	case "list_traces":
+		return s.executeListTraces(ctx, args)
+	case "get_trace":
+		return s.executeGetTrace(ctx, args)
+
+	// Query Knowledge tool
+	case "query_knowledge":
+		return s.executeQueryKnowledge(ctx, projectID, args)
 
 	default:
 		return nil, fmt.Errorf("tool not found: %s", toolName)

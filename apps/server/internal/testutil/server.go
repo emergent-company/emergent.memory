@@ -218,7 +218,17 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	chat.RegisterRoutes(e, chatHandler, authMiddleware)
 
 	// Register MCP routes
-	mcpSvc := mcp.NewService(db, graphSvc, searchSvc, testDB.Config, log)
+	skillsRepo := skills.NewRepository(db, log)
+	mcpSvc := mcp.NewService(mcp.ServiceParams{
+		DB:           db,
+		GraphService: graphSvc,
+		SearchSvc:    searchSvc,
+		Cfg:          testDB.Config,
+		Log:          log,
+		DocumentsSvc: docsSvc,
+		SkillsRepo:   skillsRepo,
+		ApitokenSvc:  apitokenSvc,
+	})
 	mcpHandler := mcp.NewHandler(mcpSvc, log)
 	mcpSSEHandler := mcp.NewSSEHandler(mcpSvc, mcpHandler, log)
 	mcpStreamableHandler := mcp.NewStreamableHTTPHandler(mcpSvc, log)
@@ -264,8 +274,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	schemasHandler := schemas.NewHandler(schemasSvc)
 	schemas.RegisterRoutes(e, schemasHandler, authMiddleware)
 
-	// Register skills routes
-	skillsRepo := skills.NewRepository(db, log)
+	// Register skills routes (skillsRepo already created above for MCP injection)
 	skillsHandler := skills.NewHandler(skillsRepo, embeddingsSvc, log)
 	skills.RegisterRoutes(e, skillsHandler, authMiddleware)
 

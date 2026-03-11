@@ -49,6 +49,9 @@ var staticPricing = []ProviderPricing{
 	{Provider: ProviderGoogleAI, Model: "gemini-2.0-flash", TextInputPrice: 0.10, ImageInputPrice: 0.10, AudioInputPrice: 0.10, OutputPrice: 0.40},
 	{Provider: ProviderGoogleAI, Model: "gemini-2.5-flash", TextInputPrice: 0.15, ImageInputPrice: 0.15, AudioInputPrice: 0.15, OutputPrice: 0.60},
 	{Provider: ProviderGoogleAI, Model: "gemini-2.5-pro", TextInputPrice: 1.25, ImageInputPrice: 1.25, AudioInputPrice: 1.25, OutputPrice: 5.00},
+	{Provider: ProviderGoogleAI, Model: "gemini-3.1-flash-lite-preview", TextInputPrice: 0.10, ImageInputPrice: 0.10, AudioInputPrice: 0.10, OutputPrice: 0.40},
+	{Provider: ProviderGoogleAI, Model: "gemini-3.1-flash", TextInputPrice: 0.15, ImageInputPrice: 0.15, AudioInputPrice: 0.15, OutputPrice: 0.60},
+	{Provider: ProviderGoogleAI, Model: "gemini-3.1-pro", TextInputPrice: 1.25, ImageInputPrice: 1.25, AudioInputPrice: 1.25, OutputPrice: 5.00},
 	// Vertex AI — same models, same pricing (users bring their own project)
 	{Provider: ProviderVertexAI, Model: "gemini-1.5-flash", TextInputPrice: 0.075, ImageInputPrice: 0.075, AudioInputPrice: 0.075, OutputPrice: 0.30},
 	{Provider: ProviderVertexAI, Model: "gemini-1.5-flash-8b", TextInputPrice: 0.0375, ImageInputPrice: 0.0375, AudioInputPrice: 0.0375, OutputPrice: 0.15},
@@ -56,6 +59,9 @@ var staticPricing = []ProviderPricing{
 	{Provider: ProviderVertexAI, Model: "gemini-2.0-flash", TextInputPrice: 0.10, ImageInputPrice: 0.10, AudioInputPrice: 0.10, OutputPrice: 0.40},
 	{Provider: ProviderVertexAI, Model: "gemini-2.5-flash", TextInputPrice: 0.15, ImageInputPrice: 0.15, AudioInputPrice: 0.15, OutputPrice: 0.60},
 	{Provider: ProviderVertexAI, Model: "gemini-2.5-pro", TextInputPrice: 1.25, ImageInputPrice: 1.25, AudioInputPrice: 1.25, OutputPrice: 5.00},
+	{Provider: ProviderVertexAI, Model: "gemini-3.1-flash-lite-preview", TextInputPrice: 0.10, ImageInputPrice: 0.10, AudioInputPrice: 0.10, OutputPrice: 0.40},
+	{Provider: ProviderVertexAI, Model: "gemini-3.1-flash", TextInputPrice: 0.15, ImageInputPrice: 0.15, AudioInputPrice: 0.15, OutputPrice: 0.60},
+	{Provider: ProviderVertexAI, Model: "gemini-3.1-pro", TextInputPrice: 1.25, ImageInputPrice: 1.25, AudioInputPrice: 1.25, OutputPrice: 5.00},
 }
 
 // PricingSyncService fetches the latest retail pricing from an external registry

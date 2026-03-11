@@ -180,6 +180,9 @@ func staticModels(p ProviderType) []ProviderSupportedModel {
 		{"gemini-2.0-flash", "Gemini 2.0 Flash", ModelTypeGenerative},
 		{"gemini-2.5-flash", "Gemini 2.5 Flash", ModelTypeGenerative},
 		{"gemini-2.5-pro", "Gemini 2.5 Pro", ModelTypeGenerative},
+		{"gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite Preview", ModelTypeGenerative},
+		{"gemini-3.1-flash", "Gemini 3.1 Flash", ModelTypeGenerative},
+		{"gemini-3.1-pro", "Gemini 3.1 Pro", ModelTypeGenerative},
 		{"text-embedding-004", "Text Embedding 004", ModelTypeEmbedding},
 		{"gemini-embedding-001", "Gemini Embedding 001", ModelTypeEmbedding},
 	}
@@ -231,9 +234,17 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 	// Pick the best model: prefer any flash variant (fast, low-cost), then first available.
 	model = models[0].ModelName
 	for _, m := range models {
-		if m.ModelName == "gemini-2.5-flash" {
+		if m.ModelName == "gemini-3.1-flash-lite-preview" {
 			model = m.ModelName
 			break
+		}
+	}
+	if model == models[0].ModelName {
+		for _, m := range models {
+			if m.ModelName == "gemini-2.5-flash" {
+				model = m.ModelName
+				break
+			}
 		}
 	}
 	if model == models[0].ModelName {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 )
 
@@ -199,4 +200,98 @@ func (h *EmbeddingControlHandler) Config(c echo.Context) error {
 		"message": "embedding worker config updated",
 		"status":  h.currentStatus(),
 	})
+}
+
+// ============================================================================
+// mcp.EmbeddingControlHandler interface implementation
+// These exported methods are called by the MCP package via interface (no direct import).
+// ============================================================================
+
+// CurrentStatus returns the current status of all embedding workers.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) CurrentStatus() mcp.EmbeddingStatusSnapshot {
+	s := h.currentStatus()
+	return mcp.EmbeddingStatusSnapshot{
+		Objects: mcp.EmbeddingWorkerState{
+			Running: s.Objects.Running,
+			Paused:  s.Objects.Paused,
+		},
+		Relationships: mcp.EmbeddingWorkerState{
+			Running: s.Relationships.Running,
+			Paused:  s.Relationships.Paused,
+		},
+		Sweep: mcp.EmbeddingWorkerState{
+			Running: s.Sweep.Running,
+			Paused:  s.Sweep.Paused,
+		},
+		Config: mcp.EmbeddingConfigState{
+			BatchSize:             s.Config.BatchSize,
+			Concurrency:           s.Config.Concurrency,
+			IntervalMs:            s.Config.IntervalMs,
+			StaleMinutes:          s.Config.StaleMinutes,
+			EnableAdaptiveScaling: s.Config.EnableAdaptiveScaling,
+			MinConcurrency:        s.Config.MinConcurrency,
+			MaxConcurrency:        s.Config.MaxConcurrency,
+		},
+	}
+}
+
+// PauseAll pauses all embedding workers.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) PauseAll() {
+	h.objectWorker.Pause()
+	h.relWorker.Pause()
+	h.sweepWorker.Pause()
+}
+
+// ResumeAll resumes all embedding workers.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) ResumeAll() {
+	h.objectWorker.Resume()
+	h.relWorker.Resume()
+	h.sweepWorker.Resume()
+}
+
+// ApplyConfig applies an embedding configuration update.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) ApplyConfig(req mcp.EmbeddingConfigUpdate) {
+	objCfg := h.objectWorker.GetConfig()
+	relCfg := h.relWorker.GetConfig()
+
+	if req.BatchSize != nil {
+		objCfg.WorkerBatchSize = *req.BatchSize
+		relCfg.WorkerBatchSize = *req.BatchSize
+	}
+	if req.Concurrency != nil {
+		if objCfg.EnableAdaptiveScaling {
+			objCfg.MaxConcurrency = *req.Concurrency
+			relCfg.MaxConcurrency = *req.Concurrency
+		} else {
+			objCfg.WorkerConcurrency = *req.Concurrency
+			relCfg.WorkerConcurrency = *req.Concurrency
+		}
+	}
+	if req.IntervalMs != nil {
+		objCfg.WorkerIntervalMs = *req.IntervalMs
+		relCfg.WorkerIntervalMs = *req.IntervalMs
+	}
+	if req.EnableAdaptiveScaling != nil {
+		objCfg.EnableAdaptiveScaling = *req.EnableAdaptiveScaling
+		relCfg.EnableAdaptiveScaling = *req.EnableAdaptiveScaling
+	}
+	if req.MinConcurrency != nil {
+		objCfg.MinConcurrency = *req.MinConcurrency
+		relCfg.MinConcurrency = *req.MinConcurrency
+	}
+	if req.MaxConcurrency != nil {
+		objCfg.MaxConcurrency = *req.MaxConcurrency
+		relCfg.MaxConcurrency = *req.MaxConcurrency
+	}
+
+	h.objectWorker.SetConfig(objCfg)
+	h.relWorker.SetConfig(relCfg)
+
+	if req.StaleMinutes != nil && h.staleTask != nil {
+		h.staleTask.SetStaleMinutes(*req.StaleMinutes)
+	}
 }

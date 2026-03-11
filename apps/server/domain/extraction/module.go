@@ -11,6 +11,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/chunking"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -128,8 +129,15 @@ var Module = fx.Module("extraction",
 		RegisterDocumentParsingWorkerLifecycle,
 		RegisterObjectExtractionWorkerLifecycle,
 		RegisterEmbeddingSweepWorkerLifecycle,
+		registerEmbeddingControlHandlerWithMCP,
 	),
 )
+
+// registerEmbeddingControlHandlerWithMCP injects the EmbeddingControlHandler into
+// the MCP service so MCP tools can pause/resume/inspect embedding workers.
+func registerEmbeddingControlHandlerWithMCP(mcpService *mcp.Service, handler *EmbeddingControlHandler) {
+	mcpService.SetEmbeddingControlHandler(handler)
+}
 
 // provideAdminHandler creates the extraction jobs admin handler
 func provideAdminHandler(jobsService *ObjectExtractionJobsService) *AdminHandler {
