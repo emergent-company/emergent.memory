@@ -312,13 +312,17 @@ func (r *Repository) GetConversationHistory(ctx context.Context, conversationID 
 
 // SetAgentDefinitionID updates the agent_definition_id on a conversation.
 func (r *Repository) SetAgentDefinitionID(ctx context.Context, projectID string, conversationID uuid.UUID, agentDefID *uuid.UUID) error {
-	_, err := r.db.NewUpdate().
+	q := r.db.NewUpdate().
 		Model((*Conversation)(nil)).
 		Set("agent_definition_id = ?", agentDefID).
 		Set("updated_at = NOW()").
-		Where("id = ?", conversationID).
-		Where("project_id = ?", projectID).
-		Exec(ctx)
+		Where("id = ?", conversationID)
+	if projectID != "" {
+		q = q.Where("project_id = ?", projectID)
+	} else {
+		q = q.Where("project_id IS NULL")
+	}
+	_, err := q.Exec(ctx)
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
