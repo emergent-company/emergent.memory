@@ -315,7 +315,7 @@ func requiresProject(toolName string) bool {
 	switch toolName {
 	case "list_entity_types", "query_entities", "search_entities", "get_entity_edges",
 		"get_available_templates", "get_installed_templates",
-		"assign_template_pack", "update_template_assignment", "uninstall_template_pack":
+		"assign_schema", "update_template_assignment", "uninstall_schema":
 		return true
 	default:
 		return false

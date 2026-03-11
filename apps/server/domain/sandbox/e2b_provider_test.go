@@ -305,7 +305,7 @@ func TestE2BProvider_Create_Success(t *testing.T) {
 	assert.True(t, capturedReq.Secure)
 	assert.True(t, capturedReq.AllowInternetAccess)
 	assert.Equal(t, "bar", capturedReq.EnvVars["FOO"])
-	assert.Equal(t, "agent_workspace", capturedReq.Metadata["container_type"])
+	assert.Equal(t, "agent_sandbox", capturedReq.Metadata["container_type"])
 	assert.Equal(t, "ws-1", capturedReq.Metadata["workspace_id"])
 
 	// Verify sandbox is tracked
