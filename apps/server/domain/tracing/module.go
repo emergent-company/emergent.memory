@@ -13,8 +13,10 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/fx"
+	adktelemetry "google.golang.org/adk/telemetry"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	pkgtracing "github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
 // Module wires OTel tracing into the fx app.
@@ -92,13 +94,25 @@ func NewTracerProvider(cfg *config.Config, log *slog.Logger) (tracerProviderResu
 		sampler = sdktrace.TraceIDRatioBased(oc.SamplingRate)
 	}
 
+	// Wrap the batcher in an AttrRewriteProcessor so that third-party attribute
+	// keys emitted by the Google ADK (gcp.vertex.agent.*, gen_ai.*) are renamed
+	// to the memory.llm.* namespace before export.
+	rewritingBatcher := pkgtracing.NewAttrRewriteProcessor(sdktrace.NewBatchSpanProcessor(exp))
+
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exp),
+		sdktrace.WithSpanProcessor(rewritingBatcher),
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sampler),
 	)
 
 	otel.SetTracerProvider(tp)
+
+	// Register the same rewriting processor on the ADK's internal tracer so
+	// that spans emitted by the ADK's own TracerProvider are also rewritten.
+	// This must be called before any ADK spans are emitted.
+	adktelemetry.RegisterSpanProcessor(
+		pkgtracing.NewAttrRewriteProcessor(sdktrace.NewBatchSpanProcessor(exp)),
+	)
 
 	return tracerProviderResult{SDKProvider: tp}, nil
 }
