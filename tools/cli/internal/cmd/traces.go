@@ -470,6 +470,58 @@ func fetchRunInfos(cmd *cobra.Command, projectID string, traces []tempoTraceSear
 	return result
 }
 
+// traceRow is the JSON-serialisable representation of a single trace list entry.
+type traceRow struct {
+	TraceID          string   `json:"traceId"`
+	RootSpan         string   `json:"rootSpan"`
+	DurationMs       float64  `json:"durationMs"`
+	Timestamp        string   `json:"timestamp"`
+	AgentID          *string  `json:"agentId,omitempty"`
+	AgentName        *string  `json:"agentName,omitempty"`
+	InputTokens      *int64   `json:"inputTokens,omitempty"`
+	OutputTokens     *int64   `json:"outputTokens,omitempty"`
+	TotalTokens      *int64   `json:"totalTokens,omitempty"`
+	EstimatedCostUSD *float64 `json:"estimatedCostUsd,omitempty"`
+}
+
+func buildTraceRows(traces []tempoTraceSearchResult, runInfos map[string]*traceRunInfo) []traceRow {
+	rows := make([]traceRow, 0, len(traces))
+	for _, t := range traces {
+		ts := ""
+		if t.StartTimeUnixNano != "" {
+			ts = nanoToTime(t.StartTimeUnixNano).Format(time.RFC3339)
+		}
+		row := traceRow{
+			TraceID:    t.TraceID,
+			RootSpan:   t.RootTraceName,
+			DurationMs: t.DurationMs,
+			Timestamp:  ts,
+		}
+		if info, ok := runInfos[t.TraceID]; ok && info != nil {
+			if info.AgentID != "" {
+				v := info.AgentID
+				row.AgentID = &v
+			}
+			if info.AgentName != "" {
+				v := info.AgentName
+				row.AgentName = &v
+			}
+			if info.Usage != nil {
+				in := info.Usage.TotalInputTokens
+				out := info.Usage.TotalOutputTokens
+				total := in + out
+				cost := info.Usage.EstimatedCostUSD
+				row.InputTokens = &in
+				row.OutputTokens = &out
+				row.TotalTokens = &total
+				row.EstimatedCostUSD = &cost
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
 func printTraceTable(traces []tempoTraceSearchResult, runInfos map[string]*traceRunInfo, showCosts bool) {
 	if len(traces) == 0 {
 		fmt.Println("No traces found.")
@@ -481,10 +533,10 @@ func printTraceTable(traces []tempoTraceSearchResult, runInfos map[string]*trace
 		return ni > nj
 	})
 	if showCosts {
-		fmt.Printf("%-32s  %-20s  %-36s  %-8s  %-10s  %-14s  %-14s  %s\n",
+		fmt.Printf("%-32s  %-28s  %-36s  %-8s  %-10s  %-14s  %-14s  %s\n",
 			"TRACE ID", "AGENT", "ROOT SPAN", "DURATION", "TIMESTAMP",
 			"INPUT TOKENS", "OUTPUT TOKENS", "EST. COST")
-		fmt.Println(strings.Repeat("─", 162))
+		fmt.Println(strings.Repeat("─", 170))
 	} else {
 		fmt.Printf("%-32s  %-36s  %-8s  %s\n",
 			"TRACE ID", "ROOT SPAN", "DURATION", "TIMESTAMP")
@@ -501,15 +553,21 @@ func printTraceTable(traces []tempoTraceSearchResult, runInfos map[string]*trace
 		}
 
 		if showCosts {
-			agentName := "—"
+			agentLabel := "—"
 			inputTok := "—"
 			outputTok := "—"
 			cost := "—"
 			if info, ok := runInfos[t.TraceID]; ok && info != nil {
-				if info.AgentName != "" {
-					agentName = info.AgentName
+				suffix := ""
+				if len(info.AgentID) >= 4 {
+					suffix = "…" + info.AgentID[len(info.AgentID)-4:]
 				} else if info.AgentID != "" {
-					agentName = info.AgentID[:8] + "…"
+					suffix = info.AgentID
+				}
+				if info.AgentName != "" {
+					agentLabel = info.AgentName + " (" + suffix + ")"
+				} else if suffix != "" {
+					agentLabel = suffix
 				}
 				if info.Usage != nil {
 					inputTok = strconv.FormatInt(info.Usage.TotalInputTokens, 10)
@@ -517,11 +575,11 @@ func printTraceTable(traces []tempoTraceSearchResult, runInfos map[string]*trace
 					cost = fmt.Sprintf("$%.6f", info.Usage.EstimatedCostUSD)
 				}
 			}
-			if len(agentName) > 20 {
-				agentName = agentName[:19] + "…"
+			if len(agentLabel) > 28 {
+				agentLabel = agentLabel[:27] + "…"
 			}
-			fmt.Printf("%-32s  %-20s  %-36s  %-8s  %-10s  %-14s  %-14s  %s\n",
-				t.TraceID, agentName, root, formatDuration(t.DurationMs), ts,
+			fmt.Printf("%-32s  %-28s  %-36s  %-8s  %-10s  %-14s  %-14s  %s\n",
+				t.TraceID, agentLabel, root, formatDuration(t.DurationMs), ts,
 				inputTok, outputTok, cost)
 		} else {
 			fmt.Printf("%-32s  %-36s  %-8s  %s\n",
@@ -584,6 +642,25 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 	var runInfos map[string]*traceRunInfo
 	if tracesListAgentRuns {
 		runInfos = fetchRunInfos(cmd, projectID, resp.Traces)
+	}
+
+	// JSON output
+	if output == "json" {
+		sort.Slice(resp.Traces, func(i, j int) bool {
+			ni, _ := strconv.ParseInt(resp.Traces[i].StartTimeUnixNano, 10, 64)
+			nj, _ := strconv.ParseInt(resp.Traces[j].StartTimeUnixNano, 10, 64)
+			return ni > nj
+		})
+		if runInfos == nil {
+			runInfos = map[string]*traceRunInfo{}
+		}
+		rows := buildTraceRows(resp.Traces, runInfos)
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		return enc.Encode(rows)
+	}
+
+	if tracesListAgentRuns {
 		fmt.Printf("Agent run traces — %s (last %s, limit %d)\n\n", projectLabel, tracesListSince, tracesListLimit)
 	} else {
 		fmt.Printf("Recent traces — %s (last %s, limit %d)\n\n", projectLabel, tracesListSince, tracesListLimit)
