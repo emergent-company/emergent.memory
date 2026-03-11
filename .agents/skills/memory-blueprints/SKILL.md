@@ -1,5 +1,5 @@
 ---
-name: emergent-blueprints
+name: memory-blueprints
 description: Apply and export Emergent Blueprints — declarative directories of template packs, agent definitions, and seed data applied with `memory blueprints`. Use when setting up a project from a blueprint, seeding graph data, or exporting an existing project's graph as re-applyable seed files.
 metadata:
   author: emergent
@@ -8,7 +8,7 @@ metadata:
 
 Manage Emergent Blueprints using `memory blueprints`. A blueprint is a directory of YAML/JSON files and JSONL seed data that declaratively describes a project's template packs, agent definitions, and initial graph objects/relationships.
 
-> **New to Emergent?** Load the `emergent-onboard` skill first — it walks through designing and installing a template pack from scratch.
+> **New to Emergent?** Load the `memory-onboard` skill first — it walks through designing and installing a template pack from scratch.
 
 ## Concepts
 

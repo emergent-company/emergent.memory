@@ -1,5 +1,5 @@
 ---
-name: emergent-mcp-servers
+name: memory-mcp-servers
 description: Manage MCP (Model Context Protocol) servers in an Emergent project — register, inspect, sync tools, and delete servers. Use when the user wants to add, configure, or troubleshoot MCP servers connected to their Emergent project.
 metadata:
   author: emergent

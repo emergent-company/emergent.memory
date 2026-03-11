@@ -576,6 +576,28 @@ func (r *Repository) UpdateSessionStatus(ctx context.Context, runID string, stat
 	return err
 }
 
+// UpdateTraceAndRootRun persists the OTel trace_id and root_run_id on an agent run.
+// Called immediately after the OTel span is created so the run row is linked to
+// its trace and to the top-level orchestration run in the same request.
+// Either argument may be empty string, in which case the corresponding column is set to NULL.
+func (r *Repository) UpdateTraceAndRootRun(ctx context.Context, runID, traceID, rootRunID string) error {
+	q := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Where("id = ?", runID)
+	if traceID != "" {
+		q = q.Set("trace_id = ?", traceID)
+	} else {
+		q = q.Set("trace_id = NULL")
+	}
+	if rootRunID != "" {
+		q = q.Set("root_run_id = ?", rootRunID)
+	} else {
+		q = q.Set("root_run_id = NULL")
+	}
+	_, err := q.Exec(ctx)
+	return err
+}
+
 // CreateRunWithOptions creates a new agent run with coordination options.
 func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
 	run := &AgentRun{

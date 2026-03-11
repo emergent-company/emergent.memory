@@ -729,13 +729,13 @@ func (m Model) renderTraceDetail() string {
 		return content.String()
 	}
 
-	// Scan all spans for emergent.agent.run_id and render a deep-link if found
+	// Scan all spans for memory.agent.run_id and render a deep-link if found
 	linkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true).Padding(0, 1)
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
 	for _, batch := range m.selectedTraceData.Batches {
 		for _, ss := range batch.ScopeSpans {
 			for _, s := range ss.Spans {
-				if runID := traceAttrValue(s.Attributes, "emergent.agent.run_id"); runID != "" {
+				if runID := traceAttrValue(s.Attributes, "memory.agent.run_id"); runID != "" {
 					deepLink := m.client.BaseURL() + "/agents/runs/" + runID
 					content.WriteString(labelStyle.Render("Open in browser:"))
 					content.WriteString(" ")

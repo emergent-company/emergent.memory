@@ -178,9 +178,9 @@ func (w *ObjectExtractionWorker) processSingleJob(ctx context.Context, job *Obje
 		docID = *job.DocumentID
 	}
 	ctx, span := tracing.Start(ctx, "extraction.object_extraction",
-		attribute.String("emergent.job.id", job.ID),
-		attribute.String("emergent.project.id", job.ProjectID),
-		attribute.String("emergent.document.id", docID),
+		attribute.String("memory.job.id", job.ID),
+		attribute.String("memory.project.id", job.ProjectID),
+		attribute.String("memory.document.id", docID),
 	)
 	defer span.End()
 
@@ -210,8 +210,8 @@ func (w *ObjectExtractionWorker) processSingleJob(ctx context.Context, job *Obje
 	}
 
 	span.SetAttributes(
-		attribute.Int("emergent.extraction.entity_count", result.ObjectsCreated),
-		attribute.Int("emergent.extraction.relationship_count", result.RelationshipsCreated),
+		attribute.Int("memory.extraction.entity_count", result.ObjectsCreated),
+		attribute.Int("memory.extraction.relationship_count", result.RelationshipsCreated),
 	)
 	span.SetStatus(codes.Ok, "")
 

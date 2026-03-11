@@ -1,12 +1,12 @@
 ---
-name: emergent-query
+name: memory-query
 description: Query an Emergent project knowledge base using natural language or direct hybrid search. Use when the user wants to search, explore, or ask questions about content in an Emergent project.
 metadata:
   author: emergent
   version: "1.0"
 ---
 
-> **New to Emergent?** Load the `emergent-onboard` skill first to set up the project's knowledge graph schema before querying.
+> **New to Emergent?** Load the `memory-onboard` skill first to set up the project's knowledge graph schema before querying.
 
 Query an Emergent project knowledge base using the `emergent query` command.
 

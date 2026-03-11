@@ -232,8 +232,8 @@ type graphObjectRow struct {
 // processJob processes a single graph embedding job
 func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddingJob) error {
 	ctx, span := tracing.Start(ctx, "extraction.graph_embedding",
-		attribute.String("emergent.job.id", job.ID),
-		attribute.String("emergent.object.id", job.ObjectID),
+		attribute.String("memory.job.id", job.ID),
+		attribute.String("memory.object.id", job.ObjectID),
 	)
 	defer span.End()
 
@@ -279,9 +279,9 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		keyVal = *obj.Key
 	}
 	span.SetAttributes(
-		attribute.String("emergent.project.id", obj.ProjectID),
-		attribute.String("emergent.object.type", obj.Type),
-		attribute.String("emergent.object.key", keyVal),
+		attribute.String("memory.project.id", obj.ProjectID),
+		attribute.String("memory.object.type", obj.Type),
+		attribute.String("memory.object.key", keyVal),
 	)
 
 	// Inject project ID into context so the credential resolver can look up
@@ -362,10 +362,10 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 	totalDurationMs := time.Since(startTime).Milliseconds()
 
 	span.SetAttributes(
-		attribute.Int("emergent.embedding.text_length", textLength),
-		attribute.Int("emergent.embedding.dims", len(result.Embedding)),
-		attribute.Int64("emergent.embedding.duration_ms", embeddingDurationMs),
-		attribute.Int64("emergent.total_duration_ms", totalDurationMs),
+		attribute.Int("memory.embedding.text_length", textLength),
+		attribute.Int("memory.embedding.dims", len(result.Embedding)),
+		attribute.Int64("memory.embedding.duration_ms", embeddingDurationMs),
+		attribute.Int64("memory.total_duration_ms", totalDurationMs),
 	)
 
 	w.log.Debug("generated embedding for graph object",

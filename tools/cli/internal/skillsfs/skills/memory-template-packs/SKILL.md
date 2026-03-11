@@ -1,5 +1,5 @@
 ---
-name: emergent-template-packs
+name: memory-template-packs
 description: Manage Emergent template packs — discover, install, and remove reusable sets of object and relationship types in a project. Use when the user wants to configure what types of knowledge objects a project can contain.
 metadata:
   author: emergent
@@ -8,7 +8,7 @@ metadata:
 
 Manage template packs using `emergent template-packs`. Template packs define reusable sets of object types and relationship types that can be installed into a project's knowledge graph schema.
 
-> **New to Emergent?** Load the `emergent-onboard` skill first — it walks through designing and installing a template pack from scratch.
+> **New to Emergent?** Load the `memory-onboard` skill first — it walks through designing and installing a template pack from scratch.
 
 ## Concepts
 

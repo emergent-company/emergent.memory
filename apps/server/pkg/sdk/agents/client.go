@@ -105,6 +105,10 @@ type AgentRun struct {
 	ParentRunID *string `json:"parentRunId,omitempty"`
 	ResumedFrom *string `json:"resumedFrom,omitempty"`
 
+	// Observability linkage
+	TraceID   *string `json:"traceId,omitempty"`
+	RootRunID *string `json:"rootRunId,omitempty"`
+
 	// Trigger tracking
 	TriggerSource   *string        `json:"triggerSource,omitempty"`
 	TriggerMetadata map[string]any `json:"triggerMetadata,omitempty"`

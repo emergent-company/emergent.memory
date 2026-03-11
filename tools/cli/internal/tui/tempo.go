@@ -153,7 +153,7 @@ func loadTraces(tempoURL, projectID string) tea.Cmd {
 			"end":   {strconv.FormatInt(time.Now().Unix(), 10)},
 		}
 		if projectID != "" {
-			params.Set("q", fmt.Sprintf(`{span.emergent.project.id="%s"}`, projectID))
+			params.Set("q", fmt.Sprintf(`{span.memory.project.id="%s" && rootName = "agent.run"}`, projectID))
 		}
 		body, err := doTempoGet(tempoURL, "/api/search", params)
 		if err != nil {
