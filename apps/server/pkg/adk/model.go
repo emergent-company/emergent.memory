@@ -130,7 +130,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				if err != nil {
 					return nil, fmt.Errorf("failed to create Gemini model via Vertex AI (DB cred): %w", err)
 				}
-				return f.wrapModel(llm, "vertex-ai"), nil
+				return f.wrapModel(llm, "google-vertex"), nil
 			}
 
 			if cred.IsGoogleAI && cred.APIKey != "" {
@@ -146,7 +146,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				if err != nil {
 					return nil, fmt.Errorf("failed to create Gemini model via Google AI (DB cred): %w", err)
 				}
-				return f.wrapModel(llm, "google-ai"), nil
+				return f.wrapModel(llm, "google"), nil
 			}
 		}
 		// cred == nil means no DB credential found — fall through to env vars
@@ -168,7 +168,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 
 		llm, err := gemini.NewModel(ctx, modelName, clientCfg)
 		if err == nil {
-			return f.wrapModel(llm, "vertex-ai"), nil
+			return f.wrapModel(llm, "google-vertex"), nil
 		}
 
 		// If Vertex AI fails and we have an API key, fall back
@@ -194,7 +194,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Gemini model via Google AI: %w", err)
 		}
-		return f.wrapModel(llm, "google-ai"), nil
+		return f.wrapModel(llm, "google"), nil
 	}
 
 	return nil, fmt.Errorf("no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI")

@@ -12,10 +12,10 @@ func TestNewRegistry(t *testing.T) {
 	}
 
 	if !r.IsSupported(ProviderGoogleAI) {
-		t.Error("expected google-ai to be supported")
+		t.Error("expected google to be supported")
 	}
 	if !r.IsSupported(ProviderVertexAI) {
-		t.Error("expected vertex-ai to be supported")
+		t.Error("expected google-vertex to be supported")
 	}
 	if r.IsSupported(ProviderType("openai")) {
 		t.Error("expected openai to NOT be supported")
@@ -86,7 +86,7 @@ func TestRegistryList(t *testing.T) {
 		types[d.Type] = true
 	}
 	if !types[ProviderGoogleAI] || !types[ProviderVertexAI] {
-		t.Errorf("expected both google-ai and vertex-ai in list, got %v", types)
+		t.Errorf("expected both google and google-vertex in list, got %v", types)
 	}
 }
 
@@ -103,16 +103,16 @@ func TestRegistrySupportedTypes(t *testing.T) {
 		typeSet[pt] = true
 	}
 	if !typeSet[ProviderGoogleAI] || !typeSet[ProviderVertexAI] {
-		t.Errorf("expected both google-ai and vertex-ai, got %v", typeSet)
+		t.Errorf("expected both google and google-vertex, got %v", typeSet)
 	}
 }
 
 func TestProviderTypeConstants(t *testing.T) {
-	if ProviderGoogleAI != "google-ai" {
-		t.Errorf("expected ProviderGoogleAI to be 'google-ai', got %q", ProviderGoogleAI)
+	if ProviderGoogleAI != "google" {
+		t.Errorf("expected ProviderGoogleAI to be 'google', got %q", ProviderGoogleAI)
 	}
-	if ProviderVertexAI != "vertex-ai" {
-		t.Errorf("expected ProviderVertexAI to be 'vertex-ai', got %q", ProviderVertexAI)
+	if ProviderVertexAI != "google-vertex" {
+		t.Errorf("expected ProviderVertexAI to be 'google-vertex', got %q", ProviderVertexAI)
 	}
 }
 

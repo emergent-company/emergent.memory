@@ -59,6 +59,14 @@ type StreamEvent struct {
 // When set on ExecuteRequest, it enables real-time streaming of text tokens and tool calls.
 type StreamCallback func(event StreamEvent)
 
+// ModelLimitsLookup is a narrow interface for querying the max output token limit
+// for a given model name from the provider catalog. It is satisfied by
+// *provider.Repository but declared here to avoid a direct import of the provider
+// domain package into the agents package.
+type ModelLimitsLookup interface {
+	GetModelOutputLimit(ctx context.Context, modelName string) (int, error)
+}
+
 // callerRunIDKey is the context key used to propagate the calling agent's run ID
 // through the execution pipeline so that tool calls (e.g. trigger_agent) can
 // identify which run is making the request.
@@ -121,6 +129,7 @@ type AgentExecutor struct {
 	provisioner    *workspace.AutoProvisioner // nil if workspaces are disabled
 	wsEnabled      bool                       // cached feature flag
 	sessionService session.Service
+	modelLimits    ModelLimitsLookup // nil if provider module is not registered
 	log            *slog.Logger
 }
 
@@ -134,6 +143,7 @@ func NewAgentExecutor(
 	provisioner *workspace.AutoProvisioner,
 	cfg *config.Config,
 	sessionService session.Service,
+	modelLimits ModelLimitsLookup,
 	log *slog.Logger,
 ) *AgentExecutor {
 	wsEnabled := cfg.Workspace.IsEnabled()
@@ -149,6 +159,7 @@ func NewAgentExecutor(
 		provisioner:    provisioner,
 		wsEnabled:      wsEnabled,
 		sessionService: sessionService,
+		modelLimits:    modelLimits,
 		log:            log.With(logger.Scope("agents.executor")),
 	}
 }
@@ -708,7 +719,13 @@ func (ae *AgentExecutor) runPipeline(
 			genConfig.Temperature = req.AgentDefinition.Model.Temperature
 		}
 		if req.AgentDefinition.Model.MaxTokens != nil {
+			// Explicit per-agent override takes highest priority.
 			genConfig.MaxOutputTokens = int32(*req.AgentDefinition.Model.MaxTokens)
+		} else if ae.modelLimits != nil && modelName != "" {
+			// Fall back to the models.dev catalog limit for this model.
+			if limit, err := ae.modelLimits.GetModelOutputLimit(ctx, modelName); err == nil && limit > 0 {
+				genConfig.MaxOutputTokens = int32(limit)
+			}
 		}
 		// Inject Google-native tools (google_search, url_context, code_execution).
 		// Only tools that are both requested by the agent definition AND supported

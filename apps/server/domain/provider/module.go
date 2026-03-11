@@ -21,6 +21,7 @@ import (
 //   - *ModelCatalogService          — model catalog with API fetch + static fallback
 //   - *UsageService                 — async LLM usage event recording
 //   - *PricingSyncService           — daily pricing sync cron job
+//   - *ModelLimitsSyncService       — daily model output token limits sync from models.dev
 //   - adk.CredentialResolver        — adapts CredentialService to pkg/adk interface
 //   - embeddings.EmbeddingResolver  — adapts CredentialService to pkg/embeddings interface
 var Module = fx.Module("provider",
@@ -31,6 +32,7 @@ var Module = fx.Module("provider",
 		provideModelCatalogService,
 		provideUsageService,
 		providePricingSyncService,
+		provideModelLimitsSyncService,
 		provideADKCredentialAdapter,
 		provideEmbeddingCredentialAdapter,
 		provideUsageTrackerAdapter,
@@ -38,6 +40,7 @@ var Module = fx.Module("provider",
 	),
 	fx.Invoke(
 		runStartupPricingSync,
+		runStartupModelLimitsSync,
 		RegisterRoutes,
 	),
 )
@@ -66,6 +69,10 @@ func providePricingSyncService(repo *Repository, sched *scheduler.Scheduler, log
 	return NewPricingSyncService(repo, sched, log)
 }
 
+func provideModelLimitsSyncService(repo *Repository, sched *scheduler.Scheduler, log *slog.Logger) *ModelLimitsSyncService {
+	return NewModelLimitsSyncService(repo, sched, log)
+}
+
 // runStartupPricingSync performs an initial pricing sync on server startup.
 // This ensures the pricing table is populated on first run without waiting
 // for the next daily cron execution.
@@ -75,6 +82,22 @@ func runStartupPricingSync(lc fx.Lifecycle, pricingSync *PricingSyncService, log
 			go func() {
 				if err := pricingSync.Sync(ctx); err != nil {
 					log.Warn("startup pricing sync failed", slog.String("error", err.Error()))
+				}
+			}()
+			return nil
+		},
+	})
+}
+
+// runStartupModelLimitsSync performs an initial model limits sync on server startup.
+// This ensures the max_output_tokens column is populated on first run without
+// waiting for the next daily cron execution.
+func runStartupModelLimitsSync(lc fx.Lifecycle, limitsSync *ModelLimitsSyncService, log *slog.Logger) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			go func() {
+				if err := limitsSync.Sync(ctx); err != nil {
+					log.Warn("startup model limits sync failed", slog.String("error", err.Error()))
 				}
 			}()
 			return nil

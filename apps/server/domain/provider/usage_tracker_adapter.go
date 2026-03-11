@@ -23,7 +23,7 @@ func NewUsageTrackerAdapter(usage *UsageService, log *slog.Logger) *UsageTracker
 }
 
 // WrapModel satisfies adk.ModelWrapper.
-// The provider parameter is one of "google-ai" or "vertex-ai" as a plain string
+// The provider parameter is one of "google" or "google-vertex" as a plain string
 // (matching ProviderType string values) to avoid leaking domain types into pkg/adk.
 func (a *UsageTrackerAdapter) WrapModel(inner adkmodel.LLM, provider string) adkmodel.LLM {
 	return NewTrackingModel(inner, a.usage, ProviderType(provider), a.log)

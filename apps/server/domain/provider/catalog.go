@@ -159,6 +159,43 @@ func classifyModel(m *genai.Model) ModelType {
 	return ""
 }
 
+// staticModels returns a hardcoded list of well-known models for a provider.
+// It is used as a fallback when the provider API is unavailable during startup,
+// and by tests that do not require a live API connection.
+//
+// Only generative and embedding models that are confirmed to be stable and
+// widely available are included. The list is intentionally conservative.
+func staticModels(p ProviderType) []ProviderSupportedModel {
+	type entry struct {
+		name        string
+		displayName string
+		modelType   ModelType
+	}
+
+	// These models are provider-agnostic; both Google AI and Vertex AI support them.
+	known := []entry{
+		{"gemini-1.5-flash", "Gemini 1.5 Flash", ModelTypeGenerative},
+		{"gemini-1.5-flash-8b", "Gemini 1.5 Flash 8B", ModelTypeGenerative},
+		{"gemini-1.5-pro", "Gemini 1.5 Pro", ModelTypeGenerative},
+		{"gemini-2.0-flash", "Gemini 2.0 Flash", ModelTypeGenerative},
+		{"gemini-2.5-flash", "Gemini 2.5 Flash", ModelTypeGenerative},
+		{"gemini-2.5-pro", "Gemini 2.5 Pro", ModelTypeGenerative},
+		{"text-embedding-004", "Text Embedding 004", ModelTypeEmbedding},
+		{"gemini-embedding-001", "Gemini Embedding 001", ModelTypeEmbedding},
+	}
+
+	models := make([]ProviderSupportedModel, 0, len(known))
+	for _, e := range known {
+		models = append(models, ProviderSupportedModel{
+			Provider:    p,
+			ModelName:   e.name,
+			ModelType:   e.modelType,
+			DisplayName: e.displayName,
+		})
+	}
+	return models
+}
+
 // normalizeModelName strips path prefixes that the API sometimes returns,
 // producing a short canonical model name suitable for storage and display.
 //
