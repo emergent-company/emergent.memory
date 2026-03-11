@@ -403,7 +403,7 @@ func TestGenerateFallbackHTML(t *testing.T) {
 			wantContains: []string{
 				"<title>Welcome Email</title>",
 				"Hello,",
-				"This email was sent by Emergent.",
+				"This email was sent by Memory.",
 			},
 		},
 		{
@@ -531,7 +531,7 @@ func TestGenerateFallbackText(t *testing.T) {
 			ctx: TemplateContext{},
 			wantContains: []string{
 				"Hello,",
-				"This email was sent by Emergent.",
+				"This email was sent by Memory.",
 			},
 		},
 		{

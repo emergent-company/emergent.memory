@@ -151,7 +151,7 @@ func TestRequiresProject(t *testing.T) {
 		},
 		{
 			name:     "assign_template_pack requires project",
-			toolName: "assign_template_pack",
+			toolName: "assign_schema",
 			expected: true,
 		},
 		{
@@ -161,28 +161,28 @@ func TestRequiresProject(t *testing.T) {
 		},
 		{
 			name:     "uninstall_template_pack requires project",
-			toolName: "uninstall_template_pack",
+			toolName: "uninstall_schema",
 			expected: true,
 		},
 		// Template pack tools that do NOT require project (global registry)
 		{
 			name:     "list_template_packs does not require project",
-			toolName: "list_template_packs",
+			toolName: "list_schemas",
 			expected: false,
 		},
 		{
 			name:     "get_template_pack does not require project",
-			toolName: "get_template_pack",
+			toolName: "get_schema",
 			expected: false,
 		},
 		{
 			name:     "create_template_pack does not require project",
-			toolName: "create_template_pack",
+			toolName: "create_schema",
 			expected: false,
 		},
 		{
 			name:     "delete_template_pack does not require project",
-			toolName: "delete_template_pack",
+			toolName: "delete_schema",
 			expected: false,
 		},
 		// Global tool
@@ -439,15 +439,15 @@ func TestGetToolDefinitions(t *testing.T) {
 		"query_entities",
 		"search_entities",
 		"get_entity_edges",
-		"list_template_packs",
-		"get_template_pack",
+		"list_schemas",
+		"get_schema",
 		"get_available_templates",
 		"get_installed_templates",
-		"assign_template_pack",
+		"assign_schema",
 		"update_template_assignment",
-		"uninstall_template_pack",
-		"create_template_pack",
-		"delete_template_pack",
+		"uninstall_schema",
+		"create_schema",
+		"delete_schema",
 		"create_entity",
 		"create_relationship",
 		"update_entity",
@@ -533,7 +533,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("get_template_pack requires pack_id", func(t *testing.T) {
-		tool := toolMap["get_template_pack"]
+		tool := toolMap["get_schema"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "pack_id" {
@@ -547,10 +547,10 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("assign_template_pack requires template_pack_id", func(t *testing.T) {
-		tool := toolMap["assign_template_pack"]
+		tool := toolMap["assign_schema"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
-			if r == "template_pack_id" {
+			if r == "schema_id" {
 				found = true
 				break
 			}
@@ -561,7 +561,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("create_template_pack requires name, version, object_type_schemas", func(t *testing.T) {
-		tool := toolMap["create_template_pack"]
+		tool := toolMap["create_schema"]
 		requiredFields := map[string]bool{"name": false, "version": false, "object_type_schemas": false}
 		for _, r := range tool.InputSchema.Required {
 			if _, ok := requiredFields[r]; ok {
@@ -576,7 +576,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("list_template_packs has optional pagination params", func(t *testing.T) {
-		tool := toolMap["list_template_packs"]
+		tool := toolMap["list_schemas"]
 		props := tool.InputSchema.Properties
 		if _, ok := props["limit"]; !ok {
 			t.Error("list_template_packs should have limit property")
@@ -618,7 +618,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("uninstall_template_pack requires assignment_id", func(t *testing.T) {
-		tool := toolMap["uninstall_template_pack"]
+		tool := toolMap["uninstall_schema"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "assignment_id" {
@@ -632,7 +632,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("delete_template_pack requires pack_id", func(t *testing.T) {
-		tool := toolMap["delete_template_pack"]
+		tool := toolMap["delete_schema"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "pack_id" {
@@ -766,8 +766,8 @@ func TestWrapResult(t *testing.T) {
 	})
 
 	t.Run("wraps list result", func(t *testing.T) {
-		data := ListTemplatePacksResult{
-			Packs:   []TemplatePackSummary{},
+		data := ListSchemasResult{
+			Packs:   []MemorySchemaSummary{},
 			Total:   0,
 			Page:    1,
 			Limit:   20,
