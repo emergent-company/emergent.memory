@@ -108,11 +108,8 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	if auth := c.AuthorizationHeader(); auth != "" {
-		httpReq.Header.Set("Authorization", auth)
-	}
-	if projectID != "" {
-		httpReq.Header.Set("X-Project-ID", projectID)
+	if err := c.SDK.AuthenticateRequest(httpReq); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
 	}
 
 	start := time.Now()
