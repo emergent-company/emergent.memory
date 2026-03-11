@@ -19,6 +19,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/database"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -81,6 +82,24 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
 				Required:   []string{},
+			},
+		},
+		{
+			Name:        "create_project",
+			Description: "Create a new project under the authenticated user's organization. Returns the new project's id, name, and orgId. If org_id is omitted it is resolved from the caller's authentication context.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Name of the new project",
+					},
+					"org_id": {
+						Type:        "string",
+						Description: "UUID of the organization to create the project under. Optional — defaults to the caller's organization from auth context.",
+					},
+				},
+				Required: []string{"name"},
 			},
 		},
 		{
@@ -872,6 +891,8 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	switch toolName {
 	case "get_project_info":
 		return s.executeGetProjectInfo(ctx, projectID)
+	case "create_project":
+		return s.executeCreateProject(ctx, args)
 	case "schema_version":
 		return s.executeSchemaVersion(ctx)
 	case "list_entity_types":
@@ -4401,4 +4422,52 @@ func (s *Service) delegateRegistryTool(ctx context.Context, projectID, toolName 
 	default:
 		return nil, fmt.Errorf("unknown MCP registry tool: %s", toolName)
 	}
+}
+
+// executeCreateProject creates a new project under the caller's organization.
+// The org_id argument is optional; when absent it is resolved from the auth context.
+func (s *Service) executeCreateProject(ctx context.Context, args map[string]any) (*ToolResult, error) {
+	name, _ := args["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("create_project: 'name' is required")
+	}
+
+	// Resolve org_id: explicit arg → auth context → error.
+	orgID, _ := args["org_id"].(string)
+	if orgID == "" {
+		orgID = auth.OrgIDFromContext(ctx)
+	}
+	if orgID == "" {
+		return nil, fmt.Errorf("create_project: 'org_id' is required (could not resolve from auth context)")
+	}
+
+	// Validate that org_id is a UUID.
+	if _, err := uuid.Parse(orgID); err != nil {
+		return nil, fmt.Errorf("create_project: 'org_id' must be a valid UUID: %w", err)
+	}
+
+	// Insert the project directly via the shared DB handle.
+	type projectRow struct {
+		ID    string `bun:"id"`
+		Name  string `bun:"name"`
+		OrgID string `bun:"organization_id"`
+	}
+	var row projectRow
+	err := s.db.NewRaw(
+		"INSERT INTO kb.projects (name, organization_id) VALUES (?, ?) RETURNING id, name, organization_id",
+		name, orgID,
+	).Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("create_project: insert failed: %w", err)
+	}
+
+	result := map[string]any{
+		"id":    row.ID,
+		"name":  row.Name,
+		"orgId": row.OrgID,
+	}
+	b, _ := json.Marshal(result)
+	return &ToolResult{
+		Content: []ContentBlock{{Type: "text", Text: string(b)}},
+	}, nil
 }
