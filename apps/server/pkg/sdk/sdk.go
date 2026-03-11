@@ -321,6 +321,26 @@ func (c *Client) SetContext(orgID, projectID string) {
 	// Note: Projects, Orgs, Users, APITokens don't use org/project context in requests
 }
 
+// AuthenticateRequest applies authentication headers to the given request
+// without executing it. This is useful when the caller needs to manage the
+// HTTP transport itself (e.g. for streaming responses with a custom timeout).
+func (c *Client) AuthenticateRequest(req *http.Request) error {
+	if err := c.auth.Authenticate(req); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+	if orgID != "" {
+		req.Header.Set("X-Org-ID", orgID)
+	}
+	if projectID != "" {
+		req.Header.Set("X-Project-ID", projectID)
+	}
+	return nil
+}
+
 // Do executes an HTTP request with authentication.
 func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
 	// Add authentication

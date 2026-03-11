@@ -150,14 +150,13 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	// Attach auth header when we have a client.
+	// Attach auth headers (and context headers) using the SDK's auth provider.
+	// This correctly handles all credential types: plain API keys send X-API-Key,
+	// project tokens and OIDC tokens send Authorization: Bearer.
 	if c != nil {
-		if authHeader := c.AuthorizationHeader(); authHeader != "" {
-			httpReq.Header.Set("Authorization", authHeader)
+		if err := c.SDK.AuthenticateRequest(httpReq); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
 		}
-	}
-	if projectID != "" {
-		httpReq.Header.Set("X-Project-ID", projectID)
 	}
 
 	start := time.Now()
