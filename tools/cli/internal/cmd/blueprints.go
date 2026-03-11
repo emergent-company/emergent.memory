@@ -36,7 +36,7 @@ var blueprintsCmd = &cobra.Command{
 current project from a structured directory or a GitHub repository URL.
 
 The source directory (or GitHub repo root) may contain:
-  packs/             — one file per template pack  (.json, .yaml, .yml)
+  packs/             — one file per memory schema  (.json, .yaml, .yml)
   agents/            — one file per agent definition (.json, .yaml, .yml)
   skills/            — one subdirectory per skill, each containing a SKILL.md file
   seed/objects/      — per-type JSONL files with graph objects to seed
@@ -96,7 +96,7 @@ Examples:
 		// ── Load files ─────────────────────────────────────────────────
 		// Load .env and .env.local from blueprint dir (secrets, API keys).
 		envVars := blueprints.LoadEnvFiles(dir)
-		packs, agents, skills, seedObjects, seedRels, loadResults, err := blueprints.LoadDir(dir, envVars)
+		projectFile, packs, agents, skills, seedObjects, seedRels, loadResults, err := blueprints.LoadDir(dir, envVars)
 		if err != nil {
 			return fmt.Errorf("load directory: %w", err)
 		}
@@ -109,14 +109,16 @@ Examples:
 			}
 		}
 
-		if len(packs) == 0 && len(agents) == 0 && len(skills) == 0 && len(seedObjects) == 0 && len(seedRels) == 0 && len(loadResults) == 0 {
+		if projectFile == nil && len(packs) == 0 && len(agents) == 0 && len(skills) == 0 && len(seedObjects) == 0 && len(seedRels) == 0 && len(loadResults) == 0 {
 			fmt.Fprintln(out, "Nothing to apply — no blueprint files found.")
 			return nil
 		}
 
 		// ── Run blueprinter ────────────────────────────────────────────
 		applier := blueprints.NewBlueprintsApplier(
-			c.SDK.TemplatePacks,
+			c.SDK.Projects,
+			projectID,
+			c.SDK.Schemas,
 			c.SDK.AgentDefinitions,
 			c.SDK.Skills,
 			blueprintsDryRunFlag,
@@ -124,7 +126,7 @@ Examples:
 			out,
 		)
 
-		results, err := applier.Run(context.Background(), packs, agents, skills)
+		results, err := applier.Run(context.Background(), projectFile, packs, agents, skills)
 		if err != nil {
 			return err
 		}

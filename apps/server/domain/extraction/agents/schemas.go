@@ -139,12 +139,12 @@ func RelationshipExtractionSchema() *genai.Schema {
 	}
 }
 
-// BuildEntitySchemaFromTemplatePack builds a dynamic genai.Schema for entity extraction
+// BuildEntitySchemaFromMemorySchema builds a dynamic genai.Schema for entity extraction
 // from template pack object schemas. The schema includes an enum of allowed entity types.
 //
 // This approach (ResponseSchema) is ~35% faster than embedding the schema in the prompt
 // and guarantees valid JSON output from the LLM.
-func BuildEntitySchemaFromTemplatePack(objectSchemas map[string]ObjectSchema) *genai.Schema {
+func BuildEntitySchemaFromMemorySchema(objectSchemas map[string]ObjectSchema) *genai.Schema {
 	typeNames := make([]string, 0, len(objectSchemas))
 	for typeName := range objectSchemas {
 		typeNames = append(typeNames, typeName)
@@ -199,9 +199,9 @@ func BuildEntitySchemaFromTemplatePack(objectSchemas map[string]ObjectSchema) *g
 	}
 }
 
-// BuildRelationshipSchemaFromTemplatePack builds a dynamic genai.Schema for relationship extraction
-// from template pack relationship schemas. The schema includes an enum of allowed relationship types.
-func BuildRelationshipSchemaFromTemplatePack(relationshipSchemas map[string]RelationshipSchema) *genai.Schema {
+// BuildRelationshipSchemaFromMemorySchema builds a dynamic genai.Schema for relationship extraction
+// from memory schema relationship schemas. The schema includes an enum of allowed relationship types.
+func BuildRelationshipSchemaFromMemorySchema(relationshipSchemas map[string]RelationshipSchema) *genai.Schema {
 	typeNames := make([]string, 0, len(relationshipSchemas))
 	for typeName := range relationshipSchemas {
 		typeNames = append(typeNames, typeName)

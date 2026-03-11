@@ -6,26 +6,32 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	sdkagents "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions"
+	sdkprojects "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
+	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	sdkskills "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
-	sdktpacks "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/templatepacks"
 )
 
 // Blueprinter orchestrates creating or updating packs, agent definitions, and skills.
 type Blueprinter struct {
-	packs   *sdktpacks.Client
-	agents  *sdkagents.Client
-	skills  *sdkskills.Client
-	dryRun  bool
-	upgrade bool
-	out     io.Writer
+	projects  *sdkprojects.Client
+	projectID string
+	packs     *sdkschemas.Client
+	agents    *sdkagents.Client
+	skills    *sdkskills.Client
+	dryRun    bool
+	upgrade   bool
+	out       io.Writer
 }
 
 // NewBlueprintsApplier creates a Blueprinter. out receives human-readable
 // progress lines; if nil, os.Stdout is used.
 func NewBlueprintsApplier(
-	packs *sdktpacks.Client,
+	projects *sdkprojects.Client,
+	projectID string,
+	packs *sdkschemas.Client,
 	agents *sdkagents.Client,
 	skills *sdkskills.Client,
 	dryRun bool,
@@ -36,26 +42,38 @@ func NewBlueprintsApplier(
 		out = os.Stdout
 	}
 	return &Blueprinter{
-		packs:   packs,
-		agents:  agents,
-		skills:  skills,
-		dryRun:  dryRun,
-		upgrade: upgrade,
-		out:     out,
+		projects:  projects,
+		projectID: projectID,
+		packs:     packs,
+		agents:    agents,
+		skills:    skills,
+		dryRun:    dryRun,
+		upgrade:   upgrade,
+		out:       out,
 	}
 }
 
-// Run applies the given packs, agents, and skills, returning one BlueprintsResult per resource.
-func (b *Blueprinter) Run(ctx context.Context, packs []PackFile, agents []AgentFile, skills []SkillFile) ([]BlueprintsResult, error) {
+// Run applies the given project config, packs, agents, and skills, returning one BlueprintsResult per resource.
+func (b *Blueprinter) Run(ctx context.Context, project *ProjectFile, packs []PackFile, agents []AgentFile, skills []SkillFile) ([]BlueprintsResult, error) {
 	var results []BlueprintsResult
 
 	if b.dryRun {
 		// Dry-run: print what would happen, make zero API calls.
+		if project != nil {
+			results = append(results, b.dryRunProject(project))
+		}
 		results = append(results, b.dryRunPacks(packs)...)
 		results = append(results, b.dryRunAgents(agents)...)
 		results = append(results, b.dryRunSkills(skills)...)
 		b.printSummary(results, true)
 		return results, nil
+	}
+
+	// Apply project config first (if present).
+	if project != nil {
+		r := b.applyProject(ctx, project)
+		results = append(results, r)
+		b.printResult(r)
 	}
 
 	// Fetch existing resources once up front (only when there are items to apply).
@@ -106,10 +124,47 @@ func (b *Blueprinter) Run(ctx context.Context, packs []PackFile, agents []AgentF
 }
 
 // ──────────────────────────────────────────────
+// Project application
+// ──────────────────────────────────────────────
+
+// applyProject sets project-level settings from the blueprint project file.
+// It always applies (no skip/upgrade logic — the operation is idempotent).
+func (b *Blueprinter) applyProject(ctx context.Context, pf *ProjectFile) BlueprintsResult {
+	if strings.TrimSpace(pf.ProjectInfo) == "" {
+		return BlueprintsResult{
+			ResourceType: "project",
+			Name:         "project info",
+			SourceFile:   pf.SourceFile,
+			Action:       BlueprintsActionSkipped,
+		}
+	}
+
+	info := pf.ProjectInfo
+	_, err := b.projects.Update(ctx, b.projectID, &sdkprojects.UpdateProjectRequest{
+		ProjectInfo: &info,
+	})
+	if err != nil {
+		return BlueprintsResult{
+			ResourceType: "project",
+			Name:         "project info",
+			SourceFile:   pf.SourceFile,
+			Action:       BlueprintsActionError,
+			Error:        fmt.Errorf("update project info: %w", err),
+		}
+	}
+	return BlueprintsResult{
+		ResourceType: "project",
+		Name:         "project info",
+		SourceFile:   pf.SourceFile,
+		Action:       BlueprintsActionUpdated,
+	}
+}
+
+// ──────────────────────────────────────────────
 // Pack application
 // ──────────────────────────────────────────────
 
-func (b *Blueprinter) blueprintPack(ctx context.Context, p PackFile, existing map[string]sdktpacks.TemplatePackListItem) BlueprintsResult {
+func (b *Blueprinter) blueprintPack(ctx context.Context, p PackFile, existing map[string]sdkschemas.MemorySchemaListItem) BlueprintsResult {
 	item, found := existing[p.Name]
 
 	if !found {
@@ -135,7 +190,7 @@ func (b *Blueprinter) createPack(ctx context.Context, p PackFile) BlueprintsResu
 			Action: BlueprintsActionError, Error: err}
 	}
 
-	req := &sdktpacks.CreatePackRequest{
+	req := &sdkschemas.CreatePackRequest{
 		Name:                    p.Name,
 		Version:                 p.Version,
 		ObjectTypeSchemas:       objSchemas,
@@ -166,8 +221,8 @@ func (b *Blueprinter) createPack(ctx context.Context, p PackFile) BlueprintsResu
 	}
 
 	// Assign to current project.
-	if _, err := b.packs.AssignPack(ctx, &sdktpacks.AssignPackRequest{
-		TemplatePackID: created.ID,
+	if _, err := b.packs.AssignPack(ctx, &sdkschemas.AssignPackRequest{
+		SchemaID: created.ID,
 	}); err != nil {
 		return BlueprintsResult{ResourceType: "pack", Name: p.Name, SourceFile: p.SourceFile,
 			Action: BlueprintsActionError, Error: fmt.Errorf("assign pack: %w", err)}
@@ -184,7 +239,7 @@ func (b *Blueprinter) updatePack(ctx context.Context, p PackFile, packID string)
 	}
 
 	ver := p.Version
-	req := &sdktpacks.UpdatePackRequest{
+	req := &sdkschemas.UpdatePackRequest{
 		Version:                 &ver,
 		ObjectTypeSchemas:       objSchemas,
 		RelationshipTypeSchemas: relSchemas,
@@ -313,6 +368,15 @@ func (b *Blueprinter) updateSkill(ctx context.Context, sk SkillFile, skillID str
 // Dry-run helpers
 // ──────────────────────────────────────────────
 
+func (b *Blueprinter) dryRunProject(pf *ProjectFile) BlueprintsResult {
+	if strings.TrimSpace(pf.ProjectInfo) == "" {
+		fmt.Fprintf(b.out, "[dry-run] project info is empty — would skip\n")
+		return BlueprintsResult{ResourceType: "project", Name: "project info", SourceFile: pf.SourceFile, Action: BlueprintsActionSkipped}
+	}
+	fmt.Fprintf(b.out, "[dry-run] would set project_info on project %q (%s)\n", b.projectID, pf.SourceFile)
+	return BlueprintsResult{ResourceType: "project", Name: "project info", SourceFile: pf.SourceFile, Action: BlueprintsActionUpdated}
+}
+
 func (b *Blueprinter) dryRunPacks(packs []PackFile) []BlueprintsResult {
 	results := make([]BlueprintsResult, 0, len(packs))
 	for _, p := range packs {
@@ -412,7 +476,7 @@ func (b *Blueprinter) printSummary(results []BlueprintsResult, dry bool) {
 // ──────────────────────────────────────────────
 
 // fetchExistingPacks returns a name→item map of all packs visible to the current project.
-func (b *Blueprinter) fetchExistingPacks(ctx context.Context) (map[string]sdktpacks.TemplatePackListItem, error) {
+func (b *Blueprinter) fetchExistingPacks(ctx context.Context) (map[string]sdkschemas.MemorySchemaListItem, error) {
 	// GetAvailablePacks returns packs NOT yet installed; we need the installed ones too.
 	// Merge both sets.
 	available, err := b.packs.GetAvailablePacks(ctx)
@@ -424,13 +488,13 @@ func (b *Blueprinter) fetchExistingPacks(ctx context.Context) (map[string]sdktpa
 		return nil, err
 	}
 
-	m := make(map[string]sdktpacks.TemplatePackListItem, len(available)+len(installed))
+	m := make(map[string]sdkschemas.MemorySchemaListItem, len(available)+len(installed))
 	for _, p := range available {
 		m[p.Name] = p
 	}
 	for _, p := range installed {
-		m[p.Name] = sdktpacks.TemplatePackListItem{
-			ID:          p.TemplatePackID,
+		m[p.Name] = sdkschemas.MemorySchemaListItem{
+			ID:          p.SchemaID,
 			Name:        p.Name,
 			Version:     p.Version,
 			Description: p.Description,

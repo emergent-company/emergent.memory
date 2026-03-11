@@ -13,7 +13,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 	"github.com/emergent-company/emergent.memory/domain/skills"
-	"github.com/emergent-company/emergent.memory/domain/workspace"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
@@ -71,7 +71,7 @@ func provideAgentExecutor(
 	repo *Repository,
 	skillRepo *skills.Repository,
 	embeddingsSvc *embeddings.Service,
-	provisioner *workspace.AutoProvisioner,
+	provisioner *sandbox.AutoProvisioner,
 	cfg *config.Config,
 	sessionService session.Service,
 	providerRepo *provider.Repository,

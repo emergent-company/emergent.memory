@@ -1060,12 +1060,12 @@ func TestParseRelationshipExtractionOutput_UnmarshalError(t *testing.T) {
 }
 
 // =============================================================================
-// Tests for BuildEntitySchemaFromTemplatePack
+// Tests for BuildEntitySchemaFromMemorySchema
 // =============================================================================
 
-func TestBuildEntitySchemaFromTemplatePack_EmptySchemas(t *testing.T) {
+func TestBuildEntitySchemaFromMemorySchema_EmptySchemas(t *testing.T) {
 	// When objectSchemas is empty, should return the default EntityExtractionSchema
-	schema := BuildEntitySchemaFromTemplatePack(map[string]ObjectSchema{})
+	schema := BuildEntitySchemaFromMemorySchema(map[string]ObjectSchema{})
 
 	assert.NotNil(t, schema)
 	assert.Equal(t, "Output containing extracted entities from the document", schema.Description)
@@ -1081,7 +1081,7 @@ func TestBuildEntitySchemaFromTemplatePack_EmptySchemas(t *testing.T) {
 	assert.Empty(t, typeSchema.Enum, "default schema should not have enum constraint")
 }
 
-func TestBuildEntitySchemaFromTemplatePack_SingleType(t *testing.T) {
+func TestBuildEntitySchemaFromMemorySchema_SingleType(t *testing.T) {
 	schemas := map[string]ObjectSchema{
 		"Person": {
 			Name:        "Person",
@@ -1089,7 +1089,7 @@ func TestBuildEntitySchemaFromTemplatePack_SingleType(t *testing.T) {
 		},
 	}
 
-	schema := BuildEntitySchemaFromTemplatePack(schemas)
+	schema := BuildEntitySchemaFromMemorySchema(schemas)
 
 	assert.NotNil(t, schema)
 	assert.Equal(t, "Output containing extracted entities from the document", schema.Description)
@@ -1101,7 +1101,7 @@ func TestBuildEntitySchemaFromTemplatePack_SingleType(t *testing.T) {
 	assert.Contains(t, typeSchema.Enum, "Person")
 }
 
-func TestBuildEntitySchemaFromTemplatePack_MultipleTypes(t *testing.T) {
+func TestBuildEntitySchemaFromMemorySchema_MultipleTypes(t *testing.T) {
 	schemas := map[string]ObjectSchema{
 		"Person": {
 			Name:        "Person",
@@ -1117,7 +1117,7 @@ func TestBuildEntitySchemaFromTemplatePack_MultipleTypes(t *testing.T) {
 		},
 	}
 
-	schema := BuildEntitySchemaFromTemplatePack(schemas)
+	schema := BuildEntitySchemaFromMemorySchema(schemas)
 
 	assert.NotNil(t, schema)
 
@@ -1130,12 +1130,12 @@ func TestBuildEntitySchemaFromTemplatePack_MultipleTypes(t *testing.T) {
 	assert.Contains(t, typeSchema.Enum, "Location")
 }
 
-func TestBuildEntitySchemaFromTemplatePack_PreservesSchemaStructure(t *testing.T) {
+func TestBuildEntitySchemaFromMemorySchema_PreservesSchemaStructure(t *testing.T) {
 	schemas := map[string]ObjectSchema{
 		"Person": {Name: "Person"},
 	}
 
-	schema := BuildEntitySchemaFromTemplatePack(schemas)
+	schema := BuildEntitySchemaFromMemorySchema(schemas)
 
 	// Verify top-level structure
 	assert.NotNil(t, schema)
@@ -1159,9 +1159,9 @@ func TestBuildEntitySchemaFromTemplatePack_PreservesSchemaStructure(t *testing.T
 	assert.Equal(t, []string{"create", "enrich", "reference"}, actionSchema.Enum)
 }
 
-func TestBuildEntitySchemaFromTemplatePack_NilSchemas(t *testing.T) {
+func TestBuildEntitySchemaFromMemorySchema_NilSchemas(t *testing.T) {
 	// nil input should be treated same as empty
-	schema := BuildEntitySchemaFromTemplatePack(nil)
+	schema := BuildEntitySchemaFromMemorySchema(nil)
 
 	assert.NotNil(t, schema)
 	assert.Equal(t, "Output containing extracted entities from the document", schema.Description)
@@ -1172,12 +1172,12 @@ func TestBuildEntitySchemaFromTemplatePack_NilSchemas(t *testing.T) {
 }
 
 // =============================================================================
-// Tests for BuildRelationshipSchemaFromTemplatePack
+// Tests for BuildRelationshipSchemaFromMemorySchema
 // =============================================================================
 
-func TestBuildRelationshipSchemaFromTemplatePack_EmptySchemas(t *testing.T) {
+func TestBuildRelationshipSchemaFromMemorySchema_EmptySchemas(t *testing.T) {
 	// When relationshipSchemas is empty, should return the default RelationshipExtractionSchema
-	schema := BuildRelationshipSchemaFromTemplatePack(map[string]RelationshipSchema{})
+	schema := BuildRelationshipSchemaFromMemorySchema(map[string]RelationshipSchema{})
 
 	assert.NotNil(t, schema)
 	assert.Equal(t, "Output containing extracted relationships between entities", schema.Description)
@@ -1193,7 +1193,7 @@ func TestBuildRelationshipSchemaFromTemplatePack_EmptySchemas(t *testing.T) {
 	assert.Empty(t, typeSchema.Enum, "default schema should not have enum constraint")
 }
 
-func TestBuildRelationshipSchemaFromTemplatePack_SingleType(t *testing.T) {
+func TestBuildRelationshipSchemaFromMemorySchema_SingleType(t *testing.T) {
 	schemas := map[string]RelationshipSchema{
 		"WORKS_AT": {
 			Name:        "WORKS_AT",
@@ -1203,7 +1203,7 @@ func TestBuildRelationshipSchemaFromTemplatePack_SingleType(t *testing.T) {
 		},
 	}
 
-	schema := BuildRelationshipSchemaFromTemplatePack(schemas)
+	schema := BuildRelationshipSchemaFromMemorySchema(schemas)
 
 	assert.NotNil(t, schema)
 	assert.Equal(t, "Output containing extracted relationships between entities", schema.Description)
@@ -1215,7 +1215,7 @@ func TestBuildRelationshipSchemaFromTemplatePack_SingleType(t *testing.T) {
 	assert.Contains(t, typeSchema.Enum, "WORKS_AT")
 }
 
-func TestBuildRelationshipSchemaFromTemplatePack_MultipleTypes(t *testing.T) {
+func TestBuildRelationshipSchemaFromMemorySchema_MultipleTypes(t *testing.T) {
 	schemas := map[string]RelationshipSchema{
 		"WORKS_AT": {
 			Name:        "WORKS_AT",
@@ -1231,7 +1231,7 @@ func TestBuildRelationshipSchemaFromTemplatePack_MultipleTypes(t *testing.T) {
 		},
 	}
 
-	schema := BuildRelationshipSchemaFromTemplatePack(schemas)
+	schema := BuildRelationshipSchemaFromMemorySchema(schemas)
 
 	assert.NotNil(t, schema)
 
@@ -1244,12 +1244,12 @@ func TestBuildRelationshipSchemaFromTemplatePack_MultipleTypes(t *testing.T) {
 	assert.Contains(t, typeSchema.Enum, "PARENT_OF")
 }
 
-func TestBuildRelationshipSchemaFromTemplatePack_PreservesSchemaStructure(t *testing.T) {
+func TestBuildRelationshipSchemaFromMemorySchema_PreservesSchemaStructure(t *testing.T) {
 	schemas := map[string]RelationshipSchema{
 		"KNOWS": {Name: "KNOWS"},
 	}
 
-	schema := BuildRelationshipSchemaFromTemplatePack(schemas)
+	schema := BuildRelationshipSchemaFromMemorySchema(schemas)
 
 	// Verify top-level structure
 	assert.NotNil(t, schema)
@@ -1268,9 +1268,9 @@ func TestBuildRelationshipSchemaFromTemplatePack_PreservesSchemaStructure(t *tes
 	assert.Contains(t, itemSchema.Properties, "description")
 }
 
-func TestBuildRelationshipSchemaFromTemplatePack_NilSchemas(t *testing.T) {
+func TestBuildRelationshipSchemaFromMemorySchema_NilSchemas(t *testing.T) {
 	// nil input should be treated same as empty
-	schema := BuildRelationshipSchemaFromTemplatePack(nil)
+	schema := BuildRelationshipSchemaFromMemorySchema(nil)
 
 	assert.NotNil(t, schema)
 	assert.Equal(t, "Output containing extracted relationships between entities", schema.Description)
@@ -1280,7 +1280,7 @@ func TestBuildRelationshipSchemaFromTemplatePack_NilSchemas(t *testing.T) {
 	assert.Empty(t, typeSchema.Enum)
 }
 
-func TestBuildRelationshipSchemaFromTemplatePack_ManyTypes(t *testing.T) {
+func TestBuildRelationshipSchemaFromMemorySchema_ManyTypes(t *testing.T) {
 	// Test with many relationship types
 	schemas := make(map[string]RelationshipSchema)
 	for i := 0; i < 20; i++ {
@@ -1291,7 +1291,7 @@ func TestBuildRelationshipSchemaFromTemplatePack_ManyTypes(t *testing.T) {
 		}
 	}
 
-	schema := BuildRelationshipSchemaFromTemplatePack(schemas)
+	schema := BuildRelationshipSchemaFromMemorySchema(schemas)
 
 	assert.NotNil(t, schema)
 
@@ -1301,7 +1301,7 @@ func TestBuildRelationshipSchemaFromTemplatePack_ManyTypes(t *testing.T) {
 	assert.Len(t, typeSchema.Enum, 20)
 }
 
-func TestBuildEntitySchemaFromTemplatePack_ManyTypes(t *testing.T) {
+func TestBuildEntitySchemaFromMemorySchema_ManyTypes(t *testing.T) {
 	// Test with many entity types
 	schemas := make(map[string]ObjectSchema)
 	for i := 0; i < 15; i++ {
@@ -1312,7 +1312,7 @@ func TestBuildEntitySchemaFromTemplatePack_ManyTypes(t *testing.T) {
 		}
 	}
 
-	schema := BuildEntitySchemaFromTemplatePack(schemas)
+	schema := BuildEntitySchemaFromMemorySchema(schemas)
 
 	assert.NotNil(t, schema)
 

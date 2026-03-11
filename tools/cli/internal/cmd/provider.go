@@ -33,16 +33,16 @@ current organization. Runs a live credential test and syncs the model catalog
 on success. Models are auto-selected from the catalog if not specified.
 
 Supported providers:
-  google-ai   — Google AI (Gemini API); requires --api-key
-  vertex-ai   — Google Cloud Vertex AI; requires --gcp-project, --location
+  google   — Google AI (Gemini API); requires --api-key
+  google-vertex   — Google Cloud Vertex AI; requires --gcp-project, --location
                 Optionally supply --key-file for a service account JSON key.
 
 Examples:
-  emergent provider configure google-ai --api-key AIzaSy...
-  emergent provider configure vertex-ai --gcp-project my-project --location us-central1 --key-file sa.json
-  emergent provider configure google-ai --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004`,
+  emergent provider configure google --api-key AIzaSy...
+  emergent provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
+  emergent provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004`,
 	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"google-ai", "vertex-ai"},
+	ValidArgs: []string{"google", "google-vertex"},
 	RunE:      runProviderConfigure,
 }
 
@@ -77,16 +77,16 @@ func runProviderConfigure(cmd *cobra.Command, args []string) error {
 	switch providerArg {
 	case provider.ProviderGoogleAI:
 		if configureAPIKey == "" {
-			return fmt.Errorf("--api-key is required for google-ai")
+			return fmt.Errorf("--api-key is required for google")
 		}
 		req.APIKey = configureAPIKey
 
 	case provider.ProviderVertexAI:
 		if configureGCPProject == "" {
-			return fmt.Errorf("--gcp-project is required for vertex-ai")
+			return fmt.Errorf("--gcp-project is required for google-vertex")
 		}
 		if configureLocation == "" {
-			return fmt.Errorf("--location is required for vertex-ai")
+			return fmt.Errorf("--location is required for google-vertex")
 		}
 		if configureKeyFile != "" {
 			data, err := os.ReadFile(configureKeyFile)
@@ -99,7 +99,7 @@ func runProviderConfigure(cmd *cobra.Command, args []string) error {
 		req.Location = configureLocation
 
 	default:
-		return fmt.Errorf("unsupported provider %q; must be google-ai or vertex-ai", providerArg)
+		return fmt.Errorf("unsupported provider %q; must be google or google-vertex", providerArg)
 	}
 
 	fmt.Printf("Configuring %s for org %s...\n", providerArg, orgID)
@@ -130,17 +130,17 @@ This overrides the organization's provider config for this project.
 Use --remove to remove the project-level override and fall back to the org config.
 
 Supported providers:
-  google-ai   — Google AI (Gemini API); requires --api-key
-  vertex-ai   — Google Cloud Vertex AI; requires --gcp-project, --location
+  google   — Google AI (Gemini API); requires --api-key
+  google-vertex   — Google Cloud Vertex AI; requires --gcp-project, --location
 
 The project is read from --project or the MEMORY_PROJECT_ID environment variable.
 
 Examples:
-  emergent provider configure-project google-ai --api-key AIzaSy...
-  emergent provider configure-project vertex-ai --gcp-project my-proj --location us-central1 --key-file sa.json
-  emergent provider configure-project google-ai --remove`,
+  emergent provider configure-project google --api-key AIzaSy...
+  emergent provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
+  emergent provider configure-project google --remove`,
 	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"google-ai", "vertex-ai"},
+	ValidArgs: []string{"google", "google-vertex"},
 	RunE:      runProviderConfigureProject,
 }
 
@@ -188,16 +188,16 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 	switch providerArg {
 	case provider.ProviderGoogleAI:
 		if configureProjectAPIKey == "" {
-			return fmt.Errorf("--api-key is required for google-ai")
+			return fmt.Errorf("--api-key is required for google")
 		}
 		req.APIKey = configureProjectAPIKey
 
 	case provider.ProviderVertexAI:
 		if configureProjectGCPProject == "" {
-			return fmt.Errorf("--gcp-project is required for vertex-ai")
+			return fmt.Errorf("--gcp-project is required for google-vertex")
 		}
 		if configureProjectLocation == "" {
-			return fmt.Errorf("--location is required for vertex-ai")
+			return fmt.Errorf("--location is required for google-vertex")
 		}
 		if configureProjectKeyFile != "" {
 			data, err := os.ReadFile(configureProjectKeyFile)
@@ -210,7 +210,7 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 		req.Location = configureProjectLocation
 
 	default:
-		return fmt.Errorf("unsupported provider %q; must be google-ai or vertex-ai", providerArg)
+		return fmt.Errorf("unsupported provider %q; must be google or google-vertex", providerArg)
 	}
 
 	fmt.Printf("Configuring %s for project %s...\n", providerArg, projectID)
@@ -244,10 +244,10 @@ Use --type to filter by model type (embedding or generative).
 
 Examples:
   emergent provider models
-  emergent provider models vertex-ai
-  emergent provider models google-ai --type generative`,
+  emergent provider models google-vertex
+  emergent provider models google --type generative`,
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"google-ai", "vertex-ai"},
+	ValidArgs: []string{"google", "google-vertex"},
 	RunE:      runProviderModels,
 }
 
@@ -303,7 +303,7 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 	}
 	if len(configs) == 0 {
 		fmt.Println("No providers configured.")
-		fmt.Println("Run 'emergent provider configure google-ai --api-key <key>' to configure a provider.")
+		fmt.Println("Run 'emergent provider configure google --api-key <key>' to configure a provider.")
 		return nil
 	}
 
@@ -444,17 +444,17 @@ var providerTestCmd = &cobra.Command{
 work end-to-end.
 
 Without a provider argument, tests all configured providers.
-Pass a provider name (google-ai or vertex-ai) to test a specific one.
+Pass a provider name (google or google-vertex) to test a specific one.
 
 Use --project to test using the project-level credential hierarchy
 (project override → org) instead of org credentials only.
 
 Examples:
   emergent provider test
-  emergent provider test vertex-ai
-  emergent provider test google-ai --project <id>`,
+  emergent provider test google-vertex
+  emergent provider test google --project <id>`,
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"google-ai", "vertex-ai"},
+	ValidArgs: []string{"google", "google-vertex"},
 	RunE:      runProviderTest,
 }
 
@@ -495,7 +495,7 @@ func runProviderTest(cmd *cobra.Command, args []string) error {
 		}
 		if len(configs) == 0 {
 			fmt.Println("No providers configured.")
-			fmt.Println("Run 'emergent provider configure google-ai --api-key <key>' to configure a provider.")
+			fmt.Println("Run 'emergent provider configure google --api-key <key>' to configure a provider.")
 			return nil
 		}
 		for _, pc := range configs {
@@ -548,19 +548,19 @@ func resolveProviderOrgID(c *client.Client, explicit string) (string, error) {
 
 func init() {
 	// configure flags
-	configureCmd.Flags().StringVar(&configureAPIKey, "api-key", "", "API key (required for google-ai)")
-	configureCmd.Flags().StringVar(&configureKeyFile, "key-file", "", "Path to service account JSON key file (vertex-ai)")
-	configureCmd.Flags().StringVar(&configureGCPProject, "gcp-project", "", "GCP project ID (required for vertex-ai)")
-	configureCmd.Flags().StringVar(&configureLocation, "location", "", "GCP region, e.g. us-central1 (required for vertex-ai)")
+	configureCmd.Flags().StringVar(&configureAPIKey, "api-key", "", "API key (required for google)")
+	configureCmd.Flags().StringVar(&configureKeyFile, "key-file", "", "Path to service account JSON key file (google-vertex)")
+	configureCmd.Flags().StringVar(&configureGCPProject, "gcp-project", "", "GCP project ID (required for google-vertex)")
+	configureCmd.Flags().StringVar(&configureLocation, "location", "", "GCP region, e.g. us-central1 (required for google-vertex)")
 	configureCmd.Flags().StringVar(&configureGenerativeModel, "generative-model", "", "Generative model to use (auto-selected from catalog if omitted)")
 	configureCmd.Flags().StringVar(&configureEmbeddingModel, "embedding-model", "", "Embedding model to use (auto-selected from catalog if omitted)")
 	configureCmd.Flags().StringVar(&configureOrgID, "org-id", "", "Organization ID (auto-detected from config)")
 
 	// configure-project flags
-	configureProjectCmd.Flags().StringVar(&configureProjectAPIKey, "api-key", "", "API key (required for google-ai)")
-	configureProjectCmd.Flags().StringVar(&configureProjectKeyFile, "key-file", "", "Path to service account JSON key file (vertex-ai)")
-	configureProjectCmd.Flags().StringVar(&configureProjectGCPProject, "gcp-project", "", "GCP project ID (required for vertex-ai)")
-	configureProjectCmd.Flags().StringVar(&configureProjectLocation, "location", "", "GCP region, e.g. us-central1 (required for vertex-ai)")
+	configureProjectCmd.Flags().StringVar(&configureProjectAPIKey, "api-key", "", "API key (required for google)")
+	configureProjectCmd.Flags().StringVar(&configureProjectKeyFile, "key-file", "", "Path to service account JSON key file (google-vertex)")
+	configureProjectCmd.Flags().StringVar(&configureProjectGCPProject, "gcp-project", "", "GCP project ID (required for google-vertex)")
+	configureProjectCmd.Flags().StringVar(&configureProjectLocation, "location", "", "GCP region, e.g. us-central1 (required for google-vertex)")
 	configureProjectCmd.Flags().StringVar(&configureProjectGenerativeModel, "generative-model", "", "Generative model to use (auto-selected from catalog if omitted)")
 	configureProjectCmd.Flags().StringVar(&configureProjectEmbeddingModel, "embedding-model", "", "Embedding model to use (auto-selected from catalog if omitted)")
 	configureProjectCmd.Flags().StringVar(&configureProjectID, "project", "", "Project ID (auto-detected from MEMORY_PROJECT_ID)")

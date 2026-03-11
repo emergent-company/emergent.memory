@@ -6,6 +6,20 @@ package blueprints
 import "encoding/json"
 
 // ──────────────────────────────────────────────
+// ProjectFile — project.[json|yaml|yml] (blueprint root)
+// ──────────────────────────────────────────────
+
+// ProjectFile holds project-level settings read from project.yaml (or .json/.yml)
+// at the blueprint root. All fields are optional — absent or empty fields are
+// skipped when applying.
+type ProjectFile struct {
+	ProjectInfo string `json:"projectInfo" yaml:"projectInfo"`
+
+	// SourceFile is the path from which this file was loaded (not serialised).
+	SourceFile string `json:"-" yaml:"-"`
+}
+
+// ──────────────────────────────────────────────
 // PackFile — packs/<name>.[json|yaml|yml]
 // ──────────────────────────────────────────────
 
@@ -154,7 +168,7 @@ const (
 
 // BlueprintsResult records the outcome of applying a single resource file.
 type BlueprintsResult struct {
-	ResourceType string           // "pack" or "agent"
+	ResourceType string           // "project", "pack", "agent", "skill", or "seed"
 	Name         string           // resource name
 	SourceFile   string           // file path it was loaded from
 	Action       BlueprintsAction // what happened

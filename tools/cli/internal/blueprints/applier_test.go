@@ -7,8 +7,9 @@ import (
 	"testing"
 
 	sdkagents "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions"
+	sdkprojects "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
+	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	sdkskills "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
-	sdktpacks "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/templatepacks"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/blueprints"
 )
 
@@ -51,9 +52,9 @@ func TestBlueprintsApplier_DryRun(t *testing.T) {
 
 	var buf bytes.Buffer
 	// nil SDK clients — dry-run must not call them
-	a := blueprints.NewBlueprintsApplier(nil, nil, nil, true /* dryRun */, false /* upgrade */, &buf)
+	a := blueprints.NewBlueprintsApplier(nil, "", nil, nil, nil, true /* dryRun */, false /* upgrade */, &buf)
 
-	results, err := a.Run(context.Background(), packs, agents, nil)
+	results, err := a.Run(context.Background(), nil, packs, agents, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,8 +86,8 @@ func TestBlueprintsApplier_DryRunWithUpgrade(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	a := blueprints.NewBlueprintsApplier(nil, nil, nil, true, true, &buf)
-	results, err := a.Run(context.Background(), packs, nil, nil)
+	a := blueprints.NewBlueprintsApplier(nil, "", nil, nil, nil, true, true, &buf)
+	results, err := a.Run(context.Background(), nil, packs, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -98,6 +99,33 @@ func TestBlueprintsApplier_DryRunWithUpgrade(t *testing.T) {
 	_ = results
 }
 
+// TestBlueprintsApplier_DryRunWithProjectInfo verifies that a non-empty ProjectFile
+// causes a dry-run line about setting project info.
+func TestBlueprintsApplier_DryRunWithProjectInfo(t *testing.T) {
+	pf := &blueprints.ProjectFile{
+		ProjectInfo: "This is a test project.",
+		SourceFile:  "project.yaml",
+	}
+
+	var buf bytes.Buffer
+	a := blueprints.NewBlueprintsApplier(nil, "test-project-id", nil, nil, nil, true, false, &buf)
+	results, err := a.Run(context.Background(), pf, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "[dry-run]") {
+		t.Errorf("expected [dry-run] prefix in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "project_info") {
+		t.Errorf("expected 'project_info' in dry-run output, got:\n%s", out)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result (project info), got %d", len(results))
+	}
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Compile-time check: ensure Blueprinter can be constructed with real SDK client types
 // ──────────────────────────────────────────────────────────────────────────────
@@ -105,11 +133,12 @@ func TestBlueprintsApplier_DryRunWithUpgrade(t *testing.T) {
 func TestBlueprintsApplier_AcceptsSDKClientTypes(t *testing.T) {
 	// This is a compile-time assertion; if the types don't match, this file won't
 	// compile. We pass typed nils to confirm the constructor signature is correct.
-	var tp *sdktpacks.Client
+	var pr *sdkprojects.Client
+	var sc *sdkschemas.Client
 	var ag *sdkagents.Client
 	var sk *sdkskills.Client
 
-	a := blueprints.NewBlueprintsApplier(tp, ag, sk, true, false, nil)
+	a := blueprints.NewBlueprintsApplier(pr, "proj-id", sc, ag, sk, true, false, nil)
 	if a == nil {
 		t.Fatal("expected non-nil blueprinter")
 	}

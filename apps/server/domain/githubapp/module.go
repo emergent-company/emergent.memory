@@ -28,7 +28,7 @@ func newStore(db *bun.DB) *Store {
 
 // newCrypto creates the encryption service from centralized config.
 func newCrypto(cfg *config.Config, log *slog.Logger) *Crypto {
-	key := cfg.Workspace.GitHubAppEncryptionKey
+	key := cfg.Sandbox.GitHubAppEncryptionKey
 	crypto, err := NewCrypto(key)
 	if err != nil {
 		log.Warn("GitHub App encryption key not configured or invalid",

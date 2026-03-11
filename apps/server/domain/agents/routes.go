@@ -46,14 +46,14 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	defsRead.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	defsRead.GET("", h.ListDefinitions)
 	defsRead.GET("/:id", h.GetDefinition)
-	defsRead.GET("/:id/workspace-config", h.GetWorkspaceConfig)
+	defsRead.GET("/:id/sandbox-config", h.GetSandboxConfig)
 
 	defsWrite := defs.Group("")
 	defsWrite.Use(authMiddleware.RequireAPITokenScopes("agents:write"))
 	defsWrite.POST("", h.CreateDefinition)
 	defsWrite.PATCH("/:id", h.UpdateDefinition)
 	defsWrite.DELETE("/:id", h.DeleteDefinition)
-	defsWrite.PUT("/:id/workspace-config", h.UpdateWorkspaceConfig)
+	defsWrite.PUT("/:id/sandbox-config", h.UpdateSandboxConfig)
 
 	// --- Project-scoped run history routes ---
 	runs := e.Group("/api/projects/:projectId/agent-runs")

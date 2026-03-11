@@ -81,12 +81,12 @@ services:
   # See ../emergent-infra/zitadel/README.md for setup instructions
 
   # ──────────────────────────────────────────────────────────────────────
-  # Agent Workspace Infrastructure (requires ENABLE_AGENT_WORKSPACES=true)
+  # Agent Sandbox Infrastructure (requires ENABLE_AGENT_SANDBOXES=true)
   # ──────────────────────────────────────────────────────────────────────
 
   # Firecracker MicroVM Manager (DISABLED by default — requires KVM)
   #
-  # Manages Firecracker microVMs for agent workspaces with hardware-level
+  # Manages Firecracker microVMs for agent sandboxes with hardware-level
   # isolation. Requires the host to have /dev/kvm available (bare-metal or
   # nested virtualization enabled). Uncomment to enable.
   #
@@ -159,7 +159,7 @@ volumes:
   pg_data:
   whisper_cache:
     driver: local
-  # Persistent storage for agent workspace container volumes (gVisor/Docker)
+  # Persistent storage for agent sandbox container volumes (gVisor/Docker)
   workspace_volumes:
     driver: local
   # Persistent storage for Firecracker microVM block devices (uncomment with firecracker-manager)
@@ -169,10 +169,10 @@ volumes:
   tempo_data:
     driver: local
 
-# Isolated network for agent workspace containers
-# Restricts inter-container communication — workspaces cannot reach
+# Isolated network for agent sandbox containers
+# Restricts inter-container communication — sandboxes cannot reach
 # infrastructure services (db, zitadel) directly. The server bridges
-# requests between the main network and the workspace network.
+# requests between the main network and the sandbox network.
 networks:
   workspace_net:
     driver: bridge

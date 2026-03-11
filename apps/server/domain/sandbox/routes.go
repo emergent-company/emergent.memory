@@ -1,0 +1,47 @@
+package sandbox
+
+import (
+	"log/slog"
+
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// RegisterRoutes registers sandbox HTTP routes.
+func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, log *slog.Logger) {
+	// Agent sandbox routes
+	g := e.Group("/api/v1/agent/sandboxes")
+	g.Use(authMiddleware.RequireAuth())
+
+	// Read operations
+	readGroup := g.Group("")
+	readGroup.Use(authMiddleware.RequireAPITokenScopes("admin:read"))
+	readGroup.GET("", h.ListWorkspaces)
+	readGroup.GET("/providers", h.ListProviders)
+	readGroup.GET("/:id", h.GetWorkspace)
+
+	// Write operations
+	writeGroup := g.Group("")
+	writeGroup.Use(authMiddleware.RequireAPITokenScopes("admin:write"))
+	writeGroup.POST("", h.CreateWorkspace)
+	writeGroup.POST("/from-snapshot", h.CreateFromSnapshot)
+	writeGroup.DELETE("/:id", h.DeleteWorkspace)
+	writeGroup.POST("/:id/stop", h.StopWorkspace)
+	writeGroup.POST("/:id/resume", h.ResumeWorkspace)
+	writeGroup.POST("/:id/attach", h.AttachSession)
+	writeGroup.POST("/:id/detach", h.DetachSession)
+	writeGroup.POST("/:id/snapshot", h.CreateSnapshot)
+
+	// Tool operations (require write scope + audit logging)
+	toolGroup := g.Group("/:id")
+	toolGroup.Use(authMiddleware.RequireAPITokenScopes("admin:write"))
+	toolGroup.Use(ToolAuditMiddleware(log))
+	toolGroup.POST("/bash", h.BashTool)
+	toolGroup.POST("/read", h.ReadTool)
+	toolGroup.POST("/write", h.WriteTool)
+	toolGroup.POST("/edit", h.EditTool)
+	toolGroup.POST("/glob", h.GlobTool)
+	toolGroup.POST("/grep", h.GrepTool)
+	toolGroup.POST("/git", h.GitTool)
+}
