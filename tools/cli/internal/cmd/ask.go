@@ -105,17 +105,16 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// --- Resolve project context (best-effort; non-blocking) ---
+	// --- Resolve project context (from flag or config only; no interactive picker) ---
+	// ask works without a project (e.g. "create a project for me"), so we never
+	// force selection. The project indicator is already printed by the root
+	// PersistentPreRunE when a project is active.
 
 	projectID := ""
 	if askProjectID != "" {
 		projectID = askProjectID
-	} else if c != nil {
-		// resolveProjectContext may show an interactive picker; suppress errors so
-		// `ask` never blocks when the user omits --project.
-		if pid, err := resolveProjectContext(cmd, ""); err == nil {
-			projectID = pid
-		}
+	} else if cfgErr == nil {
+		projectID = cfg.ProjectID
 	}
 
 	if c != nil && projectID != "" {
