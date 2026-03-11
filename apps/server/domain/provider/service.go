@@ -47,7 +47,7 @@ const (
 // Static fallback model names used when SyncModels fails or when no model was
 // explicitly selected by the caller.
 const (
-	staticFallbackGenerativeModel = "gemini-2.5-flash"
+	staticFallbackGenerativeModel = "gemini-3.1-flash-lite-preview"
 	staticFallbackEmbeddingModel  = "gemini-embedding-001"
 )
 
@@ -549,6 +549,11 @@ func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req Ups
 // pickBestGenerativeModel selects the preferred generative model from the
 // catalog, falling back to the static default if none is available.
 func (s *CredentialService) pickBestGenerativeModel(models []ProviderSupportedModel) string {
+	for _, m := range models {
+		if m.ModelName == "gemini-3.1-flash-lite-preview" {
+			return m.ModelName
+		}
+	}
 	for _, m := range models {
 		if m.ModelName == "gemini-2.5-flash" {
 			return m.ModelName

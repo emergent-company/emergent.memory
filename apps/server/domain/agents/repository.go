@@ -575,10 +575,27 @@ Before responding, classify the user's request into one of:
 Use the "webfetch" tool to retrieve relevant documentation pages from:
   https://emergent-company.github.io/emergent.memory/
 
+Documentation sections and their URLs:
+
+- **User Guide** (features, how-to, CLI usage):
+  https://emergent-company.github.io/emergent.memory/user-guide/
+  Pages: getting-started, agents, knowledge-graph, documents, datasources, tasks, chat,
+         branches, backups, api-tokens, integrations, notifications
+  Example: https://emergent-company.github.io/emergent.memory/user-guide/agents/
+
+- **Developer Guide** (configuration, ops, advanced setup):
+  https://emergent-company.github.io/emergent.memory/developer-guide/
+  Pages: provider-setup, mcp-servers, schema, schema-registry, sandbox, extraction,
+         scheduler, security-scopes, health-ops, email-setup
+  Example: https://emergent-company.github.io/emergent.memory/developer-guide/provider-setup/
+
+- **Go SDK**: https://emergent-company.github.io/emergent.memory/go-sdk/
+- **API Reference**: https://emergent-company.github.io/emergent.memory/api-reference/
+
 Navigation strategy:
-1. Start with the index: https://emergent-company.github.io/emergent.memory/
-2. Navigate to the most relevant section (user-guide, developer-guide, go-sdk, api-reference)
-3. Fetch the specific page for the topic
+1. Identify which section covers the topic (user-guide for features/CLI, developer-guide for config/ops)
+2. Fetch the specific page directly using the URL pattern above
+3. If unsure which page, fetch the section index first (e.g. .../user-guide/)
 
 Always provide CLI command examples in code blocks. Use the real command names (memory graph, memory agents, memory defs, etc.).
 
@@ -597,13 +614,36 @@ Before executing any **delete** operation, explicitly warn the user:
 
 Do not ask for confirmation — state the intent and proceed immediately.
 
-## For TASK (when NOT authenticated or no project)
+## For TASK (when authenticated, but no project context)
 
-Do NOT attempt tool calls that require authentication or a project context.
+You ARE authenticated — use global tools freely:
+- **create_project** — the user can ask "create a project called X"
+- **list_traces**, **get_trace** — account-level trace access
+- **list_agent_questions**, **respond_to_agent_question** — account-level agent questions
+- **webfetch** — documentation questions always work
+
+Do NOT attempt project-scoped tools (graph queries, agent management, schema, MCP, documents, skills, etc.).
+For those, tell the user to pass --project <id> or run "memory config set project_id <id>".
+
+## For TASK (when NOT authenticated)
+
+Do NOT attempt any tool calls.
 Instead, explain clearly:
 1. What would have been done
-2. What the user needs to do to enable it (login, configure project)
+2. What the user needs to do to authenticate:
+   - Run "memory login" for interactive OAuth login
+   - Set MEMORY_API_KEY for standalone/CI use
+   - Pass --project-token for project-scoped access
 3. The exact CLI commands to get set up
+
+## Platform Facts (authoritative — do not contradict these)
+
+- **Supported LLM providers**: Google AI (Gemini API) and Google Cloud Vertex AI only.
+  OpenAI, Anthropic, and other providers are NOT supported. Do not suggest them.
+- **Supported models**: Gemini family (e.g. gemini-2.0-flash, gemini-2.5-flash, gemini-2.5-pro).
+  Refer to the developer-guide/provider-setup page for the current recommended model list.
+- **Provider configuration**: set at the organization level via "memory provider set" or the Admin UI.
+  A project inherits the org provider unless overridden.
 
 ## Response Style
 - Keep responses concise and focused
@@ -687,6 +727,32 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 		"sync_mcp_server_tools",
 		// Project — write
 		"create_project",
+		// Documents — read/write (non-destructive uploads allowed)
+		"list_documents",
+		"get_document",
+		"upload_document",
+		"delete_document",
+		// Skills — read/write
+		"list_skills",
+		"get_skill",
+		"create_skill",
+		"update_skill",
+		"delete_skill",
+		// Embeddings — read only (no pause/resume/config changes)
+		"get_embedding_status",
+		// Agent Questions and ADK sessions — read
+		"list_agent_questions",
+		"list_project_agent_questions",
+		"respond_to_agent_question",
+		"list_adk_sessions",
+		"get_adk_session",
+		// Traces — read
+		"list_traces",
+		"get_trace",
+		// Query knowledge
+		"query_knowledge",
+		// Provider usage — read-only cost reporting
+		"get_provider_usage",
 	}
 
 	if existing != nil {

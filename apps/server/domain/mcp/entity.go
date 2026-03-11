@@ -64,6 +64,20 @@ type AgentToolHandler interface {
 	// Agent Catalog
 	ExecuteListAvailableAgents(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 
+	// Agent Questions
+	ExecuteListAgentQuestions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteListProjectAgentQuestions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteRespondToAgentQuestion(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// Agent Hooks
+	ExecuteListAgentHooks(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteCreateAgentHook(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteDeleteAgentHook(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
+	// ADK Sessions
+	ExecuteListADKSessions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteGetADKSession(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+
 	// GetAgentToolDefinitions returns tool definitions for all agent tools
 	GetAgentToolDefinitions() []ToolDefinition
 

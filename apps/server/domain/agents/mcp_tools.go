@@ -639,7 +639,14 @@ func (h *MCPToolHandler) ExecuteGetAgentRun(ctx context.Context, projectID strin
 		return errResult(fmt.Sprintf("agent run not found: %s", runID))
 	}
 
-	return wrapResult(run.ToDTO())
+	dto := run.ToDTO()
+
+	// Attach token usage / cost — same as the HTTP handler does.
+	if usage, uErr := h.repo.GetRunTokenUsage(ctx, runID); uErr == nil {
+		dto.TokenUsage = usage
+	}
+
+	return wrapResult(dto)
 }
 
 // ExecuteGetRunStatus returns the status of a queued or running agent run.
@@ -1227,4 +1234,293 @@ func (h *MCPToolHandler) GetAgentToolDefinitionsForProject(ctx context.Context, 
 // intPtr returns a pointer to an int value.
 func intPtr(i int) *int {
 	return &i
+}
+
+// ============================================================================
+// Agent Questions
+// ============================================================================
+
+// ExecuteListAgentQuestions lists all questions for a specific agent run.
+func (h *MCPToolHandler) ExecuteListAgentQuestions(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	runID, _ := args["run_id"].(string)
+	if runID == "" {
+		return errResult("run_id is required")
+	}
+
+	questions, err := h.repo.ListQuestionsByRunID(ctx, runID)
+	if err != nil {
+		return errResult("failed to list agent questions: " + err.Error())
+	}
+
+	dtos := make([]*AgentQuestionDTO, len(questions))
+	for i, q := range questions {
+		dtos[i] = q.ToDTO()
+	}
+
+	return wrapResult(dtos)
+}
+
+// ExecuteListProjectAgentQuestions lists agent questions across all runs in a project.
+func (h *MCPToolHandler) ExecuteListProjectAgentQuestions(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	var statusFilter *AgentQuestionStatus
+	if s, ok := args["status"].(string); ok && s != "" {
+		qs := AgentQuestionStatus(s)
+		statusFilter = &qs
+	}
+
+	questions, err := h.repo.ListQuestionsByProject(ctx, projectID, statusFilter)
+	if err != nil {
+		return errResult("failed to list project agent questions: " + err.Error())
+	}
+
+	dtos := make([]*AgentQuestionDTO, len(questions))
+	for i, q := range questions {
+		dtos[i] = q.ToDTO()
+	}
+
+	return wrapResult(dtos)
+}
+
+// ExecuteRespondToAgentQuestion submits a response to a pending agent question.
+func (h *MCPToolHandler) ExecuteRespondToAgentQuestion(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	questionID, _ := args["question_id"].(string)
+	response, _ := args["response"].(string)
+	if questionID == "" {
+		return errResult("question_id is required")
+	}
+	if response == "" {
+		return errResult("response is required")
+	}
+
+	question, err := h.repo.FindQuestionByID(ctx, questionID)
+	if err != nil {
+		return errResult("failed to find question: " + err.Error())
+	}
+	if question == nil {
+		return errResult("question not found: " + questionID)
+	}
+	if question.Status != QuestionStatusPending {
+		return errResult(fmt.Sprintf("question is already %s", question.Status))
+	}
+
+	if err := h.repo.AnswerQuestion(ctx, questionID, response, "mcp-tool"); err != nil {
+		return errResult("failed to answer question: " + err.Error())
+	}
+
+	// Resume the agent in a background goroutine (non-blocking)
+	if h.executor != nil {
+		run, err := h.repo.FindRunByID(ctx, question.RunID)
+		if err == nil && run != nil && run.Status == RunStatusPaused {
+			agent, err := h.repo.FindByID(ctx, run.AgentID, nil)
+			if err == nil && agent != nil {
+				agentDef, _ := h.repo.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
+				userMessage := fmt.Sprintf(
+					"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
+					question.Question, response,
+				)
+				go func() {
+					bgCtx := context.Background()
+					_, _ = h.executor.Resume(bgCtx, run, ExecuteRequest{
+						Agent:           agent,
+						AgentDefinition: agentDef,
+						ProjectID:       agent.ProjectID,
+						UserMessage:     userMessage,
+					})
+				}()
+			}
+		}
+	}
+
+	return wrapResult(map[string]any{
+		"success":     true,
+		"question_id": questionID,
+		"status":      "answered",
+	})
+}
+
+// ============================================================================
+// Agent Webhook Hooks
+// ============================================================================
+
+// ExecuteListAgentHooks lists all webhook hooks for a given agent.
+func (h *MCPToolHandler) ExecuteListAgentHooks(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	agentID, _ := args["agent_id"].(string)
+	if agentID == "" {
+		return errResult("agent_id is required")
+	}
+
+	hooks, err := h.repo.FindWebhookHooksByAgent(ctx, agentID, projectID)
+	if err != nil {
+		return errResult("failed to list agent hooks: " + err.Error())
+	}
+
+	dtos := make([]*AgentWebhookHookDTO, len(hooks))
+	for i, hook := range hooks {
+		dtos[i] = hook.ToDTO()
+	}
+
+	return wrapResult(dtos)
+}
+
+// ExecuteCreateAgentHook creates a new webhook hook for an agent.
+func (h *MCPToolHandler) ExecuteCreateAgentHook(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	agentID, _ := args["agent_id"].(string)
+	label, _ := args["label"].(string)
+	if agentID == "" {
+		return errResult("agent_id is required")
+	}
+	if label == "" {
+		return errResult("label is required")
+	}
+
+	agent, err := h.repo.FindByID(ctx, agentID, &projectID)
+	if err != nil {
+		return errResult("failed to find agent: " + err.Error())
+	}
+	if agent == nil {
+		return errResult("agent not found: " + agentID)
+	}
+
+	rawToken, err := GenerateWebhookToken()
+	if err != nil {
+		return errResult("failed to generate token: " + err.Error())
+	}
+
+	hashedToken, err := HashWebhookToken(rawToken)
+	if err != nil {
+		return errResult("failed to hash token: " + err.Error())
+	}
+
+	hook := &AgentWebhookHook{
+		AgentID:   agent.ID,
+		ProjectID: agent.ProjectID,
+		Label:     label,
+		TokenHash: hashedToken,
+		Enabled:   true,
+	}
+
+	if err := h.repo.CreateWebhookHook(ctx, hook); err != nil {
+		return errResult("failed to create webhook hook: " + err.Error())
+	}
+
+	hook.Token = &rawToken
+	return wrapResult(hook.ToDTO())
+}
+
+// ExecuteDeleteAgentHook deletes a webhook hook by ID.
+func (h *MCPToolHandler) ExecuteDeleteAgentHook(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	hookID, _ := args["hook_id"].(string)
+	if hookID == "" {
+		return errResult("hook_id is required")
+	}
+
+	if err := h.repo.DeleteWebhookHook(ctx, hookID, projectID); err != nil {
+		return errResult("failed to delete webhook hook: " + err.Error())
+	}
+
+	return wrapResult(map[string]any{
+		"success": true,
+		"hook_id": hookID,
+	})
+}
+
+// ============================================================================
+// ADK Sessions
+// ============================================================================
+
+// ExecuteListADKSessions lists ADK sessions for the current project.
+func (h *MCPToolHandler) ExecuteListADKSessions(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	limit := 50
+	offset := 0
+
+	if l, ok := args["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+	}
+	if o, ok := args["offset"].(float64); ok && o >= 0 {
+		offset = int(o)
+	}
+
+	sessions, count, err := h.repo.FindADKSessionsByProject(ctx, projectID, limit, offset)
+	if err != nil {
+		return errResult("failed to list adk sessions: " + err.Error())
+	}
+
+	dtos := make([]*ADKSessionDTO, len(sessions))
+	for i, s := range sessions {
+		dtos[i] = &ADKSessionDTO{
+			ID:         s.ID,
+			AppName:    s.AppName,
+			UserID:     s.UserID,
+			State:      s.State,
+			CreateTime: s.CreateTime,
+			UpdateTime: s.UpdateTime,
+		}
+	}
+
+	return wrapResult(map[string]any{
+		"items":       dtos,
+		"total_count": count,
+		"limit":       limit,
+		"offset":      offset,
+	})
+}
+
+// ExecuteGetADKSession gets a single ADK session with all its events.
+func (h *MCPToolHandler) ExecuteGetADKSession(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	sessionID, _ := args["session_id"].(string)
+	if sessionID == "" {
+		return errResult("session_id is required")
+	}
+
+	session, events, err := h.repo.FindADKSessionByIDForProject(ctx, sessionID, projectID)
+	if err != nil {
+		return errResult("failed to get adk session: " + err.Error())
+	}
+	if session == nil {
+		return errResult("adk session not found: " + sessionID)
+	}
+
+	dto := &ADKSessionDTO{
+		ID:         session.ID,
+		AppName:    session.AppName,
+		UserID:     session.UserID,
+		State:      session.State,
+		CreateTime: session.CreateTime,
+		UpdateTime: session.UpdateTime,
+	}
+
+	eventDTOs := make([]*ADKEventDTO, len(events))
+	for i, e := range events {
+		var content map[string]any
+		if len(e.Content) > 0 {
+			_ = json.Unmarshal(e.Content, &content)
+		}
+		var actions map[string]any
+		if len(e.Actions) > 0 {
+			_ = json.Unmarshal(e.Actions, &actions)
+		}
+		var longRunningToolIDs map[string]any
+		if len(e.LongRunningToolIDsJSON) > 0 {
+			_ = json.Unmarshal(e.LongRunningToolIDsJSON, &longRunningToolIDs)
+		}
+		eventDTOs[i] = &ADKEventDTO{
+			ID:                     e.ID,
+			SessionID:              e.SessionID,
+			InvocationID:           e.InvocationID,
+			Author:                 e.Author,
+			Timestamp:              e.Timestamp,
+			Branch:                 e.Branch,
+			Actions:                actions,
+			LongRunningToolIDsJSON: longRunningToolIDs,
+			Content:                content,
+			Partial:                e.Partial,
+			TurnComplete:           e.TurnComplete,
+			ErrorCode:              e.ErrorCode,
+			ErrorMessage:           e.ErrorMessage,
+			Interrupted:            e.Interrupted,
+		}
+	}
+	dto.Events = eventDTOs
+
+	return wrapResult(dto)
 }

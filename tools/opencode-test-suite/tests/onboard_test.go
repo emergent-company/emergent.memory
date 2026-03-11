@@ -1,5 +1,5 @@
 // Package tests contains end-to-end tests that drive opencode via its HTTP API
-// against a live Emergent server to verify the emergent-onboard skill works correctly.
+// against a live Emergent server to verify the memory-onboard skill works correctly.
 //
 // Environment variables:
 //
@@ -30,7 +30,7 @@ const (
 	maxTurns    = 8
 )
 
-// initialPrompt triggers the emergent-onboard skill via slash command syntax.
+// initialPrompt triggers the memory-onboard skill via slash command syntax.
 // We explicitly tell the LLM the project and provider are already configured
 // so it skips the setup steps and goes straight to designing the schema.
 // RunUntilDone auto-replies to any confirmation questions.
@@ -48,7 +48,7 @@ Important context:
 //  1. Creates a fresh Emergent project via the CLI.
 //  2. Creates a fake bookstore-API workspace (with opencode.json auto-allow permissions).
 //  3. Writes .env.local pointing opencode at the project.
-//  4. Installs emergent skills into the workspace (.agents/skills/).
+//  4. Installs memory skills into the workspace (.agents/skills/).
 //  5. Starts an opencode serve process (HTTP API mode).
 //  6. Sends a single prompt that loads the skill and instructs the agent to
 //     complete all steps without asking for confirmation.
@@ -92,7 +92,7 @@ func TestOnboardSkill(t *testing.T) {
 	t.Logf("tool calls (%d): %v", len(result.ToolCalls), toolCallNames(result))
 
 	// Core process assertions — did the LLM actually run the skill and use bash?
-	assert.SkillLoaded(t, result, "emergent-onboard")
+	assert.SkillLoaded(t, result, "memory-onboard")
 	assert.BashCalled(t, result)
 	assert.NoToolErrors(t, result)
 

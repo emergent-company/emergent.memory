@@ -314,7 +314,7 @@ Gemini models expose a set of **built-in tools** that are invoked directly by th
 | `url_context` | Fetches and reads the content of URLs mentioned in the conversation | Gemini 2.5 Flash |
 
 !!! note "Gemini only"
-    Native tools are ignored when the agent runs on a non-Gemini provider (OpenAI, Anthropic, etc.).
+    Native tools are only available on Gemini models (Google AI or Vertex AI). They are silently ignored when the agent is configured with a non-Gemini model.
 
 !!! note "Model capability check"
     If a tool is requested but the selected model does not support it, it is silently skipped at runtime. For example, requesting `url_context` on `gemini-2.0-flash` has no effect.

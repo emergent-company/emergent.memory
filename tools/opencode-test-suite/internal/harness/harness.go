@@ -112,13 +112,12 @@ func SkipIfServerDown(t *testing.T) {
 	}
 }
 
-// InstallSkills installs the emergent-onboard (and any other test-required) skills
-// into the workspace directory. It shells out to `emergent skills install --force`.
+// InstallSkills installs the memory-onboard (and any other test-required) skills
+// into the workspace directory. It shells out to `memory install-memory-skills --force`.
 func InstallSkills(t *testing.T, workspaceDir string) {
 	t.Helper()
 
-	srv := serverURL()
-	out, err := runCLIInDir(t, workspaceDir, "skills", "install", "--force", "--server", srv)
+	out, err := runCLIInDir(t, workspaceDir, "install-memory-skills", "--force")
 	if err != nil {
 		t.Fatalf("harness: install skills: %v\noutput: %s", err, out)
 	}

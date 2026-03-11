@@ -28,12 +28,15 @@ const (
 // These are fallback values from models.dev as of 2025 for the 6 platform-known models.
 // Only generative models are included (embeddings are excluded).
 var staticModelLimits = map[string]int{
-	"gemini-1.5-flash":    8192,
-	"gemini-1.5-flash-8b": 8192,
-	"gemini-1.5-pro":      8192,
-	"gemini-2.0-flash":    8192,
-	"gemini-2.5-flash":    65536,
-	"gemini-2.5-pro":      65536,
+	"gemini-1.5-flash":              8192,
+	"gemini-1.5-flash-8b":           8192,
+	"gemini-1.5-pro":                8192,
+	"gemini-2.0-flash":              8192,
+	"gemini-2.5-flash":              65536,
+	"gemini-2.5-pro":                65536,
+	"gemini-3.1-flash-lite-preview": 65536,
+	"gemini-3.1-flash":              65536,
+	"gemini-3.1-pro":                65536,
 }
 
 // modelsDevResponse is the top-level shape of the models.dev /api.json response.
