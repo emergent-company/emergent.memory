@@ -1644,3 +1644,26 @@ func (r *Repository) GetOrgIDByProjectID(ctx context.Context, projectID string) 
 	}
 	return orgID, nil
 }
+
+// GetFirstProjectIDByOrgID returns the ID of the first project in the given org.
+// Used as an infrastructure project sentinel when no project context is active.
+// Returns an empty string (no error) when no projects exist for the org.
+func (r *Repository) GetFirstProjectIDByOrgID(ctx context.Context, orgID string) (string, error) {
+	var projectID string
+	q := r.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("id").
+		OrderExpr("created_at ASC").
+		Limit(1)
+	if orgID != "" {
+		q = q.Where("organization_id = ?", orgID)
+	}
+	err := q.Scan(ctx, &projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("GetFirstProjectIDByOrgID: %w", err)
+	}
+	return projectID, nil
+}
