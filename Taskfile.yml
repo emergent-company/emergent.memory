@@ -78,6 +78,13 @@ tasks:
     cmds:
       - task: server:status
 
+  cli:gen-docs:
+    desc: Regenerate the embedded CLI reference skill (memory-cli-reference/SKILL.md)
+    cmds:
+      - task: cli:install
+      - ~/.memory/bin/memory gen-docs --output tools/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md.body
+      - python3 tools/cli/scripts/gen_cli_reference_skill.py
+
   cli:install:
     desc: Build and install the memory CLI to ~/.memory/bin/memory
     dir: tools/cli
@@ -101,11 +108,12 @@ tasks:
     requires:
       vars: [VERSION]
     cmds:
+      - task: cli:gen-docs
       - |
         echo "Releasing v{{.VERSION}}"
         echo "{{.VERSION}}" > VERSION
         sed -i "s|// @version .*|// @version {{.VERSION}}|" apps/server/cmd/server/main.go
-        git add VERSION apps/server/cmd/server/main.go
+        git add VERSION apps/server/cmd/server/main.go tools/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md
         git status
         git commit -m "chore: bump version to {{.VERSION}}"
         git tag v{{.VERSION}}
