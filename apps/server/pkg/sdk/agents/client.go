@@ -85,6 +85,13 @@ type AgentCapabilities struct {
 	AllowedObjectTypes     []string `json:"allowedObjectTypes,omitempty"`
 }
 
+// RunTokenUsage holds aggregated LLM token counts and estimated cost for a run.
+type RunTokenUsage struct {
+	TotalInputTokens  int64   `json:"totalInputTokens"`
+	TotalOutputTokens int64   `json:"totalOutputTokens"`
+	EstimatedCostUSD  float64 `json:"estimatedCostUsd"`
+}
+
 // AgentRun represents an agent run record.
 type AgentRun struct {
 	ID           string         `json:"id"`
@@ -112,6 +119,9 @@ type AgentRun struct {
 	// Trigger tracking
 	TriggerSource   *string        `json:"triggerSource,omitempty"`
 	TriggerMetadata map[string]any `json:"triggerMetadata,omitempty"`
+
+	// Token usage and cost (populated by GetProjectRun, nil for list endpoints)
+	TokenUsage *RunTokenUsage `json:"tokenUsage,omitempty"`
 }
 
 // AgentRunMessage represents a message in the agent conversation.
