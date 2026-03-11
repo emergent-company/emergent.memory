@@ -510,7 +510,7 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 		Description:  strPtr("Knowledge graph query assistant with access to search, entity, and relationship tools"),
 		SystemPrompt: &systemPrompt,
 		Model: &ModelConfig{
-			Name:        "gemini-2.5-flash",
+			Name:        "gemini-3.1-flash-lite-preview",
 			Temperature: &temperature,
 		},
 		Tools: []string{
@@ -539,6 +539,138 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 			return existing, nil
 		}
 		return nil, fmt.Errorf("failed to create graph-query-agent: %w", err)
+	}
+
+	return def, nil
+}
+
+// cliAssistantAgentSystemPrompt is the default system prompt for the cli-assistant-agent.
+const cliAssistantAgentSystemPrompt = `You are a CLI assistant for the Memory knowledge management platform.
+Your job is to help users accomplish tasks and answer questions about Memory — the CLI, SDK, REST API, agents, and knowledge graph features.
+
+## Authentication & Context Awareness
+
+You will be told whether the user is authenticated and whether a project context is active.
+Always adapt your response to the current context:
+
+- **Not authenticated**: You can still answer documentation questions. For tasks that require
+  authentication (listing agents, querying graph data, etc.), explain what credentials are needed:
+    - Run "memory login" for interactive OAuth login
+    - Set MEMORY_API_KEY for standalone/CI use
+    - Pass --project-token for project-scoped access
+- **Authenticated, no project**: You can answer doc questions and perform account-level tasks.
+  For project-scoped tasks, tell the user to pass --project <id> or run "memory config set project_id <id>".
+- **Authenticated with project**: Full access — answer questions and perform tasks using the available tools.
+
+## Classification
+
+Before responding, classify the user's request into one of:
+- **DOCS_QUESTION**: asking how something works, what commands exist, what a feature does, SDK/API usage
+- **TASK**: asking you to do something — list agents, query graph, check config, create objects, etc.
+- **MIXED**: a question that requires both live data (tools) and documentation context
+
+## For DOCS_QUESTION
+
+Use the "webfetch" tool to retrieve relevant documentation pages from:
+  https://emergent-company.github.io/emergent.memory/
+
+Navigation strategy:
+1. Start with the index: https://emergent-company.github.io/emergent.memory/
+2. Navigate to the most relevant section (user-guide, developer-guide, go-sdk, api-reference)
+3. Fetch the specific page for the topic
+
+Always provide CLI command examples in code blocks. Use the real command names (memory graph, memory agents, memory defs, etc.).
+
+## For TASK (when authenticated + project available)
+
+Use the available tools to fulfill the request directly. Confirm what was done afterward.
+Never fabricate live state — always use tools to look up agents, objects, IDs, etc.
+
+## For TASK (when NOT authenticated or no project)
+
+Do NOT attempt tool calls that require authentication or a project context.
+Instead, explain clearly:
+1. What would have been done
+2. What the user needs to do to enable it (login, configure project)
+3. The exact CLI commands to get set up
+
+## Response Style
+- Keep responses concise and focused
+- Use markdown with code blocks for CLI commands and API examples
+- For lists of items (agents, objects, etc.), use tables when there are multiple columns
+- If a task has multiple steps, number them clearly`
+
+// EnsureCliAssistantAgent returns the cli-assistant-agent for the project (or with an empty
+// project ID for the user-level /api/ask endpoint), creating it if it does not exist yet.
+// Uses VisibilityInternal so it never appears in the public agent list.
+// Safe to call concurrently — a race between two callers results in one insert and one
+// subsequent read (FindDefinitionByName will find the winner's row).
+func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID string) (*AgentDefinition, error) {
+	existing, err := r.FindDefinitionByName(ctx, projectID, "cli-assistant-agent")
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up cli-assistant-agent: %w", err)
+	}
+	if existing != nil {
+		return existing, nil
+	}
+
+	temperature := float32(0.3)
+	maxSteps := 20
+	systemPrompt := cliAssistantAgentSystemPrompt
+
+	def := &AgentDefinition{
+		ProjectID:    projectID,
+		Name:         "cli-assistant-agent",
+		Description:  strPtr("CLI and platform assistant — answers documentation questions and executes tasks using available tools"),
+		SystemPrompt: &systemPrompt,
+		Model: &ModelConfig{
+			Name:        "gemini-2.0-flash",
+			Temperature: &temperature,
+		},
+		Tools: []string{
+			// Web access for documentation
+			"webfetch",
+			// Project info
+			"get_project_info",
+			// Knowledge graph — read
+			"hybrid_search",
+			"query_entities",
+			"search_entities",
+			"semantic_search",
+			"find_similar",
+			"get_entity_edges",
+			"traverse_graph",
+			"list_entity_types",
+			"schema_version",
+			"list_relationships",
+			// Agent management — read
+			"list_agent_definitions",
+			"get_agent_definition",
+			"list_agents",
+			"get_agent",
+			"list_agent_runs",
+			"get_agent_run",
+			"get_agent_run_tool_calls",
+			"list_available_agents",
+			// Schema registry — read
+			"list_schemas",
+			"get_schema",
+			"get_available_templates",
+			"get_installed_templates",
+		},
+		FlowType:   FlowTypeSingle,
+		IsDefault:  false,
+		MaxSteps:   &maxSteps,
+		Visibility: VisibilityInternal,
+		Config:     map[string]any{},
+	}
+
+	if err := r.CreateDefinition(ctx, def); err != nil {
+		// Race condition: another caller inserted first — retry the read.
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, "cli-assistant-agent"); err2 == nil && existing != nil {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("failed to create cli-assistant-agent: %w", err)
 	}
 
 	return def, nil

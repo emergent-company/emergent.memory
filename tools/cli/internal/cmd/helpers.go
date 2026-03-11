@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -94,24 +96,33 @@ func resolveProjectContext(cmd *cobra.Command, flagValue string) (string, error)
 		nameOrID = viper.GetString("project_id")
 	}
 
+	// Load config once; used for the project ID fallback and the picker.
+	configPath, _ := cmd.Flags().GetString("config")
+	if configPath == "" {
+		configPath = config.DiscoverPath("")
+	}
+	cfg, cfgErr := config.LoadWithEnv(configPath)
+
 	if nameOrID == "" {
-		// Fall back to config file
-		configPath, _ := cmd.Flags().GetString("config")
-		if configPath == "" {
-			configPath = config.DiscoverPath("")
+		if cfgErr != nil {
+			return "", fmt.Errorf("failed to load config: %w", cfgErr)
 		}
-
-		cfg, err := config.LoadWithEnv(configPath)
-		if err != nil {
-			return "", fmt.Errorf("failed to load config: %w", err)
-		}
-
 		if cfg.ProjectID != "" {
 			nameOrID = cfg.ProjectID
 		}
 	}
 
 	if nameOrID == "" {
+		pickedID, pickErr := promptProjectPicker(cmd, cfg)
+		if pickErr != nil {
+			// User cancelled or timed out — surface the picker error directly.
+			return "", pickErr
+		}
+		if pickedID != "" {
+			return pickedID, nil
+		}
+
+		// Non-interactive or no projects — fall through to the original error.
 		return "", fmt.Errorf("project is required. Use --project flag, set MEMORY_PROJECT in .env.local, or configure it in your config file")
 	}
 
@@ -135,4 +146,68 @@ func resolveProjectContext(cmd *cobra.Command, flagValue string) (string, error)
 	}
 
 	return resolveProjectNameOrID(c, nameOrID)
+}
+
+// isNonInteractive returns true when the CLI is running in a context where
+// interactive prompts must not be shown: a CI environment (CI env var set),
+// an explicit opt-out (NO_PROMPT env var), or when stdin is not a real
+// terminal (piped / redirected input).
+func isNonInteractive() bool {
+	if os.Getenv("CI") != "" || os.Getenv("NO_PROMPT") != "" {
+		return true
+	}
+	return !term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// promptProjectPicker attempts an interactive project selection when no project
+// has been configured. It is a no-op in non-interactive contexts and returns
+// ("", nil) there so the caller falls through to its normal error path.
+//
+// When exactly one project exists, it is auto-selected without showing the
+// picker. When multiple projects exist, a Bubbletea arrow-key list is rendered
+// to stderr (keeping stdout clean) with a 30-second timeout.
+//
+// On success the selected project ID is returned and cfg.ProjectID is updated
+// in-memory so downstream code picks it up without re-fetching.
+func promptProjectPicker(cmd *cobra.Command, cfg *config.Config) (string, error) {
+	if isNonInteractive() {
+		return "", nil
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return "", nil // can't reach server — fall through to original error
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	projectList, err := c.SDK.Projects.List(ctx, &projects.ListOptions{})
+	if err != nil || len(projectList) == 0 {
+		return "", nil // nothing to pick — fall through
+	}
+
+	// Single project: auto-select silently.
+	if len(projectList) == 1 {
+		id := projectList[0].ID
+		cfg.ProjectID = id
+		cfg.ProjectName = projectList[0].Name
+		fmt.Fprintf(os.Stderr, "\033[2;36mAuto-selected project: %s\033[0m\n", projectList[0].Name)
+		return id, nil
+	}
+
+	// Multiple projects: show the interactive picker.
+	items := make([]PickerItem, len(projectList))
+	for i, p := range projectList {
+		items[i] = PickerItem{ID: p.ID, Name: p.Name}
+	}
+
+	id, name, err := PickProject(items, 30*time.Second, os.Stderr)
+	if err != nil {
+		return "", err
+	}
+
+	cfg.ProjectID = id
+	cfg.ProjectName = name
+	return id, nil
 }
