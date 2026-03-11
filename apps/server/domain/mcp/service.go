@@ -4432,10 +4432,22 @@ func (s *Service) executeCreateProject(ctx context.Context, args map[string]any)
 		return nil, fmt.Errorf("create_project: 'name' is required")
 	}
 
-	// Resolve org_id: explicit arg → auth context → error.
+	// Resolve org_id: explicit arg → auth context → project lookup → error.
 	orgID, _ := args["org_id"].(string)
 	if orgID == "" {
 		orgID = auth.OrgIDFromContext(ctx)
+	}
+	if orgID == "" {
+		// For standalone/account-mode auth, OrgID is not injected into the context.
+		// Fall back to looking up the org from the project ID in context.
+		if projectID := auth.ProjectIDFromContext(ctx); projectID != "" {
+			var resolvedOrgID string
+			_ = s.db.NewRaw(
+				"SELECT organization_id FROM kb.projects WHERE id = ? LIMIT 1",
+				projectID,
+			).Scan(ctx, &resolvedOrgID)
+			orgID = resolvedOrgID
+		}
 	}
 	if orgID == "" {
 		return nil, fmt.Errorf("create_project: 'org_id' is required (could not resolve from auth context)")
