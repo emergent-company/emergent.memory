@@ -33,8 +33,8 @@ fi
 ARGS=("$ENV_NAME")
 [[ -n "$FILTER" ]] && ARGS+=("$FILTER")
 
-# AI news blueprint and V2Orchestrator tests need a long timeout — pass it through.
-if [[ "$FILTER" == *AINews* || "$FILTER" == *Blueprint* || "$FILTER" == *V2Orchestrator* ]]; then
+# AI news blueprint and Orchestrator tests need a long timeout — pass it through.
+if [[ "$FILTER" == *AINews* || "$FILTER" == *Blueprint* || "$FILTER" == *V2Orchestrator* || "$FILTER" == *V3Orchestrator* || "$FILTER" == *Orchestrator* ]]; then
   exec bash "$E2E_DIR/test" "${ARGS[@]}" -- -timeout 60m
 else
   exec bash "$E2E_DIR/test" "${ARGS[@]}"
