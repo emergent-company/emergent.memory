@@ -310,8 +310,8 @@ func printSummary(stats *MigrationStats, dryRun bool) {
 }
 
 func loadSchemas(ctx context.Context, db bun.IDB, projectID uuid.UUID, version string) (*graph.ExtractionSchemas, error) {
-	type GraphTemplatePack struct {
-		bun.BaseModel           `bun:"kb.graph_template_packs,alias:gtp"`
+	type GraphMemorySchema struct {
+		bun.BaseModel           `bun:"kb.graph_schemas,alias:gtp"`
 		ID                      string         `bun:"id,pk,type:uuid"`
 		Name                    string         `bun:"name,notnull"`
 		Version                 string         `bun:"version,notnull"`
@@ -319,18 +319,18 @@ func loadSchemas(ctx context.Context, db bun.IDB, projectID uuid.UUID, version s
 		RelationshipTypeSchemas map[string]any `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
 	}
 
-	type ProjectTemplatePack struct {
-		bun.BaseModel  `bun:"kb.project_template_packs,alias:ptp"`
-		ProjectID      uuid.UUID          `bun:"project_id,notnull,type:uuid"`
-		TemplatePackID string             `bun:"template_pack_id,notnull,type:uuid"`
-		Active         bool               `bun:"active,default:true"`
-		TemplatePack   *GraphTemplatePack `bun:"rel:belongs-to,join:template_pack_id=id"`
+	type ProjectMemorySchema struct {
+		bun.BaseModel `bun:"kb.project_schemas,alias:ptp"`
+		ProjectID     uuid.UUID          `bun:"project_id,notnull,type:uuid"`
+		SchemaID      string             `bun:"schema_id,notnull,type:uuid"`
+		Active        bool               `bun:"active,default:true"`
+		MemorySchema  *GraphMemorySchema `bun:"rel:belongs-to,join:schema_id=id"`
 	}
 
-	var assignments []ProjectTemplatePack
+	var assignments []ProjectMemorySchema
 	err := db.NewSelect().
 		Model(&assignments).
-		Relation("TemplatePack").
+		Relation("MemorySchema").
 		Where("ptp.project_id = ?", projectID).
 		Where("ptp.active = true").
 		Where("gtp.version = ?", version).
@@ -341,18 +341,18 @@ func loadSchemas(ctx context.Context, db bun.IDB, projectID uuid.UUID, version s
 	}
 
 	if len(assignments) == 0 {
-		return nil, fmt.Errorf("no active template pack found for version %s", version)
+		return nil, fmt.Errorf("no active memory schema found for version %s", version)
 	}
 
 	objectSchemas := make(map[string]agents.ObjectSchema)
 	relationshipSchemas := make(map[string]agents.RelationshipSchema)
 
 	for _, assignment := range assignments {
-		if assignment.TemplatePack == nil {
+		if assignment.MemorySchema == nil {
 			continue
 		}
 
-		pack := assignment.TemplatePack
+		pack := assignment.MemorySchema
 
 		for typeName, schemaRaw := range pack.ObjectTypeSchemas {
 			schemaMap, ok := schemaRaw.(map[string]any)

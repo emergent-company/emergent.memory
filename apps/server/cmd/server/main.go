@@ -54,20 +54,20 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/domain/schemaregistry"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/domain/standalone"
 	"github.com/emergent-company/emergent.memory/domain/superadmin"
 	"github.com/emergent-company/emergent.memory/domain/tasks"
-	"github.com/emergent-company/emergent.memory/domain/templatepacks"
 	"github.com/emergent-company/emergent.memory/domain/tracing"
-	"github.com/emergent-company/emergent.memory/domain/typeregistry"
 	"github.com/emergent-company/emergent.memory/domain/useraccess"
 	"github.com/emergent-company/emergent.memory/domain/useractivity"
 	"github.com/emergent-company/emergent.memory/domain/userprofile"
 	"github.com/emergent-company/emergent.memory/domain/users"
-	"github.com/emergent-company/emergent.memory/domain/workspace"
-	"github.com/emergent-company/emergent.memory/domain/workspaceimages"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/sandboximages"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/internal/server"
@@ -144,8 +144,8 @@ func main() {
 		superadmin.Module,
 		tasks.Module,
 		skills.Module,
-		templatepacks.Module,
-		typeregistry.Module,
+		schemas.Module,
+		schemaregistry.Module,
 		useraccess.Module,
 		useractivity.Module,
 		invites.Module,
@@ -175,10 +175,10 @@ func main() {
 		docs.Module,
 
 		// Agent workspace infrastructure (isolated execution environments)
-		workspace.Module,
+		sandbox.Module,
 
 		// Workspace image catalog (built-in rootfs + custom Docker images)
-		workspaceimages.Module,
+		sandboximages.Module,
 
 		// GitHub App integration (repository access, credential management)
 		githubapp.Module,

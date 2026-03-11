@@ -13,7 +13,8 @@ import (
 
 // LoadDir walks the packs/, agents/, skills/, seed/objects/, and
 // seed/relationships/ subdirectories inside dir and returns all successfully
-// parsed records.
+// parsed records. It also looks for a project.[yaml|yml|json] file at the
+// blueprint root to load project-level settings.
 //
 // Skills follow the agentskills.io open standard: each skill is a subdirectory
 // containing a SKILL.md file with YAML frontmatter and Markdown content.
@@ -23,6 +24,7 @@ import (
 // results with BlueprintsActionError — processing continues for remaining files.
 // Missing subdirectories are not an error.
 func LoadDir(dir string, envVars map[string]string) (
+	project *ProjectFile,
 	packs []PackFile,
 	agents []AgentFile,
 	skills []SkillFile,
@@ -31,21 +33,81 @@ func LoadDir(dir string, envVars map[string]string) (
 	results []BlueprintsResult,
 	err error,
 ) {
+	project, projectResult := loadProject(dir, envVars)
+	if projectResult != nil {
+		results = append(results, *projectResult)
+	}
 	packs, packResults := loadPacks(filepath.Join(dir, "packs"), envVars)
 	agents, agentResults := loadAgents(filepath.Join(dir, "agents"), envVars)
 	skills, skillResults := loadSkills(filepath.Join(dir, "skills"), envVars)
 	objects, objResults := loadSeedObjects(filepath.Join(dir, "seed", "objects"), envVars)
 	rels, relResults := loadSeedRelationships(filepath.Join(dir, "seed", "relationships"), envVars)
-	results = append(packResults, agentResults...)
+	results = append(results, packResults...)
+	results = append(results, agentResults...)
 	results = append(results, skillResults...)
 	results = append(results, objResults...)
 	results = append(results, relResults...)
-	return packs, agents, skills, objects, rels, results, nil
+	return project, packs, agents, skills, objects, rels, results, nil
 }
 
 // ──────────────────────────────────────────────
 // Internal helpers
 // ──────────────────────────────────────────────
+
+// loadProject looks for a project.yaml / project.yml / project.json file at the
+// blueprint root dir. Returns nil, nil when no such file exists.
+func loadProject(dir string, envVars map[string]string) (*ProjectFile, *BlueprintsResult) {
+	candidates := []string{
+		filepath.Join(dir, "project.yaml"),
+		filepath.Join(dir, "project.yml"),
+		filepath.Join(dir, "project.json"),
+	}
+
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, &BlueprintsResult{
+				ResourceType: "project",
+				Name:         filepath.Base(path),
+				SourceFile:   path,
+				Action:       BlueprintsActionError,
+				Error:        fmt.Errorf("read file: %w", err),
+			}
+		}
+		data = ExpandEnvVars(data, envVars)
+
+		ext := strings.ToLower(filepath.Ext(path))
+		var pf ProjectFile
+		switch ext {
+		case ".json":
+			if err := json.Unmarshal(data, &pf); err != nil {
+				return nil, &BlueprintsResult{
+					ResourceType: "project",
+					Name:         filepath.Base(path),
+					SourceFile:   path,
+					Action:       BlueprintsActionError,
+					Error:        fmt.Errorf("parse error: %w", err),
+				}
+			}
+		default: // .yaml, .yml
+			if err := yaml.Unmarshal(data, &pf); err != nil {
+				return nil, &BlueprintsResult{
+					ResourceType: "project",
+					Name:         filepath.Base(path),
+					SourceFile:   path,
+					Action:       BlueprintsActionError,
+					Error:        fmt.Errorf("parse error: %w", err),
+				}
+			}
+		}
+		pf.SourceFile = path
+		return &pf, nil
+	}
+	return nil, nil
+}
 
 func loadPacks(dir string, envVars map[string]string) ([]PackFile, []BlueprintsResult) {
 	entries, ok := readDir(dir)

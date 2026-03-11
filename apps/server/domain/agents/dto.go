@@ -249,7 +249,7 @@ type AgentDefinitionDTO struct {
 	DispatchMode    AgentDispatchMode `json:"dispatchMode"`
 	ACPConfig       *ACPConfig        `json:"acpConfig,omitempty"`
 	Config          map[string]any    `json:"config,omitempty"`
-	WorkspaceConfig map[string]any    `json:"workspaceConfig,omitempty"`
+	SandboxConfig map[string]any    `json:"workspaceConfig,omitempty"`
 	CreatedAt       time.Time         `json:"createdAt"`
 	UpdatedAt       time.Time         `json:"updatedAt"`
 }
@@ -264,7 +264,7 @@ type AgentDefinitionSummaryDTO struct {
 	Visibility         AgentVisibility `json:"visibility"`
 	IsDefault          bool            `json:"isDefault"`
 	ToolCount          int             `json:"toolCount"`
-	HasWorkspaceConfig bool            `json:"hasWorkspaceConfig"`
+	HasSandboxConfig bool            `json:"hasSandboxConfig"`
 	CreatedAt          time.Time       `json:"createdAt"`
 	UpdatedAt          time.Time       `json:"updatedAt"`
 }
@@ -284,7 +284,7 @@ type CreateAgentDefinitionDTO struct {
 	DispatchMode    AgentDispatchMode `json:"dispatchMode"`
 	ACPConfig       *ACPConfig        `json:"acpConfig"`
 	Config          map[string]any    `json:"config"`
-	WorkspaceConfig map[string]any    `json:"workspaceConfig"`
+	SandboxConfig map[string]any    `json:"workspaceConfig"`
 }
 
 // UpdateAgentDefinitionDTO is the request DTO for updating an agent definition
@@ -302,7 +302,7 @@ type UpdateAgentDefinitionDTO struct {
 	DispatchMode    *AgentDispatchMode `json:"dispatchMode"`
 	ACPConfig       *ACPConfig         `json:"acpConfig"`
 	Config          map[string]any     `json:"config"`
-	WorkspaceConfig map[string]any     `json:"workspaceConfig"`
+	SandboxConfig map[string]any     `json:"workspaceConfig"`
 }
 
 // --- Agent Run Message / Tool Call DTOs ---
@@ -352,7 +352,7 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		DispatchMode:    d.DispatchMode,
 		ACPConfig:       d.ACPConfig,
 		Config:          d.Config,
-		WorkspaceConfig: d.WorkspaceConfig,
+		SandboxConfig: d.SandboxConfig,
 		CreatedAt:       d.CreatedAt,
 		UpdatedAt:       d.UpdatedAt,
 	}
@@ -369,7 +369,7 @@ func (d *AgentDefinition) ToSummaryDTO() *AgentDefinitionSummaryDTO {
 		Visibility:         d.Visibility,
 		IsDefault:          d.IsDefault,
 		ToolCount:          len(d.Tools),
-		HasWorkspaceConfig: len(d.WorkspaceConfig) > 0,
+		HasSandboxConfig: len(d.SandboxConfig) > 0,
 		CreatedAt:          d.CreatedAt,
 		UpdatedAt:          d.UpdatedAt,
 	}

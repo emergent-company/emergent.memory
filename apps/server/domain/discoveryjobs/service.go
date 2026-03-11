@@ -116,7 +116,7 @@ func (s *Service) GetJobStatus(ctx context.Context, jobID uuid.UUID) (*JobStatus
 		ErrorMessage:            job.ErrorMessage,
 		DiscoveredTypes:         job.DiscoveredTypes,
 		DiscoveredRelationships: job.DiscoveredRelationships,
-		TemplatePackID:          job.TemplatePackID,
+		SchemaID:          job.SchemaID,
 	}, nil
 }
 
@@ -137,7 +137,7 @@ func (s *Service) ListJobsForProject(ctx context.Context, projectID uuid.UUID) (
 			CompletedAt:             job.CompletedAt,
 			DiscoveredTypes:         job.DiscoveredTypes,
 			DiscoveredRelationships: job.DiscoveredRelationships,
-			TemplatePackID:          job.TemplatePackID,
+			SchemaID:          job.SchemaID,
 		}
 	}
 	return result, nil
@@ -148,7 +148,7 @@ func (s *Service) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 	return s.repo.CancelJob(ctx, jobID)
 }
 
-// FinalizeDiscovery finalizes discovery and creates/extends a template pack
+// FinalizeDiscovery finalizes discovery and creates/extends a memory schema
 func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID uuid.UUID, req *FinalizeDiscoveryRequest) (*FinalizeDiscoveryResponse, error) {
 	s.log.Info("finalizing discovery",
 		slog.String("job_id", jobID.String()),
@@ -156,7 +156,7 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 		slog.Int("types_count", len(req.IncludedTypes)),
 		slog.Int("relationships_count", len(req.IncludedRelationships)))
 
-	// Build template pack schemas
+	// Build memory schema schemas
 	objectTypeSchemas := make(JSONMap)
 	uiConfigs := make(JSONMap)
 
@@ -184,12 +184,12 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 		}
 	}
 
-	var templatePackID uuid.UUID
+	var schemaID uuid.UUID
 	var message string
 
 	if req.Mode == "create" {
-		// Create new template pack
-		packID, err := s.repo.CreateTemplatePack(ctx, CreateTemplatePackParams{
+		// Create new memory schema
+		packID, err := s.repo.CreateMemorySchema(ctx, CreateMemorySchemaParams{
 			Name:                    req.PackName,
 			Version:                 "1.0.0",
 			Description:             fmt.Sprintf("Discovery pack with %d types and %d relationships", len(req.IncludedTypes), len(req.IncludedRelationships)),
@@ -204,16 +204,16 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 		if err != nil {
 			return nil, err
 		}
-		templatePackID = packID
-		message = fmt.Sprintf("Created new template pack \"%s\" with %d types", req.PackName, len(req.IncludedTypes))
-		s.log.Info("created new template pack", slog.String("pack_id", packID.String()))
+		schemaID = packID
+		message = fmt.Sprintf("Created new memory schema \"%s\" with %d types", req.PackName, len(req.IncludedTypes))
+		s.log.Info("created new memory schema", slog.String("pack_id", packID.String()))
 	} else {
 		// Extend existing pack
 		if req.ExistingPackID == nil {
 			return nil, apperror.ErrBadRequest.WithMessage("existingPackId is required for extend mode")
 		}
 
-		existingPack, err := s.repo.GetTemplatePack(ctx, *req.ExistingPackID)
+		existingPack, err := s.repo.GetMemorySchema(ctx, *req.ExistingPackID)
 		if err != nil {
 			return nil, err
 		}
@@ -234,22 +234,22 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 			mergedUIConfigs[k] = v
 		}
 
-		if err := s.repo.UpdateTemplatePack(ctx, *req.ExistingPackID, mergedObjectSchemas, mergedRelSchemas, mergedUIConfigs); err != nil {
+		if err := s.repo.UpdateMemorySchema(ctx, *req.ExistingPackID, mergedObjectSchemas, mergedRelSchemas, mergedUIConfigs); err != nil {
 			return nil, err
 		}
 
-		templatePackID = *req.ExistingPackID
-		message = fmt.Sprintf("Extended template pack with %d additional types", len(req.IncludedTypes))
-		s.log.Info("extended template pack", slog.String("pack_id", templatePackID.String()))
+		schemaID = *req.ExistingPackID
+		message = fmt.Sprintf("Extended memory schema with %d additional types", len(req.IncludedTypes))
+		s.log.Info("extended memory schema", slog.String("pack_id", schemaID.String()))
 	}
 
 	// Update discovery job
-	if err := s.repo.SetJobTemplatePack(ctx, jobID, templatePackID); err != nil {
+	if err := s.repo.SetJobMemorySchema(ctx, jobID, schemaID); err != nil {
 		return nil, err
 	}
 
 	return &FinalizeDiscoveryResponse{
-		TemplatePackID: templatePackID,
+		SchemaID: schemaID,
 		Message:        message,
 	}, nil
 }
@@ -352,7 +352,7 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		}
 	}
 
-	// Step 5: Create template pack
+	// Step 5: Create memory schema
 	if len(refinedTypes) == 0 {
 		s.handleJobError(ctx, jobID, fmt.Errorf("discovery completed but found no entity types"))
 		return
@@ -362,7 +362,7 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		s.handleJobError(ctx, jobID, err)
 		return
 	}
-	s.updateProgress(ctx, jobID, len(batches)+2, len(batches)+2, "Creating template pack from discovered types...")
+	s.updateProgress(ctx, jobID, len(batches)+2, len(batches)+2, "Creating memory schema from discovered types...")
 
 	// Convert types and relationships to JSONArray for storage
 	typesArray := make(JSONArray, len(refinedTypes))
@@ -390,11 +390,11 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		}
 	}
 
-	// Create auto template pack
+	// Create auto memory schema
 	timestamp := time.Now().Format("2006-01-02-15-04-05")
 	packName := fmt.Sprintf("Discovered Types - %s", timestamp)
 
-	templatePackID, err := s.repo.CreateTemplatePack(ctx, CreateTemplatePackParams{
+	schemaID, err := s.repo.CreateMemorySchema(ctx, CreateMemorySchemaParams{
 		Name:                    packName,
 		Version:                 "1.0.0",
 		Description:             fmt.Sprintf("Auto-discovered types from %d entities", len(refinedTypes)),
@@ -412,14 +412,14 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 	}
 
 	// Step 6: Complete
-	if err := s.repo.MarkCompleted(ctx, jobID, &templatePackID, typesArray, relsArray); err != nil {
+	if err := s.repo.MarkCompleted(ctx, jobID, &schemaID, typesArray, relsArray); err != nil {
 		s.handleJobError(ctx, jobID, err)
 		return
 	}
 
 	s.log.Info("discovery job completed",
 		slog.String("job_id", jobID.String()),
-		slog.String("pack_id", templatePackID.String()),
+		slog.String("pack_id", schemaID.String()),
 		slog.Int("types_count", len(refinedTypes)),
 		slog.Int("relationships_count", len(relationships)))
 }

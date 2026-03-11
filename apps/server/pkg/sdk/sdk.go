@@ -54,12 +54,12 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/orgs"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemaregistry"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/search"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/superadmin"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/tasks"
-	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/templatepacks"
-	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/typeregistry"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/useractivity"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/users"
 )
@@ -87,7 +87,7 @@ type Client struct {
 	MCPRegistry      *mcpregistry.Client
 	Branches         *branches.Client
 	UserActivity     *useractivity.Client
-	TypeRegistry     *typeregistry.Client
+	SchemaRegistry   *schemaregistry.Client
 	Notifications    *notifications.Client
 	Tasks            *tasks.Client
 	Monitoring       *monitoring.Client
@@ -97,7 +97,7 @@ type Client struct {
 	DiscoveryJobs    *discoveryjobs.Client
 	EmbeddingPolicy  *embeddingpolicies.Client
 	Integrations     *integrations.Client
-	TemplatePacks    *templatepacks.Client
+	Schemas          *schemas.Client
 	Skills           *skills.Client
 	Chunking         *chunking.Client
 
@@ -262,7 +262,7 @@ func initClients(c *Client) {
 	c.MCPRegistry = mcpregistry.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Branches = branches.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.UserActivity = useractivity.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
-	c.TypeRegistry = typeregistry.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.SchemaRegistry = schemaregistry.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Notifications = notifications.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Tasks = tasks.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Monitoring = monitoring.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
@@ -272,7 +272,7 @@ func initClients(c *Client) {
 	c.DiscoveryJobs = discoveryjobs.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.EmbeddingPolicy = embeddingpolicies.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Integrations = integrations.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
-	c.TemplatePacks = templatepacks.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Schemas = schemas.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Skills = skills.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Chunking = chunking.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 
@@ -304,7 +304,7 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.MCPRegistry.SetContext(orgID, projectID)
 	c.Branches.SetContext(orgID, projectID)
 	c.UserActivity.SetContext(orgID, projectID)
-	c.TypeRegistry.SetContext(orgID, projectID)
+	c.SchemaRegistry.SetContext(orgID, projectID)
 	c.Notifications.SetContext(orgID, projectID)
 	c.Tasks.SetContext(orgID, projectID)
 	c.Monitoring.SetContext(orgID, projectID)
@@ -314,7 +314,7 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.DiscoveryJobs.SetContext(orgID, projectID)
 	c.EmbeddingPolicy.SetContext(orgID, projectID)
 	c.Integrations.SetContext(orgID, projectID)
-	c.TemplatePacks.SetContext(orgID, projectID)
+	c.Schemas.SetContext(orgID, projectID)
 	c.Skills.SetContext(orgID, projectID)
 	c.Chunking.SetContext(orgID, projectID)
 	// Note: Health, Superadmin, APIDocs are non-context clients — no SetContext needed

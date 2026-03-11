@@ -127,7 +127,7 @@ func (r *Repository) MarkCompleted(ctx context.Context, jobID uuid.UUID, templat
 	_, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("status = ?", StatusCompleted).
-		Set("template_pack_id = ?", templatePackID).
+		Set("schema_id = ?", templatePackID).
 		Set("discovered_types = ?", discoveredTypes).
 		Set("discovered_relationships = ?", discoveredRelationships).
 		Set("completed_at = now()").
@@ -280,11 +280,11 @@ type DocumentContent struct {
 	Filename string    `bun:"filename"`
 }
 
-// CreateTemplatePack creates a new template pack from discovery results
-func (r *Repository) CreateTemplatePack(ctx context.Context, params CreateTemplatePackParams) (uuid.UUID, error) {
+// CreateMemorySchema creates a new memory schema from discovery results
+func (r *Repository) CreateMemorySchema(ctx context.Context, params CreateMemorySchemaParams) (uuid.UUID, error) {
 	var packID uuid.UUID
 	err := r.db.NewInsert().
-		Table("kb.graph_template_packs").
+		Table("kb.graph_schemas").
 		Value("name", "?", params.Name).
 		Value("version", "?", params.Version).
 		Value("description", "?", params.Description).
@@ -298,14 +298,14 @@ func (r *Repository) CreateTemplatePack(ctx context.Context, params CreateTempla
 		Returning("id").
 		Scan(ctx, &packID)
 	if err != nil {
-		r.log.Error("failed to create template pack", logger.Error(err))
+		r.log.Error("failed to create memory schema", logger.Error(err))
 		return uuid.Nil, apperror.ErrInternal.WithInternal(err)
 	}
 	return packID, nil
 }
 
-// CreateTemplatePackParams contains parameters for creating a template pack
-type CreateTemplatePackParams struct {
+// CreateMemorySchemaParams contains parameters for creating a memory schema
+type CreateMemorySchemaParams struct {
 	Name                    string
 	Version                 string
 	Description             string
@@ -318,36 +318,36 @@ type CreateTemplatePackParams struct {
 	PendingReview           bool
 }
 
-// GetTemplatePack retrieves a template pack by ID
-func (r *Repository) GetTemplatePack(ctx context.Context, packID uuid.UUID) (*TemplatePack, error) {
-	pack := &TemplatePack{}
+// GetMemorySchema retrieves a memory schema by ID
+func (r *Repository) GetMemorySchema(ctx context.Context, packID uuid.UUID) (*MemorySchema, error) {
+	pack := &MemorySchema{}
 	err := r.db.NewSelect().
-		Table("kb.graph_template_packs").
+		Table("kb.graph_schemas").
 		Column("id", "object_type_schemas", "relationship_type_schemas", "ui_configs").
 		Where("id = ?", packID).
 		Scan(ctx, pack)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
-			return nil, apperror.ErrNotFound.WithMessage("template pack not found")
+			return nil, apperror.ErrNotFound.WithMessage("memory schema not found")
 		}
-		r.log.Error("failed to get template pack", logger.Error(err))
+		r.log.Error("failed to get memory schema", logger.Error(err))
 		return nil, apperror.ErrInternal.WithInternal(err)
 	}
 	return pack, nil
 }
 
-// TemplatePack represents a template pack (subset of fields)
-type TemplatePack struct {
+// MemorySchema represents a memory schema (subset of fields)
+type MemorySchema struct {
 	ID                      uuid.UUID `bun:"id"`
 	ObjectTypeSchemas       JSONMap   `bun:"object_type_schemas,type:jsonb"`
 	RelationshipTypeSchemas JSONMap   `bun:"relationship_type_schemas,type:jsonb"`
 	UIConfigs               JSONMap   `bun:"ui_configs,type:jsonb"`
 }
 
-// UpdateTemplatePack updates an existing template pack
-func (r *Repository) UpdateTemplatePack(ctx context.Context, packID uuid.UUID, objectSchemas, relSchemas, uiConfigs JSONMap) error {
+// UpdateMemorySchema updates an existing memory schema
+func (r *Repository) UpdateMemorySchema(ctx context.Context, packID uuid.UUID, objectSchemas, relSchemas, uiConfigs JSONMap) error {
 	_, err := r.db.NewUpdate().
-		Table("kb.graph_template_packs").
+		Table("kb.graph_schemas").
 		Set("object_type_schemas = ?", objectSchemas).
 		Set("relationship_type_schemas = ?", relSchemas).
 		Set("ui_configs = ?", uiConfigs).
@@ -355,24 +355,24 @@ func (r *Repository) UpdateTemplatePack(ctx context.Context, packID uuid.UUID, o
 		Where("id = ?", packID).
 		Exec(ctx)
 	if err != nil {
-		r.log.Error("failed to update template pack", logger.Error(err))
+		r.log.Error("failed to update memory schema", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
 	}
 	return nil
 }
 
-// SetJobTemplatePack sets the template pack ID on a job and marks it completed
-func (r *Repository) SetJobTemplatePack(ctx context.Context, jobID, templatePackID uuid.UUID) error {
+// SetJobMemorySchema sets the memory schema ID on a job and marks it completed
+func (r *Repository) SetJobMemorySchema(ctx context.Context, jobID, templatePackID uuid.UUID) error {
 	_, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
-		Set("template_pack_id = ?", templatePackID).
+		Set("schema_id = ?", templatePackID).
 		Set("status = ?", StatusCompleted).
 		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
 		Exec(ctx)
 	if err != nil {
-		r.log.Error("failed to set job template pack", logger.Error(err))
+		r.log.Error("failed to set job memory schema", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
 	}
 	return nil

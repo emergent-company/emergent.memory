@@ -138,7 +138,7 @@ services:
     devices:
       - /dev/kvm:/dev/kvm # ADD THIS LINE
     environment:
-      ENABLE_AGENT_WORKSPACES: 'true'
+      ENABLE_AGENT_SANDBOXES: 'true'
 ```
 
 #### Step 2: Restart server
@@ -461,7 +461,7 @@ After each optimization, run benchmark:
 for i in {1..10}; do
   START=$(date +%s%3N)
 
-  WORKSPACE_ID=$(curl -s -X POST http://localhost:3002/api/v1/agent/workspaces \
+  SANDBOX_ID=$(curl -s -X POST http://localhost:3002/api/v1/agent/sandboxes \
     -H "X-API-Key: $API_KEY" \
     -H "Content-Type: application/json" \
     -d '{
@@ -471,7 +471,7 @@ for i in {1..10}; do
 
   # Wait for ready
   while true; do
-    STATUS=$(curl -s http://localhost:3002/api/v1/agent/workspaces/$WORKSPACE_ID \
+    STATUS=$(curl -s http://localhost:3002/api/v1/agent/sandboxes/$SANDBOX_ID \
       -H "X-API-Key: $API_KEY" | jq -r '.status')
     [[ "$STATUS" == "ready" ]] && break
     sleep 1
@@ -482,7 +482,7 @@ for i in {1..10}; do
   echo "Run $i: ${DURATION}ms"
 
   # Cleanup
-  curl -s -X DELETE http://localhost:3002/api/v1/agent/workspaces/$WORKSPACE_ID \
+  curl -s -X DELETE http://localhost:3002/api/v1/agent/sandboxes/$SANDBOX_ID \
     -H "X-API-Key: $API_KEY"
 done
 ```

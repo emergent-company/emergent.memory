@@ -261,7 +261,7 @@ func (p *ExtractionPipeline) logEvent(event *session.Event) {
 func (p *ExtractionPipeline) createPipelineAgent(llm model.LLM) (agent.Agent, error) {
 	var entityGenerateConfig *genai.GenerateContentConfig
 	if len(p.objectSchemas) > 0 {
-		entitySchema := BuildEntitySchemaFromTemplatePack(p.objectSchemas)
+		entitySchema := BuildEntitySchemaFromMemorySchema(p.objectSchemas)
 		entityGenerateConfig = p.modelFactory.ExtractionGenerateConfigWithSchema(entitySchema)
 		p.log.Debug("using dynamic entity schema with type constraints",
 			slog.Int("type_count", len(p.objectSchemas)))
@@ -287,7 +287,7 @@ func (p *ExtractionPipeline) createPipelineAgent(llm model.LLM) (agent.Agent, er
 
 	var relationshipGenerateConfig *genai.GenerateContentConfig
 	if len(p.relationshipSchemas) > 0 {
-		relationshipSchema := BuildRelationshipSchemaFromTemplatePack(p.relationshipSchemas)
+		relationshipSchema := BuildRelationshipSchemaFromMemorySchema(p.relationshipSchemas)
 		relationshipGenerateConfig = p.modelFactory.ExtractionGenerateConfigWithSchema(relationshipSchema)
 		p.log.Debug("using dynamic relationship schema with type constraints",
 			slog.Int("type_count", len(p.relationshipSchemas)))

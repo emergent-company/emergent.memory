@@ -139,18 +139,34 @@ func runProjectsCreateToken(cmd *cobra.Command, args []string) error {
 }
 
 var setProjectProviderCmd = &cobra.Command{
-	Use:   "set-provider <project-name-or-id> <provider>",
-	Short: "Set project-level LLM provider credentials",
-	Long: `Set project-level LLM provider credentials, overriding the org config.
-
-<provider> must be "google-ai" or "vertex-ai".
-
-Examples:
-  emergent projects set-provider my-project google-ai --api-key AIzaSy...
-  emergent projects set-provider my-project vertex-ai --gcp-project my-proj --location us-central1`,
+	Use:  "set-provider <project-name-or-id> <provider>",
 	Args: cobra.ExactArgs(2),
 	RunE: runSetProjectProvider,
 }
+
+var setProjectInfoCmd = &cobra.Command{
+	Use:   "set-info [project-name-or-id]",
+	Short: "Set the project info document",
+	Long: `Set the project info document — a Markdown description of this project's
+purpose, goals, audience, and context. Agents and MCP clients read this via the
+get_project_info tool to orient themselves before working with the project's data.
+
+Provide content via --file (read a .md file) or --text (inline string).
+If no project is specified, the active project from config/env is used.
+
+Examples:
+  memory projects set-info --file README.md
+  memory projects set-info my-project --file docs/project-info.md
+  memory projects set-info --text "This project tracks internal HR documents."`,
+	Args:              cobra.MaximumNArgs(1),
+	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
+	RunE:              runSetProjectInfo,
+}
+
+var (
+	setInfoFile string
+	setInfoText string
+)
 
 var (
 	setProviderAPIKey     string
@@ -221,11 +237,11 @@ func printProjectStats(stats *projects.ProjectStats) {
 	}
 	fmt.Printf("     • Extraction jobs: %s\n", jobsStr)
 
-	if len(stats.TemplatePacks) == 0 {
-		fmt.Println("     • Template packs: none")
+	if len(stats.Schemas) == 0 {
+		fmt.Println("     • Schemas: none")
 	} else {
-		fmt.Println("     • Template packs:")
-		for _, pack := range stats.TemplatePacks {
+		fmt.Println("     • Schemas:")
+		for _, pack := range stats.Schemas {
 			fmt.Printf("       - %s@%s\n", pack.Name, pack.Version)
 
 			if len(pack.ObjectTypes) > 0 {
@@ -412,7 +428,7 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Println("Warning: No LLM provider credentials are configured for your organization.")
 		fmt.Println("AI features (embeddings, search, extraction) will not work until you add one.")
-		fmt.Println("  Run: emergent provider configure google-ai --api-key <api-key>")
+		fmt.Println("  Run: emergent provider configure google --api-key <api-key>")
 	}
 
 	return nil
@@ -562,8 +578,8 @@ func runSetProjectProvider(cmd *cobra.Command, args []string) error {
 	nameOrID := args[0]
 	providerName := args[1]
 
-	if providerName != "google-ai" && providerName != "vertex-ai" {
-		return fmt.Errorf("invalid provider %q: must be 'google-ai' or 'vertex-ai'", providerName)
+	if providerName != "google" && providerName != "google-vertex" {
+		return fmt.Errorf("invalid provider %q: must be 'google' or 'google-vertex'", providerName)
 	}
 
 	c, err := getClient(cmd)
@@ -607,25 +623,81 @@ func runSetProjectProvider(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runSetProjectInfo(cmd *cobra.Command, args []string) error {
+	if setInfoFile == "" && setInfoText == "" {
+		return fmt.Errorf("provide content via --file <path> or --text <string>")
+	}
+	if setInfoFile != "" && setInfoText != "" {
+		return fmt.Errorf("use either --file or --text, not both")
+	}
+
+	var content string
+	if setInfoFile != "" {
+		data, err := os.ReadFile(setInfoFile)
+		if err != nil {
+			return fmt.Errorf("failed to read file %q: %w", setInfoFile, err)
+		}
+		content = string(data)
+	} else {
+		content = setInfoText
+	}
+
+	if strings.TrimSpace(content) == "" {
+		return fmt.Errorf("project info content is empty")
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	var projectID string
+	if len(args) > 0 {
+		projectID, err = resolveProjectNameOrID(c, args[0])
+		if err != nil {
+			return err
+		}
+	} else {
+		projectID, err = resolveProjectContext(cmd, "")
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = c.SDK.Projects.Update(context.Background(), projectID, &projects.UpdateProjectRequest{
+		ProjectInfo: &content,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update project info: %w", err)
+	}
+
+	if setInfoFile != "" {
+		fmt.Printf("Project info updated from %q.\n", setInfoFile)
+	} else {
+		fmt.Println("Project info updated.")
+	}
+	return nil
+}
+
 func init() {
 	createProjectCmd.Flags().StringVar(&projectName, "name", "", "Project name (required)")
 	createProjectCmd.Flags().StringVar(&projectDescription, "description", "", "Project description")
 	createProjectCmd.Flags().StringVar(&projectOrgID, "org-id", "", "Organization ID (auto-detected if not specified)")
 	_ = createProjectCmd.MarkFlagRequired("name")
 
-	listProjectsCmd.Flags().BoolVar(&projectStatsFlag, "stats", false, "Include project statistics (documents, objects, jobs, template packs)")
+	listProjectsCmd.Flags().BoolVar(&projectStatsFlag, "stats", false, "Include project statistics (documents, objects, jobs, schemas)")
 	listProjectsCmd.Flags().StringVar(&filterFlag, "filter", "", "Filter results (e.g., 'name=MyProject,status=active')")
 	listProjectsCmd.Flags().StringVar(&sortFlag, "sort", "", "Sort results (e.g., 'name:asc' or 'updated_at:desc')")
 	listProjectsCmd.Flags().IntVar(&limitFlag, "limit", 0, "Maximum number of results (default from config)")
 	listProjectsCmd.Flags().IntVar(&offsetFlag, "offset", 0, "Number of results to skip")
 	listProjectsCmd.Flags().StringVar(&searchFlag, "search", "", "Search projects by name or description")
 
-	getProjectCmd.Flags().BoolVar(&projectStatsFlag, "stats", false, "Include project statistics (documents, objects, jobs, template packs)")
+	getProjectCmd.Flags().BoolVar(&projectStatsFlag, "stats", false, "Include project statistics (documents, objects, jobs, schemas)")
 
-	setProjectProviderCmd.Flags().StringVar(&setProviderAPIKey, "api-key", "", "Google AI API key (for google-ai)")
-	setProjectProviderCmd.Flags().StringVar(&setProviderSAFile, "sa-file", "", "Path to Vertex AI service account JSON (for vertex-ai)")
-	setProjectProviderCmd.Flags().StringVar(&setProviderGCPProject, "gcp-project", "", "GCP project ID (for vertex-ai)")
-	setProjectProviderCmd.Flags().StringVar(&setProviderLocation, "location", "", "GCP region (for vertex-ai)")
+	setProjectProviderCmd.Flags().StringVar(&setProviderAPIKey, "api-key", "", "Google AI API key (for google)")
+	setProjectProviderCmd.Flags().StringVar(&setProviderSAFile, "sa-file", "", "Path to Vertex AI service account JSON (for google-vertex)")
+	setProjectProviderCmd.Flags().StringVar(&setProviderGCPProject, "gcp-project", "", "GCP project ID (for google-vertex)")
+	setProjectProviderCmd.Flags().StringVar(&setProviderLocation, "location", "", "GCP region (for google-vertex)")
 	setProjectProviderCmd.Flags().StringVar(&setProviderEmbedding, "embedding-model", "", "Override embedding model for this project")
 	setProjectProviderCmd.Flags().StringVar(&setProviderGenerative, "generative-model", "", "Override generative model for this project")
 
@@ -633,11 +705,15 @@ func init() {
 	projectsCreateTokenCmd.Flags().StringSliceVar(&createTokenScopes, "scopes", nil, "Token scopes (default: data:read,data:write,schema:read,agents:read,agents:write)")
 	projectsCreateTokenCmd.Flags().BoolVar(&createTokenNoEnv, "no-env", false, "Do not write token to .env.local")
 
+	setProjectInfoCmd.Flags().StringVar(&setInfoFile, "file", "", "Path to a Markdown file to use as project info")
+	setProjectInfoCmd.Flags().StringVar(&setInfoText, "text", "", "Inline project info text")
+
 	projectsCmd.AddCommand(listProjectsCmd)
 	projectsCmd.AddCommand(getProjectCmd)
 	projectsCmd.AddCommand(createProjectCmd)
 	projectsCmd.AddCommand(deleteProjectCmd)
 	projectsCmd.AddCommand(setProjectCmd)
+	projectsCmd.AddCommand(setProjectInfoCmd)
 	projectsCmd.AddCommand(setProjectProviderCmd)
 	projectsCmd.AddCommand(projectsCreateTokenCmd)
 	rootCmd.AddCommand(projectsCmd)

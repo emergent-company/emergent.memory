@@ -52,8 +52,8 @@ type Config struct {
 	// Standalone mode configuration (minimal deployment)
 	Standalone StandaloneConfig
 
-	// Agent workspace configuration
-	Workspace WorkspaceConfig
+	// Agent sandbox configuration
+	Sandbox SandboxConfig
 
 	// Agent worker pool configuration
 	AgentWorkerPoolSize     int           `env:"AGENT_WORKER_POOL_SIZE" envDefault:"5"`
@@ -61,7 +61,6 @@ type Config struct {
 
 	// Brave Search API configuration
 	BraveSearch BraveSearchConfig
-
 
 	// OpenTelemetry tracing configuration
 	Otel OtelConfig
@@ -316,10 +315,10 @@ func (s *StorageConfig) IsConfigured() bool {
 	return s.Endpoint != "" && s.AccessKeyID != "" && s.SecretAccessKey != ""
 }
 
-// WorkspaceConfig holds configuration for agent workspaces
-type WorkspaceConfig struct {
-	// Enabled determines if agent workspace endpoints and cleanup are active
-	Enabled bool `env:"ENABLE_AGENT_WORKSPACES" envDefault:"true"`
+// SandboxConfig holds configuration for agent sandboxes
+type SandboxConfig struct {
+	// Enabled determines if agent sandbox endpoints and cleanup are active
+	Enabled bool `env:"ENABLE_AGENT_SANDBOXES" envDefault:"true"`
 	// MaxConcurrent is the maximum number of concurrent active workspaces
 	MaxConcurrent int `env:"WORKSPACE_MAX_CONCURRENT" envDefault:"10"`
 	// DefaultTTLDays is the default TTL for ephemeral workspaces in days
@@ -350,8 +349,8 @@ type WorkspaceConfig struct {
 	FirecrackerDataDir string `env:"WORKSPACE_FIRECRACKER_DATA_DIR" envDefault:"/var/lib/firecracker"`
 }
 
-// IsEnabled returns true if agent workspaces are enabled
-func (w *WorkspaceConfig) IsEnabled() bool {
+// IsEnabled returns true if agent sandboxes are enabled
+func (w *SandboxConfig) IsEnabled() bool {
 	return w.Enabled
 }
 
@@ -367,7 +366,6 @@ type BraveSearchConfig struct {
 func (b *BraveSearchConfig) IsConfigured() bool {
 	return b.APIKey != ""
 }
-
 
 // StandaloneConfig holds configuration for standalone minimal deployment mode
 type StandaloneConfig struct {

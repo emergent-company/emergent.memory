@@ -109,7 +109,7 @@ var Module = fx.Module("extraction",
 		provideDocumentParsingJobsService,
 		provideDocumentParsingWorker,
 		provideObjectExtractionJobsService,
-		provideTemplatePackSchemaProvider,
+		provideMemorySchemaProvider,
 		provideObjectExtractionWorker,
 		provideAdminHandler,
 		provideEmbeddingControlHandler,
@@ -240,9 +240,9 @@ func provideObjectExtractionJobsService(db bun.IDB, log *slog.Logger, cfg *Extra
 	return NewObjectExtractionJobsService(db, log, cfg.ObjectExtraction)
 }
 
-// provideTemplatePackSchemaProvider creates template pack schema provider with fx
-func provideTemplatePackSchemaProvider(db bun.IDB, log *slog.Logger) *TemplatePackSchemaProvider {
-	return NewTemplatePackSchemaProvider(db, log)
+// provideMemorySchemaProvider creates template pack schema provider with fx
+func provideMemorySchemaProvider(db bun.IDB, log *slog.Logger) *MemorySchemaProvider {
+	return NewMemorySchemaProvider(db, log)
 }
 
 // provideObjectExtractionWorker creates object extraction worker with fx
@@ -250,7 +250,7 @@ func provideObjectExtractionWorker(
 	jobs *ObjectExtractionJobsService,
 	graphService *graph.Service,
 	docService *documents.Service,
-	schemaProvider *TemplatePackSchemaProvider,
+	schemaProvider *MemorySchemaProvider,
 	modelFactory *adk.ModelFactory,
 	cfg *ExtractionConfig,
 	log *slog.Logger,

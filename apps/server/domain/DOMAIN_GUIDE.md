@@ -13,11 +13,11 @@ This guide documents all server domain packages under `apps/server/domain/`. It 
 
 1. [health](#health)
 2. [provider](#provider)
-3. [typeregistry](#typeregistry)
+3. [schemaregistry](#schemaregistry)
 4. [embeddingpolicies](#embeddingpolicies)
-5. [templatepacks](#templatepacks)
-6. [workspace](#workspace)
-7. [workspaceimages](#workspaceimages)
+5. [schemas](#schemas)
+6. [sandbox](#sandbox)
+7. [sandboximages](#sandboximages)
 8. [mcp](#mcp)
 9. [mcpregistry](#mcpregistry)
 10. [extraction](#extraction)
@@ -180,22 +180,22 @@ const (
 
 ---
 
-## typeregistry
+## schemaregistry
 
 ### Overview
 
-Manages per-project graph node and edge type definitions. Types describe the schema of objects that can be stored in the knowledge graph. Each type carries a JSON Schema, UI config, and extraction config. Types can originate from a template pack (`template`), be hand-crafted (`custom`), or be discovered automatically by the extraction pipeline (`discovered`).
+Manages per-project graph node and edge type definitions. Types describe the schema of objects that can be stored in the knowledge graph. Each type carries a JSON Schema, UI config, and extraction config. Types can originate from a schema (`schema`), be hand-crafted (`custom`), or be discovered automatically by the extraction pipeline (`discovered`).
 
 ### HTTP Routes
 
 | Method | Path | Handler | Auth |
 |--------|------|---------|------|
-| GET | `/api/type-registry/projects/:projectId` | `ListTypes` | authenticated |
-| GET | `/api/type-registry/projects/:projectId/types/:typeName` | `GetType` | authenticated |
-| GET | `/api/type-registry/projects/:projectId/stats` | `GetStats` | authenticated |
-| POST | `/api/type-registry/projects/:projectId/types` | `CreateType` | authenticated |
-| PUT | `/api/type-registry/projects/:projectId/types/:typeName` | `UpdateType` | authenticated |
-| DELETE | `/api/type-registry/projects/:projectId/types/:typeName` | `DeleteType` | authenticated |
+| GET | `/api/schema-registry/projects/:projectId` | `ListTypes` | authenticated |
+| GET | `/api/schema-registry/projects/:projectId/types/:typeName` | `GetType` | authenticated |
+| GET | `/api/schema-registry/projects/:projectId/stats` | `GetStats` | authenticated |
+| POST | `/api/schema-registry/projects/:projectId/types` | `CreateType` | authenticated |
+| PUT | `/api/schema-registry/projects/:projectId/types/:typeName` | `UpdateType` | authenticated |
+| DELETE | `/api/schema-registry/projects/:projectId/types/:typeName` | `DeleteType` | authenticated |
 
 ### Key Entity
 
@@ -206,8 +206,8 @@ Manages per-project graph node and edge type definitions. Types describe the sch
 | `id` | UUID | PK |
 | `project_id` | UUID | FK → project |
 | `type_name` | string | unique per project |
-| `source` | TypeSource | `"template"` \| `"custom"` \| `"discovered"` |
-| `template_pack_id` | UUID | nullable; set when `source = "template"` |
+| `source` | TypeSource | `"schema"` \| `"custom"` \| `"discovered"` |
+| `schema_id` | UUID | nullable; set when `source = "schema"` |
 | `schema_version` | int | incremented on schema changes |
 | `json_schema` | jsonb | JSON Schema for objects of this type |
 | `ui_config` | jsonb | display hints for the admin UI |
@@ -224,7 +224,7 @@ Manages per-project graph node and edge type definitions. Types describe the sch
 ```go
 type TypeSource string
 const (
-    TypeSourceTemplate   TypeSource = "template"
+    TypeSourceSchema     TypeSource = "schema"
     TypeSourceCustom     TypeSource = "custom"
     TypeSourceDiscovered TypeSource = "discovered"
 )
@@ -264,7 +264,7 @@ The `project_id` is extracted from the authenticated request context (not from a
 |-------|------|-------|
 | `id` | UUID | PK |
 | `project_id` | UUID | FK → project |
-| `object_type` | string | matches a type in `typeregistry` |
+| `object_type` | string | matches a type in `schemaregistry` |
 | `enabled` | bool | master on/off switch |
 | `max_property_size` | int | max bytes of any single property sent for embedding |
 | `required_labels` | text[] | object must have ALL of these labels |
@@ -284,30 +284,30 @@ The `project_id` is extracted from the authenticated request context (not from a
 
 ---
 
-## templatepacks
+## schemas
 
 ### Overview
 
-Template packs are versioned bundles of object type schemas, relationship type schemas, UI configs, and extraction prompts. They form a global catalog from which packs can be assigned to projects. Once assigned, a project can activate or deactivate individual packs. A helper endpoint (`compiled-types`) returns the merged type registry view for a project, combining all active packs.
+Schemas are versioned bundles of object type schemas, relationship type schemas, UI configs, and extraction prompts. They form a global catalog from which schemas can be assigned to projects. Once assigned, a project can activate or deactivate individual schemas. A helper endpoint (`compiled-types`) returns the merged type registry view for a project, combining all active schemas.
 
 ### HTTP Routes
 
 | Method | Path | Handler | Auth |
 |--------|------|---------|------|
-| POST | `/api/template-packs` | `CreateTemplatePack` | authenticated (admin) |
-| GET | `/api/template-packs/:packId` | `GetTemplatePack` | authenticated |
-| PUT | `/api/template-packs/:packId` | `UpdateTemplatePack` | authenticated (admin) |
-| DELETE | `/api/template-packs/:packId` | `DeleteTemplatePack` | authenticated (admin) |
-| GET | `/api/template-packs/projects/:projectId/available` | `ListAvailableTemplatePacks` | project scope |
-| GET | `/api/template-packs/projects/:projectId/installed` | `ListInstalledTemplatePacks` | project scope |
-| GET | `/api/template-packs/projects/:projectId/compiled-types` | `GetCompiledTypes` | project scope |
-| POST | `/api/template-packs/projects/:projectId/assign` | `AssignTemplatePack` | project scope |
-| PATCH | `/api/template-packs/projects/:projectId/assignments/:assignmentId` | `UpdateAssignment` | project scope |
-| DELETE | `/api/template-packs/projects/:projectId/assignments/:assignmentId` | `RemoveAssignment` | project scope |
+| POST | `/api/schemas` | `CreateSchema` | authenticated (admin) |
+| GET | `/api/schemas/:schemaId` | `GetSchema` | authenticated |
+| PUT | `/api/schemas/:schemaId` | `UpdateSchema` | authenticated (admin) |
+| DELETE | `/api/schemas/:schemaId` | `DeleteSchema` | authenticated (admin) |
+| GET | `/api/schemas/projects/:projectId/available` | `ListAvailableSchemas` | project scope |
+| GET | `/api/schemas/projects/:projectId/installed` | `ListInstalledSchemas` | project scope |
+| GET | `/api/schemas/projects/:projectId/compiled-types` | `GetCompiledTypes` | project scope |
+| POST | `/api/schemas/projects/:projectId/assign` | `AssignSchema` | project scope |
+| PATCH | `/api/schemas/projects/:projectId/assignments/:assignmentId` | `UpdateAssignment` | project scope |
+| DELETE | `/api/schemas/projects/:projectId/assignments/:assignmentId` | `RemoveAssignment` | project scope |
 
 ### Key Entities
 
-**`GraphTemplatePack`** — table `kb.graph_template_packs`
+**`MemorySchema`** — table `kb.graph_template_packs`
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -331,72 +331,72 @@ Template packs are versioned bundles of object type schemas, relationship type s
 | `created_at` | time.Time | |
 | `updated_at` | time.Time | |
 
-**`ProjectTemplatePack`** — table `kb.project_template_packs` (assignment join table)
+**`ProjectSchema`** — table `kb.project_template_packs` (assignment join table)
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `id` | UUID | PK |
 | `project_id` | UUID | |
-| `template_pack_id` | UUID | |
-| `active` | bool | inactive packs don't contribute compiled types |
+| `schema_id` | UUID | |
+| `active` | bool | inactive schemas don't contribute compiled types |
 | `installed_at` | time.Time | |
 | `created_at` | time.Time | |
 | `updated_at` | time.Time | |
 
 ### Service Notes
 
-- `GetCompiledTypes` merges all active packs for a project into a single flat type map, with later-assigned packs overriding earlier ones for the same type name.
-- Deleting a pack that is currently assigned to any project returns a 409 Conflict.
+- `GetCompiledTypes` merges all active schemas for a project into a single flat type map, with later-assigned schemas overriding earlier ones for the same type name.
+- Deleting a schema that is currently assigned to any project returns a 409 Conflict.
 
 ---
 
-## workspace
+## sandbox
 
 ### Overview
 
-The largest domain. Manages **agent workspaces** — isolated compute environments (Firecracker microVMs, E2B sandboxes, or gVisor containers) where AI agents execute code. Also manages **hosted MCP servers** — persistent containers that expose MCP tool endpoints via a stdio bridge.
+The largest domain. Manages **agent sandboxes** — isolated compute environments (Firecracker microVMs, E2B sandboxes, or gVisor containers) where AI agents execute code. Also manages **hosted MCP servers** — persistent containers that expose MCP tool endpoints via a stdio bridge.
 
 Key subsystems:
 
 | Subsystem | File | Purpose |
 |-----------|------|---------|
-| Orchestrator | `orchestrator.go` | create/stop/resume/snapshot workspaces; lifecycle FSM |
-| Checkout Service | `checkout.go` | git clone + branch setup inside a workspace |
-| Warm Pool | `warm_pool.go` | pre-warmed workspace pool to reduce cold-start latency |
-| Cleanup Worker | `cleanup.go` | periodic eviction of expired/idle workspaces |
+| Orchestrator | `orchestrator.go` | create/stop/resume/snapshot sandboxes; lifecycle FSM |
+| Checkout Service | `checkout.go` | git clone + branch setup inside a sandbox |
+| Warm Pool | `warm_pool.go` | pre-warmed sandbox pool to reduce cold-start latency |
+| Cleanup Worker | `cleanup.go` | periodic eviction of expired/idle sandboxes |
 | Auto Provisioner | `auto_provisioner.go` | on-demand provisioning triggered by agent sessions |
 | MCP Hosting | `mcp_hosting.go` | start/stop/restart hosted MCP server containers |
 | Stdio Bridge | `stdio_bridge.go` | JSON-RPC bridge between HTTP and container stdio |
-| Setup Executor | `setup_executor.go` | run setup scripts inside a workspace after creation |
+| Setup Executor | `setup_executor.go` | run setup scripts inside a sandbox after creation |
 | Audit Middleware | `audit.go` | records every tool invocation for compliance |
 
-### HTTP Routes — Workspace Management
+### HTTP Routes — Sandbox Management
 
 | Method | Path | Handler | Scope |
 |--------|------|---------|-------|
-| GET | `/api/v1/agent/workspaces` | `ListWorkspaces` | `admin:read` |
-| GET | `/api/v1/agent/workspaces/providers` | `ListProviders` | `admin:read` |
-| GET | `/api/v1/agent/workspaces/:id` | `GetWorkspace` | `admin:read` |
-| POST | `/api/v1/agent/workspaces` | `CreateWorkspace` | `admin:write` |
-| POST | `/api/v1/agent/workspaces/from-snapshot` | `CreateFromSnapshot` | `admin:write` |
-| DELETE | `/api/v1/agent/workspaces/:id` | `DeleteWorkspace` | `admin:write` |
-| POST | `/api/v1/agent/workspaces/:id/stop` | `StopWorkspace` | `admin:write` |
-| POST | `/api/v1/agent/workspaces/:id/resume` | `ResumeWorkspace` | `admin:write` |
-| POST | `/api/v1/agent/workspaces/:id/attach` | `AttachWorkspace` | `admin:write` |
-| POST | `/api/v1/agent/workspaces/:id/detach` | `DetachWorkspace` | `admin:write` |
-| POST | `/api/v1/agent/workspaces/:id/snapshot` | `SnapshotWorkspace` | `admin:write` |
+| GET | `/api/v1/agent/sandboxes` | `ListSandboxes` | `admin:read` |
+| GET | `/api/v1/agent/sandboxes/providers` | `ListProviders` | `admin:read` |
+| GET | `/api/v1/agent/sandboxes/:id` | `GetSandbox` | `admin:read` |
+| POST | `/api/v1/agent/sandboxes` | `CreateSandbox` | `admin:write` |
+| POST | `/api/v1/agent/sandboxes/from-snapshot` | `CreateFromSnapshot` | `admin:write` |
+| DELETE | `/api/v1/agent/sandboxes/:id` | `DeleteSandbox` | `admin:write` |
+| POST | `/api/v1/agent/sandboxes/:id/stop` | `StopSandbox` | `admin:write` |
+| POST | `/api/v1/agent/sandboxes/:id/resume` | `ResumeSandbox` | `admin:write` |
+| POST | `/api/v1/agent/sandboxes/:id/attach` | `AttachSandbox` | `admin:write` |
+| POST | `/api/v1/agent/sandboxes/:id/detach` | `DetachSandbox` | `admin:write` |
+| POST | `/api/v1/agent/sandboxes/:id/snapshot` | `SnapshotSandbox` | `admin:write` |
 
 ### HTTP Routes — Tool Execution (all require `admin:write` + audit middleware)
 
 | Method | Path | Handler |
 |--------|------|---------|
-| POST | `/api/v1/agent/workspaces/:id/bash` | `BashTool` |
-| POST | `/api/v1/agent/workspaces/:id/read` | `ReadTool` |
-| POST | `/api/v1/agent/workspaces/:id/write` | `WriteTool` |
-| POST | `/api/v1/agent/workspaces/:id/edit` | `EditTool` |
-| POST | `/api/v1/agent/workspaces/:id/glob` | `GlobTool` |
-| POST | `/api/v1/agent/workspaces/:id/grep` | `GrepTool` |
-| POST | `/api/v1/agent/workspaces/:id/git` | `GitTool` |
+| POST | `/api/v1/agent/sandboxes/:id/bash` | `BashTool` |
+| POST | `/api/v1/agent/sandboxes/:id/read` | `ReadTool` |
+| POST | `/api/v1/agent/sandboxes/:id/write` | `WriteTool` |
+| POST | `/api/v1/agent/sandboxes/:id/edit` | `EditTool` |
+| POST | `/api/v1/agent/sandboxes/:id/glob` | `GlobTool` |
+| POST | `/api/v1/agent/sandboxes/:id/grep` | `GrepTool` |
+| POST | `/api/v1/agent/sandboxes/:id/git` | `GitTool` |
 
 ### HTTP Routes — Hosted MCP Servers
 
@@ -411,15 +411,15 @@ Key subsystems:
 
 ### Key Entity
 
-**`AgentWorkspace`** — table `kb.agent_workspaces`
+**`AgentSandbox`** — table `kb.agent_sandboxes`
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `id` | UUID | PK |
 | `agent_session_id` | UUID | nullable; owning agent session |
-| `container_type` | ContainerType | `"agent_workspace"` \| `"mcp_server"` |
+| `container_type` | ContainerType | `"agent_sandbox"` \| `"mcp_server"` |
 | `provider` | ProviderType | `"firecracker"` \| `"e2b"` \| `"gvisor"` |
-| `provider_workspace_id` | string | provider-assigned ID |
+| `provider_sandbox_id` | string | provider-assigned ID |
 | `repository_url` | string | git repo to check out |
 | `branch` | string | git branch |
 | `deployment_mode` | DeploymentMode | `"managed"` \| `"self-hosted"` |
@@ -438,8 +438,8 @@ Key subsystems:
 ```go
 type ContainerType string
 const (
-    ContainerTypeAgentWorkspace ContainerType = "agent_workspace"
-    ContainerTypeMCPServer      ContainerType = "mcp_server"
+    ContainerTypeAgentSandbox ContainerType = "agent_sandbox"
+    ContainerTypeMCPServer    ContainerType = "mcp_server"
 )
 
 type ProviderType string
@@ -503,29 +503,29 @@ const (
 ### Audit Middleware
 
 Every tool call (bash/read/write/edit/glob/grep/git) is wrapped by `audit.go`, which records:
-- workspace ID, agent session ID, tool name, request payload hash, response status, duration
-- Written to `kb.workspace_audit_log` asynchronously
+- sandbox ID, agent session ID, tool name, request payload hash, response status, duration
+- Written to `kb.sandbox_audit_log` asynchronously
 
 ---
 
-## workspaceimages
+## sandboximages
 
 ### Overview
 
-Admin catalog of workspace base images. Images are provider-specific Docker references that the workspace orchestrator pulls when creating new workspaces. Implements the `workspace.ImageResolver` interface so the workspace domain can look up an image by name without depending on this package directly.
+Admin catalog of sandbox base images. Images are provider-specific Docker references that the sandbox orchestrator pulls when creating new sandboxes. Implements the `sandbox.ImageResolver` interface so the sandbox domain can look up an image by name without depending on this package directly.
 
 ### HTTP Routes
 
 | Method | Path | Handler | Scope |
 |--------|------|---------|-------|
-| GET | `/api/admin/workspace-images` | `ListImages` | `admin:read` |
-| GET | `/api/admin/workspace-images/:id` | `GetImage` | `admin:read` |
-| POST | `/api/admin/workspace-images` | `CreateImage` | `admin:write` |
-| DELETE | `/api/admin/workspace-images/:id` | `DeleteImage` | `admin:write` |
+| GET | `/api/admin/sandbox-images` | `ListImages` | `admin:read` |
+| GET | `/api/admin/sandbox-images/:id` | `GetImage` | `admin:read` |
+| POST | `/api/admin/sandbox-images` | `CreateImage` | `admin:write` |
+| DELETE | `/api/admin/sandbox-images/:id` | `DeleteImage` | `admin:write` |
 
 ### Key Entity
 
-**`WorkspaceImage`** — table `kb.workspace_images`
+**`SandboxImage`** — table `kb.sandbox_images`
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -564,15 +564,15 @@ const (
 )
 ```
 
-### `workspace.ImageResolver` Interface
+### `sandbox.ImageResolver` Interface
 
 ```go
 type ImageResolver interface {
-    ResolveImage(ctx context.Context, name string, provider ProviderName) (*WorkspaceImage, error)
+    ResolveImage(ctx context.Context, name string, provider ProviderName) (*SandboxImage, error)
 }
 ```
 
-`workspaceimages.Store` satisfies this interface. The workspace orchestrator receives it via fx dependency injection.
+`sandboximages.Store` satisfies this interface. The sandbox orchestrator receives it via fx dependency injection.
 
 ---
 

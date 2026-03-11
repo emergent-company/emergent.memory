@@ -31,7 +31,7 @@ type JobStatusResponse struct {
 	ErrorMessage            *string    `json:"error_message,omitempty"`
 	DiscoveredTypes         JSONArray  `json:"discovered_types"`
 	DiscoveredRelationships JSONArray  `json:"discovered_relationships"`
-	TemplatePackID          *uuid.UUID `json:"template_pack_id,omitempty"`
+	SchemaID                *uuid.UUID `json:"schema_id,omitempty"`
 }
 
 // JobListItem is a summary of a discovery job for listing
@@ -43,7 +43,7 @@ type JobListItem struct {
 	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 	DiscoveredTypes         JSONArray  `json:"discovered_types"`
 	DiscoveredRelationships JSONArray  `json:"discovered_relationships"`
-	TemplatePackID          *uuid.UUID `json:"template_pack_id,omitempty"`
+	SchemaID                *uuid.UUID `json:"schema_id,omitempty"`
 }
 
 // CancelJobResponse is the response for cancelling a job
@@ -81,8 +81,8 @@ type IncludedRelationship struct {
 
 // FinalizeDiscoveryResponse is the response for finalizing discovery
 type FinalizeDiscoveryResponse struct {
-	TemplatePackID uuid.UUID `json:"template_pack_id"`
-	Message        string    `json:"message"`
+	SchemaID uuid.UUID `json:"schema_id"`
+	Message  string    `json:"message"`
 }
 
 // DiscoveredType represents a type discovered by the LLM
