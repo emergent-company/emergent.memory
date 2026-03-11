@@ -158,7 +158,7 @@ func (f *EntityExtractorFactory) CreateAgentWithSchema(ctx context.Context, obje
 
 	var outputSchema *genai.Schema
 	if len(objectSchemas) > 0 {
-		outputSchema = BuildEntitySchemaFromTemplatePack(objectSchemas)
+		outputSchema = BuildEntitySchemaFromMemorySchema(objectSchemas)
 	}
 
 	return NewEntityExtractorAgent(EntityExtractorConfig{

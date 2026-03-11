@@ -36,12 +36,12 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/domain/schemaregistry"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/domain/superadmin"
 	"github.com/emergent-company/emergent.memory/domain/tasks"
-	"github.com/emergent-company/emergent.memory/domain/templatepacks"
-	"github.com/emergent-company/emergent.memory/domain/typeregistry"
 	"github.com/emergent-company/emergent.memory/domain/useraccess"
 	"github.com/emergent-company/emergent.memory/domain/useractivity"
 	"github.com/emergent-company/emergent.memory/domain/userprofile"
@@ -258,11 +258,11 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	notificationsHandler := notifications.NewHandler(notificationsSvc)
 	notifications.RegisterRoutes(e, notificationsHandler, authMiddleware)
 
-	// Register template packs routes
-	templatepacksRepo := templatepacks.NewRepository(db, log)
-	templatepacksSvc := templatepacks.NewService(templatepacksRepo, log)
-	templatepacksHandler := templatepacks.NewHandler(templatepacksSvc)
-	templatepacks.RegisterRoutes(e, templatepacksHandler, authMiddleware)
+	// Register schemas routes
+	schemasRepo := schemas.NewRepository(db, log)
+	schemasSvc := schemas.NewService(schemasRepo, log)
+	schemasHandler := schemas.NewHandler(schemasSvc)
+	schemas.RegisterRoutes(e, schemasHandler, authMiddleware)
 
 	// Register skills routes
 	skillsRepo := skills.NewRepository(db, log)
@@ -281,9 +281,9 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	superadmin.RegisterRoutes(e, superadminHandler, authMiddleware)
 
 	// Register type registry routes
-	typeregistryRepo := typeregistry.NewRepository(db)
-	typeregistryHandler := typeregistry.NewHandler(typeregistryRepo)
-	typeregistry.RegisterRoutes(e, typeregistryHandler, authMiddleware)
+	schemaregistryRepo := schemaregistry.NewRepository(db)
+	schemaregistryHandler := schemaregistry.NewHandler(schemaregistryRepo)
+	schemaregistry.RegisterRoutes(e, schemaregistryHandler, authMiddleware)
 
 	// Register agents routes
 	agentsRepo := agents.NewRepository(db)

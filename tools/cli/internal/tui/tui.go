@@ -21,7 +21,7 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/documents"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/health"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
-	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/templatepacks"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
 )
 
@@ -61,9 +61,9 @@ type Model struct {
 	workerStats     *health.AllJobMetrics
 	lastStatsUpdate time.Time
 
-	// Template packs
-	templatePacks          []templatepacks.InstalledPackItem
-	compiledTypes          *templatepacks.CompiledTypesResponse
+	// Schemas (formerly template packs)
+	installedSchemas       []schemas.InstalledSchemaItem
+	compiledTypes          *schemas.CompiledTypesResponse
 	lastTemplatePacksFetch time.Time
 
 	// Query
@@ -374,10 +374,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case templatePacksLoadedMsg:
-		m.templatePacks = msg.packs
+		m.installedSchemas = msg.packs
 		m.compiledTypes = msg.compiledTypes
 		m.lastTemplatePacksFetch = time.Now()
-		m.statusMsg = fmt.Sprintf("Loaded %d template packs", len(msg.packs))
+		m.statusMsg = fmt.Sprintf("Loaded %d schemas", len(msg.packs))
 		return m, nil
 
 	case queryResultsMsg:
@@ -630,7 +630,7 @@ func (m Model) View() string {
 
 // renderTabBar renders the tab bar
 func (m Model) renderTabBar() string {
-	tabs := []string{"Projects", "Documents", "Worker Stats", "Template Packs", "Query", "Extractions", "Traces"}
+	tabs := []string{"Projects", "Documents", "Worker Stats", "Schemas", "Query", "Extractions", "Traces"}
 	var renderedTabs []string
 
 	activeStyle := lipgloss.NewStyle().
@@ -1032,12 +1032,12 @@ func (m Model) renderTemplatePacks() string {
 		var content strings.Builder
 		content.WriteString(style.Render("⚠  No Project Selected"))
 		content.WriteString("\n\n")
-		content.WriteString(helpStyle.Render("To view template packs:\n1. Press Tab to go to Projects\n2. Press Enter on a project to select it\n3. Press Tab to return to Template Packs"))
+		content.WriteString(helpStyle.Render("To view schemas:\n1. Press Tab to go to Projects\n2. Press Enter on a project to select it\n3. Press Tab to return to Schemas"))
 		return content.String()
 	}
 
-	if m.templatePacks == nil {
-		return "Loading template packs..."
+	if m.installedSchemas == nil {
+		return "Loading schemas..."
 	}
 
 	var content strings.Builder
@@ -1048,11 +1048,11 @@ func (m Model) renderTemplatePacks() string {
 		Foreground(lipgloss.Color("12")).
 		Padding(0, 1)
 
-	content.WriteString(headerStyle.Render("Installed Template Packs"))
+	content.WriteString(headerStyle.Render("Installed Schemas"))
 	content.WriteString("\n\n")
 
-	if len(m.templatePacks) == 0 {
-		content.WriteString("No template packs installed for this project.\n")
+	if len(m.installedSchemas) == 0 {
+		content.WriteString("No schemas installed for this project.\n")
 		return content.String()
 	}
 
@@ -1084,7 +1084,7 @@ func (m Model) renderTemplatePacks() string {
 		Padding(0, 1)
 
 	// Render each installed pack
-	for i, pack := range m.templatePacks {
+	for i, pack := range m.installedSchemas {
 		// Pack header
 		packTitle := fmt.Sprintf("📦 %s (v%s)", pack.Name, pack.Version)
 		if !pack.Active {
@@ -1105,17 +1105,17 @@ func (m Model) renderTemplatePacks() string {
 		content.WriteString("\n")
 
 		// Find object types from this pack
-		var objectTypes []templatepacks.ObjectTypeSchema
-		var relationshipTypes []templatepacks.RelationshipTypeSchema
+		var objectTypes []schemas.ObjectTypeSchema
+		var relationshipTypes []schemas.RelationshipTypeSchema
 
 		if m.compiledTypes != nil {
 			for _, ot := range m.compiledTypes.ObjectTypes {
-				if ot.PackID == pack.TemplatePackID {
+				if ot.PackID == pack.SchemaID {
 					objectTypes = append(objectTypes, ot)
 				}
 			}
 			for _, rt := range m.compiledTypes.RelationshipTypes {
-				if rt.PackID == pack.TemplatePackID {
+				if rt.PackID == pack.SchemaID {
 					relationshipTypes = append(relationshipTypes, rt)
 				}
 			}
@@ -1179,7 +1179,7 @@ func (m Model) renderTemplatePacks() string {
 		}
 
 		// Add spacing between packs
-		if i < len(m.templatePacks)-1 {
+		if i < len(m.installedSchemas)-1 {
 			content.WriteString("\n")
 			separator := strings.Repeat("─", 80)
 			content.WriteString(labelStyle.Render(separator))
@@ -1201,7 +1201,7 @@ func (m Model) renderTemplatePacks() string {
 	}
 
 	footer := fmt.Sprintf("Total: %d packs • %d object types • %d relationship types",
-		len(m.templatePacks), totalObjectTypes, totalRelTypes)
+		len(m.installedSchemas), totalObjectTypes, totalRelTypes)
 	content.WriteString(footerStyle.Render(footer))
 
 	return content.String()
@@ -1301,8 +1301,8 @@ type workerStatsLoadedMsg struct {
 }
 
 type templatePacksLoadedMsg struct {
-	packs         []templatepacks.InstalledPackItem
-	compiledTypes *templatepacks.CompiledTypesResponse
+	packs         []schemas.InstalledSchemaItem
+	compiledTypes *schemas.CompiledTypesResponse
 }
 
 type queryResultsMsg struct {
@@ -1413,8 +1413,8 @@ func loadTemplatePacks(client *client.Client) tea.Cmd {
 		if client.ProjectID() == "" {
 			// Don't return error, just return empty - UI will show "no project selected" message
 			return templatePacksLoadedMsg{
-				packs:         []templatepacks.InstalledPackItem{},
-				compiledTypes: &templatepacks.CompiledTypesResponse{},
+				packs:         []schemas.InstalledSchemaItem{},
+				compiledTypes: &schemas.CompiledTypesResponse{},
 			}
 		}
 
@@ -1422,13 +1422,13 @@ func loadTemplatePacks(client *client.Client) tea.Cmd {
 		defer cancel()
 
 		// Get installed packs for the project
-		packs, err := client.SDK.TemplatePacks.GetInstalledPacks(ctx)
+		packs, err := client.SDK.Schemas.GetInstalledPacks(ctx)
 		if err != nil {
-			return errMsg{err: fmt.Errorf("failed to load template packs: %w", err)}
+			return errMsg{err: fmt.Errorf("failed to load schemas: %w", err)}
 		}
 
 		// Get compiled types (all object and relationship types from all packs)
-		compiledTypes, err := client.SDK.TemplatePacks.GetCompiledTypes(ctx)
+		compiledTypes, err := client.SDK.Schemas.GetCompiledTypes(ctx)
 		if err != nil {
 			return errMsg{err: fmt.Errorf("failed to load compiled types: %w", err)}
 		}

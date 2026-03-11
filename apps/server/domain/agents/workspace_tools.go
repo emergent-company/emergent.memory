@@ -11,17 +11,17 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 
-	"github.com/emergent-company/emergent.memory/domain/workspace"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
 )
 
 // WorkspaceToolDeps holds dependencies for building workspace tools.
 type WorkspaceToolDeps struct {
-	Provider        workspace.Provider
+	Provider        sandbox.Provider
 	ProviderID      string // provider-specific workspace/container ID
 	WorkspaceID     string // our internal workspace UUID
-	Config          *workspace.AgentWorkspaceConfig
+	Config          *sandbox.AgentSandboxConfig
 	Logger          *slog.Logger
-	CheckoutService *workspace.CheckoutService // optional; enables credential-aware git clone
+	CheckoutService *sandbox.CheckoutService // optional; enables credential-aware git clone
 }
 
 // BuildWorkspaceTools creates ADK tool.Tool wrappers for workspace tools.
@@ -44,7 +44,7 @@ func BuildWorkspaceTools(deps WorkspaceToolDeps) ([]tool.Tool, error) {
 	}
 
 	var tools []tool.Tool
-	for _, name := range workspace.ValidToolNames {
+	for _, name := range sandbox.ValidToolNames {
 		// Check if tool is allowed by workspace config
 		if deps.Config != nil && !deps.Config.IsToolAllowed(name) {
 			deps.Logger.Debug("workspace tool filtered by config",
@@ -124,7 +124,7 @@ Usage notes:
 				timeoutMs = int(t)
 			}
 
-			result, err := provider.Exec(ctx, providerID, &workspace.ExecRequest{
+			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
 				Command:   command,
 				Workdir:   workdir,
 				TimeoutMs: timeoutMs,
@@ -193,7 +193,7 @@ Usage:
 				limit = int(l)
 			}
 
-			result, err := provider.ReadFile(ctx, providerID, &workspace.FileReadRequest{
+			result, err := provider.ReadFile(ctx, providerID, &sandbox.FileReadRequest{
 				FilePath: filePath,
 				Offset:   offset,
 				Limit:    limit,
@@ -244,7 +244,7 @@ Usage:
 			}
 			content, _ := args["content"].(string)
 
-			err := provider.WriteFile(ctx, providerID, &workspace.FileWriteRequest{
+			err := provider.WriteFile(ctx, providerID, &sandbox.FileWriteRequest{
 				FilePath: filePath,
 				Content:  content,
 			})
@@ -293,7 +293,7 @@ Usage:
 			replaceAll, _ := args["replace_all"].(bool)
 
 			// Read current file content via provider
-			readResult, err := provider.ReadFile(ctx, providerID, &workspace.FileReadRequest{
+			readResult, err := provider.ReadFile(ctx, providerID, &sandbox.FileReadRequest{
 				FilePath: filePath,
 			})
 			if err != nil {
@@ -323,7 +323,7 @@ Usage:
 			}
 
 			// Write back
-			err = provider.WriteFile(ctx, providerID, &workspace.FileWriteRequest{
+			err = provider.WriteFile(ctx, providerID, &sandbox.FileWriteRequest{
 				FilePath: filePath,
 				Content:  newContent,
 			})
@@ -363,7 +363,7 @@ func buildGlobTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 			}
 			path, _ := args["path"].(string)
 
-			result, err := provider.ListFiles(ctx, providerID, &workspace.FileListRequest{
+			result, err := provider.ListFiles(ctx, providerID, &sandbox.FileListRequest{
 				Pattern: pattern,
 				Path:    path,
 			})
@@ -419,7 +419,7 @@ func buildGrepTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 			}
 			cmd += " 2>/dev/null || true"
 
-			result, err := provider.Exec(ctx, providerID, &workspace.ExecRequest{
+			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
 				Command:   cmd,
 				TimeoutMs: 30000, // 30s timeout for grep
 			})
@@ -497,7 +497,7 @@ func buildGitTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 				}, nil
 			}
 
-			result, err := provider.Exec(ctx, providerID, &workspace.ExecRequest{
+			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
 				Command:   cmd,
 				TimeoutMs: 60000, // 60s timeout for git operations
 			})
@@ -568,7 +568,7 @@ func executeGitClone(ctx tool.Context, args map[string]any, deps WorkspaceToolDe
 		cmd = fmt.Sprintf("git clone --depth 1 -b %q %q %q", branch, url, destPath)
 	}
 
-	result, err := deps.Provider.Exec(ctx, deps.ProviderID, &workspace.ExecRequest{
+	result, err := deps.Provider.Exec(ctx, deps.ProviderID, &sandbox.ExecRequest{
 		Command:   cmd,
 		TimeoutMs: 120000, // 2 minute timeout for clones
 	})

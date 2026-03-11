@@ -349,8 +349,8 @@ type GetEntityEdgesResult struct {
 // Template Pack DTOs
 // ============================================================================
 
-// TemplatePack represents a template pack from the global registry
-type TemplatePack struct {
+// MemorySchema represents a memory schema from the global registry
+type MemorySchema struct {
 	ID                      string         `json:"id"`
 	Name                    string         `json:"name"`
 	Version                 string         `json:"version"`
@@ -373,8 +373,8 @@ type TemplatePack struct {
 	UpdatedAt               string         `json:"updated_at"`
 }
 
-// TemplatePackSummary represents a summary of a template pack (for listings)
-type TemplatePackSummary struct {
+// MemorySchemaSummary represents a summary of a memory schema (for listings)
+type MemorySchemaSummary struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
 	Version      string   `json:"version"`
@@ -387,18 +387,18 @@ type TemplatePackSummary struct {
 	DeprecatedAt string   `json:"deprecated_at,omitempty"`
 }
 
-// ListTemplatePacksResult represents the result of list_template_packs tool
-type ListTemplatePacksResult struct {
-	Packs   []TemplatePackSummary `json:"packs"`
+// ListSchemasResult represents the result of list_schemas tool
+type ListSchemasResult struct {
+	Packs   []MemorySchemaSummary `json:"packs"`
 	Total   int                   `json:"total"`
 	Page    int                   `json:"page"`
 	Limit   int                   `json:"limit"`
 	HasMore bool                  `json:"has_more"`
 }
 
-// GetTemplatePackResult represents the result of get_template_pack tool
-type GetTemplatePackResult struct {
-	Pack *TemplatePack `json:"pack"`
+// GetSchemaResult represents the result of get_schema tool
+type GetSchemaResult struct {
+	Pack *MemorySchema `json:"pack"`
 }
 
 // ObjectTypeInfo represents info about an object type in a template
@@ -432,10 +432,10 @@ type GetAvailableTemplatesResult struct {
 	Total     int                 `json:"total"`
 }
 
-// InstalledTemplate represents an installed template pack
+// InstalledTemplate represents an installed memory schema
 type InstalledTemplate struct {
 	AssignmentID   string           `json:"assignment_id"`
-	TemplatePackID string           `json:"template_pack_id"`
+	SchemaID       string           `json:"schema_id"`
 	Name           string           `json:"name"`
 	Version        string           `json:"version"`
 	Description    string           `json:"description,omitempty"`
@@ -452,8 +452,8 @@ type GetInstalledTemplatesResult struct {
 	Total     int                 `json:"total"`
 }
 
-// AssignTemplatePackResult represents the result of assign_template_pack tool
-type AssignTemplatePackResult struct {
+// AssignSchemaResult represents the result of assign_schema tool
+type AssignSchemaResult struct {
 	Success        bool           `json:"success"`
 	AssignmentID   string         `json:"assignment_id"`
 	InstalledTypes []string       `json:"installed_types"`
@@ -476,22 +476,22 @@ type UpdateTemplateAssignmentResult struct {
 	Message      string `json:"message"`
 }
 
-// UninstallTemplatePackResult represents the result of uninstall_template_pack tool
-type UninstallTemplatePackResult struct {
+// UninstallSchemaResult represents the result of uninstall_schema tool
+type UninstallSchemaResult struct {
 	Success      bool   `json:"success"`
 	AssignmentID string `json:"assignment_id"`
 	Message      string `json:"message"`
 }
 
-// CreateTemplatePackResult represents the result of create_template_pack tool
-type CreateTemplatePackResult struct {
+// CreateSchemaResult represents the result of create_schema tool
+type CreateSchemaResult struct {
 	Success bool          `json:"success"`
-	Pack    *TemplatePack `json:"pack"`
+	Pack    *MemorySchema `json:"pack"`
 	Message string        `json:"message"`
 }
 
-// DeleteTemplatePackResult represents the result of delete_template_pack tool
-type DeleteTemplatePackResult struct {
+// DeleteSchemaResult represents the result of delete_schema tool
+type DeleteSchemaResult struct {
 	Success bool   `json:"success"`
 	PackID  string `json:"pack_id"`
 	Message string `json:"message"`

@@ -32,14 +32,14 @@ const (
 
 // initialPrompt triggers the emergent-onboard skill via slash command syntax.
 // We explicitly tell the LLM the project and provider are already configured
-// so it skips the setup steps and goes straight to designing the template pack.
+// so it skips the setup steps and goes straight to designing the schema.
 // RunUntilDone auto-replies to any confirmation questions.
 const initialPrompt = `start emergent onboarding
 
 Important context:
 - This project is already configured — MEMORY_PROJECT_ID is set in .env.local.
 - Do NOT create a new project or list existing projects. Use the project from .env.local.
-- Complete all remaining steps automatically without asking for confirmation: design the template pack, install it, upload the documents, create graph objects, then run a search query to verify.
+- Complete all remaining steps automatically without asking for confirmation: design the schema, install it, upload the documents, create graph objects, then run a search query to verify.
 - IMPORTANT: When creating graph objects, use the batch command: emergent graph objects create-batch --file <path>
 - IMPORTANT: When creating graph relationships, use the batch command: emergent graph relationships create-batch --file <path>
 - Do NOT use single-item create commands (emergent graph objects create or emergent graph relationships create) — always use the batch variants.`
@@ -97,7 +97,7 @@ func TestOnboardSkill(t *testing.T) {
 	assert.NoToolErrors(t, result)
 
 	// Emergent state assertions via CLI — did the skill create real state?
-	assert.HasTemplatePack(t, ws.Dir)
+	assert.HasMemorySchema(t, ws.Dir)
 	assert.HasGraphObjects(t, ws.Dir, 3) // at minimum the 3 services
 
 	// Batch command assertion — agent must use create-batch, not single creates.

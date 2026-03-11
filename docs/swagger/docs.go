@@ -10,7 +10,7 @@ const docTemplate = `{
         "description": "{{escape .Description}}",
         "title": "{{.Title}}",
         "contact": {
-            "name": "Emergent Team",
+            "name": "Memory Team",
             "url": "https://emergent-company.ai",
             "email": "support@emergent-company.ai"
         },
@@ -22,7 +22,7 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/api/admin/agent-definitions/{id}/workspace-config": {
+        "/api/admin/agent-definitions/{id}/sandbox-config": {
             "get": {
                 "security": [
                     {
@@ -53,31 +53,31 @@ const docTemplate = `{
                     "200": {
                         "description": "Workspace config",
                         "schema": {
-                            "$ref": "#/definitions/domain_agents.APIResponse-github_com_emergent-company_emergent_domain_workspace_AgentWorkspaceConfig"
+                            "$ref": "#/definitions/domain_agents.APIResponse-github_com_emergent-company_emergent_memory_domain_sandbox_AgentSandboxConfig"
                         }
                     },
                     "400": {
                         "description": "Invalid definition ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Agent definition not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -113,7 +113,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_domain_workspace.AgentWorkspaceConfig"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_sandbox.AgentSandboxConfig"
                         }
                     }
                 ],
@@ -121,31 +121,31 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated workspace config",
                         "schema": {
-                            "$ref": "#/definitions/domain_agents.APIResponse-github_com_emergent-company_emergent_domain_workspace_AgentWorkspaceConfig"
+                            "$ref": "#/definitions/domain_agents.APIResponse-github_com_emergent-company_emergent_memory_domain_sandbox_AgentSandboxConfig"
                         }
                     },
                     "400": {
                         "description": "Invalid definition ID, request body, or validation error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Agent definition not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -188,19 +188,19 @@ const docTemplate = `{
                     "400": {
                         "description": "X-Project-ID header required",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -243,19 +243,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body or validation error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -304,25 +304,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid agent ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Agent not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -369,25 +369,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid agent ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Agent not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -443,25 +443,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid agent ID or request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Agent not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -519,25 +519,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid agent ID, not a reaction agent, or invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Agent not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -595,25 +595,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid agent ID or not a reaction agent",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Agent not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -671,25 +671,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid agent ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Agent not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -745,25 +745,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid agent ID or run ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Agent or run not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -812,25 +812,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid agent ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Agent not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -861,13 +861,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -910,19 +910,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -962,19 +962,19 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1009,19 +1009,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1071,118 +1071,93 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
             }
         },
-        "/api/admin/projects/{projectId}/install-default-agents": {
-            "post": {
+        "/api/admin/orgs/{orgId}/tool-settings": {
+            "get": {
                 "security": [
                     {
                         "bearerAuth": []
                     }
                 ],
-                "description": "Creates the default graph-query-agent definition for the project. Idempotent - returns existing if already installed.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Returns all org-level tool setting overrides for a given organization",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "agents"
+                    "organizations"
                 ],
-                "summary": "Install default agent definitions for a project",
+                "summary": "List org tool settings",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
                         "in": "path",
                         "required": true
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Default agent definition (existing or created)",
+                        "description": "List of org tool settings",
                         "schema": {
-                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentDefinitionDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid project ID",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_orgs.OrgToolSettingDTO"
+                            }
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
             }
         },
-        "/api/admin/workspace-images": {
-            "get": {
-                "description": "Returns all registered workspace images (built-in and custom) for the project",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "workspace-images"
-                ],
-                "summary": "List workspace images",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspaceimages.ListResponse-domain_workspaceimages_WorkspaceImageDTO"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
+        "/api/admin/orgs/{orgId}/tool-settings/{toolName}": {
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
                     }
-                }
-            },
-            "post": {
-                "description": "Registers a new workspace image. For Docker refs, triggers background pull.",
+                ],
+                "description": "Creates or updates the org-level override for a built-in tool",
                 "consumes": [
                     "application/json"
                 ],
@@ -1190,9 +1165,177 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "workspace-images"
+                    "organizations"
                 ],
-                "summary": "Create workspace image",
+                "summary": "Upsert org tool setting",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Built-in tool name",
+                        "name": "toolName",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Tool setting",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_orgs.UpsertOrgToolSettingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated tool setting",
+                        "schema": {
+                            "$ref": "#/definitions/domain_orgs.OrgToolSettingDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Removes the org-level override for a built-in tool, reverting to global defaults",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "organizations"
+                ],
+                "summary": "Delete org tool setting",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Built-in tool name",
+                        "name": "toolName",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deletion status",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Setting not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/sandbox-images": {
+            "get": {
+                "description": "Returns all registered sandbox images (built-in and custom) for the project",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sandbox-images"
+                ],
+                "summary": "List sandbox images",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandboximages.ListResponse-domain_sandboximages_SandboxImageDTO"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Registers a new sandbox image. For Docker refs, triggers background pull.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sandbox-images"
+                ],
+                "summary": "Create sandbox image",
                 "parameters": [
                     {
                         "description": "Image details",
@@ -1200,7 +1343,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/domain_workspaceimages.CreateWorkspaceImageRequest"
+                            "$ref": "#/definitions/domain_sandboximages.CreateSandboxImageRequest"
                         }
                     }
                 ],
@@ -1208,40 +1351,40 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/domain_workspaceimages.APIResponse-domain_workspaceimages_WorkspaceImageDTO"
+                            "$ref": "#/definitions/domain_sandboximages.APIResponse-domain_sandboximages_SandboxImageDTO"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
             }
         },
-        "/api/admin/workspace-images/{id}": {
+        "/api/admin/sandbox-images/{id}": {
             "get": {
-                "description": "Returns details of a specific workspace image",
+                "description": "Returns details of a specific sandbox image",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "workspace-images"
+                    "sandbox-images"
                 ],
-                "summary": "Get workspace image",
+                "summary": "Get sandbox image",
                 "parameters": [
                     {
                         "type": "string",
@@ -1255,29 +1398,29 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/domain_workspaceimages.APIResponse-domain_workspaceimages_WorkspaceImageDTO"
+                            "$ref": "#/definitions/domain_sandboximages.APIResponse-domain_sandboximages_SandboxImageDTO"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
             },
             "delete": {
-                "description": "Removes a custom workspace image. Built-in images cannot be deleted.",
+                "description": "Removes a custom sandbox image. Built-in images cannot be deleted.",
                 "tags": [
-                    "workspace-images"
+                    "sandbox-images"
                 ],
-                "summary": "Delete workspace image",
+                "summary": "Delete sandbox image",
                 "parameters": [
                     {
                         "type": "string",
@@ -1294,19 +1437,39 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/issuer": {
+            "get": {
+                "description": "Returns the OIDC issuer URL so CLI clients can discover the correct OAuth endpoints",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "OIDC issuer discovery",
+                "responses": {
+                    "200": {
+                        "description": "Issuer information",
+                        "schema": {
+                            "$ref": "#/definitions/domain_authinfo.IssuerResponse"
                         }
                     }
                 }
@@ -1337,7 +1500,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1392,19 +1555,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid parameters",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1454,19 +1617,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1518,19 +1681,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1577,25 +1740,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid conversation ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Conversation not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1643,25 +1806,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid conversation ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Conversation not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1718,25 +1881,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Conversation not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1795,25 +1958,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Conversation not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1877,19 +2040,19 @@ const docTemplate = `{
                     "400": {
                         "description": "X-Project-ID header required",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1939,19 +2102,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request or validation error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -1988,7 +2151,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2037,19 +2200,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid provider type",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Provider not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2095,19 +2258,19 @@ const docTemplate = `{
                     "400": {
                         "description": "X-Project-ID header required",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2152,13 +2315,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request or unknown provider",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2208,25 +2371,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid integration ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2271,25 +2434,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid integration ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2346,25 +2509,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request or validation error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2422,25 +2585,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request or integration disabled",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2507,25 +2670,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid integration ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2575,25 +2738,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid integration ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2650,25 +2813,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid integration ID or job ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration or sync job not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2733,25 +2896,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid ID or job cannot be cancelled",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration or sync job not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2801,25 +2964,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid integration ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2905,13 +3068,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -2967,13 +3130,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3023,13 +3186,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3081,13 +3244,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3127,7 +3290,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3191,25 +3354,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "413": {
                         "description": "File too large (\u003e100MB)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "503": {
                         "description": "Storage service unavailable",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3259,19 +3422,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3319,19 +3482,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3381,19 +3544,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3443,19 +3606,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3502,25 +3665,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "503": {
                         "description": "Storage service unavailable",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3570,25 +3733,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Document not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3642,7 +3805,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3682,13 +3845,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing projectId parameter",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3740,13 +3903,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid parameters",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3798,13 +3961,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid parameters",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3849,19 +4012,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3904,19 +4067,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -3959,25 +4122,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Branch not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4015,25 +4178,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Branch not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4083,25 +4246,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Branch not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4161,13 +4324,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request (missing sourceBranchId)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4219,13 +4382,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4268,19 +4431,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4330,19 +4493,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Policy not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4387,19 +4550,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Policy not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4456,19 +4619,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Policy not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4521,13 +4684,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request (missing root_ids or \u003e 50 items)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4579,13 +4742,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4637,13 +4800,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4696,13 +4859,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request (missing IDs)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4819,13 +4982,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -4917,13 +5080,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid parameters",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5062,13 +5225,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid parameters",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5132,7 +5295,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5190,13 +5353,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request (key is required)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5249,13 +5412,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request (missing vector)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5308,19 +5471,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Object not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5368,19 +5531,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Object not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5437,19 +5600,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Object not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5519,13 +5682,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5575,19 +5738,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Object not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5634,19 +5797,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Object not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5750,13 +5913,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5808,13 +5971,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5866,13 +6029,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -5961,13 +6124,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid parameters",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6014,19 +6177,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Relationship not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6072,19 +6235,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Relationship not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6141,19 +6304,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Relationship not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6203,19 +6366,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Relationship not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6262,19 +6425,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Relationship not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6333,19 +6496,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request (missing query or vector)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Missing graph:search:debug scope",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6398,13 +6561,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request (missing query)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6456,13 +6619,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6515,13 +6678,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request (missing root_ids or \u003e 50 items)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6576,13 +6739,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing project ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6632,13 +6795,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request or integration already exists",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6672,7 +6835,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6719,19 +6882,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing name or project ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6788,19 +6951,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6842,19 +7005,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing name or project ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6901,19 +7064,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing name or project ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -6971,19 +7134,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Integration disabled or invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7030,19 +7193,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing name or project ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Integration not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7087,13 +7250,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7141,19 +7304,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request or missing token",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Invitation not found or expired",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7187,7 +7350,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7224,19 +7387,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing invite_id",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Invitation not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7279,19 +7442,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing invite_id",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Invitation not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7343,7 +7506,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7449,19 +7612,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7511,25 +7674,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Job not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7596,25 +7759,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Job not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7693,25 +7856,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Job not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7775,7 +7938,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7806,7 +7969,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7838,7 +8001,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7869,7 +8032,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7912,19 +8075,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing notification id",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Notification not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -7967,19 +8130,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing notification id",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Notification not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8013,13 +8176,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8062,19 +8225,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8114,19 +8277,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid organization ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Organization not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8167,19 +8330,252 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid organization ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Organization not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/orgs/{orgId}/skills": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "List all org-scoped skills for the given organization",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "List org skills",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.ListSkillsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Create a skill scoped to the given organization",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Create an org skill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Skill to create",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.CreateSkillDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/orgs/{orgId}/skills/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Delete an org-scoped skill",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Delete an org skill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Skill ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Partially update an org-scoped skill",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Update an org skill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Skill ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.UpdateSkillDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8229,13 +8625,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8278,19 +8674,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8330,25 +8726,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid project ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Project not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8389,25 +8785,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid project ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Project not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8457,25 +8853,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body or project ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Project not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8518,25 +8914,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid project ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Project not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8586,25 +8982,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid project ID or user ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Project or user not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8653,19 +9049,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8724,31 +9120,31 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Question not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "409": {
                         "description": "Question already answered or run not paused",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8798,25 +9194,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Run not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8859,13 +9255,246 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing project_id",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/skills": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "List all skills available to agents in the project (global + org + project-scoped, merged)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "List project skills",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.ListSkillsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Create a skill scoped to the given project",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Create a project skill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Skill to create",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.CreateSkillDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/skills/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Delete a project-scoped skill",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Delete a project skill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Skill ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Partially update a project-scoped skill",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Update a project skill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Skill ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.UpdateSkillDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8905,19 +9534,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid project ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -8967,19 +9596,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9026,25 +9655,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid project ID or token ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Token not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9092,25 +9721,1318 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid project ID or token ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Token not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schema-registry/projects/{projectId}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns all object types registered for a project with optional filtering",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schema-registry"
+                ],
+                "summary": "List project types",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Filter enabled types only (default true)",
+                        "name": "enabled_only",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "template",
+                            "custom",
+                            "discovered",
+                            "all"
+                        ],
+                        "type": "string",
+                        "description": "Filter by source",
+                        "name": "source",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search in type names",
+                        "name": "search",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of types",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_schemaregistry.SchemaRegistryEntryDTO"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schema-registry/projects/{projectId}/stats": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns statistics about a project's schema registry including counts and object distribution",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schema-registry"
+                ],
+                "summary": "Get type statistics",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Type statistics",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemaregistry.SchemaRegistryStats"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schema-registry/projects/{projectId}/types": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Registers a new custom object type for a project with JSON schema, UI config, and extraction config",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schema-registry"
+                ],
+                "summary": "Register custom type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Type definition",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemaregistry.CreateTypeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created type",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemaregistry.ProjectObjectSchemaRegistry"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Type already exists",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schema-registry/projects/{projectId}/types/{typeName}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns a specific object type definition including incoming/outgoing relationships",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schema-registry"
+                ],
+                "summary": "Get object type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Object type name",
+                        "name": "typeName",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Type definition",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemaregistry.SchemaRegistryEntryDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Type not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Updates an existing type in the project schema registry. Bumps schema_version when json_schema changes.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schema-registry"
+                ],
+                "summary": "Update registered type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Object type name",
+                        "name": "typeName",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Update request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemaregistry.UpdateTypeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated type",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemaregistry.ProjectObjectSchemaRegistry"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Type not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Removes a type from the project schema registry",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schema-registry"
+                ],
+                "summary": "Delete registered type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Object type name",
+                        "name": "typeName",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No content"
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Type not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates a new template pack in the global registry with object type schemas, relationship schemas, and optional UI/extraction configs",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Create template pack",
+                "parameters": [
+                    {
+                        "description": "Template pack definition",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.CreatePackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created template pack",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.GraphMemorySchema"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/assign": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Assigns a template pack to a project, making its types available for use.\nWhen dry_run=true, returns a full conflict/merge preview (HTTP 200) without making changes.\nWhen merge=true, additively merges incoming type schemas into existing registered types.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Assign template pack",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Assignment request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.AssignPackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Dry-run preview (when dry_run=true)",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.AssignPackResult"
+                        }
+                    },
+                    "201": {
+                        "description": "Created assignment",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.AssignPackResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/assignments/{assignmentId}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Removes a template pack assignment from a project",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Delete pack assignment",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Assignment ID (UUID)",
+                        "name": "assignmentId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No content"
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Assignment not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Updates a template pack assignment (e.g., toggle active status)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Update pack assignment",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Assignment ID (UUID)",
+                        "name": "assignmentId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Update request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.UpdateAssignmentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Update confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Assignment not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/available": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns template packs available for a project to install (not yet installed)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "List available template packs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Available template packs",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_schemas.MemorySchemaListItem"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/compiled-types": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns compiled object and relationship type definitions for a project based on installed template packs",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Get compiled types",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Compiled type definitions",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.CompiledTypesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/installed": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns template packs currently installed and assigned to a project",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "List installed template packs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Installed template packs",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_schemas.InstalledSchemaItem"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/{packId}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns a template pack by ID including all schemas and configs",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Get template pack",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Template Pack ID (UUID)",
+                        "name": "packId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Template pack",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.GraphMemorySchema"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Template pack not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Partially updates an existing template pack in the global registry",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Update template pack",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Template Pack ID (UUID)",
+                        "name": "packId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update (all optional)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.UpdatePackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated template pack",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.GraphMemorySchema"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Template pack not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Deletes a template pack from the global registry. Fails if the pack is assigned to any projects.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Delete template pack",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Template Pack ID (UUID)",
+                        "name": "packId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No content"
+                    },
+                    "400": {
+                        "description": "Bad request (e.g., pack is assigned to projects)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Template pack not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/skills": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "List all global (built-in, project- and org-independent) skills",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "List global skills",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.ListSkillsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Create a new global skill available to all agents. Superadmin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Create a global skill",
+                "parameters": [
+                    {
+                        "description": "Skill to create",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.CreateSkillDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/skills/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Get a skill by ID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Get a skill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Skill ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Delete a skill by ID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Delete a skill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Skill ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Partially update a skill. Regenerates embedding if description changes.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Update a skill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Skill ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.UpdateSkillDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9176,13 +11098,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9227,19 +11149,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9284,19 +11206,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9368,13 +11290,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9414,25 +11336,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid job ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Email job not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9504,13 +11426,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9541,13 +11463,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9592,19 +11514,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9676,13 +11598,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9727,19 +11649,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9784,19 +11706,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9827,7 +11749,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9875,13 +11797,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9921,25 +11843,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid organization ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Organization not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -9993,13 +11915,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10039,25 +11961,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid project ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Project not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10123,13 +12045,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10174,19 +12096,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10231,19 +12153,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10283,25 +12205,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid job ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Sync job not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10361,13 +12283,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10407,25 +12329,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid user ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden (not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "User not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10497,13 +12419,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing project_id",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10563,7 +12485,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10594,7 +12516,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10639,13 +12561,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing project_id",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10697,19 +12619,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing task ID or project_id",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Task not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10767,19 +12689,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing task ID or project_id",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Task not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -10846,32 +12768,67 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request or missing project_id",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Task not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
             }
         },
-        "/api/template-packs": {
+        "/api/tokens": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns all account-level API tokens (not bound to any project) for the authenticated user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "api-tokens"
+                ],
+                "summary": "List account API tokens",
+                "responses": {
+                    "200": {
+                        "description": "List of tokens",
+                        "schema": {
+                            "$ref": "#/definitions/domain_apitoken.ApiTokenListResponseDTO"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
                         "bearerAuth": []
                     }
                 ],
-                "description": "Creates a new template pack in the global registry with object type schemas, relationship schemas, and optional UI/extraction configs",
+                "description": "Creates a new API token bound to the authenticated user (not to a specific project). The token can be used across all projects the user has access to.",
                 "consumes": [
                     "application/json"
                 ],
@@ -10879,221 +12836,75 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "template-packs"
+                    "api-tokens"
                 ],
-                "summary": "Create template pack",
+                "summary": "Create account API token",
                 "parameters": [
                     {
-                        "description": "Template pack definition",
+                        "description": "Token creation request",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/domain_templatepacks.CreatePackRequest"
+                            "$ref": "#/definitions/domain_apitoken.CreateAccountTokenRequest"
                         }
                     }
                 ],
                 "responses": {
                     "201": {
-                        "description": "Created template pack",
+                        "description": "Token created (includes full token value)",
                         "schema": {
-                            "$ref": "#/definitions/domain_templatepacks.GraphTemplatePack"
+                            "$ref": "#/definitions/domain_apitoken.CreateApiTokenResponseDTO"
                         }
                     },
                     "400": {
-                        "description": "Bad request",
+                        "description": "Invalid request body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
             }
         },
-        "/api/template-packs/projects/{projectId}/assign": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Assigns a template pack to a project, making its types available for use",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "template-packs"
-                ],
-                "summary": "Assign template pack",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Assignment request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_templatepacks.AssignPackRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created assignment",
-                        "schema": {
-                            "$ref": "#/definitions/domain_templatepacks.ProjectTemplatePack"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/template-packs/projects/{projectId}/assignments/{assignmentId}": {
+        "/api/tokens/{tokenId}": {
             "delete": {
                 "security": [
                     {
                         "bearerAuth": []
                     }
                 ],
-                "description": "Removes a template pack assignment from a project",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Revokes an account-level API token owned by the authenticated user",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "template-packs"
+                    "api-tokens"
                 ],
-                "summary": "Delete pack assignment",
+                "summary": "Revoke account API token",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
+                        "description": "Token ID (UUID)",
+                        "name": "tokenId",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Assignment ID (UUID)",
-                        "name": "assignmentId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No content"
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Assignment not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            },
-            "patch": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Updates a template pack assignment (e.g., toggle active status)",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "template-packs"
-                ],
-                "summary": "Update pack assignment",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Assignment ID (UUID)",
-                        "name": "assignmentId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Update request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_templatepacks.UpdateAssignmentRequest"
-                        }
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Update confirmation",
+                        "description": "Revocation status",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -11102,729 +12913,27 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad request",
+                        "description": "Invalid token ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
-                        "description": "Assignment not found",
+                        "description": "Token not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/template-packs/projects/{projectId}/available": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns template packs available for a project to install (not yet installed)",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "template-packs"
-                ],
-                "summary": "List available template packs",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Available template packs",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/domain_templatepacks.TemplatePackListItem"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/template-packs/projects/{projectId}/compiled-types": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns compiled object and relationship type definitions for a project based on installed template packs",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "template-packs"
-                ],
-                "summary": "Get compiled types",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Compiled type definitions",
-                        "schema": {
-                            "$ref": "#/definitions/domain_templatepacks.CompiledTypesResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/template-packs/projects/{projectId}/installed": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns template packs currently installed and assigned to a project",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "template-packs"
-                ],
-                "summary": "List installed template packs",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Installed template packs",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/domain_templatepacks.InstalledPackItem"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/template-packs/{packId}": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns a template pack by ID including all schemas and configs",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "template-packs"
-                ],
-                "summary": "Get template pack",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Template Pack ID (UUID)",
-                        "name": "packId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Template pack",
-                        "schema": {
-                            "$ref": "#/definitions/domain_templatepacks.GraphTemplatePack"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Template pack not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Deletes a template pack from the global registry. Fails if the pack is assigned to any projects.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "template-packs"
-                ],
-                "summary": "Delete template pack",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Template Pack ID (UUID)",
-                        "name": "packId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No content"
-                    },
-                    "400": {
-                        "description": "Bad request (e.g., pack is assigned to projects)",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Template pack not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/type-registry/projects/{projectId}": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns all object types registered for a project with optional filtering",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "type-registry"
-                ],
-                "summary": "List project types",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "boolean",
-                        "default": true,
-                        "description": "Filter enabled types only (default true)",
-                        "name": "enabled_only",
-                        "in": "query"
-                    },
-                    {
-                        "enum": [
-                            "template",
-                            "custom",
-                            "discovered",
-                            "all"
-                        ],
-                        "type": "string",
-                        "description": "Filter by source",
-                        "name": "source",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Search in type names",
-                        "name": "search",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "List of types",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/domain_typeregistry.TypeRegistryEntryDTO"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/type-registry/projects/{projectId}/stats": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns statistics about a project's type registry including counts and object distribution",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "type-registry"
-                ],
-                "summary": "Get type statistics",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Type statistics",
-                        "schema": {
-                            "$ref": "#/definitions/domain_typeregistry.TypeRegistryStats"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/type-registry/projects/{projectId}/types": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Registers a new custom object type for a project with JSON schema, UI config, and extraction config",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "type-registry"
-                ],
-                "summary": "Register custom type",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Type definition",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_typeregistry.CreateTypeRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created type",
-                        "schema": {
-                            "$ref": "#/definitions/domain_typeregistry.ProjectObjectTypeRegistry"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "409": {
-                        "description": "Type already exists",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/type-registry/projects/{projectId}/types/{typeName}": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns a specific object type definition including incoming/outgoing relationships",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "type-registry"
-                ],
-                "summary": "Get object type",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Object type name",
-                        "name": "typeName",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Type definition",
-                        "schema": {
-                            "$ref": "#/definitions/domain_typeregistry.TypeRegistryEntryDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Type not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            },
-            "put": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Updates an existing type in the project type registry. Bumps schema_version when json_schema changes.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "type-registry"
-                ],
-                "summary": "Update registered type",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Object type name",
-                        "name": "typeName",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Update request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_typeregistry.UpdateTypeRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Updated type",
-                        "schema": {
-                            "$ref": "#/definitions/domain_typeregistry.ProjectObjectTypeRegistry"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Type not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Removes a type from the project type registry",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "type-registry"
-                ],
-                "summary": "Delete registered type",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Object type name",
-                        "name": "typeName",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No content"
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Type not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -11869,13 +12978,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -11910,13 +13019,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -11968,19 +13077,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -12033,19 +13142,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -12100,19 +13209,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -12146,19 +13255,19 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Profile not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -12201,19 +13310,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -12253,19 +13362,1025 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing or invalid email query parameter",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns agent sandboxes with optional filtering by type, provider, status, or session",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "List agent sandboxes",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by container type",
+                        "name": "container_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by provider",
+                        "name": "provider",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by agent session ID",
+                        "name": "agent_session_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of sandboxes",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates a new isolated agent sandbox (container/sandbox)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Create agent sandbox",
+                "parameters": [
+                    {
+                        "description": "Sandbox configuration",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.CreateWorkspaceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created sandbox",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/from-snapshot": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates a new sandbox with filesystem state restored from a snapshot",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Create sandbox from snapshot",
+                "parameters": [
+                    {
+                        "description": "Snapshot to restore from",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.CreateFromSnapshotRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Sandbox created from snapshot",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid snapshot or provider",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Restore failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/providers": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns available sandbox providers and their capabilities",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "List sandbox providers",
+                "responses": {
+                    "200": {
+                        "description": "List of providers",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sandbox.ProviderStatusResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns a single agent sandbox by ID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Get agent sandbox",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sandbox details",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid sandbox ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Sandbox not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Permanently deletes an agent sandbox and its resources",
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Delete agent sandbox",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No content"
+                    },
+                    "400": {
+                        "description": "Invalid sandbox ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Sandbox not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/attach": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Attaches an agent session to a sandbox for sequential access. Rejects concurrent attachment.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Attach agent session to sandbox",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Session to attach",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.AttachSessionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sandbox with attached session",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Concurrent access or invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Sandbox not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/bash": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Executes a command inside the sandbox container",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Execute bash command",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Command to execute",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.BashRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Command output",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.BashResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/detach": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Clears the agent session from a sandbox, making it available for new attachments",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Detach agent session from sandbox",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sandbox with session detached",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid sandbox ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Sandbox not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/edit": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Performs string replacement editing on a file in the sandbox",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Edit file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Edit parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.EditRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Edit result",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.EditResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "File not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/git": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Executes structured git operations (status, diff, commit, push, pull, checkout) without exposing credentials",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Git operations",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Git operation parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.GitRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Git output",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.GitResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/glob": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Finds files matching a glob pattern in the sandbox, sorted by modification time",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Glob file search",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Glob pattern",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.GlobRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Matching file paths",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/grep": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Searches file contents with regex pattern in the sandbox, returns structured matches",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Grep content search",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Search pattern",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.GrepRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Search results",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.GrepResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/read": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Reads file content or directory listing from the sandbox",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Read file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "File read parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.ReadRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "File content",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.ReadResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "File not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/resume": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Resumes a stopped agent sandbox",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Resume agent sandbox",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Resumed sandbox",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid sandbox ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Sandbox not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/snapshot": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates a point-in-time snapshot of a sandbox's filesystem state",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Create sandbox snapshot",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Snapshot created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.SnapshotResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid sandbox state or provider",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Sandbox not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Snapshot creation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/stop": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Stops a running agent sandbox",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Stop agent sandbox",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Stopped sandbox",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid sandbox ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Sandbox not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sandboxes/{id}/write": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Writes file content to the sandbox, auto-creating parent directories",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent-sandboxes"
+                ],
+                "summary": "Write file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sandbox ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "File write parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sandbox.WriteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Write confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -12308,1031 +14423,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid run ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Session not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns agent workspaces with optional filtering by type, provider, status, or session",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "List agent workspaces",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Filter by container type",
-                        "name": "container_type",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by provider",
-                        "name": "provider",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by status",
-                        "name": "status",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by agent session ID",
-                        "name": "agent_session_id",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "List of workspaces",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Creates a new isolated agent workspace (container/sandbox)",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Create agent workspace",
-                "parameters": [
-                    {
-                        "description": "Workspace configuration",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.CreateWorkspaceRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created workspace",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/from-snapshot": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Creates a new workspace with filesystem state restored from a snapshot",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Create workspace from snapshot",
-                "parameters": [
-                    {
-                        "description": "Snapshot to restore from",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.CreateFromSnapshotRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Workspace created from snapshot",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid snapshot or provider",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Restore failed",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/providers": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns available workspace providers and their capabilities",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "List workspace providers",
-                "responses": {
-                    "200": {
-                        "description": "List of providers",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/domain_workspace.ProviderStatusResponse"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns a single agent workspace by ID",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Get agent workspace",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Workspace details",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid workspace ID",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Workspace not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Permanently deletes an agent workspace and its resources",
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Delete agent workspace",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No content"
-                    },
-                    "400": {
-                        "description": "Invalid workspace ID",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Workspace not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/attach": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Attaches an agent session to a workspace for sequential access. Rejects concurrent attachment.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Attach agent session to workspace",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Session to attach",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.AttachSessionRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Workspace with attached session",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Concurrent access or invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Workspace not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/bash": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Executes a command inside the workspace container",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Execute bash command",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Command to execute",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.BashRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Command output",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.BashResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/detach": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Clears the agent session from a workspace, making it available for new attachments",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Detach agent session from workspace",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Workspace with session detached",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid workspace ID",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Workspace not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/edit": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Performs string replacement editing on a file in the workspace",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Edit file",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Edit parameters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.EditRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Edit result",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.EditResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "File not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/git": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Executes structured git operations (status, diff, commit, push, pull, checkout) without exposing credentials",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Git operations",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Git operation parameters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.GitRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Git output",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.GitResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/glob": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Finds files matching a glob pattern in the workspace, sorted by modification time",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Glob file search",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Glob pattern",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.GlobRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Matching file paths",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/grep": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Searches file contents with regex pattern in the workspace, returns structured matches",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Grep content search",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Search pattern",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.GrepRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Search results",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.GrepResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/read": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Reads file content or directory listing from the workspace",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Read file",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "File read parameters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.ReadRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "File content",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.ReadResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "File not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/resume": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Resumes a stopped agent workspace",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Resume agent workspace",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Resumed workspace",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid workspace ID",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Workspace not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/snapshot": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Creates a point-in-time snapshot of a workspace's filesystem state",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Create workspace snapshot",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Snapshot created",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.SnapshotResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid workspace state or provider",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Workspace not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Snapshot creation failed",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/stop": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Stops a running agent workspace",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Stop agent workspace",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Stopped workspace",
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.WorkspaceResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid workspace ID",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Workspace not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/agent/workspaces/{id}/write": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Writes file content to the workspace, auto-creating parent directories",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "agent-workspaces"
-                ],
-                "summary": "Write file",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workspace ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "File write parameters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_workspace.WriteRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Write confirmation",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -13359,14 +14468,14 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/domain_workspace.MCPServerStatus"
+                                "$ref": "#/definitions/domain_sandbox.MCPServerStatus"
                             }
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -13395,7 +14504,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/domain_workspace.RegisterMCPServerRequest"
+                            "$ref": "#/definitions/domain_sandbox.RegisterMCPServerRequest"
                         }
                     }
                 ],
@@ -13403,25 +14512,25 @@ const docTemplate = `{
                     "201": {
                         "description": "Registered MCP server",
                         "schema": {
-                            "$ref": "#/definitions/domain_workspace.MCPServerStatus"
+                            "$ref": "#/definitions/domain_sandbox.MCPServerStatus"
                         }
                     },
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -13455,25 +14564,25 @@ const docTemplate = `{
                     "200": {
                         "description": "MCP server status",
                         "schema": {
-                            "$ref": "#/definitions/domain_workspace.MCPServerStatus"
+                            "$ref": "#/definitions/domain_sandbox.MCPServerStatus"
                         }
                     },
                     "400": {
                         "description": "Invalid workspace ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "MCP server not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -13505,19 +14614,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid workspace ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "MCP server not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -13555,7 +14664,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/domain_workspace.MCPCallRequest"
+                            "$ref": "#/definitions/domain_sandbox.MCPCallRequest"
                         }
                     }
                 ],
@@ -13563,25 +14672,25 @@ const docTemplate = `{
                     "200": {
                         "description": "MCP response",
                         "schema": {
-                            "$ref": "#/definitions/domain_workspace.MCPCallResponse"
+                            "$ref": "#/definitions/domain_sandbox.MCPCallResponse"
                         }
                     },
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "MCP server not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -13615,25 +14724,25 @@ const docTemplate = `{
                     "200": {
                         "description": "Restarted MCP server",
                         "schema": {
-                            "$ref": "#/definitions/domain_workspace.MCPServerStatus"
+                            "$ref": "#/definitions/domain_sandbox.MCPServerStatus"
                         }
                     },
                     "400": {
                         "description": "Invalid workspace ID",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "MCP server not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -13693,13 +14802,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -13746,13 +14855,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Backup not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -13794,13 +14903,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Failed to delete backup",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -13844,432 +14953,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Backup not ready for download",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Backup not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Failed to generate download URL",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/organizations/{orgId}/providers/credentials": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns metadata about stored credentials. Secrets are never returned.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "provider"
-                ],
-                "summary": "List organization credentials",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "orgId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Credentials",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/provider.OrgCredentialResponse"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/organizations/{orgId}/providers/google-ai/credentials": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Encrypts and stores a Google AI API key for the organization. Syncs the model catalog on success.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "provider"
-                ],
-                "summary": "Save Google AI credential",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "orgId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Google AI credential",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_provider.SaveGoogleAICredentialRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Credential saved",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/organizations/{orgId}/providers/vertex-ai/credentials": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Encrypts and stores Vertex AI service account credentials for the organization.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "provider"
-                ],
-                "summary": "Save Vertex AI credential",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "orgId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Vertex AI credential",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_provider.SaveVertexAICredentialRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Credential saved",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/organizations/{orgId}/providers/{provider}/credentials": {
-            "delete": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Removes the stored credential for the given provider from the organization.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "provider"
-                ],
-                "summary": "Delete organization credential",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "orgId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Provider (google-ai or vertex-ai)",
-                        "name": "provider",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Deleted",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/organizations/{orgId}/providers/{provider}/models": {
-            "put": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Sets the default embedding and generative models to use for the given provider.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "provider"
-                ],
-                "summary": "Set organization model selection",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "orgId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Provider (google-ai or vertex-ai)",
-                        "name": "provider",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Model selection",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_provider.SetOrgModelSelectionRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Saved",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/organizations/{orgId}/usage": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns aggregated token usage and ESTIMATED costs for all projects in the organization, grouped by provider and model.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "provider"
-                ],
-                "summary": "Get organization usage summary",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "orgId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Start time (RFC3339)",
-                        "name": "since",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "End time (RFC3339)",
-                        "name": "until",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Usage summary",
-                        "schema": {
-                            "$ref": "#/definitions/provider.UsageSummaryResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -14321,217 +15023,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request or retention days out of range",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/projects/{projectId}/providers/policies": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns all provider policies configured for the given project.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "provider"
-                ],
-                "summary": "List project provider policies",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Policies",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/provider.ProjectProviderPolicy"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/projects/{projectId}/providers/{provider}/policy": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns the current provider policy for the given project + provider.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "provider"
-                ],
-                "summary": "Get project provider policy",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Provider (google-ai or vertex-ai)",
-                        "name": "provider",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Policy",
-                        "schema": {
-                            "$ref": "#/definitions/provider.ProjectProviderPolicy"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            },
-            "put": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Sets the provider policy for a project (none, organization, or project) and optionally stores project-level credentials.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "provider"
-                ],
-                "summary": "Set project provider policy",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Provider (google-ai or vertex-ai)",
-                        "name": "provider",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Policy request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_provider.SetProjectPolicyRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Policy set",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -14609,125 +15113,6 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/projects/{projectId}/usage": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns aggregated token usage and ESTIMATED costs for a project, grouped by provider and model.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "provider"
-                ],
-                "summary": "Get project usage summary",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Start time (RFC3339)",
-                        "name": "since",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "End time (RFC3339)",
-                        "name": "until",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Usage summary",
-                        "schema": {
-                            "$ref": "#/definitions/provider.UsageSummaryResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/providers/{provider}/models": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns the cached list of supported models for the given provider.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "provider"
-                ],
-                "summary": "List provider models",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Provider (google-ai or vertex-ai)",
-                        "name": "provider",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Model type filter (embedding or generative)",
-                        "name": "type",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Models",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/provider.ProviderSupportedModel"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
                         }
                     }
                 }
@@ -14876,19 +15261,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -14926,19 +15311,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -14976,19 +15361,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -15028,19 +15413,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -15075,25 +15460,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -15237,19 +15622,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -15308,19 +15693,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -15363,25 +15748,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Job not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -15422,25 +15807,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Job not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -15506,25 +15891,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "404": {
                         "description": "Job not found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -15655,6 +16040,504 @@ const docTemplate = `{
                 }
             }
         },
+        "/organizations/{orgId}/providers": {
+            "get": {
+                "summary": "List org-level provider configs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_provider.ProviderConfigResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/organizations/{orgId}/providers/{provider}": {
+            "get": {
+                "summary": "Get org-level provider config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider name",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.ProviderConfigResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "summary": "Configure org-level provider",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider name (google or google-vertex)",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Provider config",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.UpsertProviderConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.ProviderConfigResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Delete org-level provider config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider name",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/organizations/{orgId}/usage": {
+            "get": {
+                "summary": "Get org LLM usage summary",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (RFC3339)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (RFC3339)",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.UsageSummaryResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/projects/{projectId}/providers/{provider}": {
+            "get": {
+                "summary": "Get project-level provider config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider name",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.ProviderConfigResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "summary": "Configure project-level provider",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider name (google or google-vertex)",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Provider config",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.UpsertProviderConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.ProviderConfigResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Delete project-level provider config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider name",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/projects/{projectId}/usage": {
+            "get": {
+                "summary": "Get project LLM usage summary",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (RFC3339)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (RFC3339)",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.UsageSummaryResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/providers/{provider}/models": {
+            "get": {
+                "summary": "List available models for a provider",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Provider name",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by model type (embedding or generative)",
+                        "name": "type",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_provider.ProviderSupportedModel"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/providers/{provider}/test": {
+            "post": {
+                "summary": "Test a provider with a live generate call",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Provider name (google or google-vertex)",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID for credential resolution",
+                        "name": "projectId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Org ID for credential resolution",
+                        "name": "orgId",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.TestProviderResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/ready": {
             "get": {
                 "description": "Returns readiness status based on database connectivity (for Kubernetes readiness probes)",
@@ -15726,19 +16609,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -15775,13 +16658,13 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_pkg_apperror.Error"
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     }
                 }
@@ -15789,35 +16672,6 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "domain_agents.ACPConfig": {
-            "type": "object",
-            "properties": {
-                "capabilities": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "description": {
-                    "type": "string"
-                },
-                "displayName": {
-                    "type": "string"
-                },
-                "inputModes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "outputModes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
         "domain_agents.APIResponse-any": {
             "type": "object",
             "properties": {
@@ -15910,23 +16764,6 @@ const docTemplate = `{
                 }
             }
         },
-        "domain_agents.APIResponse-domain_agents_AgentDefinitionDTO": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/domain_agents.AgentDefinitionDTO"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
         "domain_agents.APIResponse-domain_agents_AgentQuestionDTO": {
             "type": "object",
             "properties": {
@@ -15995,11 +16832,11 @@ const docTemplate = `{
                 }
             }
         },
-        "domain_agents.APIResponse-github_com_emergent-company_emergent_domain_workspace_AgentWorkspaceConfig": {
+        "domain_agents.APIResponse-github_com_emergent-company_emergent_memory_domain_sandbox_AgentSandboxConfig": {
             "type": "object",
             "properties": {
                 "data": {
-                    "$ref": "#/definitions/github_com_emergent-company_emergent_domain_workspace.AgentWorkspaceConfig"
+                    "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_sandbox.AgentSandboxConfig"
                 },
                 "error": {
                     "type": "string"
@@ -16109,70 +16946,6 @@ const docTemplate = `{
                 }
             }
         },
-        "domain_agents.AgentDefinitionDTO": {
-            "type": "object",
-            "properties": {
-                "acpConfig": {
-                    "$ref": "#/definitions/domain_agents.ACPConfig"
-                },
-                "config": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "defaultTimeout": {
-                    "type": "integer"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "flowType": {
-                    "$ref": "#/definitions/domain_agents.AgentFlowType"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "isDefault": {
-                    "type": "boolean"
-                },
-                "maxSteps": {
-                    "type": "integer"
-                },
-                "model": {
-                    "$ref": "#/definitions/domain_agents.ModelConfig"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "productId": {
-                    "type": "string"
-                },
-                "projectId": {
-                    "type": "string"
-                },
-                "systemPrompt": {
-                    "type": "string"
-                },
-                "tools": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "updatedAt": {
-                    "type": "string"
-                },
-                "visibility": {
-                    "$ref": "#/definitions/domain_agents.AgentVisibility"
-                },
-                "workspaceConfig": {
-                    "type": "object",
-                    "additionalProperties": {}
-                }
-            }
-        },
         "domain_agents.AgentExecutionMode": {
             "type": "string",
             "enum": [
@@ -16184,29 +16957,6 @@ const docTemplate = `{
                 "ExecutionModeSuggest",
                 "ExecutionModeExecute",
                 "ExecutionModeHybrid"
-            ]
-        },
-        "domain_agents.AgentFlowType": {
-            "type": "string",
-            "enum": [
-                "single",
-                "sequential",
-                "loop"
-            ],
-            "x-enum-comments": {
-                "FlowTypeLoop": "Loop until condition met",
-                "FlowTypeSequential": "Sequential pipeline of steps",
-                "FlowTypeSingle": "Single LLM agent"
-            },
-            "x-enum-descriptions": [
-                "Single LLM agent",
-                "Sequential pipeline of steps",
-                "Loop until condition met"
-            ],
-            "x-enum-varnames": [
-                "FlowTypeSingle",
-                "FlowTypeSequential",
-                "FlowTypeLoop"
             ]
         },
         "domain_agents.AgentQuestionDTO": {
@@ -16331,12 +17081,21 @@ const docTemplate = `{
                 "summary": {
                     "type": "object",
                     "additionalProperties": {}
+                },
+                "tokenUsage": {
+                    "description": "Token usage aggregated from kb.llm_usage_events for this run.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_agents.RunTokenUsage"
+                        }
+                    ]
                 }
             }
         },
         "domain_agents.AgentRunStatus": {
             "type": "string",
             "enum": [
+                "queued",
                 "running",
                 "success",
                 "skipped",
@@ -16344,7 +17103,20 @@ const docTemplate = `{
                 "paused",
                 "cancelled"
             ],
+            "x-enum-comments": {
+                "RunStatusQueued": "enqueued, waiting for a worker"
+            },
+            "x-enum-descriptions": [
+                "enqueued, waiting for a worker",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+            ],
             "x-enum-varnames": [
+                "RunStatusQueued",
                 "RunStatusRunning",
                 "RunStatusSuccess",
                 "RunStatusSkipped",
@@ -16366,29 +17138,6 @@ const docTemplate = `{
                 "TriggerTypeManual",
                 "TriggerTypeReaction",
                 "TriggerTypeWebhook"
-            ]
-        },
-        "domain_agents.AgentVisibility": {
-            "type": "string",
-            "enum": [
-                "external",
-                "project",
-                "internal"
-            ],
-            "x-enum-comments": {
-                "VisibilityExternal": "Discoverable via ACP and admin UI",
-                "VisibilityInternal": "Only visible to other agents",
-                "VisibilityProject": "Visible in admin UI, not via ACP"
-            },
-            "x-enum-descriptions": [
-                "Discoverable via ACP and admin UI",
-                "Visible in admin UI, not via ACP",
-                "Only visible to other agents"
-            ],
-            "x-enum-varnames": [
-                "VisibilityExternal",
-                "VisibilityProject",
-                "VisibilityInternal"
             ]
         },
         "domain_agents.BatchTriggerDTO": {
@@ -16488,20 +17237,6 @@ const docTemplate = `{
                 },
                 "triggerType": {
                     "$ref": "#/definitions/domain_agents.AgentTriggerType"
-                }
-            }
-        },
-        "domain_agents.ModelConfig": {
-            "type": "object",
-            "properties": {
-                "maxTokens": {
-                    "type": "integer"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "temperature": {
-                    "type": "number"
                 }
             }
         },
@@ -16609,6 +17344,20 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.RunTokenUsage": {
+            "type": "object",
+            "properties": {
+                "estimatedCostUsd": {
+                    "type": "number"
+                },
+                "totalInputTokens": {
+                    "type": "integer"
+                },
+                "totalOutputTokens": {
+                    "type": "integer"
+                }
+            }
+        },
         "domain_agents.SessionStatus": {
             "type": "string",
             "enum": [
@@ -16707,6 +17456,9 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "projectId": {
+                    "type": "string"
+                },
                 "scopes": {
                     "type": "array",
                     "items": {
@@ -16729,6 +17481,27 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "domain_apitoken.CreateAccountTokenRequest": {
+            "type": "object",
+            "required": [
+                "name",
+                "scopes"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "scopes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -16771,6 +17544,9 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "projectId": {
+                    "type": "string"
+                },
                 "scopes": {
                     "type": "array",
                     "items": {
@@ -16803,6 +17579,9 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "projectId": {
+                    "type": "string"
+                },
                 "scopes": {
                     "type": "array",
                     "items": {
@@ -16814,6 +17593,17 @@ const docTemplate = `{
                 },
                 "tokenPrefix": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_authinfo.IssuerResponse": {
+            "type": "object",
+            "properties": {
+                "issuer": {
+                    "type": "string"
+                },
+                "standalone": {
+                    "type": "boolean"
                 }
             }
         },
@@ -17781,7 +18571,7 @@ const docTemplate = `{
                 "message": {
                     "type": "string"
                 },
-                "template_pack_id": {
+                "schema_id": {
                     "type": "string"
                 }
             }
@@ -17861,10 +18651,10 @@ const docTemplate = `{
                 "progress": {
                     "$ref": "#/definitions/domain_discoveryjobs.JSONMap"
                 },
-                "status": {
+                "schema_id": {
                     "type": "string"
                 },
-                "template_pack_id": {
+                "status": {
                     "type": "string"
                 }
             }
@@ -17895,13 +18685,13 @@ const docTemplate = `{
                 "progress": {
                     "$ref": "#/definitions/domain_discoveryjobs.JSONMap"
                 },
+                "schema_id": {
+                    "type": "string"
+                },
                 "started_at": {
                     "type": "string"
                 },
                 "status": {
-                    "type": "string"
-                },
-                "template_pack_id": {
                     "type": "string"
                 }
             }
@@ -19532,10 +20322,24 @@ const docTemplate = `{
                 "timestamp": {
                     "type": "string"
                 },
+                "tracing": {
+                    "$ref": "#/definitions/domain_health.TracingInfo"
+                },
                 "uptime": {
                     "type": "string"
                 },
                 "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_health.TracingInfo": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "traces_url": {
                     "type": "string"
                 }
             }
@@ -20145,6 +20949,10 @@ const docTemplate = `{
         "domain_mcpregistry.MCPServerToolDTO": {
             "type": "object",
             "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -20155,6 +20963,10 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "inheritedFrom": {
+                    "description": "\"project\", \"org\", or \"global\"",
                     "type": "string"
                 },
                 "inputSchema": {
@@ -20648,6 +21460,45 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_orgs.OrgToolSettingDTO": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "orgId": {
+                    "type": "string"
+                },
+                "toolName": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_orgs.UpsertOrgToolSettingRequest": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_projects.CreateProjectRequest": {
             "type": "object",
             "required": [
@@ -20701,13 +21552,13 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "kb_purpose": {
-                    "type": "string"
-                },
                 "name": {
                     "type": "string"
                 },
                 "organizationId": {
+                    "type": "string"
+                },
+                "project_info": {
                     "type": "string"
                 },
                 "stats": {
@@ -20739,13 +21590,13 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "kb_purpose": {
-                    "type": "string"
-                },
                 "name": {
                     "type": "string"
                 },
                 "orgId": {
+                    "type": "string"
+                },
+                "project_info": {
                     "type": "string"
                 },
                 "stats": {
@@ -20847,12 +21698,12 @@ const docTemplate = `{
                 "chat_prompt_template": {
                     "type": "string"
                 },
-                "kb_purpose": {
-                    "type": "string"
-                },
                 "name": {
                     "type": "string",
                     "minLength": 1
+                },
+                "project_info": {
+                    "type": "string"
                 }
             }
         },
@@ -20867,79 +21718,93 @@ const docTemplate = `{
                 "ModelTypeGenerative"
             ]
         },
-        "domain_provider.ProviderPolicy": {
-            "type": "string",
-            "enum": [
-                "none",
-                "organization",
-                "project"
-            ],
-            "x-enum-varnames": [
-                "PolicyNone",
-                "PolicyOrganization",
-                "PolicyProject"
-            ]
+        "domain_provider.ProviderConfigResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "embeddingModel": {
+                    "type": "string"
+                },
+                "gcpProject": {
+                    "type": "string"
+                },
+                "generativeModel": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "provider": {
+                    "$ref": "#/definitions/domain_provider.ProviderType"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_provider.ProviderSupportedModel": {
+            "type": "object",
+            "properties": {
+                "displayName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastSynced": {
+                    "type": "string"
+                },
+                "maxOutputTokens": {
+                    "type": "integer"
+                },
+                "modelName": {
+                    "type": "string"
+                },
+                "modelType": {
+                    "$ref": "#/definitions/domain_provider.ModelType"
+                },
+                "provider": {
+                    "$ref": "#/definitions/domain_provider.ProviderType"
+                }
+            }
         },
         "domain_provider.ProviderType": {
             "type": "string",
             "enum": [
-                "google-ai",
-                "vertex-ai"
+                "google",
+                "google-vertex"
             ],
             "x-enum-varnames": [
                 "ProviderGoogleAI",
                 "ProviderVertexAI"
             ]
         },
-        "domain_provider.SaveGoogleAICredentialRequest": {
+        "domain_provider.TestProviderResponse": {
             "type": "object",
-            "required": [
-                "apiKey"
-            ],
+            "properties": {
+                "latencyMs": {
+                    "type": "integer"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "reply": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_provider.UpsertProviderConfigRequest": {
+            "type": "object",
             "properties": {
                 "apiKey": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_provider.SaveVertexAICredentialRequest": {
-            "type": "object",
-            "required": [
-                "gcpProject",
-                "location",
-                "serviceAccountJson"
-            ],
-            "properties": {
-                "gcpProject": {
-                    "type": "string"
-                },
-                "location": {
-                    "type": "string"
-                },
-                "serviceAccountJson": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_provider.SetOrgModelSelectionRequest": {
-            "type": "object",
-            "properties": {
-                "embeddingModel": {
-                    "type": "string"
-                },
-                "generativeModel": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_provider.SetProjectPolicyRequest": {
-            "type": "object",
-            "required": [
-                "policy"
-            ],
-            "properties": {
-                "apiKey": {
-                    "description": "The following fields are only required when policy == \"project\".",
                     "type": "string"
                 },
                 "embeddingModel": {
@@ -20954,11 +21819,21 @@ const docTemplate = `{
                 "location": {
                     "type": "string"
                 },
-                "policy": {
-                    "description": "Policy must be one of: none, organization, project.",
-                    "type": "string"
-                },
                 "serviceAccountJson": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_provider.UsageSummaryResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_provider.UsageSummaryRow"
+                    }
+                },
+                "note": {
                     "type": "string"
                 }
             }
@@ -20989,6 +21864,1465 @@ const docTemplate = `{
                 },
                 "totalVideo": {
                     "type": "integer"
+                }
+            }
+        },
+        "domain_sandbox.AttachSessionRequest": {
+            "type": "object",
+            "required": [
+                "agent_session_id"
+            ],
+            "properties": {
+                "agent_session_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandbox.BashRequest": {
+            "type": "object",
+            "required": [
+                "command"
+            ],
+            "properties": {
+                "command": {
+                    "type": "string"
+                },
+                "timeout_ms": {
+                    "type": "integer"
+                },
+                "workdir": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandbox.BashResponse": {
+            "type": "object",
+            "properties": {
+                "duration_ms": {
+                    "type": "integer"
+                },
+                "exit_code": {
+                    "type": "integer"
+                },
+                "stderr": {
+                    "type": "string"
+                },
+                "stdout": {
+                    "type": "string"
+                },
+                "truncated": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_sandbox.ContainerType": {
+            "type": "string",
+            "enum": [
+                "agent_sandbox",
+                "mcp_server"
+            ],
+            "x-enum-varnames": [
+                "ContainerTypeAgentSandbox",
+                "ContainerTypeMCPServer"
+            ]
+        },
+        "domain_sandbox.CreateFromSnapshotRequest": {
+            "type": "object",
+            "required": [
+                "snapshot_id"
+            ],
+            "properties": {
+                "deployment_mode": {
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "Must match snapshot provider; defaults to original",
+                    "type": "string"
+                },
+                "resource_limits": {
+                    "$ref": "#/definitions/domain_sandbox.ResourceLimits"
+                },
+                "snapshot_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandbox.CreateWorkspaceRequest": {
+            "type": "object",
+            "required": [
+                "container_type"
+            ],
+            "properties": {
+                "branch": {
+                    "type": "string"
+                },
+                "container_type": {
+                    "$ref": "#/definitions/domain_sandbox.ContainerType"
+                },
+                "deployment_mode": {
+                    "description": "\"managed\" or \"self-hosted\"",
+                    "type": "string"
+                },
+                "mcp_config": {
+                    "description": "MCP-specific fields",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_sandbox.MCPConfig"
+                        }
+                    ]
+                },
+                "provider": {
+                    "description": "\"firecracker\", \"e2b\", \"gvisor\", or \"auto\"",
+                    "type": "string"
+                },
+                "repository_url": {
+                    "type": "string"
+                },
+                "resource_limits": {
+                    "$ref": "#/definitions/domain_sandbox.ResourceLimits"
+                },
+                "warm_start": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_sandbox.DeploymentMode": {
+            "type": "string",
+            "enum": [
+                "managed",
+                "self-hosted"
+            ],
+            "x-enum-varnames": [
+                "DeploymentManaged",
+                "DeploymentSelfHosted"
+            ]
+        },
+        "domain_sandbox.EditRequest": {
+            "type": "object",
+            "required": [
+                "file_path",
+                "old_string"
+            ],
+            "properties": {
+                "file_path": {
+                    "type": "string"
+                },
+                "new_string": {
+                    "type": "string"
+                },
+                "old_string": {
+                    "type": "string"
+                },
+                "replace_all": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_sandbox.EditResponse": {
+            "type": "object",
+            "properties": {
+                "lines_changed": {
+                    "type": "integer"
+                },
+                "replacements": {
+                    "type": "integer"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_sandbox.GitRequest": {
+            "type": "object",
+            "required": [
+                "action"
+            ],
+            "properties": {
+                "action": {
+                    "description": "status, diff, commit, push, pull, checkout",
+                    "type": "string"
+                },
+                "branch": {
+                    "description": "For checkout",
+                    "type": "string"
+                },
+                "files": {
+                    "description": "For commit (files to stage)",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "message": {
+                    "description": "For commit",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandbox.GitResponse": {
+            "type": "object",
+            "properties": {
+                "output": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandbox.GlobRequest": {
+            "type": "object",
+            "required": [
+                "pattern"
+            ],
+            "properties": {
+                "path": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandbox.GrepMatch": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string"
+                },
+                "line": {
+                    "type": "string"
+                },
+                "line_number": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_sandbox.GrepRequest": {
+            "type": "object",
+            "required": [
+                "pattern"
+            ],
+            "properties": {
+                "include": {
+                    "description": "File pattern filter e.g. \"*.ts\"",
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandbox.GrepResponse": {
+            "type": "object",
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_sandbox.GrepMatch"
+                    }
+                }
+            }
+        },
+        "domain_sandbox.JSONRPCError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "data": {},
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandbox.Lifecycle": {
+            "type": "string",
+            "enum": [
+                "ephemeral",
+                "persistent"
+            ],
+            "x-enum-varnames": [
+                "LifecycleEphemeral",
+                "LifecyclePersistent"
+            ]
+        },
+        "domain_sandbox.MCPCallRequest": {
+            "type": "object",
+            "required": [
+                "method"
+            ],
+            "properties": {
+                "method": {
+                    "description": "JSON-RPC method (e.g. \"tools/call\", \"tools/list\")",
+                    "type": "string"
+                },
+                "params": {},
+                "timeout_ms": {
+                    "description": "Default: 30000ms",
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_sandbox.MCPCallResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "$ref": "#/definitions/domain_sandbox.JSONRPCError"
+                },
+                "result": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "domain_sandbox.MCPConfig": {
+            "type": "object",
+            "properties": {
+                "environment": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "image": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "restart_policy": {
+                    "description": "\"always\", \"on-failure\", \"never\"",
+                    "type": "string"
+                },
+                "stdio_bridge": {
+                    "type": "boolean"
+                },
+                "volumes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "domain_sandbox.MCPServerStatus": {
+            "type": "object",
+            "properties": {
+                "bridge_connected": {
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "image": {
+                    "type": "string"
+                },
+                "last_crash": {
+                    "type": "string"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "provider": {
+                    "$ref": "#/definitions/domain_sandbox.ProviderType"
+                },
+                "resource_limits": {
+                    "$ref": "#/definitions/domain_sandbox.ResourceLimits"
+                },
+                "restart_count": {
+                    "type": "integer"
+                },
+                "restart_policy": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/domain_sandbox.Status"
+                },
+                "stdio_bridge": {
+                    "type": "boolean"
+                },
+                "uptime": {
+                    "type": "string"
+                },
+                "volumes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "workspace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandbox.ProviderCapabilities": {
+            "type": "object",
+            "properties": {
+                "estimated_startup_ms": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "provider_type": {
+                    "$ref": "#/definitions/domain_sandbox.ProviderType"
+                },
+                "requires_kvm": {
+                    "type": "boolean"
+                },
+                "supports_persistence": {
+                    "type": "boolean"
+                },
+                "supports_snapshots": {
+                    "type": "boolean"
+                },
+                "supports_warm_pool": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_sandbox.ProviderStatusResponse": {
+            "type": "object",
+            "properties": {
+                "active_count": {
+                    "type": "integer"
+                },
+                "capabilities": {
+                    "$ref": "#/definitions/domain_sandbox.ProviderCapabilities"
+                },
+                "healthy": {
+                    "type": "boolean"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/domain_sandbox.ProviderType"
+                }
+            }
+        },
+        "domain_sandbox.ProviderType": {
+            "type": "string",
+            "enum": [
+                "firecracker",
+                "e2b",
+                "gvisor"
+            ],
+            "x-enum-varnames": [
+                "ProviderFirecracker",
+                "ProviderE2B",
+                "ProviderGVisor"
+            ]
+        },
+        "domain_sandbox.ReadRequest": {
+            "type": "object",
+            "required": [
+                "file_path"
+            ],
+            "properties": {
+                "file_path": {
+                    "type": "string"
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_sandbox.ReadResponse": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "file_size": {
+                    "type": "integer"
+                },
+                "is_binary": {
+                    "type": "boolean"
+                },
+                "is_dir": {
+                    "type": "boolean"
+                },
+                "total_lines": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_sandbox.RegisterMCPServerRequest": {
+            "type": "object",
+            "required": [
+                "image",
+                "name"
+            ],
+            "properties": {
+                "cmd": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "environment": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "image": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resource_limits": {
+                    "description": "Default: 0.5 CPU, 512MB memory, 1GB disk",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_sandbox.ResourceLimits"
+                        }
+                    ]
+                },
+                "restart_policy": {
+                    "description": "\"always\" (default), \"on-failure\", \"never\"",
+                    "type": "string"
+                },
+                "stdio_bridge": {
+                    "type": "boolean"
+                },
+                "volumes": {
+                    "description": "Persistent mount paths (e.g. \"/data\")",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "domain_sandbox.ResourceLimits": {
+            "type": "object",
+            "properties": {
+                "cpu": {
+                    "description": "e.g. \"2\"",
+                    "type": "string"
+                },
+                "disk": {
+                    "description": "e.g. \"10G\"",
+                    "type": "string"
+                },
+                "memory": {
+                    "description": "e.g. \"4G\"",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandbox.SnapshotResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "snapshot_id": {
+                    "type": "string"
+                },
+                "workspace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandbox.Status": {
+            "type": "string",
+            "enum": [
+                "creating",
+                "ready",
+                "stopping",
+                "stopped",
+                "error"
+            ],
+            "x-enum-varnames": [
+                "StatusCreating",
+                "StatusReady",
+                "StatusStopping",
+                "StatusStopped",
+                "StatusError"
+            ]
+        },
+        "domain_sandbox.WorkspaceResponse": {
+            "type": "object",
+            "properties": {
+                "agent_session_id": {
+                    "type": "string"
+                },
+                "branch": {
+                    "type": "string"
+                },
+                "container_type": {
+                    "$ref": "#/definitions/domain_sandbox.ContainerType"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "deployment_mode": {
+                    "$ref": "#/definitions/domain_sandbox.DeploymentMode"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "lifecycle": {
+                    "$ref": "#/definitions/domain_sandbox.Lifecycle"
+                },
+                "mcp_config": {
+                    "$ref": "#/definitions/domain_sandbox.MCPConfig"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "provider": {
+                    "$ref": "#/definitions/domain_sandbox.ProviderType"
+                },
+                "provider_workspace_id": {
+                    "type": "string"
+                },
+                "repository_url": {
+                    "type": "string"
+                },
+                "resource_limits": {
+                    "$ref": "#/definitions/domain_sandbox.ResourceLimits"
+                },
+                "snapshot_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/domain_sandbox.Status"
+                }
+            }
+        },
+        "domain_sandbox.WriteRequest": {
+            "type": "object",
+            "required": [
+                "file_path"
+            ],
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "file_path": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandboximages.APIResponse-domain_sandboximages_SandboxImageDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_sandboximages.SandboxImageDTO"
+                }
+            }
+        },
+        "domain_sandboximages.CreateSandboxImageRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "docker_ref": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "defaults based on docker_ref presence",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sandboximages.ListResponse-domain_sandboximages_SandboxImageDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_sandboximages.SandboxImageDTO"
+                    }
+                }
+            }
+        },
+        "domain_sandboximages.SandboxImageDTO": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "docker_ref": {
+                    "type": "string"
+                },
+                "error_msg": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemaregistry.CreateTypeRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "description": "defaults to true",
+                    "type": "boolean"
+                },
+                "extraction_config": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "json_schema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "type_name": {
+                    "type": "string"
+                },
+                "ui_config": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "domain_schemaregistry.GraphMemorySchema": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "relationshipTypeSchemas": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemaregistry.ProjectObjectSchemaRegistry": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "createdBy": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "discoveryConfidence": {
+                    "type": "number"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "extractionConfig": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "jsonSchema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "memorySchema": {
+                    "description": "Relations - for joining",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_schemaregistry.GraphMemorySchema"
+                        }
+                    ]
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "schemaId": {
+                    "type": "string"
+                },
+                "schemaVersion": {
+                    "type": "integer"
+                },
+                "source": {
+                    "description": "'template', 'custom', 'discovered'",
+                    "type": "string"
+                },
+                "typeName": {
+                    "type": "string"
+                },
+                "uiConfig": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemaregistry.RelationshipTypeInfo": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "inverse_label": {
+                    "type": "string"
+                },
+                "inverse_type": {
+                    "description": "When set, creating this relationship auto-creates the inverse",
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "source_types": {
+                    "description": "For incoming: types this relationship can come from",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "target_types": {
+                    "description": "For outgoing: types this relationship can connect to",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemaregistry.SchemaRegistryEntryDTO": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "discovery_confidence": {
+                    "type": "number"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "extraction_config": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "id": {
+                    "type": "string"
+                },
+                "incoming_relationships": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemaregistry.RelationshipTypeInfo"
+                    }
+                },
+                "json_schema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "object_count": {
+                    "type": "integer"
+                },
+                "outgoing_relationships": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemaregistry.RelationshipTypeInfo"
+                    }
+                },
+                "schema_id": {
+                    "type": "string"
+                },
+                "schema_name": {
+                    "type": "string"
+                },
+                "schema_version": {
+                    "type": "integer"
+                },
+                "source": {
+                    "description": "'template', 'custom', 'discovered'",
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "ui_config": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemaregistry.SchemaRegistryStats": {
+            "type": "object",
+            "properties": {
+                "custom_types": {
+                    "type": "integer"
+                },
+                "discovered_types": {
+                    "type": "integer"
+                },
+                "enabled_types": {
+                    "type": "integer"
+                },
+                "template_types": {
+                    "type": "integer"
+                },
+                "total_objects": {
+                    "type": "integer"
+                },
+                "total_types": {
+                    "type": "integer"
+                },
+                "types_with_objects": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_schemaregistry.UpdateTypeRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "extraction_config": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "json_schema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "ui_config": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "domain_schemas.AssignPackRequest": {
+            "type": "object",
+            "properties": {
+                "customizations": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "dry_run": {
+                    "description": "DryRun, when true, computes and returns the full conflict/merge preview\nwithout making any database changes. The response uses HTTP 200.",
+                    "type": "boolean"
+                },
+                "merge": {
+                    "description": "Merge, when true, additively merges incoming type schemas into existing\nregistered types rather than skipping conflicting type names.",
+                    "type": "boolean"
+                },
+                "schema_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.AssignPackResult": {
+            "type": "object",
+            "properties": {
+                "already_installed": {
+                    "description": "AlreadyInstalled is true when merge=true and the pack was already assigned.",
+                    "type": "boolean"
+                },
+                "assignment_id": {
+                    "description": "AssignmentID is empty for dry-run responses.",
+                    "type": "string"
+                },
+                "conflicts": {
+                    "description": "Conflicts contains full diff detail for each conflicting type.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.SchemaConflict"
+                    }
+                },
+                "dry_run": {
+                    "description": "DryRun mirrors the request flag so callers can distinguish the response mode.",
+                    "type": "boolean"
+                },
+                "installed_types": {
+                    "description": "InstalledTypes are type names newly written to the registry.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "merged_types": {
+                    "description": "MergedTypes are type names whose schemas were additively extended.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "pack_id": {
+                    "type": "string"
+                },
+                "pack_name": {
+                    "type": "string"
+                },
+                "skipped_types": {
+                    "description": "SkippedTypes are type names that already existed and were not merged.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "domain_schemas.CompiledTypesResponse": {
+            "type": "object",
+            "properties": {
+                "objectTypes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.ObjectTypeSchema"
+                    }
+                },
+                "relationshipTypes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.RelationshipTypeSchema"
+                    }
+                }
+            }
+        },
+        "domain_schemas.CreatePackRequest": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "documentation_url": {
+                    "type": "string"
+                },
+                "extraction_prompts": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "license": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "object_type_schemas": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "relationship_type_schemas": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "repository_url": {
+                    "type": "string"
+                },
+                "ui_configs": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.GraphMemorySchema": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "checksum": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "deprecatedAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "documentationUrl": {
+                    "type": "string"
+                },
+                "draft": {
+                    "type": "boolean"
+                },
+                "extractionPrompts": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "license": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "objectTypeSchemas": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "publishedAt": {
+                    "type": "string"
+                },
+                "relationshipTypeSchemas": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "repositoryUrl": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "uiConfigs": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.InstalledSchemaItem": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "customizations": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "description": "assignment ID",
+                    "type": "string"
+                },
+                "installedAt": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "schemaId": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.MemorySchemaListItem": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.ObjectTypeSchema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "packId": {
+                    "type": "string"
+                },
+                "packName": {
+                    "type": "string"
+                },
+                "properties": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "domain_schemas.PropertyConflict": {
+            "type": "object",
+            "properties": {
+                "existing_def": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "incoming_def": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "property": {
+                    "type": "string"
+                },
+                "resolution": {
+                    "description": "Resolution is always \"existing_wins\" — existing properties are never overwritten.",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.RelationshipTypeSchema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "packId": {
+                    "type": "string"
+                },
+                "packName": {
+                    "type": "string"
+                },
+                "sourceType": {
+                    "type": "string"
+                },
+                "targetType": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.SchemaConflict": {
+            "type": "object",
+            "properties": {
+                "added_properties": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "conflicting_properties": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.PropertyConflict"
+                    }
+                },
+                "existing_schema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "incoming_schema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "merged_schema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "type_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.UpdateAssignmentRequest": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_schemas.UpdatePackRequest": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "documentation_url": {
+                    "type": "string"
+                },
+                "extraction_prompts": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "license": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "object_type_schemas": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "relationship_type_schemas": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "repository_url": {
+                    "type": "string"
+                },
+                "ui_configs": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "version": {
+                    "type": "string"
                 }
             }
         },
@@ -21341,6 +23675,99 @@ const docTemplate = `{
                 },
                 "textWeight": {
                     "type": "number"
+                }
+            }
+        },
+        "domain_skills.CreateSkillDTO": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/domain_skills.SkillMetadata"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_skills.ListSkillsResponse": {
+            "type": "object",
+            "properties": {
+                "skills": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_skills.SkillDTO"
+                    }
+                }
+            }
+        },
+        "domain_skills.SkillDTO": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "hasEmbedding": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/domain_skills.SkillMetadata"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "orgId": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "scope": {
+                    "description": "\"global\", \"org\", or \"project\"",
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_skills.SkillMetadata": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "description": "source file path (e.g. from import)",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_skills.UpdateSkillDTO": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/domain_skills.SkillMetadata"
                 }
             }
         },
@@ -22283,592 +24710,6 @@ const docTemplate = `{
                 }
             }
         },
-        "domain_templatepacks.AssignPackRequest": {
-            "type": "object",
-            "properties": {
-                "customizations": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "template_pack_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_templatepacks.CompiledTypesResponse": {
-            "type": "object",
-            "properties": {
-                "objectTypes": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_templatepacks.ObjectTypeSchema"
-                    }
-                },
-                "relationshipTypes": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_templatepacks.RelationshipTypeSchema"
-                    }
-                }
-            }
-        },
-        "domain_templatepacks.CreatePackRequest": {
-            "type": "object",
-            "properties": {
-                "author": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "documentation_url": {
-                    "type": "string"
-                },
-                "extraction_prompts": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "license": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "object_type_schemas": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "relationship_type_schemas": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "repository_url": {
-                    "type": "string"
-                },
-                "ui_configs": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "version": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_templatepacks.GraphTemplatePack": {
-            "type": "object",
-            "properties": {
-                "author": {
-                    "type": "string"
-                },
-                "checksum": {
-                    "type": "string"
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "deprecatedAt": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "documentationUrl": {
-                    "type": "string"
-                },
-                "draft": {
-                    "type": "boolean"
-                },
-                "extractionPrompts": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "id": {
-                    "type": "string"
-                },
-                "license": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "objectTypeSchemas": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "publishedAt": {
-                    "type": "string"
-                },
-                "relationshipTypeSchemas": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "repositoryUrl": {
-                    "type": "string"
-                },
-                "source": {
-                    "type": "string"
-                },
-                "uiConfigs": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "updatedAt": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_templatepacks.InstalledPackItem": {
-            "type": "object",
-            "properties": {
-                "active": {
-                    "type": "boolean"
-                },
-                "customizations": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "description": "assignment ID",
-                    "type": "string"
-                },
-                "installedAt": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "templatePackId": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_templatepacks.ObjectTypeSchema": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "label": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "packId": {
-                    "type": "string"
-                },
-                "packName": {
-                    "type": "string"
-                },
-                "properties": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                }
-            }
-        },
-        "domain_templatepacks.ProjectTemplatePack": {
-            "type": "object",
-            "properties": {
-                "active": {
-                    "type": "boolean"
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "installedAt": {
-                    "type": "string"
-                },
-                "projectId": {
-                    "type": "string"
-                },
-                "templatePack": {
-                    "description": "Joined template pack",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/domain_templatepacks.GraphTemplatePack"
-                        }
-                    ]
-                },
-                "templatePackId": {
-                    "type": "string"
-                },
-                "updatedAt": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_templatepacks.RelationshipTypeSchema": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "label": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "packId": {
-                    "type": "string"
-                },
-                "packName": {
-                    "type": "string"
-                },
-                "sourceType": {
-                    "type": "string"
-                },
-                "targetType": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_templatepacks.TemplatePackListItem": {
-            "type": "object",
-            "properties": {
-                "author": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_templatepacks.UpdateAssignmentRequest": {
-            "type": "object",
-            "properties": {
-                "active": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "domain_typeregistry.CreateTypeRequest": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "enabled": {
-                    "description": "defaults to true",
-                    "type": "boolean"
-                },
-                "extraction_config": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "json_schema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "type_name": {
-                    "type": "string"
-                },
-                "ui_config": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                }
-            }
-        },
-        "domain_typeregistry.GraphTemplatePack": {
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "relationshipTypeSchemas": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "updatedAt": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_typeregistry.ProjectObjectTypeRegistry": {
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "createdBy": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "discoveryConfidence": {
-                    "type": "number"
-                },
-                "enabled": {
-                    "type": "boolean"
-                },
-                "extractionConfig": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "id": {
-                    "type": "string"
-                },
-                "jsonSchema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "projectId": {
-                    "type": "string"
-                },
-                "schemaVersion": {
-                    "type": "integer"
-                },
-                "source": {
-                    "description": "'template', 'custom', 'discovered'",
-                    "type": "string"
-                },
-                "templatePack": {
-                    "description": "Relations - for joining",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/domain_typeregistry.GraphTemplatePack"
-                        }
-                    ]
-                },
-                "templatePackId": {
-                    "type": "string"
-                },
-                "typeName": {
-                    "type": "string"
-                },
-                "uiConfig": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "updatedAt": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_typeregistry.RelationshipTypeInfo": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "inverse_label": {
-                    "type": "string"
-                },
-                "inverse_type": {
-                    "description": "When set, creating this relationship auto-creates the inverse",
-                    "type": "string"
-                },
-                "label": {
-                    "type": "string"
-                },
-                "source_types": {
-                    "description": "For incoming: types this relationship can come from",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "target_types": {
-                    "description": "For outgoing: types this relationship can connect to",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_typeregistry.TypeRegistryEntryDTO": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "discovery_confidence": {
-                    "type": "number"
-                },
-                "enabled": {
-                    "type": "boolean"
-                },
-                "extraction_config": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "id": {
-                    "type": "string"
-                },
-                "incoming_relationships": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_typeregistry.RelationshipTypeInfo"
-                    }
-                },
-                "json_schema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "object_count": {
-                    "type": "integer"
-                },
-                "outgoing_relationships": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_typeregistry.RelationshipTypeInfo"
-                    }
-                },
-                "schema_version": {
-                    "type": "integer"
-                },
-                "source": {
-                    "description": "'template', 'custom', 'discovered'",
-                    "type": "string"
-                },
-                "template_pack_id": {
-                    "type": "string"
-                },
-                "template_pack_name": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                },
-                "ui_config": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_typeregistry.TypeRegistryStats": {
-            "type": "object",
-            "properties": {
-                "custom_types": {
-                    "type": "integer"
-                },
-                "discovered_types": {
-                    "type": "integer"
-                },
-                "enabled_types": {
-                    "type": "integer"
-                },
-                "template_types": {
-                    "type": "integer"
-                },
-                "total_objects": {
-                    "type": "integer"
-                },
-                "total_types": {
-                    "type": "integer"
-                },
-                "types_with_objects": {
-                    "type": "integer"
-                }
-            }
-        },
-        "domain_typeregistry.UpdateTypeRequest": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "enabled": {
-                    "type": "boolean"
-                },
-                "extraction_config": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "json_schema": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "ui_config": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                }
-            }
-        },
         "domain_useraccess.OrgWithProjects": {
             "type": "object",
             "properties": {
@@ -22899,13 +24740,13 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "kb_purpose": {
-                    "type": "string"
-                },
                 "name": {
                     "type": "string"
                 },
                 "orgId": {
+                    "type": "string"
+                },
+                "project_info": {
                     "type": "string"
                 },
                 "role": {
@@ -23061,743 +24902,7 @@ const docTemplate = `{
                 }
             }
         },
-        "domain_workspace.AttachSessionRequest": {
-            "type": "object",
-            "required": [
-                "agent_session_id"
-            ],
-            "properties": {
-                "agent_session_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspace.BashRequest": {
-            "type": "object",
-            "required": [
-                "command"
-            ],
-            "properties": {
-                "command": {
-                    "type": "string"
-                },
-                "timeout_ms": {
-                    "type": "integer"
-                },
-                "workdir": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspace.BashResponse": {
-            "type": "object",
-            "properties": {
-                "duration_ms": {
-                    "type": "integer"
-                },
-                "exit_code": {
-                    "type": "integer"
-                },
-                "stderr": {
-                    "type": "string"
-                },
-                "stdout": {
-                    "type": "string"
-                },
-                "truncated": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "domain_workspace.ContainerType": {
-            "type": "string",
-            "enum": [
-                "agent_workspace",
-                "mcp_server"
-            ],
-            "x-enum-varnames": [
-                "ContainerTypeAgentWorkspace",
-                "ContainerTypeMCPServer"
-            ]
-        },
-        "domain_workspace.CreateFromSnapshotRequest": {
-            "type": "object",
-            "required": [
-                "snapshot_id"
-            ],
-            "properties": {
-                "deployment_mode": {
-                    "type": "string"
-                },
-                "provider": {
-                    "description": "Must match snapshot provider; defaults to original",
-                    "type": "string"
-                },
-                "resource_limits": {
-                    "$ref": "#/definitions/domain_workspace.ResourceLimits"
-                },
-                "snapshot_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspace.CreateWorkspaceRequest": {
-            "type": "object",
-            "required": [
-                "container_type"
-            ],
-            "properties": {
-                "branch": {
-                    "type": "string"
-                },
-                "container_type": {
-                    "$ref": "#/definitions/domain_workspace.ContainerType"
-                },
-                "deployment_mode": {
-                    "description": "\"managed\" or \"self-hosted\"",
-                    "type": "string"
-                },
-                "mcp_config": {
-                    "description": "MCP-specific fields",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/domain_workspace.MCPConfig"
-                        }
-                    ]
-                },
-                "provider": {
-                    "description": "\"firecracker\", \"e2b\", \"gvisor\", or \"auto\"",
-                    "type": "string"
-                },
-                "repository_url": {
-                    "type": "string"
-                },
-                "resource_limits": {
-                    "$ref": "#/definitions/domain_workspace.ResourceLimits"
-                },
-                "warm_start": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "domain_workspace.DeploymentMode": {
-            "type": "string",
-            "enum": [
-                "managed",
-                "self-hosted"
-            ],
-            "x-enum-varnames": [
-                "DeploymentManaged",
-                "DeploymentSelfHosted"
-            ]
-        },
-        "domain_workspace.EditRequest": {
-            "type": "object",
-            "required": [
-                "file_path",
-                "old_string"
-            ],
-            "properties": {
-                "file_path": {
-                    "type": "string"
-                },
-                "new_string": {
-                    "type": "string"
-                },
-                "old_string": {
-                    "type": "string"
-                },
-                "replace_all": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "domain_workspace.EditResponse": {
-            "type": "object",
-            "properties": {
-                "lines_changed": {
-                    "type": "integer"
-                },
-                "replacements": {
-                    "type": "integer"
-                },
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "domain_workspace.GitRequest": {
-            "type": "object",
-            "required": [
-                "action"
-            ],
-            "properties": {
-                "action": {
-                    "description": "status, diff, commit, push, pull, checkout",
-                    "type": "string"
-                },
-                "branch": {
-                    "description": "For checkout",
-                    "type": "string"
-                },
-                "files": {
-                    "description": "For commit (files to stage)",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "message": {
-                    "description": "For commit",
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspace.GitResponse": {
-            "type": "object",
-            "properties": {
-                "output": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspace.GlobRequest": {
-            "type": "object",
-            "required": [
-                "pattern"
-            ],
-            "properties": {
-                "path": {
-                    "type": "string"
-                },
-                "pattern": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspace.GrepMatch": {
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string"
-                },
-                "line": {
-                    "type": "string"
-                },
-                "line_number": {
-                    "type": "integer"
-                }
-            }
-        },
-        "domain_workspace.GrepRequest": {
-            "type": "object",
-            "required": [
-                "pattern"
-            ],
-            "properties": {
-                "include": {
-                    "description": "File pattern filter e.g. \"*.ts\"",
-                    "type": "string"
-                },
-                "path": {
-                    "type": "string"
-                },
-                "pattern": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspace.GrepResponse": {
-            "type": "object",
-            "properties": {
-                "matches": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_workspace.GrepMatch"
-                    }
-                }
-            }
-        },
-        "domain_workspace.JSONRPCError": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "integer"
-                },
-                "data": {},
-                "message": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspace.Lifecycle": {
-            "type": "string",
-            "enum": [
-                "ephemeral",
-                "persistent"
-            ],
-            "x-enum-varnames": [
-                "LifecycleEphemeral",
-                "LifecyclePersistent"
-            ]
-        },
-        "domain_workspace.MCPCallRequest": {
-            "type": "object",
-            "required": [
-                "method"
-            ],
-            "properties": {
-                "method": {
-                    "description": "JSON-RPC method (e.g. \"tools/call\", \"tools/list\")",
-                    "type": "string"
-                },
-                "params": {},
-                "timeout_ms": {
-                    "description": "Default: 30000ms",
-                    "type": "integer"
-                }
-            }
-        },
-        "domain_workspace.MCPCallResponse": {
-            "type": "object",
-            "properties": {
-                "error": {
-                    "$ref": "#/definitions/domain_workspace.JSONRPCError"
-                },
-                "result": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                }
-            }
-        },
-        "domain_workspace.MCPConfig": {
-            "type": "object",
-            "properties": {
-                "environment": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "image": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "restart_policy": {
-                    "description": "\"always\", \"on-failure\", \"never\"",
-                    "type": "string"
-                },
-                "stdio_bridge": {
-                    "type": "boolean"
-                },
-                "volumes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "domain_workspace.MCPServerStatus": {
-            "type": "object",
-            "properties": {
-                "bridge_connected": {
-                    "type": "boolean"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "image": {
-                    "type": "string"
-                },
-                "last_crash": {
-                    "type": "string"
-                },
-                "last_used_at": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "provider": {
-                    "$ref": "#/definitions/domain_workspace.ProviderType"
-                },
-                "resource_limits": {
-                    "$ref": "#/definitions/domain_workspace.ResourceLimits"
-                },
-                "restart_count": {
-                    "type": "integer"
-                },
-                "restart_policy": {
-                    "type": "string"
-                },
-                "status": {
-                    "$ref": "#/definitions/domain_workspace.Status"
-                },
-                "stdio_bridge": {
-                    "type": "boolean"
-                },
-                "uptime": {
-                    "type": "string"
-                },
-                "volumes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "workspace_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspace.ProviderCapabilities": {
-            "type": "object",
-            "properties": {
-                "estimated_startup_ms": {
-                    "type": "integer"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "provider_type": {
-                    "$ref": "#/definitions/domain_workspace.ProviderType"
-                },
-                "requires_kvm": {
-                    "type": "boolean"
-                },
-                "supports_persistence": {
-                    "type": "boolean"
-                },
-                "supports_snapshots": {
-                    "type": "boolean"
-                },
-                "supports_warm_pool": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "domain_workspace.ProviderStatusResponse": {
-            "type": "object",
-            "properties": {
-                "active_count": {
-                    "type": "integer"
-                },
-                "capabilities": {
-                    "$ref": "#/definitions/domain_workspace.ProviderCapabilities"
-                },
-                "healthy": {
-                    "type": "boolean"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "type": {
-                    "$ref": "#/definitions/domain_workspace.ProviderType"
-                }
-            }
-        },
-        "domain_workspace.ProviderType": {
-            "type": "string",
-            "enum": [
-                "firecracker",
-                "e2b",
-                "gvisor"
-            ],
-            "x-enum-varnames": [
-                "ProviderFirecracker",
-                "ProviderE2B",
-                "ProviderGVisor"
-            ]
-        },
-        "domain_workspace.ReadRequest": {
-            "type": "object",
-            "required": [
-                "file_path"
-            ],
-            "properties": {
-                "file_path": {
-                    "type": "string"
-                },
-                "limit": {
-                    "type": "integer"
-                },
-                "offset": {
-                    "type": "integer"
-                }
-            }
-        },
-        "domain_workspace.ReadResponse": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "file_size": {
-                    "type": "integer"
-                },
-                "is_binary": {
-                    "type": "boolean"
-                },
-                "is_dir": {
-                    "type": "boolean"
-                },
-                "total_lines": {
-                    "type": "integer"
-                }
-            }
-        },
-        "domain_workspace.RegisterMCPServerRequest": {
-            "type": "object",
-            "required": [
-                "image",
-                "name"
-            ],
-            "properties": {
-                "cmd": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "environment": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "image": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "resource_limits": {
-                    "description": "Default: 0.5 CPU, 512MB memory, 1GB disk",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/domain_workspace.ResourceLimits"
-                        }
-                    ]
-                },
-                "restart_policy": {
-                    "description": "\"always\" (default), \"on-failure\", \"never\"",
-                    "type": "string"
-                },
-                "stdio_bridge": {
-                    "type": "boolean"
-                },
-                "volumes": {
-                    "description": "Persistent mount paths (e.g. \"/data\")",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "domain_workspace.ResourceLimits": {
-            "type": "object",
-            "properties": {
-                "cpu": {
-                    "description": "e.g. \"2\"",
-                    "type": "string"
-                },
-                "disk": {
-                    "description": "e.g. \"10G\"",
-                    "type": "string"
-                },
-                "memory": {
-                    "description": "e.g. \"4G\"",
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspace.SnapshotResponse": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "snapshot_id": {
-                    "type": "string"
-                },
-                "workspace_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspace.Status": {
-            "type": "string",
-            "enum": [
-                "creating",
-                "ready",
-                "stopping",
-                "stopped",
-                "error"
-            ],
-            "x-enum-varnames": [
-                "StatusCreating",
-                "StatusReady",
-                "StatusStopping",
-                "StatusStopped",
-                "StatusError"
-            ]
-        },
-        "domain_workspace.WorkspaceResponse": {
-            "type": "object",
-            "properties": {
-                "agent_session_id": {
-                    "type": "string"
-                },
-                "branch": {
-                    "type": "string"
-                },
-                "container_type": {
-                    "$ref": "#/definitions/domain_workspace.ContainerType"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "deployment_mode": {
-                    "$ref": "#/definitions/domain_workspace.DeploymentMode"
-                },
-                "expires_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "last_used_at": {
-                    "type": "string"
-                },
-                "lifecycle": {
-                    "$ref": "#/definitions/domain_workspace.Lifecycle"
-                },
-                "mcp_config": {
-                    "$ref": "#/definitions/domain_workspace.MCPConfig"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "provider": {
-                    "$ref": "#/definitions/domain_workspace.ProviderType"
-                },
-                "provider_workspace_id": {
-                    "type": "string"
-                },
-                "repository_url": {
-                    "type": "string"
-                },
-                "resource_limits": {
-                    "$ref": "#/definitions/domain_workspace.ResourceLimits"
-                },
-                "snapshot_id": {
-                    "type": "string"
-                },
-                "status": {
-                    "$ref": "#/definitions/domain_workspace.Status"
-                }
-            }
-        },
-        "domain_workspace.WriteRequest": {
-            "type": "object",
-            "required": [
-                "file_path"
-            ],
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "file_path": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspaceimages.APIResponse-domain_workspaceimages_WorkspaceImageDTO": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/domain_workspaceimages.WorkspaceImageDTO"
-                }
-            }
-        },
-        "domain_workspaceimages.CreateWorkspaceImageRequest": {
-            "type": "object",
-            "required": [
-                "name"
-            ],
-            "properties": {
-                "docker_ref": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "provider": {
-                    "description": "defaults based on docker_ref presence",
-                    "type": "string"
-                }
-            }
-        },
-        "domain_workspaceimages.ListResponse-domain_workspaceimages_WorkspaceImageDTO": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_workspaceimages.WorkspaceImageDTO"
-                    }
-                }
-            }
-        },
-        "domain_workspaceimages.WorkspaceImageDTO": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "docker_ref": {
-                    "type": "string"
-                },
-                "error_msg": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "project_id": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_emergent-company_emergent_domain_workspace.AgentWorkspaceConfig": {
+        "github_com_emergent-company_emergent_memory_domain_sandbox.AgentSandboxConfig": {
             "type": "object",
             "properties": {
                 "base_image": {
@@ -23814,10 +24919,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "repo_source": {
-                    "$ref": "#/definitions/github_com_emergent-company_emergent_domain_workspace.RepoSourceConfig"
+                    "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_sandbox.RepoSourceConfig"
                 },
                 "resource_limits": {
-                    "$ref": "#/definitions/github_com_emergent-company_emergent_domain_workspace.ResourceLimits"
+                    "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_sandbox.ResourceLimits"
                 },
                 "setup_commands": {
                     "type": "array",
@@ -23833,7 +24938,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_emergent-company_emergent_domain_workspace.RepoSourceConfig": {
+        "github_com_emergent-company_emergent_memory_domain_sandbox.RepoSourceConfig": {
             "type": "object",
             "properties": {
                 "branch": {
@@ -23841,7 +24946,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "type": {
-                    "$ref": "#/definitions/github_com_emergent-company_emergent_domain_workspace.RepoSourceType"
+                    "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_sandbox.RepoSourceType"
                 },
                 "url": {
                     "description": "Only for \"fixed\" type",
@@ -23849,7 +24954,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_emergent-company_emergent_domain_workspace.RepoSourceType": {
+        "github_com_emergent-company_emergent_memory_domain_sandbox.RepoSourceType": {
             "type": "string",
             "enum": [
                 "task_context",
@@ -23872,7 +24977,7 @@ const docTemplate = `{
                 "RepoSourceNone"
             ]
         },
-        "github_com_emergent-company_emergent_domain_workspace.ResourceLimits": {
+        "github_com_emergent-company_emergent_memory_domain_sandbox.ResourceLimits": {
             "type": "object",
             "properties": {
                 "cpu": {
@@ -23889,7 +24994,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_emergent-company_emergent_pkg_apperror.Error": {
+        "github_com_emergent-company_emergent_memory_pkg_apperror.Error": {
             "type": "object",
             "properties": {
                 "code": {
@@ -23913,104 +25018,6 @@ const docTemplate = `{
             "additionalProperties": {
                 "type": "string"
             }
-        },
-        "provider.OrgCredentialResponse": {
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "gcpProject": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "location": {
-                    "type": "string"
-                },
-                "orgId": {
-                    "type": "string"
-                },
-                "provider": {
-                    "$ref": "#/definitions/domain_provider.ProviderType"
-                },
-                "updatedAt": {
-                    "type": "string"
-                }
-            }
-        },
-        "provider.ProjectProviderPolicy": {
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "embeddingModel": {
-                    "type": "string"
-                },
-                "gcpProject": {
-                    "type": "string"
-                },
-                "generativeModel": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "location": {
-                    "type": "string"
-                },
-                "policy": {
-                    "$ref": "#/definitions/domain_provider.ProviderPolicy"
-                },
-                "projectId": {
-                    "type": "string"
-                },
-                "provider": {
-                    "$ref": "#/definitions/domain_provider.ProviderType"
-                },
-                "updatedAt": {
-                    "type": "string"
-                }
-            }
-        },
-        "provider.ProviderSupportedModel": {
-            "type": "object",
-            "properties": {
-                "displayName": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "lastSynced": {
-                    "type": "string"
-                },
-                "modelName": {
-                    "type": "string"
-                },
-                "modelType": {
-                    "$ref": "#/definitions/domain_provider.ModelType"
-                },
-                "provider": {
-                    "$ref": "#/definitions/domain_provider.ProviderType"
-                }
-            }
-        },
-        "provider.UsageSummaryResponse": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_provider.UsageSummaryRow"
-                    }
-                },
-                "note": {
-                    "type": "string"
-                }
-            }
         }
     },
     "securityDefinitions": {
@@ -24025,12 +25032,12 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.28.12",
+	Version:          "0.30.33",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
-	Title:            "Emergent API",
-	Description:      "Emergent Knowledge Base API - AI-powered knowledge management system",
+	Title:            "Memory API",
+	Description:      "Memory Knowledge Base API - AI-powered knowledge management system",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

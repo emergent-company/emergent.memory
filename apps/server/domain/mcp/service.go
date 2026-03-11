@@ -39,7 +39,6 @@ type Service struct {
 	braveSearchAPIKey  string
 	braveSearchTimeout time.Duration
 
-
 	// Schema version caching
 	cacheMu       sync.RWMutex
 	cachedVersion string
@@ -186,18 +185,18 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "list_template_packs",
-			Description: "List all available template packs in the global registry. Template packs define object schemas, relationships, and extraction prompts for knowledge graph entities.",
+			Name:        "list_schemas",
+			Description: "List all available memory schemas in the global registry. Schemas define object types, relationships, and extraction prompts for knowledge graph entities.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"search": {
 						Type:        "string",
-						Description: "Optional search term to filter packs by name or description",
+						Description: "Optional search term to filter schemas by name or description",
 					},
 					"include_deprecated": {
 						Type:        "boolean",
-						Description: "Include deprecated template packs (default: false)",
+						Description: "Include deprecated schemas (default: false)",
 						Default:     false,
 					},
 					"limit": {
@@ -218,14 +217,14 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_template_pack",
-			Description: "Get detailed information about a specific template pack including all schemas, UI configs, and extraction prompts.",
+			Name:        "get_schema",
+			Description: "Get detailed information about a specific memory schema including all type definitions, UI configs, and extraction prompts.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"pack_id": {
 						Type:        "string",
-						Description: "The UUID of the template pack to retrieve",
+						Description: "The UUID of the schema to retrieve",
 					},
 				},
 				Required: []string{"pack_id"},
@@ -250,14 +249,14 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "assign_template_pack",
-			Description: "Install a template pack to the project. This registers the pack's object types in the project's type registry, making them available for entity creation and extraction.",
+			Name:        "assign_schema",
+			Description: "Install a memory schema to the project. This registers the schema's object types in the project's type registry, making them available for entity creation and extraction.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
-					"template_pack_id": {
+					"schema_id": {
 						Type:        "string",
-						Description: "The UUID of the template pack to install",
+						Description: "The UUID of the schema to install",
 					},
 					"enabled_types": {
 						Type:        "array",
@@ -268,12 +267,12 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Description: "Optional list of specific type names to disable",
 					},
 				},
-				Required: []string{"template_pack_id"},
+				Required: []string{"schema_id"},
 			},
 		},
 		{
 			Name:        "update_template_assignment",
-			Description: "Update a template pack assignment. Toggle active status or modify customizations.",
+			Description: "Update a schema assignment. Toggle active status or modify customizations.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -290,28 +289,28 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "uninstall_template_pack",
-			Description: "Remove a template pack from the project. This will fail if any objects still exist using types from this pack.",
+			Name:        "uninstall_schema",
+			Description: "Remove a memory schema from the project. This will fail if any objects still exist using types from this schema.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"assignment_id": {
 						Type:        "string",
-						Description: "The UUID of the template pack assignment to remove",
+						Description: "The UUID of the schema assignment to remove",
 					},
 				},
 				Required: []string{"assignment_id"},
 			},
 		},
 		{
-			Name:        "create_template_pack",
-			Description: "Create a new template pack in the global registry. Requires object type schemas at minimum.",
+			Name:        "create_schema",
+			Description: "Create a new memory schema in the global registry. Requires object type schemas at minimum.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"name": {
 						Type:        "string",
-						Description: "Name of the template pack",
+						Description: "Name of the schema",
 					},
 					"version": {
 						Type:        "string",
@@ -319,7 +318,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"description": {
 						Type:        "string",
-						Description: "Description of the template pack",
+						Description: "Description of the schema",
 					},
 					"author": {
 						Type:        "string",
@@ -346,14 +345,14 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "delete_template_pack",
-			Description: "Delete a template pack from the global registry. Cannot delete system packs or packs that are currently installed in any project.",
+			Name:        "delete_schema",
+			Description: "Delete a memory schema from the global registry. Cannot delete system schemas or schemas that are currently installed in any project.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"pack_id": {
 						Type:        "string",
-						Description: "The UUID of the template pack to delete",
+						Description: "The UUID of the memory schema to delete",
 					},
 				},
 				Required: []string{"pack_id"},
@@ -763,8 +762,8 @@ func (s *Service) GetResourceDefinitions() []ResourceDefinition {
 		},
 		{
 			URI:         "memory://templates/catalog",
-			Name:        "Template Pack Catalog",
-			Description: "Available template packs with descriptions, object types, and metadata",
+			Name:        "Schema Catalog",
+			Description: "Available memory schemas with descriptions, object types, and metadata",
 			MimeType:    "application/json",
 		},
 		{
@@ -811,8 +810,8 @@ func (s *Service) GetPromptDefinitions() []PromptDefinition {
 					Required:    true,
 				},
 				{
-					Name:        "template_pack",
-					Description: "Template pack to use (optional, will suggest if not provided)",
+					Name:        "schema",
+					Description: "Memory schema to use (optional, will suggest if not provided)",
 					Required:    false,
 				},
 			},
@@ -883,24 +882,24 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeSearchEntities(ctx, projectID, args)
 	case "get_entity_edges":
 		return s.executeGetEntityEdges(ctx, projectID, args)
-	case "list_template_packs":
-		return s.executeListTemplatePacks(ctx, args)
-	case "get_template_pack":
-		return s.executeGetTemplatePack(ctx, args)
+	case "list_schemas":
+		return s.executeListSchemas(ctx, args)
+	case "get_schema":
+		return s.executeGetSchema(ctx, args)
 	case "get_available_templates":
 		return s.executeGetAvailableTemplates(ctx, projectID)
 	case "get_installed_templates":
 		return s.executeGetInstalledTemplates(ctx, projectID)
-	case "assign_template_pack":
-		return s.executeAssignTemplatePack(ctx, projectID, args)
+	case "assign_schema":
+		return s.executeAssignSchema(ctx, projectID, args)
 	case "update_template_assignment":
 		return s.executeUpdateTemplateAssignment(ctx, projectID, args)
-	case "uninstall_template_pack":
-		return s.executeUninstallTemplatePack(ctx, projectID, args)
-	case "create_template_pack":
-		return s.executeCreateTemplatePack(ctx, args)
-	case "delete_template_pack":
-		return s.executeDeleteTemplatePack(ctx, args)
+	case "uninstall_schema":
+		return s.executeUninstallSchema(ctx, projectID, args)
+	case "create_schema":
+		return s.executeCreateSchema(ctx, args)
+	case "delete_schema":
+		return s.executeDeleteSchema(ctx, args)
 	case "create_entity":
 		return s.executeBatchCreateEntities(ctx, projectID, args)
 	case "create_relationship":
@@ -1022,14 +1021,14 @@ func (s *Service) executeSchemaVersion(ctx context.Context) (*ToolResult, error)
 		return nil, err
 	}
 
-	// Count template packs
+	// Count schemas
 	var packCount int
 	err = s.db.NewSelect().
-		TableExpr("kb.graph_template_packs").
+		TableExpr("kb.graph_schemas").
 		ColumnExpr("COUNT(*)").
 		Scan(ctx, &packCount)
 	if err != nil {
-		s.log.Warn("failed to count template packs", logger.Error(err))
+		s.log.Warn("failed to count schemas", logger.Error(err))
 		packCount = 0
 	}
 
@@ -1102,7 +1101,7 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string) 
 				tr.type_name as name,
 				COALESCE(tr.description, '') as description,
 				COUNT(go.id)::int as instance_count
-			FROM kb.project_object_type_registry tr
+			FROM kb.project_object_schema_registry tr
 			LEFT JOIN kb.graph_objects go 
 				ON go.type = tr.type_name 
 				AND go.deleted_at IS NULL 
@@ -1261,7 +1260,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				go.type as type_name,
 				COALESCE(tr.description, '') as type_description
 			FROM kb.graph_objects go
-			LEFT JOIN kb.project_object_type_registry tr ON tr.type_name = go.type AND tr.project_id = go.project_id
+			LEFT JOIN kb.project_object_schema_registry tr ON tr.type_name = go.type AND tr.project_id = go.project_id
 			WHERE go.type = ?
 				AND go.deleted_at IS NULL
 				AND go.project_id = ?
@@ -2548,7 +2547,7 @@ func (s *Service) getSchemaVersion(ctx context.Context) (string, error) {
 		return s.cachedVersion, nil
 	}
 
-	// Fetch template packs
+	// Fetch schemas
 	type packInfo struct {
 		ID        string    `bun:"id"`
 		UpdatedAt time.Time `bun:"updated_at"`
@@ -2556,13 +2555,13 @@ func (s *Service) getSchemaVersion(ctx context.Context) (string, error) {
 
 	var packs []packInfo
 	err := s.db.NewSelect().
-		TableExpr("kb.graph_template_packs").
+		TableExpr("kb.graph_schemas").
 		Column("id", "updated_at").
 		OrderExpr("id ASC").
 		Scan(ctx, &packs)
 
 	if err != nil {
-		return "", fmt.Errorf("query template packs: %w", err)
+		return "", fmt.Errorf("query schemas: %w", err)
 	}
 
 	// Build composite string
@@ -2604,7 +2603,7 @@ func intPtr(i int) *int {
 	return &i
 }
 
-func (s *Service) executeListTemplatePacks(ctx context.Context, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeListSchemas(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	search, _ := args["search"].(string)
 	includeDeprecated, _ := args["include_deprecated"].(bool)
 
@@ -2645,7 +2644,7 @@ func (s *Service) executeListTemplatePacks(ctx context.Context, args map[string]
 	var total int
 
 	query := s.db.NewSelect().
-		TableExpr("kb.graph_template_packs").
+		TableExpr("kb.graph_schemas").
 		Column("id", "name", "version", "description", "author", "source", "object_type_schemas", "published_at", "deprecated_at").
 		Where("draft = false")
 
@@ -2658,7 +2657,7 @@ func (s *Service) executeListTemplatePacks(ctx context.Context, args map[string]
 	}
 
 	countQuery := s.db.NewSelect().
-		TableExpr("kb.graph_template_packs").
+		TableExpr("kb.graph_schemas").
 		ColumnExpr("COUNT(*)").
 		Where("draft = false")
 
@@ -2671,7 +2670,7 @@ func (s *Service) executeListTemplatePacks(ctx context.Context, args map[string]
 
 	err := countQuery.Scan(ctx, &total)
 	if err != nil {
-		return nil, fmt.Errorf("count template packs: %w", err)
+		return nil, fmt.Errorf("count schemas: %w", err)
 	}
 
 	err = query.
@@ -2681,10 +2680,10 @@ func (s *Service) executeListTemplatePacks(ctx context.Context, args map[string]
 		Scan(ctx, &packs)
 
 	if err != nil {
-		return nil, fmt.Errorf("list template packs: %w", err)
+		return nil, fmt.Errorf("list schemas: %w", err)
 	}
 
-	summaries := make([]TemplatePackSummary, len(packs))
+	summaries := make([]MemorySchemaSummary, len(packs))
 	for i, p := range packs {
 		objectTypes := make([]string, 0)
 		for typeName := range p.ObjectTypeSchemas {
@@ -2696,7 +2695,7 @@ func (s *Service) executeListTemplatePacks(ctx context.Context, args map[string]
 			deprecatedAt = p.DeprecatedAt.Format(time.RFC3339)
 		}
 
-		summaries[i] = TemplatePackSummary{
+		summaries[i] = MemorySchemaSummary{
 			ID:           p.ID,
 			Name:         p.Name,
 			Version:      p.Version,
@@ -2710,7 +2709,7 @@ func (s *Service) executeListTemplatePacks(ctx context.Context, args map[string]
 		}
 	}
 
-	result := ListTemplatePacksResult{
+	result := ListSchemasResult{
 		Packs:   summaries,
 		Total:   total,
 		Page:    page,
@@ -2721,7 +2720,7 @@ func (s *Service) executeListTemplatePacks(ctx context.Context, args map[string]
 	return s.wrapResult(result)
 }
 
-func (s *Service) executeGetTemplatePack(ctx context.Context, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeGetSchema(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	packID, _ := args["pack_id"].(string)
 	if packID == "" {
 		return nil, fmt.Errorf("missing required parameter: pack_id")
@@ -2752,13 +2751,13 @@ func (s *Service) executeGetTemplatePack(ctx context.Context, args map[string]an
 
 	var pack packRow
 	err := s.db.NewSelect().
-		TableExpr("kb.graph_template_packs").
+		TableExpr("kb.graph_schemas").
 		Column("*").
 		Where("id = ?", packID).
 		Scan(ctx, &pack)
 
 	if err != nil {
-		return nil, fmt.Errorf("template pack not found: %s", packID)
+		return nil, fmt.Errorf("schema not found: %s", packID)
 	}
 
 	deprecatedAt := ""
@@ -2766,8 +2765,8 @@ func (s *Service) executeGetTemplatePack(ctx context.Context, args map[string]an
 		deprecatedAt = pack.DeprecatedAt.Format(time.RFC3339)
 	}
 
-	result := GetTemplatePackResult{
-		Pack: &TemplatePack{
+	result := GetSchemaResult{
+		Pack: &MemorySchema{
 			ID:                      pack.ID,
 			Name:                    pack.Name,
 			Version:                 pack.Version,
@@ -2813,9 +2812,9 @@ func (s *Service) executeGetAvailableTemplates(ctx context.Context, projectID st
 	}
 
 	type installedRow struct {
-		ID             string `bun:"id"`
-		TemplatePackID string `bun:"template_pack_id"`
-		Active         bool   `bun:"active"`
+		ID       string `bun:"id"`
+		SchemaID string `bun:"schema_id"`
+		Active   bool   `bun:"active"`
 	}
 
 	type typeCountRow struct {
@@ -2833,7 +2832,7 @@ func (s *Service) executeGetAvailableTemplates(ctx context.Context, projectID st
 		}
 
 		err := tx.NewSelect().
-			TableExpr("kb.graph_template_packs").
+			TableExpr("kb.graph_schemas").
 			Column("id", "name", "version", "description", "author", "source", "object_type_schemas", "relationship_type_schemas", "published_at").
 			Where("deprecated_at IS NULL").
 			Where("draft = false").
@@ -2844,8 +2843,8 @@ func (s *Service) executeGetAvailableTemplates(ctx context.Context, projectID st
 		}
 
 		err = tx.NewSelect().
-			TableExpr("kb.project_template_packs").
-			Column("id", "template_pack_id", "active").
+			TableExpr("kb.project_schemas").
+			Column("id", "schema_id", "active").
 			Where("project_id = ?", projectUUID).
 			Scan(ctx, &installed)
 		if err != nil {
@@ -2867,7 +2866,7 @@ func (s *Service) executeGetAvailableTemplates(ctx context.Context, projectID st
 
 	installedMap := make(map[string]installedRow)
 	for _, i := range installed {
-		installedMap[i.TemplatePackID] = i
+		installedMap[i.SchemaID] = i
 	}
 
 	typeCountMap := make(map[string]int)
@@ -2933,7 +2932,7 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 
 	type installedRow struct {
 		AssignmentID      string         `bun:"assignment_id"`
-		TemplatePackID    string         `bun:"template_pack_id"`
+		SchemaID          string         `bun:"schema_id"`
 		Name              string         `bun:"name"`
 		Version           string         `bun:"version"`
 		Description       string         `bun:"description"`
@@ -2959,7 +2958,7 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 		err := tx.NewRaw(`
 			SELECT 
 				ptp.id as assignment_id,
-				ptp.template_pack_id,
+				ptp.schema_id,
 				tp.name,
 				tp.version,
 				tp.description,
@@ -2967,8 +2966,8 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 				ptp.active,
 				ptp.installed_at,
 				ptp.customizations
-			FROM kb.project_template_packs ptp
-			JOIN kb.graph_template_packs tp ON ptp.template_pack_id = tp.id
+			FROM kb.project_schemas ptp
+			JOIN kb.graph_schemas tp ON ptp.schema_id = tp.id
 			WHERE ptp.project_id = ?
 			ORDER BY ptp.installed_at DESC
 		`, projectUUID).Scan(ctx, &installed)
@@ -3013,7 +3012,7 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 
 		templates[i] = InstalledTemplate{
 			AssignmentID:   inst.AssignmentID,
-			TemplatePackID: inst.TemplatePackID,
+			SchemaID:       inst.SchemaID,
 			Name:           inst.Name,
 			Version:        inst.Version,
 			Description:    inst.Description,
@@ -3033,15 +3032,15 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 	return s.wrapResult(result)
 }
 
-func (s *Service) executeAssignTemplatePack(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeAssignSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
-	templatePackID, _ := args["template_pack_id"].(string)
+	templatePackID, _ := args["schema_id"].(string)
 	if templatePackID == "" {
-		return nil, fmt.Errorf("missing required parameter: template_pack_id")
+		return nil, fmt.Errorf("missing required parameter: schema_id")
 	}
 
 	type packRow struct {
@@ -3055,13 +3054,13 @@ func (s *Service) executeAssignTemplatePack(ctx context.Context, projectID strin
 
 	var pack packRow
 	err = s.db.NewSelect().
-		TableExpr("kb.graph_template_packs").
+		TableExpr("kb.graph_schemas").
 		Column("id", "name", "version", "object_type_schemas", "ui_configs", "extraction_prompts").
 		Where("id = ?", templatePackID).
 		Scan(ctx, &pack)
 
 	if err != nil {
-		return nil, fmt.Errorf("template pack not found: %s", templatePackID)
+		return nil, fmt.Errorf("schema not found: %s", templatePackID)
 	}
 
 	allTypes := make([]string, 0)
@@ -3130,14 +3129,14 @@ func (s *Service) executeAssignTemplatePack(ctx context.Context, projectID strin
 
 		var existingCount int
 		err := tx.NewRaw(`
-			SELECT COUNT(*) FROM kb.project_template_packs 
-			WHERE project_id = ? AND template_pack_id = ?
+			SELECT COUNT(*) FROM kb.project_schemas 
+			WHERE project_id = ? AND schema_id = ?
 		`, projectUUID, templatePackID).Scan(ctx, &existingCount)
 		if err != nil {
 			return err
 		}
 		if existingCount > 0 {
-			return fmt.Errorf("template pack %s@%s is already installed", pack.Name, pack.Version)
+			return fmt.Errorf("schema %s@%s is already installed", pack.Name, pack.Version)
 		}
 
 		type existingTypeRow struct {
@@ -3145,7 +3144,7 @@ func (s *Service) executeAssignTemplatePack(ctx context.Context, projectID strin
 		}
 		var existingTypes []existingTypeRow
 		err = tx.NewRaw(`
-			SELECT type_name FROM kb.project_object_type_registry 
+			SELECT type_name FROM kb.project_object_schema_registry 
 			WHERE project_id = ? AND type_name IN (?)
 		`, projectUUID, bun.In(typesToInstall)).Scan(ctx, &existingTypes)
 		if err != nil {
@@ -3183,7 +3182,7 @@ func (s *Service) executeAssignTemplatePack(ctx context.Context, projectID strin
 		customizationsJSON, _ := json.Marshal(customizations)
 
 		err = tx.NewRaw(`
-			INSERT INTO kb.project_template_packs (project_id, template_pack_id, active, customizations)
+			INSERT INTO kb.project_schemas (project_id, schema_id, active, customizations)
 			VALUES (?, ?, true, ?)
 			RETURNING id
 		`, projectUUID, templatePackID, string(customizationsJSON)).Scan(ctx, &assignmentID)
@@ -3201,8 +3200,8 @@ func (s *Service) executeAssignTemplatePack(ctx context.Context, projectID strin
 			extractionConfigJSON, _ := json.Marshal(extractionConfig)
 
 			_, err = tx.NewRaw(`
-				INSERT INTO kb.project_object_type_registry 
-				(project_id, type_name, source, template_pack_id, json_schema, ui_config, extraction_config, enabled)
+				INSERT INTO kb.project_object_schema_registry 
+				(project_id, type_name, source, schema_id, json_schema, ui_config, extraction_config, enabled)
 				VALUES (?, ?, 'template', ?, ?, ?, ?, true)
 			`, projectUUID, typeName, templatePackID, string(schemaJSON), string(uiConfigJSON), string(extractionConfigJSON)).Exec(ctx)
 			if err != nil {
@@ -3215,7 +3214,7 @@ func (s *Service) executeAssignTemplatePack(ctx context.Context, projectID strin
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("assign template pack: %w", err)
+		return nil, fmt.Errorf("assign schema: %w", err)
 	}
 
 	disabledTypes := make([]string, 0)
@@ -3225,7 +3224,7 @@ func (s *Service) executeAssignTemplatePack(ctx context.Context, projectID strin
 		}
 	}
 
-	result := AssignTemplatePackResult{
+	result := AssignSchemaResult{
 		Success:        true,
 		AssignmentID:   assignmentID,
 		InstalledTypes: typesToInstall,
@@ -3262,7 +3261,7 @@ func (s *Service) executeUpdateTemplateAssignment(ctx context.Context, projectID
 
 		var currentActive bool
 		err := tx.NewRaw(`
-			SELECT active FROM kb.project_template_packs 
+			SELECT active FROM kb.project_schemas 
 			WHERE id = ? AND project_id = ?
 		`, assignmentID, projectUUID).Scan(ctx, &currentActive)
 		if err != nil {
@@ -3272,7 +3271,7 @@ func (s *Service) executeUpdateTemplateAssignment(ctx context.Context, projectID
 		newActive = active
 
 		_, err = tx.NewRaw(`
-			UPDATE kb.project_template_packs 
+			UPDATE kb.project_schemas 
 			SET active = ?, updated_at = now()
 			WHERE id = ? AND project_id = ?
 		`, newActive, assignmentID, projectUUID).Exec(ctx)
@@ -3287,13 +3286,13 @@ func (s *Service) executeUpdateTemplateAssignment(ctx context.Context, projectID
 		Success:      true,
 		AssignmentID: assignmentID,
 		Active:       newActive,
-		Message:      "Template pack assignment updated successfully",
+		Message:      "Schema assignment updated successfully",
 	}
 
 	return s.wrapResult(result)
 }
 
-func (s *Service) executeUninstallTemplatePack(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeUninstallSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
@@ -3311,7 +3310,7 @@ func (s *Service) executeUninstallTemplatePack(ctx context.Context, projectID st
 
 		var templatePackID string
 		err := tx.NewRaw(`
-			SELECT template_pack_id FROM kb.project_template_packs 
+			SELECT schema_id FROM kb.project_schemas 
 			WHERE id = ? AND project_id = ?
 		`, assignmentID, projectUUID).Scan(ctx, &templatePackID)
 		if err != nil {
@@ -3321,45 +3320,45 @@ func (s *Service) executeUninstallTemplatePack(ctx context.Context, projectID st
 		var objectCount int
 		err = tx.NewRaw(`
 			SELECT COUNT(*) FROM kb.graph_objects go
-			JOIN kb.project_object_type_registry ptr ON go.type = ptr.type_name AND go.project_id = ptr.project_id
-			WHERE ptr.template_pack_id = ? AND go.project_id = ? AND go.deleted_at IS NULL AND go.supersedes_id IS NULL
+			JOIN kb.project_object_schema_registry ptr ON go.type = ptr.type_name AND go.project_id = ptr.project_id
+			WHERE ptr.schema_id = ? AND go.project_id = ? AND go.deleted_at IS NULL AND go.supersedes_id IS NULL
 		`, templatePackID, projectUUID).Scan(ctx, &objectCount)
 		if err != nil {
 			return err
 		}
 
 		if objectCount > 0 {
-			return fmt.Errorf("cannot uninstall: %d objects still exist using types from this template pack", objectCount)
+			return fmt.Errorf("cannot uninstall: %d objects still exist using types from this schema", objectCount)
 		}
 
 		_, err = tx.NewRaw(`
-			DELETE FROM kb.project_object_type_registry 
-			WHERE template_pack_id = ? AND project_id = ?
+			DELETE FROM kb.project_object_schema_registry 
+			WHERE schema_id = ? AND project_id = ?
 		`, templatePackID, projectUUID).Exec(ctx)
 		if err != nil {
 			return err
 		}
 
 		_, err = tx.NewRaw(`
-			DELETE FROM kb.project_template_packs WHERE id = ?
+			DELETE FROM kb.project_schemas WHERE id = ?
 		`, assignmentID).Exec(ctx)
 		return err
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("uninstall template pack: %w", err)
+		return nil, fmt.Errorf("uninstall schema: %w", err)
 	}
 
-	result := UninstallTemplatePackResult{
+	result := UninstallSchemaResult{
 		Success:      true,
 		AssignmentID: assignmentID,
-		Message:      "Template pack uninstalled successfully",
+		Message:      "Schema uninstalled successfully",
 	}
 
 	return s.wrapResult(result)
 }
 
-func (s *Service) executeCreateTemplatePack(ctx context.Context, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeCreateSchema(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	name, _ := args["name"].(string)
 	if name == "" {
 		return nil, fmt.Errorf("missing required parameter: name")
@@ -3415,19 +3414,19 @@ func (s *Service) executeCreateTemplatePack(ctx context.Context, args map[string
 
 	var newPack packRow
 	err := s.db.NewRaw(`
-		INSERT INTO kb.graph_template_packs 
+		INSERT INTO kb.graph_schemas 
 		(name, version, description, author, source, object_type_schemas, relationship_type_schemas, ui_configs, extraction_prompts, checksum)
 		VALUES (?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?)
 		RETURNING id, published_at, created_at, updated_at
 	`, name, version, description, author, string(objectTypeSchemasJSON), string(relationshipTypeSchemasJSON), string(uiConfigsJSON), string(extractionPromptsJSON), checksum).Scan(ctx, &newPack)
 
 	if err != nil {
-		return nil, fmt.Errorf("create template pack: %w", err)
+		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
-	result := CreateTemplatePackResult{
+	result := CreateSchemaResult{
 		Success: true,
-		Pack: &TemplatePack{
+		Pack: &MemorySchema{
 			ID:                      newPack.ID,
 			Name:                    name,
 			Version:                 version,
@@ -3444,13 +3443,13 @@ func (s *Service) executeCreateTemplatePack(ctx context.Context, args map[string
 			CreatedAt:               newPack.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:               newPack.UpdatedAt.Format(time.RFC3339),
 		},
-		Message: "Template pack created successfully",
+		Message: "Schema created successfully",
 	}
 
 	return s.wrapResult(result)
 }
 
-func (s *Service) executeDeleteTemplatePack(ctx context.Context, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeDeleteSchema(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	packID, _ := args["pack_id"].(string)
 	if packID == "" {
 		return nil, fmt.Errorf("missing required parameter: pack_id")
@@ -3464,22 +3463,22 @@ func (s *Service) executeDeleteTemplatePack(ctx context.Context, args map[string
 
 	var pack packRow
 	err := s.db.NewSelect().
-		TableExpr("kb.graph_template_packs").
+		TableExpr("kb.graph_schemas").
 		Column("id", "name", "source").
 		Where("id = ?", packID).
 		Scan(ctx, &pack)
 
 	if err != nil {
-		return nil, fmt.Errorf("template pack not found: %s", packID)
+		return nil, fmt.Errorf("schema not found: %s", packID)
 	}
 
 	if pack.Source == "system" {
-		return nil, fmt.Errorf("cannot delete built-in template packs")
+		return nil, fmt.Errorf("cannot delete built-in schemas")
 	}
 
 	var installCount int
 	err = s.db.NewRaw(`
-		SELECT COUNT(*) FROM kb.project_template_packs WHERE template_pack_id = ?
+		SELECT COUNT(*) FROM kb.project_schemas WHERE schema_id = ?
 	`, packID).Scan(ctx, &installCount)
 
 	if err != nil {
@@ -3487,21 +3486,21 @@ func (s *Service) executeDeleteTemplatePack(ctx context.Context, args map[string
 	}
 
 	if installCount > 0 {
-		return nil, fmt.Errorf("cannot delete template pack \"%s\" because it is currently installed in %d project(s)", pack.Name, installCount)
+		return nil, fmt.Errorf("cannot delete schema \"%s\" because it is currently installed in %d project(s)", pack.Name, installCount)
 	}
 
 	_, err = s.db.NewRaw(`
-		DELETE FROM kb.graph_template_packs WHERE id = ?
+		DELETE FROM kb.graph_schemas WHERE id = ?
 	`, packID).Exec(ctx)
 
 	if err != nil {
-		return nil, fmt.Errorf("delete template pack: %w", err)
+		return nil, fmt.Errorf("delete schema: %w", err)
 	}
 
-	result := DeleteTemplatePackResult{
+	result := DeleteSchemaResult{
 		Success: true,
 		PackID:  packID,
-		Message: fmt.Sprintf("Template pack \"%s\" deleted successfully", pack.Name),
+		Message: fmt.Sprintf("Schema \"%s\" deleted successfully", pack.Name),
 	}
 
 	return s.wrapResult(result)
@@ -3708,7 +3707,7 @@ func (s *Service) readRelationshipsResource(ctx context.Context, projectID strin
 }
 
 func (s *Service) readTemplatesCatalogResource(ctx context.Context) (*ResourceReadResult, error) {
-	result, err := s.executeListTemplatePacks(ctx, map[string]any{})
+	result, err := s.executeListSchemas(ctx, map[string]any{})
 	if err != nil {
 		return nil, err
 	}
@@ -3887,10 +3886,10 @@ func (s *Service) getCreateFromTemplatePrompt(args map[string]any) (*PromptGetRe
 		return nil, fmt.Errorf("missing required argument: entity_type")
 	}
 
-	templatePack, _ := args["template_pack"].(string)
+	schema, _ := args["schema"].(string)
 	templateHint := ""
-	if templatePack != "" {
-		templateHint = fmt.Sprintf(" using the '%s' template pack", templatePack)
+	if schema != "" {
+		templateHint = fmt.Sprintf(" using the '%s' schema", schema)
 	}
 
 	return &PromptGetResult{
@@ -3904,7 +3903,7 @@ func (s *Service) getCreateFromTemplatePrompt(args map[string]any) (*PromptGetRe
 
 Please guide me through:
 1. First, check available templates using get_available_templates
-2. Show me the template schema using get_template_pack%s
+2. Show me the schema using get_schema%s
 3. Ask me for each required field one by one
 4. Once we have all the data:
    - For SINGLE entity: use create_entity
@@ -3916,8 +3915,8 @@ It can handle up to 100 entities in one request, which is dramatically faster.
 
 Let's start by checking what templates are available for %s entities.`, entityType, templateHint,
 						func() string {
-							if templatePack != "" {
-								return fmt.Sprintf(" with name='%s'", templatePack)
+							if schema != "" {
+								return fmt.Sprintf(" with name='%s'", schema)
 							}
 							return ""
 						}(), entityType),

@@ -196,7 +196,7 @@ func (f *RelationshipBuilderFactory) CreateAgentWithSchema(ctx context.Context, 
 
 	var outputSchema *genai.Schema
 	if len(relationshipSchemas) > 0 {
-		outputSchema = BuildRelationshipSchemaFromTemplatePack(relationshipSchemas)
+		outputSchema = BuildRelationshipSchemaFromMemorySchema(relationshipSchemas)
 	}
 
 	return NewRelationshipBuilderAgent(RelationshipBuilderConfig{

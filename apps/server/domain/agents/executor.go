@@ -22,7 +22,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/skills"
-	"github.com/emergent-company/emergent.memory/domain/workspace"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -126,7 +126,7 @@ type AgentExecutor struct {
 	repo           *Repository
 	skillRepo      *skills.Repository
 	embeddingsSvc  *embeddings.Service
-	provisioner    *workspace.AutoProvisioner // nil if workspaces are disabled
+	provisioner    *sandbox.AutoProvisioner // nil if workspaces are disabled
 	wsEnabled      bool                       // cached feature flag
 	sessionService session.Service
 	modelLimits    ModelLimitsLookup // nil if provider module is not registered
@@ -140,13 +140,13 @@ func NewAgentExecutor(
 	repo *Repository,
 	skillRepo *skills.Repository,
 	embeddingsSvc *embeddings.Service,
-	provisioner *workspace.AutoProvisioner,
+	provisioner *sandbox.AutoProvisioner,
 	cfg *config.Config,
 	sessionService session.Service,
 	modelLimits ModelLimitsLookup,
 	log *slog.Logger,
 ) *AgentExecutor {
-	wsEnabled := cfg.Workspace.IsEnabled()
+	wsEnabled := cfg.Sandbox.IsEnabled()
 	if wsEnabled {
 		log.Info("agent executor: workspace provisioning enabled")
 	}
@@ -218,9 +218,9 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	)
 
 	// Provision workspace if configured
-	hasWorkspaceConfig := ae.wsEnabled && ae.provisioner != nil &&
-		req.AgentDefinition != nil && len(req.AgentDefinition.WorkspaceConfig) > 0
-	if hasWorkspaceConfig {
+	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
+		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
+	if hasSandboxConfig {
 		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusProvisioning); err != nil {
 			ae.log.Warn("failed to update session status to provisioning",
 				slog.String("run_id", run.ID),
@@ -235,7 +235,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	}
 
 	// Workspace provisioning complete (or skipped) — mark session active
-	if hasWorkspaceConfig {
+	if hasSandboxConfig {
 		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
 			ae.log.Warn("failed to update session status to active",
 				slog.String("run_id", run.ID),
@@ -332,9 +332,9 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	)
 
 	// Provision workspace if configured
-	hasWorkspaceConfig := ae.wsEnabled && ae.provisioner != nil &&
-		req.AgentDefinition != nil && len(req.AgentDefinition.WorkspaceConfig) > 0
-	if hasWorkspaceConfig {
+	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
+		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
+	if hasSandboxConfig {
 		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusProvisioning); err != nil {
 			ae.log.Warn("failed to update session status to provisioning",
 				slog.String("run_id", run.ID),
@@ -348,7 +348,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		defer ae.teardownWorkspace(ctx, wsResult)
 	}
 
-	if hasWorkspaceConfig {
+	if hasSandboxConfig {
 		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
 			ae.log.Warn("failed to update session status to active",
 				slog.String("run_id", run.ID),
@@ -440,9 +440,9 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	)
 
 	// Provision workspace if configured
-	hasWorkspaceConfig := ae.wsEnabled && ae.provisioner != nil &&
-		req.AgentDefinition != nil && len(req.AgentDefinition.WorkspaceConfig) > 0
-	if hasWorkspaceConfig {
+	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
+		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
+	if hasSandboxConfig {
 		if err := ae.repo.UpdateSessionStatus(ctx, newRun.ID, SessionStatusProvisioning); err != nil {
 			ae.log.Warn("failed to update session status to provisioning",
 				slog.String("run_id", newRun.ID),
@@ -457,7 +457,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	}
 
 	// Workspace provisioning complete (or skipped) — mark session active
-	if hasWorkspaceConfig {
+	if hasSandboxConfig {
 		if err := ae.repo.UpdateSessionStatus(ctx, newRun.ID, SessionStatusActive); err != nil {
 			ae.log.Warn("failed to update session status to active",
 				slog.String("run_id", newRun.ID),
@@ -485,12 +485,12 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 // provisionWorkspace provisions a workspace for the agent run if configured.
 // Returns nil if workspace provisioning is disabled, not configured, or not needed.
 // Provisioning failures are non-fatal — the agent runs in degraded mode without a workspace.
-func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, req ExecuteRequest) *workspace.ProvisioningResult {
+func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, req ExecuteRequest) *sandbox.ProvisioningResult {
 	// Check preconditions: feature enabled, provisioner available, definition has workspace config
 	if !ae.wsEnabled || ae.provisioner == nil {
 		return nil
 	}
-	if req.AgentDefinition == nil || len(req.AgentDefinition.WorkspaceConfig) == 0 {
+	if req.AgentDefinition == nil || len(req.AgentDefinition.SandboxConfig) == 0 {
 		return nil
 	}
 
@@ -499,7 +499,7 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 		slog.String("agent_definition_id", req.AgentDefinition.ID),
 	)
 
-	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.WorkspaceConfig, nil)
+	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.SandboxConfig, nil)
 	if err != nil {
 		ae.log.Error("workspace provisioning returned error, running without workspace",
 			slog.String("run_id", runID),
@@ -540,7 +540,7 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 
 // teardownWorkspace destroys the provisioned workspace after the agent run completes.
 // Called via defer so it runs regardless of how the run exits.
-func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *workspace.ProvisioningResult) {
+func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *sandbox.ProvisioningResult) {
 	if result == nil || result.Workspace == nil || ae.provisioner == nil {
 		return
 	}
@@ -573,7 +573,7 @@ func (ae *AgentExecutor) runPipeline(
 	maxSteps int,
 	initialSteps int,
 	startTime time.Time,
-	wsResult *workspace.ProvisioningResult,
+	wsResult *sandbox.ProvisioningResult,
 	askPauseState *AskPauseState,
 ) (*ExecuteResult, error) {
 	// Identify the root session ID
@@ -1281,7 +1281,7 @@ func (ae *AgentExecutor) runPipeline(
 
 // augmentInstructionWithWorkspace appends workspace context to the system instruction
 // so the agent knows it has a sandboxed environment available.
-func (ae *AgentExecutor) augmentInstructionWithWorkspace(instruction string, wsResult *workspace.ProvisioningResult) string {
+func (ae *AgentExecutor) augmentInstructionWithWorkspace(instruction string, wsResult *sandbox.ProvisioningResult) string {
 	if wsResult == nil || wsResult.Workspace == nil {
 		return instruction
 	}
@@ -1323,7 +1323,7 @@ Workspace tools are prefixed with workspace_ and run inside the sandboxed contai
 // resolveWorkspaceTools builds ADK tools that let the agent interact with its
 // provisioned workspace container (bash, read, write, edit, glob, grep, git).
 // Returns nil if the provisioner can't provide a provider for the workspace.
-func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *workspace.ProvisioningResult, req ExecuteRequest) ([]tool.Tool, error) {
+func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *sandbox.ProvisioningResult, req ExecuteRequest) ([]tool.Tool, error) {
 	if ae.provisioner == nil || wsResult == nil || wsResult.Workspace == nil {
 		return nil, nil
 	}
@@ -1335,9 +1335,9 @@ func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *workspace.ProvisioningR
 	}
 
 	// Parse workspace config for tool filtering
-	var wsCfg *workspace.AgentWorkspaceConfig
-	if req.AgentDefinition != nil && len(req.AgentDefinition.WorkspaceConfig) > 0 {
-		wsCfg, _ = workspace.ParseAgentWorkspaceConfig(req.AgentDefinition.WorkspaceConfig)
+	var wsCfg *sandbox.AgentSandboxConfig
+	if req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0 {
+		wsCfg, _ = sandbox.ParseAgentSandboxConfig(req.AgentDefinition.SandboxConfig)
 	}
 
 	return BuildWorkspaceTools(WorkspaceToolDeps{

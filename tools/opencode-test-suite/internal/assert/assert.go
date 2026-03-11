@@ -142,38 +142,38 @@ func toolNames(result *runner.Result) []string {
 // so we run commands from workspaceDir.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// HasTemplatePack asserts that at least one template pack is installed in the
-// project. It runs `emergent template-packs installed --output json` from
+// HasMemorySchema asserts that at least one schema is installed in the
+// project. It runs `emergent schemas installed --output json` from
 // workspaceDir so the CLI picks up MEMORY_SERVER and MEMORY_PROJECT from
 // .env.local automatically.
-func HasTemplatePack(t *testing.T, workspaceDir string) {
+func HasMemorySchema(t *testing.T, workspaceDir string) {
 	t.Helper()
 
-	out, err := runCLI(workspaceDir, "template-packs", "installed", "--output", "json")
+	out, err := runCLI(workspaceDir, "schemas", "installed", "--output", "json")
 	if err != nil {
-		t.Errorf("assert.HasTemplatePack: CLI error: %v\noutput: %s", err, out)
+		t.Errorf("assert.HasMemorySchema: CLI error: %v\noutput: %s", err, out)
 		return
 	}
 
-	var packs []struct {
+	var schemas []struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
-	if err := json.Unmarshal([]byte(out), &packs); err != nil {
-		t.Errorf("assert.HasTemplatePack: could not parse CLI output as JSON: %v\noutput: %s", err, out)
+	if err := json.Unmarshal([]byte(out), &schemas); err != nil {
+		t.Errorf("assert.HasMemorySchema: could not parse CLI output as JSON: %v\noutput: %s", err, out)
 		return
 	}
 
-	if len(packs) == 0 {
-		t.Errorf("assert.HasTemplatePack: expected at least one installed template pack, got none")
+	if len(schemas) == 0 {
+		t.Errorf("assert.HasMemorySchema: expected at least one installed schema, got none")
 		return
 	}
 
-	names := make([]string, len(packs))
-	for i, p := range packs {
-		names[i] = p.Name
+	names := make([]string, len(schemas))
+	for i, s := range schemas {
+		names[i] = s.Name
 	}
-	t.Logf("assert.HasTemplatePack: %d pack(s) installed: %v", len(packs), names)
+	t.Logf("assert.HasMemorySchema: %d schema(s) installed: %v", len(schemas), names)
 }
 
 // HasGraphObjects asserts that at least minCount graph objects exist in the

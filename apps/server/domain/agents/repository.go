@@ -514,6 +514,7 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 			Temperature: &temperature,
 		},
 		Tools: []string{
+			"get_project_info",
 			"hybrid_search",
 			"query_entities",
 			"search_entities",

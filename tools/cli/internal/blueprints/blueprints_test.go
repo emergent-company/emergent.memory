@@ -23,7 +23,7 @@ objectTypes:
     label: "Document"
 `)
 
-	packs, agents, _, _, _, results, err := blueprints.LoadDir(dir, nil)
+	_, packs, agents, _, _, _, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestLoadDir_ValidJSONAgent(t *testing.T) {
 	data, _ := json.Marshal(agent)
 	writeFile(t, dir, "agents/my-agent.json", string(data))
 
-	packs, agents, _, _, _, results, err := blueprints.LoadDir(dir, nil)
+	_, packs, agents, _, _, _, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,7 +82,7 @@ objectTypes:
   - name: Doc
 `)
 
-	packs, _, _, _, _, _, err := blueprints.LoadDir(dir, nil)
+	_, packs, _, _, _, _, _, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -100,7 +100,7 @@ objectTypes:
   - name: Doc
 `)
 
-	packs, _, _, _, _, results, err := blueprints.LoadDir(dir, nil)
+	_, packs, _, _, _, _, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestLoadDir_MissingSubdirsNotError(t *testing.T) {
 	dir := t.TempDir()
 	// No packs/ or agents/ subdirectory at all
 
-	packs, agents, _, _, _, results, err := blueprints.LoadDir(dir, nil)
+	_, packs, agents, _, _, _, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("expected no error when subdirs are missing, got: %v", err)
 	}
@@ -140,7 +140,7 @@ objectTypes:
   - name: Node
 `)
 
-	packs, _, _, _, _, results, err := blueprints.LoadDir(dir, nil)
+	_, packs, _, _, _, _, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestLoadDir_SeedObjects_Valid(t *testing.T) {
 {"type":"Document","key":"doc-2"}
 `)
 
-	_, _, _, objects, rels, results, err := blueprints.LoadDir(dir, nil)
+	_, _, _, _, objects, rels, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestLoadDir_SeedRelationships_Valid(t *testing.T) {
 	writeFile(t, dir, "seed/relationships/Mentions.jsonl", `{"type":"Mentions","srcKey":"doc-1","dstKey":"doc-2"}
 `)
 
-	_, _, _, objects, rels, results, err := blueprints.LoadDir(dir, nil)
+	_, _, _, _, objects, rels, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestLoadDir_SeedMissingDir_NotError(t *testing.T) {
 	dir := t.TempDir()
 	// No seed/ directory at all
 
-	_, _, _, objects, rels, results, err := blueprints.LoadDir(dir, nil)
+	_, _, _, _, objects, rels, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("expected no error for missing seed dir, got: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestLoadDir_SeedObjects_ParseError(t *testing.T) {
 this is not json
 `)
 
-	_, _, _, objects, _, results, err := blueprints.LoadDir(dir, nil)
+	_, _, _, _, objects, _, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestLoadDir_SeedObjects_ValidationError(t *testing.T) {
 	writeFile(t, dir, "seed/objects/Bad.jsonl", `{"key":"x","properties":{}}
 `)
 
-	_, _, _, objects, _, results, err := blueprints.LoadDir(dir, nil)
+	_, _, _, _, objects, _, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestLoadDir_SeedObjects_SplitFilesLoadedInOrder(t *testing.T) {
 	writeFile(t, dir, "seed/objects/Document.002.jsonl", `{"type":"Document","key":"second"}
 `)
 
-	_, _, _, objects, _, results, err := blueprints.LoadDir(dir, nil)
+	_, _, _, _, objects, _, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestLoadDir_SeedObjects_UnsupportedExtensionSkipped(t *testing.T) {
 	writeFile(t, dir, "seed/objects/Document.jsonl", `{"type":"Document","key":"d1"}
 `)
 
-	_, _, _, objects, _, results, err := blueprints.LoadDir(dir, nil)
+	_, _, _, _, objects, _, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -30,8 +30,8 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 	}
 }
 
-// TemplatePack represents an installed template pack for a project
-type TemplatePack struct {
+// MemorySchema represents an installed memory schema for a project
+type MemorySchema struct {
 	Name              string   `json:"name"`
 	Version           string   `json:"version"`
 	ObjectTypes       []string `json:"objectTypes"`
@@ -46,7 +46,7 @@ type ProjectStats struct {
 	TotalJobs         int            `json:"totalJobs"`
 	RunningJobs       int            `json:"runningJobs"`
 	QueuedJobs        int            `json:"queuedJobs"`
-	TemplatePacks     []TemplatePack `json:"templatePacks"`
+	Schemas           []MemorySchema `json:"schemas"`
 }
 
 // Project represents a project entity

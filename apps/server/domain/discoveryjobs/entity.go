@@ -21,7 +21,7 @@ type DiscoveryJob struct {
 	KBPurpose               string     `bun:"kb_purpose,notnull" json:"kbPurpose"`
 	DiscoveredTypes         JSONArray  `bun:"discovered_types,type:jsonb,default:'[]'::jsonb" json:"discoveredTypes"`
 	DiscoveredRelationships JSONArray  `bun:"discovered_relationships,type:jsonb,default:'[]'::jsonb" json:"discoveredRelationships"`
-	TemplatePackID          *uuid.UUID `bun:"template_pack_id,type:uuid" json:"templatePackId,omitempty"`
+	SchemaID                *uuid.UUID `bun:"schema_id,type:uuid" json:"schemaId,omitempty"`
 	ErrorMessage            *string    `bun:"error_message" json:"errorMessage,omitempty"`
 	RetryCount              int        `bun:"retry_count,default:0" json:"retryCount"`
 	CreatedAt               time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`

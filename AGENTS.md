@@ -8,7 +8,7 @@ Go monorepo for the Memory knowledge graph platform. React admin UI lives in a *
 
 **Server stack:** Echo (HTTP) · Bun ORM (pgx/Postgres) · fx (dependency injection) · Zitadel (auth)
 
-**Domain layout** (`apps/server/domain/<name>/`): agents, apitoken, authinfo, backups, branches, chat, chunking, chunks, datasource, devtools, discoveryjobs, docs, documents, email, embeddingpolicies, events, extraction, githubapp, graph, health, integrations, invites, mcp, mcpregistry, monitoring, notifications, orgs, projects, provider, scheduler, search, standalone, superadmin, tasks, templatepacks, tracing, typeregistry, useraccess, useractivity, userprofile, users, workspace, workspaceimages
+**Domain layout** (`apps/server/domain/<name>/`): agents, apitoken, authinfo, backups, branches, chat, chunking, chunks, datasource, devtools, discoveryjobs, docs, documents, email, embeddingpolicies, events, extraction, githubapp, graph, health, integrations, invites, mcp, mcpregistry, monitoring, notifications, orgs, projects, provider, sandbox, sandboximages, scheduler, schemas, schemaregistry, search, skills, standalone, superadmin, tasks, tracing, useraccess, useractivity, userprofile, users
 
 Each domain: `handler.go` (Echo routes) · `service.go` (business logic) · `store.go` (Bun ORM queries) · `module.go` (fx wiring)
 
