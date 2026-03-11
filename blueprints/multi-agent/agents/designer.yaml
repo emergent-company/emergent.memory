@@ -6,7 +6,7 @@ description: >
   as TaskResult objects for downstream agents to reference.
 
 model:
-  name: gemini-2.5-flash
+  name: gemini-3.1-flash-lite-preview
   temperature: 0.4
   maxTokens: 16384
 

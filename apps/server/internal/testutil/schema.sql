@@ -1,12 +1,14 @@
 --
+-- PostgreSQL database dump
 --
 
 
+-- Dumped from database version 16.11 (Debian 16.11-1.pgdg12+1)
+-- Dumped by pg_dump version 18.1
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
-
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -19,14 +21,14 @@ SET row_security = off;
 -- Name: core; Type: SCHEMA; Schema: -; Owner: -
 --
 
-CREATE SCHEMA core;
+CREATE SCHEMA IF NOT EXISTS core;
 
 
 --
 -- Name: kb; Type: SCHEMA; Schema: -; Owner: -
 --
 
-CREATE SCHEMA kb;
+CREATE SCHEMA IF NOT EXISTS kb;
 
 
 --
@@ -412,7 +414,7 @@ CREATE TABLE kb.agent_definitions (
     config jsonb DEFAULT '{}'::jsonb,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    workspace_config jsonb,
+    sandbox_config jsonb,
     dispatch_mode text DEFAULT 'sync'::text NOT NULL
 );
 
@@ -460,10 +462,10 @@ COMMENT ON COLUMN kb.agent_definitions.acp_config IS 'Agent Card Protocol metada
 
 
 --
--- Name: COLUMN agent_definitions.workspace_config; Type: COMMENT; Schema: kb; Owner: -
+-- Name: COLUMN agent_definitions.sandbox_config; Type: COMMENT; Schema: kb; Owner: -
 --
 
-COMMENT ON COLUMN kb.agent_definitions.workspace_config IS 'Declarative workspace configuration: enabled, repo_source, tools, resource_limits, setup_commands, base_image';
+COMMENT ON COLUMN kb.agent_definitions.sandbox_config IS 'Declarative workspace configuration: enabled, repo_source, tools, resource_limits, setup_commands, base_image';
 
 
 --
@@ -649,7 +651,9 @@ CREATE TABLE kb.agent_runs (
     session_status character varying(20) DEFAULT 'active'::character varying NOT NULL,
     trigger_source text,
     trigger_metadata jsonb,
-    trigger_message text
+    trigger_message text,
+    trace_id text,
+    root_run_id uuid
 );
 
 
@@ -689,27 +693,10 @@ COMMENT ON COLUMN kb.agent_runs.trigger_message IS 'Optional message injected as
 
 
 --
--- Name: agent_webhook_hooks; Type: TABLE; Schema: kb; Owner: -
+-- Name: agent_sandboxes; Type: TABLE; Schema: kb; Owner: -
 --
 
-CREATE TABLE kb.agent_webhook_hooks (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    agent_id uuid NOT NULL,
-    project_id text NOT NULL,
-    label text NOT NULL,
-    token_hash text NOT NULL,
-    enabled boolean DEFAULT true NOT NULL,
-    rate_limit_config jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: agent_workspaces; Type: TABLE; Schema: kb; Owner: -
---
-
-CREATE TABLE kb.agent_workspaces (
+CREATE TABLE kb.agent_sandboxes (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     agent_session_id uuid,
     container_type text NOT NULL,
@@ -731,38 +718,55 @@ CREATE TABLE kb.agent_workspaces (
 
 
 --
--- Name: TABLE agent_workspaces; Type: COMMENT; Schema: kb; Owner: -
+-- Name: TABLE agent_sandboxes; Type: COMMENT; Schema: kb; Owner: -
 --
 
-COMMENT ON TABLE kb.agent_workspaces IS 'Tracks isolated agent workspaces and persistent MCP server containers';
-
-
---
--- Name: COLUMN agent_workspaces.container_type; Type: COMMENT; Schema: kb; Owner: -
---
-
-COMMENT ON COLUMN kb.agent_workspaces.container_type IS 'Type of container: agent_workspace (ephemeral compute) or mcp_server (persistent daemon)';
+COMMENT ON TABLE kb.agent_sandboxes IS 'Tracks isolated agent workspaces and persistent MCP server containers';
 
 
 --
--- Name: COLUMN agent_workspaces.provider; Type: COMMENT; Schema: kb; Owner: -
+-- Name: COLUMN agent_sandboxes.container_type; Type: COMMENT; Schema: kb; Owner: -
 --
 
-COMMENT ON COLUMN kb.agent_workspaces.provider IS 'Sandbox provider: firecracker (microVM), e2b (managed), or gvisor (Docker runtime)';
-
-
---
--- Name: COLUMN agent_workspaces.lifecycle; Type: COMMENT; Schema: kb; Owner: -
---
-
-COMMENT ON COLUMN kb.agent_workspaces.lifecycle IS 'Lifecycle mode: ephemeral (session-scoped) or persistent (daemon)';
+COMMENT ON COLUMN kb.agent_sandboxes.container_type IS 'Type of container: agent_workspace (ephemeral compute) or mcp_server (persistent daemon)';
 
 
 --
--- Name: COLUMN agent_workspaces.mcp_config; Type: COMMENT; Schema: kb; Owner: -
+-- Name: COLUMN agent_sandboxes.provider; Type: COMMENT; Schema: kb; Owner: -
 --
 
-COMMENT ON COLUMN kb.agent_workspaces.mcp_config IS 'MCP server configuration including stdio bridge settings and restart policy';
+COMMENT ON COLUMN kb.agent_sandboxes.provider IS 'Sandbox provider: firecracker (microVM), e2b (managed), or gvisor (Docker runtime)';
+
+
+--
+-- Name: COLUMN agent_sandboxes.lifecycle; Type: COMMENT; Schema: kb; Owner: -
+--
+
+COMMENT ON COLUMN kb.agent_sandboxes.lifecycle IS 'Lifecycle mode: ephemeral (session-scoped) or persistent (daemon)';
+
+
+--
+-- Name: COLUMN agent_sandboxes.mcp_config; Type: COMMENT; Schema: kb; Owner: -
+--
+
+COMMENT ON COLUMN kb.agent_sandboxes.mcp_config IS 'MCP server configuration including stdio bridge settings and restart policy';
+
+
+--
+-- Name: agent_webhook_hooks; Type: TABLE; Schema: kb; Owner: -
+--
+
+CREATE TABLE kb.agent_webhook_hooks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    agent_id uuid NOT NULL,
+    project_id text NOT NULL,
+    label text NOT NULL,
+    token_hash text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    rate_limit_config jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
 
 
 --
@@ -1497,10 +1501,10 @@ COMMENT ON COLUMN kb.graph_relationships.embedding_updated_at IS 'Timestamp when
 
 
 --
--- Name: graph_template_packs; Type: TABLE; Schema: kb; Owner: -
+-- Name: graph_schemas; Type: TABLE; Schema: kb; Owner: -
 --
 
-CREATE TABLE kb.graph_template_packs (
+CREATE TABLE kb.graph_schemas (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     name text NOT NULL,
     version text NOT NULL,
@@ -2003,15 +2007,15 @@ CREATE TABLE kb.project_memberships (
 
 
 --
--- Name: project_object_type_registry; Type: TABLE; Schema: kb; Owner: -
+-- Name: project_object_schema_registry; Type: TABLE; Schema: kb; Owner: -
 --
 
-CREATE TABLE kb.project_object_type_registry (
+CREATE TABLE kb.project_object_schema_registry (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     project_id uuid NOT NULL,
     type_name text NOT NULL,
     source text NOT NULL,
-    template_pack_id uuid,
+    schema_id uuid,
     schema_version integer DEFAULT 1 NOT NULL,
     json_schema jsonb NOT NULL,
     ui_config jsonb,
@@ -2045,13 +2049,13 @@ CREATE TABLE kb.project_provider_configs (
 
 
 --
--- Name: project_template_packs; Type: TABLE; Schema: kb; Owner: -
+-- Name: project_schemas; Type: TABLE; Schema: kb; Owner: -
 --
 
-CREATE TABLE kb.project_template_packs (
+CREATE TABLE kb.project_schemas (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     project_id uuid NOT NULL,
-    template_pack_id uuid NOT NULL,
+    schema_id uuid NOT NULL,
     installed_at timestamp with time zone DEFAULT now() NOT NULL,
     installed_by uuid,
     active boolean DEFAULT true NOT NULL,
@@ -2069,7 +2073,7 @@ CREATE TABLE kb.projects (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     organization_id uuid NOT NULL,
     name text NOT NULL,
-    project_info text,
+    kb_purpose text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     auto_extract_objects boolean DEFAULT false NOT NULL,
@@ -2169,6 +2173,98 @@ CREATE TABLE kb.release_notifications (
 
 
 --
+-- Name: sandbox_images; Type: TABLE; Schema: kb; Owner: -
+--
+
+CREATE TABLE kb.sandbox_images (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name character varying(100) NOT NULL,
+    type character varying(20) DEFAULT 'custom'::character varying NOT NULL,
+    docker_ref text,
+    provider character varying(20) DEFAULT 'firecracker'::character varying NOT NULL,
+    status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+    error_msg text,
+    project_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: TABLE sandbox_images; Type: COMMENT; Schema: kb; Owner: -
+--
+
+COMMENT ON TABLE kb.sandbox_images IS 'Catalog of available workspace images per project';
+
+
+--
+-- Name: COLUMN sandbox_images.name; Type: COMMENT; Schema: kb; Owner: -
+--
+
+COMMENT ON COLUMN kb.sandbox_images.name IS 'User-facing alias used in agent definitions (e.g. "coder", "py-ml")';
+
+
+--
+-- Name: COLUMN sandbox_images.type; Type: COMMENT; Schema: kb; Owner: -
+--
+
+COMMENT ON COLUMN kb.sandbox_images.type IS 'Image type: built_in (pre-built rootfs) or custom (Docker pull)';
+
+
+--
+-- Name: COLUMN sandbox_images.docker_ref; Type: COMMENT; Schema: kb; Owner: -
+--
+
+COMMENT ON COLUMN kb.sandbox_images.docker_ref IS 'Docker image reference for custom images; NULL for built-in Firecracker rootfs';
+
+
+--
+-- Name: COLUMN sandbox_images.provider; Type: COMMENT; Schema: kb; Owner: -
+--
+
+COMMENT ON COLUMN kb.sandbox_images.provider IS 'Provider that handles this image: firecracker or gvisor';
+
+
+--
+-- Name: COLUMN sandbox_images.status; Type: COMMENT; Schema: kb; Owner: -
+--
+
+COMMENT ON COLUMN kb.sandbox_images.status IS 'Image readiness: pending, pulling, ready, or error';
+
+
+--
+-- Name: schema_studio_messages; Type: TABLE; Schema: kb; Owner: -
+--
+
+CREATE TABLE kb.schema_studio_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    session_id uuid NOT NULL,
+    role text NOT NULL,
+    content text NOT NULL,
+    suggestions jsonb DEFAULT '[]'::jsonb,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT template_pack_studio_messages_role_check CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text, 'system'::text])))
+);
+
+
+--
+-- Name: schema_studio_sessions; Type: TABLE; Schema: kb; Owner: -
+--
+
+CREATE TABLE kb.schema_studio_sessions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id text NOT NULL,
+    project_id uuid NOT NULL,
+    pack_id uuid,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT template_pack_studio_sessions_status_check CHECK ((status = ANY (ARRAY['active'::text, 'completed'::text, 'discarded'::text])))
+);
+
+
+--
 -- Name: settings; Type: TABLE; Schema: kb; Owner: -
 --
 
@@ -2251,38 +2347,6 @@ CREATE TABLE kb.tasks (
 
 
 --
--- Name: template_pack_studio_messages; Type: TABLE; Schema: kb; Owner: -
---
-
-CREATE TABLE kb.template_pack_studio_messages (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    session_id uuid NOT NULL,
-    role text NOT NULL,
-    content text NOT NULL,
-    suggestions jsonb DEFAULT '[]'::jsonb,
-    metadata jsonb DEFAULT '{}'::jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT template_pack_studio_messages_role_check CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text, 'system'::text])))
-);
-
-
---
--- Name: template_pack_studio_sessions; Type: TABLE; Schema: kb; Owner: -
---
-
-CREATE TABLE kb.template_pack_studio_sessions (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    user_id text NOT NULL,
-    project_id uuid NOT NULL,
-    pack_id uuid,
-    status text DEFAULT 'active'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT template_pack_studio_sessions_status_check CHECK ((status = ANY (ARRAY['active'::text, 'completed'::text, 'discarded'::text])))
-);
-
-
---
 -- Name: user_recent_items; Type: TABLE; Schema: kb; Owner: -
 --
 
@@ -2300,66 +2364,6 @@ CREATE TABLE kb.user_recent_items (
     CONSTRAINT user_recent_items_action_type_check CHECK (((action_type)::text = ANY (ARRAY[('viewed'::character varying)::text, ('edited'::character varying)::text]))),
     CONSTRAINT user_recent_items_resource_type_check CHECK (((resource_type)::text = ANY (ARRAY[('document'::character varying)::text, ('object'::character varying)::text])))
 );
-
-
---
--- Name: workspace_images; Type: TABLE; Schema: kb; Owner: -
---
-
-CREATE TABLE kb.workspace_images (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name character varying(100) NOT NULL,
-    type character varying(20) DEFAULT 'custom'::character varying NOT NULL,
-    docker_ref text,
-    provider character varying(20) DEFAULT 'firecracker'::character varying NOT NULL,
-    status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
-    error_msg text,
-    project_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
-
-
---
--- Name: TABLE workspace_images; Type: COMMENT; Schema: kb; Owner: -
---
-
-COMMENT ON TABLE kb.workspace_images IS 'Catalog of available workspace images per project';
-
-
---
--- Name: COLUMN workspace_images.name; Type: COMMENT; Schema: kb; Owner: -
---
-
-COMMENT ON COLUMN kb.workspace_images.name IS 'User-facing alias used in agent definitions (e.g. "coder", "py-ml")';
-
-
---
--- Name: COLUMN workspace_images.type; Type: COMMENT; Schema: kb; Owner: -
---
-
-COMMENT ON COLUMN kb.workspace_images.type IS 'Image type: built_in (pre-built rootfs) or custom (Docker pull)';
-
-
---
--- Name: COLUMN workspace_images.docker_ref; Type: COMMENT; Schema: kb; Owner: -
---
-
-COMMENT ON COLUMN kb.workspace_images.docker_ref IS 'Docker image reference for custom images; NULL for built-in Firecracker rootfs';
-
-
---
--- Name: COLUMN workspace_images.provider; Type: COMMENT; Schema: kb; Owner: -
---
-
-COMMENT ON COLUMN kb.workspace_images.provider IS 'Provider that handles this image: firecracker or gvisor';
-
-
---
--- Name: COLUMN workspace_images.status; Type: COMMENT; Schema: kb; Owner: -
---
-
-COMMENT ON COLUMN kb.workspace_images.status IS 'Image readiness: pending, pulling, ready, or error';
 
 
 --
@@ -2491,14 +2495,6 @@ ALTER TABLE ONLY kb.chat_messages
 
 
 --
--- Name: graph_template_packs PK_5bdff6c04be4775e82f1cef130b; Type: CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.graph_template_packs
-    ADD CONSTRAINT "PK_5bdff6c04be4775e82f1cef130b" PRIMARY KEY (id);
-
-
---
 -- Name: clickup_sync_state PK_623fe43bafbc630a829e51c0024; Type: CONSTRAINT; Schema: kb; Owner: -
 --
 
@@ -2528,14 +2524,6 @@ ALTER TABLE ONLY kb.notifications
 
 ALTER TABLE ONLY kb.system_process_logs
     ADD CONSTRAINT "PK_734385c231b8c9ce4b9157913ae" PRIMARY KEY (id);
-
-
---
--- Name: project_object_type_registry PK_734eabf182ef87e9b747c864d71; Type: CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.project_object_type_registry
-    ADD CONSTRAINT "PK_734eabf182ef87e9b747c864d71" PRIMARY KEY (id);
 
 
 --
@@ -2640,14 +2628,6 @@ ALTER TABLE ONLY kb.llm_call_logs
 
 ALTER TABLE ONLY kb.product_version_members
     ADD CONSTRAINT "PK_b5b8707471c0c5c16f64f95f75c" PRIMARY KEY (product_version_id, object_canonical_id);
-
-
---
--- Name: project_template_packs PK_c3edf237839b7a0dd374437a670; Type: CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.project_template_packs
-    ADD CONSTRAINT "PK_c3edf237839b7a0dd374437a670" PRIMARY KEY (id);
 
 
 --
@@ -2795,19 +2775,19 @@ ALTER TABLE ONLY kb.agent_runs
 
 
 --
+-- Name: agent_sandboxes agent_sandboxes_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_sandboxes
+    ADD CONSTRAINT agent_sandboxes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: agent_webhook_hooks agent_webhook_hooks_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
 --
 
 ALTER TABLE ONLY kb.agent_webhook_hooks
     ADD CONSTRAINT agent_webhook_hooks_pkey PRIMARY KEY (id);
-
-
---
--- Name: agent_workspaces agent_workspaces_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.agent_workspaces
-    ADD CONSTRAINT agent_workspaces_pkey PRIMARY KEY (id);
 
 
 --
@@ -2939,6 +2919,14 @@ ALTER TABLE ONLY kb.graph_relationship_embedding_jobs
 
 
 --
+-- Name: graph_schemas graph_schemas_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.graph_schemas
+    ADD CONSTRAINT graph_schemas_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: llm_usage_events llm_usage_events_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
 --
 
@@ -3027,6 +3015,14 @@ ALTER TABLE ONLY kb.project_memberships
 
 
 --
+-- Name: project_object_schema_registry project_object_schema_registry_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.project_object_schema_registry
+    ADD CONSTRAINT project_object_schema_registry_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: project_provider_configs project_provider_configs_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
 --
 
@@ -3040,6 +3036,14 @@ ALTER TABLE ONLY kb.project_provider_configs
 
 ALTER TABLE ONLY kb.project_provider_configs
     ADD CONSTRAINT project_provider_configs_project_id_provider_key UNIQUE (project_id, provider);
+
+
+--
+-- Name: project_schemas project_schemas_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.project_schemas
+    ADD CONSTRAINT project_schemas_pkey PRIMARY KEY (id);
 
 
 --
@@ -3099,6 +3103,30 @@ ALTER TABLE ONLY kb.release_notifications
 
 
 --
+-- Name: sandbox_images sandbox_images_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.sandbox_images
+    ADD CONSTRAINT sandbox_images_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: schema_studio_messages schema_studio_messages_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.schema_studio_messages
+    ADD CONSTRAINT schema_studio_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: schema_studio_sessions schema_studio_sessions_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.schema_studio_sessions
+    ADD CONSTRAINT schema_studio_sessions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: skills skills_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
 --
 
@@ -3112,22 +3140,6 @@ ALTER TABLE ONLY kb.skills
 
 ALTER TABLE ONLY kb.tasks
     ADD CONSTRAINT tasks_pkey PRIMARY KEY (id);
-
-
---
--- Name: template_pack_studio_messages template_pack_studio_messages_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.template_pack_studio_messages
-    ADD CONSTRAINT template_pack_studio_messages_pkey PRIMARY KEY (id);
-
-
---
--- Name: template_pack_studio_sessions template_pack_studio_sessions_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.template_pack_studio_sessions
-    ADD CONSTRAINT template_pack_studio_sessions_pkey PRIMARY KEY (id);
 
 
 --
@@ -3160,14 +3172,6 @@ ALTER TABLE ONLY kb.provider_pricing
 
 ALTER TABLE ONLY kb.user_recent_items
     ADD CONSTRAINT user_recent_items_pkey PRIMARY KEY (id);
-
-
---
--- Name: workspace_images workspace_images_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.workspace_images
-    ADD CONSTRAINT workspace_images_pkey PRIMARY KEY (id);
 
 
 --
@@ -3486,17 +3490,17 @@ CREATE UNIQUE INDEX "IDX_graph_objects_upsert_main" ON kb.graph_objects USING bt
 
 
 --
--- Name: IDX_graph_template_packs_draft; Type: INDEX; Schema: kb; Owner: -
+-- Name: IDX_graph_schemas_draft; Type: INDEX; Schema: kb; Owner: -
 --
 
-CREATE INDEX "IDX_graph_template_packs_draft" ON kb.graph_template_packs USING btree (draft) WHERE (draft = true);
+CREATE INDEX "IDX_graph_schemas_draft" ON kb.graph_schemas USING btree (draft) WHERE (draft = true);
 
 
 --
--- Name: IDX_graph_template_packs_parent_version_id; Type: INDEX; Schema: kb; Owner: -
+-- Name: IDX_graph_schemas_parent_version_id; Type: INDEX; Schema: kb; Owner: -
 --
 
-CREATE INDEX "IDX_graph_template_packs_parent_version_id" ON kb.graph_template_packs USING btree (parent_version_id) WHERE (parent_version_id IS NOT NULL);
+CREATE INDEX "IDX_graph_schemas_parent_version_id" ON kb.graph_schemas USING btree (parent_version_id) WHERE (parent_version_id IS NOT NULL);
 
 
 --
@@ -3521,31 +3525,31 @@ CREATE INDEX "IDX_object_chunks_object_id" ON kb.object_chunks USING btree (obje
 
 
 --
--- Name: IDX_template_pack_studio_messages_session_id; Type: INDEX; Schema: kb; Owner: -
+-- Name: IDX_schema_studio_messages_session_id; Type: INDEX; Schema: kb; Owner: -
 --
 
-CREATE INDEX "IDX_template_pack_studio_messages_session_id" ON kb.template_pack_studio_messages USING btree (session_id);
-
-
---
--- Name: IDX_template_pack_studio_sessions_pack_id; Type: INDEX; Schema: kb; Owner: -
---
-
-CREATE INDEX "IDX_template_pack_studio_sessions_pack_id" ON kb.template_pack_studio_sessions USING btree (pack_id) WHERE (pack_id IS NOT NULL);
+CREATE INDEX "IDX_schema_studio_messages_session_id" ON kb.schema_studio_messages USING btree (session_id);
 
 
 --
--- Name: IDX_template_pack_studio_sessions_status; Type: INDEX; Schema: kb; Owner: -
+-- Name: IDX_schema_studio_sessions_schema_id; Type: INDEX; Schema: kb; Owner: -
 --
 
-CREATE INDEX "IDX_template_pack_studio_sessions_status" ON kb.template_pack_studio_sessions USING btree (status) WHERE (status = 'active'::text);
+CREATE INDEX "IDX_schema_studio_sessions_schema_id" ON kb.schema_studio_sessions USING btree (pack_id) WHERE (pack_id IS NOT NULL);
 
 
 --
--- Name: IDX_template_pack_studio_sessions_user_id; Type: INDEX; Schema: kb; Owner: -
+-- Name: IDX_schema_studio_sessions_status; Type: INDEX; Schema: kb; Owner: -
 --
 
-CREATE INDEX "IDX_template_pack_studio_sessions_user_id" ON kb.template_pack_studio_sessions USING btree (user_id);
+CREATE INDEX "IDX_schema_studio_sessions_status" ON kb.schema_studio_sessions USING btree (status) WHERE (status = 'active'::text);
+
+
+--
+-- Name: IDX_schema_studio_sessions_user_id; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX "IDX_schema_studio_sessions_user_id" ON kb.schema_studio_sessions USING btree (user_id);
 
 
 --
@@ -3696,6 +3700,13 @@ CREATE INDEX idx_agent_runs_resumed_from ON kb.agent_runs USING btree (resumed_f
 
 
 --
+-- Name: idx_agent_runs_root_run_id; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_agent_runs_root_run_id ON kb.agent_runs USING btree (root_run_id) WHERE (root_run_id IS NOT NULL);
+
+
+--
 -- Name: idx_agent_runs_started_at; Type: INDEX; Schema: kb; Owner: -
 --
 
@@ -3710,38 +3721,45 @@ CREATE INDEX idx_agent_runs_status ON kb.agent_runs USING btree (status);
 
 
 --
+-- Name: idx_agent_runs_trace_id; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_agent_runs_trace_id ON kb.agent_runs USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: idx_agent_sandboxes_expires; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_agent_sandboxes_expires ON kb.agent_sandboxes USING btree (expires_at) WHERE (expires_at IS NOT NULL);
+
+
+--
+-- Name: idx_agent_sandboxes_persistent_mcp; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_agent_sandboxes_persistent_mcp ON kb.agent_sandboxes USING btree (container_type, lifecycle, status) WHERE ((container_type = 'mcp_server'::text) AND (lifecycle = 'persistent'::text));
+
+
+--
+-- Name: idx_agent_sandboxes_session; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_agent_sandboxes_session ON kb.agent_sandboxes USING btree (agent_session_id) WHERE (agent_session_id IS NOT NULL);
+
+
+--
+-- Name: idx_agent_sandboxes_status; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_agent_sandboxes_status ON kb.agent_sandboxes USING btree (status);
+
+
+--
 -- Name: idx_agent_webhook_hooks_agent_id; Type: INDEX; Schema: kb; Owner: -
 --
 
 CREATE INDEX idx_agent_webhook_hooks_agent_id ON kb.agent_webhook_hooks USING btree (agent_id);
-
-
---
--- Name: idx_agent_workspaces_expires; Type: INDEX; Schema: kb; Owner: -
---
-
-CREATE INDEX idx_agent_workspaces_expires ON kb.agent_workspaces USING btree (expires_at) WHERE (expires_at IS NOT NULL);
-
-
---
--- Name: idx_agent_workspaces_persistent_mcp; Type: INDEX; Schema: kb; Owner: -
---
-
-CREATE INDEX idx_agent_workspaces_persistent_mcp ON kb.agent_workspaces USING btree (container_type, lifecycle, status) WHERE ((container_type = 'mcp_server'::text) AND (lifecycle = 'persistent'::text));
-
-
---
--- Name: idx_agent_workspaces_session; Type: INDEX; Schema: kb; Owner: -
---
-
-CREATE INDEX idx_agent_workspaces_session ON kb.agent_workspaces USING btree (agent_session_id) WHERE (agent_session_id IS NOT NULL);
-
-
---
--- Name: idx_agent_workspaces_status; Type: INDEX; Schema: kb; Owner: -
---
-
-CREATE INDEX idx_agent_workspaces_status ON kb.agent_workspaces USING btree (status);
 
 
 --
@@ -4396,6 +4414,20 @@ CREATE INDEX idx_revision_counts_count ON kb.graph_object_revision_counts USING 
 
 
 --
+-- Name: idx_sandbox_images_project_id; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_sandbox_images_project_id ON kb.sandbox_images USING btree (project_id);
+
+
+--
+-- Name: idx_sandbox_images_project_name; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_sandbox_images_project_name ON kb.sandbox_images USING btree (project_id, name);
+
+
+--
 -- Name: idx_skills_embedding_ivfflat; Type: INDEX; Schema: kb; Owner: -
 --
 
@@ -4463,20 +4495,6 @@ CREATE UNIQUE INDEX idx_user_recent_items_unique_resource ON kb.user_recent_item
 --
 
 CREATE INDEX idx_user_recent_items_user_project_accessed ON kb.user_recent_items USING btree (user_id, project_id, accessed_at DESC);
-
-
---
--- Name: idx_workspace_images_project_id; Type: INDEX; Schema: kb; Owner: -
---
-
-CREATE INDEX idx_workspace_images_project_id ON kb.workspace_images USING btree (project_id);
-
-
---
--- Name: idx_workspace_images_project_name; Type: INDEX; Schema: kb; Owner: -
---
-
-CREATE UNIQUE INDEX idx_workspace_images_project_name ON kb.workspace_images USING btree (project_id, name);
 
 
 --
@@ -4625,14 +4643,6 @@ ALTER TABLE ONLY kb.object_extraction_jobs
 
 
 --
--- Name: project_template_packs FK_359c704937c9f1857fd80898ef2; Type: FK CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.project_template_packs
-    ADD CONSTRAINT "FK_359c704937c9f1857fd80898ef2" FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
-
-
---
 -- Name: project_memberships FK_38a73cbcc58fbed8e62a66d79b8; Type: FK CONSTRAINT; Schema: kb; Owner: -
 --
 
@@ -4646,14 +4656,6 @@ ALTER TABLE ONLY kb.project_memberships
 
 ALTER TABLE ONLY kb.chat_messages
     ADD CONSTRAINT "FK_3d623662d4ee1219b23cf61e649" FOREIGN KEY (conversation_id) REFERENCES kb.chat_conversations(id) ON DELETE CASCADE;
-
-
---
--- Name: project_template_packs FK_440cc8aae6f630830193b703f54; Type: FK CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.project_template_packs
-    ADD CONSTRAINT "FK_440cc8aae6f630830193b703f54" FOREIGN KEY (template_pack_id) REFERENCES kb.graph_template_packs(id);
 
 
 --
@@ -4742,14 +4744,6 @@ ALTER TABLE ONLY kb.notifications
 
 ALTER TABLE ONLY kb.graph_relationships
     ADD CONSTRAINT "FK_a0dadc1ffc4ee153226f786e99a" FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
-
-
---
--- Name: project_object_type_registry FK_b8a4633d03d7ce7bc67701f8efb; Type: FK CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.project_object_type_registry
-    ADD CONSTRAINT "FK_b8a4633d03d7ce7bc67701f8efb" FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
 
 
 --
@@ -4918,6 +4912,14 @@ ALTER TABLE ONLY kb.agent_runs
 
 ALTER TABLE ONLY kb.agent_runs
     ADD CONSTRAINT agent_runs_resumed_from_fkey FOREIGN KEY (resumed_from) REFERENCES kb.agent_runs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: agent_runs agent_runs_root_run_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_runs
+    ADD CONSTRAINT agent_runs_root_run_id_fkey FOREIGN KEY (root_run_id) REFERENCES kb.agent_runs(id) ON DELETE SET NULL;
 
 
 --
@@ -5129,11 +5131,11 @@ ALTER TABLE ONLY kb.graph_relationship_embedding_jobs
 
 
 --
--- Name: graph_template_packs graph_template_packs_parent_version_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+-- Name: graph_schemas graph_schemas_parent_version_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
 --
 
-ALTER TABLE ONLY kb.graph_template_packs
-    ADD CONSTRAINT graph_template_packs_parent_version_id_fkey FOREIGN KEY (parent_version_id) REFERENCES kb.graph_template_packs(id) ON DELETE SET NULL;
+ALTER TABLE ONLY kb.graph_schemas
+    ADD CONSTRAINT graph_schemas_parent_version_id_fkey FOREIGN KEY (parent_version_id) REFERENCES kb.graph_schemas(id) ON DELETE SET NULL;
 
 
 --
@@ -5233,11 +5235,35 @@ ALTER TABLE ONLY kb.orgs
 
 
 --
+-- Name: project_object_schema_registry project_object_schema_registry_project_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.project_object_schema_registry
+    ADD CONSTRAINT project_object_schema_registry_project_id_fkey FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_provider_configs project_provider_configs_project_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
 --
 
 ALTER TABLE ONLY kb.project_provider_configs
     ADD CONSTRAINT project_provider_configs_project_id_fkey FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_schemas project_schemas_project_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.project_schemas
+    ADD CONSTRAINT project_schemas_project_id_fkey FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_schemas project_schemas_schema_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.project_schemas
+    ADD CONSTRAINT project_schemas_schema_id_fkey FOREIGN KEY (schema_id) REFERENCES kb.graph_schemas(id);
 
 
 --
@@ -5289,6 +5315,30 @@ ALTER TABLE ONLY kb.release_notifications
 
 
 --
+-- Name: schema_studio_messages schema_studio_messages_session_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.schema_studio_messages
+    ADD CONSTRAINT schema_studio_messages_session_id_fkey FOREIGN KEY (session_id) REFERENCES kb.schema_studio_sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: schema_studio_sessions schema_studio_sessions_project_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.schema_studio_sessions
+    ADD CONSTRAINT schema_studio_sessions_project_id_fkey FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: schema_studio_sessions schema_studio_sessions_schema_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.schema_studio_sessions
+    ADD CONSTRAINT schema_studio_sessions_schema_id_fkey FOREIGN KEY (pack_id) REFERENCES kb.graph_schemas(id) ON DELETE CASCADE;
+
+
+--
 -- Name: skills skills_project_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
 --
 
@@ -5302,30 +5352,6 @@ ALTER TABLE ONLY kb.skills
 
 ALTER TABLE ONLY kb.tasks
     ADD CONSTRAINT tasks_project_id_fkey FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
-
-
---
--- Name: template_pack_studio_messages template_pack_studio_messages_session_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.template_pack_studio_messages
-    ADD CONSTRAINT template_pack_studio_messages_session_id_fkey FOREIGN KEY (session_id) REFERENCES kb.template_pack_studio_sessions(id) ON DELETE CASCADE;
-
-
---
--- Name: template_pack_studio_sessions template_pack_studio_sessions_pack_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.template_pack_studio_sessions
-    ADD CONSTRAINT template_pack_studio_sessions_pack_id_fkey FOREIGN KEY (pack_id) REFERENCES kb.graph_template_packs(id) ON DELETE CASCADE;
-
-
---
--- Name: template_pack_studio_sessions template_pack_studio_sessions_project_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.template_pack_studio_sessions
-    ADD CONSTRAINT template_pack_studio_sessions_project_id_fkey FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
 
 
 --
@@ -6157,71 +6183,105 @@ CREATE POLICY project_memberships_update ON kb.project_memberships FOR UPDATE US
 
 
 --
--- Name: project_object_type_registry; Type: ROW SECURITY; Schema: kb; Owner: -
+-- Name: project_object_schema_registry; Type: ROW SECURITY; Schema: kb; Owner: -
 --
 
-ALTER TABLE kb.project_object_type_registry ENABLE ROW LEVEL SECURITY;
+ALTER TABLE kb.project_object_schema_registry ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: project_object_type_registry project_object_type_registry_delete; Type: POLICY; Schema: kb; Owner: -
+-- Name: project_object_schema_registry project_object_schema_registry_delete; Type: POLICY; Schema: kb; Owner: -
 --
 
-CREATE POLICY project_object_type_registry_delete ON kb.project_object_type_registry FOR DELETE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
-
-
---
--- Name: project_object_type_registry project_object_type_registry_insert; Type: POLICY; Schema: kb; Owner: -
---
-
-CREATE POLICY project_object_type_registry_insert ON kb.project_object_type_registry FOR INSERT WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+CREATE POLICY project_object_schema_registry_delete ON kb.project_object_schema_registry FOR DELETE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
 
 
 --
--- Name: project_object_type_registry project_object_type_registry_select; Type: POLICY; Schema: kb; Owner: -
+-- Name: project_object_schema_registry project_object_schema_registry_insert; Type: POLICY; Schema: kb; Owner: -
 --
 
-CREATE POLICY project_object_type_registry_select ON kb.project_object_type_registry FOR SELECT USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
-
-
---
--- Name: project_object_type_registry project_object_type_registry_update; Type: POLICY; Schema: kb; Owner: -
---
-
-CREATE POLICY project_object_type_registry_update ON kb.project_object_type_registry FOR UPDATE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true)))) WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+CREATE POLICY project_object_schema_registry_insert ON kb.project_object_schema_registry FOR INSERT WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
 
 
 --
--- Name: project_template_packs; Type: ROW SECURITY; Schema: kb; Owner: -
+-- Name: project_object_schema_registry project_object_schema_registry_select; Type: POLICY; Schema: kb; Owner: -
 --
 
-ALTER TABLE kb.project_template_packs ENABLE ROW LEVEL SECURITY;
-
---
--- Name: project_template_packs project_template_packs_delete; Type: POLICY; Schema: kb; Owner: -
---
-
-CREATE POLICY project_template_packs_delete ON kb.project_template_packs FOR DELETE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+CREATE POLICY project_object_schema_registry_select ON kb.project_object_schema_registry FOR SELECT USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
 
 
 --
--- Name: project_template_packs project_template_packs_insert; Type: POLICY; Schema: kb; Owner: -
+-- Name: project_object_schema_registry project_object_schema_registry_update; Type: POLICY; Schema: kb; Owner: -
 --
 
-CREATE POLICY project_template_packs_insert ON kb.project_template_packs FOR INSERT WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
-
-
---
--- Name: project_template_packs project_template_packs_select; Type: POLICY; Schema: kb; Owner: -
---
-
-CREATE POLICY project_template_packs_select ON kb.project_template_packs FOR SELECT USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+CREATE POLICY project_object_schema_registry_update ON kb.project_object_schema_registry FOR UPDATE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true)))) WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
 
 
 --
--- Name: project_template_packs project_template_packs_update; Type: POLICY; Schema: kb; Owner: -
+-- Name: project_schemas; Type: ROW SECURITY; Schema: kb; Owner: -
 --
 
-CREATE POLICY project_template_packs_update ON kb.project_template_packs FOR UPDATE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true)))) WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+ALTER TABLE kb.project_schemas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: project_schemas project_schemas_delete; Type: POLICY; Schema: kb; Owner: -
+--
+
+CREATE POLICY project_schemas_delete ON kb.project_schemas FOR DELETE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+
+
+--
+-- Name: project_schemas project_schemas_insert; Type: POLICY; Schema: kb; Owner: -
+--
+
+CREATE POLICY project_schemas_insert ON kb.project_schemas FOR INSERT WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+
+
+--
+-- Name: project_schemas project_schemas_select; Type: POLICY; Schema: kb; Owner: -
+--
+
+CREATE POLICY project_schemas_select ON kb.project_schemas FOR SELECT USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+
+
+--
+-- Name: project_schemas project_schemas_update; Type: POLICY; Schema: kb; Owner: -
+--
+
+CREATE POLICY project_schemas_update ON kb.project_schemas FOR UPDATE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true)))) WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+
+
+--
+-- Name: schema_studio_sessions; Type: ROW SECURITY; Schema: kb; Owner: -
+--
+
+ALTER TABLE kb.schema_studio_sessions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: schema_studio_sessions schema_studio_sessions_delete; Type: POLICY; Schema: kb; Owner: -
+--
+
+CREATE POLICY schema_studio_sessions_delete ON kb.schema_studio_sessions FOR DELETE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+
+
+--
+-- Name: schema_studio_sessions schema_studio_sessions_insert; Type: POLICY; Schema: kb; Owner: -
+--
+
+CREATE POLICY schema_studio_sessions_insert ON kb.schema_studio_sessions FOR INSERT WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+
+
+--
+-- Name: schema_studio_sessions schema_studio_sessions_select; Type: POLICY; Schema: kb; Owner: -
+--
+
+CREATE POLICY schema_studio_sessions_select ON kb.schema_studio_sessions FOR SELECT USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
+
+
+--
+-- Name: schema_studio_sessions schema_studio_sessions_update; Type: POLICY; Schema: kb; Owner: -
+--
+
+CREATE POLICY schema_studio_sessions_update ON kb.schema_studio_sessions FOR UPDATE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true)))) WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
 
 
 --
@@ -6293,40 +6353,6 @@ CREATE POLICY tasks_update ON kb.tasks FOR UPDATE USING (((COALESCE(current_sett
 
 
 --
--- Name: template_pack_studio_sessions; Type: ROW SECURITY; Schema: kb; Owner: -
---
-
-ALTER TABLE kb.template_pack_studio_sessions ENABLE ROW LEVEL SECURITY;
-
---
--- Name: template_pack_studio_sessions template_pack_studio_sessions_delete; Type: POLICY; Schema: kb; Owner: -
---
-
-CREATE POLICY template_pack_studio_sessions_delete ON kb.template_pack_studio_sessions FOR DELETE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
-
-
---
--- Name: template_pack_studio_sessions template_pack_studio_sessions_insert; Type: POLICY; Schema: kb; Owner: -
---
-
-CREATE POLICY template_pack_studio_sessions_insert ON kb.template_pack_studio_sessions FOR INSERT WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
-
-
---
--- Name: template_pack_studio_sessions template_pack_studio_sessions_select; Type: POLICY; Schema: kb; Owner: -
---
-
-CREATE POLICY template_pack_studio_sessions_select ON kb.template_pack_studio_sessions FOR SELECT USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
-
-
---
--- Name: template_pack_studio_sessions template_pack_studio_sessions_update; Type: POLICY; Schema: kb; Owner: -
---
-
-CREATE POLICY template_pack_studio_sessions_update ON kb.template_pack_studio_sessions FOR UPDATE USING (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true)))) WITH CHECK (((COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text) OR ((project_id)::text = current_setting('app.current_project_id'::text, true))));
-
-
---
 -- Name: user_recent_items; Type: ROW SECURITY; Schema: kb; Owner: -
 --
 
@@ -6340,6 +6366,25 @@ CREATE POLICY user_recent_items_isolation ON kb.user_recent_items USING ((user_i
 
 
 --
+-- PostgreSQL database dump complete
 --
+
+-- ============================================================
+-- Migrations 54-57: applied here to keep schema.sql current.
+-- Migration 54: add org_id to kb.skills
+-- ============================================================
+ALTER TABLE kb.skills ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES kb.orgs(id) ON DELETE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_org ON kb.skills (name, org_id) WHERE project_id IS NULL AND org_id IS NOT NULL;
+ALTER TABLE kb.skills DROP CONSTRAINT IF EXISTS chk_skills_scope;
+ALTER TABLE kb.skills ADD CONSTRAINT chk_skills_scope CHECK (NOT (project_id IS NOT NULL AND org_id IS NOT NULL));
+CREATE INDEX IF NOT EXISTS idx_skills_org_id ON kb.skills (org_id);
+
+-- Migration 55: add project_info to kb.projects, drop kb_purpose
+ALTER TABLE kb.projects ADD COLUMN IF NOT EXISTS project_info text;
+UPDATE kb.projects SET project_info = kb_purpose WHERE kb_purpose IS NOT NULL AND kb_purpose != '' AND project_info IS NULL;
+ALTER TABLE kb.projects DROP COLUMN IF EXISTS kb_purpose;
+
+-- Migration 57: add max_output_tokens to kb.provider_supported_models
+ALTER TABLE kb.provider_supported_models ADD COLUMN IF NOT EXISTS max_output_tokens INT;
 
 

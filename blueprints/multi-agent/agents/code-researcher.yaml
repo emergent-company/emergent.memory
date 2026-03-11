@@ -7,7 +7,7 @@ description: >
   architecture exploration.
 
 model:
-  name: gemini-2.5-flash
+  name: gemini-3.1-flash-lite-preview
   temperature: 0.5
   maxTokens: 8192
 
