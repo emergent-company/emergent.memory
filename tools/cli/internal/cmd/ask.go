@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/x/term"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/spf13/cobra"
@@ -198,9 +200,6 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 		case "token":
 			if token, ok := event["token"].(string); ok {
 				response.WriteString(token)
-				if !askJSON {
-					fmt.Print(token)
-				}
 			}
 		case "mcp_tool":
 			if status, ok := event["status"].(string); ok && status == "started" {
@@ -241,7 +240,27 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 		return encoder.Encode(output)
 	}
 
-	fmt.Printf("\n\n")
+	// Render the full markdown response. Detect terminal width for word-wrap;
+	// use a large value when stdout is not a tty (e.g. piped) so glamour
+	// never truncates wide table columns.
+	width := 0 // 0 = no word-wrap
+	if w, _, err := term.GetSize(os.Stdout.Fd()); err == nil && w > 0 {
+		width = w
+	}
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	if err == nil {
+		if rendered, err := renderer.Render(response.String()); err == nil {
+			fmt.Print(rendered)
+		} else {
+			fmt.Print(response.String())
+		}
+	} else {
+		fmt.Print(response.String())
+	}
+
 	if askShowTools && len(tools) > 0 {
 		fmt.Fprintf(os.Stderr, "Tools used: %s\n", strings.Join(tools, ", "))
 	}
