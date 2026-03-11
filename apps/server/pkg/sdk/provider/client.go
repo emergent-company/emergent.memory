@@ -38,8 +38,8 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 type ProviderType = string
 
 const (
-	ProviderGoogleAI ProviderType = "google-ai"
-	ProviderVertexAI ProviderType = "vertex-ai"
+	ProviderGoogleAI ProviderType = "google"
+	ProviderVertexAI ProviderType = "google-vertex"
 )
 
 // ModelType classifies a model.
@@ -103,8 +103,8 @@ type TestProviderResponse struct {
 
 // UpsertProviderConfigRequest is the unified request body for creating or
 // updating a provider config (org-level or project-level).
-// For google-ai: set APIKey.
-// For vertex-ai: set ServiceAccountJSON, GCPProject, Location.
+// For google: set APIKey.
+// For google-vertex: set ServiceAccountJSON, GCPProject, Location.
 // GenerativeModel and EmbeddingModel are auto-selected from the catalog if omitted.
 type UpsertProviderConfigRequest struct {
 	APIKey             string `json:"apiKey,omitempty"`

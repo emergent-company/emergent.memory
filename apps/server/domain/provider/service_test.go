@@ -170,7 +170,7 @@ func TestDecryptProjectConfig(t *testing.T) {
 		t.Fatalf("decrypt project config failed: %v", err)
 	}
 	if resolved.Provider != ProviderVertexAI {
-		t.Errorf("expected provider vertex-ai, got %s", resolved.Provider)
+		t.Errorf("expected provider google-vertex, got %s", resolved.Provider)
 	}
 	if resolved.Source != SourceProject {
 		t.Errorf("expected source project, got %s", resolved.Source)

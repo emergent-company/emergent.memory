@@ -10,6 +10,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
+	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/domain/workspace"
@@ -73,9 +74,10 @@ func provideAgentExecutor(
 	provisioner *workspace.AutoProvisioner,
 	cfg *config.Config,
 	sessionService session.Service,
+	providerRepo *provider.Repository,
 	log *slog.Logger,
 ) *AgentExecutor {
-	return NewAgentExecutor(modelFactory, toolPool, repo, skillRepo, embeddingsSvc, provisioner, cfg, sessionService, log)
+	return NewAgentExecutor(modelFactory, toolPool, repo, skillRepo, embeddingsSvc, provisioner, cfg, sessionService, providerRepo, log)
 }
 
 // provideHandler creates a Handler with both repo and executor.

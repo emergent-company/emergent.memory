@@ -67,7 +67,7 @@ func (s *ProviderTestSuite) TestListOrgCredentials_RequiresAuth() {
 }
 
 func (s *ProviderTestSuite) TestSaveGoogleAICredential_RequiresAuth() {
-	resp := s.Client.POST(s.orgURL("/google-ai/credentials"),
+	resp := s.Client.POST(s.orgURL("/google/credentials"),
 		testutil.WithJSONBody(map[string]string{"apiKey": "test-key"}),
 	)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
@@ -81,7 +81,7 @@ func (s *ProviderTestSuite) TestSaveAndListGoogleAICredential() {
 	s.SkipIfExternalServer("requires encryption key config")
 
 	// Save a Google AI credential
-	resp := s.Client.POST(s.orgURL("/google-ai/credentials"),
+	resp := s.Client.POST(s.orgURL("/google/credentials"),
 		append(s.withOrgAuth(), testutil.WithJSONBody(map[string]string{
 			"apiKey": "test-google-api-key-12345",
 		}))...,
@@ -102,14 +102,14 @@ func (s *ProviderTestSuite) TestSaveAndListGoogleAICredential() {
 	s.Require().NoError(json.Unmarshal(resp.Body, &creds))
 	s.Require().Len(creds, 1)
 	s.Equal(s.OrgID, creds[0]["orgId"])
-	s.Equal("google-ai", creds[0]["provider"])
+	s.Equal("google", creds[0]["provider"])
 	// Encrypted key must not be exposed
 	_, hasAPIKey := creds[0]["apiKey"]
 	s.False(hasAPIKey, "API key must not be returned in list response")
 }
 
 func (s *ProviderTestSuite) TestSaveGoogleAICredential_MissingAPIKey() {
-	resp := s.Client.POST(s.orgURL("/google-ai/credentials"),
+	resp := s.Client.POST(s.orgURL("/google/credentials"),
 		append(s.withOrgAuth(), testutil.WithJSONBody(map[string]string{}))...,
 	)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
@@ -117,7 +117,7 @@ func (s *ProviderTestSuite) TestSaveGoogleAICredential_MissingAPIKey() {
 
 func (s *ProviderTestSuite) TestSaveGoogleAICredential_WrongOrg() {
 	otherOrgID := "00000000-0000-0000-0000-ffff00000001"
-	url := fmt.Sprintf("/api/v1/organizations/%s/providers/google-ai/credentials", otherOrgID)
+	url := fmt.Sprintf("/api/v1/organizations/%s/providers/google/credentials", otherOrgID)
 	resp := s.Client.POST(url,
 		// auth token scoped to s.OrgID but URL uses a different org
 		testutil.WithAuth("e2e-test-user"),
@@ -135,7 +135,7 @@ func (s *ProviderTestSuite) TestDeleteOrgCredential() {
 	s.SkipIfExternalServer("requires encryption key config")
 
 	// First save one
-	resp := s.Client.POST(s.orgURL("/google-ai/credentials"),
+	resp := s.Client.POST(s.orgURL("/google/credentials"),
 		append(s.withOrgAuth(), testutil.WithJSONBody(map[string]string{
 			"apiKey": "key-to-delete",
 		}))...,
@@ -143,7 +143,7 @@ func (s *ProviderTestSuite) TestDeleteOrgCredential() {
 	s.Require().Equal(http.StatusOK, resp.StatusCode)
 
 	// Delete it
-	resp = s.Client.DELETE(s.orgURL("/google-ai/credentials"),
+	resp = s.Client.DELETE(s.orgURL("/google/credentials"),
 		s.withOrgAuth()...,
 	)
 	s.Require().Equal(http.StatusOK, resp.StatusCode)
@@ -169,7 +169,7 @@ func (s *ProviderTestSuite) TestDeleteOrgCredential() {
 
 func (s *ProviderTestSuite) TestSetAndGetProjectPolicy_Organization() {
 	// Set policy to "organization" (use org credentials)
-	resp := s.Client.PUT(s.projectURL("/google-ai/policy"),
+	resp := s.Client.PUT(s.projectURL("/google/policy"),
 		append(s.withProjectAuth(), testutil.WithJSONBody(map[string]any{
 			"policy": "organization",
 		}))...,
@@ -181,7 +181,7 @@ func (s *ProviderTestSuite) TestSetAndGetProjectPolicy_Organization() {
 	s.Equal("saved", result["status"])
 
 	// Read it back
-	resp = s.Client.GET(s.projectURL("/google-ai/policy"),
+	resp = s.Client.GET(s.projectURL("/google/policy"),
 		s.withProjectAuth()...,
 	)
 	s.Require().Equal(http.StatusOK, resp.StatusCode, "get policy: %s", resp.String())
@@ -189,7 +189,7 @@ func (s *ProviderTestSuite) TestSetAndGetProjectPolicy_Organization() {
 	var policy map[string]any
 	s.Require().NoError(json.Unmarshal(resp.Body, &policy))
 	s.Equal(s.ProjectID, policy["projectId"])
-	s.Equal("google-ai", policy["provider"])
+	s.Equal("google", policy["provider"])
 	s.Equal("organization", policy["policy"])
 }
 
@@ -197,7 +197,7 @@ func (s *ProviderTestSuite) TestSetAndGetProjectPolicy_ProjectLevel() {
 	s.SkipIfExternalServer("requires encryption key config")
 
 	// Set policy to "project" with its own API key
-	resp := s.Client.PUT(s.projectURL("/google-ai/policy"),
+	resp := s.Client.PUT(s.projectURL("/google/policy"),
 		append(s.withProjectAuth(), testutil.WithJSONBody(map[string]any{
 			"policy":          "project",
 			"apiKey":          "project-specific-api-key",
@@ -208,7 +208,7 @@ func (s *ProviderTestSuite) TestSetAndGetProjectPolicy_ProjectLevel() {
 	s.Require().Equal(http.StatusOK, resp.StatusCode, "set project policy: %s", resp.String())
 
 	// Read it back — verify metadata returned, not the encrypted key
-	resp = s.Client.GET(s.projectURL("/google-ai/policy"),
+	resp = s.Client.GET(s.projectURL("/google/policy"),
 		s.withProjectAuth()...,
 	)
 	s.Require().Equal(http.StatusOK, resp.StatusCode, "get policy: %s", resp.String())
@@ -228,7 +228,7 @@ func (s *ProviderTestSuite) TestSetAndGetProjectPolicy_ProjectLevel() {
 
 func (s *ProviderTestSuite) TestSetProjectPolicy_ProjectLevel_MissingAPIKey() {
 	// policy=project without apiKey should return 400
-	resp := s.Client.PUT(s.projectURL("/google-ai/policy"),
+	resp := s.Client.PUT(s.projectURL("/google/policy"),
 		append(s.withProjectAuth(), testutil.WithJSONBody(map[string]any{
 			"policy": "project",
 			// apiKey intentionally omitted
@@ -238,7 +238,7 @@ func (s *ProviderTestSuite) TestSetProjectPolicy_ProjectLevel_MissingAPIKey() {
 }
 
 func (s *ProviderTestSuite) TestSetProjectPolicy_InvalidPolicy() {
-	resp := s.Client.PUT(s.projectURL("/google-ai/policy"),
+	resp := s.Client.PUT(s.projectURL("/google/policy"),
 		append(s.withProjectAuth(), testutil.WithJSONBody(map[string]any{
 			"policy": "unknown-policy-value",
 		}))...,
@@ -247,8 +247,8 @@ func (s *ProviderTestSuite) TestSetProjectPolicy_InvalidPolicy() {
 }
 
 func (s *ProviderTestSuite) TestGetProjectPolicy_NotFound() {
-	// No policy has been set yet for vertex-ai on this project
-	resp := s.Client.GET(s.projectURL("/vertex-ai/policy"),
+	// No policy has been set yet for google-vertex on this project
+	resp := s.Client.GET(s.projectURL("/google-vertex/policy"),
 		s.withProjectAuth()...,
 	)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
@@ -264,8 +264,8 @@ func (s *ProviderTestSuite) TestListProjectPolicies() {
 		path   string
 		policy string
 	}{
-		{"/google-ai/policy", "organization"},
-		{"/vertex-ai/policy", "none"},
+		{"/google/policy", "organization"},
+		{"/google-vertex/policy", "none"},
 	} {
 		resp := s.Client.PUT(s.projectURL(p.path),
 			append(s.withProjectAuth(), testutil.WithJSONBody(map[string]any{
@@ -289,8 +289,8 @@ func (s *ProviderTestSuite) TestListProjectPolicies() {
 	for _, p := range policies {
 		policyMap[p["provider"].(string)] = p["policy"].(string)
 	}
-	s.Equal("organization", policyMap["google-ai"])
-	s.Equal("none", policyMap["vertex-ai"])
+	s.Equal("organization", policyMap["google"])
+	s.Equal("none", policyMap["google-vertex"])
 }
 
 // =============================================================================
