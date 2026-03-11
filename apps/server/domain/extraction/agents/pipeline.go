@@ -437,7 +437,7 @@ func (p *ExtractionPipeline) createEntityProcessorAgent() (agent.Agent, error) {
 					slog.Int("count", len(internalEntities)),
 				)
 
-				span.SetAttributes(attribute.Int("emergent.extraction.entity_count", len(internalEntities)))
+				span.SetAttributes(attribute.Int("memory.extraction.entity_count", len(internalEntities)))
 
 				// Use state.Set() for immediate visibility to subsequent agents
 				if err := state.Set("extracted_entities", internalEntities); err != nil {
@@ -631,7 +631,7 @@ func (p *ExtractionPipeline) createRelationshipProcessorAgent() (agent.Agent, er
 
 				p.log.Debug("processed relationships", slog.Int("count", len(relationships)))
 
-				span.SetAttributes(attribute.Int("emergent.extraction.relationship_count", len(relationships)))
+				span.SetAttributes(attribute.Int("memory.extraction.relationship_count", len(relationships)))
 
 				// Use state.Set() for immediate visibility to QualityChecker
 				if err := state.Set("extracted_relationships", relationships); err != nil {

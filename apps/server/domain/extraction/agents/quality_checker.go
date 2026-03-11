@@ -71,15 +71,15 @@ func NewQualityCheckerAgent(cfg QualityCheckerConfig) (agent.Agent, error) {
 				orphanIDs := GetOrphanTempIDs(entities, relationships)
 
 				span.SetAttributes(
-					attribute.Float64("emergent.extraction.orphan_rate", orphanRate),
-					attribute.Int("emergent.extraction.entity_count", len(entities)),
-					attribute.Int("emergent.extraction.relationship_count", len(relationships)),
+					attribute.Float64("memory.extraction.orphan_rate", orphanRate),
+					attribute.Int("memory.extraction.entity_count", len(entities)),
+					attribute.Int("memory.extraction.relationship_count", len(relationships)),
 				)
 
 				if orphanRate > threshold {
 					span.AddEvent("extraction.quality_warning", trace.WithAttributes(
-						attribute.Float64("emergent.extraction.orphan_rate", orphanRate),
-						attribute.Float64("emergent.extraction.orphan_threshold", threshold),
+						attribute.Float64("memory.extraction.orphan_rate", orphanRate),
+						attribute.Float64("memory.extraction.orphan_threshold", threshold),
 					))
 				}
 

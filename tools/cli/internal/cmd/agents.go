@@ -386,6 +386,12 @@ func runGetAgentRuns(cmd *cobra.Command, args []string) error {
 		if r.DurationMs != nil {
 			fmt.Printf("   Duration:  %dms\n", *r.DurationMs)
 		}
+		if r.TraceID != nil && *r.TraceID != "" {
+			fmt.Printf("   Trace:     %s\n", *r.TraceID)
+		}
+		if r.RootRunID != nil && *r.RootRunID != "" && *r.RootRunID != r.ID {
+			fmt.Printf("   Root Run:  %s\n", *r.RootRunID)
+		}
 		if r.ErrorMessage != nil {
 			fmt.Printf("   Error:     %s\n", *r.ErrorMessage)
 		}

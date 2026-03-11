@@ -216,7 +216,7 @@ type chunkRow struct {
 // processJob processes a single chunk embedding job
 func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddingJob) error {
 	ctx, span := tracing.Start(ctx, "extraction.chunk_embedding",
-		attribute.String("emergent.job.id", job.ID),
+		attribute.String("memory.job.id", job.ID),
 	)
 	defer span.End()
 
@@ -262,7 +262,7 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 	// per-project LLM provider configuration (e.g. Vertex AI credentials).
 	if chunk.ProjectID != "" {
 		ctx = auth.ContextWithProjectID(ctx, chunk.ProjectID)
-		span.SetAttributes(attribute.String("emergent.project.id", chunk.ProjectID))
+		span.SetAttributes(attribute.String("memory.project.id", chunk.ProjectID))
 	}
 
 	// Generate embedding

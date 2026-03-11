@@ -220,10 +220,10 @@ func (w *DocumentParsingWorker) poll() {
 func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentParsingJob) {
 	docID := ptrToString(job.DocumentID)
 	ctx, span := tracing.Start(ctx, "extraction.document_parsing",
-		attribute.String("emergent.job.id", job.ID),
-		attribute.String("emergent.project.id", job.ProjectID),
-		attribute.String("emergent.document.id", docID),
-		attribute.String("emergent.document.content_type", ptrToString(job.MimeType)),
+		attribute.String("memory.job.id", job.ID),
+		attribute.String("memory.project.id", job.ProjectID),
+		attribute.String("memory.document.id", docID),
+		attribute.String("memory.document.content_type", ptrToString(job.MimeType)),
 	)
 	defer span.End()
 

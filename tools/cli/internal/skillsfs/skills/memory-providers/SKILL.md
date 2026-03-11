@@ -1,5 +1,5 @@
 ---
-name: emergent-providers
+name: memory-providers
 description: Manage LLM provider credentials and browse available models in Emergent. Use when the user wants to configure API keys, set up Vertex AI, check which models are available, or review LLM usage and costs.
 metadata:
   author: emergent

@@ -21,8 +21,8 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/domain/provider"
-	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -127,7 +127,7 @@ type AgentExecutor struct {
 	skillRepo      *skills.Repository
 	embeddingsSvc  *embeddings.Service
 	provisioner    *sandbox.AutoProvisioner // nil if workspaces are disabled
-	wsEnabled      bool                       // cached feature flag
+	wsEnabled      bool                     // cached feature flag
 	sessionService session.Service
 	modelLimits    ModelLimitsLookup // nil if provider module is not registered
 	log            *slog.Logger
@@ -202,12 +202,23 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 
 	// Start OTel span now that we have the run ID
 	ctx, span := tracing.Start(ctx, "agent.run",
-		attribute.String("emergent.agent.id", ae.resolveAgentID(req)),
-		attribute.String("emergent.agent.run_id", run.ID),
-		attribute.String("emergent.agent.root_run_id", *req.RootRunID),
-		attribute.String("emergent.project.id", req.ProjectID),
+		attribute.String("memory.agent.id", ae.resolveAgentID(req)),
+		attribute.String("memory.agent.run_id", run.ID),
+		attribute.String("memory.agent.root_run_id", *req.RootRunID),
+		attribute.String("memory.project.id", req.ProjectID),
 	)
 	defer span.End()
+
+	// Persist trace_id and root_run_id back to the run row so the reverse link
+	// (run → trace, run → orchestration root) is queryable without OTEL.
+	if sc := span.SpanContext(); sc.IsValid() {
+		if err := ae.repo.UpdateTraceAndRootRun(ctx, run.ID, sc.TraceID().String(), *req.RootRunID); err != nil {
+			ae.log.Warn("failed to persist trace_id/root_run_id on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
 
 	ae.log.Info("executing agent",
 		slog.String("run_id", run.ID),
@@ -252,8 +263,8 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(
-			attribute.Int("emergent.agent.step_count", 0),
-			attribute.String("emergent.agent.run_status", string(RunStatusError)),
+			attribute.Int("memory.agent.step_count", 0),
+			attribute.String("memory.agent.run_status", string(RunStatusError)),
 		)
 		return &ExecuteResult{
 			RunID:    run.ID,
@@ -266,13 +277,13 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 
 	// Record final run outcome on the span
 	span.SetAttributes(
-		attribute.Int("emergent.agent.step_count", result.Steps),
-		attribute.String("emergent.agent.run_status", string(result.Status)),
+		attribute.Int("memory.agent.step_count", result.Steps),
+		attribute.String("memory.agent.run_status", string(result.Status)),
 	)
 	switch result.Status {
 	case RunStatusPaused:
 		span.AddEvent("agent.max_steps_reached", trace.WithAttributes(
-			attribute.Int("emergent.agent.step_count", result.Steps),
+			attribute.Int("memory.agent.step_count", result.Steps),
 		))
 		span.SetStatus(codes.Ok, "")
 	case RunStatusError:
@@ -316,12 +327,23 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 
 	// Start OTel span
 	ctx, span := tracing.Start(ctx, "agent.run",
-		attribute.String("emergent.agent.id", ae.resolveAgentID(req)),
-		attribute.String("emergent.agent.run_id", run.ID),
-		attribute.String("emergent.agent.root_run_id", *req.RootRunID),
-		attribute.String("emergent.project.id", req.ProjectID),
+		attribute.String("memory.agent.id", ae.resolveAgentID(req)),
+		attribute.String("memory.agent.run_id", run.ID),
+		attribute.String("memory.agent.root_run_id", *req.RootRunID),
+		attribute.String("memory.project.id", req.ProjectID),
 	)
 	defer span.End()
+
+	// Persist trace_id and root_run_id back to the run row so the reverse link
+	// (run → trace, run → orchestration root) is queryable without OTEL.
+	if sc := span.SpanContext(); sc.IsValid() {
+		if err := ae.repo.UpdateTraceAndRootRun(ctx, run.ID, sc.TraceID().String(), *req.RootRunID); err != nil {
+			ae.log.Warn("failed to persist trace_id/root_run_id on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
 
 	ae.log.Info("executing agent (async)",
 		slog.String("run_id", run.ID),
@@ -363,8 +385,8 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(
-			attribute.Int("emergent.agent.step_count", 0),
-			attribute.String("emergent.agent.run_status", string(RunStatusError)),
+			attribute.Int("memory.agent.step_count", 0),
+			attribute.String("memory.agent.run_status", string(RunStatusError)),
 		)
 		return &ExecuteResult{
 			RunID:    run.ID,
@@ -376,13 +398,13 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	}
 
 	span.SetAttributes(
-		attribute.Int("emergent.agent.step_count", result.Steps),
-		attribute.String("emergent.agent.run_status", string(result.Status)),
+		attribute.Int("memory.agent.step_count", result.Steps),
+		attribute.String("memory.agent.run_status", string(result.Status)),
 	)
 	switch result.Status {
 	case RunStatusPaused:
 		span.AddEvent("agent.max_steps_reached", trace.WithAttributes(
-			attribute.Int("emergent.agent.step_count", result.Steps),
+			attribute.Int("memory.agent.step_count", result.Steps),
 		))
 		span.SetStatus(codes.Ok, "")
 	case RunStatusError:
@@ -430,6 +452,16 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	// Establish root_run_id for resumed runs: inherit from caller or default to own ID.
 	if req.RootRunID == nil {
 		req.RootRunID = &newRun.ID
+	}
+
+	// Persist root_run_id on the resumed run row. trace_id is omitted here since
+	// Resume has no dedicated agent.run span — the caller's HTTP span context is
+	// not meaningful to store as the run's trace.
+	if err := ae.repo.UpdateTraceAndRootRun(ctx, newRun.ID, "", *req.RootRunID); err != nil {
+		ae.log.Warn("failed to persist root_run_id on resumed agent run",
+			slog.String("run_id", newRun.ID),
+			slog.String("error", err.Error()),
+		)
 	}
 
 	ae.log.Info("resuming agent",

@@ -399,7 +399,7 @@ func (wp *WarmPool) createWarmContainer(ctx context.Context) (*warmContainer, er
 	result, err := provider.Create(ctx, &CreateContainerRequest{
 		ContainerType: ContainerTypeAgentSandbox,
 		Labels: map[string]string{
-			"emergent.warm-pool": "true",
+			"memory.warm-pool": "true",
 		},
 	})
 	if err != nil {

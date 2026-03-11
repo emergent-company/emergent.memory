@@ -214,8 +214,8 @@ func (w *GraphRelationshipEmbeddingWorker) processBatch(ctx context.Context) err
 // processJob generates and stores the embedding for a single relationship job.
 func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *GraphRelationshipEmbeddingJob) error {
 	ctx, span := tracing.Start(ctx, "extraction.relationship_embedding",
-		attribute.String("emergent.job.id", job.ID),
-		attribute.String("emergent.relationship.id", job.RelationshipID),
+		attribute.String("memory.job.id", job.ID),
+		attribute.String("memory.relationship.id", job.RelationshipID),
 	)
 	defer span.End()
 
@@ -271,10 +271,10 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	if rel.ProjectID != "" {
 		ctx = auth.ContextWithProjectID(ctx, rel.ProjectID)
 		span.SetAttributes(
-			attribute.String("emergent.project.id", rel.ProjectID),
-			attribute.String("emergent.relationship.type", rel.Type),
-			attribute.String("emergent.relationship.src_name", rel.SrcName),
-			attribute.String("emergent.relationship.dst_name", rel.DstName),
+			attribute.String("memory.project.id", rel.ProjectID),
+			attribute.String("memory.relationship.type", rel.Type),
+			attribute.String("memory.relationship.src_name", rel.SrcName),
+			attribute.String("memory.relationship.dst_name", rel.DstName),
 		)
 	}
 
@@ -336,10 +336,10 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	totalDurationMs := time.Since(startTime).Milliseconds()
 
 	span.SetAttributes(
-		attribute.Int("emergent.embedding.text_length", len(text)),
-		attribute.Int("emergent.embedding.dims", len(result.Embedding)),
-		attribute.Int64("emergent.embedding.duration_ms", embeddingDurationMs),
-		attribute.Int64("emergent.total_duration_ms", totalDurationMs),
+		attribute.Int("memory.embedding.text_length", len(text)),
+		attribute.Int("memory.embedding.dims", len(result.Embedding)),
+		attribute.Int64("memory.embedding.duration_ms", embeddingDurationMs),
+		attribute.Int64("memory.total_duration_ms", totalDurationMs),
 	)
 
 	w.log.Debug("generated embedding for graph relationship",

@@ -1,5 +1,5 @@
 ---
-name: emergent-agents
+name: memory-agents
 description: Manage Emergent runtime agents and agent definitions — create, trigger, monitor runs, respond to questions, and manage agent configurations. Use when the user wants to run, inspect, or configure AI agents in an Emergent project.
 metadata:
   author: emergent
