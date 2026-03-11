@@ -79,11 +79,12 @@ tasks:
       - task: server:status
 
   cli:install:
-    desc: Build and install the memory CLI to ~/.local/bin/memory
+    desc: Build and install the memory CLI to ~/.memory/bin/memory
     dir: tools/cli
     cmds:
-      - go build -o ~/.local/bin/memory ./cmd/main.go
-      - echo "Installed memory CLI → ~/.local/bin/memory"
+      - mkdir -p ~/.memory/bin
+      - go build -o ~/.memory/bin/memory ./cmd/main.go
+      - echo "Installed memory CLI → ~/.memory/bin/memory"
 
   traces:list:
     desc: List recent traces from Tempo (memory traces list)

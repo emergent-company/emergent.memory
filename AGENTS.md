@@ -14,7 +14,7 @@ Each domain: `handler.go` (Echo routes) · `service.go` (business logic) · `sto
 
 **DB:** Postgres on port `5436` (not 5432) · schemas: `kb` (knowledge), `core` (users/orgs) · migrations in `apps/server/migrations/` via Goose
 
-**CLI:** source at `tools/cli/` · install with `task cli:install` → `~/.local/bin/memory` · defaults to remote `http://mcj-emergent:3002`; override with `--server http://localhost:3012`
+**CLI:** source at `tools/cli/` · install with `task cli:install` → `~/.memory/bin/memory` · defaults to remote `http://mcj-emergent:3002`; override with `--server http://localhost:3012`
 
 
 
@@ -24,7 +24,7 @@ task build          # build Go server binary
 task test           # unit tests
 task test:e2e       # API e2e tests
 task lint           # Go linter
-task cli:install    # build + install memory CLI → ~/.local/bin/memory
+task cli:install    # build + install memory CLI → ~/.memory/bin/memory
 
 # Frontend (/root/emergent.memory.ui)
 pnpm run lint
