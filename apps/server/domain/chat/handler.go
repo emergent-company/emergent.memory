@@ -1006,3 +1006,186 @@ func (h *Handler) QueryStream(c echo.Context) error {
 	sseWriter.Close()
 	return nil
 }
+
+// AskStreamRequest is the request body for the stateless CLI assistant endpoint.
+type AskStreamRequest struct {
+	Message string `json:"message"`
+}
+
+// AskStream handles POST /api/projects/:projectId/ask and POST /api/ask.
+// It finds (or lazily creates) the project's cli-assistant-agent and streams the response.
+// The agent is aware of the authentication/project context and adapts its behaviour accordingly:
+//   - No auth       → RequireAuth middleware blocks the request before reaching here
+//   - Auth, no project → streams a helpful SSE response explaining how to set up a project
+//   - Auth + project   → full agent execution with documentation + task tools
+//
+// The handler accepts OAuth tokens, emt_* project tokens, and standalone API keys.
+func (h *Handler) AskStream(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	// Resolve project ID: URL param > API token project > X-Project-ID header.
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+
+	var req AskStreamRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
+		return apperror.ErrBadRequest.WithMessage("message is required")
+	}
+
+	ctx := c.Request().Context()
+
+	// Inject project ID into context so credential resolver can locate org-level creds.
+	if auth.ProjectIDFromContext(ctx) == "" && projectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, projectID)
+	}
+
+	// Build context-awareness prefix that is prepended to the user message so the
+	// agent always knows the current auth/project state without needing a tool call.
+	contextPrefix := buildAskContextPrefix(user, projectID)
+	augmentedMessage := contextPrefix + message
+
+	// When there is no project context we cannot run the full agent (agent definitions
+	// and conversations are project-scoped in the DB). Stream a helpful static response
+	// instead so the user gets actionable guidance.
+	if projectID == "" {
+		sseWriter := sse.NewWriter(c.Response().Writer)
+		if err := sseWriter.Start(); err != nil {
+			return apperror.ErrInternal.WithMessage("failed to start SSE stream")
+		}
+		// Use a nil UUID as a placeholder conversation ID for the meta event.
+		if err := sseWriter.WriteData(sse.NewMetaEvent("00000000-0000-0000-0000-000000000000")); err != nil {
+			return nil
+		}
+		noProjectMsg := "I can see you're authenticated" +
+			func() string {
+				if user.Email != "" {
+					return " as **" + user.Email + "**"
+				}
+				return ""
+			}() +
+			", but no project context is active.\n\n" +
+			"To use the full assistant (including querying your graph, listing agents, etc.), " +
+			"I need to know which project to work with.\n\n" +
+			"**Set a default project:**\n" +
+			"```bash\n" +
+			"memory config set project_id <your-project-id>\n" +
+			"```\n\n" +
+			"**Or pass it inline:**\n" +
+			"```bash\n" +
+			"memory ask --project <project-id> \"" + message + "\"\n" +
+			"```\n\n" +
+			"**List your projects:**\n" +
+			"```bash\n" +
+			"memory projects list\n" +
+			"```"
+		sseWriter.WriteData(sse.NewTokenEvent(noProjectMsg))
+		sseWriter.WriteData(sse.NewDoneEvent())
+		sseWriter.Close()
+		return nil
+	}
+
+	// Probe the LLM provider before opening the SSE stream so callers get a proper
+	// HTTP error instead of a success status with an error buried in the stream.
+	if h.modelFactory != nil {
+		probeModelName := h.modelFactory.ModelName()
+		if probeModelName == "" {
+			probeModelName = "gemini-2.0-flash"
+		}
+		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
+		if probeErr != nil {
+			return apperror.New(http.StatusServiceUnavailable, "no_provider",
+				"No LLM provider configured for this project. "+
+					"Please configure a Google AI or Vertex AI credential in your project settings.")
+		}
+		if closer, ok := probeModel.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}
+
+	// Ensure the cli-assistant-agent exists for this project (idempotent, internal).
+	agentDef, err := h.agentRepo.EnsureCliAssistantAgent(ctx, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to ensure cli-assistant-agent", err)
+	}
+
+	agentDefUUID, err := uuid.Parse(agentDef.ID)
+	if err != nil {
+		return apperror.NewInternal("invalid cli-assistant-agent ID", err)
+	}
+
+	// Create a transient conversation for this ask (not persisted to user history).
+	title := message
+	if len(title) > 50 {
+		title = title[:50] + "..."
+	}
+	conv, err := h.svc.CreateConversation(ctx, projectID, user.ID, CreateConversationRequest{
+		Title:   title,
+		Message: augmentedMessage,
+	})
+	if err != nil {
+		return apperror.NewInternal("failed to create conversation", err)
+	}
+	conv.AgentDefinitionID = &agentDefUUID
+	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
+		h.log.Warn("failed to set agent_definition_id on ask conversation",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	// Start SSE stream.
+	sseWriter := sse.NewWriter(c.Response().Writer)
+	if err := sseWriter.Start(); err != nil {
+		return apperror.ErrInternal.WithMessage("failed to start SSE stream")
+	}
+
+	if err := sseWriter.WriteData(sse.NewMetaEvent(conv.ID.String())); err != nil {
+		return nil
+	}
+
+	h.streamAgentChat(ctx, conv, augmentedMessage, projectID, sseWriter)
+	sseWriter.WriteData(sse.NewDoneEvent())
+	sseWriter.Close()
+	return nil
+}
+
+// buildAskContextPrefix constructs a short context block prepended to the user's
+// message so the cli-assistant-agent is always aware of auth/project state.
+// The block is formatted as a system note rather than part of the question.
+func buildAskContextPrefix(user *auth.AuthUser, projectID string) string {
+	var sb strings.Builder
+	sb.WriteString("<context>\n")
+
+	if user == nil || user.ID == "" {
+		sb.WriteString("Authentication: NOT authenticated\n")
+	} else {
+		sb.WriteString("Authentication: authenticated\n")
+		if user.Email != "" {
+			sb.WriteString("User: " + user.Email + "\n")
+		}
+		if projectID != "" {
+			sb.WriteString("Project ID: " + projectID + "\n")
+		} else {
+			sb.WriteString("Project: none (no project context active)\n")
+		}
+		if user.APITokenProjectID != "" {
+			sb.WriteString("Auth method: project API token (emt_*)\n")
+		} else if user.Sub == "standalone" {
+			sb.WriteString("Auth method: standalone API key\n")
+		} else {
+			sb.WriteString("Auth method: OAuth\n")
+		}
+	}
+
+	sb.WriteString("</context>\n\n")
+	return sb.String()
+}

@@ -40,4 +40,21 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	queryGroup.Use(authMiddleware.RequireProjectScope())
 	queryGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 	queryGroup.POST("", h.QueryStream)
+
+	// Project-scoped ask endpoint — stateless CLI assistant.
+	// Uses the internal cli-assistant-agent; accepts OAuth, emt_* tokens, and API keys.
+	// The agent is context-aware: it adapts responses based on auth state and project availability.
+	askProjectGroup := e.Group("/api/projects/:projectId/ask")
+	askProjectGroup.Use(authMiddleware.RequireAuth())
+	askProjectGroup.Use(authMiddleware.RequireProjectScope())
+	askProjectGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
+	askProjectGroup.POST("", h.AskStream)
+
+	// User-level ask endpoint — no project context required.
+	// Useful for documentation questions and account-level tasks (e.g. "how do I configure a provider?").
+	// Still requires authentication so the agent can personalise responses and access account info.
+	askGroup := e.Group("/api/ask")
+	askGroup.Use(authMiddleware.RequireAuth())
+	askGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
+	askGroup.POST("", h.AskStream)
 }
