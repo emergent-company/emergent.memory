@@ -1,0 +1,2856 @@
+---
+name: memory-cli-reference
+description: Full Memory CLI command reference with all subcommands and flags. Use when you need exact command syntax, flag names, or usage examples for any `memory` CLI command.
+metadata:
+  author: emergent
+  version: "1.0"
+---
+
+This skill contains the complete `memory` CLI command reference, auto-generated from the binary.
+
+Use this when you need to look up:
+- Exact subcommand names (e.g. `memory agents get-run`, `memory provider configure-project`)
+- Available flags and their types for any command
+- Usage examples embedded in the help text
+- Which subcommands exist under a parent command
+
+# Memory CLI Reference
+
+Full command reference auto-generated from `memory --help`. Each section covers one command or subcommand with its synopsis, usage, and flags.
+
+---
+
+## memory
+
+CLI tool for Memory platform
+
+### Synopsis
+
+Command-line interface for the Memory knowledge base platform.
+
+Manage projects, documents, graph objects, AI agents, and MCP integrations.
+
+For self-hosted deployments, use 'memory server' to install and manage your server.
+
+### Options
+
+```
+      --compact                use compact output layout
+      --config string          config file (default is $HOME/.memory/config.yaml)
+      --debug                  enable debug logging
+  -h, --help                   help for memory
+      --no-color               disable colored output
+      --output string          output format (table, json, yaml, csv) (default "table")
+      --project string         project ID (overrides config and environment)
+      --project-token string   project token (overrides config and environment)
+      --server string          Memory server URL
+```
+
+## memory adk-sessions
+
+Manage and inspect ADK sessions
+
+### Options
+
+```
+  -h, --help             help for adk-sessions
+      --project string   Project name or ID
+```
+
+## memory adk-sessions get
+
+Get details and event history for a specific ADK session
+
+```
+memory adk-sessions get [id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory adk-sessions list
+
+List ADK sessions for the active project
+
+```
+memory adk-sessions list [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory agent-definitions
+
+Manage agent definitions
+
+### Synopsis
+
+Commands for managing agent definitions (system prompts, tools, model config, flow type, visibility)
+
+### Options
+
+```
+  -h, --help   help for agent-definitions
+```
+
+## memory agent-definitions create
+
+Create a new agent definition
+
+### Synopsis
+
+Create a new agent definition.
+
+Examples:
+  emergent-cli agent-definitions create --name "my-def" --system-prompt "You are a helpful agent"
+  emergent-cli defs create --name "extractor" --flow-type single --tools "search,graph_query" --visibility project
+
+```
+memory agent-definitions create [flags]
+```
+
+### Options
+
+```
+      --default-timeout int    Default timeout in seconds
+      --description string     Description
+      --flow-type string       Flow type (single, multi, coordinator)
+  -h, --help                   help for create
+      --is-default string      Set as default definition (true/false)
+      --max-steps int          Maximum steps per run
+      --model string           Model name (e.g., gemini-2.0-flash)
+      --name string            Definition name (required)
+      --system-prompt string   System prompt
+      --tools string           Comma-separated tool names
+      --visibility string      Visibility (external, project, internal)
+```
+
+## memory agent-definitions delete
+
+Delete an agent definition
+
+### Synopsis
+
+Delete an agent definition by ID
+
+```
+memory agent-definitions delete [id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+## memory agent-definitions get
+
+Get agent definition details
+
+### Synopsis
+
+Get details for a specific agent definition by ID
+
+```
+memory agent-definitions get [id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory agent-definitions list
+
+List all agent definitions
+
+### Synopsis
+
+List all agent definitions for the current project
+
+```
+memory agent-definitions list [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory agent-definitions update
+
+Update an agent definition
+
+### Synopsis
+
+Update an existing agent definition (partial update)
+
+```
+memory agent-definitions update [id] [flags]
+```
+
+### Options
+
+```
+      --default-timeout int    New default timeout
+      --description string     New description
+      --flow-type string       New flow type
+  -h, --help                   help for update
+      --is-default string      Set as default (true/false)
+      --max-steps int          New max steps
+      --model string           New model name
+      --name string            New name
+      --system-prompt string   New system prompt
+      --tools string           New comma-separated tool names
+      --visibility string      New visibility
+```
+
+## memory agents
+
+Manage runtime agents
+
+### Synopsis
+
+Commands for managing runtime agents (scheduling, triggers, execution state)
+
+### Options
+
+```
+  -h, --help             help for agents
+      --project string   Project name or ID (auto-detected from config/env if not specified)
+```
+
+## memory agents create
+
+Create a new agent
+
+### Synopsis
+
+Create a new runtime agent for the current project.
+
+Examples:
+  emergent-cli agents create --name "my-agent" --project <id>
+  emergent-cli agents create --name "cron-agent" --trigger-type schedule --cron "0 */5 * * * *"
+  emergent-cli agents create --name "reaction-agent" --trigger-type reaction --reaction-events created,updated --reaction-object-types document
+
+```
+memory agents create [flags]
+```
+
+### Options
+
+```
+      --cron string                    Cron schedule (e.g., '0 */5 * * * *')
+      --description string             Agent description
+      --enabled string                 Enable agent (true/false)
+      --execution-mode string          Execution mode
+  -h, --help                           help for create
+      --name string                    Agent name (required)
+      --prompt string                  Agent prompt
+      --reaction-events string         Comma-separated reaction event types (e.g., created,updated)
+      --reaction-object-types string   Comma-separated reaction object types (e.g., document,chunk)
+      --strategy-type string           Strategy type (e.g., graph_object_processor)
+      --trigger-type string            Trigger type (manual, schedule, reaction, webhook)
+```
+
+## memory agents delete
+
+Delete an agent
+
+### Synopsis
+
+Delete an agent by ID
+
+```
+memory agents delete [id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+## memory agents get-run
+
+Get details for a specific run
+
+### Synopsis
+
+Get full details (including token usage and cost) for an agent run by run ID
+
+```
+memory agents get-run [run-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get-run
+```
+
+## memory agents get
+
+Get agent details
+
+### Synopsis
+
+Get details for a specific agent by ID
+
+```
+memory agents get [id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory agents hooks
+
+Manage agent webhook hooks
+
+### Synopsis
+
+Commands for managing webhook hooks on agents (create, list, delete)
+
+### Options
+
+```
+  -h, --help   help for hooks
+```
+
+## memory agents hooks create
+
+Create a webhook hook
+
+### Synopsis
+
+Create a new webhook hook for an agent. The plaintext token is only shown once.
+
+Examples:
+  emergent-cli agents hooks create <agent-id> --label "CI/CD Pipeline"
+  emergent-cli agents hooks create <agent-id> --label "Staging" --rate-limit 30 --burst-size 5
+
+```
+memory agents hooks create [agent-id] [flags]
+```
+
+### Options
+
+```
+      --burst-size int   Burst size for rate limiting (0 = server default)
+  -h, --help             help for create
+      --label string     Hook label (required)
+      --rate-limit int   Rate limit in requests per minute (0 = server default)
+```
+
+## memory agents hooks delete
+
+Delete a webhook hook
+
+### Synopsis
+
+Delete a webhook hook from an agent
+
+```
+memory agents hooks delete [agent-id] [hook-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+## memory agents hooks list
+
+List webhook hooks
+
+### Synopsis
+
+List all webhook hooks configured for an agent
+
+```
+memory agents hooks list [agent-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory agents list
+
+List all agents
+
+### Synopsis
+
+List all agents for the current project
+
+```
+memory agents list [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory agents questions
+
+Manage agent questions
+
+### Synopsis
+
+Commands for listing and responding to agent questions
+
+### Options
+
+```
+  -h, --help   help for questions
+```
+
+## memory agents questions list-project
+
+List questions for a project
+
+### Synopsis
+
+List all questions for a project with optional status filter
+
+```
+memory agents questions list-project [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for list-project
+      --status string   Filter by status (pending, answered, cancelled, expired)
+```
+
+## memory agents questions list
+
+List questions for a run
+
+### Synopsis
+
+List all questions for a specific agent run
+
+```
+memory agents questions list [run-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory agents questions respond
+
+Respond to a question
+
+### Synopsis
+
+Respond to a pending agent question and resume the paused run
+
+```
+memory agents questions respond [question-id] [response] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for respond
+```
+
+## memory agents runs
+
+List agent runs
+
+### Synopsis
+
+List recent runs for an agent
+
+```
+memory agents runs [id] [flags]
+```
+
+### Options
+
+```
+  -h, --help        help for runs
+      --limit int   Maximum number of runs to return (default 10)
+```
+
+## memory agents trigger
+
+Trigger an agent run
+
+### Synopsis
+
+Trigger an immediate run of an agent
+
+```
+memory agents trigger [id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for trigger
+```
+
+## memory agents update
+
+Update an agent
+
+### Synopsis
+
+Update an existing agent (partial update)
+
+```
+memory agents update [id] [flags]
+```
+
+### Options
+
+```
+      --cron string             New cron schedule
+      --description string      New description
+      --enabled string          Enable/disable (true/false)
+      --execution-mode string   New execution mode
+  -h, --help                    help for update
+      --name string             New agent name
+      --prompt string           New agent prompt
+      --trigger-type string     New trigger type
+```
+
+## memory ask
+
+Ask the Memory CLI assistant a question or request a task
+
+### Synopsis
+
+Ask the Memory CLI assistant a question or request a task.
+
+The assistant is context-aware — it adapts its responses based on whether you
+are authenticated and whether a project is configured:
+
+  • Not authenticated     → documentation answers; explains how to log in
+  • Auth, no project      → account-level tasks + documentation answers
+  • Auth + project active → full task execution + documentation answers
+
+The assistant fetches live documentation from the Memory docs site to answer
+questions about the CLI, SDK, REST API, agents, and knowledge graph features.
+It can also execute tasks on your behalf (list agents, query the graph, etc.).
+
+Examples:
+  memory ask "what are native tools?"
+  memory ask "what agents do I have configured?"
+  memory ask "how do I create a schema?"
+  memory ask --project abc123 "list all agent runs from today"
+  memory ask "what commands are available for managing API tokens?"
+
+```
+memory ask <question> [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for ask
+      --json             Output result as JSON {question, response, tools, elapsedMs}
+      --project string   Project ID (optional — uses default project if configured)
+      --show-time        Show elapsed time at the end of the response
+      --show-tools       Show tool calls made by the assistant during reasoning
+```
+
+## memory blueprints
+
+Apply Blueprints (packs, agents, seed data) from a directory or GitHub URL
+
+### Synopsis
+
+Apply Blueprints — template packs, agent definitions, skills, and seed data — to the
+current project from a structured directory or a GitHub repository URL.
+
+The source directory (or GitHub repo root) may contain:
+  packs/             — one file per memory schema  (.json, .yaml, .yml)
+  agents/            — one file per agent definition (.json, .yaml, .yml)
+  skills/            — one subdirectory per skill, each containing a SKILL.md file
+  seed/objects/      — per-type JSONL files with graph objects to seed
+  seed/relationships/ — per-type JSONL files with graph relationships to seed
+
+Skills follow the agentskills.io open standard: each skill is a directory with a
+SKILL.md file containing YAML frontmatter (name, description) and Markdown content.
+
+By default the command is additive-only: existing resources are skipped.
+Use --upgrade to update resources that already exist.
+
+Use the dump subcommand to export an existing project's data as seed files:
+
+  memory blueprints dump <output-dir>
+
+Examples:
+
+  memory blueprints ./my-config
+  memory blueprints https://github.com/acme/memory-blueprints
+  memory blueprints https://github.com/acme/memory-blueprints#v1.2.0 --upgrade
+  memory blueprints ./my-config --dry-run
+  memory blueprints dump ./exported
+
+```
+memory blueprints <source> [flags]
+```
+
+### Options
+
+```
+      --dry-run          Preview actions without making any API calls
+  -h, --help             help for blueprints
+      --project string   Project ID or name (overrides config/env)
+      --token string     GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
+      --upgrade          Update existing resources instead of skipping them
+```
+
+## memory blueprints dump
+
+Export project graph objects and relationships as JSONL seed files
+
+### Synopsis
+
+Export the current project's graph objects and relationships as per-type JSONL
+seed files that can be re-applied with "memory blueprints <dir>".
+
+Output layout:
+  <output-dir>/seed/objects/<Type>.jsonl
+  <output-dir>/seed/relationships/<Type>.jsonl
+
+Files exceeding 50 MB are automatically split:
+  <Type>.001.jsonl, <Type>.002.jsonl, …
+
+Examples:
+
+  memory blueprints dump ./exported
+  memory blueprints dump ./exported --types Document,Person
+  memory blueprints dump ./exported --project my-project
+
+```
+memory blueprints dump <output-dir> [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for dump
+      --project string   Project ID or name (overrides config/env)
+      --types string     Comma-separated list of object/relationship types to export (default: all types)
+```
+
+## memory browse
+
+Interactive TUI for browsing projects and documents
+
+### Synopsis
+
+Launch an interactive terminal UI (TUI) for browsing projects, documents, and extractions.
+
+The TUI provides:
+- Tab-based navigation (Projects, Documents, Worker Stats, Template Packs, Query, Extractions, Traces)
+- Natural language query (Ctrl+Q) to ask questions about your project
+- Vim-style keybindings (j/k for up/down, Enter to select)
+- Search functionality (press / to search)
+- Help panel (press ? to toggle)
+
+Minimum terminal size: 80x24
+
+The Traces tab connects to the Grafana Tempo instance that runs alongside the configured
+server. The Tempo URL is derived automatically from the server URL (same host, port 3200).
+Override with --tempo-url or MEMORY_TEMPO_URL if Tempo runs elsewhere.
+
+```
+memory browse [flags]
+```
+
+### Options
+
+```
+  -h, --help               help for browse
+      --tempo-url string   Override Tempo URL (auto-derived from server URL by default)
+```
+
+## memory completion
+
+Generate shell completion scripts
+
+### Synopsis
+
+Generate shell completion scripts for Memory CLI.
+
+The completion script provides:
+- Command and subcommand completion
+- Flag name completion
+- Flag value completion for enum flags (e.g., --output)
+- Dynamic resource completion (project names, document IDs)
+
+To load completions:
+
+Bash:
+  $ source <(memory completion bash)
+  
+  # To load completions for each session, execute once:
+  # Linux:
+  $ memory completion bash > /etc/bash_completion.d/memory
+  # macOS:
+  $ memory completion bash > $(brew --prefix)/etc/bash_completion.d/memory
+
+Zsh:
+  # If shell completion is not already enabled in your environment,
+  # you will need to enable it. You can execute the following once:
+  $ echo "autoload -U compinit; compinit" >> ~/.zshrc
+
+  # To load completions for each session, execute once:
+  $ memory completion zsh > "${fpath[1]}/_memory"
+
+  # You will need to start a new shell for this setup to take effect.
+
+Fish:
+  $ memory completion fish | source
+
+  # To load completions for each session, execute once:
+  $ memory completion fish > ~/.config/fish/completions/memory.fish
+
+PowerShell:
+  PS> memory completion powershell | Out-String | Invoke-Expression
+
+  # To load completions for every new session, run:
+  PS> memory completion powershell > memory.ps1
+  # and source this file from your PowerShell profile.
+
+Notes:
+- Dynamic completions (project names, document IDs) are cached locally for 5 minutes
+- Cache location: ~/.memory/cache/
+- Completion timeout: 2 seconds (configurable via ~/.memory/config.yaml)
+
+```
+memory completion [bash|zsh|fish|powershell]
+```
+
+### Options
+
+```
+  -h, --help   help for completion
+```
+
+## memory config
+
+Manage CLI configuration
+
+### Synopsis
+
+Configure server URL, credentials, and other settings for the Memory CLI
+
+### Options
+
+```
+  -h, --help   help for config
+```
+
+## memory config set-credentials
+
+Set the email for authentication
+
+```
+memory config set-credentials [email] [flags]
+```
+
+### Options
+
+```
+      --config string   config file path
+  -h, --help            help for set-credentials
+```
+
+## memory config set-server
+
+Set the Memory server URL
+
+```
+memory config set-server [url] [flags]
+```
+
+### Options
+
+```
+      --config string   config file path
+  -h, --help            help for set-server
+```
+
+## memory config set
+
+Set a configuration value
+
+### Synopsis
+
+Set a configuration value by key.
+
+Supported keys:
+  server_url      Server URL (e.g., http://localhost:3002)
+  api_key         API key for authentication
+  email           Email for authentication
+  org_id          Organization ID
+  project_id      Project ID
+  google_api_key  Google API key (standalone installations only)
+
+For standalone installations, google_api_key is saved to .env.local.
+All other keys are saved to config.yaml.
+
+```
+memory config set <key> <value> [flags]
+```
+
+### Options
+
+```
+      --config string   config file path
+  -h, --help            help for set
+```
+
+## memory config show
+
+Display current configuration
+
+```
+memory config show [flags]
+```
+
+### Options
+
+```
+      --config string   config file path
+  -h, --help            help for show
+```
+
+## memory documents
+
+Manage project documents
+
+### Synopsis
+
+Commands for managing documents in the Memory platform
+
+### Options
+
+```
+  -h, --help             help for documents
+      --output string    Output format: table or json (default "table")
+      --project string   Project ID (overrides config/env)
+```
+
+## memory documents delete
+
+Delete a document
+
+### Synopsis
+
+Delete a document and all related entities (chunks, extractions, graph objects)
+
+```
+memory documents delete <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+## memory documents get
+
+Get a document by ID
+
+```
+memory documents get <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory documents list
+
+List documents
+
+### Synopsis
+
+List documents in the current project
+
+```
+memory documents list [flags]
+```
+
+### Options
+
+```
+  -h, --help        help for list
+      --limit int   Maximum number of results (default 50)
+```
+
+## memory documents upload
+
+Upload a file as a document
+
+### Synopsis
+
+Upload a local file and create a document record. Use --auto-extract to trigger extraction after upload.
+
+```
+memory documents upload <file> [flags]
+```
+
+### Options
+
+```
+      --auto-extract   Trigger extraction after upload
+  -h, --help           help for upload
+```
+
+## memory embeddings
+
+Manage embedding workers
+
+### Synopsis
+
+Inspect and control the embedding workers running in the Memory server.
+
+Useful for benchmarking: pause all workers before a bench run so embeddings
+don't interfere with write throughput, then resume afterwards.
+
+Examples:
+  memory embeddings status            Show current worker state
+  memory embeddings pause             Pause all embedding workers
+  memory embeddings resume            Resume all embedding workers
+  memory embeddings pause --server http://mcj-emergent:3002
+
+### Options
+
+```
+      --config-path string   path to Emergent config.yaml
+  -h, --help                 help for embeddings
+      --server string        Emergent server URL (overrides config)
+```
+
+## memory embeddings config
+
+Get or set embedding worker config (batch, concurrency, stale-minutes)
+
+### Synopsis
+
+Get or update embedding worker configuration at runtime without restarting.
+
+All flags are optional — omit a flag to leave that value unchanged.
+With no flags, shows the current configuration.
+
+Examples:
+  memory embeddings config                                  Show current config
+  memory embeddings config --batch 200 --concurrency 200   Max throughput
+  memory embeddings config --stale-minutes 60              Raise stale threshold
+  memory embeddings config --batch 10 --concurrency 10     Throttle down
+
+```
+memory embeddings config [flags]
+```
+
+### Options
+
+```
+      --batch int           Number of jobs to dequeue per poll (0 = no change)
+      --concurrency int     Number of jobs processed concurrently per poll (0 = no change)
+  -h, --help                help for config
+      --interval-ms int     Polling interval in milliseconds (0 = no change)
+      --stale-minutes int   Minutes before a processing job is marked stale (0 = no change)
+```
+
+## memory embeddings pause
+
+Pause all embedding workers (object, relationship, sweep)
+
+```
+memory embeddings pause [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for pause
+```
+
+## memory embeddings resume
+
+Resume all embedding workers
+
+```
+memory embeddings resume [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for resume
+```
+
+## memory embeddings status
+
+Show pause/run state of all embedding workers
+
+```
+memory embeddings status [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for status
+```
+
+## memory graph
+
+Manage graph objects and relationships
+
+### Synopsis
+
+Commands for managing graph objects and relationships in the Memory knowledge graph
+
+### Options
+
+```
+  -h, --help             help for graph
+      --output string    Output format: table or json (default "table")
+      --project string   Project ID (overrides config/env)
+```
+
+## memory graph objects
+
+Manage graph objects
+
+### Options
+
+```
+  -h, --help   help for objects
+```
+
+## memory graph objects create-batch
+
+Batch-create graph objects from a JSON file
+
+### Synopsis
+
+Create multiple graph objects in one API call.
+
+The input file must contain a JSON array of objects, each with:
+  type        (string, required)
+  name        (string, optional) — placed in properties.name
+  description (string, optional) — placed in properties.description
+  properties  (object, optional) — arbitrary additional properties
+
+Example objects.json:
+  [
+    {"type": "Person", "name": "Alice"},
+    {"type": "Person", "name": "Bob", "description": "A developer"},
+    {"type": "Project", "name": "Acme", "properties": {"status": "active"}}
+  ]
+
+Output (one line per object): <entity-id>  <type>  <name>
+
+```
+memory graph objects create-batch [flags]
+```
+
+### Options
+
+```
+      --file string   Path to JSON file containing array of objects (required)
+  -h, --help          help for create-batch
+```
+
+## memory graph objects create
+
+Create a graph object
+
+### Synopsis
+
+Create a new graph object with the given type and optional properties
+
+```
+memory graph objects create [flags]
+```
+
+### Options
+
+```
+      --description string   Set properties.description
+  -h, --help                 help for create
+      --name string          Set properties.name
+      --properties string    JSON properties object
+      --type string          Object type (required)
+```
+
+## memory graph objects delete
+
+Delete a graph object
+
+### Synopsis
+
+Soft-delete a graph object by ID
+
+```
+memory graph objects delete <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+## memory graph objects edges
+
+Show edges (relationships) for an object
+
+### Synopsis
+
+Show incoming and outgoing relationships for a graph object
+
+```
+memory graph objects edges <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for edges
+```
+
+## memory graph objects get
+
+Get a graph object by ID
+
+```
+memory graph objects get <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for get
+      --output string   Output format: table or json (default "table")
+```
+
+## memory graph objects list
+
+List graph objects
+
+### Synopsis
+
+List graph objects in the current project, optionally filtered by type
+
+```
+memory graph objects list [flags]
+```
+
+### Options
+
+```
+  -h, --help          help for list
+      --limit int     Maximum number of results (default 50)
+      --type string   Filter by object type
+```
+
+## memory graph objects update
+
+Update a graph object
+
+### Synopsis
+
+Update a graph object's properties or status (creates a new version)
+
+```
+memory graph objects update <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help                help for update
+      --properties string   JSON properties object to merge
+```
+
+## memory graph relationships
+
+Manage graph relationships
+
+### Options
+
+```
+  -h, --help   help for relationships
+```
+
+## memory graph relationships create-batch
+
+Batch-create graph relationships from a JSON file
+
+### Synopsis
+
+Create multiple graph relationships in one API call.
+
+The input file must contain a JSON array of objects, each with:
+  type  (string, required) — relationship type
+  from  (string, required) — source entity ID
+  to    (string, required) — destination entity ID
+  properties (object, optional)
+
+Example relationships.json:
+  [
+    {"type": "knows", "from": "<entity-id-1>", "to": "<entity-id-2>"},
+    {"type": "manages", "from": "<entity-id-3>", "to": "<entity-id-4>"}
+  ]
+
+Output (one line per relationship): <entity-id>  <type>  <from> -> <to>
+
+```
+memory graph relationships create-batch [flags]
+```
+
+### Options
+
+```
+      --file string   Path to JSON file containing array of relationships (required)
+  -h, --help          help for create-batch
+```
+
+## memory graph relationships create
+
+Create a relationship
+
+### Synopsis
+
+Create a directed relationship between two graph objects
+
+```
+memory graph relationships create [flags]
+```
+
+### Options
+
+```
+      --from string         Source object ID (required)
+  -h, --help                help for create
+      --properties string   JSON properties object
+      --to string           Destination object ID (required)
+      --type string         Relationship type (required)
+```
+
+## memory graph relationships delete
+
+Delete a relationship
+
+### Synopsis
+
+Soft-delete a graph relationship by ID
+
+```
+memory graph relationships delete <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+## memory graph relationships get
+
+Get a relationship by ID
+
+```
+memory graph relationships get <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory graph relationships list
+
+List relationships
+
+### Synopsis
+
+List relationships in the current project, optionally filtered by type, from, or to
+
+```
+memory graph relationships list [flags]
+```
+
+### Options
+
+```
+      --from string   Filter by source object ID
+  -h, --help          help for list
+      --limit int     Maximum number of results (default 50)
+      --to string     Filter by destination object ID
+      --type string   Filter by relationship type
+```
+
+## memory install-memory-skills
+
+Install Memory skills to .agents/skills/
+
+### Synopsis
+
+Install the built-in Memory skills from the embedded catalog into
+.agents/skills/ in the current directory (or the directory specified by --dir).
+
+Only skills with the "memory-" prefix are installed. This is the set of skills
+that teach AI agents how to use the Memory CLI and platform.
+
+By default the command skips skills that already exist. Use --force to
+overwrite existing skill directories.
+
+```
+memory install-memory-skills [flags]
+```
+
+### Options
+
+```
+      --dir string   target directory (default: .agents/skills relative to cwd)
+      --force        overwrite existing skill directories
+  -h, --help         help for install-memory-skills
+```
+
+## memory login
+
+Sign in or create a Memory account
+
+### Synopsis
+
+Authenticate using the OAuth Device Authorization flow.
+
+Opens your browser so you can sign in or create a new account.
+Your credentials are saved locally for future CLI use.
+
+If this server is running in standalone mode, use an API key instead:
+  memory config set-api-key <key>
+
+```
+memory login [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for login
+```
+
+## memory logout
+
+Clear stored credentials
+
+### Synopsis
+
+Remove locally stored OAuth credentials and log out from the Memory platform.
+
+```
+memory logout [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for logout
+```
+
+## memory mcp-guide
+
+Show MCP configuration for AI agents
+
+### Synopsis
+
+Print MCP server configuration snippets for connecting AI agents (Claude Desktop, Cursor, etc.) to Memory.
+
+```
+memory mcp-guide [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for mcp-guide
+```
+
+## memory mcp-servers
+
+Manage MCP servers
+
+### Synopsis
+
+Commands for managing Model Context Protocol (MCP) servers in the Memory platform
+
+### Options
+
+```
+  -h, --help   help for mcp-servers
+```
+
+## memory mcp-servers configure
+
+Configure a tool's runtime settings
+
+### Synopsis
+
+Set runtime configuration key/value pairs for a named MCP tool.
+
+The command searches all MCP servers in the current project to find the tool
+by name, then patches its config with the provided key=value pairs.
+
+Examples:
+  memory mcp-servers configure brave_web_search api_key=YOUR_KEY --project <id>
+  memory mcp-servers configure reddit_search client_id=YOUR_ID client_secret=YOUR_SECRET --project <id>
+
+```
+memory mcp-servers configure [tool-name] [key=value ...] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for configure
+```
+
+## memory mcp-servers create
+
+Create a new MCP server
+
+### Synopsis
+
+Register a new MCP server with the specified configuration.
+
+Examples:
+  memory mcp-servers create --name "my-server" --type sse --url "http://localhost:8080/sse"
+  memory mcp-servers create --name "stdio-server" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github"
+  memory mcp-servers create --name "my-server" --type http --url "http://localhost:8080/mcp" --env "API_KEY=abc123"
+
+```
+memory mcp-servers create [flags]
+```
+
+### Options
+
+```
+      --args string          Comma-separated arguments (for stdio type)
+      --command string       Command to run (for stdio type)
+      --description string   Server description
+      --enabled string       Enable server (true/false, default: true)
+      --env strings          Environment variables (KEY=VALUE format, can be specified multiple times)
+  -h, --help                 help for create
+      --name string          Server name (required)
+      --type string          Server type: 'sse', 'stdio', or 'http' (required)
+      --url string           Server URL (for sse/http types)
+```
+
+## memory mcp-servers delete
+
+Delete an MCP server
+
+### Synopsis
+
+Remove an MCP server and all its tools from your project configuration
+
+```
+memory mcp-servers delete [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+## memory mcp-servers get
+
+Get MCP server details
+
+### Synopsis
+
+Get detailed information about a specific MCP server, including its tools
+
+```
+memory mcp-servers get [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory mcp-servers inspect
+
+Inspect an MCP server
+
+### Synopsis
+
+Test connection to an MCP server and display its capabilities, tools, prompts, and resources
+
+```
+memory mcp-servers inspect [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for inspect
+```
+
+## memory mcp-servers list
+
+List all MCP servers
+
+### Synopsis
+
+List all MCP servers configured for the current project
+
+```
+memory mcp-servers list [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory mcp-servers sync
+
+Sync tools from an MCP server
+
+### Synopsis
+
+Connect to the MCP server and refresh the list of available tools
+
+```
+memory mcp-servers sync [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for sync
+```
+
+## memory mcp-servers tools
+
+List tools for an MCP server
+
+### Synopsis
+
+List all tools registered for a specific MCP server
+
+```
+memory mcp-servers tools [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for tools
+```
+
+## memory projects
+
+Manage projects
+
+### Synopsis
+
+Commands for managing projects in the Memory platform
+
+### Options
+
+```
+  -h, --help   help for projects
+```
+
+## memory projects create-token
+
+Create a new API token for a project
+
+### Synopsis
+
+Create a new project-scoped API token (emt_...) and print it.
+
+The token is also written to .env.local in the current directory as
+MEMORY_PROJECT_TOKEN so subsequent CLI commands pick it up automatically.
+
+Scopes default to: data:read data:write schema:read agents:read agents:write
+
+Example:
+  emergent projects create-token my-project --name onboard-token
+
+```
+memory projects create-token <project-name-or-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for create-token
+      --name string      Token name (default "cli-token")
+      --no-env           Do not write token to .env.local
+      --scopes strings   Token scopes (default: data:read,data:write,schema:read,agents:read,agents:write)
+```
+
+## memory projects create
+
+Create a new project
+
+### Synopsis
+
+Create a new project in the Memory platform
+
+```
+memory projects create [flags]
+```
+
+### Options
+
+```
+      --description string   Project description
+  -h, --help                 help for create
+      --name string          Project name (required)
+      --org-id string        Organization ID (auto-detected if not specified)
+```
+
+## memory projects delete
+
+Delete a project
+
+### Synopsis
+
+Permanently delete a project and all its data
+
+```
+memory projects delete <project-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+## memory projects get
+
+Get project details
+
+### Synopsis
+
+Get details for a specific project by name or ID
+
+```
+memory projects get [name-or-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help    help for get
+      --stats   Include project statistics (documents, objects, jobs, schemas)
+```
+
+## memory projects list
+
+List all projects
+
+### Synopsis
+
+List all projects you have access to
+
+```
+memory projects list [flags]
+```
+
+### Options
+
+```
+      --filter string   Filter results (e.g., 'name=MyProject,status=active')
+  -h, --help            help for list
+      --limit int       Maximum number of results (default from config)
+      --offset int      Number of results to skip
+      --search string   Search projects by name or description
+      --sort string     Sort results (e.g., 'name:asc' or 'updated_at:desc')
+      --stats           Include project statistics (documents, objects, jobs, schemas)
+```
+
+## memory projects set-info
+
+Set the project info document
+
+### Synopsis
+
+Set the project info document — a Markdown description of this project's
+purpose, goals, audience, and context. Agents and MCP clients read this via the
+get_project_info tool to orient themselves before working with the project's data.
+
+Provide content via --file (read a .md file) or --text (inline string).
+If no project is specified, the active project from config/env is used.
+
+Examples:
+  memory projects set-info --file README.md
+  memory projects set-info my-project --file docs/project-info.md
+  memory projects set-info --text "This project tracks internal HR documents."
+
+```
+memory projects set-info [project-name-or-id] [flags]
+```
+
+### Options
+
+```
+      --file string   Path to a Markdown file to use as project info
+  -h, --help          help for set-info
+      --text string   Inline project info text
+```
+
+## memory projects set-provider
+
+```
+memory projects set-provider <project-name-or-id> <provider> [flags]
+```
+
+### Options
+
+```
+      --api-key string            Google AI API key (for google)
+      --embedding-model string    Override embedding model for this project
+      --gcp-project string        GCP project ID (for google-vertex)
+      --generative-model string   Override generative model for this project
+  -h, --help                      help for set-provider
+      --location string           GCP region (for google-vertex)
+      --sa-file string            Path to Vertex AI service account JSON (for google-vertex)
+```
+
+## memory projects set
+
+Set active project
+
+### Synopsis
+
+Set the active project context by writing to .env.local
+
+```
+memory projects set [name-or-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for set
+```
+
+## memory provider
+
+Manage LLM provider credentials and models
+
+### Synopsis
+
+Commands for managing LLM provider credentials, model selections, and usage reporting.
+
+### Options
+
+```
+  -h, --help   help for provider
+```
+
+## memory provider configure-project
+
+Save project-level LLM provider credentials (overrides org config)
+
+### Synopsis
+
+Save project-specific credentials and model selections for the given provider.
+This overrides the organization's provider config for this project.
+
+Use --remove to remove the project-level override and fall back to the org config.
+
+Supported providers:
+  google   — Google AI (Gemini API); requires --api-key
+  google-vertex   — Google Cloud Vertex AI; requires --gcp-project, --location
+
+The project is read from --project or the MEMORY_PROJECT_ID environment variable.
+
+Examples:
+  emergent provider configure-project google --api-key AIzaSy...
+  emergent provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
+  emergent provider configure-project google --remove
+
+```
+memory provider configure-project <provider> [flags]
+```
+
+### Options
+
+```
+      --api-key string            API key (required for google)
+      --embedding-model string    Embedding model to use (auto-selected from catalog if omitted)
+      --gcp-project string        GCP project ID (required for google-vertex)
+      --generative-model string   Generative model to use (auto-selected from catalog if omitted)
+  -h, --help                      help for configure-project
+      --key-file string           Path to service account JSON key file (google-vertex)
+      --location string           GCP region, e.g. us-central1 (required for google-vertex)
+      --project string            Project ID (auto-detected from MEMORY_PROJECT_ID)
+      --remove                    Remove the project-level override and inherit org config
+```
+
+## memory provider configure
+
+Save LLM provider credentials and model selections for the organization
+
+### Synopsis
+
+Save LLM provider credentials (and optionally model selections) for the
+current organization. Runs a live credential test and syncs the model catalog
+on success. Models are auto-selected from the catalog if not specified.
+
+Supported providers:
+  google   — Google AI (Gemini API); requires --api-key
+  google-vertex   — Google Cloud Vertex AI; requires --gcp-project, --location
+                Optionally supply --key-file for a service account JSON key.
+
+Examples:
+  emergent provider configure google --api-key AIzaSy...
+  emergent provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
+  emergent provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004
+
+```
+memory provider configure <provider> [flags]
+```
+
+### Options
+
+```
+      --api-key string            API key (required for google)
+      --embedding-model string    Embedding model to use (auto-selected from catalog if omitted)
+      --gcp-project string        GCP project ID (required for google-vertex)
+      --generative-model string   Generative model to use (auto-selected from catalog if omitted)
+  -h, --help                      help for configure
+      --key-file string           Path to service account JSON key file (google-vertex)
+      --location string           GCP region, e.g. us-central1 (required for google-vertex)
+      --org-id string             Organization ID (auto-detected from config)
+```
+
+## memory provider models
+
+List available models from the provider catalog
+
+### Synopsis
+
+List models available in the cached model catalog.
+
+Without a provider argument, lists models for all configured providers.
+Pass a provider name to filter to a single provider.
+
+Use --type to filter by model type (embedding or generative).
+
+Examples:
+  emergent provider models
+  emergent provider models google-vertex
+  emergent provider models google --type generative
+
+```
+memory provider models [provider] [flags]
+```
+
+### Options
+
+```
+  -h, --help          help for models
+      --type string   Filter by model type: embedding or generative
+```
+
+## memory provider test
+
+Test LLM provider credentials with a live generate call
+
+### Synopsis
+
+Send a live "say hello" generate call to verify that provider credentials
+work end-to-end.
+
+Without a provider argument, tests all configured providers.
+Pass a provider name (google or google-vertex) to test a specific one.
+
+Use --project to test using the project-level credential hierarchy
+(project override → org) instead of org credentials only.
+
+Examples:
+  emergent provider test
+  emergent provider test google-vertex
+  emergent provider test google --project <id>
+
+```
+memory provider test [provider] [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for test
+      --org-id string    Organization ID (auto-detected from config)
+      --project string   Project ID for project-level credential resolution
+```
+
+## memory provider usage
+
+Show LLM usage and estimated cost
+
+### Synopsis
+
+Show aggregated LLM token usage and estimated cost.
+
+Without --project, reports org-wide usage across all projects.
+With --project, reports usage for that specific project.
+
+Examples:
+  emergent provider usage
+  emergent provider usage --project <id>
+  emergent provider usage --since 2024-01-01
+
+```
+memory provider usage [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for usage
+      --json             Output raw JSON
+      --org-id string    Organization ID (auto-detected from config)
+      --project string   Filter usage to a specific project ID
+      --since string     Start date for usage window (YYYY-MM-DD)
+      --until string     End date for usage window (YYYY-MM-DD)
+```
+
+## memory query
+
+Query a project using natural language
+
+### Synopsis
+
+Query a project using natural language.
+
+By default, uses the graph-query-agent — an AI agent that reasons over the knowledge
+graph using search, traversal, and entity tools. The agent is managed server-side;
+no agent ID is needed.
+
+Use --mode=search for direct hybrid search without AI reasoning.
+
+Examples:
+  emergent query "what are the main services and how do they relate?"
+  emergent query --mode=search "auth service"
+  emergent query --project abc123 "list all requirements"
+
+```
+memory query <question> [flags]
+```
+
+### Options
+
+```
+      --debug                    Include debug information in output
+      --fusion-strategy string   Fusion strategy: weighted, rrf, interleave, graph_first, text_first (search mode only) (default "weighted")
+  -h, --help                     help for query
+      --json                     Output results as JSON
+      --limit int                Maximum number of results to return (search mode only) (default 10)
+      --mode string              Query mode: agent (default, AI reasoning) or search (direct hybrid search) (default "agent")
+      --project string           Project ID to query (uses default project if not specified)
+      --result-types string      Types of results: graph, text, or both (search mode only) (default "both")
+      --show-scores              Show relevance scores for each result (search mode only)
+      --show-time                Show elapsed query time
+      --show-tools               Show tool calls made by the agent (agent mode only)
+```
+
+## memory schemas
+
+Manage schemas
+
+### Synopsis
+
+Commands for managing schemas in the Memory platform
+
+### Options
+
+```
+  -h, --help             help for schemas
+      --output string    Output format: table or json (default "table")
+      --project string   Project ID (overrides config/env)
+```
+
+## memory schemas compiled-types
+
+Show compiled object and relationship types for the current project
+
+### Synopsis
+
+Returns the merged set of object and relationship type definitions from all installed schemas
+
+```
+memory schemas compiled-types [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for compiled-types
+```
+
+## memory schemas create
+
+Create a schema from a JSON file
+
+### Synopsis
+
+Create a new schema by loading its definition from a JSON file
+
+```
+memory schemas create [flags]
+```
+
+### Options
+
+```
+      --file string   Path to schema JSON file (required)
+  -h, --help          help for create
+```
+
+## memory schemas delete
+
+Delete a schema from the registry
+
+### Synopsis
+
+Permanently delete a schema definition from the global registry
+
+```
+memory schemas delete <schema-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+## memory schemas get
+
+Get a schema by ID
+
+```
+memory schemas get <schema-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory schemas install
+
+Install a schema into the current project
+
+### Synopsis
+
+Install a schema into the current project.
+
+Two modes:
+  install <schema-id>         Install an existing schema from the registry by ID.
+  install --file schema.json  Create a new schema from a JSON file and install it in one step.
+
+```
+memory schemas install [<schema-id>] [flags]
+```
+
+### Options
+
+```
+      --dry-run       Preview what would be installed without making changes
+      --file string   Create schema from JSON file and install in one step
+  -h, --help          help for install
+      --merge         Additively merge incoming type schemas into existing registered types
+```
+
+## memory schemas installed
+
+List installed schemas
+
+### Synopsis
+
+List schemas currently installed on the current project
+
+```
+memory schemas installed [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for installed
+```
+
+## memory schemas list
+
+List available schemas
+
+### Synopsis
+
+List schemas available for the current project to install
+
+```
+memory schemas list [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory schemas uninstall
+
+Uninstall (remove) a schema assignment from the current project
+
+```
+memory schemas uninstall <assignment-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for uninstall
+```
+
+## memory server
+
+Manage a self-hosted Memory server
+
+### Synopsis
+
+Commands for installing, running, and maintaining a self-hosted Memory server.
+
+### Options
+
+```
+  -h, --help   help for server
+```
+
+## memory server ctl
+
+Control Memory services
+
+### Synopsis
+
+Control and manage Memory standalone services.
+
+This command provides service management capabilities similar to memory-ctl:
+  - start/stop/restart services
+  - view service status and logs
+  - check server health
+  - open shell in server container
+
+Examples:
+  memory ctl start
+  memory ctl stop
+  memory ctl status
+  memory ctl logs -f
+  memory ctl logs server
+  memory ctl health
+
+### Options
+
+```
+      --dir string   Installation directory (default "/root/.memory")
+  -h, --help         help for ctl
+```
+
+## memory server ctl health
+
+Check server health
+
+```
+memory server ctl health [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for health
+```
+
+## memory server ctl logs
+
+Show service logs
+
+### Synopsis
+
+Show logs from Memory services.
+
+Examples:
+  memory ctl logs           # Show recent logs from all services
+  memory ctl logs -f        # Follow logs in real-time
+  memory ctl logs server    # Show logs from server only
+  memory ctl logs -n 50     # Show last 50 lines
+
+```
+memory server ctl logs [service] [flags]
+```
+
+### Options
+
+```
+  -f, --follow      Follow log output
+  -h, --help        help for logs
+  -n, --lines int   Number of lines to show (default 100)
+```
+
+## memory server ctl pull
+
+Pull latest Docker images
+
+```
+memory server ctl pull [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for pull
+```
+
+## memory server ctl restart
+
+Restart all services
+
+```
+memory server ctl restart [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for restart
+```
+
+## memory server ctl shell
+
+Open shell in server container
+
+```
+memory server ctl shell [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for shell
+```
+
+## memory server ctl start
+
+Start all services
+
+```
+memory server ctl start [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for start
+```
+
+## memory server ctl status
+
+Show service status
+
+```
+memory server ctl status [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for status
+```
+
+## memory server ctl stop
+
+Stop all services
+
+```
+memory server ctl stop [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for stop
+```
+
+## memory server doctor
+
+Check system health and configuration
+
+### Synopsis
+
+Run diagnostic checks on your Memory CLI installation.
+
+This command verifies:
+- Configuration file exists and is valid
+- Server connectivity
+- Authentication status
+- API functionality
+- Docker container health (for standalone installations)
+
+Use --fix to automatically repair common issues.
+
+```
+memory server doctor [flags]
+```
+
+### Options
+
+```
+      --debug   Show detailed debug information (copyable for bug reports)
+      --fix     Attempt to automatically fix detected issues
+  -h, --help    help for doctor
+```
+
+## memory server install
+
+Install Memory standalone server
+
+### Synopsis
+
+Install Memory standalone server with all required components.
+
+This command will:
+  - Check Docker and Docker Compose are installed
+  - Create installation directory (~/.memory by default)
+  - Generate secure configuration (API keys, passwords)
+  - Write Docker Compose configuration
+  - Pull and start Docker containers
+  - Configure the CLI to connect to the local server
+
+Example:
+  memory install
+  memory install --port 8080 --google-api-key YOUR_KEY
+  memory install --dir /opt/memory --skip-start
+
+```
+memory server install [flags]
+```
+
+### Options
+
+```
+      --dir string              Installation directory (default "/root/.memory")
+      --force                   Overwrite existing installation
+      --google-api-key string   Google API key for embeddings
+  -h, --help                    help for install
+      --port int                Server port (default 3002)
+      --skip-start              Generate config but don't start services
+```
+
+## memory server uninstall
+
+Remove Memory installation
+
+### Synopsis
+
+Remove Memory standalone server installation.
+
+This command will:
+  - Stop and remove Docker containers
+  - Remove Docker volumes (unless --keep-data is specified)
+  - Remove installation directory
+
+Example:
+  memory uninstall
+  memory uninstall --keep-data
+  memory uninstall --force
+
+```
+memory server uninstall [flags]
+```
+
+### Options
+
+```
+      --dir string   Installation directory (default "/root/.memory")
+      --force        Skip confirmation prompt
+  -h, --help         help for uninstall
+      --keep-data    Keep Docker volumes (preserve data)
+```
+
+## memory server upgrade
+
+Upgrade the standalone server installation
+
+### Synopsis
+
+Upgrades the Memory standalone server installation.
+
+This will:
+  - Pull the latest Docker images
+  - Restart services with the new images
+  - Preserve all existing configuration and data
+
+Examples:
+  memory server upgrade
+  memory server upgrade --dir ~/.memory
+
+```
+memory server upgrade [flags]
+```
+
+### Options
+
+```
+      --dir string   Installation directory (default "/root/.memory")
+  -f, --force        Force upgrade without confirmation
+  -h, --help         help for upgrade
+```
+
+## memory set-token
+
+Save a static Bearer token as CLI credentials
+
+### Synopsis
+
+Save a static Bearer token to ~/.memory/credentials.json.
+
+Useful in CI, test harnesses, and dev environments where a token is
+pre-issued rather than obtained via the OAuth device flow.
+
+Example:
+  memory auth set-token e2e-test-user
+
+```
+memory set-token <bearer-token> [flags]
+```
+
+### Options
+
+```
+      --duration string   Token validity duration (default 24h, e.g. 48h, 168h)
+  -h, --help              help for set-token
+```
+
+## memory skills
+
+Manage skills
+
+### Synopsis
+
+Commands for managing skills — reusable Markdown workflow instructions for agents
+
+### Options
+
+```
+      --global           Use global scope (built-in skills only, superadmin)
+  -h, --help             help for skills
+      --json             Output as JSON
+      --org string       Organization ID (creates/lists org-scoped skill)
+      --project string   Project ID (creates/lists project-scoped skill)
+```
+
+## memory skills create
+
+Create a skill
+
+### Synopsis
+
+Create a new skill. Use --project to create a project-scoped skill, or omit for global.
+
+```
+memory skills create [flags]
+```
+
+### Options
+
+```
+      --content string        Skill content (Markdown)
+      --content-file string   Path to a file containing the skill content
+      --description string    Skill description (required)
+  -h, --help                  help for create
+      --name string           Skill name (slug, e.g. 'my-skill') (required)
+```
+
+## memory skills delete
+
+Delete a skill by ID
+
+```
+memory skills delete <id> [flags]
+```
+
+### Options
+
+```
+      --confirm   Skip confirmation prompt
+  -h, --help      help for delete
+```
+
+## memory skills get
+
+Get a skill by ID
+
+```
+memory skills get <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory skills import
+
+Import skills from a SKILL.md file or directory
+
+### Synopsis
+
+Import one or more skills and register them on the server so agents can use them.
+
+Import a single SKILL.md file:
+  memory skills import path/to/SKILL.md
+
+Import all skills found in a directory (scans one level deep for SKILL.md files):
+  memory skills import --from-dir .agents/skills/
+
+Auto-discover skills from well-known locations (.agents/skills/, ~/.claude/skills/, etc.):
+  memory skills import --discover
+
+Import all discovered skills without prompting:
+  memory skills import --discover --all
+
+Import built-in Memory skills from the embedded catalog:
+  memory skills import --builtin
+
+```
+memory skills import [path] [flags]
+```
+
+### Options
+
+```
+      --all               Import all found skills without prompting
+      --builtin           Import from the built-in embedded Memory skill catalog
+      --discover          Auto-discover skills from well-known locations (.agents/skills/, ~/.claude/skills/, etc.)
+      --from-dir string   Scan a directory for SKILL.md files and import all found skills
+  -h, --help              help for import
+```
+
+## memory skills list
+
+List skills installed on the server
+
+### Synopsis
+
+List skills stored on the server and available to agents. Use --project to include project-scoped skills, or --global for global only.
+
+```
+memory skills list [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory skills update
+
+Update a skill
+
+```
+memory skills update <id> [flags]
+```
+
+### Options
+
+```
+      --content string        New content (Markdown)
+      --content-file string   Path to file with new content
+      --description string    New description
+  -h, --help                  help for update
+```
+
+## memory status
+
+Show current authentication status
+
+### Synopsis
+
+Display information about the current authentication session including token expiry and user details.
+
+```
+memory status [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for status
+```
+
+## memory tokens
+
+Manage API tokens
+
+### Synopsis
+
+Commands for managing API tokens (emt_* keys). Tokens can be account-level (cross-project) or project-scoped.
+
+### Options
+
+```
+  -h, --help             help for tokens
+      --project string   Project name or ID (omit for account-level tokens)
+```
+
+## memory tokens create
+
+Create a new API token
+
+### Synopsis
+
+Create a new API token.
+
+Without --project, creates an account-level token usable across all projects.
+With --project, creates a project-scoped token.
+
+Valid scopes: schema:read, data:read, data:write, agents:read, agents:write, projects:read, projects:write
+
+```
+memory tokens create [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for create
+      --name string     Token name (required)
+      --scopes string   Comma-separated scopes (default: data:read). Valid: schema:read, data:read, data:write, agents:read, agents:write, projects:read, projects:write
+```
+
+## memory tokens get
+
+Get token details
+
+### Synopsis
+
+Get details for a specific API token by ID
+
+```
+memory tokens get [token-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory tokens list
+
+List API tokens
+
+### Synopsis
+
+List API tokens. Without --project, lists account-level tokens. With --project, lists tokens for that project.
+
+```
+memory tokens list [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory tokens revoke
+
+Revoke an API token
+
+### Synopsis
+
+Permanently revoke an API token, making it unusable. Without --project, revokes an account-level token.
+
+```
+memory tokens revoke [token-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for revoke
+```
+
+## memory traces
+
+Query traces
+
+### Synopsis
+
+Query OpenTelemetry traces via the server's built-in Tempo proxy.
+
+Traces are proxied through the configured --server endpoint so no direct
+access to Tempo is required.
+
+### Options
+
+```
+  -h, --help   help for traces
+```
+
+## memory traces get
+
+Fetch a full trace by ID
+
+### Synopsis
+
+Fetch and display a full trace as a span tree.
+
+```
+memory traces get <traceID> [flags]
+```
+
+### Options
+
+```
+      --debug   Show all spans including internal ADK bookkeeping spans (e.g. merged tool responses)
+  -h, --help    help for get
+```
+
+## memory traces list
+
+List recent traces
+
+### Synopsis
+
+List recent traces (default: last 1 hour, up to 20 results).
+
+```
+memory traces list [flags]
+```
+
+### Options
+
+```
+      --agent-runs     Filter to agent.run root spans and show token/cost columns
+  -h, --help           help for list
+      --limit int      Maximum number of traces to return (default 20)
+      --since string   Show traces from the last duration (e.g. 30m, 2h, 24h) (default "1h")
+```
+
+## memory traces search
+
+Search traces by criteria
+
+### Synopsis
+
+Search traces using TraceQL filters (service, route, min-duration).
+
+```
+memory traces search [flags]
+```
+
+### Options
+
+```
+  -h, --help                  help for search
+      --limit int             Maximum number of results (default 20)
+      --min-duration string   Filter by minimum duration (e.g. 200ms, 1s)
+      --route string          Filter by HTTP route (e.g. /api/kb/documents)
+      --service string        Filter by service name
+      --since string          Search within the last duration (e.g. 30m, 2h, 24h) (default "1h")
+```
+
+## memory upgrade
+
+Upgrade the Memory CLI binary
+
+### Synopsis
+
+Upgrades the Memory CLI binary to the latest release.
+
+Downloads the latest CLI binary from GitHub and replaces the current binary
+in-place. Does not touch a self-hosted server installation — use
+'memory server upgrade' to upgrade the server.
+
+Examples:
+  memory upgrade            # Upgrade the CLI binary
+  memory upgrade --force    # Upgrade even when running a dev build
+
+```
+memory upgrade [flags]
+```
+
+### Options
+
+```
+      --dir string   Installation directory (unused for CLI-only upgrade) (default "/root/.memory")
+  -f, --force        Force upgrade even for dev versions
+  -h, --help         help for upgrade
+```
+
+## memory version
+
+Show version information
+
+### Synopsis
+
+Display the version, commit hash, and build date of the Memory CLI
+
+```
+memory version [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for version
+```
+
