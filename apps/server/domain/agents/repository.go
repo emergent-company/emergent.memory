@@ -546,7 +546,8 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 
 // cliAssistantAgentSystemPrompt is the default system prompt for the cli-assistant-agent.
 const cliAssistantAgentSystemPrompt = `You are a CLI assistant for the Memory knowledge management platform.
-Your job is to help users accomplish tasks and answer questions about Memory — the CLI, SDK, REST API, agents, and knowledge graph features.
+Your job is to help users accomplish tasks using Memory — the CLI, SDK, REST API, agents, and knowledge graph features.
+You can answer questions AND take direct action: create, update, and delete entities, relationships, agents, schemas, MCP servers, and projects.
 
 ## Authentication & Context Awareness
 
@@ -566,7 +567,7 @@ Always adapt your response to the current context:
 
 Before responding, classify the user's request into one of:
 - **DOCS_QUESTION**: asking how something works, what commands exist, what a feature does, SDK/API usage
-- **TASK**: asking you to do something — list agents, query graph, check config, create objects, etc.
+- **TASK**: asking you to do something — list agents, query graph, create/update/delete objects, etc.
 - **MIXED**: a question that requires both live data (tools) and documentation context
 
 ## For DOCS_QUESTION
@@ -586,6 +587,16 @@ Always provide CLI command examples in code blocks. Use the real command names (
 Use the available tools to fulfill the request directly. Confirm what was done afterward.
 Never fabricate live state — always use tools to look up agents, objects, IDs, etc.
 
+### Write action guardrails
+
+Before executing any write tool (create, update, delete), briefly describe what you are about to do:
+  "I will create an agent definition named 'summarizer' with model gemini-2.0-flash."
+
+Before executing any **delete** operation, explicitly warn the user:
+  "Warning: this will permanently delete <resource name/id>. Proceeding."
+
+Do not ask for confirmation — state the intent and proceed immediately.
+
 ## For TASK (when NOT authenticated or no project)
 
 Do NOT attempt tool calls that require authentication or a project context.
@@ -602,6 +613,8 @@ Instead, explain clearly:
 
 // EnsureCliAssistantAgent returns the cli-assistant-agent for the project (or with an empty
 // project ID for the user-level /api/ask endpoint), creating it if it does not exist yet.
+// If it already exists, its Tools list and SystemPrompt are updated to reflect any changes
+// made to cliAssistantAgentSystemPrompt and the canonical tool whitelist.
 // Uses VisibilityInternal so it never appears in the public agent list.
 // Safe to call concurrently — a race between two callers results in one insert and one
 // subsequent read (FindDefinitionByName will find the winner's row).
@@ -610,13 +623,82 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to look up cli-assistant-agent: %w", err)
 	}
-	if existing != nil {
-		return existing, nil
-	}
 
 	temperature := float32(0.3)
 	maxSteps := 20
 	systemPrompt := cliAssistantAgentSystemPrompt
+
+	canonicalTools := []string{
+		// Web access for documentation
+		"webfetch",
+		// Project info
+		"get_project_info",
+		// Knowledge graph — read
+		"hybrid_search",
+		"query_entities",
+		"search_entities",
+		"semantic_search",
+		"find_similar",
+		"get_entity_edges",
+		"traverse_graph",
+		"list_entity_types",
+		"schema_version",
+		"list_relationships",
+		// Knowledge graph — write
+		"create_entity",
+		"update_entity",
+		"delete_entity",
+		"create_relationship",
+		"update_relationship",
+		"delete_relationship",
+		// Agent management — read
+		"list_agent_definitions",
+		"get_agent_definition",
+		"list_agents",
+		"get_agent",
+		"list_agent_runs",
+		"get_agent_run",
+		"get_agent_run_tool_calls",
+		"list_available_agents",
+		// Agent definition — write
+		"create_agent_definition",
+		"update_agent_definition",
+		"delete_agent_definition",
+		// Runtime agent — write
+		"create_agent",
+		"update_agent",
+		"delete_agent",
+		"trigger_agent",
+		// Schema registry — read
+		"list_schemas",
+		"get_schema",
+		"get_available_templates",
+		"get_installed_templates",
+		// Schema registry — write
+		"create_schema",
+		"delete_schema",
+		"assign_schema",
+		"update_template_assignment",
+		// MCP registry — write
+		"create_mcp_server",
+		"update_mcp_server",
+		"delete_mcp_server",
+		"install_mcp_from_registry",
+		"sync_mcp_server_tools",
+		// Project — write
+		"create_project",
+	}
+
+	if existing != nil {
+		// Update tools and system prompt to pick up any changes to the canonical definition.
+		existing.Tools = canonicalTools
+		existing.SystemPrompt = &systemPrompt
+		if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
+			// Non-fatal — return existing as-is rather than failing the ask call.
+			return existing, nil
+		}
+		return existing, nil
+	}
 
 	def := &AgentDefinition{
 		ProjectID:    projectID,
@@ -627,37 +709,7 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 			Name:        "gemini-2.0-flash",
 			Temperature: &temperature,
 		},
-		Tools: []string{
-			// Web access for documentation
-			"webfetch",
-			// Project info
-			"get_project_info",
-			// Knowledge graph — read
-			"hybrid_search",
-			"query_entities",
-			"search_entities",
-			"semantic_search",
-			"find_similar",
-			"get_entity_edges",
-			"traverse_graph",
-			"list_entity_types",
-			"schema_version",
-			"list_relationships",
-			// Agent management — read
-			"list_agent_definitions",
-			"get_agent_definition",
-			"list_agents",
-			"get_agent",
-			"list_agent_runs",
-			"get_agent_run",
-			"get_agent_run_tool_calls",
-			"list_available_agents",
-			// Schema registry — read
-			"list_schemas",
-			"get_schema",
-			"get_available_templates",
-			"get_installed_templates",
-		},
+		Tools:      canonicalTools,
 		FlowType:   FlowTypeSingle,
 		IsDefault:  false,
 		MaxSteps:   &maxSteps,
