@@ -8,7 +8,7 @@ import (
 func TestLoadEnvFiles_BasicParsing(t *testing.T) {
 	dir := t.TempDir()
 
-	os.WriteFile(dir+"/.env", []byte(`
+	_ = os.WriteFile(dir+"/.env", []byte(`
 # comment line
 BRAVE_SEARCH_API_KEY=
 REDDIT_CLIENT_ID=from_env_file
@@ -16,18 +16,18 @@ QUOTED_DOUBLE="double quoted"
 QUOTED_SINGLE='single quoted'
 WITH_COMMENT=value # inline comment
 `), 0644)
-	os.WriteFile(dir+"/.env.local", []byte(`
+	_ = os.WriteFile(dir+"/.env.local", []byte(`
 BRAVE_SEARCH_API_KEY=mybravekey123
 `), 0644)
 
 	vars := LoadEnvFiles(dir)
 
 	cases := []struct{ key, want string }{
-		{"BRAVE_SEARCH_API_KEY", "mybravekey123"},   // .env.local overrides .env
-		{"REDDIT_CLIENT_ID", "from_env_file"},        // from .env
-		{"QUOTED_DOUBLE", "double quoted"},            // quotes stripped
-		{"QUOTED_SINGLE", "single quoted"},            // quotes stripped
-		{"WITH_COMMENT", "value"},                     // inline comment stripped
+		{"BRAVE_SEARCH_API_KEY", "mybravekey123"}, // .env.local overrides .env
+		{"REDDIT_CLIENT_ID", "from_env_file"},     // from .env
+		{"QUOTED_DOUBLE", "double quoted"},        // quotes stripped
+		{"QUOTED_SINGLE", "single quoted"},        // quotes stripped
+		{"WITH_COMMENT", "value"},                 // inline comment stripped
 	}
 	for _, c := range cases {
 		got := vars[c.key]
