@@ -91,11 +91,27 @@ type runTokenUsage struct {
 	EstimatedCostUSD  float64 `json:"estimatedCostUsd"`
 }
 
+// traceRunInfo holds per-trace agent run metadata fetched from the agent-runs API.
+type traceRunInfo struct {
+	AgentID   string
+	AgentName string // resolved after fetching agents
+	Usage     *runTokenUsage
+}
+
 // agentRunDTOResponse represents the API response wrapping AgentRunDTO.
 type agentRunDTOResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
+		AgentID    string         `json:"agentId"`
 		TokenUsage *runTokenUsage `json:"tokenUsage"`
+	} `json:"data"`
+}
+
+// agentGetResponse is the API response for GET /api/projects/:pid/agents/:id.
+type agentGetResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Name string `json:"name"`
 	} `json:"data"`
 }
 
@@ -110,6 +126,7 @@ var (
 	tracesSearchMinDur  string
 	tracesSearchSince   string
 	tracesSearchLimit   int
+	tracesGetDebug      bool
 )
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -181,9 +198,9 @@ func tracesGet(cmd *cobra.Command, path string, params url.Values) ([]byte, erro
 	return body, nil
 }
 
-// fetchRunTokenUsage calls GET /api/projects/:projectId/agent-runs/:runId and
-// returns the tokenUsage field. Returns nil on any error (graceful degradation).
-func fetchRunTokenUsage(cmd *cobra.Command, projectID, runID string) *runTokenUsage {
+// fetchRunInfo calls GET /api/projects/:projectId/agent-runs/:runId and
+// returns token usage + agentId. Returns nil on any error (graceful degradation).
+func fetchRunInfo(cmd *cobra.Command, projectID, runID string) *traceRunInfo {
 	c, err := getClient(cmd)
 	if err != nil {
 		return nil
@@ -210,7 +227,53 @@ func fetchRunTokenUsage(cmd *cobra.Command, projectID, runID string) *runTokenUs
 	if err := json.Unmarshal(body, &dto); err != nil {
 		return nil
 	}
-	return dto.Data.TokenUsage
+	return &traceRunInfo{
+		AgentID: dto.Data.AgentID,
+		Usage:   dto.Data.TokenUsage,
+	}
+}
+
+// fetchRunTokenUsage is a compatibility shim used by runTracesGet.
+func fetchRunTokenUsage(cmd *cobra.Command, projectID, runID string) *runTokenUsage {
+	if info := fetchRunInfo(cmd, projectID, runID); info != nil {
+		return info.Usage
+	}
+	return nil
+}
+
+// fetchAgentName calls GET /api/projects/:pid/agents/:agentId and returns the name.
+// Returns "" on any error.
+func fetchAgentName(cmd *cobra.Command, projectID, agentID string) string {
+	if projectID == "" || agentID == "" {
+		return ""
+	}
+	c, err := getClient(cmd)
+	if err != nil {
+		return ""
+	}
+	u := strings.TrimRight(c.BaseURL(), "/") +
+		"/api/projects/" + projectID + "/agents/" + agentID
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := c.SDK.Do(context.Background(), req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+	var ag agentGetResponse
+	if err := json.Unmarshal(body, &ag); err != nil {
+		return ""
+	}
+	return ag.Data.Name
 }
 
 func parseSince(since string) time.Time {
@@ -245,39 +308,169 @@ func attrValue(attrs []tempoAttribute, key string) string {
 	return ""
 }
 
-// fetchRunTokenUsages concurrently fetches token usage for a set of traces that
-// have an agent run ID. Returns a map from traceID → *runTokenUsage.
-func fetchRunTokenUsages(cmd *cobra.Command, projectID string, traces []tempoTraceSearchResult) map[string]*runTokenUsage {
-	result := make(map[string]*runTokenUsage)
-	if projectID == "" {
-		return result
-	}
+// fetchRunInfos concurrently fetches agent run info (token usage + agentId) for
+// traces that have an agent run ID. Returns a map from traceID → *traceRunInfo.
+// Agent names are resolved in a second pass (one request per unique agentId).
+// projectID is used as a fallback; per-trace project ID is preferred from
+// the span.memory.project.id attribute (populated via TraceQL select()).
+func fetchRunInfos(cmd *cobra.Command, projectID string, traces []tempoTraceSearchResult) map[string]*traceRunInfo {
+	result := make(map[string]*traceRunInfo)
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
+	// agentRunAttr returns the value of memory.agent.run_id or emergent.agent.run_id (legacy).
+	agentRunAttr := func(attrs []tempoAttribute) string {
+		for _, a := range attrs {
+			if a.Key == "memory.agent.run_id" || a.Key == "emergent.agent.run_id" {
+				if a.Value.StringValue != "" {
+					return a.Value.StringValue
+				}
+			}
+		}
+		return ""
+	}
+	// projectAttr returns the value of memory.project.id or emergent.project.id (legacy).
+	projectAttr := func(attrs []tempoAttribute) string {
+		for _, a := range attrs {
+			if a.Key == "memory.project.id" || a.Key == "emergent.project.id" {
+				if a.Value.StringValue != "" {
+					return a.Value.StringValue
+				}
+			}
+		}
+		return ""
+	}
+
 	for _, t := range traces {
+		// Check top-level attributes map first (set by Tempo search metadata).
 		runID := t.Attributes["memory.agent.run_id"]
+		if runID == "" {
+			runID = t.Attributes["emergent.agent.run_id"]
+		}
+		if runID == "" {
+			// Also check spanSets for the attribute
+			for _, ss := range t.SpanSets {
+				for _, sp := range ss.Spans {
+					if v := agentRunAttr(sp.Attributes); v != "" {
+						runID = v
+					}
+				}
+			}
+			if t.SpanSet != nil {
+				for _, sp := range t.SpanSet.Spans {
+					if v := agentRunAttr(sp.Attributes); v != "" {
+						runID = v
+					}
+				}
+			}
+		}
 		if runID == "" {
 			continue
 		}
+
+		// Prefer per-trace project ID from attributes over global flag value
+		pid := t.Attributes["memory.project.id"]
+		if pid == "" {
+			pid = t.Attributes["emergent.project.id"]
+		}
+		if pid == "" {
+			// Check spanSets for project ID
+			for _, ss := range t.SpanSets {
+				for _, sp := range ss.Spans {
+					if v := projectAttr(sp.Attributes); v != "" {
+						pid = v
+					}
+				}
+			}
+			if t.SpanSet != nil {
+				for _, sp := range t.SpanSet.Spans {
+					if v := projectAttr(sp.Attributes); v != "" {
+						pid = v
+					}
+				}
+			}
+		}
+		if pid == "" {
+			pid = projectID
+		}
+		if pid == "" {
+			continue
+		}
+
 		traceID := t.TraceID
 		wg.Add(1)
-		go func(tid, rid string) {
+		go func(tid, rid, p string) {
 			defer wg.Done()
-			usage := fetchRunTokenUsage(cmd, projectID, rid)
-			if usage != nil {
+			info := fetchRunInfo(cmd, p, rid)
+			if info != nil {
 				mu.Lock()
-				result[tid] = usage
+				result[tid] = info
 				mu.Unlock()
 			}
-		}(traceID, runID)
+		}(traceID, runID, pid)
 	}
 	wg.Wait()
+
+	// Second pass: resolve unique agentIds → names
+	type agentKey struct{ pid, aid string }
+	// Also build a reverse map from traceID → projectID for per-trace lookups
+	traceProject := map[string]string{}
+	for _, t := range traces {
+		pid := t.Attributes["memory.project.id"]
+		if pid == "" {
+			pid = t.Attributes["emergent.project.id"]
+		}
+		if pid == "" {
+			pid = projectID
+		}
+		traceProject[t.TraceID] = pid
+	}
+	// Resolve agent names concurrently (one per unique agentId)
+	var nameMu sync.Mutex
+	var nameWg sync.WaitGroup
+	// Collect unique agentKeys including per-trace project
+	agentKeySet := map[agentKey]bool{}
+	for tid, info := range result {
+		if info.AgentID == "" {
+			continue
+		}
+		pid := traceProject[tid]
+		if pid == "" {
+			pid = projectID
+		}
+		agentKeySet[agentKey{pid: pid, aid: info.AgentID}] = true
+	}
+	resolvedNames := map[agentKey]string{}
+	for k := range agentKeySet {
+		k := k
+		nameWg.Add(1)
+		go func() {
+			defer nameWg.Done()
+			name := fetchAgentName(cmd, k.pid, k.aid)
+			nameMu.Lock()
+			resolvedNames[k] = name
+			nameMu.Unlock()
+		}()
+	}
+	nameWg.Wait()
+
+	// Apply resolved names back to result
+	for tid, info := range result {
+		if info.AgentID == "" {
+			continue
+		}
+		pid := traceProject[tid]
+		if pid == "" {
+			pid = projectID
+		}
+		info.AgentName = resolvedNames[agentKey{pid: pid, aid: info.AgentID}]
+	}
+
 	return result
 }
 
-func printTraceTable(traces []tempoTraceSearchResult, tokenUsages map[string]*runTokenUsage, showCosts bool) {
+func printTraceTable(traces []tempoTraceSearchResult, runInfos map[string]*traceRunInfo, showCosts bool) {
 	if len(traces) == 0 {
 		fmt.Println("No traces found.")
 		return
@@ -288,10 +481,10 @@ func printTraceTable(traces []tempoTraceSearchResult, tokenUsages map[string]*ru
 		return ni > nj
 	})
 	if showCosts {
-		fmt.Printf("%-32s  %-36s  %-8s  %-10s  %-14s  %-14s  %s\n",
-			"TRACE ID", "ROOT SPAN", "DURATION", "TIMESTAMP",
+		fmt.Printf("%-32s  %-20s  %-36s  %-8s  %-10s  %-14s  %-14s  %s\n",
+			"TRACE ID", "AGENT", "ROOT SPAN", "DURATION", "TIMESTAMP",
 			"INPUT TOKENS", "OUTPUT TOKENS", "EST. COST")
-		fmt.Println(strings.Repeat("─", 136))
+		fmt.Println(strings.Repeat("─", 162))
 	} else {
 		fmt.Printf("%-32s  %-36s  %-8s  %s\n",
 			"TRACE ID", "ROOT SPAN", "DURATION", "TIMESTAMP")
@@ -308,16 +501,27 @@ func printTraceTable(traces []tempoTraceSearchResult, tokenUsages map[string]*ru
 		}
 
 		if showCosts {
+			agentName := "—"
 			inputTok := "—"
 			outputTok := "—"
 			cost := "—"
-			if u, ok := tokenUsages[t.TraceID]; ok && u != nil {
-				inputTok = strconv.FormatInt(u.TotalInputTokens, 10)
-				outputTok = strconv.FormatInt(u.TotalOutputTokens, 10)
-				cost = fmt.Sprintf("$%.6f", u.EstimatedCostUSD)
+			if info, ok := runInfos[t.TraceID]; ok && info != nil {
+				if info.AgentName != "" {
+					agentName = info.AgentName
+				} else if info.AgentID != "" {
+					agentName = info.AgentID[:8] + "…"
+				}
+				if info.Usage != nil {
+					inputTok = strconv.FormatInt(info.Usage.TotalInputTokens, 10)
+					outputTok = strconv.FormatInt(info.Usage.TotalOutputTokens, 10)
+					cost = fmt.Sprintf("$%.6f", info.Usage.EstimatedCostUSD)
+				}
 			}
-			fmt.Printf("%-32s  %-36s  %-8s  %-10s  %-14s  %-14s  %s\n",
-				t.TraceID, root, formatDuration(t.DurationMs), ts,
+			if len(agentName) > 20 {
+				agentName = agentName[:19] + "…"
+			}
+			fmt.Printf("%-32s  %-20s  %-36s  %-8s  %-10s  %-14s  %-14s  %s\n",
+				t.TraceID, agentName, root, formatDuration(t.DurationMs), ts,
 				inputTok, outputTok, cost)
 		} else {
 			fmt.Printf("%-32s  %-36s  %-8s  %s\n",
@@ -338,16 +542,34 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 
 	projectID, _ := resolveProjectContext(cmd, "")
 
+	// Resolve project name for the header (best effort).
+	projectLabel := "all projects"
+	if projectID != "" {
+		c, err := getClient(cmd)
+		if err == nil {
+			if p, err := c.SDK.Projects.Get(context.Background(), projectID, nil); err == nil && p != nil && p.Name != "" {
+				projectLabel = "project: " + p.Name
+			} else {
+				projectLabel = "project: " + projectID[:min(8, len(projectID))] + "…"
+			}
+		}
+	}
+
 	var conditions []string
 	if projectID != "" {
-		conditions = append(conditions, fmt.Sprintf(`.memory.project.id = "%s"`, projectID))
+		conditions = append(conditions, fmt.Sprintf(`.memory.project.id = "%s" || .emergent.project.id = "%s"`, projectID, projectID))
 	}
 	if tracesListAgentRuns {
 		conditions = append(conditions, `rootName = "agent.run"`)
 	}
 	if len(conditions) > 0 {
 		q := "{ " + strings.Join(conditions, " && ") + " }"
+		if tracesListAgentRuns {
+			q += " | select(span.emergent.agent.run_id, span.emergent.project.id, span.memory.agent.run_id, span.memory.project.id)"
+		}
 		params.Set("q", q)
+	} else if tracesListAgentRuns {
+		params.Set("q", `{ rootName = "agent.run" } | select(span.emergent.agent.run_id, span.emergent.project.id, span.memory.agent.run_id, span.memory.project.id)`)
 	}
 
 	body, err := tracesGet(cmd, "/search", params)
@@ -359,13 +581,14 @@ func runTracesList(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("unexpected response: %w", err)
 	}
 
-	var tokenUsages map[string]*runTokenUsage
+	var runInfos map[string]*traceRunInfo
 	if tracesListAgentRuns {
-		tokenUsages = fetchRunTokenUsages(cmd, projectID, resp.Traces)
+		runInfos = fetchRunInfos(cmd, projectID, resp.Traces)
+		fmt.Printf("Agent run traces — %s (last %s, limit %d)\n\n", projectLabel, tracesListSince, tracesListLimit)
+	} else {
+		fmt.Printf("Recent traces — %s (last %s, limit %d)\n\n", projectLabel, tracesListSince, tracesListLimit)
 	}
-
-	fmt.Printf("Recent traces (last %s, limit %d)\n\n", tracesListSince, tracesListLimit)
-	printTraceTable(resp.Traces, tokenUsages, tracesListAgentRuns)
+	printTraceTable(resp.Traces, runInfos, tracesListAgentRuns)
 	return nil
 }
 
@@ -454,7 +677,7 @@ func runTracesGet(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Trace: %s\n\n", traceID)
 
-	// Walk all spans looking for memory.agent.run_id to print a token summary.
+	// Walk all spans looking for memory.agent.run_id / emergent.agent.run_id to print a token summary.
 	projectID, _ := resolveProjectContext(cmd, "")
 	if projectID != "" {
 		var runID string
@@ -463,6 +686,10 @@ func runTracesGet(cmd *cobra.Command, args []string) error {
 			for _, ss := range batch.ScopeSpans {
 				for _, s := range ss.Spans {
 					if v := attrValue(s.Attributes, "memory.agent.run_id"); v != "" {
+						runID = v
+						break outer
+					}
+					if v := attrValue(s.Attributes, "emergent.agent.run_id"); v != "" {
 						runID = v
 						break outer
 					}
@@ -480,6 +707,12 @@ func runTracesGet(cmd *cobra.Command, args []string) error {
 	var printNode func(n *spanNode, indent int)
 	printNode = func(n *spanNode, indent int) {
 		s := n.span
+
+		// Filter out ADK-internal "(merged)" bookkeeping spans unless --debug is set.
+		if !tracesGetDebug && strings.Contains(s.Name, "(merged)") {
+			return
+		}
+
 		startNs, _ := strconv.ParseInt(s.StartTimeUnixNano, 10, 64)
 		endNs, _ := strconv.ParseInt(s.EndTimeUnixNano, 10, 64)
 		durMs := float64(endNs-startNs) / 1e6
@@ -494,7 +727,7 @@ func runTracesGet(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s%s %s  [%s]\n", prefix, statusIcon, s.Name, formatDuration(durMs))
 
 		// Print key HTTP attributes
-		for _, key := range []string{"http.method", "http.route", "http.status_code", "http.url", "db.statement", "error", "memory.agent.run_id"} {
+		for _, key := range []string{"http.method", "http.route", "http.status_code", "http.url", "db.statement", "error", "memory.agent.run_id", "emergent.agent.run_id"} {
 			if v := attrValue(s.Attributes, key); v != "" {
 				if len(v) > 80 {
 					v = v[:79] + "…"
@@ -528,6 +761,9 @@ func init() {
 	tracesSearchCmd.Flags().StringVar(&tracesSearchMinDur, "min-duration", "", "Filter by minimum duration (e.g. 200ms, 1s)")
 	tracesSearchCmd.Flags().StringVar(&tracesSearchSince, "since", "1h", "Search within the last duration (e.g. 30m, 2h, 24h)")
 	tracesSearchCmd.Flags().IntVar(&tracesSearchLimit, "limit", 20, "Maximum number of results")
+
+	// get flags
+	tracesGetCmd.Flags().BoolVar(&tracesGetDebug, "debug", false, "Show all spans including internal ADK bookkeeping spans (e.g. merged tool responses)")
 
 	tracesCmd.AddCommand(tracesListCmd)
 	tracesCmd.AddCommand(tracesSearchCmd)
