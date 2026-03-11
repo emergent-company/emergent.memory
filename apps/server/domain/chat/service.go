@@ -61,9 +61,13 @@ func (s *Service) GetConversationWithMessages(ctx context.Context, projectID str
 
 // CreateConversation creates a new conversation with an initial message
 func (s *Service) CreateConversation(ctx context.Context, projectID, ownerUserID string, req CreateConversationRequest) (*Conversation, error) {
-	projectUUID, err := uuid.Parse(projectID)
-	if err != nil {
-		return nil, apperror.New(400, "invalid-project-id", "Invalid project ID format")
+	var projectUUIDPtr *uuid.UUID
+	if projectID != "" {
+		parsed, err := uuid.Parse(projectID)
+		if err != nil {
+			return nil, apperror.New(400, "invalid-project-id", "Invalid project ID format")
+		}
+		projectUUIDPtr = &parsed
 	}
 
 	// Parse canonical ID if provided
@@ -91,7 +95,7 @@ func (s *Service) CreateConversation(ctx context.Context, projectID, ownerUserID
 		Title:       req.Title,
 		OwnerUserID: &ownerUserID,
 		IsPrivate:   true,
-		ProjectID:   &projectUUID,
+		ProjectID:   projectUUIDPtr,
 		CanonicalID: canonicalID,
 		CreatedAt:   now,
 		UpdatedAt:   now,

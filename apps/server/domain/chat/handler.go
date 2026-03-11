@@ -1053,41 +1053,29 @@ func (h *Handler) AskStream(c echo.Context) error {
 	contextPrefix := buildAskContextPrefix(user, projectID)
 	augmentedMessage := contextPrefix + message
 
-	// When there is no project context we cannot run the full agent (agent definitions
-	// and conversations are project-scoped in the DB). Stream a helpful static response
-	// instead so the user gets actionable guidance.
-	if projectID == "" {
+	// When there is no project context, use the user's org's first project as infrastructure
+	// (for agent/conversation DB rows which require a valid project FK), while still telling
+	// the agent via the context prefix that no project is selected.
+	// This allows global tools (list_traces, create_project, etc.) to work without a project.
+	agentProjectID := projectID
+	if agentProjectID == "" {
+		// Look up infrastructure project (scoped to org if known, otherwise first available).
+		if infraProject, err2 := h.agentRepo.GetFirstProjectIDByOrgID(ctx, user.OrgID); err2 == nil && infraProject != "" {
+			agentProjectID = infraProject
+			// Inject the infra project into context for LLM provider resolution.
+			ctx = auth.ContextWithProjectID(ctx, agentProjectID)
+		}
+	}
+	if agentProjectID == "" {
+		// No project available at all — fall back to a helpful static message.
 		sseWriter := sse.NewWriter(c.Response().Writer)
 		if err := sseWriter.Start(); err != nil {
 			return apperror.ErrInternal.WithMessage("failed to start SSE stream")
 		}
-		// Use a nil UUID as a placeholder conversation ID for the meta event.
 		if err := sseWriter.WriteData(sse.NewMetaEvent("00000000-0000-0000-0000-000000000000")); err != nil {
 			return nil
 		}
-		noProjectMsg := "I can see you're authenticated" +
-			func() string {
-				if user.Email != "" {
-					return " as **" + user.Email + "**"
-				}
-				return ""
-			}() +
-			", but no project context is active.\n\n" +
-			"To use the full assistant (including querying your graph, listing agents, etc.), " +
-			"I need to know which project to work with.\n\n" +
-			"**Set a default project:**\n" +
-			"```bash\n" +
-			"memory config set project_id <your-project-id>\n" +
-			"```\n\n" +
-			"**Or pass it inline:**\n" +
-			"```bash\n" +
-			"memory ask --project <project-id> \"" + message + "\"\n" +
-			"```\n\n" +
-			"**List your projects:**\n" +
-			"```bash\n" +
-			"memory projects list\n" +
-			"```"
-		sseWriter.WriteData(sse.NewTokenEvent(noProjectMsg))
+		sseWriter.WriteData(sse.NewTokenEvent("No projects found in your account. Create one first:\n\n```bash\nmemory projects create --name \"My Project\"\n```"))
 		sseWriter.WriteData(sse.NewDoneEvent())
 		sseWriter.Close()
 		return nil
@@ -1112,7 +1100,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 	}
 
 	// Ensure the cli-assistant-agent exists for this project (idempotent, internal).
-	agentDef, err := h.agentRepo.EnsureCliAssistantAgent(ctx, projectID)
+	agentDef, err := h.agentRepo.EnsureCliAssistantAgent(ctx, agentProjectID)
 	if err != nil {
 		return apperror.NewInternal("failed to ensure cli-assistant-agent", err)
 	}
@@ -1123,6 +1111,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 	}
 
 	// Create a transient conversation for this ask (not persisted to user history).
+	// Pass the original projectID (may be "") — CreateConversation handles "" as NULL project.
 	title := message
 	if len(title) > 50 {
 		title = title[:50] + "..."
@@ -1152,7 +1141,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 		return nil
 	}
 
-	h.streamAgentChat(ctx, conv, augmentedMessage, projectID, sseWriter)
+	h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, sseWriter)
 	sseWriter.WriteData(sse.NewDoneEvent())
 	sseWriter.Close()
 	return nil
