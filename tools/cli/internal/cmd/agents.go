@@ -102,6 +102,12 @@ var (
 )
 
 func runListAgents(cmd *cobra.Command, args []string) error {
+	// Resolve project first — this triggers the interactive picker when no
+	// project is configured and the terminal is interactive.
+	if _, err := resolveProjectContext(cmd, agentProjectID); err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
