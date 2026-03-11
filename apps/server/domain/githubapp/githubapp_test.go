@@ -179,14 +179,14 @@ func TestGitHubAppConfig_IsInstalled(t *testing.T) {
 
 func TestBotCommitIdentity(t *testing.T) {
 	name, email := BotCommitIdentity(12345)
-	assert.Equal(t, "emergent-app[bot]", name)
-	assert.Equal(t, "12345+emergent-app[bot]@users.noreply.github.com", email)
+	assert.Equal(t, "memory-app[bot]", name)
+	assert.Equal(t, "12345+memory-app[bot]@users.noreply.github.com", email)
 }
 
 func TestDefaultCommitIdentity(t *testing.T) {
 	name, email := DefaultCommitIdentity()
-	assert.Equal(t, "Emergent Agent", name)
-	assert.Equal(t, "agent@emergent.local", email)
+	assert.Equal(t, "Memory Agent", name)
+	assert.Equal(t, "agent@memory.local", email)
 }
 
 // --- Manifest URL Tests ---
@@ -197,7 +197,7 @@ func TestGenerateManifestURL(t *testing.T) {
 	url, err := svc.GenerateManifestURL("https://example.com/callback")
 	require.NoError(t, err)
 	assert.Contains(t, url, "https://github.com/settings/apps/new?manifest=")
-	assert.Contains(t, url, "Emergent")
+	assert.Contains(t, url, "Memory")
 	assert.Contains(t, url, "contents")
 }
 

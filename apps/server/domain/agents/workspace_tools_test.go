@@ -10,76 +10,76 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/emergent-company/emergent.memory/domain/workspace"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
 )
 
 // --- Mock Provider ---
 
-// testProvider implements workspace.Provider for testing workspace tools.
+// testProvider implements sandbox.Provider for testing workspace tools.
 type testProvider struct {
 	// Configurable responses
-	execResult *workspace.ExecResult
+	execResult *sandbox.ExecResult
 	execErr    error
-	readResult *workspace.FileReadResult
+	readResult *sandbox.FileReadResult
 	readErr    error
 	writeErr   error
-	listResult *workspace.FileListResult
+	listResult *sandbox.FileListResult
 	listErr    error
 
 	// Captured calls for verification
-	lastExecReq   *workspace.ExecRequest
-	lastReadReq   *workspace.FileReadRequest
-	lastWriteReq  *workspace.FileWriteRequest
-	lastListReq   *workspace.FileListRequest
+	lastExecReq   *sandbox.ExecRequest
+	lastReadReq   *sandbox.FileReadRequest
+	lastWriteReq  *sandbox.FileWriteRequest
+	lastListReq   *sandbox.FileListRequest
 	execCallCount int
 }
 
 func newTestProvider() *testProvider {
 	return &testProvider{
-		execResult: &workspace.ExecResult{ExitCode: 0, Stdout: "", Stderr: ""},
-		readResult: &workspace.FileReadResult{Content: "hello\n", TotalLines: 1},
-		listResult: &workspace.FileListResult{Files: nil},
+		execResult: &sandbox.ExecResult{ExitCode: 0, Stdout: "", Stderr: ""},
+		readResult: &sandbox.FileReadResult{Content: "hello\n", TotalLines: 1},
+		listResult: &sandbox.FileListResult{Files: nil},
 	}
 }
 
-func (p *testProvider) Create(_ context.Context, _ *workspace.CreateContainerRequest) (*workspace.CreateContainerResult, error) {
-	return &workspace.CreateContainerResult{ProviderID: "test-123"}, nil
+func (p *testProvider) Create(_ context.Context, _ *sandbox.CreateContainerRequest) (*sandbox.CreateContainerResult, error) {
+	return &sandbox.CreateContainerResult{ProviderID: "test-123"}, nil
 }
 func (p *testProvider) Destroy(_ context.Context, _ string) error { return nil }
 func (p *testProvider) Stop(_ context.Context, _ string) error    { return nil }
 func (p *testProvider) Resume(_ context.Context, _ string) error  { return nil }
-func (p *testProvider) Exec(_ context.Context, _ string, req *workspace.ExecRequest) (*workspace.ExecResult, error) {
+func (p *testProvider) Exec(_ context.Context, _ string, req *sandbox.ExecRequest) (*sandbox.ExecResult, error) {
 	p.lastExecReq = req
 	p.execCallCount++
 	return p.execResult, p.execErr
 }
-func (p *testProvider) ReadFile(_ context.Context, _ string, req *workspace.FileReadRequest) (*workspace.FileReadResult, error) {
+func (p *testProvider) ReadFile(_ context.Context, _ string, req *sandbox.FileReadRequest) (*sandbox.FileReadResult, error) {
 	p.lastReadReq = req
 	return p.readResult, p.readErr
 }
-func (p *testProvider) WriteFile(_ context.Context, _ string, req *workspace.FileWriteRequest) error {
+func (p *testProvider) WriteFile(_ context.Context, _ string, req *sandbox.FileWriteRequest) error {
 	p.lastWriteReq = req
 	return p.writeErr
 }
-func (p *testProvider) ListFiles(_ context.Context, _ string, req *workspace.FileListRequest) (*workspace.FileListResult, error) {
+func (p *testProvider) ListFiles(_ context.Context, _ string, req *sandbox.FileListRequest) (*sandbox.FileListResult, error) {
 	p.lastListReq = req
 	return p.listResult, p.listErr
 }
-func (p *testProvider) Health(_ context.Context) (*workspace.HealthStatus, error) {
-	return &workspace.HealthStatus{Healthy: true}, nil
+func (p *testProvider) Health(_ context.Context) (*sandbox.HealthStatus, error) {
+	return &sandbox.HealthStatus{Healthy: true}, nil
 }
 func (p *testProvider) Snapshot(_ context.Context, _ string) (string, error) {
-	return "", workspace.ErrSnapshotNotSupported
+	return "", sandbox.ErrSnapshotNotSupported
 }
-func (p *testProvider) CreateFromSnapshot(_ context.Context, _ string, _ *workspace.CreateContainerRequest) (*workspace.CreateContainerResult, error) {
-	return nil, workspace.ErrSnapshotNotSupported
+func (p *testProvider) CreateFromSnapshot(_ context.Context, _ string, _ *sandbox.CreateContainerRequest) (*sandbox.CreateContainerResult, error) {
+	return nil, sandbox.ErrSnapshotNotSupported
 }
-func (p *testProvider) Capabilities() *workspace.ProviderCapabilities {
-	return &workspace.ProviderCapabilities{Name: "test", ProviderType: workspace.ProviderGVisor}
+func (p *testProvider) Capabilities() *sandbox.ProviderCapabilities {
+	return &sandbox.ProviderCapabilities{Name: "test", ProviderType: sandbox.ProviderGVisor}
 }
 
 // Verify interface compliance
-var _ workspace.Provider = (*testProvider)(nil)
+var _ sandbox.Provider = (*testProvider)(nil)
 
 func testAgentLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -180,7 +180,7 @@ func TestBuildWorkspaceTools_AllToolsBuilt(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tools, 7)
 
-	// Verify tool names in deterministic order (matches workspace.ValidToolNames)
+	// Verify tool names in deterministic order (matches sandbox.ValidToolNames)
 	expectedNames := []string{
 		"workspace_bash",
 		"workspace_read",
@@ -197,7 +197,7 @@ func TestBuildWorkspaceTools_AllToolsBuilt(t *testing.T) {
 
 func TestBuildWorkspaceTools_FilteredByConfig(t *testing.T) {
 	provider := newTestProvider()
-	cfg := &workspace.AgentWorkspaceConfig{
+	cfg := &sandbox.AgentSandboxConfig{
 		Enabled: true,
 		Tools:   []string{"bash", "read", "write"}, // Only allow 3 tools
 	}
@@ -220,7 +220,7 @@ func TestBuildWorkspaceTools_FilteredByConfig(t *testing.T) {
 
 func TestBuildWorkspaceTools_SingleTool(t *testing.T) {
 	provider := newTestProvider()
-	cfg := &workspace.AgentWorkspaceConfig{
+	cfg := &sandbox.AgentSandboxConfig{
 		Enabled: true,
 		Tools:   []string{"git"},
 	}
@@ -240,7 +240,7 @@ func TestBuildWorkspaceTools_SingleTool(t *testing.T) {
 
 func TestBuildWorkspaceTools_EmptyToolsListAllowsAll(t *testing.T) {
 	provider := newTestProvider()
-	cfg := &workspace.AgentWorkspaceConfig{
+	cfg := &sandbox.AgentSandboxConfig{
 		Enabled: true,
 		Tools:   []string{}, // Empty = all allowed
 	}
@@ -328,7 +328,7 @@ func TestAugmentInstructionWithWorkspace_NilResult(t *testing.T) {
 
 func TestAugmentInstructionWithWorkspace_NilWorkspace(t *testing.T) {
 	ae := &AgentExecutor{log: testAgentLogger()}
-	result := ae.augmentInstructionWithWorkspace("base instruction", &workspace.ProvisioningResult{
+	result := ae.augmentInstructionWithWorkspace("base instruction", &sandbox.ProvisioningResult{
 		Workspace: nil,
 	})
 	assert.Equal(t, "base instruction", result)
@@ -336,8 +336,8 @@ func TestAugmentInstructionWithWorkspace_NilWorkspace(t *testing.T) {
 
 func TestAugmentInstructionWithWorkspace_BasicWorkspace(t *testing.T) {
 	ae := &AgentExecutor{log: testAgentLogger()}
-	wsResult := &workspace.ProvisioningResult{
-		Workspace: &workspace.AgentWorkspace{
+	wsResult := &sandbox.ProvisioningResult{
+		Workspace: &sandbox.AgentSandbox{
 			ID: "ws-test-123",
 		},
 	}
@@ -352,8 +352,8 @@ func TestAugmentInstructionWithWorkspace_BasicWorkspace(t *testing.T) {
 
 func TestAugmentInstructionWithWorkspace_WithRepo(t *testing.T) {
 	ae := &AgentExecutor{log: testAgentLogger()}
-	wsResult := &workspace.ProvisioningResult{
-		Workspace: &workspace.AgentWorkspace{
+	wsResult := &sandbox.ProvisioningResult{
+		Workspace: &sandbox.AgentSandbox{
 			ID: "ws-test-456",
 		},
 		RepoURL: "https://github.com/org/repo",
@@ -369,8 +369,8 @@ func TestAugmentInstructionWithWorkspace_WithRepo(t *testing.T) {
 
 func TestAugmentInstructionWithWorkspace_WithRepoNoBranch(t *testing.T) {
 	ae := &AgentExecutor{log: testAgentLogger()}
-	wsResult := &workspace.ProvisioningResult{
-		Workspace: &workspace.AgentWorkspace{
+	wsResult := &sandbox.ProvisioningResult{
+		Workspace: &sandbox.AgentSandbox{
 			ID: "ws-test-789",
 		},
 		RepoURL: "https://github.com/org/repo",
@@ -409,7 +409,7 @@ func TestProvisionWorkspace_NilProvisionerReturnsNil(t *testing.T) {
 func TestProvisionWorkspace_NilDefinitionReturnsNil(t *testing.T) {
 	ae := &AgentExecutor{
 		wsEnabled:   true,
-		provisioner: &workspace.AutoProvisioner{}, // non-nil but won't be called
+		provisioner: &sandbox.AutoProvisioner{}, // non-nil but won't be called
 		log:         testAgentLogger(),
 	}
 
@@ -422,13 +422,13 @@ func TestProvisionWorkspace_NilDefinitionReturnsNil(t *testing.T) {
 func TestProvisionWorkspace_EmptyWorkspaceConfigReturnsNil(t *testing.T) {
 	ae := &AgentExecutor{
 		wsEnabled:   true,
-		provisioner: &workspace.AutoProvisioner{}, // non-nil but won't be called
+		provisioner: &sandbox.AutoProvisioner{}, // non-nil but won't be called
 		log:         testAgentLogger(),
 	}
 
 	result := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{
 		AgentDefinition: &AgentDefinition{
-			WorkspaceConfig: nil, // no workspace config
+			SandboxConfig: nil, // no workspace config
 		},
 	})
 	assert.Nil(t, result)
@@ -437,13 +437,13 @@ func TestProvisionWorkspace_EmptyWorkspaceConfigReturnsNil(t *testing.T) {
 func TestProvisionWorkspace_EmptyMapWorkspaceConfigReturnsNil(t *testing.T) {
 	ae := &AgentExecutor{
 		wsEnabled:   true,
-		provisioner: &workspace.AutoProvisioner{}, // non-nil but won't be called
+		provisioner: &sandbox.AutoProvisioner{}, // non-nil but won't be called
 		log:         testAgentLogger(),
 	}
 
 	result := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{
 		AgentDefinition: &AgentDefinition{
-			WorkspaceConfig: map[string]any{}, // empty map
+			SandboxConfig: map[string]any{}, // empty map
 		},
 	})
 	assert.Nil(t, result)
@@ -466,7 +466,7 @@ func TestTeardownWorkspace_NilWorkspace(t *testing.T) {
 		log:         testAgentLogger(),
 	}
 	// Should not panic
-	ae.teardownWorkspace(context.Background(), &workspace.ProvisioningResult{Workspace: nil})
+	ae.teardownWorkspace(context.Background(), &sandbox.ProvisioningResult{Workspace: nil})
 }
 
 func TestTeardownWorkspace_NilProvisioner(t *testing.T) {
@@ -475,8 +475,8 @@ func TestTeardownWorkspace_NilProvisioner(t *testing.T) {
 		log:         testAgentLogger(),
 	}
 	// Should not panic
-	ae.teardownWorkspace(context.Background(), &workspace.ProvisioningResult{
-		Workspace: &workspace.AgentWorkspace{ID: "ws-1"},
+	ae.teardownWorkspace(context.Background(), &sandbox.ProvisioningResult{
+		Workspace: &sandbox.AgentSandbox{ID: "ws-1"},
 	})
 }
 
@@ -495,7 +495,7 @@ func TestResolveWorkspaceTools_NilProvisioner(t *testing.T) {
 
 func TestResolveWorkspaceTools_NilResult(t *testing.T) {
 	ae := &AgentExecutor{
-		provisioner: &workspace.AutoProvisioner{},
+		provisioner: &sandbox.AutoProvisioner{},
 		log:         testAgentLogger(),
 	}
 
@@ -506,11 +506,11 @@ func TestResolveWorkspaceTools_NilResult(t *testing.T) {
 
 func TestResolveWorkspaceTools_NilWorkspaceInResult(t *testing.T) {
 	ae := &AgentExecutor{
-		provisioner: &workspace.AutoProvisioner{},
+		provisioner: &sandbox.AutoProvisioner{},
 		log:         testAgentLogger(),
 	}
 
-	tools, err := ae.resolveWorkspaceTools(&workspace.ProvisioningResult{Workspace: nil}, ExecuteRequest{})
+	tools, err := ae.resolveWorkspaceTools(&sandbox.ProvisioningResult{Workspace: nil}, ExecuteRequest{})
 	assert.NoError(t, err)
 	assert.Nil(t, tools)
 }

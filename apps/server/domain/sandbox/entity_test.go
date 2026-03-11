@@ -14,7 +14,7 @@ func TestContainerTypeConstants(t *testing.T) {
 		ct       ContainerType
 		expected string
 	}{
-		{"agent workspace", ContainerTypeAgentSandbox, "agent_workspace"},
+		{"agent sandbox", ContainerTypeAgentSandbox, "agent_sandbox"},
 		{"mcp server", ContainerTypeMCPServer, "mcp_server"},
 	}
 	for _, tt := range tests {

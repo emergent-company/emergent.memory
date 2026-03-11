@@ -1079,12 +1079,12 @@ func TestJSONArrayScan(t *testing.T) {
 	}
 }
 
-func TestTemplatePackCustomizationsScan(t *testing.T) {
+func TestMemorySchemaCustomizationsScan(t *testing.T) {
 	tests := []struct {
 		name        string
 		input       interface{}
 		expectError bool
-		checkResult func(*TemplatePackCustomizations) bool
+		checkResult func(*MemorySchemaCustomizations) bool
 	}{
 		{
 			name:  "nil input",
@@ -1093,14 +1093,14 @@ func TestTemplatePackCustomizationsScan(t *testing.T) {
 		{
 			name:  "valid JSON bytes",
 			input: []byte(`{"disabledTypes": ["Person", "Organization"]}`),
-			checkResult: func(c *TemplatePackCustomizations) bool {
+			checkResult: func(c *MemorySchemaCustomizations) bool {
 				return len(c.DisabledTypes) == 2 && c.DisabledTypes[0] == "Person"
 			},
 		},
 		{
 			name:  "valid JSON string",
 			input: `{"schemaOverrides": {"Event": {"description": "Custom event"}}}`,
-			checkResult: func(c *TemplatePackCustomizations) bool {
+			checkResult: func(c *MemorySchemaCustomizations) bool {
 				return c.SchemaOverrides != nil && c.SchemaOverrides["Event"] != nil
 			},
 		},
@@ -1117,7 +1117,7 @@ func TestTemplatePackCustomizationsScan(t *testing.T) {
 		{
 			name:  "empty object",
 			input: []byte(`{}`),
-			checkResult: func(c *TemplatePackCustomizations) bool {
+			checkResult: func(c *MemorySchemaCustomizations) bool {
 				return len(c.DisabledTypes) == 0 && len(c.SchemaOverrides) == 0
 			},
 		},
@@ -1125,7 +1125,7 @@ func TestTemplatePackCustomizationsScan(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var c TemplatePackCustomizations
+			var c MemorySchemaCustomizations
 			err := c.Scan(tt.input)
 
 			if tt.expectError {
@@ -1147,25 +1147,25 @@ func TestTemplatePackCustomizationsScan(t *testing.T) {
 	}
 }
 
-func TestTemplatePackCustomizationsValue(t *testing.T) {
+func TestMemorySchemaCustomizationsValue(t *testing.T) {
 	tests := []struct {
 		name        string
-		input       TemplatePackCustomizations
+		input       MemorySchemaCustomizations
 		expectError bool
 	}{
 		{
 			name:  "empty customizations",
-			input: TemplatePackCustomizations{},
+			input: MemorySchemaCustomizations{},
 		},
 		{
 			name: "with disabled types",
-			input: TemplatePackCustomizations{
+			input: MemorySchemaCustomizations{
 				DisabledTypes: []string{"Person", "Event"},
 			},
 		},
 		{
 			name: "with schema overrides",
-			input: TemplatePackCustomizations{
+			input: MemorySchemaCustomizations{
 				SchemaOverrides: map[string]any{
 					"Document": map[string]any{
 						"description": "Custom document",
@@ -1175,7 +1175,7 @@ func TestTemplatePackCustomizationsValue(t *testing.T) {
 		},
 		{
 			name: "with both fields",
-			input: TemplatePackCustomizations{
+			input: MemorySchemaCustomizations{
 				DisabledTypes: []string{"Person"},
 				SchemaOverrides: map[string]any{
 					"Event": map[string]any{"description": "Custom"},
@@ -1208,7 +1208,7 @@ func TestTemplatePackCustomizationsValue(t *testing.T) {
 			}
 
 			// Verify it's valid JSON by parsing it back
-			var parsed TemplatePackCustomizations
+			var parsed MemorySchemaCustomizations
 			if err := json.Unmarshal(bytes, &parsed); err != nil {
 				t.Errorf("Value() produced invalid JSON: %v", err)
 			}
