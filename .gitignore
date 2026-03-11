@@ -115,6 +115,7 @@ fix_*.go
 patch*.go
 test_*.go
 setup_*.go
+!**/setup_executor.go
 run_*.go
 new_*.go
 old_*.go
