@@ -48,12 +48,6 @@ func (p PickerItem) FilterValue() string { return p.Name }
 // pickerTimeoutMsg is sent by the timeout timer.
 type pickerTimeoutMsg struct{}
 
-// pickerResultMsg carries the final outcome.
-type pickerResultMsg struct {
-	item PickerItem
-	err  error
-}
-
 // pickerModel is the Bubbletea model for the project picker.
 type pickerModel struct {
 	list     list.Model
