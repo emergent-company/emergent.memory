@@ -239,20 +239,27 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 		return encoder.Encode(output)
 	}
 
-	// Render the full markdown response. Detect terminal width for word-wrap;
-	// use a large value when stdout is not a tty (e.g. piped) so glamour
-	// never truncates wide table columns.
-	width := 0 // 0 = no word-wrap
+	// Render the full markdown response.
+	// Detect terminal width for word-wrap; 0 = no limit when not a tty.
+	// Use "dark" style when in a real terminal (WithAutoStyle falls back to
+	// "notty" which skips all markdown rendering), plain print when piped.
+	width := 0
+	isTTY := term.IsTerminal(os.Stdout.Fd())
 	if w, _, err := term.GetSize(os.Stdout.Fd()); err == nil && w > 0 {
 		width = w
 	}
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(width),
-	)
-	if err == nil {
-		if rendered, err := renderer.Render(response.String()); err == nil {
-			fmt.Print(rendered)
+
+	if isTTY {
+		renderer, err := glamour.NewTermRenderer(
+			glamour.WithStylePath("dark"),
+			glamour.WithWordWrap(width),
+		)
+		if err == nil {
+			if rendered, err := renderer.Render(response.String()); err == nil {
+				fmt.Print(rendered)
+			} else {
+				fmt.Print(response.String())
+			}
 		} else {
 			fmt.Print(response.String())
 		}
