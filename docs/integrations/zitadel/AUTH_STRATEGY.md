@@ -52,27 +52,27 @@ User clicks login
 
 ---
 
-### 2. Backend (Server-Nest) - NestJS API
+### 2. Backend (Go API)
 
 **Authentication Methods**:
 
 #### A. Token Validation (Incoming Requests)
 
-**Method 1**: Passport-Zitadel Strategy (Token Introspection)
-- **File**: `apps/server/src/modules/auth/strategies/zitadel.strategy.ts`
+**Method 1**: Zitadel Token Introspection
+- **Domain**: `apps/server/domain/authinfo/`
 - **Flow**: Frontend sends Bearer token → Zitadel introspects token → Returns user info
 - **Uses**: CLIENT service account with JWT-bearer grant to authenticate introspection request
 - **Caching**: PostgreSQL cache (`auth_introspection_cache` table)
 
 **Method 2**: JWT Validation (Fallback)
-- **File**: `apps/server/src/modules/auth/auth.service.ts`
+- **Domain**: `apps/server/domain/authinfo/`
 - **Flow**: Validate JWT signature using Zitadel's JWKS
 - **Uses**: No service account needed (public key validation)
 
 #### B. Management API Calls (Outgoing Requests)
 
-**Service**: `ZitadelService` 
-- **File**: `apps/server/src/modules/auth/zitadel.service.ts`
+**Service**: Zitadel management client
+- **Domain**: `apps/server/domain/users/`
 - **Purpose**: Create users, manage roles, send notifications
 - **Uses**: API service account with JWT-bearer grant
 - **Grant Type**: `urn:ietf:params:oauth:grant-type:jwt-bearer`
