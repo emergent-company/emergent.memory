@@ -14,13 +14,13 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
-// Repository handles database operations for template packs
+// Repository handles database operations for schemas
 type Repository struct {
 	db  bun.IDB
 	log *slog.Logger
 }
 
-// NewRepository creates a new template packs repository
+// NewRepository creates a new schemas repository
 func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	return &Repository{
 		db:  db,
@@ -30,7 +30,7 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 
 // GetCompiledTypesByProject returns compiled object and relationship types for a project
 func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID string) (*CompiledTypesResponse, error) {
-	// Get all active template packs for the project with their schemas
+	// Get all active schemas for the project
 	var projectPacks []ProjectMemorySchema
 	err := r.db.NewSelect().
 		Model(&projectPacks).
@@ -40,7 +40,7 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 		Scan(ctx)
 
 	if err != nil {
-		r.log.Error("failed to get project template packs", logger.Error(err))
+		r.log.Error("failed to get project schemas", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -93,7 +93,7 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 	return response, nil
 }
 
-// GetAvailablePacks returns template packs available for a project to install
+// GetAvailablePacks returns schemas available for a project to install
 func (r *Repository) GetAvailablePacks(ctx context.Context, projectID string) ([]MemorySchemaListItem, error) {
 	// Get IDs of packs already installed for this project
 	var installedIDs []string
@@ -129,7 +129,7 @@ func (r *Repository) GetAvailablePacks(ctx context.Context, projectID string) ([
 	return packs, nil
 }
 
-// GetInstalledPacks returns template packs installed for a project
+// GetInstalledPacks returns schemas installed for a project
 func (r *Repository) GetInstalledPacks(ctx context.Context, projectID string) ([]InstalledSchemaItem, error) {
 	var results []struct {
 		ID             string                 `bun:"id"`
@@ -171,19 +171,19 @@ func (r *Repository) GetInstalledPacks(ctx context.Context, projectID string) ([
 	return packs, nil
 }
 
-// AssignPack assigns a template pack to a project
+// AssignPack assigns a schema to a project
 func (r *Repository) AssignPack(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*ProjectMemorySchema, error) {
-	// Check if template pack exists
+	// Check if schema exists
 	packExists, err := r.db.NewSelect().
 		Model((*GraphMemorySchema)(nil)).
 		Where("id = ?", req.SchemaID).
 		Exists(ctx)
 	if err != nil {
-		r.log.Error("failed to check template pack existence", logger.Error(err))
+		r.log.Error("failed to check schema existence", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 	if !packExists {
-		return nil, apperror.ErrNotFound.WithMessage("template pack not found")
+		return nil, apperror.ErrNotFound.WithMessage("schema not found")
 	}
 
 	// Check if already assigned
@@ -197,7 +197,7 @@ func (r *Repository) AssignPack(ctx context.Context, projectID, userID string, r
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 	if exists {
-		return nil, apperror.ErrBadRequest.WithMessage("template pack already assigned to project")
+		return nil, apperror.ErrBadRequest.WithMessage("schema already assigned to project")
 	}
 
 	assignment := &ProjectMemorySchema{
@@ -337,7 +337,7 @@ func (r *Repository) DeleteAssignment(ctx context.Context, projectID, assignment
 	return nil
 }
 
-// CreatePack creates a new template pack in the global registry
+// CreatePack creates a new schema in the global registry
 func (r *Repository) CreatePack(ctx context.Context, req *CreatePackRequest) (*GraphMemorySchema, error) {
 	// Compute checksum from schemas
 	checksumContent := map[string]json.RawMessage{
@@ -375,14 +375,14 @@ func (r *Repository) CreatePack(ctx context.Context, req *CreatePackRequest) (*G
 
 	_, err := r.db.NewInsert().Model(pack).Returning("id, created_at, updated_at, published_at").Exec(ctx)
 	if err != nil {
-		r.log.Error("failed to create template pack", logger.Error(err))
+		r.log.Error("failed to create schema", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
 	return pack, nil
 }
 
-// GetPack returns a template pack by ID
+// GetPack returns a schema by ID
 func (r *Repository) GetPack(ctx context.Context, packID string) (*GraphMemorySchema, error) {
 	var pack GraphMemorySchema
 	err := r.db.NewSelect().
@@ -390,20 +390,20 @@ func (r *Repository) GetPack(ctx context.Context, packID string) (*GraphMemorySc
 		Where("id = ?", packID).
 		Scan(ctx)
 	if err != nil {
-		r.log.Error("failed to get template pack", logger.Error(err))
-		return nil, apperror.ErrNotFound.WithMessage("template pack not found")
+		r.log.Error("failed to get schema", logger.Error(err))
+		return nil, apperror.ErrNotFound.WithMessage("schema not found")
 	}
 	return &pack, nil
 }
 
-// UpdatePack partially updates a template pack in the global registry.
+// UpdatePack partially updates a schema in the global registry.
 // Only non-nil / non-empty fields in req are applied.
 func (r *Repository) UpdatePack(ctx context.Context, packID string, req *UpdatePackRequest) (*GraphMemorySchema, error) {
 	// Fetch current record first to ensure it exists and to return full pack.
 	var pack GraphMemorySchema
 	err := r.db.NewSelect().Model(&pack).Where("id = ?", packID).Scan(ctx)
 	if err != nil {
-		return nil, apperror.ErrNotFound.WithMessage("template pack not found")
+		return nil, apperror.ErrNotFound.WithMessage("schema not found")
 	}
 
 	q := r.db.NewUpdate().Model(&pack).Where("id = ?", packID).Set("updated_at = ?", time.Now())
@@ -454,14 +454,14 @@ func (r *Repository) UpdatePack(ctx context.Context, packID string, req *UpdateP
 	}
 
 	if _, err := q.Returning("updated_at").Exec(ctx); err != nil {
-		r.log.Error("failed to update template pack", logger.Error(err))
+		r.log.Error("failed to update schema", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
 	return &pack, nil
 }
 
-// DeletePack deletes a template pack from the global registry.
+// DeletePack deletes a schema from the global registry.
 // Returns an error if the pack is assigned to any projects.
 func (r *Repository) DeletePack(ctx context.Context, packID string) error {
 	// Check if assigned to any projects
@@ -474,7 +474,7 @@ func (r *Repository) DeletePack(ctx context.Context, packID string) error {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 	if assignedCount > 0 {
-		return apperror.ErrBadRequest.WithMessage("cannot delete template pack that is assigned to projects")
+		return apperror.ErrBadRequest.WithMessage("cannot delete schema that is assigned to projects")
 	}
 
 	result, err := r.db.NewDelete().
@@ -482,32 +482,32 @@ func (r *Repository) DeletePack(ctx context.Context, packID string) error {
 		Where("id = ?", packID).
 		Exec(ctx)
 	if err != nil {
-		r.log.Error("failed to delete template pack", logger.Error(err))
+		r.log.Error("failed to delete schema", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		return apperror.ErrNotFound.WithMessage("template pack not found")
+		return apperror.ErrNotFound.WithMessage("schema not found")
 	}
 
 	return nil
 }
 
-// AssignPackWithTypes assigns a template pack to a project AND populates the type registry.
+// AssignPackWithTypes assigns a schema to a project AND populates the type registry.
 // When req.DryRun is true, no database changes are made — only the preview is returned.
 // When req.Merge is true, incoming type schemas are additively merged into existing types
 // instead of being silently skipped.
 func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*AssignPackResult, error) {
-	// Get the full template pack with schemas
+	// Get the full schema
 	var pack GraphMemorySchema
 	err := r.db.NewSelect().
 		Model(&pack).
 		Where("id = ?", req.SchemaID).
 		Scan(ctx)
 	if err != nil {
-		r.log.Error("failed to get template pack", logger.Error(err))
-		return nil, apperror.ErrNotFound.WithMessage("template pack not found")
+		r.log.Error("failed to get schema", logger.Error(err))
+		return nil, apperror.ErrNotFound.WithMessage("schema not found")
 	}
 
 	// Check if already assigned
@@ -523,7 +523,7 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 	}
 
 	if alreadyAssigned && !req.Merge && !req.DryRun {
-		return nil, apperror.ErrBadRequest.WithMessage("template pack already assigned to project")
+		return nil, apperror.ErrBadRequest.WithMessage("schema already assigned to project")
 	}
 
 	// Parse object type schemas

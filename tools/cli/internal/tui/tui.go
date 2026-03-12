@@ -252,7 +252,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentView == WorkerStatsView {
 				return m, loadWorkerStats(m.client)
 			}
-			// Load template packs when switching to that tab
+			// Load schemas when switching to that tab
 			if m.currentView == TemplatePacksView {
 				return m, loadTemplatePacks(m.client)
 			}
@@ -1017,7 +1017,7 @@ func (m Model) renderWorkerStats() string {
 	return content.String()
 }
 
-// renderTemplatePacks renders the template packs view with full details
+// renderTemplatePacks renders the schemas view with full details
 func (m Model) renderTemplatePacks() string {
 	if m.selectedProjectID == "" {
 		style := lipgloss.NewStyle().

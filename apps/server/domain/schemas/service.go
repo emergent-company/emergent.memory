@@ -26,17 +26,17 @@ func (s *Service) GetCompiledTypes(ctx context.Context, projectID string) (*Comp
 	return s.repo.GetCompiledTypesByProject(ctx, projectID)
 }
 
-// GetAvailablePacks returns template packs available for a project to install
+// GetAvailablePacks returns schemas available for a project to install
 func (s *Service) GetAvailablePacks(ctx context.Context, projectID string) ([]MemorySchemaListItem, error) {
 	return s.repo.GetAvailablePacks(ctx, projectID)
 }
 
-// GetInstalledPacks returns template packs installed for a project
+// GetInstalledPacks returns schemas installed for a project
 func (s *Service) GetInstalledPacks(ctx context.Context, projectID string) ([]InstalledSchemaItem, error) {
 	return s.repo.GetInstalledPacks(ctx, projectID)
 }
 
-// AssignPack assigns a template pack to a project and registers its types.
+// AssignPack assigns a schema to a project and registers its types.
 // When req.DryRun is true, returns a preview without making any changes.
 // When req.Merge is true, additively merges incoming schemas into existing types.
 func (s *Service) AssignPack(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*AssignPackResult, error) {
@@ -53,22 +53,22 @@ func (s *Service) DeleteAssignment(ctx context.Context, projectID, assignmentID 
 	return s.repo.DeleteAssignment(ctx, projectID, assignmentID)
 }
 
-// CreatePack creates a new template pack in the global registry
+// CreatePack creates a new schema in the global registry
 func (s *Service) CreatePack(ctx context.Context, req *CreatePackRequest) (*GraphMemorySchema, error) {
 	return s.repo.CreatePack(ctx, req)
 }
 
-// GetPack returns a template pack by ID
+// GetPack returns a schema by ID
 func (s *Service) GetPack(ctx context.Context, packID string) (*GraphMemorySchema, error) {
 	return s.repo.GetPack(ctx, packID)
 }
 
-// UpdatePack partially updates an existing template pack
+// UpdatePack partially updates an existing schema
 func (s *Service) UpdatePack(ctx context.Context, packID string, req *UpdatePackRequest) (*GraphMemorySchema, error) {
 	return s.repo.UpdatePack(ctx, packID, req)
 }
 
-// DeletePack deletes a template pack from the global registry
+// DeletePack deletes a schema from the global registry
 func (s *Service) DeletePack(ctx context.Context, packID string) error {
 	return s.repo.DeletePack(ctx, packID)
 }

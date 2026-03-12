@@ -178,7 +178,7 @@ func (h *Handler) CancelJob(c echo.Context) error {
 
 // FinalizeDiscovery handles POST /discovery-jobs/:jobId/finalize
 // @Summary      Finalize discovery job
-// @Description  Creates or extends a template pack from discovered types and relationships
+// @Description  Creates or extends a schema from discovered types and relationships
 // @Tags         discovery-jobs
 // @Accept       json
 // @Produce      json

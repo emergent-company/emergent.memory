@@ -154,7 +154,7 @@ type UpdateAssignmentRequest struct {
 	Active *bool `json:"active"`
 }
 
-// CreatePackRequest is the request to create a new template pack
+// CreatePackRequest is the request to create a new schema
 type CreatePackRequest struct {
 	Name                    string          `json:"name"`
 	Version                 string          `json:"version"`
@@ -169,7 +169,7 @@ type CreatePackRequest struct {
 	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
 }
 
-// UpdatePackRequest is the request to update an existing template pack (partial update — only non-nil fields are applied)
+// UpdatePackRequest is the request to update an existing schema (partial update — only non-nil fields are applied)
 type UpdatePackRequest struct {
 	Name                    *string         `json:"name,omitempty"`
 	Version                 *string         `json:"version,omitempty"`
@@ -184,12 +184,12 @@ type UpdatePackRequest struct {
 	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
 }
 
-// GetPackRequest is the request to get a template pack by ID
+// GetPackRequest is the request to get a schema by ID
 type GetPackRequest struct {
 	ID string `json:"id"`
 }
 
-// DeletePackRequest is the request to delete a template pack
+// DeletePackRequest is the request to delete a schema
 type DeletePackRequest struct {
 	ID string `json:"id"`
 }

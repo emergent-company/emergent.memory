@@ -60,7 +60,7 @@ type FinalizeDiscoveryRequest struct {
 	IncludedRelationships []IncludedRelationship `json:"includedRelationships"`
 }
 
-// IncludedType represents a type selected for the template pack
+// IncludedType represents a type selected for the schema
 type IncludedType struct {
 	TypeName           string         `json:"type_name"`
 	Description        string         `json:"description"`
@@ -70,7 +70,7 @@ type IncludedType struct {
 	Frequency          int            `json:"frequency"`
 }
 
-// IncludedRelationship represents a relationship selected for the template pack
+// IncludedRelationship represents a relationship selected for the schema
 type IncludedRelationship struct {
 	SourceType   string `json:"source_type"`
 	TargetType   string `json:"target_type"`

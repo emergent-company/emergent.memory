@@ -32,7 +32,7 @@ var blueprintsCmd = &cobra.Command{
 	Use:     "blueprints <source>",
 	Short:   "Apply Blueprints (packs, agents, seed data) from a directory or GitHub URL",
 	GroupID: "knowledge",
-	Long: `Apply Blueprints — template packs, agent definitions, skills, and seed data — to the
+	Long: `Apply Blueprints — schemas, agent definitions, skills, and seed data — to the
 current project from a structured directory or a GitHub repository URL.
 
 The source directory (or GitHub repo root) may contain:

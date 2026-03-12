@@ -11,9 +11,9 @@ import (
 // - SSE transport (/mcp/sse/:projectId)
 // - Tools: schema_version, list_entity_types, query_entities, search_entities, get_entity_edges
 // - Tools: create_entity, create_relationship, update_entity, delete_entity
-// - Tools: list_template_packs, get_template_pack, get_available_templates, get_installed_templates
-// - Tools: assign_template_pack, update_template_assignment, uninstall_template_pack
-// - Tools: create_template_pack, delete_template_pack
+// - Tools: schema-list-available, schema-list-installed
+// - Tools: schema-assign, schema-assignment-update, schema-uninstall
+// - Tools: schema-create, schema-delete
 // - Tools (delegated to agents domain via AgentToolHandler):
 //   - Agent Definitions: list_agent_definitions, get_agent_definition, create_agent_definition, update_agent_definition, delete_agent_definition
 //   - Agents (runtime): list_agents, get_agent, create_agent, update_agent, delete_agent, trigger_agent

@@ -21,7 +21,7 @@ func NewHandler(svc *Service) *Handler {
 
 // GetCompiledTypes handles GET /api/schemas/projects/:projectId/compiled-types
 // @Summary      Get compiled types
-// @Description  Returns compiled object and relationship type definitions for a project based on installed template packs
+// @Description  Returns compiled object and relationship type definitions for a project based on installed schemas
 // @Tags         schemas
 // @Accept       json
 // @Produce      json
@@ -52,13 +52,13 @@ func (h *Handler) GetCompiledTypes(c echo.Context) error {
 }
 
 // GetAvailablePacks handles GET /api/schemas/projects/:projectId/available
-// @Summary      List available template packs
-// @Description  Returns template packs available for a project to install (not yet installed)
+// @Summary      List available schemas
+// @Description  Returns schemas available for a project to install (not yet installed)
 // @Tags         schemas
 // @Accept       json
 // @Produce      json
 // @Param        projectId path string true "Project ID (UUID)"
-// @Success      200 {array} MemorySchemaListItem "Available template packs"
+// @Success      200 {array} MemorySchemaListItem "Available schemas"
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
@@ -84,13 +84,13 @@ func (h *Handler) GetAvailablePacks(c echo.Context) error {
 }
 
 // GetInstalledPacks handles GET /api/schemas/projects/:projectId/installed
-// @Summary      List installed template packs
-// @Description  Returns template packs currently installed and assigned to a project
+// @Summary      List installed schemas
+// @Description  Returns schemas currently installed and assigned to a project
 // @Tags         schemas
 // @Accept       json
 // @Produce      json
 // @Param        projectId path string true "Project ID (UUID)"
-// @Success      200 {array} InstalledSchemaItem "Installed template packs"
+// @Success      200 {array} InstalledSchemaItem "Installed schemas"
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
@@ -116,8 +116,8 @@ func (h *Handler) GetInstalledPacks(c echo.Context) error {
 }
 
 // AssignPack handles POST /api/schemas/projects/:projectId/assign
-// @Summary      Assign template pack
-// @Description  Assigns a template pack to a project, making its types available for use.
+// @Summary      Assign schema
+// @Description  Assigns a schema to a project, making its types available for use.
 // @Description  When dry_run=true, returns a full conflict/merge preview (HTTP 200) without making changes.
 // @Description  When merge=true, additively merges incoming type schemas into existing registered types.
 // @Tags         schemas
@@ -165,7 +165,7 @@ func (h *Handler) AssignPack(c echo.Context) error {
 
 // UpdateAssignment handles PATCH /api/schemas/projects/:projectId/assignments/:assignmentId
 // @Summary      Update pack assignment
-// @Description  Updates a template pack assignment (e.g., toggle active status)
+// @Description  Updates a schema assignment (e.g., toggle active status)
 // @Tags         schemas
 // @Accept       json
 // @Produce      json
@@ -205,7 +205,7 @@ func (h *Handler) UpdateAssignment(c echo.Context) error {
 
 // DeleteAssignment handles DELETE /api/schemas/projects/:projectId/assignments/:assignmentId
 // @Summary      Delete pack assignment
-// @Description  Removes a template pack assignment from a project
+// @Description  Removes a schema assignment from a project
 // @Tags         schemas
 // @Accept       json
 // @Produce      json
@@ -238,13 +238,13 @@ func (h *Handler) DeleteAssignment(c echo.Context) error {
 }
 
 // CreatePack handles POST /api/schemas
-// @Summary      Create template pack
-// @Description  Creates a new template pack in the global registry with object type schemas, relationship schemas, and optional UI/extraction configs
+// @Summary      Create schema
+// @Description  Creates a new schema in the global registry with object type schemas, relationship schemas, and optional UI/extraction configs
 // @Tags         schemas
 // @Accept       json
 // @Produce      json
 // @Param        request body CreatePackRequest true "Template pack definition"
-// @Success      201 {object} GraphMemorySchema "Created template pack"
+// @Success      201 {object} GraphMemorySchema "Created schema"
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
@@ -280,8 +280,8 @@ func (h *Handler) CreatePack(c echo.Context) error {
 }
 
 // GetPack handles GET /api/schemas/:packId
-// @Summary      Get template pack
-// @Description  Returns a template pack by ID including all schemas and configs
+// @Summary      Get schema
+// @Description  Returns a schema by ID including all schemas and configs
 // @Tags         schemas
 // @Accept       json
 // @Produce      json
@@ -313,14 +313,14 @@ func (h *Handler) GetPack(c echo.Context) error {
 }
 
 // UpdatePack handles PUT /api/schemas/:packId
-// @Summary      Update template pack
-// @Description  Partially updates an existing template pack in the global registry
+// @Summary      Update schema
+// @Description  Partially updates an existing schema in the global registry
 // @Tags         schemas
 // @Accept       json
 // @Produce      json
 // @Param        packId path string true "Template Pack ID (UUID)"
 // @Param        request body UpdatePackRequest true "Fields to update (all optional)"
-// @Success      200 {object} GraphMemorySchema "Updated template pack"
+// @Success      200 {object} GraphMemorySchema "Updated schema"
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Template pack not found"
@@ -352,8 +352,8 @@ func (h *Handler) UpdatePack(c echo.Context) error {
 }
 
 // DeletePack handles DELETE /api/schemas/:packId
-// @Summary      Delete template pack
-// @Description  Deletes a template pack from the global registry. Fails if the pack is assigned to any projects.
+// @Summary      Delete schema
+// @Description  Deletes a schema from the global registry. Fails if the schema is assigned to any projects.
 // @Tags         schemas
 // @Accept       json
 // @Produce      json
