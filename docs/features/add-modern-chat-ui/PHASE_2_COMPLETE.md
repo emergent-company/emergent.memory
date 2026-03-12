@@ -21,7 +21,7 @@ Phase 2 has been successfully completed with full LangGraph integration, databas
 
 **Configuration**:
 
-- `GCP_PROJECT_ID=spec-server-dev`
+- `GCP_PROJECT_ID=your-gcp-project`
 - `VERTEX_AI_LOCATION=global`
 - `VERTEX_AI_MODEL=gemini-2.5-flash`
 
@@ -248,12 +248,12 @@ curl -X POST http://localhost:3002/chat \
 
 ```bash
 # View all conversations
-docker exec -u postgres $(docker ps -qf "name=spec-server-2.*db") \
+docker exec -u postgres $(docker ps -qf "name=emergent-memory.*db") \
   psql -U spec -d spec -c \
   "SELECT id, owner_user_id, title, created_at FROM kb.chat_conversations ORDER BY created_at DESC LIMIT 10;"
 
 # View conversation messages
-docker exec -u postgres $(docker ps -qf "name=spec-server-2.*db") \
+docker exec -u postgres $(docker ps -qf "name=emergent-memory.*db") \
   psql -U spec -d spec -c \
   "SELECT role, content, created_at FROM kb.chat_messages WHERE conversation_id = '<uuid>' ORDER BY created_at ASC;"
 ```

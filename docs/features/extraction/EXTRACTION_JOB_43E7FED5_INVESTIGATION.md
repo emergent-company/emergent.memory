@@ -25,11 +25,11 @@ Extraction job failed with error: `Invalid JSON response from LLM`
 ### Error Stack
 ```
 Error: Invalid JSON response from LLM
-    at VertexAIProvider.extractEntities (/Users/mcj/code/spec-server/apps/server/src/modules/extraction-jobs/llm/vertex-ai.provider.ts:131:23)
+    at VertexAIProvider.extractEntities (/path/to/emergent.memory/apps/server/src/modules/extraction-jobs/llm/vertex-ai.provider.ts:131:23)
     at processTicksAndRejections (node:internal/process/task_queues:105:5)
-    at ExtractionWorkerService.processJob (/Users/mcj/code/spec-server/apps/server/src/modules/extraction-jobs/extraction-worker.service.ts:479:32)
-    at ExtractionWorkerService.processBatch (/Users/mcj/code/spec-server/apps/server/src/modules/extraction-jobs/extraction-worker.service.ts:277:13)
-    at Timeout.tick [as _onTimeout] (/Users/mcj/code/spec-server/apps/server/src/modules/extraction-jobs/extraction-worker.service.ts:237:17)
+    at ExtractionWorkerService.processJob (/path/to/emergent.memory/apps/server/src/modules/extraction-jobs/extraction-worker.service.ts:479:32)
+    at ExtractionWorkerService.processBatch (/path/to/emergent.memory/apps/server/src/modules/extraction-jobs/extraction-worker.service.ts:277:13)
+    at Timeout.tick [as _onTimeout] (/path/to/emergent.memory/apps/server/src/modules/extraction-jobs/extraction-worker.service.ts:237:17)
 ```
 
 ## Root Cause Analysis

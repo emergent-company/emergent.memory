@@ -76,7 +76,7 @@ Look for the sequence:
 [OIDC] Token exchange successful { hasAccessToken: true, hasIdToken: true, expiresIn: 43200 }
 [AuthContext] applyTokenResponse called { hasAccessToken: true, hasIdToken: true, expiresIn: 43200 }
 [AuthContext] Parsed JWT claims { sub: "...", email: "admin@dev.yourdomain.com", name: "..." }
-[AuthContext] State updated, saving to localStorage { key: "spec-server-auth" }
+[AuthContext] State updated, saving to localStorage { key: "emergent-memory-auth" }
 [AuthContext] Successfully saved auth state to localStorage
 [AuthCallback] handleCallback succeeded, navigating to /admin
 ```

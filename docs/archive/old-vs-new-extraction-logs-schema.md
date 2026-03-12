@@ -1,4 +1,4 @@
-# Old Database (spec-server-db-1) - object_extraction_logs table schema
+# Old Database (legacy-db-1) - object_extraction_logs table schema
 
 ```sql
                             Table "kb.object_extraction_logs"
@@ -32,7 +32,7 @@ Foreign-key constraints:
 
 ```
 
-# New Database (spec-server-2-db-1) - object_extraction_logs table schema
+# New Database (emergent-memory-db-1) - object_extraction_logs table schema
 
 ```sql
                             Table "kb.object_extraction_logs"

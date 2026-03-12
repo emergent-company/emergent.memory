@@ -236,7 +236,7 @@ package.json                               # Added framer-motion
 
 - **Source:** Scalo React Template v2.0.0
 - **Page:** Automation landing page
-- **Location:** `/Users/mcj/code/scalo-react@2.0.0/src/pages/automation/`
+- **Location:** `/path/to/scalo-react@2.0.0/src/pages/automation/`
 
 ### Documentation
 

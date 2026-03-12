@@ -94,7 +94,7 @@ The Spec Server system supports four distinct deployment environments, each with
 ```bash
 # Complete local setup in one command sequence
 git clone <repository> && \
-cd spec-server-2 && \
+cd emergent-memory && \
 cp .env.example .env && \
 echo "ENVIRONMENT=local" >> .env && \
 npm install && \
@@ -160,7 +160,7 @@ npm run secrets:dump -- --output=.env.local
 ```bash
 # 1. Clone and install
 git clone <repository>
-cd spec-server-2
+cd emergent-memory
 npm install
 
 # 2. Start Docker dependencies
@@ -213,7 +213,7 @@ Your PC
 
 ```bash
 git clone <repository-url>
-cd spec-server-2
+cd emergent-memory
 npm install
 ```
 
@@ -282,7 +282,7 @@ npm run workspace:status
 # └─────────────────────────┴────┴──────┴────────┘
 
 # Verify PostgreSQL is ready
-docker exec spec-server-2-postgres-1 pg_isready -U postgres
+docker exec emergent-memory-postgres-1 pg_isready -U postgres
 # Expected: postgres:5432 - accepting connections
 
 # Verify Zitadel is ready
@@ -370,8 +370,8 @@ echo "VITE_ZITADEL_CLIENT_ID=<oauth-client-id-from-bootstrap>" >> .env.local
 
 Organization ID: 123456789012345678
 Project ID: 234567890123456789
-OAuth Client ID: 345678901234567890@spec-server
-API Client ID: 456789012345678901@spec-server
+OAuth Client ID: 345678901234567890@emergent-memory
+API Client ID: 456789012345678901@emergent-memory
 
 Service Accounts:
   CLIENT: client-introspection-service
@@ -407,7 +407,7 @@ npm run workspace:start
 - Workspace CLI performs preflight checks (dependencies running, .env files exist)
 - Starts `admin` service on port 5176 (or ADMIN_PORT from .env)
 - Starts `server` service on port 3002 (or SERVER_PORT from .env)
-- Services run under PID-based process manager in namespace `spec-server-2` (or NAMESPACE from .env)
+- Services run under PID-based process manager in namespace `emergent-memory` (or NAMESPACE from .env)
 - Health checks verify services are responding
 - Logs captured to `apps/logs/`
 
@@ -590,7 +590,7 @@ This section covers setting up the Spec Server in a shared development environme
 ssh user@dev-environment.example.com
 
 # Complete dev setup in one command sequence
-cd spec-server-2 && \
+cd emergent-memory && \
 cp .env.example .env && \
 echo "ENVIRONMENT=dev" >> .env && \
 npm install && \
@@ -793,7 +793,7 @@ This section covers deploying Spec Server to a staging environment using **full 
 ssh user@staging.example.com
 
 # Complete staging deployment in one command sequence
-cd spec-server-2 && \
+cd emergent-memory && \
 git pull origin main && \
 cp .env.example .env && \
 echo "ENVIRONMENT=staging" >> .env && \
@@ -860,7 +860,7 @@ docker compose version
 
 ```bash
 git clone <repository-url>
-cd spec-server-2
+cd emergent-memory
 npm install  # For build scripts if needed
 ```
 
@@ -1085,7 +1085,7 @@ This section covers deploying Spec Server to production using **full Docker Comp
 ssh user@production.example.com
 
 # Complete production deployment in one command sequence
-cd spec-server-2 && \
+cd emergent-memory && \
 git pull origin main && \
 npm install && \
 docker compose -f docker/docker-compose.yml --env-file .env.production up -d && \
@@ -1195,7 +1195,7 @@ docker compose version
 ```bash
 # Clone from production branch
 git clone -b production <repository-url>
-cd spec-server-2
+cd emergent-memory
 
 # Verify clean state
 git status
@@ -1568,7 +1568,7 @@ Located in: `.env` file (or Infisical path `/workspace` for export)
 
 | Variable                 | Default                | Used When           | Changes After Bootstrap | Required | Description                          |
 | ------------------------ | ---------------------- | ------------------- | ----------------------- | -------- | ------------------------------------ |
-| `NAMESPACE`              | `spec-server-2`        | Startup             | No                      | Yes      | Process namespace for isolation      |
+| `NAMESPACE`              | `emergent-memory`        | Startup             | No                      | Yes      | Process namespace for isolation      |
 | `ADMIN_PORT`             | `5176`                 | Startup             | No                      | Yes      | Frontend dev server port             |
 | `SERVER_PORT`            | `3002`                 | Startup             | No                      | Yes      | Backend API port                     |
 | `ZITADEL_DOMAIN`         | `localhost:8200`       | Bootstrap + Startup | No                      | Yes      | Zitadel domain (with port for local) |
@@ -1581,7 +1581,7 @@ Located in: `.env` file (or Infisical path `/workspace` for export)
 | `POSTGRES_USER`          | `spec`                 | Runtime             | No                      | Optional | Database user (for MCP tools)        |
 | `POSTGRES_DB`            | `spec`                 | Runtime             | No                      | Optional | Database name (for MCP tools)        |
 | `POSTGRES_PASSWORD`      | `spec`                 | Runtime             | No                      | Optional | Database password (for MCP tools)    |
-| `GCP_PROJECT_ID`         | `spec-server`          | Runtime             | No                      | Optional | GCP project for dev scripts          |
+| `GCP_PROJECT_ID`         | `emergent-memory`          | Runtime             | No                      | Optional | GCP project for dev scripts          |
 | `VERTEX_AI_LOCATION`     | `us-central1`          | Runtime             | No                      | Optional | Vertex AI region                     |
 
 **Environment-Specific Values:**
@@ -1633,7 +1633,7 @@ Located in: `apps/server/.env` or `.env.local`
 
 | Variable              | Default                | Used When | Changes After Bootstrap | Required | Description                |
 | --------------------- | ---------------------- | --------- | ----------------------- | -------- | -------------------------- |
-| `GCP_PROJECT_ID`      | `spec-server`          | Runtime   | No                      | Optional | Google Cloud project ID    |
+| `GCP_PROJECT_ID`      | `emergent-memory`          | Runtime   | No                      | Optional | Google Cloud project ID    |
 | `GOOGLE_API_KEY`      | _(secret)_             | Runtime   | No                      | Optional | Google API key for Gemini  |
 | `VERTEX_AI_LOCATION`  | `us-central1`          | Runtime   | No                      | Optional | Vertex AI region           |
 | `VERTEX_AI_MODEL`     | `gemini-2.0-flash-exp` | Runtime   | No                      | Optional | AI model name              |
@@ -1668,7 +1668,7 @@ Located in: `apps/server/.env` or `.env.local`
 | `LANGSMITH_TRACING`  | `false`                           | Runtime   | No                      | Optional | Enable LangSmith tracing |
 | `LANGSMITH_ENDPOINT` | `https://api.smith.langchain.com` | Runtime   | No                      | Optional | LangSmith API endpoint   |
 | `LANGSMITH_API_KEY`  | _(secret)_                        | Runtime   | No                      | Optional | LangSmith API key        |
-| `LANGSMITH_PROJECT`  | `spec-server`                     | Runtime   | No                      | Optional | LangSmith project name   |
+| `LANGSMITH_PROJECT`  | `emergent-memory`                     | Runtime   | No                      | Optional | LangSmith project name   |
 
 **Note:** See `apps/server/.env.example` for complete list of all 118+ server variables.
 
@@ -1790,7 +1790,7 @@ infisical login
 
 ```bash
 # Initialize Infisical for this project
-cd /path/to/spec-server-2
+cd /path/to/emergent-memory
 infisical init
 
 # Follow prompts:
@@ -1932,10 +1932,10 @@ sleep 60
 curl http://localhost:8200/debug/healthz
 
 # Check Zitadel logs
-docker logs spec-server-2-zitadel-1
+docker logs emergent-memory-zitadel-1
 
 # Check PostgreSQL
-docker exec spec-server-2-postgres-1 pg_isready
+docker exec emergent-memory-postgres-1 pg_isready
 ```
 
 ### Bootstrap Issues
@@ -1951,7 +1951,7 @@ docker exec spec-server-2-postgres-1 pg_isready
 npm run workspace:status
 
 # Check PAT exists in volume
-docker exec spec-server-2-zitadel-1 cat /machinekey/pat.txt
+docker exec emergent-memory-zitadel-1 cat /machinekey/pat.txt
 
 # If missing, Zitadel didn't initialize correctly
 # Recreate Zitadel container:

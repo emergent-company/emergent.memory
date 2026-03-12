@@ -1,6 +1,6 @@
 # 🎯 Unified Auth & Service Account Implementation Plan
 
-**Project**: spec-server-2  
+**Project**: emergent-memory  
 **Date**: January 2025  
 **Status**: Ready to Implement  
 **Timeline**: 3-4 weeks  
@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-This plan **unifies two critical authentication enhancements** for spec-server-2:
+This plan **unifies two critical authentication enhancements** for emergent-memory:
 
 1. **Token Introspection System** (from auth-zitadel-introspection-implementation-plan.md)
    - Production-grade Zitadel OAuth2 introspection
@@ -841,7 +841,7 @@ export class InvitesService {
             };
 
             await this.zitadelService.updateUserMetadata(zitadelUserId, {
-                'spec-server-invite': inviteMetadata,
+                'emergent-memory-invite': inviteMetadata,
             });
 
             // Step 5: Create invitation record in database
@@ -1505,4 +1505,4 @@ git push
 5. **Week 3: Testing & Deploy**: E2E tests + production deployment
 6. **Week 4: Documentation**: Guides + monitoring
 
-**Ready to implement!** This plan merges proven introspection code with new user management capabilities, creating a complete end-to-end authentication system for spec-server-2.
+**Ready to implement!** This plan merges proven introspection code with new user management capabilities, creating a complete end-to-end authentication system for emergent-memory.

@@ -1,15 +1,15 @@
-# 🎯 Authentication System Implementation Plan for spec-server-2
+# 🎯 Authentication System Implementation Plan for emergent-memory
 
 **Based on**: Working implementation from huma-blueprint-ui  
 **Date**: October 31, 2025  
-**Target**: spec-server-2 (apps/server/)  
+**Target**: emergent-memory (apps/server/)  
 **Status**: Ready to Implement
 
 ---
 
 ## Executive Summary
 
-This plan implements **Zitadel Token Introspection** using the **proven, working code** from huma-blueprint-ui. The current spec-server-2 system already has excellent foundations, and we'll enhance it with:
+This plan implements **Zitadel Token Introspection** using the **proven, working code** from huma-blueprint-ui. The current emergent-memory system already has excellent foundations, and we'll enhance it with:
 
 1. ✅ **Zitadel Token Introspection** (production-grade)
 2. ✅ **PostgreSQL Cache Layer** (no Redis needed)
@@ -25,7 +25,7 @@ This plan implements **Zitadel Token Introspection** using the **proven, working
 
 ## Current State Analysis
 
-### ✅ What's Already Excellent in spec-server-2
+### ✅ What's Already Excellent in emergent-memory
 
 ```typescript
 // Already implemented:
@@ -1074,4 +1074,4 @@ async list() { }
 
 ---
 
-**Ready to implement!** This plan uses proven, tested code from a working production system and integrates seamlessly with spec-server-2's existing excellent architecture.
+**Ready to implement!** This plan uses proven, tested code from a working production system and integrates seamlessly with emergent-memory's existing excellent architecture.

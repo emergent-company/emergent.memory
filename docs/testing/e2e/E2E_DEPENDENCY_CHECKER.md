@@ -60,7 +60,7 @@ The admin process is detached (`detached: true, unref()`) so it continues runnin
 
 ### Script Location
 
-`/Users/mcj/code/spec-server/scripts/ensure-e2e-deps.mjs`
+`/path/to/emergent.memory/scripts/ensure-e2e-deps.mjs`
 
 ### Package.json Integration
 

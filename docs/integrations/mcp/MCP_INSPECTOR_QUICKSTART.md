@@ -37,7 +37,7 @@ npx @modelcontextprotocol/inspector \
 3. See list of your database tables in response
 4. Try `describe_table` with parameter: `{"table_name": "users"}`
 
-**Why this matters**: Your spec-server will work exactly the same way!
+**Why this matters**: Your server will work exactly the same way!
 
 ---
 

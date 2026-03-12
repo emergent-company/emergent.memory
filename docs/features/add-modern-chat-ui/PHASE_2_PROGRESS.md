@@ -159,7 +159,7 @@ Consider updating to 'node16', 'nodenext', or 'bundler'.
 
 **Current Status**:
 
-- ✅ `GCP_PROJECT_ID=spec-server-dev` (already configured)
+- ✅ `GCP_PROJECT_ID=your-gcp-project` (already configured)
 - ❌ `VERTEX_AI_LOCATION` (missing - needs to be added)
 - ✅ `VERTEX_AI_MODEL=gemini-2.5-flash` (already configured)
 
@@ -195,7 +195,7 @@ Consider updating to 'node16', 'nodenext', or 'bundler'.
 
 ### Required:
 
-- `GCP_PROJECT_ID` - Google Cloud project ID (✅ already set: `spec-server-dev`)
+- `GCP_PROJECT_ID` - Google Cloud project ID (✅ already set: `your-gcp-project`)
 - `VERTEX_AI_LOCATION` - GCP region (❌ **MISSING** - add: `europe-north1`)
 - `VERTEX_AI_MODEL` - Model name (✅ already set: `gemini-2.5-flash`)
 

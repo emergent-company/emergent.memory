@@ -158,7 +158,7 @@ rm .env.backup apps/server/.env.backup apps/admin/.env.backup
 
 **✅ Include:**
 
-- `NAMESPACE=spec-server-2`
+- `NAMESPACE=emergent-memory`
 - `ADMIN_PORT=5176`
 - `SERVER_PORT=3002`
 - `ZITADEL_DOMAIN=localhost:8200`
@@ -288,7 +288,7 @@ GOOGLE_API_KEY=secret              # ❌ Not exposed (backend only)
 **`.env`:**
 
 ```bash
-NAMESPACE=spec-server-2
+NAMESPACE=emergent-memory
 ADMIN_PORT=5176
 SERVER_PORT=3002
 ZITADEL_DOMAIN=localhost:8200

@@ -1,6 +1,6 @@
 # Notification Event Catalog
 
-**Purpose:** Complete reference of all notification events produced by the spec-server system  
+**Purpose:** Complete reference of all notification events produced by the emergent-memory system  
 **Last Updated:** October 3, 2025  
 **Related Specs:** 
 - [docs/spec/35-admin-notification-inbox.md](spec/35-admin-notification-inbox.md)

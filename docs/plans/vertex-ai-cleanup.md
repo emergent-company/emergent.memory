@@ -25,9 +25,9 @@ The codebase currently has **dual embedding systems** and **redundant Vertex AI 
 Current `.env` file:
 ```bash
 EMBEDDING_PROVIDER=vertex
-VERTEX_EMBEDDING_PROJECT=twentyfirst-io      # ← REDUNDANT
+VERTEX_EMBEDDING_PROJECT=your-gcp-project      # ← REDUNDANT
 VERTEX_EMBEDDING_LOCATION=europe-north1
-GCP_PROJECT_ID=spec-server-dev                # ← PRIMARY (should be used everywhere)
+GCP_PROJECT_ID=your-gcp-project                # ← PRIMARY (should be used everywhere)
 VERTEX_AI_LOCATION=us-central1               # ← REDUNDANT (use VERTEX_EMBEDDING_LOCATION)
 VERTEX_AI_MODEL=gemini-2.5-flash
 ```
@@ -320,9 +320,9 @@ VERTEX_EMBEDDING_MODEL=text-embedding-004
 **Current** (your .env):
 ```bash
 EMBEDDING_PROVIDER=vertex
-VERTEX_EMBEDDING_PROJECT=twentyfirst-io      # ← REMOVE
+VERTEX_EMBEDDING_PROJECT=your-gcp-project      # ← REMOVE
 VERTEX_EMBEDDING_LOCATION=europe-north1      # ← RENAME to VERTEX_AI_LOCATION
-GCP_PROJECT_ID=spec-server-dev               # ← KEEP (and use everywhere)
+GCP_PROJECT_ID=your-gcp-project               # ← KEEP (and use everywhere)
 VERTEX_AI_LOCATION=us-central1               # ← CONFLICT! Resolve
 VERTEX_AI_MODEL=gemini-2.5-flash
 ```
@@ -602,15 +602,15 @@ Same changes as .env.example
 
 **Current**:
 ```bash
-VERTEX_EMBEDDING_PROJECT=twentyfirst-io
+VERTEX_EMBEDDING_PROJECT=your-gcp-project
 VERTEX_EMBEDDING_LOCATION=europe-north1
-GCP_PROJECT_ID=spec-server-dev
+GCP_PROJECT_ID=your-gcp-project
 VERTEX_AI_LOCATION=us-central1
 ```
 
 **Change to** (choose one location):
 ```bash
-GCP_PROJECT_ID=twentyfirst-io         # Use the actual project ID
+GCP_PROJECT_ID=your-gcp-project         # Use the actual project ID
 VERTEX_AI_LOCATION=europe-north1      # Or us-central1 - pick one!
 VERTEX_AI_MODEL=gemini-2.5-flash
 VERTEX_EMBEDDING_MODEL=text-embedding-004
@@ -852,13 +852,13 @@ export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 **Migration**:
 ```bash
 # BEFORE
-VERTEX_EMBEDDING_PROJECT=twentyfirst-io
+VERTEX_EMBEDDING_PROJECT=your-gcp-project
 VERTEX_EMBEDDING_LOCATION=europe-north1
-GCP_PROJECT_ID=spec-server-dev
+GCP_PROJECT_ID=your-gcp-project
 VERTEX_AI_LOCATION=us-central1
 
 # AFTER (consolidated)
-GCP_PROJECT_ID=twentyfirst-io
+GCP_PROJECT_ID=your-gcp-project
 VERTEX_AI_LOCATION=europe-north1
 ```
 
@@ -1010,15 +1010,15 @@ VERTEX_AI_LOCATION=europe-north1
 
 ```bash
 # ❌ ISSUE 1: Duplicate project IDs
-VERTEX_EMBEDDING_PROJECT=twentyfirst-io      # Should be removed
-GCP_PROJECT_ID=spec-server-dev               # Keep, but which value?
+VERTEX_EMBEDDING_PROJECT=your-gcp-project      # Should be removed
+GCP_PROJECT_ID=your-gcp-project               # Keep, but which value?
 
 # ❌ ISSUE 2: Conflicting locations
 VERTEX_EMBEDDING_LOCATION=europe-north1      # Should be removed
 VERTEX_AI_LOCATION=us-central1               # Keep, but which value?
 
 # ❌ ISSUE 3: Missing variable
-VERTEX_AI_PROJECT_ID=spec-server-dev         # Duplicate, should use GCP_PROJECT_ID
+VERTEX_AI_PROJECT_ID=your-gcp-project         # Duplicate, should use GCP_PROJECT_ID
 
 # ✅ CORRECT
 EMBEDDING_PROVIDER=vertex
@@ -1029,13 +1029,13 @@ VERTEX_AI_MODEL=gemini-2.5-flash
 ### Recommended Final Config
 
 **Question to resolve**: Which project and location?
-- Project: `twentyfirst-io` or `spec-server-dev`?
+- Project: which GCP project?
 - Location: `europe-north1` or `us-central1`?
 
 **Recommended .env**:
 ```bash
 # Google Cloud Configuration (choose your values)
-GCP_PROJECT_ID=twentyfirst-io               # Your actual GCP project
+GCP_PROJECT_ID=your-gcp-project               # Your actual GCP project
 VERTEX_AI_LOCATION=europe-north1            # Your preferred region
 
 # Model Configuration
@@ -1054,8 +1054,7 @@ EXTRACTION_WORKER_ENABLED=true
 ## Pre-Implementation Questions
 
 1. **Which GCP project should be used?**
-   - `twentyfirst-io` (from VERTEX_EMBEDDING_PROJECT)
-   - `spec-server-dev` (from GCP_PROJECT_ID)
+   - Your GCP project ID
    
 2. **Which region should be used?**
    - `europe-north1` (from VERTEX_EMBEDDING_LOCATION)

@@ -75,7 +75,7 @@ CREATE INDEX idx_documents_integration_metadata
 ```json
 {
   "source": "github",
-  "repository": "eyedea-io/spec-server",
+  "repository": "emergent-company/emergent.memory",
   "branch": "master",
   "commit_sha": "abc123...",
   "file_path": "src/modules/auth/auth.service.ts",
@@ -84,7 +84,7 @@ CREATE INDEX idx_documents_integration_metadata
   "last_modified_by": "octocat",
   "last_commit_date": "2024-03-15T14:30:00Z",
   "file_type": "source_code",
-  "url": "https://github.com/eyedea-io/spec-server/blob/master/src/modules/auth/auth.service.ts"
+  "url": "https://github.com/emergent-company/emergent.memory/blob/master/src/modules/auth/auth.service.ts"
 }
 ```
 
@@ -587,7 +587,7 @@ Workspace 4573313
 
 ```
 Organization "eyedea-io"
-└─ Repository "spec-server"
+└─ Repository "emergent-memory"
    ├─ README.md
    ├─ src/
    │  ├─ modules/

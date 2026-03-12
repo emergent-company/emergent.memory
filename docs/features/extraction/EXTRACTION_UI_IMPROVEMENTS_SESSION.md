@@ -41,7 +41,7 @@ name: (obj.properties?.name as string) || (obj.properties?.title as string) || o
 ```
 
 ### Files Changed
-- `/Users/mcj/code/spec-server/apps/admin/src/pages/admin/pages/objects/index.tsx` (lines 63-67 and 89-93)
+- `/path/to/emergent.memory/apps/admin/src/pages/admin/pages/objects/index.tsx` (lines 63-67 and 89-93)
 
 ### Impact
 - ✅ Objects now display human-readable names from properties
@@ -72,7 +72,7 @@ const defaultTypes = types.map(t => t.value);
 ```
 
 ### Files Changed
-- `/Users/mcj/code/spec-server/apps/admin/src/components/organisms/ExtractionConfigModal.tsx` (line 92)
+- `/path/to/emergent.memory/apps/admin/src/components/organisms/ExtractionConfigModal.tsx` (line 92)
 
 ### Rationale
 - Users want comprehensive extraction by default
@@ -124,7 +124,7 @@ When a log entry is expanded, tokens now appear at the top of the details sectio
 ```
 
 ### Files Changed
-- `/Users/mcj/code/spec-server/apps/admin/src/components/organisms/ExtractionLogsModal/ExtractionLogsModal.tsx`
+- `/path/to/emergent.memory/apps/admin/src/components/organisms/ExtractionLogsModal/ExtractionLogsModal.tsx`
 
 ### Benefits
 - ✅ Table is narrower and easier to scan
@@ -202,7 +202,7 @@ await this.extractionLogger.logStep({
 ```
 
 ### Files Changed
-- `/Users/mcj/code/spec-server/apps/server/src/modules/extraction-jobs/extraction-worker.service.ts` (lines 476-542)
+- `/path/to/emergent.memory/apps/server/src/modules/extraction-jobs/extraction-worker.service.ts` (lines 476-542)
 
 ### Benefits
 - ✅ Halves the number of timeline entries (one instead of two per extraction)

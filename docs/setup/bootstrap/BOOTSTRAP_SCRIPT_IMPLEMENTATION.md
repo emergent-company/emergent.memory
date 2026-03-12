@@ -281,7 +281,7 @@ Then when starting the server:
 
 ## References
 
-- **huma-blueprints-api**: `/Users/mcj/code/huma/huma-blueprints-api/`
+- **huma-blueprints-api**: `/path/to/huma-blueprints-api/`
   - Pattern: Dual service accounts (CLIENT + API)
   - Implementation: Go with zitadel-go v3 SDK
   - Our adaptation: Bash bootstrap + NestJS service

@@ -162,7 +162,7 @@ cd apps/server && npm run test:e2e 2>&1 | grep "FAIL" | wc -l
 npm run workspace:stop
 
 # Restore database
-cat backup_before_user_refactor_20251025_001648.sql | docker exec -i spec-server-2-db-1 psql -U spec spec
+cat backup_before_user_refactor_20251025_001648.sql | docker exec -i emergent-memory-db-1 psql -U spec spec
 
 # Revert code changes
 git checkout apps/server/src/modules/user-profile/

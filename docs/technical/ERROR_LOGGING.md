@@ -232,7 +232,7 @@ errorLogger.logNetworkError(url, method, error);
 - **Rotation**: Logs grow indefinitely - implement log rotation:
   ```bash
   # Add to crontab for daily rotation
-  0 0 * * * gzip -9 /path/to/spec-server/logs/errors.log && mv /path/to/spec-server/logs/errors.log.gz /path/to/spec-server/logs/errors-$(date +\%Y\%m\%d).log.gz && touch /path/to/spec-server/logs/errors.log
+  0 0 * * * gzip -9 /path/to/emergent.memory/logs/errors.log && mv /path/to/emergent.memory/logs/errors.log.gz /path/to/emergent.memory/logs/errors-$(date +\%Y\%m\%d).log.gz && touch /path/to/emergent.memory/logs/errors.log
   ```
 
 ## Integration with Monitoring Tools
@@ -268,7 +268,7 @@ filebeat.inputs:
 - type: log
   enabled: true
   paths:
-    - /path/to/spec-server/logs/errors.log
+    - /path/to/emergent.memory/logs/errors.log
   json.keys_under_root: true
   json.add_error_key: true
 ```

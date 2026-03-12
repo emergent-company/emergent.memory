@@ -202,4 +202,4 @@ Test IDs are automatically removed from production builds via:
 
 ## Full Documentation
 
-See `/Users/mcj/code/spec-server/docs/TEST_ID_CONVENTIONS.md` for complete guidelines, examples, and anti-patterns.
+See `/path/to/emergent.memory/docs/TEST_ID_CONVENTIONS.md` for complete guidelines, examples, and anti-patterns.

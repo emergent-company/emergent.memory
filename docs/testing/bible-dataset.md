@@ -269,7 +269,7 @@ curl -H "Authorization: Bearer $BIBLE_SEED_ACCESS_TOKEN" \
 **Solution:** Ensure you're running from the project root:
 
 ```bash
-cd /path/to/spec-server-2
+cd /path/to/emergent-memory
 npm run seed:bible -- --project-id=abc123
 ```
 

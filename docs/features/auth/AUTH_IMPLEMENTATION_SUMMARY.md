@@ -8,7 +8,7 @@
 
 ## 📋 What Was Created
 
-Three comprehensive documentation files have been created to guide the implementation of Zitadel token introspection for spec-server-2:
+Three comprehensive documentation files have been created to guide the implementation of Zitadel token introspection for emergent-memory:
 
 ### 1. **Main Roadmap** 
 `docs/AUTH_ENHANCEMENT_ROADMAP.md`
@@ -262,7 +262,7 @@ CACHE_CLEANUP_INTERVAL=900
 ```
 
 ### 5. Copy Services (5 min)
-Copy the 6 service files from huma-blueprint-ui to spec-server-2 (see Quick Start Guide for exact commands)
+Copy the 6 service files from huma-blueprint-ui to emergent-memory (see Quick Start Guide for exact commands)
 
 ### 6. Update Core Files (3 min)
 - Update `AuthService.validateToken()` (add introspection)
@@ -327,8 +327,8 @@ curl -H "Authorization: Bearer <real-token>" http://localhost:3002/api/orgs
 
 ### Code References
 - **Reference Implementation**: huma-blueprint-ui (`apps/api/src/auth/`)
-- **Current Auth**: spec-server-2 (`apps/server/src/modules/auth/`)
-- **User Profiles**: spec-server-2 (`apps/server/src/modules/user-profile/`)
+- **Current Auth**: emergent-memory (`apps/server/src/modules/auth/`)
+- **User Profiles**: emergent-memory (`apps/server/src/modules/user-profile/`)
 
 ### External Resources
 - **Zitadel Docs**: https://zitadel.com/docs

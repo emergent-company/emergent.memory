@@ -36,7 +36,7 @@ zitadel   online  54s     8200->8080, 8201->3000
 **Log Output**:
 
 ```
-[LangGraphService] Initializing Vertex AI Chat: project=spec-server-dev, location=global, model=gemini-2.5-flash
+[LangGraphService] Initializing Vertex AI Chat: project=your-gcp-project, location=global, model=gemini-2.5-flash
 [LangGraphService] Vertex AI Chat initialized: model=gemini-2.5-flash
 [LangGraphService] LangGraph conversation graph compiled
 [InstanceLoader] ChatUiModule dependencies initialized
@@ -48,7 +48,7 @@ zitadel   online  54s     8200->8080, 8201->3000
 
 **Configuration Confirmed**:
 
-- `GCP_PROJECT_ID=spec-server-dev`
+- `GCP_PROJECT_ID=your-gcp-project`
 - `VERTEX_AI_LOCATION=global`
 - `VERTEX_AI_MODEL=gemini-2.5-flash`
 
@@ -164,7 +164,7 @@ Assistant: Echo: Hello! Can you introduce yourself?
 
 | Variable             | Value              | Status |
 | -------------------- | ------------------ | ------ |
-| `GCP_PROJECT_ID`     | `spec-server-dev`  | ✅ Set |
+| `GCP_PROJECT_ID`     | `your-gcp-project`  | ✅ Set |
 | `VERTEX_AI_LOCATION` | `global`           | ✅ Set |
 | `VERTEX_AI_MODEL`    | `gemini-2.5-flash` | ✅ Set |
 

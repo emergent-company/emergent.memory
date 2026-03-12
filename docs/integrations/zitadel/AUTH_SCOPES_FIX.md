@@ -156,7 +156,7 @@ After getting new tokens with scopes:
 
 ```bash
 # Test with new token
-curl -X GET https://spec-server.yourdomain.com/api/orgs \
+curl -X GET https://your-server.yourdomain.com/api/orgs \
   -H "Authorization: Bearer YOUR_NEW_ID_TOKEN" \
   -H "Content-Type: application/json"
 

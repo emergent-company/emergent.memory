@@ -4,7 +4,7 @@ This document compares the `object_extraction_logs` table schema between the old
 
 ## Summary
 
-The code has been updated to work with the **NEW schema** (spec-server-2-db-1). The old database (spec-server-db-1) is kept as a reference and will not be modified.
+The code has been updated to work with the **NEW schema** (emergent-memory-db-1). The old database (legacy-db-1) is kept as a reference and will not be modified.
 
 ## Key Differences
 
@@ -51,19 +51,19 @@ The following files were updated to work with the NEW schema:
 
 ## Database Files Created
 
-- `old-database-schema-dump.sql` - Full schema dump of old database (spec-server-db-1)
+- `old-database-schema-dump.sql` - Full schema dump of old database (legacy-db-1)
 - `old-vs-new-extraction-logs-schema.md` - Side-by-side comparison of extraction logs table
 
 ## Active Database
 
-The application currently uses: **spec-server-2-db-1** (port 5437)
+The application currently uses: **emergent-memory-db-1** (port 5437)
 - This is the database with the NEW schema
 - All code now works with this schema
 - Extraction logs should now be created properly
 
 ## Old Database (Kept for Reference)
 
-Database: **spec-server-db-1** (port 5432)
+Database: **legacy-db-1** (port 5432)
 - Contains the OLD schema
 - Kept as reference, will not be modified
 - Can be compared against when needed
@@ -78,7 +78,7 @@ After these changes:
 
 To verify logs are being created:
 ```sql
--- Connect to spec-server-2-db-1
+-- Connect to emergent-memory-db-1
 SELECT COUNT(*) FROM kb.object_extraction_logs;
 
 -- View recent logs

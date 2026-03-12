@@ -241,7 +241,7 @@ Add to `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "spec-server": {
+    "emergent-memory": {
       "url": "https://api.example.com/mcp",
       "headers": {
         "Authorization": "Bearer YOUR_SCHEMA_READ_TOKEN_HERE"
@@ -259,7 +259,7 @@ Add to `.cursor/mcp.json`:
 {
   "mcp": {
     "servers": {
-      "spec-server": {
+      "emergent-memory": {
         "command": "npx",
         "args": ["-y", "@modelcontextprotocol/cli", "connect", "https://api.example.com/mcp"],
         "env": {

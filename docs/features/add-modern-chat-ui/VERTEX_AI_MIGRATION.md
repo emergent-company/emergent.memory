@@ -27,14 +27,14 @@ The LangGraphService has been updated to use **Google Vertex AI** instead of the
 **Required Environment Variables**:
 
 ```bash
-GCP_PROJECT_ID=spec-server-dev              # Your GCP project ID
+GCP_PROJECT_ID=your-gcp-project              # Your GCP project ID
 VERTEX_AI_LOCATION=europe-north1            # GCP region
 VERTEX_AI_MODEL=gemini-2.5-flash            # Model name
 ```
 
 **Current .env Status**:
 
-- ✅ `GCP_PROJECT_ID=spec-server-dev` (already set)
+- ✅ `GCP_PROJECT_ID=your-gcp-project` (already set)
 - ❌ `VERTEX_AI_LOCATION` (missing - needs to be added)
 - ✅ `VERTEX_AI_MODEL=gemini-2.5-flash` (already set)
 
@@ -94,7 +94,7 @@ echo "VERTEX_AI_LOCATION=europe-north1" >> .env
 this.model = new ChatVertexAI({
   model: 'gemini-2.5-flash', // From VERTEX_AI_MODEL
   authOptions: {
-    projectId: 'spec-server-dev', // From GCP_PROJECT_ID
+    projectId: 'your-gcp-project', // From GCP_PROJECT_ID
   },
   location: 'europe-north1', // From VERTEX_AI_LOCATION
   temperature: 0.7,
@@ -150,7 +150,7 @@ grep -E "^(GCP_PROJECT_ID|VERTEX_AI_LOCATION|VERTEX_AI_MODEL)=" .env
 **Expected Output**:
 
 ```
-GCP_PROJECT_ID=spec-server-dev
+GCP_PROJECT_ID=your-gcp-project
 VERTEX_AI_LOCATION=europe-north1
 VERTEX_AI_MODEL=gemini-2.5-flash
 ```
@@ -185,7 +185,7 @@ nx run workspace-cli:workspace:logs -- --service=server | grep "Vertex AI"
 **Expected Log**:
 
 ```
-[LangGraphService] Initializing Vertex AI Chat: project=spec-server-dev, location=europe-north1, model=gemini-2.5-flash
+[LangGraphService] Initializing Vertex AI Chat: project=your-gcp-project, location=europe-north1, model=gemini-2.5-flash
 [LangGraphService] Vertex AI Chat initialized: model=gemini-2.5-flash
 [LangGraphService] LangGraph conversation graph compiled
 ```

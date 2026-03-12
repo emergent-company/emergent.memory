@@ -6,7 +6,7 @@
 
 ## Overview
 
-A specialized MCP server for managing development tasks, service lifecycle, and project workflows in the spec-server monorepo. Eliminates ad-hoc terminal commands and provides context-aware task execution with proper error handling, dependency management, and state tracking.
+A specialized MCP server for managing development tasks, service lifecycle, and project workflows in the emergent.memory monorepo. Eliminates ad-hoc terminal commands and provides context-aware task execution with proper error handling, dependency management, and state tracking.
 
 ---
 
@@ -270,7 +270,7 @@ Discover all available npm/yarn scripts across workspaces.
 {
   workspaces: Array<{
     path: string;              // "apps/server"
-    name: string;              // "@spec-server/server"
+    name: string;              // "@emergent-memory/server"
     tasks: Array<{
       name: string;            // "build"
       command: string;         // "tsc -p tsconfig.json"
@@ -289,7 +289,7 @@ Discover all available npm/yarn scripts across workspaces.
   "workspaces": [
     {
       "path": "apps/server",
-      "name": "@spec-server/server",
+      "name": "@emergent-memory/server",
       "tasks": [
         {
           "name": "build",
@@ -1860,7 +1860,7 @@ DEFAULT_HEALTH_CHECK_INTERVAL=5000
 DEFAULT_GRACE_PERIOD=10000
 
 # Workspace
-MONOREPO_ROOT=/Users/mcj/code/spec-server
+MONOREPO_ROOT=/path/to/emergent.memory
 PACKAGE_MANAGER=npm  # or yarn, pnpm
 ```
 

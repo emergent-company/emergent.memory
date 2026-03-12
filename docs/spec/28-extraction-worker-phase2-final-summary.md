@@ -491,6 +491,6 @@ The extraction worker is **ready for staging deployment** and manual testing wit
 ---
 
 **Team:** AI-assisted implementation by GitHub Copilot  
-**Project:** spec-server / Nexus Knowledge Base  
+**Project:** emergent-memory / Nexus Knowledge Base  
 **Branch:** master  
 **Completion Date:** October 3, 2025

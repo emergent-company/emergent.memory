@@ -210,8 +210,8 @@ await revisionCountRefreshWorkerService.triggerRefresh();
 ## Files Modified
 
 ### New Files
-- `/Users/mcj/code/spec-server/apps/server/src/modules/graph/revision-count-refresh-worker.service.ts`
-- `/Users/mcj/code/spec-server/docs/REVISION_COUNT_REFRESH_WORKER.md` (this file)
+- `/path/to/emergent.memory/apps/server/src/modules/graph/revision-count-refresh-worker.service.ts`
+- `/path/to/emergent.memory/docs/REVISION_COUNT_REFRESH_WORKER.md` (this file)
 
 ### Modified Files
 - `apps/server/src/modules/graph/graph.module.ts`:

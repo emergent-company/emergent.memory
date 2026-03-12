@@ -154,7 +154,7 @@ npx tsx scripts/extraction_tests/run-all.ts --runs=3
 - Node.js 22.x
 - `@langchain/google-vertexai`: 1.0.4
 - `@google/genai`: 1.32.0
-- GCP Project: `spec-server-dev`
+- GCP Project: `your-gcp-project`
 - Region: `europe-central2`
 - Model: `gemini-2.5-flash-lite`
 

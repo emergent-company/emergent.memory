@@ -63,7 +63,7 @@ export function OrgAndProjectGateRedirect({ children }: OrgAndProjectGateRedirec
 
 Even though `useLocalStorage` writes to `window.localStorage` synchronously:
 ```typescript
-window.localStorage.setItem('spec-server', JSON.stringify({ ...config, activeProjectId: 'abc' }));
+window.localStorage.setItem('emergent-memory', JSON.stringify({ ...config, activeProjectId: 'abc' }));
 ```
 
 The **React state** (`config` from `useConfig()`) doesn't update until the next render cycle. The `OrgAndProjectGateRedirect` component reads from React state, not directly from localStorage:
@@ -94,12 +94,12 @@ async function handleCreate(e: React.FormEvent) {
     const proj = await createProject(trimmed);
     
     // Verify localStorage writes (debugging)
-    const beforeConfig = window.localStorage.getItem('spec-server');
+    const beforeConfig = window.localStorage.getItem('emergent-memory');
     console.log('[SetupProjectPage] localStorage BEFORE:', beforeConfig);
     
     setActiveProject(proj.id, proj.name);  // ← Triggers React state update
     
-    const afterConfig = window.localStorage.getItem('spec-server');
+    const afterConfig = window.localStorage.getItem('emergent-memory');
     console.log('[SetupProjectPage] localStorage AFTER:', afterConfig);
     
     // Don't navigate directly - let useEffect handle it after state updates

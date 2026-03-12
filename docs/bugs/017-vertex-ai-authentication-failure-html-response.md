@@ -133,7 +133,7 @@ Add to `.env.local` or `.env.test.local`:
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json
 
 # Example:
-# GOOGLE_APPLICATION_CREDENTIALS=/Users/mcj/.config/gcloud/application_default_credentials.json
+# GOOGLE_APPLICATION_CREDENTIALS=/path/to/gcloud/application_default_credentials.json
 ```
 
 **OR** use Application Default Credentials (ADC):

@@ -87,7 +87,7 @@ curl -X POST http://localhost:3002/chat \
 Required environment variables:
 
 ```bash
-GCP_PROJECT_ID=spec-server-dev
+GCP_PROJECT_ID=your-gcp-project
 VERTEX_AI_LOCATION=global
 VERTEX_AI_MODEL=gemini-2.5-flash
 ```
@@ -112,7 +112,7 @@ curl http://localhost:3002/health | jq
 tail -f apps/logs/server/out.log
 
 # Query conversations
-docker exec -u postgres $(docker ps -qf "name=spec-server-2.*db") \
+docker exec -u postgres $(docker ps -qf "name=emergent-memory.*db") \
   psql -U spec -d spec -c \
   "SELECT * FROM kb.chat_conversations ORDER BY created_at DESC LIMIT 5;"
 ```

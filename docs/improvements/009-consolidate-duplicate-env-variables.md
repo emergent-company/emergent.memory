@@ -140,15 +140,15 @@ ZITADEL_OAUTH_CLIENT_ID=345644688558063619
 ZITADEL_OAUTH_REDIRECT_URI=http://localhost:3002/auth/callback
 
 # GCP/Vertex AI (server-specific, used for embeddings/LLM)
-GCP_PROJECT_ID=spec-server-dev
-GOOGLE_APPLICATION_CREDENTIALS=/Users/mcj/spec-server-dev-vertex-ai.json
-GOOGLE_CLOUD_PROJECT=spec-server-dev
+GCP_PROJECT_ID=your-gcp-project
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+GOOGLE_CLOUD_PROJECT=your-gcp-project
 GOOGLE_CLOUD_LOCATION=europe-central2
 VERTEX_AI_MODEL=gemini-2.5-flash-lite
 VERTEX_AI_LOCATION=europe-central2
-VERTEX_AI_PROJECT_ID=spec-server-dev
+VERTEX_AI_PROJECT_ID=your-gcp-project
 VERTEX_EMBEDDING_MODEL=text-embedding-004
-VERTEX_EMBEDDING_PROJECT=spec-server-dev
+VERTEX_EMBEDDING_PROJECT=your-gcp-project
 VERTEX_EMBEDDING_LOCATION=europe-north1
 
 # Server runtime config

@@ -42,7 +42,7 @@ npm install --save-dev @tailwindcss/typography
 
 ### 2. Add Plugin to CSS Configuration
 
-Updated `/Users/mcj/code/spec-server/apps/admin/src/styles/app.css`:
+Updated `/path/to/emergent.memory/apps/admin/src/styles/app.css`:
 
 ```css
 /****  Plugins  ****/

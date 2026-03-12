@@ -164,7 +164,7 @@ async createWithUser(
 
 4. ✅ should store invitation metadata in Zitadel
    - Verifies: updateUserMetadata called with structured metadata
-   - Structure: `{ 'spec-server-invite': { inviteId, role, organizationId, projectId, invitedByUserId, invitedAt } }`
+   - Structure: `{ 'emergent-memory-invite': { inviteId, role, organizationId, projectId, invitedByUserId, invitedAt } }`
    - Asserts: All metadata fields present
 
 5. ✅ should create database invitation record
@@ -365,7 +365,7 @@ CREATE TABLE core.user_profiles (
 **Stored in Zitadel user metadata:**
 ```json
 {
-    "spec-server-invite": {
+    "emergent-memory-invite": {
         "inviteId": "invite-uuid",
         "role": "project_user",
         "organizationId": "org-uuid",

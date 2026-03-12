@@ -127,7 +127,7 @@ nx run workspace-cli:workspace:logs -- --follow
 Required environment variables:
 
 ```env
-GCP_PROJECT_ID=spec-server-dev
+GCP_PROJECT_ID=your-gcp-project
 VERTEX_AI_LOCATION=global
 VERTEX_AI_MODEL=gemini-2.5-flash
 ```
@@ -164,5 +164,5 @@ See [TESTING_GUIDE.md](TESTING_GUIDE.md#troubleshooting) for common issues and s
 ---
 
 **Last Updated**: November 20, 2025  
-**Project**: spec-server-2  
+**Project**: emergent-memory  
 **Status**: ✅ Phase 5 Complete (Production Ready)

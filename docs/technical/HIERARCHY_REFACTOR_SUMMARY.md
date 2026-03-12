@@ -101,7 +101,7 @@ export interface InternalDocument {
   external_source: "github",
   title: "auth.service.ts",
   metadata: {
-    repository: "eyedea-io/spec-server",
+    repository: "emergent-company/emergent.memory",
     file_path: "src/modules/auth/auth.service.ts",
     language: "typescript"
   }

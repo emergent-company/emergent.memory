@@ -1,6 +1,6 @@
 # Docker Services Prefix Configuration
 
-This document explains how to run multiple instances of the spec-server Docker services without naming conflicts.
+This document explains how to run multiple instances of the emergent-memory Docker services without naming conflicts.
 
 ## Overview
 

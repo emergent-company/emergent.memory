@@ -174,7 +174,7 @@ This sets a localStorage flag that persists across sessions.
 
 Add to crontab for daily rotation:
 ```bash
-0 0 * * * cd /path/to/spec-server && gzip logs/errors.log && mv logs/errors.log.gz logs/errors-$(date +\%Y\%m\%d).log.gz && touch logs/errors.log
+0 0 * * * cd /path/to/emergent.memory && gzip logs/errors.log && mv logs/errors.log.gz logs/errors-$(date +\%Y\%m\%d).log.gz && touch logs/errors.log
 ```
 
 ## Next Steps

@@ -137,7 +137,7 @@ volumes:
 
 ### 3. Service Account JSON - Environment Variable
 
-**Old approach:** Mount `/home/spec-server/zitadel-service-account.json` from host
+**Old approach:** Mount `/home/deploy/zitadel-service-account.json` from host
 **New approach:** Pass as environment variable
 
 ```yaml

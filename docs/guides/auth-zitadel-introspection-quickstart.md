@@ -8,7 +8,7 @@
 
 ## Overview
 
-This guide provides a quick overview of implementing Zitadel token introspection in spec-server-2. For detailed implementation steps, see the full implementation plan.
+This guide provides a quick overview of implementing Zitadel token introspection in emergent-memory. For detailed implementation steps, see the full implementation plan.
 
 ---
 
@@ -48,7 +48,7 @@ psql $DATABASE_URL < apps/server/migrations/0004_auth_introspection_cache.sql
 
 ### 2. Copy Services
 
-Copy these files from huma-blueprint-ui to spec-server-2:
+Copy these files from huma-blueprint-ui to emergent-memory:
 
 ```bash
 # Cache services

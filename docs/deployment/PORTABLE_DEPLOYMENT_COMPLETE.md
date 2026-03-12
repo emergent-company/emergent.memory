@@ -18,7 +18,7 @@ volumes:
   - ./docker/init.sql:/docker-entrypoint-initdb.d/00-init.sql # ❌ Host path
   - ./docker/01-init-zitadel.sh:/docker-entrypoint-initdb.d/01-init-zitadel.sh # ❌ Host path
   - ./secrets/bootstrap:/machinekey # ❌ Host directory
-  - /home/spec-server/zitadel-service-account.json:/service-account.json # ❌ Absolute path
+  - /home/emergent-memory/zitadel-service-account.json:/service-account.json # ❌ Absolute path
 ```
 
 **After**: Uses Docker images and volumes only

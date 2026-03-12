@@ -16,8 +16,8 @@ Updated `VERTEX_AI_MODEL` in both .env files:
 
 **Files Modified**:
 
-- `/Users/mcj/code/spec-server-2/.env`
-- `/Users/mcj/code/spec-server-2/apps/server/.env`
+- `/path/to/emergent.memory/.env`
+- `/path/to/emergent.memory/apps/server/.env`
 
 **Change**:
 

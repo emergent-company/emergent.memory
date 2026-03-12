@@ -72,7 +72,7 @@ ConversationService → PostgreSQL
 **Configuration**:
 
 ```env
-GCP_PROJECT_ID=spec-server-dev
+GCP_PROJECT_ID=your-gcp-project
 VERTEX_AI_LOCATION=global
 VERTEX_AI_MODEL=gemini-2.5-flash
 ```
@@ -488,7 +488,7 @@ nx run workspace-cli:workspace:logs -- --follow
 
 ---
 
-**Project**: spec-server-2  
+**Project**: emergent-memory  
 **Phase**: 2 - LangGraph Integration  
 **Status**: ✅ COMPLETE  
 **Next**: Phase 3 (Optional) or Production Hardening

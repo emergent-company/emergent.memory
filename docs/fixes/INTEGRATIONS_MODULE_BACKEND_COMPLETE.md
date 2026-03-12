@@ -11,7 +11,7 @@ Successfully implemented the IntegrationsModule backend infrastructure with AES-
 ## Completed Components
 
 ### 1. Database Migration ✅
-**File:** `/Users/mcj/code/spec-server/migrations/0003_integrations_system.sql`
+**File:** `/path/to/emergent.memory/migrations/0003_integrations_system.sql`
 
 - Created `kb.integrations` table with 13 columns
 - Created `kb.clickup_sync_state` table with 21 columns
@@ -353,10 +353,10 @@ DELETE /api/v1/integrations/clickup?project_id=uuid&org_id=org_123
 
 ## References
 
-- **Spec 22:** `/Users/mcj/code/spec-server/docs/spec/22-clickup-integration.md`
-- **Spec 23:** `/Users/mcj/code/spec-server/docs/spec/23-integration-gallery.md`
-- **Implementation Plan:** `/Users/mcj/code/spec-server/docs/INTEGRATION_GALLERY_IMPLEMENTATION_PLAN.md`
-- **Migration Doc:** `/Users/mcj/code/spec-server/docs/fixes/INTEGRATION_MIGRATION_COMPLETE.md`
+- **Spec 22:** `/path/to/emergent.memory/docs/spec/22-clickup-integration.md`
+- **Spec 23:** `/path/to/emergent.memory/docs/spec/23-integration-gallery.md`
+- **Implementation Plan:** `/path/to/emergent.memory/docs/INTEGRATION_GALLERY_IMPLEMENTATION_PLAN.md`
+- **Migration Doc:** `/path/to/emergent.memory/docs/fixes/INTEGRATION_MIGRATION_COMPLETE.md`
 
 ## Verification Checklist
 

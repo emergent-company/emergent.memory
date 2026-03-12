@@ -40,7 +40,7 @@ git commit -m "docs: add user reference refactor plan"
 ### 3. Backup Database
 ```bash
 # Backup entire database
-docker exec spec-server-2-db-1 pg_dump -U spec spec > backup_before_user_refactor_$(date +%Y%m%d_%H%M%S).sql
+docker exec emergent-memory-db-1 pg_dump -U spec spec > backup_before_user_refactor_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 ## After Migration - Required Code Changes
@@ -76,7 +76,7 @@ npm run test:e2e -- tests/e2e/phase1.workflows.e2e.spec.ts
 git checkout -b feature/user-reference-refactor
 
 # 2. Backup database  
-docker exec spec-server-2-db-1 pg_dump -U spec spec > backup.sql
+docker exec emergent-memory-db-1 pg_dump -U spec spec > backup.sql
 
 # 3. Run migration
 npx tsx scripts/run-migrations.ts

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document provides comprehensive guidelines for writing and maintaining tests in the spec-server-2 monorepo. Our testing strategy emphasizes clear boundaries between test types, consistent patterns, and maintainable test code.
+This document provides comprehensive guidelines for writing and maintaining tests in the emergent-memory monorepo. Our testing strategy emphasizes clear boundaries between test types, consistent patterns, and maintainable test code.
 
 ## Philosophy
 

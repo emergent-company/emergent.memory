@@ -4,7 +4,7 @@
 
 This document explains the schema evolution for `kb.object_extraction_logs` and why the status values changed between the old and new database instances.
 
-## Old Schema (spec-server-db-1)
+## Old Schema (legacy-db-1)
 
 ### Status Column
 - **Type**: `text` (no constraints)
@@ -29,7 +29,7 @@ CREATE INDEX idx_extraction_logs_errors ON kb.object_extraction_logs(extraction_
 WHERE status = 'error'::text;
 ```
 
-## New Schema (spec-server-2-db-1)
+## New Schema (emergent-memory-db-1)
 
 ### Status Column
 - **Type**: `varchar(20)` with CHECK constraint
@@ -173,14 +173,14 @@ After the code changes:
 npx nx run server:build
 
 # 2. Check database accepts new values
-docker exec spec-server-2-db-1 psql -U spec -d spec -c "
+docker exec emergent-memory-db-1 psql -U spec -d spec -c "
   SELECT step, status, message, started_at 
   FROM kb.object_extraction_logs 
   ORDER BY started_at DESC LIMIT 10;
 "
 
 # 3. Verify logs are being created
-docker exec spec-server-2-db-1 psql -U spec -d spec -c "
+docker exec emergent-memory-db-1 psql -U spec -d spec -c "
   SELECT ej.id, ej.status, COUNT(el.id) as log_count 
   FROM kb.object_extraction_jobs ej 
   LEFT JOIN kb.object_extraction_logs el ON ej.id = el.extraction_job_id 

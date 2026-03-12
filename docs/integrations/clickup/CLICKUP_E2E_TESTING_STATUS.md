@@ -21,7 +21,7 @@ The ClickUp integration E2E testing work has made significant progress but is cu
 ## Test File Location
 
 ```
-/Users/mcj/code/spec-server/apps/admin/e2e/specs/integrations.clickup.spec.ts
+/path/to/emergent.memory/apps/admin/e2e/specs/integrations.clickup.spec.ts
 ```
 
 **File Size:** 672 lines  
@@ -342,7 +342,7 @@ Sets up org/project context BEFORE page loads:
 
 ### Test Results Location
 ```
-/Users/mcj/code/spec-server/apps/admin/test-results/
+/path/to/emergent.memory/apps/admin/test-results/
 ```
 
 Each failed test generates:

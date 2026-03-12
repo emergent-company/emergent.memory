@@ -19,7 +19,7 @@
 
 ### 1. Start the Server
 ```bash
-cd /Users/mcj/code/spec-server
+cd /path/to/emergent.memory
 npm run dev
 ```
 
@@ -337,4 +337,4 @@ export EXTRACTION_CONFIDENCE_THRESHOLD_REVIEW=0.8
 
 ---
 
-**Questions?** Check `/Users/mcj/code/spec-server/docs/LANGCHAIN_MIGRATION_SUMMARY.md` for full details.
+**Questions?** Check `/path/to/emergent.memory/docs/LANGCHAIN_MIGRATION_SUMMARY.md` for full details.

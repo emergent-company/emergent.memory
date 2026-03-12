@@ -264,7 +264,7 @@ Control logging behavior with environment variables:
 
 ```bash
 # Log directory (default: logs/)
-LOG_DIR=/var/log/spec-server
+LOG_DIR=/var/log/emergent-memory
 
 # Node environment (affects debug log output)
 NODE_ENV=production  # Disables debug.log

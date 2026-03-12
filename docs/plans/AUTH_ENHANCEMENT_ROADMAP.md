@@ -8,7 +8,7 @@
 
 ## 📋 Overview
 
-This document provides an overview of the authentication system enhancement for spec-server-2, including Zitadel token introspection, PostgreSQL caching, and role-based authorization.
+This document provides an overview of the authentication system enhancement for emergent-memory, including Zitadel token introspection, PostgreSQL caching, and role-based authorization.
 
 ---
 
@@ -41,8 +41,8 @@ This document provides an overview of the authentication system enhancement for 
 
 ### 3. **Original Analysis** (Background)
 **Files**: 
-- `/Users/mcj/code/huma/huma-blueprint-ui/docs/architecture/database-auth-implementation-plan.md`
-- `/Users/mcj/code/huma/huma-blueprint-ui/docs/architecture/auth-system-migration-plan-2025.md`
+- `/path/to/huma-blueprint-ui/docs/architecture/database-auth-implementation-plan.md`
+- `/path/to/huma-blueprint-ui/docs/architecture/auth-system-migration-plan-2025.md`
 
 **What it contains**:
 - Original migration plans
@@ -224,7 +224,7 @@ Check PostgreSQL Cache
 
 **What it is**: Permission system based on user roles
 
-**Roles in spec-server-2**:
+**Roles in emergent-memory**:
 - `org_admin` - Full org access
 - `project_admin` - Project management
 - `project_user` - Read-only project access

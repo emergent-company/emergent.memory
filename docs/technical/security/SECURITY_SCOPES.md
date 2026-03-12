@@ -136,7 +136,7 @@ Configure Claude Desktop to use MCP with bearer token:
 ```json
 {
   "mcpServers": {
-    "spec-server": {
+    "emergent-memory": {
       "url": "https://api.example.com/mcp",
       "headers": {
         "Authorization": "Bearer YOUR_TOKEN_HERE"
@@ -154,7 +154,7 @@ Configure Claude Desktop to use MCP with bearer token:
 {
   "mcp": {
     "servers": {
-      "spec-server": {
+      "emergent-memory": {
         "command": "npx",
         "args": [
           "-y",

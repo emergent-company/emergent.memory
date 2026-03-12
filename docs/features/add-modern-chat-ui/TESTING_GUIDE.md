@@ -63,7 +63,7 @@ curl -s -X POST http://localhost:3002/chat \
 
 ```bash
 # View all conversations (last 10)
-docker exec -u postgres $(docker ps -qf "name=spec-server-2.*db") \
+docker exec -u postgres $(docker ps -qf "name=emergent-memory.*db") \
   psql -U spec -d spec -c \
   "SELECT id, LEFT(title, 50) as title, owner_user_id, created_at
    FROM kb.chat_conversations
@@ -71,7 +71,7 @@ docker exec -u postgres $(docker ps -qf "name=spec-server-2.*db") \
    LIMIT 10;"
 
 # View messages for a specific conversation
-docker exec -u postgres $(docker ps -qf "name=spec-server-2.*db") \
+docker exec -u postgres $(docker ps -qf "name=emergent-memory.*db") \
   psql -U spec -d spec -c \
   "SELECT role, content, created_at
    FROM kb.chat_messages
@@ -152,7 +152,7 @@ curl -X POST http://localhost:3002/chat \
 
 ```bash
 # Check conversation belongs to user
-docker exec -u postgres $(docker ps -qf "name=spec-server-2.*db") \
+docker exec -u postgres $(docker ps -qf "name=emergent-memory.*db") \
   psql -U spec -d spec -c \
   "SELECT id, title, owner_user_id, created_at
    FROM kb.chat_conversations
@@ -393,7 +393,7 @@ echo
 
 # Test 4: Database Persistence
 echo "4️⃣  Verify Database Persistence"
-MSG_COUNT=$(docker exec -u postgres $(docker ps -qf "name=spec-server-2.*db") \
+MSG_COUNT=$(docker exec -u postgres $(docker ps -qf "name=emergent-memory.*db") \
   psql -U spec -d spec -t -c \
   "SELECT COUNT(*) FROM kb.chat_messages WHERE conversation_id = '$CONV_ID';" \
   | tr -d ' ')
@@ -411,7 +411,7 @@ echo
 echo "Cleanup: Delete test conversation? (y/N)"
 read -r CLEANUP
 if [ "$CLEANUP" = "y" ]; then
-  docker exec -u postgres $(docker ps -qf "name=spec-server-2.*db") \
+  docker exec -u postgres $(docker ps -qf "name=emergent-memory.*db") \
     psql -U spec -d spec -c \
     "DELETE FROM kb.chat_conversations WHERE id = '$CONV_ID';"
   echo "   ✅ Test data cleaned up"
@@ -486,7 +486,7 @@ nx run workspace-cli:workspace:restart
 
 ```bash
 # Check if messages are in database
-docker exec -u postgres $(docker ps -qf "name=spec-server-2.*db") \
+docker exec -u postgres $(docker ps -qf "name=emergent-memory.*db") \
   psql -U spec -d spec -c \
   "SELECT * FROM kb.chat_messages WHERE conversation_id = '<ID>' ORDER BY created_at;"
 ```

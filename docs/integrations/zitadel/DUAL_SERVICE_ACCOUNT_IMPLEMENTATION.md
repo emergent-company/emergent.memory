@@ -111,7 +111,7 @@ Benefits:
 ### Step 1: Run Provisioning Script
 
 ```bash
-cd /Users/mcj/code/spec-server-2
+cd /path/to/emergent.memory
 
 # Set environment variables from production Zitadel
 export ZITADEL_DOMAIN="your-production-instance.zitadel.cloud"

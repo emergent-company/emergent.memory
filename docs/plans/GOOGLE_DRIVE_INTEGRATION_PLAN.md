@@ -42,8 +42,8 @@ A comprehensive Google Drive integration that enables users to connect multiple 
 ```typescript
 // Environment variables
 STORAGE_PROVIDER=gcs
-GCS_BUCKET=spec-server-documents
-GCS_PROJECT_ID=spec-server-prod
+GCS_BUCKET=your-gcs-bucket
+GCS_PROJECT_ID=your-gcp-project
 GCS_EMULATOR_HOST=localhost:4443  // Dev only
 GCS_CREDENTIALS_PATH=/path/to/service-account.json  // Prod only
 STORAGE_PRESIGNED_URL_EXPIRY=3600  // 1 hour
@@ -70,7 +70,7 @@ services:
     environment:
       - GCS_EMULATOR_HOST=gcs-emulator:4443
       - STORAGE_PROVIDER=gcs
-      - GCS_BUCKET=spec-server-dev
+      - GCS_BUCKET=emergent-memory-dev
       - GCS_PROJECT_ID=test-project
     depends_on:
       - gcs-emulator
@@ -607,8 +607,8 @@ GOOGLE_DRIVE_OAUTH_REDIRECT_URI=http://localhost:3000/api/v1/integrations/google
 
 # Storage (GCS)
 STORAGE_PROVIDER=gcs
-GCS_BUCKET=spec-server-documents
-GCS_PROJECT_ID=spec-server-prod
+GCS_BUCKET=your-gcs-bucket
+GCS_PROJECT_ID=your-gcp-project
 GCS_LOCATION=US
 GCS_CREDENTIALS_PATH=/path/to/service-account.json  # Prod
 GCS_EMULATOR_HOST=localhost:4443  # Dev

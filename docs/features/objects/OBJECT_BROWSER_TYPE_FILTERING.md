@@ -300,7 +300,7 @@ const handleClearTypeFilter = () => {
 ### Files Modified
 
 **Component:**
-- `/Users/mcj/code/spec-server/apps/admin/src/components/organisms/ObjectBrowser/ObjectBrowser.tsx`
+- `/path/to/emergent.memory/apps/admin/src/components/organisms/ObjectBrowser/ObjectBrowser.tsx`
 
 ### Key Changes
 
