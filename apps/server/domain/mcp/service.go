@@ -316,8 +316,8 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "template-list-available",
-			Description: "Get all template packs available for a project with their installation status. Shows which packs are installed, active, and their object type counts.",
+			Name:        "schema-list-available",
+			Description: "Get all schemas available for a project with their installation status. Shows which schemas are installed, active, and their object type counts.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -325,8 +325,8 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "template-list-installed",
-			Description: "Get all template packs currently installed in the project with their configuration and active status.",
+			Name:        "schema-list-installed",
+			Description: "Get all schemas currently installed in the project with their configuration and active status.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -363,11 +363,11 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"assignment_id": {
 						Type:        "string",
-						Description: "The UUID of the template pack assignment to update",
+						Description: "The UUID of the schema assignment to update",
 					},
 					"active": {
 						Type:        "boolean",
-						Description: "Set the active status of the template pack",
+						Description: "Set the active status of the schema",
 					},
 				},
 				Required: []string{"assignment_id"},
@@ -445,7 +445,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "entity-create",
-			Description: "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed template pack. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create outgoing relationships atomically in the same call, avoiding a separate create_relationship call.",
+			Description: "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed schema. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create outgoing relationships atomically in the same call, avoiding a separate create_relationship call.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -459,7 +459,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "relationship-create",
-			Description: "Create one or more relationships between entities. Always pass a 'relationships' array — use a single-element array for one relationship. Each relationship type should match a type defined in an installed template pack. Returns slim {id, type, source_id, target_id} per relationship. TIP: for creating an entity and linking it in one call, use the 'relationships' field on the entity spec in create_entity instead.",
+			Description: "Create one or more relationships between entities. Always pass a 'relationships' array — use a single-element array for one relationship. Each relationship type should match a type defined in an installed schema. Returns slim {id, type, source_id, target_id} per relationship. TIP: for creating an entity and linking it in one call, use the 'relationships' field on the entity spec in create_entity instead.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -899,7 +899,7 @@ func (s *Service) GetPromptDefinitions() []PromptDefinition {
 		},
 		{
 			Name:        "create_from_template",
-			Description: "Step-by-step workflow for creating a new entity using a template pack",
+			Description: "Step-by-step workflow for creating a new entity using a schema",
 			Arguments: []PromptArgument{
 				{
 					Name:        "entity_type",
@@ -985,9 +985,9 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeListSchemas(ctx, args)
 	case "schema-get":
 		return s.executeGetSchema(ctx, args)
-	case "template-list-available":
+	case "schema-list-available":
 		return s.executeGetAvailableTemplates(ctx, projectID)
-	case "template-list-installed":
+	case "schema-list-installed":
 		return s.executeGetInstalledTemplates(ctx, projectID)
 	case "schema-assign":
 		return s.executeAssignSchema(ctx, projectID, args)
