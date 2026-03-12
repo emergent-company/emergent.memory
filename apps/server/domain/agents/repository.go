@@ -659,7 +659,10 @@ Knowledge Base:
 Agents & AI:
   memory adk-sessions list|get
   memory agent-definitions create|list|get|update|delete    (aliases: agent-defs, defs)
-  memory agents create|list|get|update|delete|trigger|runs|get-run|hooks|questions
+  memory agents create|list|get|update|delete|trigger
+  memory agents runs <agent-id> [--limit N]   -- lists recent runs with status, token usage, and cost per run
+  memory agents get-run <run-id>              -- full detail for one run: tokens in/out + estimated cost in USD
+  memory agents hooks|questions
   memory ask "<question>"            Ask the CLI assistant
   memory mcp-guide                   Show MCP config for AI agents
   memory mcp-servers create|list|get|update|delete|inspect|sync|tools|configure
