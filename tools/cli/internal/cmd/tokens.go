@@ -19,7 +19,13 @@ var tokensCmd = &cobra.Command{
 var listTokensCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List API tokens",
-	Long:  "List API tokens. Without --project, lists account-level tokens. With --project, lists tokens for that project.",
+	Long: `List API tokens and their details.
+
+Without --project, lists account-level tokens. With --project, lists tokens
+for the specified project. Each token entry prints: Name, ID, Prefix, Type
+(account or project), Scopes, Created timestamp, and Revoked timestamp (if
+applicable). For project tokens, the full plaintext token value is also fetched
+and displayed — treat this output as sensitive.`,
 	RunE:  runListTokens,
 }
 
@@ -31,6 +37,10 @@ var createTokenCmd = &cobra.Command{
 Without --project, creates an account-level token usable across all projects.
 With --project, creates a project-scoped token.
 
+On success, prints the full plaintext Token value prominently (this is the only
+time the full token is shown — save it immediately), followed by ID, Name, Type,
+Prefix, Scopes, and Created timestamp.
+
 Valid scopes: schema:read, data:read, data:write, agents:read, agents:write, projects:read, projects:write`,
 	RunE: runCreateToken,
 }
@@ -38,7 +48,10 @@ Valid scopes: schema:read, data:read, data:write, agents:read, agents:write, pro
 var getTokenCmd = &cobra.Command{
 	Use:   "get [token-id]",
 	Short: "Get token details",
-	Long:  "Get details for a specific API token by ID",
+	Long: `Get details for a specific API token by its ID.
+
+Use --project to specify a project-scoped token; without it, looks up an
+account-level token.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runGetToken,
 }

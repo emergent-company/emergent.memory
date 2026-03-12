@@ -162,21 +162,37 @@ access to Tempo is required.`,
 var tracesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List recent traces",
-	Long:  "List recent traces (default: last 1 hour, up to 20 results).",
+	Long: `List recent traces (default: last 1 hour, up to 20 results).
+
+Output is a table with columns: TRACE ID, ROOT SPAN, DURATION, and TIMESTAMP.
+When the --agent-runs flag is used, the table additionally includes: AGENT,
+INPUT TOKENS, OUTPUT TOKENS, and EST. COST columns, and results are filtered
+to traces with agent.run root spans only. Use --since (e.g. 30m, 2h, 24h) and
+--limit to control the time window and result count.`,
 	RunE:  runTracesList,
 }
 
 var tracesSearchCmd = &cobra.Command{
 	Use:   "search",
 	Short: "Search traces by criteria",
-	Long:  "Search traces using TraceQL filters (service, route, min-duration).",
+	Long: `Search traces using TraceQL filters.
+
+Outputs the same table format as 'memory traces list': TRACE ID, ROOT SPAN,
+DURATION, TIMESTAMP. Use --service, --route, --min-duration, --since, and
+--limit flags to narrow results. The query is scoped to the active project
+automatically.`,
 	RunE:  runTracesSearch,
 }
 
 var tracesGetCmd = &cobra.Command{
 	Use:   "get <traceID>",
 	Short: "Fetch a full trace by ID",
-	Long:  "Fetch and display a full trace as a span tree.",
+	Long: `Fetch and display a full trace as an indented span tree.
+
+Prints the Trace ID, then each span in a tree structure showing the span name
+and duration. If an agent run ID is found in the trace attributes, also prints
+a token usage summary (Input Tokens, Output Tokens, Estimated Cost). Use
+--debug to include internal ADK bookkeeping spans in the tree.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runTracesGet,
 }

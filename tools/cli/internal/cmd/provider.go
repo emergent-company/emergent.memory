@@ -343,6 +343,10 @@ var providerUsageCmd = &cobra.Command{
 Without --project, reports org-wide usage across all projects.
 With --project, reports usage for that specific project.
 
+Output is a table with columns: PROVIDER, MODEL, TEXT IN (tokens), IMAGE
+(tokens), VIDEO (tokens), AUDIO (tokens), OUTPUT (tokens), and EST. COST (USD).
+A total estimated cost line is printed below the table.
+
 Examples:
   emergent provider usage
   emergent provider usage --project <id>

@@ -62,6 +62,10 @@ var ctlRestartCmd = &cobra.Command{
 var ctlStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show service status",
+	Long: `Show the current status of all Memory Docker services.
+
+Runs 'docker compose ps' for the local installation and prints the container
+name, state (running/exited), and port mappings for each service.`,
 	RunE:  runCtlStatus,
 }
 
@@ -81,6 +85,11 @@ Examples:
 var ctlHealthCmd = &cobra.Command{
 	Use:   "health",
 	Short: "Check server health",
+	Long: `Check the health of the local Memory server.
+
+Makes an HTTP GET request to the server's /health endpoint and prints whether
+the server is healthy (✓) or not responding (✗). On a healthy response the
+full JSON health payload is printed in indented format.`,
 	RunE:  runCtlHealth,
 }
 

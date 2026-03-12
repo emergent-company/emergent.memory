@@ -61,7 +61,10 @@ func getSchemasClient(cmd *cobra.Command) (*sdkschemas.Client, error) {
 var schemasListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available schemas",
-	Long:  "List schemas available for the current project to install",
+	Long: `List schemas available in the global registry for the current project to install.
+
+Output is a table with columns: ID, Name, Version, and Description (truncated
+to 60 characters). Use --output json to receive the full list as JSON.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		tp, err := getSchemasClient(cmd)
 		if err != nil {
@@ -107,7 +110,12 @@ var schemasListCmd = &cobra.Command{
 var schemasInstalledCmd = &cobra.Command{
 	Use:   "installed",
 	Short: "List installed schemas",
-	Long:  "List schemas currently installed on the current project",
+	Long: `List schemas currently installed (assigned) on the current project.
+
+Output is a table with columns: Assignment ID, Schema ID, Name, Version,
+Active (yes/no), and Installed date. The Assignment ID is used with
+'memory schemas uninstall' to remove a schema from the project. Use
+--output json to receive the full list as JSON.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		tp, err := getSchemasClient(cmd)
 		if err != nil {
@@ -157,6 +165,11 @@ var schemasInstalledCmd = &cobra.Command{
 var schemasGetCmd = &cobra.Command{
 	Use:   "get <schema-id>",
 	Short: "Get a schema by ID",
+	Long: `Get details for a schema pack by its ID.
+
+Prints ID, Name, Version, Description (if set), Author (if set), Draft status,
+and Created timestamp. Use --output json to receive the full schema record as
+JSON instead.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// get-schema is a global operation — no project context needed
@@ -386,6 +399,10 @@ Two modes:
 var schemasUninstallCmd = &cobra.Command{
 	Use:   "uninstall <assignment-id>",
 	Short: "Uninstall (remove) a schema assignment from the current project",
+	Long: `Remove a schema assignment from the current project by its assignment ID.
+
+Use 'memory schemas installed' to list assignment IDs. Prints
+"Schema assignment <id> removed." on success.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		tp, err := getSchemasClient(cmd)
@@ -434,7 +451,11 @@ var schemasDeleteCmd = &cobra.Command{
 var schemasCompiledTypesCmd = &cobra.Command{
 	Use:   "compiled-types",
 	Short: "Show compiled object and relationship types for the current project",
-	Long:  "Returns the merged set of object and relationship type definitions from all installed schemas",
+	Long: `Show the merged set of type definitions compiled from all installed schemas.
+
+Prints two tables: Object Types (columns: Name, Label, Schema, Description)
+and Relationship Types (columns: Name, Label, Source → Target, Schema). Use
+--output json to receive the raw compiled types as JSON.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		tp, err := getSchemasClient(cmd)
 		if err != nil {

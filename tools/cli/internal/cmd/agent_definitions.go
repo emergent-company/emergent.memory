@@ -21,14 +21,23 @@ var agentDefsCmd = &cobra.Command{
 var listAgentDefsCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all agent definitions",
-	Long:  "List all agent definitions for the current project",
+	Long: `List all agent definitions for the current project.
+
+Prints a numbered list with each definition's Name, ID, FlowType, Visibility,
+IsDefault flag, Tool count, and Description (if set).`,
 	RunE:  runListAgentDefs,
 }
 
 var getAgentDefCmd = &cobra.Command{
 	Use:   "get [id]",
 	Short: "Get agent definition details",
-	Long:  "Get details for a specific agent definition by ID",
+	Long: `Get full details for a specific agent definition by ID.
+
+Prints Name, ID, ProjectID, FlowType, Visibility, IsDefault, Description (if
+set), System Prompt (truncated to 200 characters), Model configuration (Name,
+Temperature, MaxTokens), Tools list, MaxSteps, DefaultTimeout, ACP Config
+(DisplayName, Description, Capabilities), CreatedAt and UpdatedAt timestamps,
+and any extra Config JSON.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runGetAgentDef,
 }
