@@ -191,3 +191,6 @@ tools/cli/emergent
 tools/cli/emergent-cli-*
 tools/cli/emergent-darwin-*
 tools/cli/*.tar.gz
+
+# EPF subtree (removed from tracking)
+docs/EPF/
