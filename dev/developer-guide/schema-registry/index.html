@@ -12,13 +12,9 @@
         <meta name="author" content="Emergent Company">
       
       
-        <link rel="canonical" href="https://emergent-company.github.io/emergent.memory/dev/developer-guide/type-registry/">
+        <link rel="canonical" href="https://emergent-company.github.io/emergent.memory/dev/developer-guide/schema-registry/">
       
       
-        <link rel="prev" href="../provider-setup/">
-      
-      
-        <link rel="next" href="../template-packs/">
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
@@ -26,7 +22,7 @@
     
     
       
-        <title>Type Registry - Memory SDK Documentation</title>
+        <title>Schema Registry - Memory SDK Documentation</title>
       
     
     
@@ -78,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#type-registry" class="md-skip">
+        <a href="#schema-registry" class="md-skip">
           Skip to content
         </a>
       
@@ -118,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Type Registry
+              Schema Registry
             
           </span>
         </div>
@@ -234,12 +230,10 @@
         
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
+      <li class="md-tabs__item">
         <a href="../" class="md-tabs__link">
           
   
@@ -405,8 +399,6 @@
       
   
   
-    
-  
   
   
     
@@ -430,28 +422,21 @@
       
         
       
-        
-      
-        
-      
-        
-      
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
         
           
           
@@ -467,13 +452,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             Developer Guide
@@ -507,253 +492,6 @@
                 
   
   
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    Type Registry
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  <span class="md-ellipsis">
-    Type Registry
-  </span>
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#concepts" class="md-nav__link">
-    <span class="md-ellipsis">
-      Concepts
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#type-sources" class="md-nav__link">
-    <span class="md-ellipsis">
-      Type sources
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#managing-types-via-api" class="md-nav__link">
-    <span class="md-ellipsis">
-      Managing types via API
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Managing types via API">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#list-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      List types
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#get-a-specific-type" class="md-nav__link">
-    <span class="md-ellipsis">
-      Get a specific type
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#get-type-stats" class="md-nav__link">
-    <span class="md-ellipsis">
-      Get type stats
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#create-a-custom-type" class="md-nav__link">
-    <span class="md-ellipsis">
-      Create a custom type
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#update-a-type" class="md-nav__link">
-    <span class="md-ellipsis">
-      Update a type
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#delete-a-type" class="md-nav__link">
-    <span class="md-ellipsis">
-      Delete a type
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#entity-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      Entity reference
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#embedding-policies" class="md-nav__link">
-    <span class="md-ellipsis">
-      Embedding policies
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Embedding policies">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#list-policies" class="md-nav__link">
-    <span class="md-ellipsis">
-      List policies
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#create-a-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      Create a policy
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#update-a-policy-patch-all-fields-optional" class="md-nav__link">
-    <span class="md-ellipsis">
-      Update a policy (PATCH — all fields optional)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#delete-a-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      Delete a policy
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#embedding-policy-fields" class="md-nav__link">
-    <span class="md-ellipsis">
-      Embedding policy fields
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#workflow-adding-a-new-entity-type" class="md-nav__link">
-    <span class="md-ellipsis">
-      Workflow: adding a new entity type
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../template-packs/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Template Packs
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
   
   
     <li class="md-nav__item">
@@ -762,27 +500,6 @@
   
   <span class="md-ellipsis">
     MCP Servers
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../workspace/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Workspaces
   </span>
   
 
@@ -1514,10 +1231,6 @@
       
         
       
-        
-      
-        
-      
     
     
       
@@ -2027,48 +1740,6 @@
   
   <span class="md-ellipsis">
     integrations
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../go-sdk/reference/templatepacks/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    templatepacks
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../go-sdk/reference/typeregistry/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    typeregistry
   </span>
   
 
@@ -2647,8 +2318,8 @@
   
 
 
-<h1 id="type-registry">Type Registry<a class="headerlink" href="#type-registry" title="Permanent link">&para;</a></h1>
-<p>The type registry defines the schema of objects that can live in your project's knowledge graph. Every object has a <strong>type name</strong>, and the registry stores the JSON Schema, display config, and extraction hints for each type.</p>
+<h1 id="schema-registry">Schema Registry<a class="headerlink" href="#schema-registry" title="Permanent link">&para;</a></h1>
+<p>The schema registry defines the schema of objects that can live in your project's knowledge graph. Every object has a <strong>type name</strong>, and the registry stores the JSON Schema, display config, and extraction hints for each type.</p>
 <h2 id="concepts">Concepts<a class="headerlink" href="#concepts" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -2664,7 +2335,7 @@
 </tr>
 <tr>
 <td><strong>Source</strong></td>
-<td>Where the type came from: <code>template</code>, <code>custom</code>, or <code>discovered</code></td>
+<td>Where the type came from: <code>schema</code>, <code>custom</code>, or <code>discovered</code></td>
 </tr>
 <tr>
 <td><strong>Embedding policy</strong></td>
@@ -2683,8 +2354,8 @@
 </thead>
 <tbody>
 <tr>
-<td><code>template</code></td>
-<td>Installed from a template pack</td>
+<td><code>schema</code></td>
+<td>Installed from a schema</td>
 </tr>
 <tr>
 <td><code>custom</code></td>
@@ -2699,20 +2370,20 @@
 <hr />
 <h2 id="managing-types-via-api">Managing types via API<a class="headerlink" href="#managing-types-via-api" title="Permanent link">&para;</a></h2>
 <h3 id="list-types">List types<a class="headerlink" href="#list-types" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/type-registry/projects/&lt;projectId&gt;<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schema-registry/projects/&lt;projectId&gt;<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
 </code></pre></div>
 <h3 id="get-a-specific-type">Get a specific type<a class="headerlink" href="#get-a-specific-type" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/type-registry/projects/&lt;projectId&gt;/types/Person<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schema-registry/projects/&lt;projectId&gt;/types/Person<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
 </code></pre></div>
 <h3 id="get-type-stats">Get type stats<a class="headerlink" href="#get-type-stats" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/type-registry/projects/&lt;projectId&gt;/stats<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schema-registry/projects/&lt;projectId&gt;/stats<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
 </code></pre></div>
 <p>Returns counts of total / enabled / by-source types.</p>
 <h3 id="create-a-custom-type">Create a custom type<a class="headerlink" href="#create-a-custom-type" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/type-registry/projects/&lt;projectId&gt;/types<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/schema-registry/projects/&lt;projectId&gt;/types<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
@@ -2741,7 +2412,7 @@
 <a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="s1">  }&#39;</span>
 </code></pre></div>
 <h3 id="update-a-type">Update a type<a class="headerlink" href="#update-a-type" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://api.dev.emergent-company.ai/api/type-registry/projects/&lt;projectId&gt;/types/Company<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://api.dev.emergent-company.ai/api/schema-registry/projects/&lt;projectId&gt;/types/Company<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
@@ -2750,7 +2421,7 @@
 <a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="s1">  }&#39;</span>
 </code></pre></div>
 <h3 id="delete-a-type">Delete a type<a class="headerlink" href="#delete-a-type" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.dev.emergent-company.ai/api/type-registry/projects/&lt;projectId&gt;/types/Company<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.dev.emergent-company.ai/api/schema-registry/projects/&lt;projectId&gt;/types/Company<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
 </code></pre></div>
 <div class="admonition warning">
@@ -2787,12 +2458,12 @@
 <tr>
 <td><code>source</code></td>
 <td>string</td>
-<td><code>template</code> | <code>custom</code> | <code>discovered</code></td>
+<td><code>schema</code> | <code>custom</code> | <code>discovered</code></td>
 </tr>
 <tr>
-<td><code>templatePackId</code></td>
+<td><code>schemaId</code></td>
 <td>UUID</td>
-<td>Set when <code>source = "template"</code></td>
+<td>Set when <code>source = "schema"</code></td>
 </tr>
 <tr>
 <td><code>schemaVersion</code></td>
@@ -2888,7 +2559,7 @@
 <tbody>
 <tr>
 <td><code>objectType</code></td>
-<td>Matches a type name in the type registry</td>
+<td>Matches a type name in the schema registry</td>
 </tr>
 <tr>
 <td><code>enabled</code></td>

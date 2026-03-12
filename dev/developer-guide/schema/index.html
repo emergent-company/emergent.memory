@@ -12,13 +12,9 @@
         <meta name="author" content="Emergent Company">
       
       
-        <link rel="canonical" href="https://emergent-company.github.io/emergent.memory/dev/developer-guide/template-packs/">
+        <link rel="canonical" href="https://emergent-company.github.io/emergent.memory/dev/developer-guide/schema/">
       
       
-        <link rel="prev" href="../type-registry/">
-      
-      
-        <link rel="next" href="../mcp-servers/">
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
@@ -26,7 +22,7 @@
     
     
       
-        <title>Template Packs - Memory SDK Documentation</title>
+        <title>Schemas - Memory SDK Documentation</title>
       
     
     
@@ -78,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#template-packs" class="md-skip">
+        <a href="#schemas" class="md-skip">
           Skip to content
         </a>
       
@@ -118,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Template Packs
+              Schemas
             
           </span>
         </div>
@@ -234,12 +230,10 @@
         
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
+      <li class="md-tabs__item">
         <a href="../" class="md-tabs__link">
           
   
@@ -405,8 +399,6 @@
       
   
   
-    
-  
   
   
     
@@ -430,28 +422,21 @@
       
         
       
-        
-      
-        
-      
-        
-      
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
         
           
           
@@ -467,13 +452,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             Developer Guide
@@ -510,270 +495,11 @@
   
   
     <li class="md-nav__item">
-      <a href="../type-registry/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Type Registry
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    Template Packs
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  <span class="md-ellipsis">
-    Template Packs
-  </span>
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#concepts" class="md-nav__link">
-    <span class="md-ellipsis">
-      Concepts
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#pack-lifecycle" class="md-nav__link">
-    <span class="md-ellipsis">
-      Pack lifecycle
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#managing-packs-admin" class="md-nav__link">
-    <span class="md-ellipsis">
-      Managing packs (admin)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Managing packs (admin)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#create-a-pack" class="md-nav__link">
-    <span class="md-ellipsis">
-      Create a pack
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#get-a-pack" class="md-nav__link">
-    <span class="md-ellipsis">
-      Get a pack
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#update-a-pack" class="md-nav__link">
-    <span class="md-ellipsis">
-      Update a pack
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#delete-a-pack" class="md-nav__link">
-    <span class="md-ellipsis">
-      Delete a pack
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#pack-field-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      Pack field reference
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#assigning-packs-to-projects" class="md-nav__link">
-    <span class="md-ellipsis">
-      Assigning packs to projects
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Assigning packs to projects">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#browse-available-packs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Browse available packs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#list-installed-packs" class="md-nav__link">
-    <span class="md-ellipsis">
-      List installed packs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#assign-a-pack" class="md-nav__link">
-    <span class="md-ellipsis">
-      Assign a pack
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#enable-disable-an-assignment" class="md-nav__link">
-    <span class="md-ellipsis">
-      Enable / disable an assignment
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#remove-an-assignment" class="md-nav__link">
-    <span class="md-ellipsis">
-      Remove an assignment
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#compiled-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compiled types
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#blueprints" class="md-nav__link">
-    <span class="md-ellipsis">
-      Blueprints
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../mcp-servers/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     MCP Servers
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../workspace/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Workspaces
   </span>
   
 
@@ -1505,10 +1231,6 @@
       
         
       
-        
-      
-        
-      
     
     
       
@@ -2034,48 +1756,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../go-sdk/reference/templatepacks/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    templatepacks
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../go-sdk/reference/typeregistry/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    typeregistry
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../go-sdk/reference/notifications/" class="md-nav__link">
         
   
@@ -2465,55 +2145,55 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#pack-lifecycle" class="md-nav__link">
+  <a href="#schema-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
-      Pack lifecycle
+      Schema lifecycle
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#managing-packs-admin" class="md-nav__link">
+  <a href="#managing-schemas-admin" class="md-nav__link">
     <span class="md-ellipsis">
-      Managing packs (admin)
+      Managing schemas (admin)
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Managing packs (admin)">
+    <nav class="md-nav" aria-label="Managing schemas (admin)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#create-a-pack" class="md-nav__link">
+  <a href="#create-a-schema" class="md-nav__link">
     <span class="md-ellipsis">
-      Create a pack
+      Create a schema
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#get-a-pack" class="md-nav__link">
+  <a href="#get-a-schema" class="md-nav__link">
     <span class="md-ellipsis">
-      Get a pack
+      Get a schema
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#update-a-pack" class="md-nav__link">
+  <a href="#update-a-schema" class="md-nav__link">
     <span class="md-ellipsis">
-      Update a pack
+      Update a schema
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#delete-a-pack" class="md-nav__link">
+  <a href="#delete-a-schema" class="md-nav__link">
     <span class="md-ellipsis">
-      Delete a pack
+      Delete a schema
     </span>
   </a>
   
@@ -2525,46 +2205,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#pack-field-reference" class="md-nav__link">
+  <a href="#schema-field-reference" class="md-nav__link">
     <span class="md-ellipsis">
-      Pack field reference
+      Schema field reference
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#assigning-packs-to-projects" class="md-nav__link">
+  <a href="#assigning-schemas-to-projects" class="md-nav__link">
     <span class="md-ellipsis">
-      Assigning packs to projects
+      Assigning schemas to projects
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Assigning packs to projects">
+    <nav class="md-nav" aria-label="Assigning schemas to projects">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#browse-available-packs" class="md-nav__link">
+  <a href="#browse-available-schemas" class="md-nav__link">
     <span class="md-ellipsis">
-      Browse available packs
+      Browse available schemas
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#list-installed-packs" class="md-nav__link">
+  <a href="#list-installed-schemas" class="md-nav__link">
     <span class="md-ellipsis">
-      List installed packs
+      List installed schemas
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#assign-a-pack" class="md-nav__link">
+  <a href="#assign-a-schema" class="md-nav__link">
     <span class="md-ellipsis">
-      Assign a pack
+      Assign a schema
     </span>
   </a>
   
@@ -2629,8 +2309,8 @@
   
 
 
-<h1 id="template-packs">Template Packs<a class="headerlink" href="#template-packs" title="Permanent link">&para;</a></h1>
-<p>Template packs are versioned bundles of object type schemas, relationship type schemas, UI configurations, and extraction prompts. They let you define a domain model once and apply it to many projects.</p>
+<h1 id="schemas">Schemas<a class="headerlink" href="#schemas" title="Permanent link">&para;</a></h1>
+<p>Schemas are versioned bundles of object type schemas, relationship type schemas, UI configurations, and extraction prompts. They let you define a domain model once and apply it to many projects.</p>
 <h2 id="concepts">Concepts<a class="headerlink" href="#concepts" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -2641,32 +2321,32 @@
 </thead>
 <tbody>
 <tr>
-<td><strong>Template Pack</strong></td>
+<td><strong>Schema</strong></td>
 <td>A versioned bundle: type schemas, relationship schemas, UI configs, extraction prompts</td>
 </tr>
 <tr>
 <td><strong>Assignment</strong></td>
-<td>A link between a pack and a project</td>
+<td>A link between a schema and a project</td>
 </tr>
 <tr>
 <td><strong>Compiled types</strong></td>
-<td>The merged type registry view for a project, combining all active packs</td>
+<td>The merged schema registry view for a project, combining all active schemas</td>
 </tr>
 </tbody>
 </table>
 <hr />
-<h2 id="pack-lifecycle">Pack lifecycle<a class="headerlink" href="#pack-lifecycle" title="Permanent link">&para;</a></h2>
+<h2 id="schema-lifecycle">Schema lifecycle<a class="headerlink" href="#schema-lifecycle" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>draft → published → (deprecated)
 </code></pre></div>
 <ul>
-<li><strong>Draft</strong> packs are not visible to projects.</li>
-<li><strong>Published</strong> packs appear in the <code>available</code> list for all projects.</li>
-<li><strong>Deprecated</strong> packs remain installed on existing projects but cannot be newly assigned.</li>
+<li><strong>Draft</strong> schemas are not visible to projects.</li>
+<li><strong>Published</strong> schemas appear in the <code>available</code> list for all projects.</li>
+<li><strong>Deprecated</strong> schemas remain installed on existing projects but cannot be newly assigned.</li>
 </ul>
 <hr />
-<h2 id="managing-packs-admin">Managing packs (admin)<a class="headerlink" href="#managing-packs-admin" title="Permanent link">&para;</a></h2>
-<h3 id="create-a-pack">Create a pack<a class="headerlink" href="#create-a-pack" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/template-packs<span class="w"> </span><span class="se">\</span>
+<h2 id="managing-schemas-admin">Managing schemas (admin)<a class="headerlink" href="#managing-schemas-admin" title="Permanent link">&para;</a></h2>
+<h3 id="create-a-schema">Create a schema<a class="headerlink" href="#create-a-schema" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
@@ -2714,26 +2394,26 @@
 <a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a><span class="s1">    }</span>
 <a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a><span class="s1">  }&#39;</span>
 </code></pre></div>
-<h3 id="get-a-pack">Get a pack<a class="headerlink" href="#get-a-pack" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/template-packs/&lt;packId&gt;<span class="w"> </span><span class="se">\</span>
+<h3 id="get-a-schema">Get a schema<a class="headerlink" href="#get-a-schema" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/&lt;schemaId&gt;<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
 </code></pre></div>
-<h3 id="update-a-pack">Update a pack<a class="headerlink" href="#update-a-pack" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://api.dev.emergent-company.ai/api/template-packs/&lt;packId&gt;<span class="w"> </span><span class="se">\</span>
+<h3 id="update-a-schema">Update a schema<a class="headerlink" href="#update-a-schema" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/&lt;schemaId&gt;<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;version&quot;: &quot;1.0.1&quot;, &quot;description&quot;: &quot;Updated description&quot;}&#39;</span>
 </code></pre></div>
-<h3 id="delete-a-pack">Delete a pack<a class="headerlink" href="#delete-a-pack" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.dev.emergent-company.ai/api/template-packs/&lt;packId&gt;<span class="w"> </span><span class="se">\</span>
+<h3 id="delete-a-schema">Delete a schema<a class="headerlink" href="#delete-a-schema" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/&lt;schemaId&gt;<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
 </code></pre></div>
 <div class="admonition warning">
-<p class="admonition-title">In-use packs</p>
-<p>Deleting a pack that is currently assigned to any project returns <code>409 Conflict</code>. Remove all assignments first.</p>
+<p class="admonition-title">In-use schemas</p>
+<p>Deleting a schema that is currently assigned to any project returns <code>409 Conflict</code>. Remove all assignments first.</p>
 </div>
 <hr />
-<h2 id="pack-field-reference">Pack field reference<a class="headerlink" href="#pack-field-reference" title="Permanent link">&para;</a></h2>
+<h2 id="schema-field-reference">Schema field reference<a class="headerlink" href="#schema-field-reference" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -2761,7 +2441,7 @@
 <tr>
 <td><code>author</code></td>
 <td>string</td>
-<td>Pack author</td>
+<td>Schema author</td>
 </tr>
 <tr>
 <td><code>source</code></td>
@@ -2816,56 +2496,56 @@
 <tr>
 <td><code>publishedAt</code></td>
 <td>timestamp</td>
-<td>When the pack was published</td>
+<td>When the schema was published</td>
 </tr>
 <tr>
 <td><code>deprecatedAt</code></td>
 <td>timestamp</td>
-<td>When the pack was deprecated</td>
+<td>When the schema was deprecated</td>
 </tr>
 </tbody>
 </table>
 <hr />
-<h2 id="assigning-packs-to-projects">Assigning packs to projects<a class="headerlink" href="#assigning-packs-to-projects" title="Permanent link">&para;</a></h2>
-<h3 id="browse-available-packs">Browse available packs<a class="headerlink" href="#browse-available-packs" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/template-packs/projects/&lt;projectId&gt;/available<span class="w"> </span><span class="se">\</span>
+<h2 id="assigning-schemas-to-projects">Assigning schemas to projects<a class="headerlink" href="#assigning-schemas-to-projects" title="Permanent link">&para;</a></h2>
+<h3 id="browse-available-schemas">Browse available schemas<a class="headerlink" href="#browse-available-schemas" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/available<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
 </code></pre></div>
-<h3 id="list-installed-packs">List installed packs<a class="headerlink" href="#list-installed-packs" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/template-packs/projects/&lt;projectId&gt;/installed<span class="w"> </span><span class="se">\</span>
+<h3 id="list-installed-schemas">List installed schemas<a class="headerlink" href="#list-installed-schemas" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/installed<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
 </code></pre></div>
-<h3 id="assign-a-pack">Assign a pack<a class="headerlink" href="#assign-a-pack" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/template-packs/projects/&lt;projectId&gt;/assign<span class="w"> </span><span class="se">\</span>
+<h3 id="assign-a-schema">Assign a schema<a class="headerlink" href="#assign-a-schema" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/assign<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;templatePackId&quot;: &quot;&lt;packId&gt;&quot;}&#39;</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;schemaId&quot;: &quot;&lt;schemaId&gt;&quot;}&#39;</span>
 </code></pre></div>
 <p>This creates an assignment with <code>active: true</code> by default.</p>
 <h3 id="enable-disable-an-assignment">Enable / disable an assignment<a class="headerlink" href="#enable-disable-an-assignment" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>https://api.dev.emergent-company.ai/api/template-packs/projects/&lt;projectId&gt;/assignments/&lt;assignmentId&gt;<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/assignments/&lt;assignmentId&gt;<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;active&quot;: false}&#39;</span>
 </code></pre></div>
 <p>Inactive assignments do not contribute types to the compiled registry.</p>
 <h3 id="remove-an-assignment">Remove an assignment<a class="headerlink" href="#remove-an-assignment" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.dev.emergent-company.ai/api/template-packs/projects/&lt;projectId&gt;/assignments/&lt;assignmentId&gt;<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/assignments/&lt;assignmentId&gt;<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
 </code></pre></div>
 <hr />
 <h2 id="compiled-types">Compiled types<a class="headerlink" href="#compiled-types" title="Permanent link">&para;</a></h2>
-<p>The compiled types endpoint merges all <strong>active</strong> pack assignments for a project into a single flat type map. Later-assigned packs override earlier ones for the same type name.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/template-packs/projects/&lt;projectId&gt;/compiled-types<span class="w"> </span><span class="se">\</span>
+<p>The compiled types endpoint merges all <strong>active</strong> schema assignments for a project into a single flat type map. Later-assigned schemas override earlier ones for the same type name.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/compiled-types<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
 </code></pre></div>
-<p>This is the type registry the extraction pipeline uses. Types registered here that are not yet in the project's type registry table are automatically added with <code>source = "template"</code> on the next extraction run.</p>
+<p>This is the schema registry the extraction pipeline uses. Types registered here that are not yet in the project's schema registry table are automatically added with <code>source = "template"</code> on the next extraction run.</p>
 <hr />
 <h2 id="blueprints">Blueprints<a class="headerlink" href="#blueprints" title="Permanent link">&para;</a></h2>
-<p>You can also install template packs via the CLI blueprints workflow:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>./my-pack-dir<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;
+<p>You can also install schemas via the CLI blueprints workflow:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>./my-schema-dir<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;
 </code></pre></div>
-<p>See the <a href="../../user-guide/agents/#blueprints-gitops">Agents — Blueprints</a> section for the blueprint file format. Template pack blueprints use the same YAML-based declarative config.</p>
+<p>See the <a href="../../user-guide/agents/#blueprints-gitops">Agents — Blueprints</a> section for the blueprint file format. Schema blueprints use the same YAML-based declarative config.</p>
 
 
 
