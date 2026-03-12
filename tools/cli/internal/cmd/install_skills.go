@@ -20,6 +20,7 @@ type SkillFrontmatter struct {
 	Version      string             `yaml:"version"` // flat form: version: "1.0"
 	License      string             `yaml:"license"`
 	AllowedTools []string           `yaml:"allowed-tools"`
+	Experimental bool               `yaml:"experimental"`
 	Metadata     SkillMetadataBlock `yaml:"metadata"`
 }
 
@@ -170,11 +171,12 @@ func promptYesNo(prompt string) (bool, error) {
 
 // FoundSkill represents a SKILL.md file found during discovery.
 type FoundSkill struct {
-	Path        string
-	Name        string
-	Description string
-	Version     string
-	Content     string
+	Path         string
+	Name         string
+	Description  string
+	Version      string
+	Content      string
+	Experimental bool
 }
 
 // discoverSkillsInDir scans a directory for SKILL.md files (either directly or
@@ -233,11 +235,12 @@ func loadFoundSkill(skillDir, skillMDPath string) (FoundSkill, error) {
 	}
 	content := skillContentFromBytes(data)
 	return FoundSkill{
-		Path:        skillMDPath,
-		Name:        fm.Name,
-		Description: fm.Description,
-		Version:     fm.EffectiveVersion(),
-		Content:     content,
+		Path:         skillMDPath,
+		Name:         fm.Name,
+		Description:  fm.Description,
+		Version:      fm.EffectiveVersion(),
+		Content:      content,
+		Experimental: fm.Experimental,
 	}, nil
 }
 

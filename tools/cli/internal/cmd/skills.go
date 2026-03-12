@@ -45,9 +45,10 @@ var (
 	skillContentFileFlag string
 	skillConfirmFlag     bool
 	// import flags
-	skillImportFromDirFlag  string
-	skillImportDiscoverFlag bool
-	skillImportAllFlag      bool
+	skillImportFromDirFlag      string
+	skillImportDiscoverFlag     bool
+	skillImportAllFlag          bool
+	skillImportExperimentalFlag bool
 )
 
 // slug regex must match server-side validation
@@ -208,7 +209,7 @@ var skillGetCmd = &cobra.Command{
 Prints ID, Name, Description, Scope (global / org / project), Created and
 Updated timestamps, and the full skill Content. Use --json to receive the raw
 JSON response instead.`,
-	Args:  cobra.MaximumNArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := getClient(cmd)
 		if err != nil {
@@ -327,7 +328,7 @@ var skillUpdateCmd = &cobra.Command{
 Prints "Skill updated." followed by the skill's ID and Name on success. At
 least one of --description, --content, or --content-file must be provided.
 Use --json to receive the full updated skill as JSON instead.`,
-	Args:  cobra.MaximumNArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		req := &sdkskills.UpdateSkillRequest{}
 		hasUpdate := false
@@ -391,7 +392,7 @@ var skillDeleteCmd = &cobra.Command{
 
 Prints "Skill <id> deleted." on success. You will be prompted for confirmation
 unless the --confirm flag is provided.`,
-	Args:  cobra.MaximumNArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := getClient(cmd)
 		if err != nil {
@@ -452,7 +453,10 @@ Import all discovered skills without prompting:
   memory skills import --discover --all
 
 Import built-in Memory skills from the embedded catalog:
-  memory skills import --builtin`,
+  memory skills import --builtin
+
+Import built-in skills including experimental ones:
+  memory skills import --builtin --experimental`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		projectID, orgID, err := resolveSkillScope(cmd)
@@ -572,7 +576,11 @@ func importFoundSkills(cmd *cobra.Command, c *client.Client, projectID, orgID st
 		if s.Version != "" {
 			ver = " (v" + s.Version + ")"
 		}
-		fmt.Fprintf(out, "  • %s%s — %s\n", s.Name, ver, truncate(s.Description, 60))
+		label := s.Name
+		if s.Experimental {
+			label = s.Name + " [experimental]"
+		}
+		fmt.Fprintf(out, "  • %s%s — %s\n", label, ver, truncate(s.Description, 60))
 	}
 	fmt.Fprintln(out)
 
@@ -583,7 +591,11 @@ func importFoundSkills(cmd *cobra.Command, c *client.Client, projectID, orgID st
 
 	for _, s := range skills {
 		if !all && isInteractiveTerminal() {
-			ok, err := promptYesNo(fmt.Sprintf("Import '%s'? [y/N]: ", s.Name))
+			promptName := s.Name
+			if s.Experimental {
+				promptName = s.Name + " [experimental]"
+			}
+			ok, err := promptYesNo(fmt.Sprintf("Import '%s'? [y/N]: ", promptName))
 			if err != nil {
 				return fmt.Errorf("reading input: %w", err)
 			}
@@ -632,6 +644,8 @@ func importFromEmbeddedCatalog(cmd *cobra.Command, c *client.Client, projectID, 
 	out := cmd.OutOrStdout()
 	catalog := skillsfs.Catalog()
 
+	experimentalFlag, _ := cmd.Flags().GetBool("experimental")
+
 	entries, err := fs.ReadDir(catalog, ".")
 	if err != nil {
 		return fmt.Errorf("reading embedded catalog: %w", err)
@@ -651,18 +665,27 @@ func importFromEmbeddedCatalog(cmd *cobra.Command, c *client.Client, projectID, 
 		if err != nil {
 			continue
 		}
+		// Skip experimental skills unless --experimental flag is set.
+		if fm.Experimental && !experimentalFlag {
+			continue
+		}
 		content := skillContentFromBytes(data)
 		skills = append(skills, FoundSkill{
-			Path:        skillMDPath,
-			Name:        fm.Name,
-			Description: fm.Description,
-			Version:     fm.EffectiveVersion(),
-			Content:     content,
+			Path:         skillMDPath,
+			Name:         fm.Name,
+			Description:  fm.Description,
+			Version:      fm.EffectiveVersion(),
+			Content:      content,
+			Experimental: fm.Experimental,
 		})
 	}
 
 	if len(skills) == 0 {
-		fmt.Fprintln(out, "No skills found in the embedded catalog.")
+		if experimentalFlag {
+			fmt.Fprintln(out, "No skills found in the embedded catalog.")
+		} else {
+			fmt.Fprintln(out, "No skills found in the embedded catalog. Use --experimental to include experimental skills.")
+		}
 		return nil
 	}
 
@@ -764,6 +787,7 @@ func init() {
 	skillImportCmd.Flags().BoolVar(&skillImportDiscoverFlag, "discover", false, "Auto-discover skills from well-known locations (.agents/skills/, ~/.claude/skills/, etc.)")
 	skillImportCmd.Flags().BoolVar(&skillImportAllFlag, "all", false, "Import all found skills without prompting")
 	skillImportCmd.Flags().Bool("builtin", false, "Import from the built-in embedded Memory skill catalog")
+	skillImportCmd.Flags().BoolVar(&skillImportExperimentalFlag, "experimental", false, "Include experimental skills when importing from the built-in catalog (--builtin)")
 
 	// Assemble
 	skillsCmd.AddCommand(skillListCmd)

@@ -10,6 +10,12 @@ metadata:
 
 Query an Emergent project knowledge base using the `emergent query` command.
 
+## Rules
+
+- **Never run `memory browse`** — it launches a full interactive TUI that blocks on terminal input and will hang in an automated agent context.
+- **Always prefix `memory` commands with `NO_PROMPT=1`** (e.g. `NO_PROMPT=1 memory <cmd>`). Without it, the CLI may show interactive pickers when no project, agent, MCP server, skill, or agent-definition ID is provided. Do not add this to `.env.local` — it must only apply to agent-driven invocations.
+- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` is set.
+
 ## Modes
 
 **Agent mode (default)** — AI reasoning over the knowledge graph. Best for complex or multi-hop questions.

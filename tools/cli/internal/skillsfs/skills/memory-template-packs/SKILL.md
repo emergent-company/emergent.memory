@@ -10,6 +10,12 @@ Manage template packs using `emergent template-packs`. Template packs define reu
 
 > **New to Emergent?** Load the `memory-onboard` skill first — it walks through designing and installing a template pack from scratch.
 
+## Rules
+
+- **Never run `memory browse`** — it launches a full interactive TUI that blocks on terminal input and will hang in an automated agent context.
+- **Always prefix `memory` commands with `NO_PROMPT=1`** (e.g. `NO_PROMPT=1 memory <cmd>`). Without it, the CLI may show interactive pickers when no project, agent, MCP server, skill, or agent-definition ID is provided. Do not add this to `.env.local` — it must only apply to agent-driven invocations.
+- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` is set.
+
 ## Concepts
 
 - **Template pack** — a versioned bundle of `objectTypeSchemas` and `relationshipTypeSchemas`. Immutable once created; new versions get new IDs.
