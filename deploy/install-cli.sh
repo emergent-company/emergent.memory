@@ -52,11 +52,25 @@ OS=$(detect_os)
 ARCH=$(detect_arch)
 EXT="tar.gz"; [ "$OS" = "windows" ] && EXT="zip"
 
+# Detect any previously installed version
+PREV_VERSION=""
+if command -v "${INSTALL_DIR}/bin/memory" >/dev/null 2>&1; then
+    PREV_VERSION=$("${INSTALL_DIR}/bin/memory" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+fi
+
+if [ -n "$PREV_VERSION" ]; then
+    if [ "$PREV_VERSION" = "$VERSION" ]; then
+        echo -e "${CYAN}Reinstalling memory ${VERSION} (${OS}/${ARCH})...${NC}"
+    else
+        echo -e "${CYAN}Updating memory from ${PREV_VERSION} to ${VERSION} (${OS}/${ARCH})...${NC}"
+    fi
+else
+    echo -e "${CYAN}Downloading memory ${VERSION} (${OS}/${ARCH})...${NC}"
+fi
+
 URL="https://github.com/${REPO_ORG}/${REPO_NAME}/releases/download/${VERSION}/memory-cli-${OS}-${ARCH}.${EXT}"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-
-echo -e "${CYAN}Downloading memory ${VERSION} (${OS}/${ARCH})...${NC}"
 if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$URL" -o "${TMP}/memory-cli.${EXT}"
 else
@@ -73,7 +87,11 @@ mkdir -p "${INSTALL_DIR}/bin"
 BINARY="memory-cli-${OS}-${ARCH}"; [ "$OS" = "windows" ] && BINARY="${BINARY}.exe"
 mv "${TMP}/${BINARY}" "${INSTALL_DIR}/bin/memory"
 chmod +x "${INSTALL_DIR}/bin/memory"
-echo -e "${GREEN}✓${NC} Installed to ${INSTALL_DIR}/bin/memory"
+if [ -n "$PREV_VERSION" ] && [ "$PREV_VERSION" != "$VERSION" ]; then
+    echo -e "${GREEN}✓${NC} Updated to ${INSTALL_DIR}/bin/memory"
+else
+    echo -e "${GREEN}✓${NC} Installed to ${INSTALL_DIR}/bin/memory"
+fi
 
 PATH_LINE="export PATH=\"\$HOME/.memory/bin:\$PATH\""
 
