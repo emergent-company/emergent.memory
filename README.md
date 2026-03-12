@@ -28,8 +28,10 @@ curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/ma
 Connect to an existing Memory server without installing the full stack:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/install-cli.sh | bash
+source <(curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/install-cli.sh)
 ```
+
+Using `source` (instead of piping to `bash`) lets the script update `PATH` in your current shell session so `memory` is available immediately.
 
 ### Self-Update
 
