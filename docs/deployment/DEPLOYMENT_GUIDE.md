@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide explains how to deploy the Spec Server application using Docker Compose. The deployment is fully portable with **zero host path dependencies** - you only need Docker, docker-compose, and environment variables.
+This guide explains how to deploy the Emergent Memory application using Docker Compose. The deployment is fully portable with **zero host path dependencies** - you only need Docker, docker-compose, and environment variables.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ The application consists of:
 - **PostgreSQL** (with pgvector extension) - Database
 - **Zitadel** - Identity Provider (OAuth/OIDC)
 - **Zitadel Login UI** - Custom login interface
-- **NestJS Server** - Backend API
+- **Go Server** - Backend API
 - **React Admin** - Frontend UI
 
 ## Prerequisites
