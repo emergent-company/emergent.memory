@@ -157,16 +157,9 @@ func runListMCPServers(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("   Tools:     %d\n", s.ToolCount)
 		if len(s.Tools) > 0 {
-			const maxShow = 5
-			for i, t := range s.Tools {
-				if i >= maxShow {
-					break
-				}
+			for _, t := range s.Tools {
 				suffix := toolConfigSuffix(t.ConfigKeys, t.Config)
 				fmt.Printf("             • %s%s\n", t.ToolName, suffix)
-			}
-			if len(s.Tools) > maxShow {
-				fmt.Printf("             • … +%d more\n", len(s.Tools)-maxShow)
 			}
 		}
 		fmt.Printf("   Created:   %s\n", s.CreatedAt.Format("2006-01-02 15:04:05"))

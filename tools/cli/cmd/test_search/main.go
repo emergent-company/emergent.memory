@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	// Configuration for mcj-emergent server
+	// Configuration
 	serverURL := "https://api.dev.emergent-company.ai"
 	projectID := "dfe2febb-1971-4325-8f97-c816c6609f6d" // IMDB project
 	orgID := "c9bfa6d1-dc9f-4c3b-ac37-7a0411a0beba"

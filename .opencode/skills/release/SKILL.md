@@ -140,7 +140,7 @@ ssh root@<server> "curl -s http://localhost:3002/health | jq '.version'"
 
 | Server       | SSH                     | Notes                                                                   |
 | ------------ | ----------------------- | ----------------------------------------------------------------------- |
-| mcj-emergent | `ssh root@mcj-emergent` | Standalone deployment, DB container: `emergent-db`, DB user: `emergent` |
+| your-server  | `ssh root@your-server`  | Standalone deployment, DB container: `emergent-db`, DB user: `emergent` |
 
 ## Quick Reference
 

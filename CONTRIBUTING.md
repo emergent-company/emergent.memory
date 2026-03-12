@@ -1,6 +1,6 @@
-# Contributing to Spec Server 2
+# Contributing to Memory
 
-Thank you for your interest in contributing to Spec Server 2! This guide will help you understand our development practices, coding standards, and architectural patterns.
+Thank you for your interest in contributing to Memory! This guide will help you understand our development practices, coding standards, and architectural patterns.
 
 ---
 
@@ -31,8 +31,8 @@ Thank you for your interest in contributing to Spec Server 2! This guide will he
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/your-org/spec-server-2.git
-   cd spec-server-2
+   git clone https://github.com/emergent-company/emergent.memory.git
+   cd emergent.memory
    ```
 
 2. **Set up environment:**
@@ -56,7 +56,7 @@ Thank you for your interest in contributing to Spec Server 2! This guide will he
    task build
 
    # Run the server
-   ./apps/server-go/dist/server
+   task start
    ```
 
 ---
@@ -97,7 +97,7 @@ task migrate:status
 
 ## Database Patterns
 
-Spec Server 2 uses `bun` as a SQL-first ORM for Go. We emphasize:
+Memory uses `bun` as a SQL-first ORM for Go. We emphasize:
 - **Type Safety:** Using Go structs for database models.
 - **Multi-tenancy:** Respecting Row-Level Security (RLS) in PostgreSQL.
 - **Strategic SQL:** Using raw SQL via `bun` for complex or performance-critical queries.

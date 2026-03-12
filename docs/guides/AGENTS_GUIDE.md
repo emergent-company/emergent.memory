@@ -17,7 +17,7 @@ export MEMORY_PROJECT=my-project
 # or: export MEMORY_PROJECT_ID=<uuid>
 ```
 
-Server default is `http://mcj-emergent:3002`. For local dev, override:
+Server default is `http://localhost:3012`. For a remote server, override:
 
 ```bash
 export MEMORY_SERVER_URL=http://localhost:3012

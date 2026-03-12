@@ -34,8 +34,8 @@ package cmd
 // Examples:
 //   memory db lovdata
 //   memory db lovdata --seed 20 --skip-eu --dataset laws
-//   memory db lovdata --server http://mcj-emergent:3002 --workers 40
-//   memory db lovdata --server http://mcj-emergent:3002 --seed 0 --workers 40
+//   memory db lovdata --server http://your-server:3002 --workers 40
+//   memory db lovdata --server http://your-server:3002 --seed 0 --workers 40
 
 import (
 	"archive/tar"
@@ -115,8 +115,8 @@ Relationship types:
 Examples:
   memory db lovdata
   memory db lovdata --seed 20 --skip-eu --dataset laws
-  memory db lovdata --server http://mcj-emergent:3002 --workers 40
-  memory db lovdata --server http://mcj-emergent:3002 --seed 0 --workers 40`,
+  memory db lovdata --server http://your-server:3002 --workers 40
+  memory db lovdata --server http://your-server:3002 --seed 0 --workers 40`,
 	RunE: runDbLovdata,
 }
 

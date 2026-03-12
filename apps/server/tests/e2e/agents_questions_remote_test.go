@@ -13,15 +13,15 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
-// AgentsQuestionsRemoteSuite tests agent questions against a remote server (mcj-emergent).
+// AgentsQuestionsRemoteSuite tests agent questions against a remote server.
 //
 // This test suite is designed to run against an external Emergent server deployment
 // to verify the agent questions feature end-to-end in a real environment.
 //
 // Usage:
 //
-//	# Run against mcj-emergent
-//	TEST_SERVER_URL=http://mcj-emergent:3002 go test -v -run TestAgentsQuestionsRemoteSuite
+//	# Run against a remote server
+//	TEST_SERVER_URL=http://your-server:3002 go test -v -run TestAgentsQuestionsRemoteSuite
 //
 //	# Or against local dev server
 //	TEST_SERVER_URL=http://localhost:3002 go test -v -run TestAgentsQuestionsRemoteSuite
@@ -139,7 +139,7 @@ func (s *AgentsQuestionsRemoteSuite) TestAgentQuestionsAPIEndpoints() {
 	s.T().Log("")
 	s.T().Log("✓ Deployment Status:")
 	s.T().Log("  • Version: v0.18.0")
-	s.T().Log("  • Server: mcj-emergent")
+	s.T().Log("  • Server: your-server")
 	s.T().Log("  • Migrations: 28, 29 applied successfully")
 	s.T().Log("")
 	s.T().Log("Note: Full integration testing (agent execution -> question -> response)")

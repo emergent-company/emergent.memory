@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run.sh — run e2e tests against mcj-emergent (default) or another env.
+# run.sh — run e2e tests against a configured environment.
 #
 # Usage:
 #   bash .opencode/skills/run-e2e-test/scripts/run.sh
@@ -8,8 +8,8 @@
 #
 # Args:
 #   $1  (optional) env name or test filter
-#       - if it looks like a test name (starts with "Test") → used as filter against mcj-emergent
-#       - otherwise → treated as env name (mcj-emergent | localhost | <blank for base .env>)
+#       - if it looks like a test name (starts with "Test") → used as filter against default env
+#       - otherwise → treated as env name (your-server | localhost | <blank for base .env>)
 #   $2  (optional) test filter when $1 is an env name
 
 set -euo pipefail
@@ -18,7 +18,7 @@ export PATH="/root/.local/bin:$PATH"
 
 E2E_DIR="/root/emergent.memory.e2e"
 
-ENV_NAME="mcj-emergent"
+ENV_NAME="${DEFAULT_E2E_ENV:-localhost}"
 FILTER=""
 
 if [[ $# -ge 1 ]]; then

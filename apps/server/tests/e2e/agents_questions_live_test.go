@@ -12,7 +12,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
-// AgentsQuestionsLiveSuite tests agent questions against live test data in mcj-emergent.
+// AgentsQuestionsLiveSuite tests agent questions against live test data on an external server.
 //
 // This test assumes you've already created test data using:
 //
@@ -24,7 +24,7 @@ import (
 //
 // Usage:
 //
-//	TEST_SERVER_URL=http://mcj-emergent:3002 go test -v -run TestAgentsQuestionsLiveSuite
+//	TEST_SERVER_URL=http://your-server:3002 go test -v -run TestAgentsQuestionsLiveSuite
 type AgentsQuestionsLiveSuite struct {
 	testutil.BaseSuite
 

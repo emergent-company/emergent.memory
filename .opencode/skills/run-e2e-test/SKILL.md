@@ -1,6 +1,6 @@
 ---
 name: run-e2e-test
-description: Run the e2e test suite against mcj-emergent or another environment. Use when the user wants to run e2e tests, verify a feature end-to-end, or run a specific test by name.
+description: Run the e2e test suite against a configured environment. Use when the user wants to run e2e tests, verify a feature end-to-end, or run a specific test by name.
 license: MIT
 metadata:
   author: openspec
@@ -8,16 +8,16 @@ metadata:
 ---
 
 Run e2e tests using the `test` script in `/root/emergent.memory.e2e/`. All env vars,
-server URLs, auth tokens, and API keys are already wired in `.env.mcj-emergent` —
+server URLs, auth tokens, and API keys are wired via env overlay files —
 no manual variable setup needed.
 
 ## Quick Reference
 
 ```bash
-# Run ALL tests against mcj-emergent (default)
+# Run ALL tests against the default environment
 bash .opencode/skills/run-e2e-test/scripts/run.sh
 
-# Run a specific test against mcj-emergent
+# Run a specific test against the default environment
 bash .opencode/skills/run-e2e-test/scripts/run.sh TestAINewsBlueprint_InstallAndRun
 
 # Run against a different env (localhost, etc.)
@@ -36,12 +36,12 @@ bash .opencode/skills/run-e2e-test/scripts/run.sh localhost TestCLIInstalled_Ver
 
 The `test` script in `/root/emergent.memory.e2e/test`:
 1. Loads `.env` as base config
-2. Merges `.env.mcj-emergent` (or whichever overlay is named) on top
+2. Merges the named env overlay (e.g. `.env.your-server`) on top
 3. Shell-exported variables always win over file values
 4. Passes everything to `go test` with `-v`
 
 The `run.sh` wrapper:
-- Defaults env to `mcj-emergent`
+- Defaults env to the value of `ENV_NAME` (set in `run.sh`)
 - Detects `TestAINews*` / `TestBlueprint*` filters and adds `-timeout 60m` automatically
 
 ## Env Overlays
@@ -49,7 +49,7 @@ The `run.sh` wrapper:
 | File | Target |
 |------|--------|
 | `.env` | Base defaults (Docker Compose stack) |
-| `.env.mcj-emergent` | mcj-emergent test server (auth + token pre-configured) |
+| `.env.your-server` | Remote test server (auth + token pre-configured) |
 | `.env.localhost` | Local server at `http://localhost:3012` |
 
 ## Guardrails

@@ -49,7 +49,7 @@ Examples:
   memory embeddings status            Show current worker state
   memory embeddings pause             Pause all embedding workers
   memory embeddings resume            Resume all embedding workers
-  memory embeddings pause --server http://mcj-emergent:3002`,
+  memory embeddings pause --server http://your-server:3002`,
 }
 
 func init() {
