@@ -35,6 +35,23 @@ func (r *Repository) FindAllServers(ctx context.Context, projectID string) ([]*M
 	return servers, nil
 }
 
+// FindAllServersWithTools returns all MCP servers for a project with their tools eager-loaded.
+func (r *Repository) FindAllServersWithTools(ctx context.Context, projectID string) ([]*MCPServer, error) {
+	var servers []*MCPServer
+	err := r.db.NewSelect().
+		Model(&servers).
+		Relation("Tools", func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.Order("tool_name ASC")
+		}).
+		Where("ms.project_id = ?", projectID).
+		Order("ms.name ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return servers, nil
+}
+
 // FindEnabledServers returns all enabled MCP servers for a project.
 func (r *Repository) FindEnabledServers(ctx context.Context, projectID string) ([]*MCPServer, error) {
 	var servers []*MCPServer
@@ -207,6 +224,7 @@ func (r *Repository) UpsertTool(ctx context.Context, tool *MCPServerTool) error 
 		Set("description = EXCLUDED.description").
 		Set("input_schema = EXCLUDED.input_schema").
 		Set("enabled = EXCLUDED.enabled").
+		Set("config_keys = EXCLUDED.config_keys").
 		Returning("*").
 		Exec(ctx)
 	return err
@@ -222,6 +240,7 @@ func (r *Repository) BulkUpsertTools(ctx context.Context, tools []*MCPServerTool
 		On("CONFLICT (server_id, tool_name) DO UPDATE").
 		Set("description = EXCLUDED.description").
 		Set("input_schema = EXCLUDED.input_schema").
+		Set("config_keys = EXCLUDED.config_keys").
 		Returning("*").
 		Exec(ctx)
 	return err

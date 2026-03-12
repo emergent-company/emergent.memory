@@ -216,6 +216,9 @@ type ToolDefinition struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
 	InputSchema InputSchema `json:"inputSchema"`
+	// ConfigKeys lists setup-time configuration keys required by this tool
+	// (e.g. ["api_key"]). Empty for tools that need no configuration.
+	ConfigKeys []string `json:"configKeys,omitempty"`
 }
 
 // InputSchema is a JSON schema for tool parameters
