@@ -93,7 +93,9 @@ See `docker-compose.staging.yml` for a production-ready template.
 
 ## Documentation
 
-All project documentation is located in the `/docs` directory:
+Published documentation is available at **https://emergent-company.github.io/emergent.memory/**.
+
+Additional in-repo documentation is located in the `/docs` directory:
 
 - **/docs/setup**: Guides for setting up the project and its dependencies.
 - **/docs/guides**: How-to guides and quick references for developers.
