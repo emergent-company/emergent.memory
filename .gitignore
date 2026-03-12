@@ -14,6 +14,7 @@ dist/
 .env.*.local
 .env.e2e.scenarios
 .env.infisical
+.env.test
 docker/.env
 
 # Environment files for specific deployments (never commit)
