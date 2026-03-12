@@ -13,7 +13,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		// --- Questions ---
 		{
-			Name:        "list_agent_questions",
+			Name:        "agent-question-list",
 			Description: "List all questions asked by an agent during a specific run. Returns question text, status, and any response.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -27,7 +27,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "list_project_agent_questions",
+			Name:        "agent-question-list-project",
 			Description: "List agent questions across all runs in the current project. Optionally filter by status.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -42,7 +42,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "respond_to_agent_question",
+			Name:        "agent-question-respond",
 			Description: "Submit a response to a pending agent question. The agent will be resumed with the provided answer.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -61,7 +61,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 		},
 		// --- Hooks ---
 		{
-			Name:        "list_agent_hooks",
+			Name:        "agent-hook-list",
 			Description: "List all webhook hooks configured for an agent.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -75,7 +75,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "create_agent_hook",
+			Name:        "agent-hook-create",
 			Description: "Create a new webhook hook for an agent. Returns the hook id and a one-time token for authenticating webhook calls.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -93,7 +93,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "delete_agent_hook",
+			Name:        "agent-hook-delete",
 			Description: "Delete a webhook hook by its ID.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -108,7 +108,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 		},
 		// --- ADK Sessions ---
 		{
-			Name:        "list_adk_sessions",
+			Name:        "adk-session-list",
 			Description: "List ADK (Agent Development Kit) sessions for the current project. Returns session IDs, app names, user IDs, state, and timestamps.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -126,7 +126,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_adk_session",
+			Name:        "adk-session-get",
 			Description: "Get a single ADK session by its ID, including all events (messages, tool calls, etc.).",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -156,7 +156,7 @@ func (s *Service) requireAgentHandler(toolName string) error {
 }
 
 func (s *Service) executeListAgentQuestions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	if err := s.requireAgentHandler("list_agent_questions"); err != nil {
+	if err := s.requireAgentHandler("agent-question-list"); err != nil {
 		return nil, err
 	}
 	runID, _ := args["run_id"].(string)
@@ -167,14 +167,14 @@ func (s *Service) executeListAgentQuestions(ctx context.Context, projectID strin
 }
 
 func (s *Service) executeListProjectAgentQuestions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	if err := s.requireAgentHandler("list_project_agent_questions"); err != nil {
+	if err := s.requireAgentHandler("agent-question-list-project"); err != nil {
 		return nil, err
 	}
 	return s.agentToolHandler.ExecuteListProjectAgentQuestions(ctx, projectID, args)
 }
 
 func (s *Service) executeRespondToAgentQuestion(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	if err := s.requireAgentHandler("respond_to_agent_question"); err != nil {
+	if err := s.requireAgentHandler("agent-question-respond"); err != nil {
 		return nil, err
 	}
 	questionID, _ := args["question_id"].(string)
@@ -189,7 +189,7 @@ func (s *Service) executeRespondToAgentQuestion(ctx context.Context, projectID s
 }
 
 func (s *Service) executeListAgentHooks(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	if err := s.requireAgentHandler("list_agent_hooks"); err != nil {
+	if err := s.requireAgentHandler("agent-hook-list"); err != nil {
 		return nil, err
 	}
 	agentID, _ := args["agent_id"].(string)
@@ -200,7 +200,7 @@ func (s *Service) executeListAgentHooks(ctx context.Context, projectID string, a
 }
 
 func (s *Service) executeCreateAgentHook(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	if err := s.requireAgentHandler("create_agent_hook"); err != nil {
+	if err := s.requireAgentHandler("agent-hook-create"); err != nil {
 		return nil, err
 	}
 	agentID, _ := args["agent_id"].(string)
@@ -215,7 +215,7 @@ func (s *Service) executeCreateAgentHook(ctx context.Context, projectID string, 
 }
 
 func (s *Service) executeDeleteAgentHook(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	if err := s.requireAgentHandler("delete_agent_hook"); err != nil {
+	if err := s.requireAgentHandler("agent-hook-delete"); err != nil {
 		return nil, err
 	}
 	hookID, _ := args["hook_id"].(string)
@@ -226,14 +226,14 @@ func (s *Service) executeDeleteAgentHook(ctx context.Context, projectID string, 
 }
 
 func (s *Service) executeListADKSessions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	if err := s.requireAgentHandler("list_adk_sessions"); err != nil {
+	if err := s.requireAgentHandler("adk-session-list"); err != nil {
 		return nil, err
 	}
 	return s.agentToolHandler.ExecuteListADKSessions(ctx, projectID, args)
 }
 
 func (s *Service) executeGetADKSession(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	if err := s.requireAgentHandler("get_adk_session"); err != nil {
+	if err := s.requireAgentHandler("adk-session-get"); err != nil {
 		return nil, err
 	}
 	sessionID, _ := args["session_id"].(string)

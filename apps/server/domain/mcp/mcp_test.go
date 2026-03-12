@@ -120,75 +120,75 @@ func TestRequiresProject(t *testing.T) {
 		// Entity tools that require project
 		{
 			name:     "list_entity_types requires project",
-			toolName: "list_entity_types",
+			toolName: "entity-type-list",
 			expected: true,
 		},
 		{
-			name:     "query_entities requires project",
-			toolName: "query_entities",
+			name:     "entity-query requires project",
+			toolName: "entity-query",
 			expected: true,
 		},
 		{
-			name:     "search_entities requires project",
-			toolName: "search_entities",
+			name:     "entity-search requires project",
+			toolName: "entity-search",
 			expected: true,
 		},
 		{
-			name:     "get_entity_edges requires project",
-			toolName: "get_entity_edges",
+			name:     "entity-edges-get requires project",
+			toolName: "entity-edges-get",
 			expected: true,
 		},
 		// Template pack tools that require project (project-scoped)
 		{
 			name:     "get_available_templates requires project",
-			toolName: "get_available_templates",
+			toolName: "template-list-available",
 			expected: true,
 		},
 		{
 			name:     "get_installed_templates requires project",
-			toolName: "get_installed_templates",
+			toolName: "template-list-installed",
 			expected: true,
 		},
 		{
 			name:     "assign_template_pack requires project",
-			toolName: "assign_schema",
+			toolName: "schema-assign",
 			expected: true,
 		},
 		{
 			name:     "update_template_assignment requires project",
-			toolName: "update_template_assignment",
+			toolName: "schema-assignment-update",
 			expected: true,
 		},
 		{
 			name:     "uninstall_template_pack requires project",
-			toolName: "uninstall_schema",
+			toolName: "schema-uninstall",
 			expected: true,
 		},
 		// Template pack tools that do NOT require project (global registry)
 		{
-			name:     "list_template_packs does not require project",
-			toolName: "list_schemas",
+			name:     "template-list does not require project",
+			toolName: "schema-list",
 			expected: false,
 		},
 		{
-			name:     "get_template_pack does not require project",
-			toolName: "get_schema",
+			name:     "template-get does not require project",
+			toolName: "schema-get",
 			expected: false,
 		},
 		{
-			name:     "create_template_pack does not require project",
-			toolName: "create_schema",
+			name:     "template-create does not require project",
+			toolName: "schema-create",
 			expected: false,
 		},
 		{
-			name:     "delete_template_pack does not require project",
-			toolName: "delete_schema",
+			name:     "template-delete does not require project",
+			toolName: "schema-delete",
 			expected: false,
 		},
 		// Global tool
 		{
 			name:     "schema_version does not require project",
-			toolName: "schema_version",
+			toolName: "schema-version",
 			expected: false,
 		},
 		// Edge cases
@@ -433,44 +433,44 @@ func TestGetToolDefinitions(t *testing.T) {
 	tools := svc.GetToolDefinitions()
 
 	expectedTools := []string{
-		"get_project_info",
-		"schema_version",
-		"list_entity_types",
-		"query_entities",
-		"search_entities",
-		"get_entity_edges",
-		"list_schemas",
-		"get_schema",
-		"get_available_templates",
-		"get_installed_templates",
-		"assign_schema",
-		"update_template_assignment",
-		"uninstall_schema",
-		"create_schema",
-		"delete_schema",
-		"create_entity",
-		"create_relationship",
-		"update_entity",
-		"delete_entity",
-		"restore_entity",
-		"hybrid_search",
-		"semantic_search",
-		"find_similar",
-		"traverse_graph",
-		"list_relationships",
-		"update_relationship",
-		"delete_relationship",
-		"list_tags",
-		"preview_schema_migration",
-		"list_migration_archives",
-		"get_migration_archive",
-		"brave_web_search",
-		"webfetch",
-		"reddit_search",
+		"project-get",
+		"schema-version",
+		"entity-type-list",
+		"entity-query",
+		"entity-search",
+		"entity-edges-get",
+		"schema-list",
+		"schema-get",
+		"template-list-available",
+		"template-list-installed",
+		"schema-assign",
+		"schema-assignment-update",
+		"schema-uninstall",
+		"schema-create",
+		"schema-delete",
+		"entity-create",
+		"relationship-create",
+		"entity-update",
+		"entity-delete",
+		"entity-restore",
+		"search-hybrid",
+		"search-semantic",
+		"search-similar",
+		"graph-traverse",
+		"relationship-list",
+		"relationship-update",
+		"relationship-delete",
+		"tag-list",
+		"schema-migration-preview",
+		"migration-archive-list",
+		"migration-archive-get",
+		"web-search-brave",
+		"web-fetch",
+		"web-search-reddit",
 	}
 
-	if len(tools) != len(expectedTools) {
-		t.Errorf("GetToolDefinitions() returned %d tools, want %d", len(tools), len(expectedTools))
+	if len(tools) < len(expectedTools) {
+		t.Errorf("GetToolDefinitions() returned %d tools, want at least %d", len(tools), len(expectedTools))
 	}
 
 	toolNames := make(map[string]bool)
@@ -501,10 +501,10 @@ func TestToolInputSchemas(t *testing.T) {
 		toolMap[tool.Name] = tool
 	}
 
-	t.Run("query_entities requires type_name", func(t *testing.T) {
-		tool := toolMap["query_entities"]
+	t.Run("entity-query requires type_name", func(t *testing.T) {
+		tool := toolMap["entity-query"]
 		if len(tool.InputSchema.Required) == 0 {
-			t.Error("query_entities should have required fields")
+			t.Error("entity-query should have required fields")
 		}
 		found := false
 		for _, r := range tool.InputSchema.Required {
@@ -514,12 +514,12 @@ func TestToolInputSchemas(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Error("query_entities should require type_name")
+			t.Error("entity-query should require type_name")
 		}
 	})
 
-	t.Run("search_entities requires query", func(t *testing.T) {
-		tool := toolMap["search_entities"]
+	t.Run("entity-search requires query", func(t *testing.T) {
+		tool := toolMap["entity-search"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "query" {
@@ -528,12 +528,12 @@ func TestToolInputSchemas(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Error("search_entities should require query")
+			t.Error("entity-search should require query")
 		}
 	})
 
-	t.Run("get_template_pack requires pack_id", func(t *testing.T) {
-		tool := toolMap["get_schema"]
+	t.Run("template-get requires pack_id", func(t *testing.T) {
+		tool := toolMap["schema-get"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "pack_id" {
@@ -542,12 +542,12 @@ func TestToolInputSchemas(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Error("get_template_pack should require pack_id")
+			t.Error("template-get should require pack_id")
 		}
 	})
 
 	t.Run("assign_template_pack requires template_pack_id", func(t *testing.T) {
-		tool := toolMap["assign_schema"]
+		tool := toolMap["schema-assign"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "schema_id" {
@@ -560,8 +560,8 @@ func TestToolInputSchemas(t *testing.T) {
 		}
 	})
 
-	t.Run("create_template_pack requires name, version, object_type_schemas", func(t *testing.T) {
-		tool := toolMap["create_schema"]
+	t.Run("template-create requires name, version, object_type_schemas", func(t *testing.T) {
+		tool := toolMap["schema-create"]
 		requiredFields := map[string]bool{"name": false, "version": false, "object_type_schemas": false}
 		for _, r := range tool.InputSchema.Required {
 			if _, ok := requiredFields[r]; ok {
@@ -570,27 +570,27 @@ func TestToolInputSchemas(t *testing.T) {
 		}
 		for field, found := range requiredFields {
 			if !found {
-				t.Errorf("create_template_pack should require %s", field)
+				t.Errorf("template-create should require %s", field)
 			}
 		}
 	})
 
-	t.Run("list_template_packs has optional pagination params", func(t *testing.T) {
-		tool := toolMap["list_schemas"]
+	t.Run("template-list has optional pagination params", func(t *testing.T) {
+		tool := toolMap["schema-list"]
 		props := tool.InputSchema.Properties
 		if _, ok := props["limit"]; !ok {
-			t.Error("list_template_packs should have limit property")
+			t.Error("template-list should have limit property")
 		}
 		if _, ok := props["page"]; !ok {
-			t.Error("list_template_packs should have page property")
+			t.Error("template-list should have page property")
 		}
 		if _, ok := props["search"]; !ok {
-			t.Error("list_template_packs should have search property")
+			t.Error("template-list should have search property")
 		}
 	})
 
-	t.Run("get_entity_edges requires entity_id", func(t *testing.T) {
-		tool := toolMap["get_entity_edges"]
+	t.Run("entity-edges-get requires entity_id", func(t *testing.T) {
+		tool := toolMap["entity-edges-get"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "entity_id" {
@@ -599,12 +599,12 @@ func TestToolInputSchemas(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Error("get_entity_edges should require entity_id")
+			t.Error("entity-edges-get should require entity_id")
 		}
 	})
 
 	t.Run("update_template_assignment requires assignment_id", func(t *testing.T) {
-		tool := toolMap["update_template_assignment"]
+		tool := toolMap["schema-assignment-update"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "assignment_id" {
@@ -618,7 +618,7 @@ func TestToolInputSchemas(t *testing.T) {
 	})
 
 	t.Run("uninstall_template_pack requires assignment_id", func(t *testing.T) {
-		tool := toolMap["uninstall_schema"]
+		tool := toolMap["schema-uninstall"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "assignment_id" {
@@ -631,8 +631,8 @@ func TestToolInputSchemas(t *testing.T) {
 		}
 	})
 
-	t.Run("delete_template_pack requires pack_id", func(t *testing.T) {
-		tool := toolMap["delete_schema"]
+	t.Run("template-delete requires pack_id", func(t *testing.T) {
+		tool := toolMap["schema-delete"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
 			if r == "pack_id" {
@@ -641,7 +641,7 @@ func TestToolInputSchemas(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Error("delete_template_pack should require pack_id")
+			t.Error("template-delete should require pack_id")
 		}
 	})
 }

@@ -383,7 +383,7 @@ func (h *MCPRegistryToolHandler) ExecuteInspectMCPServer(ctx context.Context, pr
 func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefinition {
 	return []mcp.ToolDefinition{
 		{
-			Name:        "list_mcp_servers",
+			Name:        "mcp-server-list",
 			Description: "List all registered MCP servers for the current project. Returns both builtin and external servers with their type, status, and tool count.",
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
@@ -392,7 +392,7 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "get_mcp_server",
+			Name:        "mcp-server-get",
 			Description: "Get details of a specific MCP server by ID, including all its registered tools with their enabled/disabled status.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -406,7 +406,7 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "create_mcp_server",
+			Name:        "mcp-server-create",
 			Description: "Register a new external MCP server. Supports stdio, sse, and http transport types. Builtin servers are managed automatically.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -480,7 +480,7 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "delete_mcp_server",
+			Name:        "mcp-server-delete",
 			Description: "Delete an external MCP server and all its cached tools. Builtin servers cannot be deleted.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -553,7 +553,7 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "get_mcp_registry_server",
+			Name:        "mcp-registry-get",
 			Description: "Get detailed information about a specific server from the official MCP registry, including all available transports (remotes, packages), required environment variables, and repository links.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -567,7 +567,7 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "install_mcp_from_registry",
+			Name:        "mcp-registry-install",
 			Description: "Install an MCP server from the official registry into the current project. Only servers with remote transports (HTTP/SSE) are supported — stdio-based packages (npm/pypi/oci) are blocked for security. Creates the server entry, attempts tool discovery, and returns required environment variables that must be configured before use.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -589,7 +589,7 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "inspect_mcp_server",
+			Name:        "mcp-server-inspect",
 			Description: "Inspect/test-connect an MCP server. Creates a fresh ephemeral connection, captures the server's identity (name, version, protocol), capabilities, and enumerates all tools, prompts, and resources the server exposes. Connection errors are reported in the response (status: 'error') rather than as failures.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",

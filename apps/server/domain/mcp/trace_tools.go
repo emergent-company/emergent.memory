@@ -18,7 +18,7 @@ import (
 func traceToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:        "list_traces",
+			Name:        "trace-list",
 			Description: "List recent traces from Tempo. Returns trace IDs, root span names, durations, and timestamps. Returns an empty list when tracing is not configured.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -52,7 +52,7 @@ func traceToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_trace",
+			Name:        "trace-get",
 			Description: "Get the full span tree for a specific trace by ID. Returns all spans with their operation names, durations, tags, and parent/child relationships.",
 			InputSchema: InputSchema{
 				Type: "object",

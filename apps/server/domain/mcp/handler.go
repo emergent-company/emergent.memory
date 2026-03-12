@@ -313,9 +313,9 @@ func extractToken(c echo.Context) string {
 // requiresProject returns true if the tool requires a project context
 func requiresProject(toolName string) bool {
 	switch toolName {
-	case "list_entity_types", "query_entities", "search_entities", "get_entity_edges",
-		"get_available_templates", "get_installed_templates",
-		"assign_schema", "update_template_assignment", "uninstall_schema":
+	case "entity-type-list", "entity-query", "entity-search", "entity-edges-get",
+		"template-list-available", "template-list-installed",
+		"schema-assign", "schema-assignment-update", "schema-uninstall":
 		return true
 	default:
 		return false

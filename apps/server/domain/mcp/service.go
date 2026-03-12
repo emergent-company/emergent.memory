@@ -142,7 +142,7 @@ func (s *Service) SetEmbeddingControlHandler(h EmbeddingControlHandler) {
 func (s *Service) GetToolDefinitions() []ToolDefinition {
 	tools := []ToolDefinition{
 		{
-			Name:        "get_project_info",
+			Name:        "project-get",
 			Description: "Returns the project info document — a markdown document describing this knowledge base's purpose, goals, audience, and context. Call this to understand what this project is about before working with its data.",
 			InputSchema: InputSchema{
 				Type:       "object",
@@ -151,7 +151,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "create_project",
+			Name:        "project-create",
 			Description: "Create a new project under the authenticated user's organization. Returns the new project's id, name, and orgId. If org_id is omitted it is resolved from the caller's authentication context.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -169,7 +169,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema_version",
+			Name:        "schema-version",
 			Description: "Get the current schema version and metadata. Returns version hash, timestamp, total types, and relationships.",
 			InputSchema: InputSchema{
 				Type:       "object",
@@ -178,7 +178,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "list_entity_types",
+			Name:        "entity-type-list",
 			Description: "List all available entity types in the knowledge graph with instance counts. Helps discover what entities can be queried.",
 			InputSchema: InputSchema{
 				Type:       "object",
@@ -187,7 +187,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "query_entities",
+			Name:        "entity-query",
 			Description: "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -231,7 +231,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "search_entities",
+			Name:        "entity-search",
 			Description: "Search entities by text query across name, key, and description fields.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -256,7 +256,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_entity_edges",
+			Name:        "entity-edges-get",
 			Description: "Get all relationships (edges) for an entity. Returns incoming and outgoing relationships with connected entity information. Use this to traverse the graph and discover how entities are connected.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -270,7 +270,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "list_schemas",
+			Name:        "schema-list",
 			Description: "List all available memory schemas in the global registry. Schemas define object types, relationships, and extraction prompts for knowledge graph entities.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -302,7 +302,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_schema",
+			Name:        "schema-get",
 			Description: "Get detailed information about a specific memory schema including all type definitions, UI configs, and extraction prompts.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -316,7 +316,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_available_templates",
+			Name:        "template-list-available",
 			Description: "Get all template packs available for a project with their installation status. Shows which packs are installed, active, and their object type counts.",
 			InputSchema: InputSchema{
 				Type:       "object",
@@ -325,7 +325,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_installed_templates",
+			Name:        "template-list-installed",
 			Description: "Get all template packs currently installed in the project with their configuration and active status.",
 			InputSchema: InputSchema{
 				Type:       "object",
@@ -334,7 +334,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "assign_schema",
+			Name:        "schema-assign",
 			Description: "Install a memory schema to the project. This registers the schema's object types in the project's type registry, making them available for entity creation and extraction.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -356,7 +356,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "update_template_assignment",
+			Name:        "schema-assignment-update",
 			Description: "Update a schema assignment. Toggle active status or modify customizations.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -374,7 +374,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "uninstall_schema",
+			Name:        "schema-uninstall",
 			Description: "Remove a memory schema from the project. This will fail if any objects still exist using types from this schema.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -388,7 +388,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "create_schema",
+			Name:        "schema-create",
 			Description: "Create a new memory schema in the global registry. Requires object type schemas at minimum.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -430,7 +430,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "delete_schema",
+			Name:        "schema-delete",
 			Description: "Delete a memory schema from the global registry. Cannot delete system schemas or schemas that are currently installed in any project.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -444,7 +444,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "create_entity",
+			Name:        "entity-create",
 			Description: "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed template pack. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create outgoing relationships atomically in the same call, avoiding a separate create_relationship call.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -458,7 +458,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "create_relationship",
+			Name:        "relationship-create",
 			Description: "Create one or more relationships between entities. Always pass a 'relationships' array — use a single-element array for one relationship. Each relationship type should match a type defined in an installed template pack. Returns slim {id, type, source_id, target_id} per relationship. TIP: for creating an entity and linking it in one call, use the 'relationships' field on the entity spec in create_entity instead.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -472,7 +472,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "update_entity",
+			Name:        "entity-update",
 			Description: "Update an existing entity by creating a new version. Properties are merged with existing values (null removes a property).",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -502,7 +502,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "delete_entity",
+			Name:        "entity-delete",
 			Description: "Soft-delete an entity. The entity can be restored later.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -516,7 +516,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "restore_entity",
+			Name:        "entity-restore",
 			Description: "Restore a soft-deleted entity.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -530,7 +530,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "hybrid_search",
+			Name:        "search-hybrid",
 			Description: "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -559,7 +559,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "semantic_search",
+			Name:        "search-semantic",
 			Description: "Search entities by semantic meaning using vector embeddings. Finds conceptually similar entities even with different wording.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -584,7 +584,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "find_similar",
+			Name:        "search-similar",
 			Description: "Find entities similar to a given entity based on semantic similarity.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -609,7 +609,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "traverse_graph",
+			Name:        "graph-traverse",
 			Description: "Multi-hop graph traversal starting from an entity. Discover non-obvious connections and relationships.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -644,7 +644,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "list_relationships",
+			Name:        "relationship-list",
 			Description: "Query relationships with optional filters. Returns paginated list of relationships in the knowledge graph.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -673,7 +673,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "update_relationship",
+			Name:        "relationship-update",
 			Description: "Update an existing relationship's properties or weight.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -695,7 +695,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "delete_relationship",
+			Name:        "relationship-delete",
 			Description: "Soft-delete a relationship between two entities.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -709,7 +709,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "list_tags",
+			Name:        "tag-list",
 			Description: "Get all unique tags/labels used in the project with counts.",
 			InputSchema: InputSchema{
 				Type:       "object",
@@ -718,7 +718,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "preview_schema_migration",
+			Name:        "schema-migration-preview",
 			Description: "SAFE READ-ONLY: Preview what would happen if objects are migrated from one schema version to another. Shows risk assessment (safe/cautious/risky/dangerous), fields that would be dropped, type coercions, and validation errors. NO CHANGES ARE MADE. Use this before actual migration to understand impact. If dangerous, recommend user to use CLI: ./bin/migrate-schema -project <uuid> -from <old> -to <new>",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -743,7 +743,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "list_migration_archives",
+			Name:        "migration-archive-list",
 			Description: "SAFE READ-ONLY: List objects that have migration archives (dropped fields from previous migrations). Shows which objects have recoverable data and what fields were dropped. Use this to understand what data can be restored via rollback.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -766,7 +766,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_migration_archive",
+			Name:        "migration-archive-get",
 			Description: "SAFE READ-ONLY: Get detailed migration archive for a specific object. Shows complete history of dropped fields across all migrations, with timestamps and versions. Use this to see exactly what data would be restored if you rollback. For actual rollback, recommend user to use CLI: ./bin/migrate-schema -project <uuid> --rollback --rollback-version <version> -dry-run=false",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -967,131 +967,131 @@ func (s *Service) GetPromptDefinitions() []PromptDefinition {
 // ExecuteTool executes an MCP tool and returns the result
 func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName string, args map[string]any) (*ToolResult, error) {
 	switch toolName {
-	case "get_project_info":
+	case "project-get":
 		return s.executeGetProjectInfo(ctx, projectID)
-	case "create_project":
+	case "project-create":
 		return s.executeCreateProject(ctx, args)
-	case "schema_version":
+	case "schema-version":
 		return s.executeSchemaVersion(ctx)
-	case "list_entity_types":
+	case "entity-type-list":
 		return s.executeListEntityTypes(ctx, projectID)
-	case "query_entities":
+	case "entity-query":
 		return s.executeQueryEntities(ctx, projectID, args)
-	case "search_entities":
+	case "entity-search":
 		return s.executeSearchEntities(ctx, projectID, args)
-	case "get_entity_edges":
+	case "entity-edges-get":
 		return s.executeGetEntityEdges(ctx, projectID, args)
-	case "list_schemas":
+	case "schema-list":
 		return s.executeListSchemas(ctx, args)
-	case "get_schema":
+	case "schema-get":
 		return s.executeGetSchema(ctx, args)
-	case "get_available_templates":
+	case "template-list-available":
 		return s.executeGetAvailableTemplates(ctx, projectID)
-	case "get_installed_templates":
+	case "template-list-installed":
 		return s.executeGetInstalledTemplates(ctx, projectID)
-	case "assign_schema":
+	case "schema-assign":
 		return s.executeAssignSchema(ctx, projectID, args)
-	case "update_template_assignment":
+	case "schema-assignment-update":
 		return s.executeUpdateTemplateAssignment(ctx, projectID, args)
-	case "uninstall_schema":
+	case "schema-uninstall":
 		return s.executeUninstallSchema(ctx, projectID, args)
-	case "create_schema":
+	case "schema-create":
 		return s.executeCreateSchema(ctx, args)
-	case "delete_schema":
+	case "schema-delete":
 		return s.executeDeleteSchema(ctx, args)
-	case "create_entity":
+	case "entity-create":
 		return s.executeBatchCreateEntities(ctx, projectID, args)
-	case "create_relationship":
+	case "relationship-create":
 		return s.executeBatchCreateRelationships(ctx, projectID, args)
-	case "update_entity":
+	case "entity-update":
 		return s.executeUpdateEntity(ctx, projectID, args)
-	case "delete_entity":
+	case "entity-delete":
 		return s.executeDeleteEntity(ctx, projectID, args)
-	case "restore_entity":
+	case "entity-restore":
 		return s.executeRestoreEntity(ctx, projectID, args)
-	case "hybrid_search":
+	case "search-hybrid":
 		return s.executeHybridSearch(ctx, projectID, args)
-	case "semantic_search":
+	case "search-semantic":
 		return s.executeSemanticSearch(ctx, projectID, args)
-	case "find_similar":
+	case "search-similar":
 		return s.executeFindSimilar(ctx, projectID, args)
-	case "traverse_graph":
+	case "graph-traverse":
 		return s.executeTraverseGraph(ctx, projectID, args)
-	case "list_relationships":
+	case "relationship-list":
 		return s.executeListRelationships(ctx, projectID, args)
-	case "update_relationship":
+	case "relationship-update":
 		return s.executeUpdateRelationship(ctx, projectID, args)
-	case "delete_relationship":
+	case "relationship-delete":
 		return s.executeDeleteRelationship(ctx, projectID, args)
-	case "list_tags":
+	case "tag-list":
 		return s.executeListTags(ctx, projectID)
-	case "preview_schema_migration":
+	case "schema-migration-preview":
 		return s.executePreviewSchemaMigration(ctx, projectID, args)
-	case "list_migration_archives":
+	case "migration-archive-list":
 		return s.executeListMigrationArchives(ctx, projectID, args)
-	case "get_migration_archive":
+	case "migration-archive-get":
 		return s.executeGetMigrationArchive(ctx, projectID, args)
 
 	// Web tools
-	case "brave_web_search":
+	case "web-search-brave":
 		return s.executeBraveWebSearch(ctx, projectID, args)
-	case "webfetch":
+	case "web-fetch":
 		return s.executeWebFetch(ctx, args)
-	case "reddit_search":
+	case "web-search-reddit":
 		return s.executeRedditSearch(ctx, projectID, args)
 
 	// Agent Definition tools
-	case "list_agent_definitions":
+	case "agent-def-list":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "get_agent_definition":
+	case "agent-def-get":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "create_agent_definition":
+	case "agent-def-create":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
 	case "update_agent_definition":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "delete_agent_definition":
+	case "agent-def-delete":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
 
 	// Agent (runtime) tools
-	case "list_agents":
+	case "agent-list":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "get_agent":
+	case "agent-get":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "create_agent":
+	case "agent-create":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
 	case "update_agent":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "delete_agent":
+	case "agent-delete":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
 	case "trigger_agent":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
 
 	// Agent Run tools
-	case "list_agent_runs":
+	case "agent-run-list":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "get_agent_run":
+	case "agent-run-get":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "get_agent_run_messages":
+	case "agent-run-messages":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "get_agent_run_tool_calls":
+	case "agent-run-tool-calls":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "get_run_status":
+	case "agent-run-status":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
 
 	// Agent Catalog tools
-	case "list_available_agents":
+	case "agent-list-available":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
 
 	// MCP Registry tools
-	case "list_mcp_servers":
+	case "mcp-server-list":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
-	case "get_mcp_server":
+	case "mcp-server-get":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
-	case "create_mcp_server":
+	case "mcp-server-create":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
 	case "update_mcp_server":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
-	case "delete_mcp_server":
+	case "mcp-server-delete":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
 	case "toggle_mcp_server_tool":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
@@ -1101,95 +1101,95 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// Official MCP Registry browse/install tools
 	case "search_mcp_registry":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
-	case "get_mcp_registry_server":
+	case "mcp-registry-get":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
-	case "install_mcp_from_registry":
+	case "mcp-registry-install":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
-	case "inspect_mcp_server":
+	case "mcp-server-inspect":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
 
 	// Agent Questions, Hooks, and ADK Sessions
-	case "list_agent_questions":
+	case "agent-question-list":
 		return s.executeListAgentQuestions(ctx, projectID, args)
-	case "list_project_agent_questions":
+	case "agent-question-list-project":
 		return s.executeListProjectAgentQuestions(ctx, projectID, args)
-	case "respond_to_agent_question":
+	case "agent-question-respond":
 		return s.executeRespondToAgentQuestion(ctx, projectID, args)
-	case "list_agent_hooks":
+	case "agent-hook-list":
 		return s.executeListAgentHooks(ctx, projectID, args)
-	case "create_agent_hook":
+	case "agent-hook-create":
 		return s.executeCreateAgentHook(ctx, projectID, args)
-	case "delete_agent_hook":
+	case "agent-hook-delete":
 		return s.executeDeleteAgentHook(ctx, projectID, args)
-	case "list_adk_sessions":
+	case "adk-session-list":
 		return s.executeListADKSessions(ctx, projectID, args)
-	case "get_adk_session":
+	case "adk-session-get":
 		return s.executeGetADKSession(ctx, projectID, args)
 
 	// Skills tools
-	case "list_skills":
+	case "skill-list":
 		return s.executeListSkills(ctx, projectID)
-	case "get_skill":
+	case "skill-get":
 		return s.executeGetSkill(ctx, args)
-	case "create_skill":
+	case "skill-create":
 		return s.executeCreateSkill(ctx, projectID, args)
-	case "update_skill":
+	case "skill-update":
 		return s.executeUpdateSkill(ctx, args)
-	case "delete_skill":
+	case "skill-delete":
 		return s.executeDeleteSkill(ctx, args)
 
 	// Documents tools
-	case "list_documents":
+	case "document-list":
 		return s.executeListDocuments(ctx, projectID, args)
-	case "get_document":
+	case "document-get":
 		return s.executeGetDocument(ctx, projectID, args)
-	case "upload_document":
+	case "document-upload":
 		return s.executeUploadDocument(ctx, projectID, args)
-	case "delete_document":
+	case "document-delete":
 		return s.executeDeleteDocument(ctx, projectID, args)
 
 	// Embeddings tools
-	case "get_embedding_status":
+	case "embedding-status":
 		return s.executeGetEmbeddingStatus(ctx)
-	case "pause_embeddings":
+	case "embedding-pause":
 		return s.executePauseEmbeddings(ctx)
-	case "resume_embeddings":
+	case "embedding-resume":
 		return s.executeResumeEmbeddings(ctx)
-	case "update_embedding_config":
+	case "embedding-config-update":
 		return s.executeUpdateEmbeddingConfig(ctx, args)
 
 	// Provider tools
-	case "list_org_providers":
+	case "provider-list-org":
 		return s.executeListOrgProviders(ctx, args)
-	case "configure_org_provider":
+	case "provider-configure-org":
 		return s.executeConfigureOrgProvider(ctx, args)
-	case "configure_project_provider":
+	case "provider-configure-project":
 		return s.executeConfigureProjectProvider(ctx, projectID, args)
-	case "list_provider_models":
+	case "provider-models-list":
 		return s.executeListProviderModels(ctx, args)
-	case "get_provider_usage":
+	case "provider-usage-get":
 		return s.executeGetProviderUsage(ctx, args)
-	case "test_provider":
+	case "provider-test":
 		return s.executeTestProvider(ctx, args)
 
 	// API Token tools
-	case "list_project_api_tokens":
+	case "token-list":
 		return s.executeListProjectAPITokens(ctx, projectID)
-	case "create_project_api_token":
+	case "token-create":
 		return s.executeCreateProjectAPIToken(ctx, projectID, args)
-	case "get_project_api_token":
+	case "token-get":
 		return s.executeGetProjectAPIToken(ctx, projectID, args)
-	case "revoke_project_api_token":
+	case "token-revoke":
 		return s.executeRevokeProjectAPIToken(ctx, projectID, args)
 
 	// Trace tools
-	case "list_traces":
+	case "trace-list":
 		return s.executeListTraces(ctx, args)
-	case "get_trace":
+	case "trace-get":
 		return s.executeGetTrace(ctx, args)
 
 	// Query Knowledge tool
-	case "query_knowledge":
+	case "search-knowledge":
 		return s.executeQueryKnowledge(ctx, projectID, args)
 
 	default:
@@ -4506,45 +4506,45 @@ func (s *Service) delegateAgentTool(ctx context.Context, projectID, toolName str
 
 	switch toolName {
 	// Agent Definitions
-	case "list_agent_definitions":
+	case "agent-def-list":
 		return s.agentToolHandler.ExecuteListAgentDefinitions(ctx, projectID, args)
-	case "get_agent_definition":
+	case "agent-def-get":
 		return s.agentToolHandler.ExecuteGetAgentDefinition(ctx, projectID, args)
-	case "create_agent_definition":
+	case "agent-def-create":
 		return s.agentToolHandler.ExecuteCreateAgentDefinition(ctx, projectID, args)
 	case "update_agent_definition":
 		return s.agentToolHandler.ExecuteUpdateAgentDefinition(ctx, projectID, args)
-	case "delete_agent_definition":
+	case "agent-def-delete":
 		return s.agentToolHandler.ExecuteDeleteAgentDefinition(ctx, projectID, args)
 
 	// Agents (runtime)
-	case "list_agents":
+	case "agent-list":
 		return s.agentToolHandler.ExecuteListAgents(ctx, projectID, args)
-	case "get_agent":
+	case "agent-get":
 		return s.agentToolHandler.ExecuteGetAgent(ctx, projectID, args)
-	case "create_agent":
+	case "agent-create":
 		return s.agentToolHandler.ExecuteCreateAgent(ctx, projectID, args)
 	case "update_agent":
 		return s.agentToolHandler.ExecuteUpdateAgent(ctx, projectID, args)
-	case "delete_agent":
+	case "agent-delete":
 		return s.agentToolHandler.ExecuteDeleteAgent(ctx, projectID, args)
 	case "trigger_agent":
 		return s.agentToolHandler.ExecuteTriggerAgent(ctx, projectID, args)
 
 	// Agent Runs
-	case "list_agent_runs":
+	case "agent-run-list":
 		return s.agentToolHandler.ExecuteListAgentRuns(ctx, projectID, args)
-	case "get_agent_run":
+	case "agent-run-get":
 		return s.agentToolHandler.ExecuteGetAgentRun(ctx, projectID, args)
-	case "get_agent_run_messages":
+	case "agent-run-messages":
 		return s.agentToolHandler.ExecuteGetAgentRunMessages(ctx, projectID, args)
-	case "get_agent_run_tool_calls":
+	case "agent-run-tool-calls":
 		return s.agentToolHandler.ExecuteGetAgentRunToolCalls(ctx, projectID, args)
-	case "get_run_status":
+	case "agent-run-status":
 		return s.agentToolHandler.ExecuteGetRunStatus(ctx, projectID, args)
 
 	// Agent Catalog
-	case "list_available_agents":
+	case "agent-list-available":
 		return s.agentToolHandler.ExecuteListAvailableAgents(ctx, projectID, args)
 
 	default:
@@ -4559,15 +4559,15 @@ func (s *Service) delegateRegistryTool(ctx context.Context, projectID, toolName 
 	}
 
 	switch toolName {
-	case "list_mcp_servers":
+	case "mcp-server-list":
 		return s.mcpRegistryToolHandler.ExecuteListMCPServers(ctx, projectID, args)
-	case "get_mcp_server":
+	case "mcp-server-get":
 		return s.mcpRegistryToolHandler.ExecuteGetMCPServer(ctx, projectID, args)
-	case "create_mcp_server":
+	case "mcp-server-create":
 		return s.mcpRegistryToolHandler.ExecuteCreateMCPServer(ctx, projectID, args)
 	case "update_mcp_server":
 		return s.mcpRegistryToolHandler.ExecuteUpdateMCPServer(ctx, projectID, args)
-	case "delete_mcp_server":
+	case "mcp-server-delete":
 		return s.mcpRegistryToolHandler.ExecuteDeleteMCPServer(ctx, projectID, args)
 	case "toggle_mcp_server_tool":
 		return s.mcpRegistryToolHandler.ExecuteToggleMCPServerTool(ctx, projectID, args)
@@ -4575,11 +4575,11 @@ func (s *Service) delegateRegistryTool(ctx context.Context, projectID, toolName 
 		return s.mcpRegistryToolHandler.ExecuteSyncMCPServerTools(ctx, projectID, args)
 	case "search_mcp_registry":
 		return s.mcpRegistryToolHandler.ExecuteSearchMCPRegistry(ctx, projectID, args)
-	case "get_mcp_registry_server":
+	case "mcp-registry-get":
 		return s.mcpRegistryToolHandler.ExecuteGetMCPRegistryServer(ctx, projectID, args)
-	case "install_mcp_from_registry":
+	case "mcp-registry-install":
 		return s.mcpRegistryToolHandler.ExecuteInstallMCPFromRegistry(ctx, projectID, args)
-	case "inspect_mcp_server":
+	case "mcp-server-inspect":
 		return s.mcpRegistryToolHandler.ExecuteInspectMCPServer(ctx, projectID, args)
 	default:
 		return nil, fmt.Errorf("unknown MCP registry tool: %s", toolName)
