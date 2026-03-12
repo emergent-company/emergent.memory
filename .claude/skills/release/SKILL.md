@@ -38,12 +38,12 @@ About to release:
 
 Steps:
   1. Update VERSION → <new>
-  2. Update apps/server-go/cmd/server/main.go @version → <new>
+  2. Update apps/server/cmd/server/main.go @version → <new>
   3. git commit -m "chore: bump version to <new>"
   4. git tag v<new>
-  5. git tag apps/server-go/pkg/sdk/v<new>
+  5. git tag apps/server/pkg/sdk/v<new>
   6. git push origin main
-  7. git push origin v<new> apps/server-go/pkg/sdk/v<new>
+  7. git push origin v<new> apps/server/pkg/sdk/v<new>
 
 CI will then build CLI binaries (all platforms) and Docker images.
 Proceed?
@@ -65,19 +65,19 @@ Otherwise execute steps manually:
 CURRENT=$(cat VERSION)
 NEW=<new-version>
 echo "$NEW" > VERSION
-sed -i "s|// @version $CURRENT|// @version $NEW|" apps/server-go/cmd/server/main.go
+sed -i "s|// @version $CURRENT|// @version $NEW|" apps/server/cmd/server/main.go
 
 # Step 2: Commit
-git add VERSION apps/server-go/cmd/server/main.go
+git add VERSION apps/server/cmd/server/main.go
 git commit -m "chore: bump version to $NEW"
 
 # Step 3: Tags
 git tag "v$NEW"
-git tag "apps/server-go/pkg/sdk/v$NEW"
+git tag "apps/server/pkg/sdk/v$NEW"
 
 # Step 4: Push
 git push origin main
-git push origin "v$NEW" "apps/server-go/pkg/sdk/v$NEW"
+git push origin "v$NEW" "apps/server/pkg/sdk/v$NEW"
 ```
 
 ### 4. Report outcome
@@ -89,7 +89,7 @@ Released v<new>
 
 Tags pushed:
   v<new>                          → triggers emergent-cli.yml (CLI binaries + GitHub Release)
-  apps/server-go/pkg/sdk/v<new>  → Go module proxy
+  apps/server/pkg/sdk/v<new>  → Go module proxy
 
 CI will build:
   - Cross-platform CLI binaries (linux, darwin, windows, freebsd × amd64/arm64)
@@ -108,4 +108,4 @@ Monitor at: https://github.com/emergent-company/emergent/actions
 - The working tree must be clean (`git status`) before bumping; warn the user and stop if it is not
 - Only bump from `main` branch; warn and stop if on any other branch
 - The new version must be strictly greater than the current one (semver ordering)
-- If `apps/server-go/cmd/server/main.go` doesn't contain `// @version <current>`, warn and stop — do not corrupt the file
+- If `apps/server/cmd/server/main.go` doesn't contain `// @version <current>`, warn and stop — do not corrupt the file

@@ -113,7 +113,7 @@ E2E tests need a balance:
 ALTER TABLE kb.graph_objects 
     ALTER COLUMN embedding_vec TYPE vector(768);
 ```
-Applied with: `docker exec -i spec-server-2-db-1 psql -U spec -d spec < migration.sql`
+Applied with: `docker exec -i emergent-db-1 psql -U spec -d spec < migration.sql`
 
 **Step 2: Hybrid StubGraphModule for E2E Tests**
 ```typescript
@@ -1116,7 +1116,7 @@ This proves the pattern: **ANY pagination loop MUST have these safety mechanisms
   - Stores encrypted credentials in `settings_encrypted`
 
 **Real-World Result**:
-Using `mcp_postgres_query`, I quickly discovered there was already a ClickUp integration created on October 5th for project `11b1e87c-a86a-4a8f-bdb0-c15c6e06b591`, which explained the "already connected" error.
+Using `mcp_postgres_query`, I quickly discovered there was already a ClickUp integration created on October 5th for project `<redacted-uuid>`, which explained the "already connected" error.
 
 ---
 
@@ -1331,7 +1331,7 @@ Backend Controller → Reads req.headers['x-org-id'], req.headers['x-project-id'
 - Add to central docs (copilot-instructions.md) to prevent future confusion
 
 **Related Files/Conventions**:
-- `apps/server-go/Taskfile.yml` - `dev` task runs `air` for Go hot reload
+- `apps/server/Taskfile.yml` - `dev` task runs `air` for Go hot reload
 - `/root/emergent.memory.ui/package.json` - "dev": "vite" (Vite HMR built-in)
 - `.github/copilot-instructions.md` - Process management section
 - `docs/HOT_RELOAD.md` - Comprehensive hot reload documentation

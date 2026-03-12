@@ -28,11 +28,6 @@
       "command": ["./scripts/mcp-postgres-wrapper.sh"],
       "timeout": 60000
     },
-    "diane": {
-        "type": "remote",
-        "url": "http://mcp-emergent:8765/mcp/sse?context=work",
-        "oauth": false
-    },
     "context7": {
       "type": "remote",
       "url": "https://mcp.context7.com/mcp",
@@ -48,14 +43,14 @@
         "-y",
         "chrome-devtools-mcp@latest",
         "--browserUrl",
-        "http://100.75.227.125:9222"
+        "http://localhost:9222"
       ],
       "timeout": 120000
     }
   },
   "instructions": [
-    "apps/server-go/docs/agent-context/infrastructure.md",
-    "apps/server-go/docs/agent-context/e2e-testing.md"
+    "apps/server/docs/agent-context/infrastructure.md",
+    "apps/server/docs/agent-context/e2e-testing.md"
   ],
   "tools": {
     "todowrite": true,

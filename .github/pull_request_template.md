@@ -14,7 +14,7 @@ Describe the change. What feature/bug does this address?
 
 If you touched graph logic or tests:
 
-- [ ] Updated relevant test helpers in `apps/server-go/tests/`
+- [ ] Updated relevant test helpers in `apps/server/tests/`
 - [ ] Verified head selection semantics (DISTINCT ON then outer tombstone filter) preserved
 - [ ] Multiplicity logic unchanged OR new tests added
 

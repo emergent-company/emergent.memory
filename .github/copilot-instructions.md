@@ -10,7 +10,7 @@ Before implementing new features, **always check** these domain-specific AGENT.m
 | --------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------- |
 | `/root/emergent.memory.ui/src/components/AGENT.md`        | Frontend Components | Atomic design (atoms/molecules/organisms), DaisyUI + Tailwind, available components |
 | `/root/emergent.memory.ui/src/hooks/AGENT.md`             | Frontend Hooks      | `useApi` (MUST use for all API calls), all 33+ hooks categorized                    |
-| `apps/server-go/AGENT.md`                                 | Go Backend          | fx modules, Echo handlers, Bun ORM, job queues                                      |
+| `apps/server/AGENT.md`                                 | Go Backend          | fx modules, Echo handlers, Bun ORM, job queues                                      |
 
 > **Frontend repo**: The React admin lives at `/root/emergent.memory.ui` (remote: `emergent-company/emergent.memory.ui`). It is a standalone Vite project — not in this monorepo.
 

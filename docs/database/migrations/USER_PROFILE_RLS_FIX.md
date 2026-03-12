@@ -68,7 +68,7 @@ After deploying this fix, authentication should succeed:
 
 ```bash
 # Test with user's browser token
-curl -H "Authorization: Bearer ${TOKEN}" https://spec-server.kucharz.net/api/orgs
+curl -H "Authorization: Bearer ${TOKEN}" https://spec-server.yourdomain.com/api/orgs
 
 # Should return 200 with user's organizations list, not 500 database error
 ```

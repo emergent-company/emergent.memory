@@ -83,7 +83,7 @@ User will delete production database and rebuild from scratch:
 # 3. Server restarts and runs migrations automatically
 
 # 4. Test authentication
-curl -H "Authorization: Bearer <token>" https://server.kucharz.net/api/orgs
+curl -H "Authorization: Bearer <token>" https://server.yourdomain.com/api/orgs
 
 # Expected: 200 OK with user's organizations
 # No longer: 401 "Invalid or expired access token"

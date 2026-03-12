@@ -56,7 +56,7 @@ After deploying with `SCOPES_DISABLED=1`, your authentication should work:
 
 ```bash
 # Test with any valid token (access_token or id_token)
-curl -X GET https://spec-server.kucharz.net/api/orgs \
+curl -X GET https://spec-server.yourdomain.com/api/orgs \
   -H "Authorization: Bearer YOUR_TOKEN"
 
 # Should return org list (200 OK), not unauthorized error

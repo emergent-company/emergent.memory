@@ -9,7 +9,7 @@ Policy
 - Respect licenses and attribution. Preserve headers when copying code.
 
 Nexus React (3.0.0)
-- Repo: git@github.com:eyedea-io/Nexus-React-3.0.0.git
+- Repo: git@github.com:emergent-company/Nexus-React-3.0.0.git
 - Purpose: UI/UX reference for React + Vite + TypeScript + Tailwind CSS (v4) + daisyUI (v5) and Iconify (Lucide) usage.
 - Location (recommended): `reference/nexus`
 
@@ -20,7 +20,7 @@ react-daisyui
 
 Suggested setup (submodule)
 1) Add the submodule:
-   git submodule add -b master git@github.com:eyedea-io/Nexus-React-3.0.0.git reference/nexus
+   git submodule add -b master git@github.com:emergent-company/Nexus-React-3.0.0.git reference/nexus
 2) Initialize and update submodules on fresh clones:
    git submodule update --init --recursive
 3) To pull latest from upstream:

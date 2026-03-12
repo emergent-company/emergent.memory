@@ -31,14 +31,14 @@ Your current ID token contains:
 
 - ✅ Valid signature (RSA256)
 - ✅ Not expired (12 hours remaining)
-- ✅ Correct issuer: `https://spec-zitadel.kucharz.net`
+- ✅ Correct issuer: `https://spec-zitadel.yourdomain.com`
 - ❌ **NO scope claim** - This is the problem!
 
 ## ✅ The Fix
 
 ### Step 1: Configure Zitadel Application Scopes
 
-In your Zitadel admin console (https://spec-zitadel.kucharz.net):
+In your Zitadel admin console (https://spec-zitadel.yourdomain.com):
 
 1. Go to **Projects** → Your Application
 2. Click on your application (Client ID: `344995930577111044`)
@@ -156,7 +156,7 @@ After getting new tokens with scopes:
 
 ```bash
 # Test with new token
-curl -X GET https://spec-server.kucharz.net/api/orgs \
+curl -X GET https://spec-server.yourdomain.com/api/orgs \
   -H "Authorization: Bearer YOUR_NEW_ID_TOKEN" \
   -H "Content-Type: application/json"
 

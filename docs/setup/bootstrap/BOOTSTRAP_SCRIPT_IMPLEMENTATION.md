@@ -176,11 +176,11 @@ nx run workspace-cli:workspace:logs -- --follow
 ### Production Deployment
 ```bash
 # 1. Get production admin PAT
-# https://spec-zitadel.kucharz.net → Profile → Personal Access Tokens
+# https://spec-zitadel.yourdomain.com → Profile → Personal Access Tokens
 
 # 2. Run bootstrap (same script!)
 ./scripts/bootstrap-zitadel.sh
-# Domain: spec-zitadel.kucharz.net
+# Domain: spec-zitadel.yourdomain.com
 # Admin PAT: [production token]
 # Use existing org: "Spec Server"
 # Project: "Spec Server API"

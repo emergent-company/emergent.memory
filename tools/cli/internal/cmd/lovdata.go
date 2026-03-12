@@ -74,7 +74,7 @@ const (
 	lovdataCellarSPQL  = "https://publications.europa.eu/webapi/rdf/sparql"
 	lovdataCellarBase  = "https://publications.europa.eu/resource/cellar/"
 	lovdataProjectName = "Norwegian Law"
-	lovdataOrgIDDef    = "dcba78f0-fc40-414a-a24d-f9c32b762f15"
+	lovdataOrgIDDef    = ""
 )
 
 // ─── flags ────────────────────────────────────────────────────────────────────

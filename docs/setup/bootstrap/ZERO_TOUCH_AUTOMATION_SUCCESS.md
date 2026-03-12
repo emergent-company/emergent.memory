@@ -117,7 +117,7 @@ docker-compose -f docker-compose.zitadel-local.yml up -d
    - Verify: "Dual service account mode active" in logs
 
 2. 🔄 **Production Bootstrap**
-   - Run script on production Zitadel (spec-zitadel.kucharz.net)
+   - Run script on production Zitadel (spec-zitadel.yourdomain.com)
    - May need manual PAT for existing instance
    - OR: Configure production with automatic PAT generation
 

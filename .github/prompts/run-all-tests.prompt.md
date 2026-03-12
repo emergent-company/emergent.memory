@@ -12,7 +12,7 @@ Execute the complete test suite across all applications in this monorepo. This p
 This is a monorepo with the following testable applications:
 
 1. **Admin Frontend** (`apps/admin/`) - React + Vite + Vitest (unit) + Playwright (E2E)
-2. **Server Backend** (`apps/server-go/`) - Go + testify (unit & E2E)
+2. **Server Backend** (`apps/server/`) - Go + testify (unit & E2E)
 
 ## Test Execution Order
 

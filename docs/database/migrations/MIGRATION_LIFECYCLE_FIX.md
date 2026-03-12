@@ -221,8 +221,8 @@ After deployment, verify:
 3. ✅ Each migration shows "✓ Migration XXX.sql completed"
 4. ✅ Summary shows "All migrations completed in Xms"
 5. ✅ Application starts successfully
-6. ✅ API health endpoint responds: https://spec-api.kucharz.net/health
-7. ✅ Admin frontend loads: https://spec-admin.kucharz.net
+6. ✅ API health endpoint responds: https://spec-api.yourdomain.com/health
+7. ✅ Admin frontend loads: https://spec-admin.yourdomain.com
 
 ## Related Documentation
 

@@ -100,7 +100,7 @@ git push origin cli-v0.1.0
 
 ```bash
 curl -L -o emergent-cli.tar.gz \
-  https://github.com/eyedea-io/emergent/releases/download/cli-v0.1.0/emergent-cli-linux-amd64.tar.gz
+  https://github.com/emergent-company/emergent.memory/releases/download/cli-v0.1.0/emergent-cli-linux-amd64.tar.gz
 tar xzf emergent-cli.tar.gz
 sudo mv emergent-cli-linux-amd64 /usr/local/bin/emergent-cli
 ```
@@ -108,14 +108,14 @@ sudo mv emergent-cli-linux-amd64 /usr/local/bin/emergent-cli
 **Docker**:
 
 ```bash
-docker pull ghcr.io/eyedea-io/emergent-cli:latest
-docker run --rm ghcr.io/eyedea-io/emergent-cli:latest version
+docker pull ghcr.io/emergent-company/emergent.memory-cli:latest
+docker run --rm ghcr.io/emergent-company/emergent.memory-cli:latest version
 ```
 
 **Homebrew** (future):
 
 ```bash
-brew tap eyedea-io/emergent
+brew tap emergent-company/emergent.memory
 brew install emergent-cli
 ```
 

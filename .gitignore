@@ -180,3 +180,14 @@ apps/server/VERSION
 
 # Local deployment skills (machine-specific)
 .opencode/skills/upgrade-mcj/
+
+# Build outputs and binaries
+apps/server/bin/
+apps/server/*.out
+apps/server/migrate
+apps/server/tasks
+apps/server/vm-agent
+tools/cli/emergent
+tools/cli/emergent-cli-*
+tools/cli/emergent-darwin-*
+tools/cli/*.tar.gz

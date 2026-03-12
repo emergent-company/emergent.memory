@@ -191,7 +191,7 @@ fmt.Printf("Version: %s\n", rawVersion)
 **v0.4.11 Deployment** (completed prior to this fix):
 
 - ✅ Docker images published: `ghcr.io/emergent-company/emergent-server-go:0.4.11`
-- ✅ CLI upgraded on remote machine (`mcj@100.123.170.53`)
+- ✅ CLI upgraded on remote machine (`remote-server`)
 - ✅ MCP fix verified working (32 tools accessible)
 - ✅ `emergent doctor` now passes MCP Server check
 

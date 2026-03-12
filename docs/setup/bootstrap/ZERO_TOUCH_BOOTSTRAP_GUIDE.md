@@ -103,7 +103,7 @@ scp production:/path/to/secrets/bootstrap/pat.txt secrets/bootstrap/
 4. **Run bootstrap script:**
 
 ```bash
-ZITADEL_DOMAIN=spec-zitadel.kucharz.net ./scripts/bootstrap-zitadel-fully-automated.sh
+ZITADEL_DOMAIN=spec-zitadel.yourdomain.com ./scripts/bootstrap-zitadel-fully-automated.sh
 ```
 
 5. **Upload generated keys to production:**
@@ -118,7 +118,7 @@ ssh production "chmod 600 /app/secrets/zitadel-*.json"
 If Zitadel is already running in production:
 
 1. **Create machine user in Zitadel UI:**
-   - Login to https://spec-zitadel.kucharz.net
+   - Login to https://spec-zitadel.yourdomain.com
    - Go to Organization → Users
    - Click "+ New" → "Service User"
    - Name: `bootstrap-admin`
@@ -138,7 +138,7 @@ echo "PASTE_TOKEN_HERE" > secrets/bootstrap/pat.txt
 4. **Run bootstrap script:**
 
 ```bash
-ZITADEL_DOMAIN=spec-zitadel.kucharz.net ./scripts/bootstrap-zitadel-fully-automated.sh
+ZITADEL_DOMAIN=spec-zitadel.yourdomain.com ./scripts/bootstrap-zitadel-fully-automated.sh
 ```
 
 5. **Upload generated keys to production:**

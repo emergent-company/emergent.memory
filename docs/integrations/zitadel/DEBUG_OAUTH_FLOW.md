@@ -57,7 +57,7 @@ The `AuthGuard` already logs:
 1. Click "Login" button
 2. Watch Console for `[OIDC] startAuth called`
 3. You'll be redirected to Zitadel
-4. Log in with: **admin@dev.spec.local** / **AdminPassword123!**
+4. Log in with: **admin@dev.yourdomain.com** / **<your-admin-password>**
 5. After redirect back to localhost, watch Console carefully
 
 ### Step 3: Analyze Console Output
@@ -75,7 +75,7 @@ Look for the sequence:
 [OIDC] Token exchange response { status: 200, ok: true }
 [OIDC] Token exchange successful { hasAccessToken: true, hasIdToken: true, expiresIn: 43200 }
 [AuthContext] applyTokenResponse called { hasAccessToken: true, hasIdToken: true, expiresIn: 43200 }
-[AuthContext] Parsed JWT claims { sub: "...", email: "admin@dev.spec.local", name: "..." }
+[AuthContext] Parsed JWT claims { sub: "...", email: "admin@dev.yourdomain.com", name: "..." }
 [AuthContext] State updated, saving to localStorage { key: "spec-server-auth" }
 [AuthContext] Successfully saved auth state to localStorage
 [AuthCallback] handleCallback succeeded, navigating to /admin
@@ -109,7 +109,7 @@ After the flow completes, check if token was saved:
 
 ```javascript
 // In Console tab, type:
-localStorage.getItem('spec-server-auth')
+localStorage.getItem('emergent-auth')
 ```
 
 **Expected if successful:**
@@ -120,7 +120,7 @@ localStorage.getItem('spec-server-auth')
   "expiresAt": 1732645678000,
   "user": {
     "sub": "348011770662617091",
-    "email": "admin@dev.spec.local",
+    "email": "admin@dev.yourdomain.com",
     "name": "Admin User"
   }
 }
@@ -201,7 +201,7 @@ npm run workspace:restart
 Please provide:
 
 1. **Full Console output** (copy/paste the log sequence)
-2. **localStorage value** (output of `localStorage.getItem('spec-server-auth')`)
+2. **localStorage value** (output of `localStorage.getItem('emergent-auth')`)
 3. **What you see on screen**:
    - A) Stuck on "Signing you in..." spinner?
    - B) Error alert "We could not complete sign-in"?

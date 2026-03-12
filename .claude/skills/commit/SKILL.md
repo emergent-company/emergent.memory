@@ -119,7 +119,7 @@ Show the proposed message and ask for confirmation or edits via **AskUserQuestio
 git commit -m "<message>"
 ```
 
-The pre-commit hook validates Swagger annotations on `apps/server-go/domain/*/handler.go` files. If the hook fails:
+The pre-commit hook validates Swagger annotations on `apps/server/domain/*/handler.go` files. If the hook fails:
 - Read the error carefully
 - Fix the missing `// @Router` annotations
 - Re-stage the fixed files

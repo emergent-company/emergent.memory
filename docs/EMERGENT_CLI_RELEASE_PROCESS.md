@@ -37,7 +37,7 @@ Each release includes:
 
 - **Binary Archives**: One per platform/architecture
 - **Checksums File**: `checksums.txt` with SHA256 hashes
-- **Docker Image**: `ghcr.io/eyedea-io/emergent-cli:{version}`
+- **Docker Image**: `ghcr.io/emergent-company/emergent.memory-cli:{version}`
 - **Release Notes**: Installation instructions and changelog
 
 ### 4. Installation Methods
@@ -49,7 +49,7 @@ Users can download pre-built binaries from the GitHub Releases page:
 ```bash
 # Linux amd64
 curl -L -o emergent-cli.tar.gz \
-  https://github.com/eyedea-io/emergent/releases/download/cli-v0.1.0/emergent-cli-linux-amd64.tar.gz
+  https://github.com/emergent-company/emergent.memory/releases/download/cli-v0.1.0/emergent-cli-linux-amd64.tar.gz
 tar xzf emergent-cli.tar.gz
 sudo mv emergent-cli-linux-amd64 /usr/local/bin/emergent-cli
 ```
@@ -57,11 +57,11 @@ sudo mv emergent-cli-linux-amd64 /usr/local/bin/emergent-cli
 #### Docker Container
 
 ```bash
-docker pull ghcr.io/eyedea-io/emergent-cli:latest
+docker pull ghcr.io/emergent-company/emergent.memory-cli:latest
 
 docker run --rm -e MEMORY_SERVER_URL=http://host.docker.internal:9090 \
   -e MEMORY_API_KEY=your-key \
-  ghcr.io/eyedea-io/emergent-cli:latest projects list
+  ghcr.io/emergent-company/emergent.memory-cli:latest projects list
 ```
 
 #### Homebrew (macOS/Linux) - Future
@@ -69,7 +69,7 @@ docker run --rm -e MEMORY_SERVER_URL=http://host.docker.internal:9090 \
 Once we create a Homebrew tap:
 
 ```bash
-brew tap eyedea-io/emergent
+brew tap emergent-company/emergent.memory
 brew install emergent-cli
 ```
 
@@ -80,7 +80,7 @@ After the first stable release (v1.0.0), create a Homebrew formula:
 ### 1. Create Tap Repository
 
 ```bash
-gh repo create eyedea-io/homebrew-emergent --public
+gh repo create emergent-company/homebrew-emergent --public
 cd homebrew-emergent
 ```
 
@@ -91,25 +91,25 @@ File: `Formula/emergent-cli.rb`
 ```ruby
 class EmergentCli < Formula
   desc "CLI tool for Emergent Knowledge Base platform"
-  homepage "https://github.com/eyedea-io/emergent"
+  homepage "https://github.com/emergent-company/emergent.memory"
   version "1.0.0"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/eyedea-io/emergent/releases/download/cli-v1.0.0/emergent-cli-darwin-arm64.tar.gz"
+      url "https://github.com/emergent-company/emergent.memory/releases/download/cli-v1.0.0/emergent-cli-darwin-arm64.tar.gz"
       sha256 "ACTUAL_SHA256_HERE"
     else
-      url "https://github.com/eyedea-io/emergent/releases/download/cli-v1.0.0/emergent-cli-darwin-amd64.tar.gz"
+      url "https://github.com/emergent-company/emergent.memory/releases/download/cli-v1.0.0/emergent-cli-darwin-amd64.tar.gz"
       sha256 "ACTUAL_SHA256_HERE"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/eyedea-io/emergent/releases/download/cli-v1.0.0/emergent-cli-linux-arm64.tar.gz"
+      url "https://github.com/emergent-company/emergent.memory/releases/download/cli-v1.0.0/emergent-cli-linux-arm64.tar.gz"
       sha256 "ACTUAL_SHA256_HERE"
     else
-      url "https://github.com/eyedea-io/emergent/releases/download/cli-v1.0.0/emergent-cli-linux-amd64.tar.gz"
+      url "https://github.com/emergent-company/emergent.memory/releases/download/cli-v1.0.0/emergent-cli-linux-amd64.tar.gz"
       sha256 "ACTUAL_SHA256_HERE"
     end
   end
@@ -130,8 +130,8 @@ Use `brew bump-formula-pr` after each release:
 
 ```bash
 brew bump-formula-pr \
-  --url=https://github.com/eyedea-io/emergent/releases/download/cli-v1.1.0/emergent-cli-darwin-arm64.tar.gz \
-  eyedea-io/emergent/emergent-cli
+  --url=https://github.com/emergent-company/emergent.memory/releases/download/cli-v1.1.0/emergent-cli-darwin-arm64.tar.gz \
+  emergent-company/emergent.memory/emergent-cli
 ```
 
 ## Versioning Strategy
@@ -263,12 +263,12 @@ gh release view cli-v0.1.0
 ### Docker Image Usage
 
 Check GHCR package insights:
-https://github.com/orgs/eyedea-io/packages/container/emergent-cli
+https://github.com/orgs/emergent-company/packages/container/emergent-cli
 
 ### CI/CD Logs
 
 Monitor workflow runs:
-https://github.com/eyedea-io/emergent/actions/workflows/emergent-cli.yml
+https://github.com/emergent-company/emergent.memory/actions/workflows/emergent-cli.yml
 
 ## Future Enhancements
 

@@ -85,7 +85,7 @@ Ports: Postgres 5432, Zitadel 8080, API 3002.
 
 ## Coverage Reports
 
-- **Backend:** `task test:coverage` → `apps/server-go/coverage.html`
+- **Backend:** `task test:coverage` → `apps/server/coverage.html`
 - **Frontend:** `cd /root/emergent.memory.ui && pnpm run test:coverage`
 
 ## CI Alignment
@@ -141,9 +141,9 @@ After any Playwright test run, IMMEDIATELY check the HTML report:
 
 | Area               | Pattern                                         |
 | ------------------ | ----------------------------------------------- |
-| Server unit (Go)   | `apps/server-go/tests/**/*_test.go`             |
-| Server integration | `apps/server-go/tests/integration/**/*_test.go` |
-| Server e2e (Go)    | `apps/server-go/tests/e2e/**/*_test.go`         |
+| Server unit (Go)   | `apps/server/tests/**/*_test.go`             |
+| Server integration | `apps/server/tests/integration/**/*_test.go` |
+| Server e2e (Go)    | `apps/server/tests/e2e/**/*_test.go`         |
 | Admin unit         | `/root/emergent.memory.ui/tests/unit/**/*.test.{ts,tsx}` |
 | Admin e2e          | `/root/emergent.memory.ui/tests/e2e/specs/**/*.spec.ts`  |
 

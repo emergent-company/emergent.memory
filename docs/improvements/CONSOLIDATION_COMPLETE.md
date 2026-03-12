@@ -191,7 +191,7 @@ Applications currently reading from local `.env` files will continue to work. Wh
 ## Infisical Dashboard
 
 View the consolidated secrets:
-https://infiscal.kucharz.net/project/2c273128-5d01-4156-a134-be9511d99c61
+<your-infisical-project-url>
 
 Navigate to each folder to see the organized structure:
 - `/workspace` → 46 secrets

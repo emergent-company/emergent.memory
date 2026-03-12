@@ -117,8 +117,8 @@ All 9 ClickUp integration tests passing:
 Tests use credentials from `.env.test.local` in repository root:
 
 ```bash
-CLICKUP_API_TOKEN=REDACTED_CLICKUP_TOKEN
-CLICKUP_WORKSPACE_ID=4573313
+CLICKUP_API_TOKEN=<your-clickup-api-token>
+CLICKUP_WORKSPACE_ID=<your-workspace-id>
 ```
 
 **Note**: This file is gitignored and contains real production credentials.

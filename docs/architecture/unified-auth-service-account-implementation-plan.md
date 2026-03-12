@@ -1197,8 +1197,8 @@ services:
 
 | Variable | Value | Notes |
 |----------|-------|-------|
-| `ZITADEL_DOMAIN` | `spec-zitadel.kucharz.net` | Without https:// |
-| `ZITADEL_ISSUER` | `https://spec-zitadel.kucharz.net/` | With trailing slash |
+| `ZITADEL_DOMAIN` | `spec-zitadel.yourdomain.com` | Without https:// |
+| `ZITADEL_ISSUER` | `https://spec-zitadel.yourdomain.com/` | With trailing slash |
 | `ZITADEL_FRONTEND_CLIENT_ID` | `344995930577111044` | Existing frontend app |
 | `ZITADEL_SERVICE_CLIENT_ID` | `<create-in-zitadel>` | Service account app |
 | `ZITADEL_SERVICE_CLIENT_SECRET` | `<create-in-zitadel>` | Service account secret |
