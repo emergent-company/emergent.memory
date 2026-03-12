@@ -194,15 +194,16 @@ func (s *Service) CreateServer(ctx context.Context, projectID string, dto *Creat
 	}
 
 	server := &MCPServer{
-		ProjectID: projectID,
-		Name:      dto.Name,
-		Enabled:   enabled,
-		Type:      dto.Type,
-		Command:   dto.Command,
-		Args:      dto.Args,
-		Env:       dto.Env,
-		URL:       dto.URL,
-		Headers:   dto.Headers,
+		ProjectID:   projectID,
+		Name:        dto.Name,
+		Description: dto.Description,
+		Enabled:     enabled,
+		Type:        dto.Type,
+		Command:     dto.Command,
+		Args:        dto.Args,
+		Env:         dto.Env,
+		URL:         dto.URL,
+		Headers:     dto.Headers,
 	}
 
 	if err := s.repo.CreateServer(ctx, server); err != nil {
@@ -248,6 +249,9 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 			return nil, fmt.Errorf("server with name %q already exists in this project", *dto.Name)
 		}
 		server.Name = *dto.Name
+	}
+	if dto.Description != nil {
+		server.Description = dto.Description
 	}
 	if dto.Enabled != nil {
 		server.Enabled = *dto.Enabled

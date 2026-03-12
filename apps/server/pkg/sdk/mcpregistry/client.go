@@ -61,19 +61,20 @@ const (
 
 // MCPServer is the response DTO for an MCP server.
 type MCPServer struct {
-	ID        string         `json:"id"`
-	ProjectID string         `json:"projectId"`
-	Name      string         `json:"name"`
-	Enabled   bool           `json:"enabled"`
-	Type      MCPServerType  `json:"type"`
-	Command   *string        `json:"command,omitempty"`
-	Args      []string       `json:"args,omitempty"`
-	Env       map[string]any `json:"env,omitempty"`
-	URL       *string        `json:"url,omitempty"`
-	Headers   map[string]any `json:"headers,omitempty"`
-	ToolCount int            `json:"toolCount"`
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
+	ID          string         `json:"id"`
+	ProjectID   string         `json:"projectId"`
+	Name        string         `json:"name"`
+	Description *string        `json:"description,omitempty"`
+	Enabled     bool           `json:"enabled"`
+	Type        MCPServerType  `json:"type"`
+	Command     *string        `json:"command,omitempty"`
+	Args        []string       `json:"args,omitempty"`
+	Env         map[string]any `json:"env,omitempty"`
+	URL         *string        `json:"url,omitempty"`
+	Headers     map[string]any `json:"headers,omitempty"`
+	ToolCount   int            `json:"toolCount"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
 }
 
 // MCPServerTool is the response DTO for an MCP server tool.
@@ -97,25 +98,27 @@ type MCPServerDetail struct {
 
 // CreateMCPServerRequest is the request body for creating an MCP server.
 type CreateMCPServerRequest struct {
-	Name    string         `json:"name"`
-	Type    MCPServerType  `json:"type"`
-	Enabled *bool          `json:"enabled,omitempty"`
-	Command *string        `json:"command,omitempty"`
-	Args    []string       `json:"args,omitempty"`
-	Env     map[string]any `json:"env,omitempty"`
-	URL     *string        `json:"url,omitempty"`
-	Headers map[string]any `json:"headers,omitempty"`
+	Name        string         `json:"name"`
+	Description *string        `json:"description,omitempty"`
+	Type        MCPServerType  `json:"type"`
+	Enabled     *bool          `json:"enabled,omitempty"`
+	Command     *string        `json:"command,omitempty"`
+	Args        []string       `json:"args,omitempty"`
+	Env         map[string]any `json:"env,omitempty"`
+	URL         *string        `json:"url,omitempty"`
+	Headers     map[string]any `json:"headers,omitempty"`
 }
 
 // UpdateMCPServerRequest is the request body for updating an MCP server.
 type UpdateMCPServerRequest struct {
-	Name    *string        `json:"name,omitempty"`
-	Enabled *bool          `json:"enabled,omitempty"`
-	Command *string        `json:"command,omitempty"`
-	Args    []string       `json:"args,omitempty"`
-	Env     map[string]any `json:"env,omitempty"`
-	URL     *string        `json:"url,omitempty"`
-	Headers map[string]any `json:"headers,omitempty"`
+	Name        *string        `json:"name,omitempty"`
+	Description *string        `json:"description,omitempty"`
+	Enabled     *bool          `json:"enabled,omitempty"`
+	Command     *string        `json:"command,omitempty"`
+	Args        []string       `json:"args,omitempty"`
+	Env         map[string]any `json:"env,omitempty"`
+	URL         *string        `json:"url,omitempty"`
+	Headers     map[string]any `json:"headers,omitempty"`
 }
 
 // MCPServerInspect is the response for the inspect/test-connection endpoint.
