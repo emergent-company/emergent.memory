@@ -15,12 +15,20 @@ Knowledge graph platform for ingesting, storing, and querying structured knowled
 
 ## Quick Installation
 
-### One-Line Install (Recommended)
+### Server + CLI (Recommended)
 
 Install server + CLI in 2-3 minutes with pre-built images:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install-online.sh | bash
+```
+
+### CLI only
+
+Connect to an existing Memory server without installing the full stack:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/install-cli.sh | bash
 ```
 
 ### Self-Update
