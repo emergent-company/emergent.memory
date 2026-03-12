@@ -55,7 +55,7 @@ EXT="tar.gz"; [ "$OS" = "windows" ] && EXT="zip"
 # Detect any previously installed version
 PREV_VERSION=""
 if [ -x "${INSTALL_DIR}/bin/memory" ]; then
-    PREV_VERSION=$("${INSTALL_DIR}/bin/memory" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+    PREV_VERSION=$("${INSTALL_DIR}/bin/memory" version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 fi
 
 if [ -n "$PREV_VERSION" ]; then
