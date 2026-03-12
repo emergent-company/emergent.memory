@@ -372,4 +372,4 @@ This creates a new `MCPServer` record for your project and immediately runs a sy
 
 ## Hosted MCP servers (workspace)
 
-For persistent, containerized MCP servers managed by the workspace system, see [Workspaces — Hosted MCP Servers](workspace.md#hosted-mcp-servers).
+For persistent, containerized MCP servers managed by the workspace system, contact your platform administrator.
