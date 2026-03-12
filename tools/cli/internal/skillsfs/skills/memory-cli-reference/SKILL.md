@@ -50,6 +50,15 @@ For self-hosted deployments, use 'memory server' to install and manage your serv
 
 Manage and inspect ADK sessions
 
+### Synopsis
+
+Manage and inspect Google ADK (Agent Development Kit) sessions.
+
+ADK sessions represent individual agent conversation threads, including the full
+event history of messages and tool calls. Use the list subcommand to browse
+sessions for a project, and the get subcommand to inspect a specific session in
+detail.
+
 ### Options
 
 ```
@@ -60,6 +69,13 @@ Manage and inspect ADK sessions
 ## memory adk-sessions get
 
 Get details and event history for a specific ADK session
+
+### Synopsis
+
+Get full details and the complete event history for a specific ADK session.
+
+Outputs the entire session record as indented JSON, including all events (user
+messages, agent responses, and tool calls) in the session history.
 
 ```
 memory adk-sessions get [id] [flags]
@@ -74,6 +90,14 @@ memory adk-sessions get [id] [flags]
 ## memory adk-sessions list
 
 List ADK sessions for the active project
+
+### Synopsis
+
+List all ADK sessions for the active (or specified) project.
+
+Each session is printed on one line with its session ID, App name, User ID, and
+last Updated timestamp in the format:
+  ID: <id> | App: <app> | User: <user> | Updated: <timestamp>
 
 ```
 memory adk-sessions list [flags]
@@ -155,7 +179,13 @@ Get agent definition details
 
 ### Synopsis
 
-Get details for a specific agent definition by ID
+Get full details for a specific agent definition by ID.
+
+Prints Name, ID, ProjectID, FlowType, Visibility, IsDefault, Description (if
+set), System Prompt (truncated to 200 characters), Model configuration (Name,
+Temperature, MaxTokens), Tools list, MaxSteps, DefaultTimeout, ACP Config
+(DisplayName, Description, Capabilities), CreatedAt and UpdatedAt timestamps,
+and any extra Config JSON.
 
 ```
 memory agent-definitions get [id] [flags]
@@ -173,7 +203,10 @@ List all agent definitions
 
 ### Synopsis
 
-List all agent definitions for the current project
+List all agent definitions for the current project.
+
+Prints a numbered list with each definition's Name, ID, FlowType, Visibility,
+IsDefault flag, Tool count, and Description (if set).
 
 ```
 memory agent-definitions list [flags]
@@ -267,7 +300,9 @@ Delete an agent
 
 ### Synopsis
 
-Delete an agent by ID
+Delete an agent by ID.
+
+Prints "Agent <id> deleted successfully." on success.
 
 ```
 memory agents delete [id] [flags]
@@ -310,7 +345,12 @@ Get agent details
 
 ### Synopsis
 
-Get details for a specific agent by ID
+Get full details for a specific agent by its ID.
+
+Prints Name, ID, Project ID, Strategy Type, Enabled status, Trigger Type,
+Execution Mode, Cron Schedule (if set), Description (if set), Prompt (if set),
+Reaction Config (Object Types and Events), Last Run At, Last Run Status,
+Created At, Updated At, and any extra Config JSON.
 
 ```
 memory agents get [id] [flags]
@@ -385,7 +425,10 @@ List webhook hooks
 
 ### Synopsis
 
-List all webhook hooks configured for an agent
+List all webhook hooks configured for an agent.
+
+Prints a numbered list with each hook's Label, ID, Enabled status, Rate Limit
+configuration (requests/minute and burst size, if set), and Created timestamp.
 
 ```
 memory agents hooks list [agent-id] [flags]
@@ -403,7 +446,11 @@ List all agents
 
 ### Synopsis
 
-List all agents for the current project
+List all agents configured for the current project.
+
+Prints a numbered list with each agent's Name, ID, Enabled status, Trigger
+Type, Cron schedule (if any), Description (if set), Last Run timestamp, and
+Last Run Status. Use --project to specify a project other than the active one.
 
 ```
 memory agents list [flags]
@@ -435,7 +482,10 @@ List questions for a project
 
 ### Synopsis
 
-List all questions for a project with optional status filter
+List all agent questions for the current project.
+
+Outputs the full question list as indented JSON. Use --status to filter by
+question status (e.g. pending, answered).
 
 ```
 memory agents questions list-project [flags]
@@ -454,7 +504,10 @@ List questions for a run
 
 ### Synopsis
 
-List all questions for a specific agent run
+List all questions asked by the agent during a specific run.
+
+Outputs the full question list as indented JSON, including each question's ID,
+status, prompt text, and response (if already answered).
 
 ```
 memory agents questions list [run-id] [flags]
@@ -472,7 +525,10 @@ Respond to a question
 
 ### Synopsis
 
-Respond to a pending agent question and resume the paused run
+Respond to a pending agent question and resume the paused agent run.
+
+Sends the response text as the answer to the specified question. Outputs the
+updated question record as indented JSON on success.
 
 ```
 memory agents questions respond [question-id] [response] [flags]
@@ -516,7 +572,10 @@ Trigger an agent run
 
 ### Synopsis
 
-Trigger an immediate run of an agent
+Trigger an immediate run of an agent.
+
+Prints "Agent triggered successfully!" with an optional message on success, or
+"Agent trigger failed." with an error message on failure.
 
 ```
 memory agents trigger [id] [flags]
@@ -788,6 +847,13 @@ Configure server URL, credentials, and other settings for the Memory CLI
 
 Set the email for authentication
 
+### Synopsis
+
+Set the email address used for authentication in the CLI configuration file.
+
+Prints the email that was set and the path to the configuration file where
+the setting was saved.
+
 ```
 memory config set-credentials [email] [flags]
 ```
@@ -802,6 +868,14 @@ memory config set-credentials [email] [flags]
 ## memory config set-server
 
 Set the Memory server URL
+
+### Synopsis
+
+Set the Memory server URL in the CLI configuration file.
+
+Prints the new server URL and the path to the configuration file where the
+setting was saved. Use this to point the CLI at a different server environment
+(e.g. local dev vs production).
 
 ```
 memory config set-server [url] [flags]
@@ -848,6 +922,15 @@ memory config set <key> <value> [flags]
 
 Display current configuration
 
+### Synopsis
+
+Display the current CLI configuration as a table.
+
+Prints a Setting/Value table with: Server URL, API Key (masked, showing only
+the first 8 and last 4 characters), Email, Organization ID, Project ID, Debug
+mode, and the Config File path. Values are merged from the config file and any
+overriding environment variables.
+
 ```
 memory config show [flags]
 ```
@@ -881,7 +964,11 @@ Delete a document
 
 ### Synopsis
 
-Delete a document and all related entities (chunks, extractions, graph objects)
+Delete a document and all related entities.
+
+Prints the deletion status and a summary of removed entities: Chunks,
+Extraction jobs, Graph objects, and Graph relationships. Use --output json
+for a machine-readable response.
 
 ```
 memory documents delete <id> [flags]
@@ -896,6 +983,14 @@ memory documents delete <id> [flags]
 ## memory documents get
 
 Get a document by ID
+
+### Synopsis
+
+Get details for a specific document by its ID.
+
+Prints ID, Filename, MIME Type, Size (bytes), Conversion Status, total Chunks,
+Embedded Chunks, and Created/Updated timestamps. Use --output json to receive
+the full document record as JSON instead.
 
 ```
 memory documents get <id> [flags]
@@ -913,7 +1008,11 @@ List documents
 
 ### Synopsis
 
-List documents in the current project
+List documents in the current project.
+
+Output is a table with columns: ID, Filename, MIME Type, Size (bytes), and
+Created date. Use --limit to control how many records are returned. Use
+--output json to receive the full document list as JSON.
 
 ```
 memory documents list [flags]
@@ -1005,6 +1104,14 @@ memory embeddings config [flags]
 
 Pause all embedding workers (object, relationship, sweep)
 
+### Synopsis
+
+Pause all embedding workers (objects, relationships, and sweep).
+
+Prints a confirmation message from the server, then displays the updated worker
+state table showing each worker's status symbol (running ●, paused ⏸, stopped ○)
+and the current Config (batch_size, concurrency, interval_ms, stale_minutes).
+
 ```
 memory embeddings pause [flags]
 ```
@@ -1019,6 +1126,14 @@ memory embeddings pause [flags]
 
 Resume all embedding workers
 
+### Synopsis
+
+Resume all paused embedding workers (objects, relationships, and sweep).
+
+Prints a confirmation message from the server, then displays the updated worker
+state table showing each worker's status symbol (running ●, paused ⏸, stopped ○)
+and the current Config (batch_size, concurrency, interval_ms, stale_minutes).
+
 ```
 memory embeddings resume [flags]
 ```
@@ -1032,6 +1147,15 @@ memory embeddings resume [flags]
 ## memory embeddings status
 
 Show pause/run state of all embedding workers
+
+### Synopsis
+
+Show the current state of all embedding workers.
+
+Prints a worker state table for the objects, relationships, and sweep workers.
+Each worker is shown with a symbol indicating its state: running (●), paused (⏸),
+or stopped (○). Also displays the current worker Config: batch_size, concurrency,
+interval_ms, and stale_minutes.
 
 ```
 memory embeddings status [flags]
@@ -1149,7 +1273,11 @@ Show edges (relationships) for an object
 
 ### Synopsis
 
-Show incoming and outgoing relationships for a graph object
+Show all incoming and outgoing relationships for a graph object.
+
+Prints two sections: Outgoing (format: [Type] → DstID (entity: EntityID)) and
+Incoming (format: [Type] ← SrcID (entity: EntityID)) with counts for each.
+Use --output json to receive the full edges response as JSON.
 
 ```
 memory graph objects edges <id> [flags]
@@ -1164,6 +1292,14 @@ memory graph objects edges <id> [flags]
 ## memory graph objects get
 
 Get a graph object by ID
+
+### Synopsis
+
+Get details for a graph object (entity) by its ID.
+
+Prints Entity ID, Version ID, Type, Version number, Key (if set), Status (if
+set), Labels (if any), Created timestamp, and Properties as formatted JSON.
+Use --output json to receive the full object as JSON instead.
 
 ```
 memory graph objects get <id> [flags]
@@ -1182,7 +1318,11 @@ List graph objects
 
 ### Synopsis
 
-List graph objects in the current project, optionally filtered by type
+List graph objects (entities) in the current project.
+
+Output is a table with columns: Entity ID, Type, Version, Status, and Created
+date. Use --type to filter by object type, --limit to control result count, and
+--output json to receive the full list as JSON.
 
 ```
 memory graph objects list [flags]
@@ -1302,6 +1442,14 @@ memory graph relationships delete <id> [flags]
 
 Get a relationship by ID
 
+### Synopsis
+
+Get details for a graph relationship by its ID.
+
+Prints Entity ID, Version ID, Type, From (source entity ID), To (destination
+entity ID), Version number, Created timestamp, and Properties as formatted
+JSON. Use --output json to receive the full relationship as JSON instead.
+
 ```
 memory graph relationships get <id> [flags]
 ```
@@ -1318,7 +1466,12 @@ List relationships
 
 ### Synopsis
 
-List relationships in the current project, optionally filtered by type, from, or to
+List relationships in the current project.
+
+Output is a table with columns: Entity ID, Type, From (source entity ID), To
+(destination entity ID), and Created date. Use --type to filter by relationship
+type, --from/--to to filter by endpoint, --limit to control result count, and
+--output json to receive the full list as JSON.
 
 ```
 memory graph relationships list [flags]
@@ -1409,7 +1562,12 @@ Show MCP configuration for AI agents
 
 ### Synopsis
 
-Print MCP server configuration snippets for connecting AI agents (Claude Desktop, Cursor, etc.) to Memory.
+Print ready-to-use MCP server configuration snippets for connecting AI agents to Memory.
+
+Outputs JSON configuration blocks for Claude Desktop, Cursor, and other MCP-
+compatible clients. Snippets use the active server URL and API key (project
+token takes precedence over account key). Copy the relevant block into your
+AI client's MCP configuration to enable Memory tools.
 
 ```
 memory mcp-guide [flags]
@@ -1515,7 +1673,12 @@ Get MCP server details
 
 ### Synopsis
 
-Get detailed information about a specific MCP server, including its tools
+Get full details for a specific MCP server, including its registered tools.
+
+Prints Name (enabled/disabled), ID, Project ID, Description (if set), Type,
+URL (for sse/http), Command and Args (for stdio), Env Vars count, Headers count,
+Created, and Updated timestamps. Also lists all registered tools with their
+enabled/disabled state and description (truncated to 60 characters).
 
 ```
 memory mcp-servers get [server-id] [flags]
@@ -1551,7 +1714,11 @@ List all MCP servers
 
 ### Synopsis
 
-List all MCP servers configured for the current project
+List all MCP servers configured for the current project.
+
+Prints a numbered list with each server's Name (enabled/disabled), Description
+(if set), ID, Type (sse/http/stdio), URL or Command, Tool count, and Created
+timestamp.
 
 ```
 memory mcp-servers list [flags]
@@ -1587,7 +1754,11 @@ List tools for an MCP server
 
 ### Synopsis
 
-List all tools registered for a specific MCP server
+List all tools registered for a specific MCP server.
+
+Each tool entry shows its enabled/disabled state and tool name. Use
+'memory mcp-servers sync <id>' first to discover available tools if the list
+is empty.
 
 ```
 memory mcp-servers tools [server-id] [flags]
@@ -1648,7 +1819,12 @@ Create a new project
 
 ### Synopsis
 
-Create a new project in the Memory platform
+Create a new project in the Memory platform.
+
+Prints the new project's Name and ID on success. If no LLM provider credentials
+are configured for the organization, a warning is shown explaining that AI
+features (embeddings, search, extraction) will not work until a provider is
+added via 'memory provider configure'.
 
 ```
 memory projects create [flags]
@@ -1687,7 +1863,12 @@ Get project details
 
 ### Synopsis
 
-Get details for a specific project by name or ID
+Get details for a specific project by name or ID.
+
+Prints the project's Name, ID, and Org ID. If a project info document is set
+it is shown as well. Use the --stats flag to additionally display counts for
+Documents, Graph Objects, Relationships, Extraction jobs, and installed Schemas
+with their object and relationship type names.
 
 ```
 memory projects get [name-or-id] [flags]
@@ -1706,7 +1887,13 @@ List all projects
 
 ### Synopsis
 
-List all projects you have access to
+List all projects you have access to.
+
+Output prints a numbered list with each project's Name and ID. If the project
+has a project info document set, it is shown beneath the name. Use the --stats
+flag to also display per-project counts for Documents, Graph Objects,
+Relationships, Extraction jobs (total/running/queued), and installed Schemas
+(with their object and relationship type names).
 
 ```
 memory projects list [flags]
@@ -1756,6 +1943,17 @@ memory projects set-info [project-name-or-id] [flags]
 
 ## memory projects set-provider
 
+Configure the LLM provider for a project
+
+### Synopsis
+
+Configure the LLM provider credentials for a specific project.
+
+Supported providers: google, google-vertex. Prints the provider name, the
+configured generative model, and the embedding model on success. Use flags
+such as --api-key, --embedding-model, and --generative-model to specify
+credentials and model overrides.
+
 ```
 memory projects set-provider <project-name-or-id> <provider> [flags]
 ```
@@ -1778,7 +1976,13 @@ Set active project
 
 ### Synopsis
 
-Set the active project context by writing to .env.local
+Set the active project context by writing credentials to .env.local.
+
+Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_TOKEN into
+.env.local in the current directory so that subsequent CLI commands and
+application code automatically use the selected project. If no existing token
+is found for the project, a new one is created automatically. Run without
+arguments to select interactively from a numbered list of available projects.
 
 ```
 memory projects set [name-or-id] [flags]
@@ -1953,6 +2157,10 @@ Show aggregated LLM token usage and estimated cost.
 Without --project, reports org-wide usage across all projects.
 With --project, reports usage for that specific project.
 
+Output is a table with columns: PROVIDER, MODEL, TEXT IN (tokens), IMAGE
+(tokens), VIDEO (tokens), AUDIO (tokens), OUTPUT (tokens), and EST. COST (USD).
+A total estimated cost line is printed below the table.
+
 Examples:
   emergent provider usage
   emergent provider usage --project <id>
@@ -2034,7 +2242,11 @@ Show compiled object and relationship types for the current project
 
 ### Synopsis
 
-Returns the merged set of object and relationship type definitions from all installed schemas
+Show the merged set of type definitions compiled from all installed schemas.
+
+Prints two tables: Object Types (columns: Name, Label, Schema, Description)
+and Relationship Types (columns: Name, Label, Source → Target, Schema). Use
+--output json to receive the raw compiled types as JSON.
 
 ```
 memory schemas compiled-types [flags]
@@ -2087,6 +2299,14 @@ memory schemas delete <schema-id> [flags]
 
 Get a schema by ID
 
+### Synopsis
+
+Get details for a schema pack by its ID.
+
+Prints ID, Name, Version, Description (if set), Author (if set), Draft status,
+and Created timestamp. Use --output json to receive the full schema record as
+JSON instead.
+
 ```
 memory schemas get <schema-id> [flags]
 ```
@@ -2128,7 +2348,12 @@ List installed schemas
 
 ### Synopsis
 
-List schemas currently installed on the current project
+List schemas currently installed (assigned) on the current project.
+
+Output is a table with columns: Assignment ID, Schema ID, Name, Version,
+Active (yes/no), and Installed date. The Assignment ID is used with
+'memory schemas uninstall' to remove a schema from the project. Use
+--output json to receive the full list as JSON.
 
 ```
 memory schemas installed [flags]
@@ -2146,7 +2371,10 @@ List available schemas
 
 ### Synopsis
 
-List schemas available for the current project to install
+List schemas available in the global registry for the current project to install.
+
+Output is a table with columns: ID, Name, Version, and Description (truncated
+to 60 characters). Use --output json to receive the full list as JSON.
 
 ```
 memory schemas list [flags]
@@ -2161,6 +2389,13 @@ memory schemas list [flags]
 ## memory schemas uninstall
 
 Uninstall (remove) a schema assignment from the current project
+
+### Synopsis
+
+Remove a schema assignment from the current project by its assignment ID.
+
+Use 'memory schemas installed' to list assignment IDs. Prints
+"Schema assignment <id> removed." on success.
 
 ```
 memory schemas uninstall <assignment-id> [flags]
@@ -2218,6 +2453,14 @@ Examples:
 ## memory server ctl health
 
 Check server health
+
+### Synopsis
+
+Check the health of the local Memory server.
+
+Makes an HTTP GET request to the server's /health endpoint and prints whether
+the server is healthy (✓) or not responding (✗). On a healthy response the
+full JSON health payload is printed in indented format.
 
 ```
 memory server ctl health [flags]
@@ -2314,6 +2557,13 @@ memory server ctl start [flags]
 ## memory server ctl status
 
 Show service status
+
+### Synopsis
+
+Show the current status of all Memory Docker services.
+
+Runs 'docker compose ps' for the local installation and prints the container
+name, state (running/exited), and port mappings for each service.
 
 ```
 memory server ctl status [flags]
@@ -2533,6 +2783,13 @@ memory skills create [flags]
 
 Delete a skill by ID
 
+### Synopsis
+
+Permanently delete a skill by its ID.
+
+Prints "Skill <id> deleted." on success. You will be prompted for confirmation
+unless the --confirm flag is provided.
+
 ```
 memory skills delete <id> [flags]
 ```
@@ -2547,6 +2804,14 @@ memory skills delete <id> [flags]
 ## memory skills get
 
 Get a skill by ID
+
+### Synopsis
+
+Get full details for a skill by its ID.
+
+Prints ID, Name, Description, Scope (global / org / project), Created and
+Updated timestamps, and the full skill Content. Use --json to receive the raw
+JSON response instead.
 
 ```
 memory skills get <id> [flags]
@@ -2601,7 +2866,12 @@ List skills installed on the server
 
 ### Synopsis
 
-List skills stored on the server and available to agents. Use --project to include project-scoped skills, or --global for global only.
+List skills stored on the server and available to agents.
+
+Output is a table with columns: NAME, DESCRIPTION (truncated to 55 characters),
+SCOPE (global/org/project), and ID. Use --project to include project-scoped
+skills, or --global for global-only skills. Use --json to receive the full
+skill list as JSON.
 
 ```
 memory skills list [flags]
@@ -2616,6 +2886,14 @@ memory skills list [flags]
 ## memory skills update
 
 Update a skill
+
+### Synopsis
+
+Update the description or content of an existing skill.
+
+Prints "Skill updated." followed by the skill's ID and Name on success. At
+least one of --description, --content, or --content-file must be provided.
+Use --json to receive the full updated skill as JSON instead.
 
 ```
 memory skills update <id> [flags]
@@ -2636,7 +2914,16 @@ Show current authentication status
 
 ### Synopsis
 
-Display information about the current authentication session including token expiry and user details.
+Display detailed information about the current authentication session and server health.
+
+Shows authentication Mode (project token, account API key, or OAuth), Server URL,
+masked credential key, and connection Status (Connected or unreachable). Also
+displays server Health and Version. If authenticated as a user, prints the active
+project Name and ID, or a numbered list of all accessible projects.
+
+Additionally prints full Usage Statistics for the active project including:
+Documents, Graph Objects, Relationships, Type Registry (Types, Enabled,
+TypesWithObjects), Template Packs, and Processing Pipeline job queue depths.
 
 ```
 memory status [flags]
@@ -2674,6 +2961,10 @@ Create a new API token.
 Without --project, creates an account-level token usable across all projects.
 With --project, creates a project-scoped token.
 
+On success, prints the full plaintext Token value prominently (this is the only
+time the full token is shown — save it immediately), followed by ID, Name, Type,
+Prefix, Scopes, and Created timestamp.
+
 Valid scopes: schema:read, data:read, data:write, agents:read, agents:write, projects:read, projects:write
 
 ```
@@ -2694,7 +2985,10 @@ Get token details
 
 ### Synopsis
 
-Get details for a specific API token by ID
+Get details for a specific API token by its ID.
+
+Use --project to specify a project-scoped token; without it, looks up an
+account-level token.
 
 ```
 memory tokens get [token-id] [flags]
@@ -2712,7 +3006,13 @@ List API tokens
 
 ### Synopsis
 
-List API tokens. Without --project, lists account-level tokens. With --project, lists tokens for that project.
+List API tokens and their details.
+
+Without --project, lists account-level tokens. With --project, lists tokens
+for the specified project. Each token entry prints: Name, ID, Prefix, Type
+(account or project), Scopes, Created timestamp, and Revoked timestamp (if
+applicable). For project tokens, the full plaintext token value is also fetched
+and displayed — treat this output as sensitive.
 
 ```
 memory tokens list [flags]
@@ -2765,7 +3065,12 @@ Fetch a full trace by ID
 
 ### Synopsis
 
-Fetch and display a full trace as a span tree.
+Fetch and display a full trace as an indented span tree.
+
+Prints the Trace ID, then each span in a tree structure showing the span name
+and duration. If an agent run ID is found in the trace attributes, also prints
+a token usage summary (Input Tokens, Output Tokens, Estimated Cost). Use
+--debug to include internal ADK bookkeeping spans in the tree.
 
 ```
 memory traces get <traceID> [flags]
@@ -2786,6 +3091,12 @@ List recent traces
 
 List recent traces (default: last 1 hour, up to 20 results).
 
+Output is a table with columns: TRACE ID, ROOT SPAN, DURATION, and TIMESTAMP.
+When the --agent-runs flag is used, the table additionally includes: AGENT,
+INPUT TOKENS, OUTPUT TOKENS, and EST. COST columns, and results are filtered
+to traces with agent.run root spans only. Use --since (e.g. 30m, 2h, 24h) and
+--limit to control the time window and result count.
+
 ```
 memory traces list [flags]
 ```
@@ -2805,7 +3116,12 @@ Search traces by criteria
 
 ### Synopsis
 
-Search traces using TraceQL filters (service, route, min-duration).
+Search traces using TraceQL filters.
+
+Outputs the same table format as 'memory traces list': TRACE ID, ROOT SPAN,
+DURATION, TIMESTAMP. Use --service, --route, --min-duration, --since, and
+--limit flags to narrow results. The query is scoped to the active project
+automatically.
 
 ```
 memory traces search [flags]
