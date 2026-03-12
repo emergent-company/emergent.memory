@@ -53,13 +53,16 @@ ARCH=$(detect_arch)
 EXT="tar.gz"; [ "$OS" = "windows" ] && EXT="zip"
 
 # Detect any previously installed version
+# Note: the binary stores version without "v" prefix (stripped at build time),
+# so we normalise both sides before comparing.
 PREV_VERSION=""
 if [ -x "${INSTALL_DIR}/bin/memory" ]; then
-    PREV_VERSION=$("${INSTALL_DIR}/bin/memory" version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+    PREV_VERSION=$("${INSTALL_DIR}/bin/memory" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 fi
+VERSION_NORM="${VERSION#v}"
 
 if [ -n "$PREV_VERSION" ]; then
-    if [ "$PREV_VERSION" = "$VERSION" ]; then
+    if [ "$PREV_VERSION" = "$VERSION_NORM" ]; then
         echo -e "${CYAN}Reinstalling memory ${VERSION} (${OS}/${ARCH})...${NC}"
     else
         echo -e "${CYAN}Updating memory from ${PREV_VERSION} to ${VERSION} (${OS}/${ARCH})...${NC}"
@@ -87,7 +90,7 @@ mkdir -p "${INSTALL_DIR}/bin"
 BINARY="memory-cli-${OS}-${ARCH}"; [ "$OS" = "windows" ] && BINARY="${BINARY}.exe"
 mv "${TMP}/${BINARY}" "${INSTALL_DIR}/bin/memory"
 chmod +x "${INSTALL_DIR}/bin/memory"
-if [ -n "$PREV_VERSION" ] && [ "$PREV_VERSION" != "$VERSION" ]; then
+if [ -n "$PREV_VERSION" ] && [ "$PREV_VERSION" != "$VERSION_NORM" ]; then
     echo -e "${GREEN}✓${NC} Updated to ${INSTALL_DIR}/bin/memory"
 else
     echo -e "${GREEN}✓${NC} Installed to ${INSTALL_DIR}/bin/memory"
