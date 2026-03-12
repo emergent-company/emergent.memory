@@ -131,7 +131,15 @@ func runListMCPServers(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list MCP servers: %w", err)
 	}
 
-	servers := result.Data
+	// Filter out the internal "builtin" server — it is an implementation detail,
+	// not a user-configured server. Use 'memory agents builtin-tools list' instead.
+	var servers []mcpregistry.MCPServer
+	for _, s := range result.Data {
+		if s.Type != mcpregistry.ServerTypeBuiltin {
+			servers = append(servers, s)
+		}
+	}
+
 	if len(servers) == 0 {
 		fmt.Println("No MCP servers found.")
 		return nil
@@ -606,6 +614,10 @@ func runConfigureMCPServer(cmd *cobra.Command, args []string) error {
 
 	var foundServerID, foundToolID string
 	for _, server := range serversResult.Data {
+		// Skip the internal builtin server — use 'memory agents builtin-tools configure' instead.
+		if server.Type == mcpregistry.ServerTypeBuiltin {
+			continue
+		}
 		toolsResult, err := c.SDK.MCPRegistry.ListTools(context.Background(), server.ID)
 		if err != nil {
 			continue

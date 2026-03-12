@@ -414,6 +414,40 @@ func (s *Service) GetEnabledBuiltinToolsForProject(ctx context.Context, projectI
 	return s.repo.FindAllEnabledBuiltinTools(ctx, projectID)
 }
 
+// ListBuiltinToolsForProject returns all builtin tools for a project with their
+// resolved enabled state and config inheritance source. This is the authoritative
+// list used by GET /api/admin/builtin-tools.
+func (s *Service) ListBuiltinToolsForProject(ctx context.Context, projectID string) ([]*MCPServerToolDTO, error) {
+	if err := s.EnsureBuiltinServer(ctx, projectID); err != nil {
+		return nil, fmt.Errorf("ensuring builtin server: %w", err)
+	}
+
+	server, err := s.repo.FindServerByName(ctx, projectID, "builtin")
+	if err != nil {
+		return nil, fmt.Errorf("finding builtin server: %w", err)
+	}
+	if server == nil {
+		return nil, fmt.Errorf("builtin server not found for project %s", projectID)
+	}
+
+	tools, err := s.repo.FindToolsByServerID(ctx, server.ID)
+	if err != nil {
+		return nil, fmt.Errorf("listing builtin tools: %w", err)
+	}
+
+	dtos := make([]*MCPServerToolDTO, 0, len(tools))
+	for _, t := range tools {
+		dto := t.ToDTO()
+		_, _, source, resolveErr := s.ResolveBuiltinToolSettings(ctx, projectID, t.ToolName)
+		if resolveErr == nil {
+			dto.InheritedFrom = source
+		}
+		dtos = append(dtos, dto)
+	}
+
+	return dtos, nil
+}
+
 // --- External Tool Proxy ---
 
 // InspectServer performs a diagnostic test-connection to an MCP server.

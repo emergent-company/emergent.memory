@@ -1,0 +1,207 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcpregistry"
+	"github.com/spf13/cobra"
+)
+
+var builtinToolsCmd = &cobra.Command{
+	Use:   "builtin-tools",
+	Short: "Manage built-in tools",
+	Long: `Commands for managing built-in (Go-native) tools in the Memory platform.
+
+Built-in tools are implemented directly in the server and are available to all
+agents without requiring an external MCP server connection. Examples include
+query_entities, brave_web_search, webfetch, and create_document.
+
+Use 'memory agents mcp-servers' to manage externally-connected MCP servers.`,
+}
+
+var listBuiltinToolsCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all built-in tools",
+	Long: `List all built-in tools registered for the current project.
+
+Prints each tool's enabled/disabled state, name, and description. Tools that
+require runtime configuration (e.g. API keys) are shown with their config status.
+The 'Source' column shows where the effective settings come from: project, org,
+or global (server default).`,
+	RunE: runListBuiltinTools,
+}
+
+var toggleBuiltinToolCmd = &cobra.Command{
+	Use:   "toggle [tool-id] [on|off]",
+	Short: "Enable or disable a built-in tool",
+	Long: `Enable or disable a built-in tool for the current project.
+
+The tool-id is the UUID shown in 'memory agents builtin-tools list'.
+
+Examples:
+  memory agents builtin-tools toggle <tool-id> off
+  memory agents builtin-tools toggle <tool-id> on`,
+	Args: cobra.ExactArgs(2),
+	RunE: runToggleBuiltinTool,
+}
+
+var configureBuiltinToolCmd = &cobra.Command{
+	Use:   "configure [tool-name] [key=value ...]",
+	Short: "Set runtime config for a built-in tool",
+	Long: `Set runtime configuration key/value pairs for a named built-in tool.
+
+Looks up the tool by name and patches its config. Only the provided keys are
+updated; existing keys not mentioned are left unchanged.
+
+Examples:
+  memory agents builtin-tools configure brave_web_search api_key=YOUR_KEY
+  memory agents builtin-tools configure reddit_search client_id=ID client_secret=SECRET`,
+	Args: cobra.MinimumNArgs(2),
+	RunE: runConfigureBuiltinTool,
+}
+
+func runListBuiltinTools(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	result, err := c.SDK.MCPRegistry.ListBuiltinTools(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to list built-in tools: %w", err)
+	}
+
+	tools := result.Data
+	if len(tools) == 0 {
+		fmt.Println("No built-in tools found.")
+		return nil
+	}
+
+	fmt.Printf("Found %d built-in tool(s):\n\n", len(tools))
+	for i, t := range tools {
+		enabledLabel := "on"
+		if !t.Enabled {
+			enabledLabel = "off"
+		}
+		suffix := toolConfigSuffix(t.ConfigKeys, t.Config)
+		source := t.InheritedFrom
+		if source == "" {
+			source = "global"
+		}
+		fmt.Printf("%d. [%s] %s%s\n", i+1, enabledLabel, t.ToolName, suffix)
+		fmt.Printf("   ID:     %s\n", t.ID)
+		fmt.Printf("   Source: %s\n", source)
+		if t.Description != nil && *t.Description != "" {
+			desc := *t.Description
+			if len(desc) > 80 {
+				desc = desc[:77] + "..."
+			}
+			fmt.Printf("   Desc:   %s\n", desc)
+		}
+		fmt.Println()
+	}
+
+	return nil
+}
+
+func runToggleBuiltinTool(cmd *cobra.Command, args []string) error {
+	toolID := args[0]
+	state := strings.ToLower(args[1])
+
+	if state != "on" && state != "off" {
+		return fmt.Errorf("state must be 'on' or 'off', got %q", args[1])
+	}
+
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	enabled := state == "on"
+	_, err = c.SDK.MCPRegistry.UpdateBuiltinTool(context.Background(), toolID, &mcpregistry.UpdateBuiltinToolRequest{
+		Enabled: &enabled,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update built-in tool: %w", err)
+	}
+
+	fmt.Printf("Tool %s is now %s.\n", toolID, state)
+	return nil
+}
+
+func runConfigureBuiltinTool(cmd *cobra.Command, args []string) error {
+	toolName := args[0]
+	kvPairs := args[1:]
+
+	config := make(map[string]any, len(kvPairs))
+	for _, kv := range kvPairs {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid key=value pair %q (expected KEY=VALUE)", kv)
+		}
+		config[parts[0]] = parts[1]
+	}
+
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	// Find the tool ID by name from the builtin-tools list.
+	listResult, err := c.SDK.MCPRegistry.ListBuiltinTools(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to list built-in tools: %w", err)
+	}
+
+	var foundToolID string
+	for _, t := range listResult.Data {
+		if t.ToolName == toolName {
+			foundToolID = t.ID
+			break
+		}
+	}
+	if foundToolID == "" {
+		return fmt.Errorf("built-in tool %q not found for this project", toolName)
+	}
+
+	_, err = c.SDK.MCPRegistry.UpdateBuiltinTool(context.Background(), foundToolID, &mcpregistry.UpdateBuiltinToolRequest{
+		Config: config,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to configure built-in tool: %w", err)
+	}
+
+	fmt.Printf("Built-in tool %q configured successfully.\n", toolName)
+	fmt.Printf("  Tool ID:  %s\n", foundToolID)
+	fmt.Printf("  Keys set: %s\n", strings.Join(keysOf(config), ", "))
+	return nil
+}
+
+func init() {
+	builtinToolsCmd.AddCommand(listBuiltinToolsCmd)
+	builtinToolsCmd.AddCommand(toggleBuiltinToolCmd)
+	builtinToolsCmd.AddCommand(configureBuiltinToolCmd)
+
+	// Register under agents command
+	agentsCmd.AddCommand(builtinToolsCmd)
+}
