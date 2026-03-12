@@ -60,6 +60,9 @@ test-results/
 coverage/
 **/coverage/
 lcov.info
+*.out
+coverage_combined/
+apps/server/coverage_combined/
 
 # Vitest / Jest snapshots (optional keep if needed)
 *.snap
@@ -154,6 +157,10 @@ tools/niezatapialni-scraper/niezatapialni-scraper
 !blueprints/**/seed/**/*.jsonl
 *.log
 .claude/settings.local.json
+
+# Test data and e2e suites (live in emergent.memory.e2e)
+test-data/
+tests/
 
 # auto-added by commit skill — 2026-03-01
 /cmd
