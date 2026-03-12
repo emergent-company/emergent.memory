@@ -16,7 +16,7 @@ import (
 func skillsToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:        "list_skills",
+			Name:        "skill-list",
 			Description: "List skills available to the current project. Returns an array of skill objects with id, name, description, content, scope, and metadata.",
 			InputSchema: InputSchema{
 				Type:       "object",
@@ -25,7 +25,7 @@ func skillsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_skill",
+			Name:        "skill-get",
 			Description: "Get a single skill by its UUID. Returns the full skill including content, description, scope, and metadata.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -39,7 +39,7 @@ func skillsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "create_skill",
+			Name:        "skill-create",
 			Description: "Create a new project-scoped skill. Returns the created skill's id, name, description, and scope.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -61,7 +61,7 @@ func skillsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "update_skill",
+			Name:        "skill-update",
 			Description: "Update an existing skill's description, content, or metadata.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -83,7 +83,7 @@ func skillsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "delete_skill",
+			Name:        "skill-delete",
 			Description: "Delete a skill by its UUID.",
 			InputSchema: InputSchema{
 				Type: "object",

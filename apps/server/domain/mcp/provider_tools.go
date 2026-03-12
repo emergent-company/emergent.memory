@@ -15,7 +15,7 @@ import (
 func providerToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:        "list_org_providers",
+			Name:        "provider-list-org",
 			Description: "List all LLM provider configurations for an organization. Returns provider name, model selections, and credential source.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -29,7 +29,7 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "configure_org_provider",
+			Name:        "provider-configure-org",
 			Description: "Configure or update an LLM provider at the organization level (e.g. set Google AI API key).",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -63,7 +63,7 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "configure_project_provider",
+			Name:        "provider-configure-project",
 			Description: "Configure or update an LLM provider at the project level, overriding the org-level config.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -93,7 +93,7 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "list_provider_models",
+			Name:        "provider-models-list",
 			Description: "List available models for a given LLM provider. Optionally filter by model type (generative or embedding).",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -112,7 +112,7 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "test_provider",
+			Name:        "provider-test",
 			Description: "Test an LLM provider configuration by sending a minimal generation request. Returns the model used and the response.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -126,7 +126,7 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_provider_usage",
+			Name:        "provider-usage-get",
 			Description: "Get LLM usage statistics (token counts, costs) for the organization.",
 			InputSchema: InputSchema{
 				Type: "object",

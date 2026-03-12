@@ -23,7 +23,7 @@ const maxUploadBytes = 10 * 1024 * 1024 // 10 MB
 func documentsToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:        "list_documents",
+			Name:        "document-list",
 			Description: "List documents in the current project. Returns an array of document objects with id, filename, mimeType, conversionStatus, fileSizeBytes, and timestamps. Supports optional pagination.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -41,7 +41,7 @@ func documentsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_document",
+			Name:        "document-get",
 			Description: "Get a single document by its ID. Returns full document metadata including conversion status, storage info, and chunk counts.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -55,7 +55,7 @@ func documentsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name: "upload_document",
+			Name: "document-upload",
 			Description: "Upload a document to the current project by providing its content as a base64-encoded string. " +
 				"The decoded content must not exceed 10 MB. Returns the created document id, title, and conversion status.",
 			InputSchema: InputSchema{
@@ -78,7 +78,7 @@ func documentsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "delete_document",
+			Name:        "document-delete",
 			Description: "Delete a document and all its associated chunks from the current project.",
 			InputSchema: InputSchema{
 				Type: "object",

@@ -514,8 +514,8 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 			Temperature: &temperature,
 		},
 		Tools: []string{
-			"get_project_info",
-			"hybrid_search",
+			"project-get",
+			"search-hybrid",
 			"query_entities",
 			"search_entities",
 			"semantic_search",
@@ -572,7 +572,7 @@ Before responding, classify the user's request into one of:
 
 ## For DOCS_QUESTION
 
-Use the "webfetch" tool to retrieve relevant documentation pages from:
+Use the "web-fetch" tool to retrieve relevant documentation pages from:
   https://emergent-company.github.io/emergent.memory/
 
 Documentation sections and their URLs:
@@ -744,11 +744,11 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 
 	canonicalTools := []string{
 		// Web access for documentation
-		"webfetch",
+		"web-fetch",
 		// Project info
-		"get_project_info",
+		"project-get",
 		// Knowledge graph — read
-		"hybrid_search",
+		"search-hybrid",
 		"query_entities",
 		"search_entities",
 		"semantic_search",
@@ -759,19 +759,19 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 		"schema_version",
 		"list_relationships",
 		// Knowledge graph — write
-		"create_entity",
+		"entity-create",
 		"update_entity",
 		"delete_entity",
 		"create_relationship",
 		"update_relationship",
 		"delete_relationship",
 		// Agent management — read
-		"list_agent_definitions",
+		"agent-def-list",
 		"get_agent_definition",
-		"list_agents",
+		"agent-list",
 		"get_agent",
 		"list_agent_runs",
-		"get_agent_run",
+		"agent-run-get",
 		"get_agent_run_tool_calls",
 		"list_available_agents",
 		// Agent definition — write
@@ -791,23 +791,23 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 		// Schema registry — write
 		"create_schema",
 		"delete_schema",
-		"assign_schema",
-		"update_template_assignment",
+		"schema-assign",
+		"schema-assignment-update",
 		// MCP registry — write
 		"create_mcp_server",
 		"update_mcp_server",
-		"delete_mcp_server",
-		"install_mcp_from_registry",
+		"mcp-server-delete",
+		"mcp-registry-install",
 		"sync_mcp_server_tools",
 		// Project — write
 		"create_project",
 		// Documents — read/write (non-destructive uploads allowed)
-		"list_documents",
+		"document-list",
 		"get_document",
 		"upload_document",
 		"delete_document",
 		// Skills — read/write
-		"list_skills",
+		"skill-list",
 		"get_skill",
 		"create_skill",
 		"update_skill",
@@ -815,16 +815,16 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 		// Embeddings — read only (no pause/resume/config changes)
 		"get_embedding_status",
 		// Agent Questions and ADK sessions — read
-		"list_agent_questions",
+		"agent-question-list",
 		"list_project_agent_questions",
 		"respond_to_agent_question",
-		"list_adk_sessions",
+		"adk-session-list",
 		"get_adk_session",
 		// Traces — read
-		"list_traces",
+		"trace-list",
 		"get_trace",
 		// Query knowledge
-		"query_knowledge",
+		"search-knowledge",
 		// Provider usage — read-only cost reporting
 		"get_provider_usage",
 	}

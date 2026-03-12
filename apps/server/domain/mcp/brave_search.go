@@ -72,7 +72,7 @@ func (s *Service) executeBraveWebSearch(ctx context.Context, projectID string, a
 	// Resolve API key: project → org → global env (fallback)
 	apiKey := s.braveSearchAPIKey
 	if s.mcpRegistryToolHandler != nil && projectID != "" {
-		if cfg, _, err := s.mcpRegistryToolHandler.ResolveBuiltinToolConfig(ctx, projectID, "brave_web_search"); err == nil {
+		if cfg, _, err := s.mcpRegistryToolHandler.ResolveBuiltinToolConfig(ctx, projectID, "web-search-brave"); err == nil {
 			if k, ok := cfg["api_key"].(string); ok && k != "" {
 				apiKey = k
 			}
@@ -219,7 +219,7 @@ func (s *Service) callBraveSearchAPI(ctx context.Context, req braveSearchRequest
 // getBraveSearchToolDefinition returns the MCP tool definition for Brave web search
 func getBraveSearchToolDefinition() ToolDefinition {
 	return ToolDefinition{
-		Name:        "brave_web_search",
+		Name:        "web-search-brave",
 		Description: "Search the web using the Brave Search API. Returns web search results with titles, URLs, descriptions, and snippets. Use this to find current information, research topics, or verify facts from the web.",
 		ConfigKeys:  []string{"api_key"},
 		InputSchema: InputSchema{

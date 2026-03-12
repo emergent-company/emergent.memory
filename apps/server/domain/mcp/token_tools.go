@@ -15,7 +15,7 @@ import (
 func tokenToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:        "list_project_api_tokens",
+			Name:        "token-list",
 			Description: "List all API tokens for the current project. Returns token metadata (id, name, prefix, scopes, created at) but not the raw token value.",
 			InputSchema: InputSchema{
 				Type:       "object",
@@ -24,7 +24,7 @@ func tokenToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "create_project_api_token",
+			Name:        "token-create",
 			Description: "Create a new API token for the current project. Returns the token id, name, scopes, and the raw token value (shown once only).",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -42,7 +42,7 @@ func tokenToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_project_api_token",
+			Name:        "token-get",
 			Description: "Get a project API token by its ID. Returns metadata and the encrypted token value if available.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -56,7 +56,7 @@ func tokenToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "revoke_project_api_token",
+			Name:        "token-revoke",
 			Description: "Revoke (permanently disable) a project API token. This cannot be undone.",
 			InputSchema: InputSchema{
 				Type: "object",

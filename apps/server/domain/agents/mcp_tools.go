@@ -782,7 +782,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 	return []mcp.ToolDefinition{
 		// --- Agent Definitions ---
 		{
-			Name:        "list_agent_definitions",
+			Name:        "agent-def-list",
 			Description: "List all agent definitions for the current project. Agent definitions store agent configurations (system prompt, tools, flow type, visibility, ACP config). Returns summary DTOs with tool counts.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -797,7 +797,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_agent_definition",
+			Name:        "agent-def-get",
 			Description: "Get a single agent definition by ID with full details including system prompt, tools, model config, ACP config, and visibility settings.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -811,7 +811,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 			},
 		},
 		{
-			Name:        "create_agent_definition",
+			Name:        "agent-def-create",
 			Description: "Create a new agent definition. Defines the configuration template for an agent including its system prompt, available tools, flow type, and visibility.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -914,7 +914,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 			},
 		},
 		{
-			Name:        "delete_agent_definition",
+			Name:        "agent-def-delete",
 			Description: "Delete an agent definition by ID. This removes the configuration template but does not affect running agents.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -930,7 +930,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 
 		// --- Agents (runtime) ---
 		{
-			Name:        "list_agents",
+			Name:        "agent-list",
 			Description: "List all runtime agents for the current project, enriched with definition metadata. Each entry includes: id, name, enabled, triggerType, executionMode, lastRunAt, lastRunStatus, description, flowType, model, agentType, and tier. Use agent_name (not id) with trigger_agent.",
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
@@ -939,7 +939,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_agent",
+			Name:        "agent-get",
 			Description: "Get a single runtime agent by ID with full details including schedule, trigger type, execution mode, and last run status.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -953,7 +953,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 			},
 		},
 		{
-			Name:        "create_agent",
+			Name:        "agent-create",
 			Description: "Create a new runtime agent with schedule, trigger type, and execution configuration.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -1048,7 +1048,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 			},
 		},
 		{
-			Name:        "delete_agent",
+			Name:        "agent-delete",
 			Description: "Delete a runtime agent by ID. This stops any scheduled runs and removes the agent.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -1086,7 +1086,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 
 		// --- Agent Runs ---
 		{
-			Name:        "list_agent_runs",
+			Name:        "agent-run-list",
 			Description: "List agent runs for the current project with pagination and optional filters by agent ID or status.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -1118,7 +1118,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_agent_run",
+			Name:        "agent-run-get",
 			Description: "Get details of a single agent run including status, duration, step count, and error information.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -1132,7 +1132,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_agent_run_messages",
+			Name:        "agent-run-messages",
 			Description: "Get all LLM messages exchanged during an agent run, ordered by step number. Includes system, user, assistant, and tool_result messages.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -1146,7 +1146,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_agent_run_tool_calls",
+			Name:        "agent-run-tool-calls",
 			Description: "Get all tool calls made during an agent run, including input, output, status, and duration for each call.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -1160,7 +1160,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 			},
 		},
 		{
-			Name:        "get_run_status",
+			Name:        "agent-run-status",
 			Description: "Poll the status of an agent run by ID. Intended for use after trigger_agent returns status=queued. Returns run_id, status, and optionally error/summary fields.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -1176,7 +1176,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 
 		// --- Agent Catalog ---
 		{
-			Name:        "list_available_agents",
+			Name:        "agent-list-available",
 			Description: "List all available agents in the project catalog. Returns a lightweight summary with name, description, tools list, flow_type, and visibility for each agent definition. Does not include system prompts or IDs — use list_agent_definitions for full details.",
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
