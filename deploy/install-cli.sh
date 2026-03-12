@@ -76,14 +76,40 @@ chmod +x "${INSTALL_DIR}/bin/memory"
 echo -e "${GREEN}✓${NC} Installed to ${INSTALL_DIR}/bin/memory"
 
 PATH_LINE="export PATH=\"\$HOME/.memory/bin:\$PATH\""
-for RC in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
-    if [ -f "$RC" ] && ! grep -q '\.memory/bin' "$RC" 2>/dev/null; then
-        printf '\n# Memory CLI\n%s\n' "$PATH_LINE" >> "$RC"
-        echo -e "${GREEN}✓${NC} Added to PATH in ${RC}"
-        break
-    fi
-done
+
+# Pick the RC file that matches the running shell, falling back to common files
+detect_rc() {
+    local shell_name
+    shell_name="$(basename "${SHELL:-}")"
+    case "$shell_name" in
+        zsh)   echo "$HOME/.zshrc" ;;
+        bash)
+            # On macOS, bash login shells use .bash_profile; prefer it if it exists
+            if [ "$(uname -s)" = "Darwin" ] && [ -f "$HOME/.bash_profile" ]; then
+                echo "$HOME/.bash_profile"
+            else
+                echo "$HOME/.bashrc"
+            fi
+            ;;
+        fish)  echo "$HOME/.config/fish/config.fish" ;;
+        *)
+            # Fallback: first existing file wins
+            for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+                [ -f "$f" ] && echo "$f" && return
+            done
+            echo "$HOME/.profile"
+            ;;
+    esac
+}
+
+RC=$(detect_rc)
+if ! grep -q '\.memory/bin' "$RC" 2>/dev/null; then
+    printf '\n# Memory CLI\n%s\n' "$PATH_LINE" >> "$RC"
+    echo -e "${GREEN}✓${NC} Added to PATH in ${RC}"
+fi
+
+# Make the binary available in the current session immediately
+export PATH="$HOME/.memory/bin:$PATH"
 
 echo ""
 echo -e "${BOLD}Run:${NC} memory --help"
-echo -e "${YELLOW}Note:${NC} Restart your terminal (or source your shell config) for 'memory' to be in PATH."
