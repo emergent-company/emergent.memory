@@ -34,7 +34,7 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 	var projectPacks []ProjectMemorySchema
 	err := r.db.NewSelect().
 		Model(&projectPacks).
-		Relation("TemplatePack").
+		Relation("MemorySchema").
 		Where("ptp.project_id = ?", projectID).
 		Where("ptp.active = true").
 		Scan(ctx)

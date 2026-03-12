@@ -3221,8 +3221,8 @@ func (s *Service) executeAssignSchema(ctx context.Context, projectID string, arg
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
-	templatePackID, _ := args["schema_id"].(string)
-	if templatePackID == "" {
+	schemaID, _ := args["schema_id"].(string)
+	if schemaID == "" {
 		return nil, fmt.Errorf("missing required parameter: schema_id")
 	}
 
@@ -3239,11 +3239,11 @@ func (s *Service) executeAssignSchema(ctx context.Context, projectID string, arg
 	err = s.db.NewSelect().
 		TableExpr("kb.graph_schemas").
 		Column("id", "name", "version", "object_type_schemas", "ui_configs", "extraction_prompts").
-		Where("id = ?", templatePackID).
+		Where("id = ?", schemaID).
 		Scan(ctx, &pack)
 
 	if err != nil {
-		return nil, fmt.Errorf("schema not found: %s", templatePackID)
+		return nil, fmt.Errorf("schema not found: %s", schemaID)
 	}
 
 	allTypes := make([]string, 0)
@@ -3314,7 +3314,7 @@ func (s *Service) executeAssignSchema(ctx context.Context, projectID string, arg
 		err := tx.NewRaw(`
 			SELECT COUNT(*) FROM kb.project_schemas 
 			WHERE project_id = ? AND schema_id = ?
-		`, projectUUID, templatePackID).Scan(ctx, &existingCount)
+		`, projectUUID, schemaID).Scan(ctx, &existingCount)
 		if err != nil {
 			return err
 		}
@@ -3368,7 +3368,7 @@ func (s *Service) executeAssignSchema(ctx context.Context, projectID string, arg
 			INSERT INTO kb.project_schemas (project_id, schema_id, active, customizations)
 			VALUES (?, ?, true, ?)
 			RETURNING id
-		`, projectUUID, templatePackID, string(customizationsJSON)).Scan(ctx, &assignmentID)
+		`, projectUUID, schemaID, string(customizationsJSON)).Scan(ctx, &assignmentID)
 		if err != nil {
 			return err
 		}
@@ -3386,7 +3386,7 @@ func (s *Service) executeAssignSchema(ctx context.Context, projectID string, arg
 				INSERT INTO kb.project_object_schema_registry 
 				(project_id, type_name, source, schema_id, json_schema, ui_config, extraction_config, enabled)
 				VALUES (?, ?, 'template', ?, ?, ?, ?, true)
-			`, projectUUID, typeName, templatePackID, string(schemaJSON), string(uiConfigJSON), string(extractionConfigJSON)).Exec(ctx)
+			`, projectUUID, typeName, schemaID, string(schemaJSON), string(uiConfigJSON), string(extractionConfigJSON)).Exec(ctx)
 			if err != nil {
 				return err
 			}
@@ -3491,11 +3491,11 @@ func (s *Service) executeUninstallSchema(ctx context.Context, projectID string, 
 			return err
 		}
 
-		var templatePackID string
+		var schemaID string
 		err := tx.NewRaw(`
 			SELECT schema_id FROM kb.project_schemas 
 			WHERE id = ? AND project_id = ?
-		`, assignmentID, projectUUID).Scan(ctx, &templatePackID)
+		`, assignmentID, projectUUID).Scan(ctx, &schemaID)
 		if err != nil {
 			return fmt.Errorf("assignment not found: %s", assignmentID)
 		}
@@ -3505,7 +3505,7 @@ func (s *Service) executeUninstallSchema(ctx context.Context, projectID string, 
 			SELECT COUNT(*) FROM kb.graph_objects go
 			JOIN kb.project_object_schema_registry ptr ON go.type = ptr.type_name AND go.project_id = ptr.project_id
 			WHERE ptr.schema_id = ? AND go.project_id = ? AND go.deleted_at IS NULL AND go.supersedes_id IS NULL
-		`, templatePackID, projectUUID).Scan(ctx, &objectCount)
+		`, schemaID, projectUUID).Scan(ctx, &objectCount)
 		if err != nil {
 			return err
 		}
@@ -3517,7 +3517,7 @@ func (s *Service) executeUninstallSchema(ctx context.Context, projectID string, 
 		_, err = tx.NewRaw(`
 			DELETE FROM kb.project_object_schema_registry 
 			WHERE schema_id = ? AND project_id = ?
-		`, templatePackID, projectUUID).Exec(ctx)
+		`, schemaID, projectUUID).Exec(ctx)
 		if err != nil {
 			return err
 		}

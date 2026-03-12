@@ -33,7 +33,7 @@ func provideEmbeddingService(svc *embeddings.Service) EmbeddingService {
 
 // ProvideSchemaProvider creates a schema provider (exported for tests).
 func ProvideSchemaProvider(db bun.IDB, log *slog.Logger) SchemaProvider {
-	return &templatePackSchemaProviderAdapter{
+	return &schemaProviderAdapter{
 		db:          db,
 		log:         log,
 		schemaCache: make(map[string]*cachedSchemas),
@@ -44,8 +44,8 @@ func provideSchemaProvider(db bun.IDB, log *slog.Logger) SchemaProvider {
 	return ProvideSchemaProvider(db, log)
 }
 
-// templatePackSchemaProviderAdapter adapts template pack queries without importing extraction package.
-type templatePackSchemaProviderAdapter struct {
+// schemaProviderAdapter adapts schema queries without importing extraction package.
+type schemaProviderAdapter struct {
 	db  bun.IDB
 	log *slog.Logger
 
@@ -67,7 +67,7 @@ type cachedSchemas struct {
 
 const schemaCacheTTL = 5 * time.Minute
 
-func (p *templatePackSchemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID string) (*ExtractionSchemas, error) {
+func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID string) (*ExtractionSchemas, error) {
 	p.cacheMu.RLock()
 	if cached, ok := p.schemaCache[projectID]; ok && time.Now().Before(cached.expiry) {
 		schemas := cached.schemas
@@ -90,7 +90,7 @@ func (p *templatePackSchemaProviderAdapter) GetProjectSchemas(ctx context.Contex
 	p.incrementCacheMiss()
 	p.log.Debug("schema cache miss, loading from database", slog.String("project_id", projectID))
 
-	type GraphTemplatePack struct {
+	type GraphSchema struct {
 		bun.BaseModel           `bun:"kb.graph_template_packs,alias:gtp"`
 		ID                      string  `bun:"id,pk,type:uuid"`
 		Name                    string  `bun:"name,notnull"`
@@ -99,18 +99,18 @@ func (p *templatePackSchemaProviderAdapter) GetProjectSchemas(ctx context.Contex
 		RelationshipTypeSchemas JSONMap `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
 	}
 
-	type ProjectTemplatePack struct {
+	type ProjectSchemaAssignment struct {
 		bun.BaseModel  `bun:"kb.project_template_packs,alias:ptp"`
 		ProjectID      string             `bun:"project_id,notnull,type:uuid"`
 		TemplatePackID string             `bun:"template_pack_id,notnull,type:uuid"`
 		Active         bool               `bun:"active,default:true"`
-		TemplatePack   *GraphTemplatePack `bun:"rel:belongs-to,join:template_pack_id=id"`
+		Schema         *GraphSchema `bun:"rel:belongs-to,join:template_pack_id=id"`
 	}
 
-	var assignments []ProjectTemplatePack
+	var assignments []ProjectSchemaAssignment
 	err := p.db.NewSelect().
 		Model(&assignments).
-		Relation("TemplatePack").
+		Relation("Schema").
 		Where("ptp.project_id = ?", projectID).
 		Where("ptp.active = true").
 		Scan(ctx)
@@ -136,11 +136,11 @@ func (p *templatePackSchemaProviderAdapter) GetProjectSchemas(ctx context.Contex
 	}
 
 	for _, assignment := range assignments {
-		if assignment.TemplatePack == nil {
+		if assignment.Schema == nil {
 			continue
 		}
 
-		pack := assignment.TemplatePack
+		pack := assignment.Schema
 
 		for typeName, schemaRaw := range pack.ObjectTypeSchemas {
 			schemaMap, ok := schemaRaw.(map[string]any)
@@ -218,31 +218,31 @@ func (p *templatePackSchemaProviderAdapter) GetProjectSchemas(ctx context.Contex
 	return schemas, nil
 }
 
-func (p *templatePackSchemaProviderAdapter) incrementCacheHit() {
+func (p *schemaProviderAdapter) incrementCacheHit() {
 	p.metricsMu.Lock()
 	p.cacheHits++
 	p.metricsMu.Unlock()
 }
 
-func (p *templatePackSchemaProviderAdapter) incrementCacheMiss() {
+func (p *schemaProviderAdapter) incrementCacheMiss() {
 	p.metricsMu.Lock()
 	p.cacheMisses++
 	p.metricsMu.Unlock()
 }
 
-func (p *templatePackSchemaProviderAdapter) incrementDBLoadSuccess() {
+func (p *schemaProviderAdapter) incrementDBLoadSuccess() {
 	p.metricsMu.Lock()
 	p.dbLoadSuccess++
 	p.metricsMu.Unlock()
 }
 
-func (p *templatePackSchemaProviderAdapter) incrementDBLoadError() {
+func (p *schemaProviderAdapter) incrementDBLoadError() {
 	p.metricsMu.Lock()
 	p.dbLoadErrors++
 	p.metricsMu.Unlock()
 }
 
-func (p *templatePackSchemaProviderAdapter) Metrics() SchemaProviderMetrics {
+func (p *schemaProviderAdapter) Metrics() SchemaProviderMetrics {
 	p.metricsMu.RLock()
 	defer p.metricsMu.RUnlock()
 	return SchemaProviderMetrics{
@@ -304,7 +304,7 @@ func provideInverseTypeProvider(db bun.IDB, log *slog.Logger) InverseTypeProvide
 	return ProvideInverseTypeProvider(db, log)
 }
 
-// inverseTypeProviderAdapter loads inverseType mappings from template pack JSONB.
+// inverseTypeProviderAdapter loads inverseType mappings from schema JSONB.
 type inverseTypeProviderAdapter struct {
 	db  bun.IDB
 	log *slog.Logger

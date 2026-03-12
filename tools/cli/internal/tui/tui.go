@@ -32,7 +32,7 @@ const (
 	ProjectsView ViewMode = iota
 	DocumentsView
 	WorkerStatsView
-	TemplatePacksView
+	SchemasView
 	QueryView
 	ExtractionsView
 	TracesView      // tab 6
@@ -64,7 +64,7 @@ type Model struct {
 	// Schemas (formerly template packs)
 	installedSchemas       []schemas.InstalledSchemaItem
 	compiledTypes          *schemas.CompiledTypesResponse
-	lastTemplatePacksFetch time.Time
+	lastSchemasFetch time.Time
 
 	// Query
 	queryMode     bool
@@ -253,8 +253,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, loadWorkerStats(m.client)
 			}
 			// Load schemas when switching to that tab
-			if m.currentView == TemplatePacksView {
-				return m, loadTemplatePacks(m.client)
+			if m.currentView == SchemasView {
+				return m, loadSchemas(m.client)
 			}
 			// Focus query input when switching to query tab (only if project selected)
 			if m.currentView == QueryView && m.selectedProjectID != "" {
@@ -373,10 +373,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case templatePacksLoadedMsg:
+	case schemasLoadedMsg:
 		m.installedSchemas = msg.packs
 		m.compiledTypes = msg.compiledTypes
-		m.lastTemplatePacksFetch = time.Now()
+		m.lastSchemasFetch = time.Now()
 		m.statusMsg = fmt.Sprintf("Loaded %d schemas", len(msg.packs))
 		return m, nil
 
@@ -593,8 +593,8 @@ func (m Model) View() string {
 		content.WriteString(m.documentsList.View())
 	case WorkerStatsView:
 		content.WriteString(m.renderWorkerStats())
-	case TemplatePacksView:
-		content.WriteString(m.renderTemplatePacks())
+	case SchemasView:
+		content.WriteString(m.renderSchemas())
 	case QueryView:
 		content.WriteString(m.renderQuery())
 	case ExtractionsView:
@@ -1018,7 +1018,7 @@ func (m Model) renderWorkerStats() string {
 }
 
 // renderTemplatePacks renders the schemas view with full details
-func (m Model) renderTemplatePacks() string {
+func (m Model) renderSchemas() string {
 	if m.selectedProjectID == "" {
 		style := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("11")).
@@ -1300,7 +1300,7 @@ type workerStatsLoadedMsg struct {
 	stats *health.AllJobMetrics
 }
 
-type templatePacksLoadedMsg struct {
+type schemasLoadedMsg struct {
 	packs         []schemas.InstalledSchemaItem
 	compiledTypes *schemas.CompiledTypesResponse
 }
@@ -1407,12 +1407,12 @@ func loadWorkerStats(client *client.Client) tea.Cmd {
 	}
 }
 
-func loadTemplatePacks(client *client.Client) tea.Cmd {
+func loadSchemas(client *client.Client) tea.Cmd {
 	return func() tea.Msg {
 		// Check if project context is set
 		if client.ProjectID() == "" {
 			// Don't return error, just return empty - UI will show "no project selected" message
-			return templatePacksLoadedMsg{
+			return schemasLoadedMsg{
 				packs:         []schemas.InstalledSchemaItem{},
 				compiledTypes: &schemas.CompiledTypesResponse{},
 			}
@@ -1433,7 +1433,7 @@ func loadTemplatePacks(client *client.Client) tea.Cmd {
 			return errMsg{err: fmt.Errorf("failed to load compiled types: %w", err)}
 		}
 
-		return templatePacksLoadedMsg{
+		return schemasLoadedMsg{
 			packs:         packs,
 			compiledTypes: compiledTypes,
 		}

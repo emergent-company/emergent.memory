@@ -123,11 +123,11 @@ func (r *Repository) MarkStarted(ctx context.Context, jobID uuid.UUID) error {
 }
 
 // MarkCompleted marks the job as completed with results
-func (r *Repository) MarkCompleted(ctx context.Context, jobID uuid.UUID, templatePackID *uuid.UUID, discoveredTypes, discoveredRelationships JSONArray) error {
+func (r *Repository) MarkCompleted(ctx context.Context, jobID uuid.UUID, schemaID *uuid.UUID, discoveredTypes, discoveredRelationships JSONArray) error {
 	_, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("status = ?", StatusCompleted).
-		Set("schema_id = ?", templatePackID).
+		Set("schema_id = ?", schemaID).
 		Set("discovered_types = ?", discoveredTypes).
 		Set("discovered_relationships = ?", discoveredRelationships).
 		Set("completed_at = now()").
@@ -362,10 +362,10 @@ func (r *Repository) UpdateMemorySchema(ctx context.Context, packID uuid.UUID, o
 }
 
 // SetJobMemorySchema sets the memory schema ID on a job and marks it completed
-func (r *Repository) SetJobMemorySchema(ctx context.Context, jobID, templatePackID uuid.UUID) error {
+func (r *Repository) SetJobMemorySchema(ctx context.Context, jobID, schemaID uuid.UUID) error {
 	_, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
-		Set("schema_id = ?", templatePackID).
+		Set("schema_id = ?", schemaID).
 		Set("status = ?", StatusCompleted).
 		Set("completed_at = now()").
 		Set("updated_at = now()").

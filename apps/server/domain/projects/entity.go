@@ -70,8 +70,8 @@ const (
 	RoleProjectUser  = "project_user"
 )
 
-// TemplatePack represents an installed template pack for a project
-type TemplatePack struct {
+// InstalledSchema represents an installed schema for a project
+type InstalledSchema struct {
 	Name              string   `json:"name"`
 	Version           string   `json:"version"`
 	ObjectTypes       []string `json:"objectTypes"`
@@ -86,7 +86,7 @@ type ProjectStats struct {
 	TotalJobs         int            `json:"totalJobs"`
 	RunningJobs       int            `json:"runningJobs"`
 	QueuedJobs        int            `json:"queuedJobs"`
-	TemplatePacks     []TemplatePack `json:"templatePacks"`
+	InstalledSchemas  []InstalledSchema `json:"installedSchemas"`
 }
 
 // ProjectDTO is the response DTO for project endpoints

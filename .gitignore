@@ -177,3 +177,6 @@ apps/server/swiftbridge
 
 # auto-added by commit skill — 2026-03-09
 apps/server/VERSION
+
+# Local deployment skills (machine-specific)
+.opencode/skills/upgrade-mcj/

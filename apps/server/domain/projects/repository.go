@@ -60,10 +60,10 @@ func (p *projectWithStats) populateStats() {
 		TotalJobs:         p.TotalJobs,
 		RunningJobs:       p.RunningJobs,
 		QueuedJobs:        p.QueuedJobs,
-		TemplatePacks:     []TemplatePack{},
+		InstalledSchemas:  []InstalledSchema{},
 	}
 	if len(p.TemplatePacks) > 0 {
-		_ = json.Unmarshal(p.TemplatePacks, &p.Project.Stats.TemplatePacks)
+		_ = json.Unmarshal(p.TemplatePacks, &p.Project.Stats.InstalledSchemas)
 	}
 }
 
