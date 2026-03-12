@@ -30,18 +30,19 @@ const (
 type MCPServer struct {
 	bun.BaseModel `bun:"table:kb.mcp_servers,alias:ms"`
 
-	ID        string         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	ProjectID string         `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	Name      string         `bun:"name,notnull" json:"name"`
-	Enabled   bool           `bun:"enabled,notnull,default:true" json:"enabled"`
-	Type      MCPServerType  `bun:"type,notnull" json:"type"`
-	Command   *string        `bun:"command" json:"command,omitempty"`               // for stdio
-	Args      []string       `bun:"args,array,default:'{}'" json:"args"`            // for stdio
-	Env       map[string]any `bun:"env,type:jsonb,default:'{}'" json:"env"`         // environment vars
-	URL       *string        `bun:"url" json:"url,omitempty"`                       // for sse/http
-	Headers   map[string]any `bun:"headers,type:jsonb,default:'{}'" json:"headers"` // for sse/http
-	CreatedAt time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	ID          string         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProjectID   string         `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	Name        string         `bun:"name,notnull" json:"name"`
+	Description *string        `bun:"description" json:"description,omitempty"`
+	Enabled     bool           `bun:"enabled,notnull,default:true" json:"enabled"`
+	Type        MCPServerType  `bun:"type,notnull" json:"type"`
+	Command     *string        `bun:"command" json:"command,omitempty"`               // for stdio
+	Args        []string       `bun:"args,array,default:'{}'" json:"args"`            // for stdio
+	Env         map[string]any `bun:"env,type:jsonb,default:'{}'" json:"env"`         // environment vars
+	URL         *string        `bun:"url" json:"url,omitempty"`                       // for sse/http
+	Headers     map[string]any `bun:"headers,type:jsonb,default:'{}'" json:"headers"` // for sse/http
+	CreatedAt   time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt   time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 
 	// Relations
 	Tools []*MCPServerTool `bun:"rel:has-many,join:id=server_id" json:"tools,omitempty"`
@@ -69,19 +70,20 @@ type MCPServerTool struct {
 
 // MCPServerDTO is the response DTO for an MCP server.
 type MCPServerDTO struct {
-	ID        string         `json:"id"`
-	ProjectID string         `json:"projectId"`
-	Name      string         `json:"name"`
-	Enabled   bool           `json:"enabled"`
-	Type      MCPServerType  `json:"type"`
-	Command   *string        `json:"command,omitempty"`
-	Args      []string       `json:"args,omitempty"`
-	Env       map[string]any `json:"env,omitempty"`
-	URL       *string        `json:"url,omitempty"`
-	Headers   map[string]any `json:"headers,omitempty"`
-	ToolCount int            `json:"toolCount"`
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
+	ID          string         `json:"id"`
+	ProjectID   string         `json:"projectId"`
+	Name        string         `json:"name"`
+	Description *string        `json:"description,omitempty"`
+	Enabled     bool           `json:"enabled"`
+	Type        MCPServerType  `json:"type"`
+	Command     *string        `json:"command,omitempty"`
+	Args        []string       `json:"args,omitempty"`
+	Env         map[string]any `json:"env,omitempty"`
+	URL         *string        `json:"url,omitempty"`
+	Headers     map[string]any `json:"headers,omitempty"`
+	ToolCount   int            `json:"toolCount"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
 }
 
 // MCPServerToolDTO is the response DTO for an MCP server tool.
@@ -105,25 +107,27 @@ type MCPServerDetailDTO struct {
 
 // CreateMCPServerDTO is the request DTO for creating an MCP server.
 type CreateMCPServerDTO struct {
-	Name    string         `json:"name" validate:"required"`
-	Type    MCPServerType  `json:"type" validate:"required,oneof=stdio sse http"`
-	Enabled *bool          `json:"enabled"`
-	Command *string        `json:"command"`
-	Args    []string       `json:"args"`
-	Env     map[string]any `json:"env"`
-	URL     *string        `json:"url"`
-	Headers map[string]any `json:"headers"`
+	Name        string         `json:"name" validate:"required"`
+	Description *string        `json:"description"`
+	Type        MCPServerType  `json:"type" validate:"required,oneof=stdio sse http"`
+	Enabled     *bool          `json:"enabled"`
+	Command     *string        `json:"command"`
+	Args        []string       `json:"args"`
+	Env         map[string]any `json:"env"`
+	URL         *string        `json:"url"`
+	Headers     map[string]any `json:"headers"`
 }
 
 // UpdateMCPServerDTO is the request DTO for updating an MCP server.
 type UpdateMCPServerDTO struct {
-	Name    *string        `json:"name"`
-	Enabled *bool          `json:"enabled"`
-	Command *string        `json:"command"`
-	Args    []string       `json:"args"`
-	Env     map[string]any `json:"env"`
-	URL     *string        `json:"url"`
-	Headers map[string]any `json:"headers"`
+	Name        *string        `json:"name"`
+	Description *string        `json:"description"`
+	Enabled     *bool          `json:"enabled"`
+	Command     *string        `json:"command"`
+	Args        []string       `json:"args"`
+	Env         map[string]any `json:"env"`
+	URL         *string        `json:"url"`
+	Headers     map[string]any `json:"headers"`
 }
 
 // UpdateMCPServerToolDTO is the request DTO for toggling a tool and/or updating its config.
@@ -292,19 +296,20 @@ func (s *MCPServer) ToDTO() *MCPServerDTO {
 		toolCount = len(s.Tools)
 	}
 	return &MCPServerDTO{
-		ID:        s.ID,
-		ProjectID: s.ProjectID,
-		Name:      s.Name,
-		Enabled:   s.Enabled,
-		Type:      s.Type,
-		Command:   s.Command,
-		Args:      s.Args,
-		Env:       s.Env,
-		URL:       s.URL,
-		Headers:   s.Headers,
-		ToolCount: toolCount,
-		CreatedAt: s.CreatedAt,
-		UpdatedAt: s.UpdatedAt,
+		ID:          s.ID,
+		ProjectID:   s.ProjectID,
+		Name:        s.Name,
+		Description: s.Description,
+		Enabled:     s.Enabled,
+		Type:        s.Type,
+		Command:     s.Command,
+		Args:        s.Args,
+		Env:         s.Env,
+		URL:         s.URL,
+		Headers:     s.Headers,
+		ToolCount:   toolCount,
+		CreatedAt:   s.CreatedAt,
+		UpdatedAt:   s.UpdatedAt,
 	}
 }
 
