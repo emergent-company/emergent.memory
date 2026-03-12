@@ -111,6 +111,31 @@ fi
 # Make the binary available in the current session immediately
 export PATH="$HOME/.memory/bin:$PATH"
 
+# Install shell completions
+SHELL_NAME="$(basename "${SHELL:-}")"
+case "$SHELL_NAME" in
+    zsh)
+        COMP_LINE='source <(memory completion zsh)'
+        if ! grep -q 'memory completion' "$RC" 2>/dev/null; then
+            printf '\n# Memory CLI completions\n%s\n' "$COMP_LINE" >> "$RC"
+            echo -e "${GREEN}✓${NC} Shell completions added to ${RC}"
+        fi
+        ;;
+    bash)
+        COMP_LINE='source <(memory completion bash)'
+        if ! grep -q 'memory completion' "$RC" 2>/dev/null; then
+            printf '\n# Memory CLI completions\n%s\n' "$COMP_LINE" >> "$RC"
+            echo -e "${GREEN}✓${NC} Shell completions added to ${RC}"
+        fi
+        ;;
+    fish)
+        FISH_COMP_DIR="$HOME/.config/fish/completions"
+        mkdir -p "$FISH_COMP_DIR"
+        "$INSTALL_DIR/bin/memory" completion fish > "$FISH_COMP_DIR/memory.fish"
+        echo -e "${GREEN}✓${NC} Shell completions installed to ${FISH_COMP_DIR}/memory.fish"
+        ;;
+esac
+
 echo ""
 echo -e "${BOLD}Run:${NC} memory --help"
 echo -e "${YELLOW}Note:${NC} To apply to future sessions: source ${RC}"
