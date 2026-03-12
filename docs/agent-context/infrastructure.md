@@ -68,7 +68,7 @@ WHISPER_SERVICE_TIMEOUT=7200000
 
 - **Port:** `3012`
 - **Start:** `air` (with hot-reload) or `go run ./cmd/main.go`
-- **Remote staging:** `http://mcj-emergent:3002`
+- **Remote staging:** set `TEST_SERVER_URL` env var to your remote server URL
 - CLI default points to remote staging — override with `--server http://localhost:3012`
 
 ## MCP Server

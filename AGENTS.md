@@ -14,7 +14,7 @@ Each domain: `handler.go` (Echo routes) · `service.go` (business logic) · `sto
 
 **DB:** Postgres on port `5436` (not 5432) · schemas: `kb` (knowledge), `core` (users/orgs) · migrations in `apps/server/migrations/` via Goose
 
-**CLI:** source at `tools/cli/` · install with `task cli:install` → `~/.memory/bin/memory` · defaults to remote `http://mcj-emergent:3002`; override with `--server http://localhost:3012`
+**CLI:** source at `tools/cli/` · install with `task cli:install` → `~/.memory/bin/memory` · defaults to `http://localhost:3012`; override with `--server <url>`
 
 
 
@@ -53,7 +53,7 @@ task stop        # stop background server
 |---|---|---|
 | Domain (preferred) | `https://admin.dev.emergent-company.ai` | `https://api.dev.emergent-company.ai` |
 | Localhost | `http://localhost:5176` | `http://localhost:5300` |
-| mcj-emergent (remote test) | — | `http://localhost:3002` (via SSH tunnel) |
+| Remote test server | — | `http://localhost:3002` (via SSH tunnel) |
 | Local Go server (direct) | — | `http://localhost:3012` |
 
 ## Before Writing Code — Check These First
@@ -94,7 +94,7 @@ logs/admin/admin.out.log      logs/admin/admin.error.log
 
 - `docs/site/` is tracked in git — do NOT add to `.gitignore`
 - `search/client_test.go` and `health/client_test.go` have pre-existing compile errors; ignore unless working on those packages
-- **SSH timeouts**: SSH commands to `mcj-emergent` time out at ~120s. For long operations (builds, test suites), run in background: `ssh root@mcj-emergent "nohup <cmd> > /tmp/out.log 2>&1 &"`. Use `gh run watch` to track CI instead of polling manually.
+- **SSH timeouts**: SSH commands to remote servers time out at ~120s. For long operations (builds, test suites), run in background: `ssh root@your-server "nohup <cmd> > /tmp/out.log 2>&1 &"`. Use `gh run watch` to track CI instead of polling manually.
 - **Ephemeral container deploys**: copying a binary into a running Docker container is temporary — a container restart reverts to the image version. All permanent deployments require a tagged release pushed through CI.
 
 ## Detail Docs

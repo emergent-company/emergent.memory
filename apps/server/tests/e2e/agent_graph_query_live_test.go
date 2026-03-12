@@ -11,13 +11,13 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
-// AgentGraphQueryLiveSuite tests natural language graph queries against live test data in mcj-emergent.
+// AgentGraphQueryLiveSuite tests natural language graph queries against live test data.
 // It verifies that the agent can successfully use vector search (via hybrid_search/semantic_search)
 // to answer questions about relationships.
 //
 // Usage:
 //
-//	TEST_SERVER_URL=https://api.mcj-emergent.com TEST_API_KEY=<key> go test -v -run TestAgentGraphQueryLiveSuite
+//	TEST_SERVER_URL=https://api.your-server.com TEST_API_KEY=<key> go test -v -run TestAgentGraphQueryLiveSuite
 type AgentGraphQueryLiveSuite struct {
 	testutil.BaseSuite
 
@@ -40,13 +40,17 @@ func (s *AgentGraphQueryLiveSuite) SetupSuite() {
 
 	s.apiKey = os.Getenv("TEST_API_KEY")
 	if s.apiKey == "" {
-		// Fallback to the standard mcj-emergent key if running against it
-		s.apiKey = "4334d35abf06be28271d7c5cd5a1cf02a6e9b4c2753db816e48419330e023060"
+		s.T().Skip("Skipping live test - TEST_API_KEY not set")
 	}
 
-	// Use standard mcj-emergent project and default graph query agent
-	s.projectID = "b04e0cd4-1800-4f42-a875-18172541d9fc"
-	s.agentDefID = "70356e5f-2c97-4ce4-9754-ec14e15a2a13"
+	s.projectID = os.Getenv("TEST_PROJECT_ID")
+	if s.projectID == "" {
+		s.T().Skip("Skipping live test - TEST_PROJECT_ID not set")
+	}
+	s.agentDefID = os.Getenv("TEST_AGENT_DEF_ID")
+	if s.agentDefID == "" {
+		s.T().Skip("Skipping live test - TEST_AGENT_DEF_ID not set")
+	}
 }
 
 // TestVectorSearchOnRelationships verifies the agent can use vector search tools

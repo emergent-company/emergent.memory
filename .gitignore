@@ -16,6 +16,7 @@ dist/
 .env.infisical
 .env.test
 docker/.env
+# Note: docker/.env.example IS tracked (safe placeholder values only)
 
 # Environment files for specific deployments (never commit)
 .env.staging

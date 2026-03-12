@@ -34,7 +34,7 @@ The database schema has a `chunking_config` column in the `kb.projects` table, b
 
 ## Reproduction Steps
 
-1. Deploy v0.25.0 to mcj-emergent server
+1. Deploy v0.25.0 to server
 2. Run: `emergent projects get huma --stats`
 3. Observe error: `[500] database_error: Database operation failed`
 4. Check server logs: See error `bun: ProjectWithStats does not have column "chunking_config"`
@@ -49,7 +49,7 @@ The database schema has a `chunking_config` column in the `kb.projects` table, b
 2026-02-25T12:42:56.529Z [ERROR] - request error status=500 error=database_error: Database operation failed (sql: Scan error on column index 9, name "chunking_config": bun: ProjectWithStats does not have column "chunking_config")
 ```
 
-**Log Location:** `mcj-emergent:/var/lib/docker/containers/[emergent-server]/`  
+**Log Location:** `your-server:/var/lib/docker/containers/[emergent-server]/`  
 **Timestamp:** 2026-02-25T12:42:56Z
 
 ---
