@@ -4,7 +4,7 @@
 
 **Client field:** `client.DiscoveryJobs`
 
-Discovery Jobs perform AI-driven schema analysis on your documents to detect recurring object types and relationships. Once a job completes you can finalize the results into a new or existing [Template Pack](templatepacks.md).
+Discovery Jobs perform AI-driven schema analysis on your documents to detect recurring object types and relationships. Once a job completes you can finalize the results into a new or existing Template Pack.
 
 ## Methods
 

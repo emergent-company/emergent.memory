@@ -1,421 +1,172 @@
-# Emergent CLI
+# Memory CLI
 
-Command-line interface for the Emergent Knowledge Base platform. Supports both standalone Docker deployments (API key authentication) and full Zitadel OAuth deployments.
-
-## Features
-
-- **Dual Authentication**: API key for standalone mode, OAuth device flow for Zitadel
-- **Project Management**: List, create, and manage projects
-- **Cross-Platform**: Pre-built binaries for Linux, macOS, Windows, FreeBSD
-- **Docker Support**: Multi-arch container images
-- **Configuration**: File-based and environment variable configuration
+Command-line interface for the Memory knowledge graph platform. Supports API key authentication (standalone/self-hosted) and OAuth via Zitadel.
 
 ## Installation
 
-### Quick Install (Recommended)
-
-**One-line install** (Linux/macOS):
+### CLI only (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eyedea-io/emergent/master/tools/emergent-cli/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/install-cli.sh | bash
 ```
 
-This will:
+Detects OS and architecture, downloads the latest pre-built binary from GitHub Releases, and installs it to `~/.memory/bin/memory`. Add `~/.memory/bin` to your `PATH` if it isn't already.
 
-- Automatically detect your OS and architecture
-- Download the latest release
-- Install to `/usr/local/bin` (or `~/bin` if not root)
-- Verify the installation
-
-**Manual version selection:**
+Pin a specific version:
 
 ```bash
-VERSION=cli-v0.1.0 curl -fsSL https://raw.githubusercontent.com/eyedea-io/emergent/master/tools/emergent-cli/install.sh | bash
+VERSION=v0.32.4 curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/install-cli.sh | bash
 ```
 
-### Pre-Built Binaries
+### Pre-built binaries
 
-Download from [GitHub Releases](https://github.com/eyedea-io/emergent/releases):
+Download from [GitHub Releases](https://github.com/emergent-company/emergent.memory/releases):
 
 #### Linux (amd64)
 
 ```bash
-curl -L -o emergent-cli.tar.gz https://github.com/eyedea-io/emergent/releases/latest/download/emergent-cli-linux-amd64.tar.gz
-tar xzf emergent-cli.tar.gz
-sudo mv emergent-cli-linux-amd64 /usr/local/bin/emergent-cli
-chmod +x /usr/local/bin/emergent-cli
+curl -L -o memory-cli.tar.gz https://github.com/emergent-company/emergent.memory/releases/latest/download/memory-cli-linux-amd64.tar.gz
+tar xzf memory-cli.tar.gz
+sudo mv memory-cli-linux-amd64 /usr/local/bin/memory
 ```
 
 #### macOS (Apple Silicon)
 
 ```bash
-curl -L -o emergent-cli.tar.gz https://github.com/eyedea-io/emergent/releases/latest/download/emergent-cli-darwin-arm64.tar.gz
-tar xzf emergent-cli.tar.gz
-sudo mv emergent-cli-darwin-arm64 /usr/local/bin/emergent-cli
-chmod +x /usr/local/bin/emergent-cli
+curl -L -o memory-cli.tar.gz https://github.com/emergent-company/emergent.memory/releases/latest/download/memory-cli-darwin-arm64.tar.gz
+tar xzf memory-cli.tar.gz
+sudo mv memory-cli-darwin-arm64 /usr/local/bin/memory
 ```
 
 #### Windows (PowerShell)
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/eyedea-io/emergent/releases/latest/download/emergent-cli-windows-amd64.zip" -OutFile "emergent-cli.zip"
-Expand-Archive -Path emergent-cli.zip -DestinationPath .
-# Add to PATH or move to a directory in your PATH
+Invoke-WebRequest -Uri "https://github.com/emergent-company/emergent.memory/releases/latest/download/memory-cli-windows-amd64.zip" -OutFile "memory-cli.zip"
+Expand-Archive -Path memory-cli.zip -DestinationPath .
+# Move memory.exe to a directory in your PATH
 ```
 
-### Docker
+### Build from source
+
+Requires Go 1.24+ and [`task`](https://taskfile.dev):
 
 ```bash
-docker pull ghcr.io/eyedea-io/emergent-cli:latest
-
-# Run with environment variables
-docker run --rm \
-  -e MEMORY_SERVER_URL=http://localhost:9090 \
-  -e MEMORY_API_KEY=your-api-key \
-  ghcr.io/eyedea-io/emergent-cli:latest projects list
+task cli:install        # builds and installs to ~/.memory/bin/memory
 ```
 
-### Build from Source
-
-Requires Go 1.24+:
+Or without `task`:
 
 ```bash
-git clone https://github.com/eyedea-io/emergent.git
-cd emergent/tools/emergent-cli
-go build -o emergent-cli ./cmd
+cd tools/cli
+go build -o ~/.memory/bin/memory ./cmd/main.go
 ```
 
-## Quick Start
+## Quick start
 
-### Standalone Mode (Docker/API Key)
-
-1. Start the standalone server:
+### API key (standalone / self-hosted)
 
 ```bash
-docker run -d -p 9090:9090 \
-  -e POSTGRES_URL=postgresql://user:pass@host:5432/db \
-  -e API_KEY=your-secure-key \
-  emergent-server-standalone:latest
+export MEMORY_SERVER_URL=https://api.your-instance.com
+export MEMORY_API_KEY=your-api-key
+
+memory projects list
 ```
 
-2. Configure CLI:
+### OAuth (Zitadel)
 
 ```bash
-export MEMORY_SERVER_URL=http://localhost:9090
-export MEMORY_API_KEY=your-secure-key
-```
+export MEMORY_SERVER_URL=https://api.your-instance.com
 
-3. Test connection:
-
-```bash
-emergent-cli projects list
-```
-
-### OAuth Mode (Zitadel)
-
-1. Configure server URL:
-
-```bash
-export MEMORY_SERVER_URL=https://api.memory-company.ai
-```
-
-2. Login via device flow:
-
-```bash
-emergent-cli auth login
-# Opens browser for authentication
-```
-
-3. Use commands:
-
-```bash
-emergent-cli projects list
-emergent-cli config show
+memory auth login       # opens browser for device flow
+memory projects list
 ```
 
 ## Configuration
 
-### Environment Variables
-
-```bash
-MEMORY_SERVER_URL       # Required: Base URL of Memory server
-MEMORY_API_KEY          # Optional: API key for standalone mode
-MEMORY_ORG_ID           # Optional: Default organization ID
-MEMORY_PROJECT_ID       # Optional: Default project ID
-```
-
-### Configuration File
-
-Location: `~/.memory/config.yaml`
+**File:** `~/.memory/config.yaml`
 
 ```yaml
-server_url: https://api.memory-company.ai
+server_url: https://api.your-instance.com
 org_id: org_abc123
 project_id: proj_xyz789
 
-# Cache configuration
 cache:
-  ttl: 5m # Cache TTL for shell completions (e.g., "5m", "1h")
-  enabled: true # Enable completion caching
+  ttl: 5m
+  enabled: true
 
-# UI preferences
 ui:
-  compact: false # Use compact output layout
-  color: auto # Color output: auto, always, never
-  pager: true # Use pager for large outputs
+  compact: false
+  color: auto    # auto | always | never
+  pager: true
 
-# Query defaults
 query:
-  default_limit: 50 # Default number of results to show
-  default_sort: updated_at:desc # Default sort order
+  default_limit: 50
+  default_sort: updated_at:desc
 
-# Completion settings
 completion:
-  timeout: 2s # Timeout for dynamic completions (e.g., "2s", "5s")
+  timeout: 2s
 ```
 
-**Configuration precedence**: Command flags > Environment variables > Config file > Defaults
+**Environment variables:**
+
+| Variable | Description |
+|---|---|
+| `MEMORY_SERVER_URL` | Base URL of the Memory server |
+| `MEMORY_API_KEY` | API key for standalone/self-hosted mode |
+| `MEMORY_ORG_ID` | Default organization ID |
+| `MEMORY_PROJECT_ID` | Default project ID |
+
+**Precedence:** flags > env vars > config file > defaults
 
 ## Commands
 
-### Authentication
-
 ```bash
-emergent-cli auth login         # Start OAuth device flow
-emergent-cli auth logout        # Clear stored credentials
-emergent-cli auth status        # Check authentication status
+# Authentication
+memory auth login                  # OAuth device flow
+memory auth logout
+memory auth status
+
+# Projects
+memory projects list
+memory projects create
+memory projects get <id>
+
+# Blueprints — apply a declarative config directory
+memory blueprints ./my-config                         # from local folder
+memory blueprints https://github.com/org/repo         # from GitHub
+memory blueprints ./my-config --dry-run               # preview only
+memory blueprints ./my-config --upgrade               # update existing resources
+
+# Misc
+memory config show
+memory version
+memory help
 ```
 
-### Projects
-
-```bash
-emergent-cli projects list      # List all projects
-emergent-cli projects create    # Create new project (interactive)
-emergent-cli projects get <id>  # Get project details
-```
-
-### Configuration
-
-```bash
-emergent-cli config show        # Display current configuration
-emergent-cli config set <key> <value>  # Set configuration value
-```
-
-### Blueprints
-
-Apply a declarative configuration directory (template packs and agent definitions) to a project:
-
-```bash
-memory blueprints ./my-config                          # Apply from local folder
-memory blueprints https://github.com/org/repo          # Apply from GitHub repo
-memory blueprints https://github.com/org/repo#v1.0.0   # Apply from a specific tag/branch
-```
-
-Flags:
-
-| Flag | Description |
-|---|---|
-| `--project <id>` | Target project. Overrides `MEMORY_PROJECT_ID`. |
-| `--upgrade` | Update resources that already exist (by name). Default: skip. |
-| `--dry-run` | Preview actions without making any API calls. |
-| `--token <tok>` | GitHub PAT for private repos. Falls back to `MEMORY_GITHUB_TOKEN`. |
-
-```bash
-# Preview what would happen
-memory blueprints ./my-config --dry-run
-
-# Apply and update existing resources
-memory blueprints ./my-config --upgrade --project proj_abc123
-
-# Apply from a private GitHub repo
-MEMORY_GITHUB_TOKEN=ghp_... memory blueprints https://github.com/org/private-repo
-```
-
-A blueprint directory has this structure:
+A blueprint directory layout:
 
 ```
 my-config/
-  packs/        # one YAML/JSON file per template pack
-  agents/       # one YAML/JSON file per agent definition
-```
-
-See the `blueprint-creator` skill for a full guide on authoring blueprint files.
-
-### General
-
-```bash
-emergent-cli version            # Show version information
-emergent-cli help               # Show help
-```
-
-## Usage Examples
-
-### List Projects
-
-```bash
-# All projects
-emergent-cli projects list
-
-# With specific org (override default)
-MEMORY_ORG_ID=org_123 memory projects list
-
-# JSON output
-emergent-cli projects list --output json
-```
-
-### Create Project
-
-```bash
-# Interactive mode
-emergent-cli projects create
-
-# With flags
-emergent-cli projects create \
-  --name "My Knowledge Base" \
-  --description "Documentation and research"
-```
-
-### CI/CD Usage
-
-```bash
-#!/bin/bash
-set -e
-
-export MEMORY_SERVER_URL=https://api.prod.emergent.com
-export MEMORY_API_KEY=$PROD_API_KEY
-
-PROJECT_ID=$(emergent-cli projects create \
-  --name "Automated KB" \
-  --output json | jq -r '.id')
-
-echo "Created project: $PROJECT_ID"
-```
-
-## Authentication Details
-
-### Standalone Mode (API Key)
-
-When `MEMORY_API_KEY` is set:
-
-- Uses `X-API-Key` header for all requests
-- No OAuth flow required
-- Ideal for Docker deployments and automation
-
-### OAuth Mode (Zitadel)
-
-When no API key is set:
-
-1. Runs OAuth 2.0 device flow
-2. Opens browser for login
-3. Stores credentials in `~/.memory/credentials.json`
-4. Auto-refreshes tokens when expired
-
-Credentials structure:
-
-```json
-{
-  "access_token": "...",
-  "refresh_token": "...",
-  "expires_at": "2024-02-07T12:00:00Z"
-}
-```
-
-## Troubleshooting
-
-### Connection Errors
-
-```bash
-# Test server connectivity
-curl $MEMORY_SERVER_URL/health
-
-# Check configuration
-emergent-cli config show
-
-# Verify API key
-curl -H "X-API-Key: $MEMORY_API_KEY" \
-  $MEMORY_SERVER_URL/api/projects
-```
-
-### Authentication Issues
-
-```bash
-# OAuth: Re-authenticate
-emergent-cli auth logout
-emergent-cli auth login
-
-# API Key: Verify key is correct
-echo $MEMORY_API_KEY
-
-# Check server logs for auth errors
-docker logs emergent-server
-```
-
-### Debug Mode
-
-```bash
-# Enable verbose logging
-emergent-cli --debug projects list
-
-# Check credential file
-cat ~/.memory/credentials.json
-
-# Verify token validity (OAuth mode)
-emergent-cli auth status
+  packs/      # one YAML/JSON file per template pack
+  agents/     # one YAML/JSON file per agent definition
 ```
 
 ## Development
 
-### Running Tests
-
 ```bash
-cd tools/emergent-cli
+cd tools/cli
+
 go test ./...
 go test -race ./...
-go test -coverprofile=coverage.out ./...
-```
 
-### Integration Tests
-
-```bash
-# Start test server
-docker-compose -f docker/docker-compose.standalone.yml up -d
-
-# Run integration tests
-go test -tags=integration ./...
-```
-
-### Building
-
-```bash
-# Local build
-go build -o emergent-cli ./cmd
+golangci-lint run
 
 # Cross-compile
-GOOS=linux GOARCH=amd64 go build -o emergent-cli-linux ./cmd
-GOOS=darwin GOARCH=arm64 go build -o emergent-cli-macos ./cmd
-GOOS=windows GOARCH=amd64 go build -o emergent-cli.exe ./cmd
+GOOS=linux  GOARCH=amd64 go build -o memory-linux-amd64  ./cmd/main.go
+GOOS=darwin GOARCH=arm64 go build -o memory-darwin-arm64 ./cmd/main.go
 ```
-
-## Contributing
-
-1. Fork the repository
-2. Create feature branch: `git checkout -b feature/cli-enhancement`
-3. Make changes and add tests
-4. Run tests: `go test ./...`
-5. Run linter: `golangci-lint run`
-6. Submit pull request
-
-## License
-
-See root repository LICENSE file.
-
-## Documentation
-
-- [Standalone Mode Guide](../../docs/EMERGENT_CLI_STANDALONE.md) - Comprehensive standalone deployment guide
-- [Technical Implementation](../../docs/STANDALONE_CLI_IMPLEMENTATION.md) - Architecture and implementation details
-- [Release Process](../../docs/EMERGENT_CLI_RELEASE_PROCESS.md) - How releases are created and published
 
 ## Support
 
-- GitHub Issues: https://github.com/eyedea-io/emergent/issues
-- Documentation: https://github.com/eyedea-io/emergent/tree/master/docs
+- Issues: https://github.com/emergent-company/emergent.memory/issues
+- Docs: https://emergent-company.github.io/emergent.memory/

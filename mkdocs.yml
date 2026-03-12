@@ -67,10 +67,7 @@ nav:
   - Developer Guide:
     - Overview: developer-guide/index.md
     - Provider Setup: developer-guide/provider-setup.md
-    - Type Registry: developer-guide/type-registry.md
-    - Template Packs: developer-guide/template-packs.md
     - MCP Servers: developer-guide/mcp-servers.md
-    - Workspaces: developer-guide/workspace.md
     - Extraction Pipeline: developer-guide/extraction.md
     - Email Setup: developer-guide/email-setup.md
     - Health & Ops: developer-guide/health-ops.md
@@ -122,8 +119,6 @@ nav:
       - discoveryjobs: go-sdk/reference/discoveryjobs.md
       - embeddingpolicies: go-sdk/reference/embeddingpolicies.md
       - integrations: go-sdk/reference/integrations.md
-      - templatepacks: go-sdk/reference/templatepacks.md
-      - typeregistry: go-sdk/reference/typeregistry.md
       - notifications: go-sdk/reference/notifications.md
       - tasks: go-sdk/reference/tasks.md
       - monitoring: go-sdk/reference/monitoring.md
