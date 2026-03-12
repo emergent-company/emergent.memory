@@ -21,7 +21,7 @@ func TestAgentsList(t *testing.T) {
 		"success": true,
 		"data":    fixtureAgents,
 	}
-	mock.OnJSON("GET", "/api/admin/agents", http.StatusOK, apiResponse)
+	mock.OnJSON("GET", "/api/projects/proj_test123/agents", http.StatusOK, apiResponse)
 
 	// Create client
 	client, err := sdk.New(sdk.Config{
@@ -34,6 +34,7 @@ func TestAgentsList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
+	client.Agents.SetContext("", "proj_test123")
 
 	// Test List
 	result, err := client.Agents.List(context.Background())
@@ -59,12 +60,13 @@ func TestAgentsGet(t *testing.T) {
 		"success": true,
 		"data":    fixtureAgent,
 	}
-	mock.OnJSON("GET", "/api/admin/agents/agent_test123", http.StatusOK, apiResponse)
+	mock.OnJSON("GET", "/api/projects/proj_test123/agents/agent_test123", http.StatusOK, apiResponse)
 
 	client, _ := sdk.New(sdk.Config{
 		ServerURL: mock.URL,
 		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
 	})
+	client.Agents.SetContext("", "proj_test123")
 
 	result, err := client.Agents.Get(context.Background(), "agent_test123")
 	if err != nil {
@@ -89,7 +91,7 @@ func TestAgentsGetRuns(t *testing.T) {
 		"success": true,
 		"data":    fixtureRuns,
 	}
-	mock.On("GET", "/api/admin/agents/agent_test123/runs", func(w http.ResponseWriter, r *http.Request) {
+	mock.On("GET", "/api/projects/proj_test123/agents/agent_test123/runs", func(w http.ResponseWriter, r *http.Request) {
 		// Verify query parameters
 		if limit := r.URL.Query().Get("limit"); limit != "5" {
 			t.Errorf("expected limit=5, got %s", limit)
@@ -106,6 +108,7 @@ func TestAgentsGetRuns(t *testing.T) {
 		ServerURL: mock.URL,
 		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
 	})
+	client.Agents.SetContext("", "proj_test123")
 
 	result, err := client.Agents.GetRuns(context.Background(), "agent_test123", 5)
 	if err != nil {

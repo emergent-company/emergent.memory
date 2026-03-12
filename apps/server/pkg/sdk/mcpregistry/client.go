@@ -61,20 +61,21 @@ const (
 
 // MCPServer is the response DTO for an MCP server.
 type MCPServer struct {
-	ID          string         `json:"id"`
-	ProjectID   string         `json:"projectId"`
-	Name        string         `json:"name"`
-	Description *string        `json:"description,omitempty"`
-	Enabled     bool           `json:"enabled"`
-	Type        MCPServerType  `json:"type"`
-	Command     *string        `json:"command,omitempty"`
-	Args        []string       `json:"args,omitempty"`
-	Env         map[string]any `json:"env,omitempty"`
-	URL         *string        `json:"url,omitempty"`
-	Headers     map[string]any `json:"headers,omitempty"`
-	ToolCount   int            `json:"toolCount"`
-	CreatedAt   time.Time      `json:"createdAt"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
+	ID          string          `json:"id"`
+	ProjectID   string          `json:"projectId"`
+	Name        string          `json:"name"`
+	Description *string         `json:"description,omitempty"`
+	Enabled     bool            `json:"enabled"`
+	Type        MCPServerType   `json:"type"`
+	Command     *string         `json:"command,omitempty"`
+	Args        []string        `json:"args,omitempty"`
+	Env         map[string]any  `json:"env,omitempty"`
+	URL         *string         `json:"url,omitempty"`
+	Headers     map[string]any  `json:"headers,omitempty"`
+	ToolCount   int             `json:"toolCount"`
+	Tools       []MCPServerTool `json:"tools,omitempty"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
 }
 
 // MCPServerTool is the response DTO for an MCP server tool.
@@ -86,6 +87,7 @@ type MCPServerTool struct {
 	InputSchema   map[string]any `json:"inputSchema,omitempty"`
 	Enabled       bool           `json:"enabled"`
 	Config        map[string]any `json:"config,omitempty"`
+	ConfigKeys    []string       `json:"configKeys,omitempty"`
 	InheritedFrom string         `json:"inheritedFrom,omitempty"`
 	CreatedAt     time.Time      `json:"createdAt"`
 }

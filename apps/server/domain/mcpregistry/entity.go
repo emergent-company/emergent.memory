@@ -60,7 +60,9 @@ type MCPServerTool struct {
 	InputSchema map[string]any `bun:"input_schema,type:jsonb,default:'{}'" json:"inputSchema"`
 	Enabled     bool           `bun:"enabled,notnull,default:true" json:"enabled"`
 	Config      map[string]any `bun:"config,type:jsonb" json:"config,omitempty"`
-	CreatedAt   time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	// ConfigKeys lists setup-time configuration keys required by this tool (e.g. ["api_key"]).
+	ConfigKeys []string  `bun:"config_keys,array,default:'{}'" json:"configKeys,omitempty"`
+	CreatedAt  time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 
 	// Relations
 	Server *MCPServer `bun:"rel:belongs-to,join:server_id=id" json:"-"`
@@ -70,20 +72,21 @@ type MCPServerTool struct {
 
 // MCPServerDTO is the response DTO for an MCP server.
 type MCPServerDTO struct {
-	ID          string         `json:"id"`
-	ProjectID   string         `json:"projectId"`
-	Name        string         `json:"name"`
-	Description *string        `json:"description,omitempty"`
-	Enabled     bool           `json:"enabled"`
-	Type        MCPServerType  `json:"type"`
-	Command     *string        `json:"command,omitempty"`
-	Args        []string       `json:"args,omitempty"`
-	Env         map[string]any `json:"env,omitempty"`
-	URL         *string        `json:"url,omitempty"`
-	Headers     map[string]any `json:"headers,omitempty"`
-	ToolCount   int            `json:"toolCount"`
-	CreatedAt   time.Time      `json:"createdAt"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
+	ID          string             `json:"id"`
+	ProjectID   string             `json:"projectId"`
+	Name        string             `json:"name"`
+	Description *string            `json:"description,omitempty"`
+	Enabled     bool               `json:"enabled"`
+	Type        MCPServerType      `json:"type"`
+	Command     *string            `json:"command,omitempty"`
+	Args        []string           `json:"args,omitempty"`
+	Env         map[string]any     `json:"env,omitempty"`
+	URL         *string            `json:"url,omitempty"`
+	Headers     map[string]any     `json:"headers,omitempty"`
+	ToolCount   int                `json:"toolCount"`
+	Tools       []MCPServerToolDTO `json:"tools,omitempty"`
+	CreatedAt   time.Time          `json:"createdAt"`
+	UpdatedAt   time.Time          `json:"updatedAt"`
 }
 
 // MCPServerToolDTO is the response DTO for an MCP server tool.
@@ -95,6 +98,7 @@ type MCPServerToolDTO struct {
 	InputSchema   map[string]any `json:"inputSchema,omitempty"`
 	Enabled       bool           `json:"enabled"`
 	Config        map[string]any `json:"config,omitempty"`
+	ConfigKeys    []string       `json:"configKeys,omitempty"`
 	InheritedFrom string         `json:"inheritedFrom,omitempty"` // "project", "org", or "global"
 	CreatedAt     time.Time      `json:"createdAt"`
 }
@@ -292,8 +296,10 @@ type InspectResourceTemplateDTO struct {
 // ToDTO converts an MCPServer entity to MCPServerDTO.
 func (s *MCPServer) ToDTO() *MCPServerDTO {
 	toolCount := 0
-	if s.Tools != nil {
-		toolCount = len(s.Tools)
+	tools := make([]MCPServerToolDTO, 0, len(s.Tools))
+	for _, t := range s.Tools {
+		toolCount++
+		tools = append(tools, *t.ToDTO())
 	}
 	return &MCPServerDTO{
 		ID:          s.ID,
@@ -308,6 +314,7 @@ func (s *MCPServer) ToDTO() *MCPServerDTO {
 		URL:         s.URL,
 		Headers:     s.Headers,
 		ToolCount:   toolCount,
+		Tools:       tools,
 		CreatedAt:   s.CreatedAt,
 		UpdatedAt:   s.UpdatedAt,
 	}
@@ -334,6 +341,8 @@ func (t *MCPServerTool) ToDTO() *MCPServerToolDTO {
 		Description: t.Description,
 		InputSchema: t.InputSchema,
 		Enabled:     t.Enabled,
+		Config:      t.Config,
+		ConfigKeys:  t.ConfigKeys,
 		CreatedAt:   t.CreatedAt,
 	}
 }

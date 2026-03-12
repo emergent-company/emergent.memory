@@ -100,7 +100,9 @@ func runGenDocs(cmd *cobra.Command, args []string) error {
 		if len(strings.TrimSpace(string(cleaned))) == 0 {
 			continue
 		}
-		bw.Write(cleaned)
+		if _, err := bw.Write(cleaned); err != nil {
+			return fmt.Errorf("write output: %w", err)
+		}
 		fmt.Fprintln(bw)
 		fmt.Fprintln(bw)
 	}

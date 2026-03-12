@@ -112,6 +112,7 @@ func (s *Service) EnsureBuiltinServer(ctx context.Context, projectID string) err
 			Description: &desc,
 			InputSchema: inputSchema,
 			Enabled:     true,
+			ConfigKeys:  td.ConfigKeys,
 		})
 	}
 
@@ -152,7 +153,7 @@ func (s *Service) EnsureBuiltinServer(ctx context.Context, projectID string) err
 
 // ListServers returns all MCP servers for a project.
 func (s *Service) ListServers(ctx context.Context, projectID string) ([]*MCPServer, error) {
-	return s.repo.FindAllServers(ctx, projectID)
+	return s.repo.FindAllServersWithTools(ctx, projectID)
 }
 
 // GetServer returns an MCP server by ID.

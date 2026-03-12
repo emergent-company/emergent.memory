@@ -11,10 +11,9 @@ import (
 )
 
 var mcpServersCmd = &cobra.Command{
-	Use:     "mcp-servers",
-	Short:   "Manage MCP servers",
-	Long:    "Commands for managing Model Context Protocol (MCP) servers in the Memory platform",
-	GroupID: "ai",
+	Use:   "mcp-servers",
+	Short: "Manage MCP servers",
+	Long:  "Commands for managing Model Context Protocol (MCP) servers in the Memory platform",
 }
 
 var listMCPServersCmd = &cobra.Command{
@@ -25,7 +24,7 @@ var listMCPServersCmd = &cobra.Command{
 Prints a numbered list with each server's Name (enabled/disabled), Description
 (if set), ID, Type (sse/http/stdio), URL or Command, Tool count, and Created
 timestamp.`,
-	RunE:  runListMCPServers,
+	RunE: runListMCPServers,
 }
 
 var getMCPServerCmd = &cobra.Command{
@@ -37,8 +36,8 @@ Prints Name (enabled/disabled), ID, Project ID, Description (if set), Type,
 URL (for sse/http), Command and Args (for stdio), Env Vars count, Headers count,
 Created, and Updated timestamps. Also lists all registered tools with their
 enabled/disabled state and description (truncated to 60 characters).`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runGetMCPServer,
+	Args: cobra.ExactArgs(1),
+	RunE: runGetMCPServer,
 }
 
 var createMCPServerCmd = &cobra.Command{
@@ -47,9 +46,9 @@ var createMCPServerCmd = &cobra.Command{
 	Long: `Register a new MCP server with the specified configuration.
 
 Examples:
-  memory mcp-servers create --name "my-server" --type sse --url "http://localhost:8080/sse"
-  memory mcp-servers create --name "stdio-server" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github"
-  memory mcp-servers create --name "my-server" --type http --url "http://localhost:8080/mcp" --env "API_KEY=abc123"`,
+ memory agents mcp-servers create --name "my-server" --type sse --url "http://localhost:8080/sse"
+ memory agents mcp-servers create --name "stdio-server" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github"
+ memory agents mcp-servers create --name "my-server" --type http --url "http://localhost:8080/mcp" --env "API_KEY=abc123"`,
 	RunE: runCreateMCPServer,
 }
 
@@ -83,10 +82,10 @@ var toolsMCPServerCmd = &cobra.Command{
 	Long: `List all tools registered for a specific MCP server.
 
 Each tool entry shows its enabled/disabled state and tool name. Use
-'memory mcp-servers sync <id>' first to discover available tools if the list
+'memory agents mcp-servers sync <id>' first to discover available tools if the list
 is empty.`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runListMCPServerTools,
+	Args: cobra.ExactArgs(1),
+	RunE: runListMCPServerTools,
 }
 
 var (
@@ -157,11 +156,62 @@ func runListMCPServers(cmd *cobra.Command, args []string) error {
 			fmt.Printf("   Command:   %s\n", *s.Command)
 		}
 		fmt.Printf("   Tools:     %d\n", s.ToolCount)
+		if len(s.Tools) > 0 {
+			const maxShow = 5
+			for i, t := range s.Tools {
+				if i >= maxShow {
+					break
+				}
+				suffix := toolConfigSuffix(t.ConfigKeys, t.Config)
+				fmt.Printf("             • %s%s\n", t.ToolName, suffix)
+			}
+			if len(s.Tools) > maxShow {
+				fmt.Printf("             • … +%d more\n", len(s.Tools)-maxShow)
+			}
+		}
 		fmt.Printf("   Created:   %s\n", s.CreatedAt.Format("2006-01-02 15:04:05"))
 		fmt.Println()
 	}
 
 	return nil
+}
+
+// toolConfigSuffix builds the setup annotation shown next to a tool name in the list.
+// - No configKeys → ""
+// - Has configKeys, none set → " [setup required: key1, key2]"
+// - Has configKeys, all set → " [key1=…xxxx, key2=…xxxx]"
+// - Mixed → configured keys shown masked, missing ones flagged
+func toolConfigSuffix(configKeys []string, config map[string]any) string {
+	if len(configKeys) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(configKeys))
+	anyMissing := false
+	for _, k := range configKeys {
+		v, ok := config[k]
+		if !ok || v == nil || v == "" {
+			parts = append(parts, k+"=?")
+			anyMissing = true
+		} else {
+			s := fmt.Sprintf("%v", v)
+			masked := "…" + s[max(0, len(s)-4):]
+			parts = append(parts, k+"="+masked)
+		}
+	}
+	if anyMissing && len(parts) == len(configKeys) && allMissing(config, configKeys) {
+		return " [setup required: " + strings.Join(configKeys, ", ") + "]"
+	}
+	return " [" + strings.Join(parts, ", ") + "]"
+}
+
+func allMissing(config map[string]any, keys []string) bool {
+	for _, k := range keys {
+		v, ok := config[k]
+		if ok && v != nil && v != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func runGetMCPServer(cmd *cobra.Command, args []string) error {
@@ -512,8 +562,8 @@ func init() {
 	mcpServersCmd.AddCommand(toolsMCPServerCmd)
 	mcpServersCmd.AddCommand(configureMCPServerCmd)
 
-	// Register with root command
-	rootCmd.AddCommand(mcpServersCmd)
+	// Register with agents command
+	agentsCmd.AddCommand(mcpServersCmd)
 }
 
 var configureMCPServerCmd = &cobra.Command{
@@ -525,8 +575,8 @@ The command searches all MCP servers in the current project to find the tool
 by name, then patches its config with the provided key=value pairs.
 
 Examples:
-  memory mcp-servers configure brave_web_search api_key=YOUR_KEY --project <id>
-  memory mcp-servers configure reddit_search client_id=YOUR_ID client_secret=YOUR_SECRET --project <id>`,
+  memory agents mcp-servers configure brave_web_search api_key=YOUR_KEY --project <id>
+  memory agents mcp-servers configure reddit_search client_id=YOUR_ID client_secret=YOUR_SECRET --project <id>`,
 	Args: cobra.MinimumNArgs(2),
 	RunE: runConfigureMCPServer,
 }
