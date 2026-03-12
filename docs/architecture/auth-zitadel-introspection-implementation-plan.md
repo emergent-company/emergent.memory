@@ -1066,7 +1066,7 @@ async list() { }
 - **Tests**: 51 passing tests
 - **Documentation**: Complete migration guide
 
-### Existing Spec-Server-2 Features
+### Existing emergent-memory Features
 - UserProfileService: `src/modules/user-profile/`
 - PermissionService: `src/modules/auth/permission.service.ts`
 - AuditService: `src/modules/auth/audit.service.ts`

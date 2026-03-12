@@ -1476,7 +1476,7 @@ git push
    - Status: Production-ready, fully tested (51 passing tests)
    - Features: Introspection, PostgreSQL cache, role guards
 
-2. **Existing Spec-Server-2**: Solid foundations
+2. **Existing emergent-memory**: Solid foundations
    - UserProfileService: `src/modules/user-profile/`
    - InvitesService: `src/modules/invites/`
    - Database schema: Migrations 0001, 0003

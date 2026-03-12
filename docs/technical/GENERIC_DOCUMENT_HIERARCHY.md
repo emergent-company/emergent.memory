@@ -586,7 +586,7 @@ Workspace 4573313
 ### GitHub (Example)
 
 ```
-Organization "eyedea-io"
+Organization "example-org"
 └─ Repository "emergent-memory"
    ├─ README.md
    ├─ src/
