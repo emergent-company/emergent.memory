@@ -49,7 +49,7 @@ Prints the project's Name, ID, and Org ID. If a project info document is set
 it is shown as well. Use the --stats flag to additionally display counts for
 Documents, Graph Objects, Relationships, Extraction jobs, and installed Schemas
 with their object and relationship type names.`,
-	Args:              cobra.ExactArgs(1),
+	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
 	RunE:              runGetProject,
 }
@@ -67,10 +67,10 @@ added via 'memory provider configure'.`,
 }
 
 var deleteProjectCmd = &cobra.Command{
-	Use:               "delete <project-id>",
+	Use:               "delete [project-id]",
 	Short:             "Delete a project",
 	Long:              "Permanently delete a project and all its data",
-	Args:              cobra.ExactArgs(1),
+	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
 	RunE:              runDeleteProject,
 }
@@ -91,7 +91,7 @@ arguments to select interactively from a numbered list of available projects.`,
 }
 
 var projectsCreateTokenCmd = &cobra.Command{
-	Use:   "create-token <project-name-or-id>",
+	Use:   "create-token [project-name-or-id]",
 	Short: "Create a new API token for a project",
 	Long: `Create a new project-scoped API token (emt_...) and print it.
 
@@ -102,7 +102,7 @@ Scopes default to: data:read data:write schema:read agents:read agents:write
 
 Example:
   emergent projects create-token my-project --name onboard-token`,
-	Args:              cobra.ExactArgs(1),
+	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
 	RunE:              runProjectsCreateToken,
 }
@@ -119,7 +119,7 @@ func runProjectsCreateToken(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	projectID, err := resolveProjectNameOrID(c, args[0])
+	projectID, err := resolveProjectArgOrPick(cmd, c, args)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func runProjectsCreateToken(cmd *cobra.Command, args []string) error {
 }
 
 var setProjectProviderCmd = &cobra.Command{
-	Use:   "set-provider <project-name-or-id> <provider>",
+	Use:   "set-provider [project-name-or-id] <provider>",
 	Short: "Configure the LLM provider for a project",
 	Long: `Configure the LLM provider credentials for a specific project.
 
@@ -169,7 +169,7 @@ Supported providers: google, google-vertex. Prints the provider name, the
 configured generative model, and the embedding model on success. Use flags
 such as --api-key, --embedding-model, and --generative-model to specify
 credentials and model overrides.`,
-	Args: cobra.ExactArgs(2),
+	Args: cobra.RangeArgs(1, 2),
 	RunE: runSetProjectProvider,
 }
 
@@ -333,7 +333,7 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	projectID, err := resolveProjectNameOrID(c, args[0])
+	projectID, err := resolveProjectArgOrPick(cmd, c, args)
 	if err != nil {
 		return err
 	}
@@ -379,6 +379,29 @@ func isUUID(s string) bool {
 		}
 	}
 	return true
+}
+
+// resolveProjectArgOrPick resolves a project name/ID from args[0], or, when
+// args is empty and stdin is a terminal, launches the interactive project
+// picker. Returns the resolved project ID.
+func resolveProjectArgOrPick(cmd *cobra.Command, c *client.Client, args []string) (string, error) {
+	if len(args) > 0 && args[0] != "" {
+		return resolveProjectNameOrID(c, args[0])
+	}
+
+	// No arg — try the interactive picker.
+	cfg, _ := config.LoadWithEnv(config.DiscoverPath(""))
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	pickedID, pickErr := promptProjectPicker(cmd, cfg)
+	if pickErr != nil {
+		return "", pickErr
+	}
+	if pickedID != "" {
+		return pickedID, nil
+	}
+	return "", fmt.Errorf("project is required — pass a project name or ID, or select one interactively")
 }
 
 // resolveProjectNameOrID resolves a project name or ID to a project ID.
@@ -469,7 +492,7 @@ func runDeleteProject(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	projectID, err := resolveProjectNameOrID(c, args[0])
+	projectID, err := resolveProjectArgOrPick(cmd, c, args)
 	if err != nil {
 		return err
 	}
@@ -481,7 +504,7 @@ func runDeleteProject(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete project: %w", err)
 	}
 
-	fmt.Printf("Project %s deleted.\n", args[0])
+	fmt.Printf("Project %s deleted.\n", projectID)
 	return nil
 }
 
@@ -604,8 +627,15 @@ func runSetProject(cmd *cobra.Command, args []string) error {
 }
 
 func runSetProjectProvider(cmd *cobra.Command, args []string) error {
-	nameOrID := args[0]
-	providerName := args[1]
+	var nameOrID, providerName string
+	if len(args) == 1 {
+		// Only provider given — pick a project interactively.
+		providerName = args[0]
+	} else {
+		// Both project and provider given.
+		nameOrID = args[0]
+		providerName = args[1]
+	}
 
 	if providerName != "google" && providerName != "google-vertex" {
 		return fmt.Errorf("invalid provider %q: must be 'google' or 'google-vertex'", providerName)
@@ -616,7 +646,11 @@ func runSetProjectProvider(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	projectID, err := resolveProjectNameOrID(c, nameOrID)
+	var pickArgs []string
+	if nameOrID != "" {
+		pickArgs = []string{nameOrID}
+	}
+	projectID, err := resolveProjectArgOrPick(cmd, c, pickArgs)
 	if err != nil {
 		return err
 	}
@@ -642,7 +676,7 @@ func runSetProjectProvider(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to set project provider config: %w", err)
 	}
 
-	fmt.Printf("Provider config for project %q set (provider: %s).\n", nameOrID, providerName)
+	fmt.Printf("Provider config for project %q set (provider: %s).\n", projectID, providerName)
 	if cfg.GenerativeModel != "" {
 		fmt.Printf("  Generative model: %s\n", cfg.GenerativeModel)
 	}

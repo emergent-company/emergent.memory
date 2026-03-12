@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions"
+	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -38,7 +39,7 @@ set), System Prompt (truncated to 200 characters), Model configuration (Name,
 Temperature, MaxTokens), Tools list, MaxSteps, DefaultTimeout, ACP Config
 (DisplayName, Description, Capabilities), CreatedAt and UpdatedAt timestamps,
 and any extra Config JSON.`,
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runGetAgentDef,
 }
 
@@ -57,7 +58,7 @@ var updateAgentDefCmd = &cobra.Command{
 	Use:   "update [id]",
 	Short: "Update an agent definition",
 	Long:  "Update an existing agent definition (partial update)",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runUpdateAgentDef,
 }
 
@@ -65,7 +66,7 @@ var deleteAgentDefCmd = &cobra.Command{
 	Use:   "delete [id]",
 	Short: "Delete an agent definition",
 	Long:  "Delete an agent definition by ID",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runDeleteAgentDef,
 }
 
@@ -122,9 +123,47 @@ func runListAgentDefs(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runGetAgentDef(cmd *cobra.Command, args []string) error {
-	defID := args[0]
+// resolveAgentDefArgOrPick resolves an agent-definition ID from args[0], or,
+// when args is empty and stdin is a terminal, lists definitions and shows an
+// interactive picker. Returns the resolved definition ID.
+func resolveAgentDefArgOrPick(cmd *cobra.Command, c *client.Client, args []string) (string, error) {
+	if len(args) > 0 && args[0] != "" {
+		return args[0], nil
+	}
 
+	if isNonInteractive() {
+		return "", fmt.Errorf("agent definition ID is required — pass an ID or run interactively to pick from a list")
+	}
+
+	result, err := c.SDK.AgentDefinitions.List(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("failed to list agent definitions: %w", err)
+	}
+	defList := result.Data
+	if len(defList) == 0 {
+		return "", fmt.Errorf("no agent definitions found in the current project")
+	}
+
+	items := make([]PickerItem, len(defList))
+	for i, d := range defList {
+		label := d.Name + "  [" + d.FlowType + "]"
+		if d.IsDefault {
+			label += " (default)"
+		}
+		items[i] = PickerItem{ID: d.ID, Name: label}
+	}
+
+	id, _, err := promptResourcePicker("Select an agent definition", items)
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", fmt.Errorf("agent definition ID is required")
+	}
+	return id, nil
+}
+
+func runGetAgentDef(cmd *cobra.Command, args []string) error {
 	projectID, err := resolveProjectContext(cmd, "")
 	if err != nil {
 		return err
@@ -135,6 +174,11 @@ func runGetAgentDef(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	c.SetContext("", projectID)
+
+	defID, err := resolveAgentDefArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
 
 	result, err := c.SDK.AgentDefinitions.Get(context.Background(), defID)
 	if err != nil {
@@ -272,8 +316,6 @@ func runCreateAgentDef(cmd *cobra.Command, args []string) error {
 }
 
 func runUpdateAgentDef(cmd *cobra.Command, args []string) error {
-	defID := args[0]
-
 	projectID, err := resolveProjectContext(cmd, "")
 	if err != nil {
 		return err
@@ -284,6 +326,11 @@ func runUpdateAgentDef(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	c.SetContext("", projectID)
+
+	defID, err := resolveAgentDefArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
 
 	updateReq := &agentdefinitions.UpdateAgentDefinitionRequest{}
 	hasUpdate := false
@@ -355,8 +402,6 @@ func runUpdateAgentDef(cmd *cobra.Command, args []string) error {
 }
 
 func runDeleteAgentDef(cmd *cobra.Command, args []string) error {
-	defID := args[0]
-
 	projectID, err := resolveProjectContext(cmd, "")
 	if err != nil {
 		return err
@@ -367,6 +412,11 @@ func runDeleteAgentDef(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	c.SetContext("", projectID)
+
+	defID, err := resolveAgentDefArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
 
 	err = c.SDK.AgentDefinitions.Delete(context.Background(), defID)
 	if err != nil {

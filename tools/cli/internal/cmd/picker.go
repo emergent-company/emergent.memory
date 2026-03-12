@@ -198,3 +198,42 @@ func PickProject(projects []PickerItem, timeout time.Duration, w io.Writer) (id,
 
 	return fm.result.ID, fm.result.Name, nil
 }
+
+// pickResourceWithTitle is like PickProject but lets the caller set a custom
+// list title. Used by promptResourcePicker so non-project pickers have a
+// meaningful heading (e.g. "Select an agent").
+func pickResourceWithTitle(title string, items []PickerItem, timeout time.Duration, w io.Writer) (id, name string, err error) {
+	if len(items) == 0 {
+		return "", "", fmt.Errorf("no items available to pick from")
+	}
+
+	m := newPickerModel(items, timeout)
+	m.list.Title = title
+
+	p := tea.NewProgram(
+		m,
+		tea.WithInput(os.Stdin),
+		tea.WithOutput(w),
+	)
+
+	finalModel, runErr := p.Run()
+	if runErr != nil {
+		return "", "", fmt.Errorf("picker error: %w", runErr)
+	}
+
+	fm, ok := finalModel.(pickerModel)
+	if !ok {
+		return "", "", fmt.Errorf("unexpected picker model type")
+	}
+
+	if fm.err != nil {
+		return "", "", fm.err
+	}
+
+	if fm.result == nil {
+		return "", "", ErrPickerCancelled
+	}
+
+	return fm.result.ID, fm.result.Name, nil
+}
+

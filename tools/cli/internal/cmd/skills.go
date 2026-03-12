@@ -146,26 +146,81 @@ skill list as JSON.`,
 	},
 }
 
+// resolveSkillArgOrPick resolves a skill ID from args[0], or, when args is
+// empty and stdin is a terminal, lists skills in the current scope and shows
+// an interactive picker. Returns the resolved skill ID.
+func resolveSkillArgOrPick(cmd *cobra.Command, c *client.Client, args []string) (string, error) {
+	if len(args) > 0 && args[0] != "" {
+		return args[0], nil
+	}
+
+	if isNonInteractive() {
+		return "", fmt.Errorf("skill ID is required — pass an ID or run interactively to pick from a list")
+	}
+
+	// Resolve scope so we know which skills to list.
+	// --global passes projectID="" to List which returns global skills.
+	projectID, orgID, _ := resolveSkillScope(cmd)
+
+	var skills []*sdkskills.Skill
+	var err error
+	if orgID != "" {
+		skills, err = c.SDK.Skills.ListOrgSkills(context.Background(), orgID)
+	} else {
+		// Covers both --global (projectID="") and project-scoped.
+		skills, err = c.SDK.Skills.List(context.Background(), projectID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to list skills: %w", err)
+	}
+	if len(skills) == 0 {
+		return "", fmt.Errorf("no skills found in the current scope")
+	}
+
+	items := make([]PickerItem, len(skills))
+	for i, s := range skills {
+		desc := s.Description
+		if len(desc) > 60 {
+			desc = desc[:57] + "…"
+		}
+		items[i] = PickerItem{ID: s.ID, Name: s.Name + "  " + desc}
+	}
+
+	id, _, err := promptResourcePicker("Select a skill", items)
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", fmt.Errorf("skill ID is required")
+	}
+	return id, nil
+}
+
 // ─────────────────────────────────────────────
 // skills get <id>
 // ─────────────────────────────────────────────
 
 var skillGetCmd = &cobra.Command{
-	Use:   "get <id>",
+	Use:   "get [id]",
 	Short: "Get a skill by ID",
 	Long: `Get full details for a skill by its ID.
 
 Prints ID, Name, Description, Scope (global / org / project), Created and
 Updated timestamps, and the full skill Content. Use --json to receive the raw
 JSON response instead.`,
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := getClient(cmd)
 		if err != nil {
 			return err
 		}
 
-		skill, err := c.SDK.Skills.Get(context.Background(), args[0])
+		skillID, err := resolveSkillArgOrPick(cmd, c, args)
+		if err != nil {
+			return err
+		}
+
+		skill, err := c.SDK.Skills.Get(context.Background(), skillID)
 		if err != nil {
 			return fmt.Errorf("failed to get skill: %w", err)
 		}
@@ -265,14 +320,14 @@ var skillCreateCmd = &cobra.Command{
 // ─────────────────────────────────────────────
 
 var skillUpdateCmd = &cobra.Command{
-	Use:   "update <id>",
+	Use:   "update [id]",
 	Short: "Update a skill",
 	Long: `Update the description or content of an existing skill.
 
 Prints "Skill updated." followed by the skill's ID and Name on success. At
 least one of --description, --content, or --content-file must be provided.
 Use --json to receive the full updated skill as JSON instead.`,
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		req := &sdkskills.UpdateSkillRequest{}
 		hasUpdate := false
@@ -302,7 +357,12 @@ Use --json to receive the full updated skill as JSON instead.`,
 			return err
 		}
 
-		skill, err := c.SDK.Skills.Update(context.Background(), args[0], req)
+		skillID, err := resolveSkillArgOrPick(cmd, c, args)
+		if err != nil {
+			return err
+		}
+
+		skill, err := c.SDK.Skills.Update(context.Background(), skillID, req)
 		if err != nil {
 			return fmt.Errorf("failed to update skill: %w", err)
 		}
@@ -325,16 +385,26 @@ Use --json to receive the full updated skill as JSON instead.`,
 // ─────────────────────────────────────────────
 
 var skillDeleteCmd = &cobra.Command{
-	Use:   "delete <id>",
+	Use:   "delete [id]",
 	Short: "Delete a skill by ID",
 	Long: `Permanently delete a skill by its ID.
 
 Prints "Skill <id> deleted." on success. You will be prompted for confirmation
 unless the --confirm flag is provided.`,
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := getClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		skillID, err := resolveSkillArgOrPick(cmd, c, args)
+		if err != nil {
+			return err
+		}
+
 		if !skillConfirmFlag {
-			fmt.Fprintf(cmd.OutOrStdout(), "Delete skill %s? [y/N]: ", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Delete skill %s? [y/N]: ", skillID)
 			scanner := bufio.NewScanner(os.Stdin)
 			scanner.Scan()
 			answer := strings.TrimSpace(scanner.Text())
@@ -344,16 +414,11 @@ unless the --confirm flag is provided.`,
 			}
 		}
 
-		c, err := getClient(cmd)
-		if err != nil {
-			return err
-		}
-
-		if err := c.SDK.Skills.Delete(context.Background(), args[0]); err != nil {
+		if err := c.SDK.Skills.Delete(context.Background(), skillID); err != nil {
 			return fmt.Errorf("failed to delete skill: %w", err)
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Skill %s deleted.\n", args[0])
+		fmt.Fprintf(cmd.OutOrStdout(), "Skill %s deleted.\n", skillID)
 		return nil
 	},
 }

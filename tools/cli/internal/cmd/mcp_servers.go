@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcpregistry"
+	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +37,7 @@ Prints Name (enabled/disabled), ID, Project ID, Description (if set), Type,
 URL (for sse/http), Command and Args (for stdio), Env Vars count, Headers count,
 Created, and Updated timestamps. Also lists all registered tools with their
 enabled/disabled state and description (truncated to 60 characters).`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runGetMCPServer,
 }
 
@@ -56,7 +57,7 @@ var deleteMCPServerCmd = &cobra.Command{
 	Use:   "delete [server-id]",
 	Short: "Delete an MCP server",
 	Long:  "Remove an MCP server and all its tools from your project configuration",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runDeleteMCPServer,
 }
 
@@ -64,7 +65,7 @@ var syncMCPServerCmd = &cobra.Command{
 	Use:   "sync [server-id]",
 	Short: "Sync tools from an MCP server",
 	Long:  "Connect to the MCP server and refresh the list of available tools",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runSyncMCPServer,
 }
 
@@ -72,7 +73,7 @@ var inspectMCPServerCmd = &cobra.Command{
 	Use:   "inspect [server-id]",
 	Short: "Inspect an MCP server",
 	Long:  "Test connection to an MCP server and display its capabilities, tools, prompts, and resources",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runInspectMCPServer,
 }
 
@@ -84,7 +85,7 @@ var toolsMCPServerCmd = &cobra.Command{
 Each tool entry shows its enabled/disabled state and tool name. Use
 'memory agents mcp-servers sync <id>' first to discover available tools if the list
 is empty.`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runListMCPServerTools,
 }
 
@@ -112,6 +113,46 @@ func parseEnvVars(envVarStrs []string) (map[string]any, error) {
 		envVars[parts[0]] = parts[1]
 	}
 	return envVars, nil
+}
+
+// resolveServerArgOrPick resolves an MCP server ID from args[0], or, when
+// args is empty and stdin is a terminal, lists MCP servers and shows an
+// interactive picker. Returns the resolved server ID.
+func resolveServerArgOrPick(cmd *cobra.Command, c *client.Client, args []string) (string, error) {
+	if len(args) > 0 && args[0] != "" {
+		return args[0], nil
+	}
+
+	if isNonInteractive() {
+		return "", fmt.Errorf("MCP server ID is required — pass an ID or run interactively to pick from a list")
+	}
+
+	result, err := c.SDK.MCPRegistry.List(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("failed to list MCP servers: %w", err)
+	}
+	serverList := result.Data
+	if len(serverList) == 0 {
+		return "", fmt.Errorf("no MCP servers found in the current project")
+	}
+
+	items := make([]PickerItem, len(serverList))
+	for i, s := range serverList {
+		label := s.Name + "  [" + string(s.Type) + "]"
+		if !s.Enabled {
+			label += " (disabled)"
+		}
+		items[i] = PickerItem{ID: s.ID, Name: label}
+	}
+
+	id, _, err := promptResourcePicker("Select an MCP server", items)
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", fmt.Errorf("MCP server ID is required")
+	}
+	return id, nil
 }
 
 func runListMCPServers(cmd *cobra.Command, args []string) error {
@@ -216,8 +257,6 @@ func allMissing(config map[string]any, keys []string) bool {
 }
 
 func runGetMCPServer(cmd *cobra.Command, args []string) error {
-	serverID := args[0]
-
 	projectID, err := resolveProjectContext(cmd, "")
 	if err != nil {
 		return err
@@ -228,6 +267,11 @@ func runGetMCPServer(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
 
 	result, err := c.SDK.MCPRegistry.Get(context.Background(), serverID)
 	if err != nil {
@@ -351,8 +395,6 @@ func runCreateMCPServer(cmd *cobra.Command, args []string) error {
 }
 
 func runDeleteMCPServer(cmd *cobra.Command, args []string) error {
-	serverID := args[0]
-
 	projectID, err := resolveProjectContext(cmd, "")
 	if err != nil {
 		return err
@@ -363,6 +405,11 @@ func runDeleteMCPServer(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
 
 	err = c.SDK.MCPRegistry.Delete(context.Background(), serverID)
 	if err != nil {
@@ -374,8 +421,6 @@ func runDeleteMCPServer(cmd *cobra.Command, args []string) error {
 }
 
 func runSyncMCPServer(cmd *cobra.Command, args []string) error {
-	serverID := args[0]
-
 	projectID, err := resolveProjectContext(cmd, "")
 	if err != nil {
 		return err
@@ -386,6 +431,11 @@ func runSyncMCPServer(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
 
 	result, err := c.SDK.MCPRegistry.SyncTools(context.Background(), serverID)
 	if err != nil {
@@ -402,8 +452,6 @@ func runSyncMCPServer(cmd *cobra.Command, args []string) error {
 }
 
 func runInspectMCPServer(cmd *cobra.Command, args []string) error {
-	serverID := args[0]
-
 	projectID, err := resolveProjectContext(cmd, "")
 	if err != nil {
 		return err
@@ -414,6 +462,11 @@ func runInspectMCPServer(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
 
 	result, err := c.SDK.MCPRegistry.Inspect(context.Background(), serverID)
 	if err != nil {
@@ -494,8 +547,6 @@ func runInspectMCPServer(cmd *cobra.Command, args []string) error {
 }
 
 func runListMCPServerTools(cmd *cobra.Command, args []string) error {
-	serverID := args[0]
-
 	projectID, err := resolveProjectContext(cmd, "")
 	if err != nil {
 		return err
@@ -506,6 +557,11 @@ func runListMCPServerTools(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
 
 	result, err := c.SDK.MCPRegistry.ListTools(context.Background(), serverID)
 	if err != nil {
