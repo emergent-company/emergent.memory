@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/ma
 Connect to an existing Memory server without installing the full stack:
 
 ```bash
-source <(curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/install-cli.sh)
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/install-cli.sh | bash
 ```
 
 ### Self-Update
