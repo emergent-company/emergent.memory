@@ -1,8 +1,8 @@
-# Spec Server 2
+# Memory
 
-Minimal ingestion server aligned with the spec:
+Knowledge graph platform for ingesting, storing, and querying structured knowledge:
 
-- Ingest a URL or uploaded file, extract text, chunk, embed with Google Gemini `text-embedding-004`.
+- Ingest URLs or uploaded files, extract text, chunk, and embed.
 - Store in Postgres with pgvector and FTS.
 
 ## Technologies
@@ -72,7 +72,7 @@ The system supports integration with:
 
 ## Production Deployment
 
-Spec Server 2 supports production deployment with Docker Compose.
+Memory supports production deployment with Docker Compose.
 
 ### Architecture
 
