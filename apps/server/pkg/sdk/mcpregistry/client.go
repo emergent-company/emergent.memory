@@ -555,3 +555,80 @@ func (c *Client) ConfigureTool(ctx context.Context, serverID, toolID string, con
 
 	return &result, nil
 }
+
+// --- Built-in Tools API ---
+
+// UpdateBuiltinToolRequest is the request body for updating a built-in tool.
+type UpdateBuiltinToolRequest struct {
+	Enabled *bool          `json:"enabled,omitempty"`
+	Config  map[string]any `json:"config,omitempty"`
+}
+
+// ListBuiltinTools returns all built-in (Go-native) tools for the current project,
+// including each tool's enabled state, config keys, and resolved inheritance source.
+// GET /api/admin/builtin-tools
+func (c *Client) ListBuiltinTools(ctx context.Context) (*APIResponse[[]MCPServerTool], error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/admin/builtin-tools", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[[]MCPServerTool]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// UpdateBuiltinTool enables/disables a built-in tool or updates its runtime config.
+// PATCH /api/admin/builtin-tools/:toolId
+func (c *Client) UpdateBuiltinTool(ctx context.Context, toolID string, updateReq *UpdateBuiltinToolRequest) (*APIResponse[any], error) {
+	body, err := json.Marshal(updateReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PATCH",
+		c.base+"/api/admin/builtin-tools/"+url.PathEscape(toolID),
+		bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[any]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}

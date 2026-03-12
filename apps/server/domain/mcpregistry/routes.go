@@ -28,6 +28,19 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.PATCH("/:id/tools/:toolId", h.ToggleTool)
 	writeGroup.POST("/:id/sync", h.SyncTools)
 
+	// Built-in tools — separate endpoint family that never exposes the internal
+	// "builtin" MCPServer record, only the flat tool list with inheritance info.
+	builtins := e.Group("/api/admin/builtin-tools")
+	builtins.Use(authMiddleware.RequireAuth())
+
+	builtinRead := builtins.Group("")
+	builtinRead.Use(authMiddleware.RequireAPITokenScopes("admin:read"))
+	builtinRead.GET("", h.ListBuiltinTools)
+
+	builtinWrite := builtins.Group("")
+	builtinWrite.Use(authMiddleware.RequireAPITokenScopes("admin:write"))
+	builtinWrite.PATCH("/:toolId", h.UpdateBuiltinTool)
+
 	// Official MCP Registry browse/install routes
 	registry := e.Group("/api/admin/mcp-registry")
 	registry.Use(authMiddleware.RequireAuth())

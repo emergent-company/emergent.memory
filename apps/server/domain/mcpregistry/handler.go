@@ -391,6 +391,68 @@ func (h *Handler) SyncTools(c echo.Context) error {
 }
 
 // ============================================================================
+// Built-in Tools Handlers
+// ============================================================================
+
+// ListBuiltinTools handles GET /api/admin/builtin-tools
+//
+// Returns all built-in (Go-native) tools registered for the current project,
+// with each tool's enabled state, config keys, and resolved inheritance source
+// ("project", "org", or "global"). Unlike GET /api/admin/mcp-servers this
+// endpoint never surfaces the internal "builtin" MCPServer record — it exposes
+// only the flat tool list.
+func (h *Handler) ListBuiltinTools(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
+
+	dtos, err := h.svc.ListBuiltinToolsForProject(c.Request().Context(), user.ProjectID)
+	if err != nil {
+		return apperror.NewInternal("failed to list built-in tools", err)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dtos))
+}
+
+// UpdateBuiltinTool handles PATCH /api/admin/builtin-tools/:toolId
+//
+// Enables/disables a built-in tool or updates its runtime config for the
+// current project. Accepts the same body as PATCH /api/admin/mcp-servers/:id/tools/:toolId.
+func (h *Handler) UpdateBuiltinTool(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	toolID := c.Param("toolId")
+	if toolID == "" {
+		return apperror.NewBadRequest("tool ID is required")
+	}
+
+	var dto UpdateMCPServerToolDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	if dto.Enabled == nil && dto.Config == nil {
+		return apperror.NewBadRequest("at least one of enabled or config must be provided")
+	}
+
+	if err := h.svc.UpdateTool(c.Request().Context(), toolID, dto.Enabled, dto.Config); err != nil {
+		return apperror.NewBadRequest(err.Error())
+	}
+
+	msg := "tool updated"
+	return c.JSON(http.StatusOK, APIResponse[any]{
+		Success: true,
+		Message: &msg,
+	})
+}
+
+// ============================================================================
 // Official MCP Registry Browse/Install Handlers
 // ============================================================================
 
