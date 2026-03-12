@@ -3,10 +3,12 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcpregistry"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var builtinToolsCmd = &cobra.Command{
@@ -85,26 +87,58 @@ func runListBuiltinTools(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Detect terminal width for description wrapping; fall back to 80.
+	termWidth := 80
+	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+		termWidth = w
+	}
+
 	fmt.Printf("Found %d built-in tool(s):\n\n", len(tools))
-	for i, t := range tools {
-		enabledLabel := "on"
+
+	// Field label width (including trailing space) — all lines share the same indent.
+	const indent = "  "
+	const labelName = "Name:    "
+	const labelEnabled = "Enabled: "
+	const labelID = "ID:      "
+	const labelSource = "Source:  "
+	const labelDesc = "Desc:    "
+	descIndent := indent + strings.Repeat(" ", len(labelDesc))
+
+	for _, t := range tools {
+		checkbox := "[✓]"
 		if !t.Enabled {
-			enabledLabel = "off"
+			checkbox = "[ ]"
 		}
 		suffix := toolConfigSuffix(t.ConfigKeys, t.Config)
 		source := t.InheritedFrom
 		if source == "" {
 			source = "global"
 		}
-		fmt.Printf("%d. [%s] %s%s\n", i+1, enabledLabel, t.ToolName, suffix)
-		fmt.Printf("   ID:     %s\n", t.ID)
-		fmt.Printf("   Source: %s\n", source)
+		fmt.Printf("%s%s%s%s\n", indent, labelName, t.ToolName, suffix)
+		fmt.Printf("%s%s%s\n", indent, labelEnabled, checkbox)
+		fmt.Printf("%s%s%s\n", indent, labelID, t.ID)
+		fmt.Printf("%s%s%s\n", indent, labelSource, source)
 		if t.Description != nil && *t.Description != "" {
-			desc := *t.Description
-			if len(desc) > 80 {
-				desc = desc[:77] + "..."
+			avail := termWidth - len(indent) - len(labelDesc)
+			if avail < 20 {
+				avail = 20
 			}
-			fmt.Printf("   Desc:   %s\n", desc)
+			lines := wrapText(*t.Description, avail)
+			if len(lines) > 2 {
+				if len(lines[1]) > avail-3 {
+					lines[1] = lines[1][:avail-3] + "..."
+				} else {
+					lines[1] = lines[1] + "..."
+				}
+				lines = lines[:2]
+			}
+			for j, l := range lines {
+				if j == 0 {
+					fmt.Printf("%s%s%s\n", indent, labelDesc, l)
+				} else {
+					fmt.Printf("%s%s\n", descIndent, l)
+				}
+			}
 		}
 		fmt.Println()
 	}
@@ -204,4 +238,28 @@ func init() {
 
 	// Register under agents command
 	agentsCmd.AddCommand(builtinToolsCmd)
+}
+
+// wrapText splits text into lines of at most maxWidth runes, breaking on word
+// boundaries. It returns at least one element even for empty input.
+func wrapText(text string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{text}
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{""}
+	}
+	var lines []string
+	line := words[0]
+	for _, w := range words[1:] {
+		if len(line)+1+len(w) <= maxWidth {
+			line += " " + w
+		} else {
+			lines = append(lines, line)
+			line = w
+		}
+	}
+	lines = append(lines, line)
+	return lines
 }
