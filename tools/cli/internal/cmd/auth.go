@@ -297,17 +297,32 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	// Gate on Enter so the user can read the code before the browser opens.
 	fmt.Printf("  Press Enter to open your browser to sign in or create an account.\n")
 	fmt.Printf("  Or visit manually: %s\n\n", browserURL)
-	waitForEnter()
 
-	if openErr := auth.OpenBrowser(browserURL); openErr != nil {
-		// Non-fatal — the user can use the manual URL above.
-		fmt.Fprintf(os.Stderr, "  Note: could not open browser automatically.\n\n")
-	}
-
-	// Poll for the token with a live spinner.
+	// Start polling immediately — the user may navigate to the URL manually
+	// without ever pressing Enter, so we must not block polling on that gate.
 	fmt.Print("  Waiting for authorization")
-	tokenResp, pollErr := pollWithSpinner(oidcConfig, deviceResp, clientID)
+	type pollResult struct {
+		resp *auth.TokenResponse
+		err  error
+	}
+	pollCh := make(chan pollResult, 1)
+	go func() {
+		resp, err := pollWithSpinner(oidcConfig, deviceResp, clientID)
+		pollCh <- pollResult{resp, err}
+	}()
+
+	// Open the browser when Enter is pressed, but do not wait for it before polling.
+	go func() {
+		waitForEnter()
+		if openErr := auth.OpenBrowser(browserURL); openErr != nil {
+			// Non-fatal — the user can use the manual URL above.
+			fmt.Fprintf(os.Stderr, "  Note: could not open browser automatically.\n\n")
+		}
+	}()
+
+	result := <-pollCh
 	fmt.Println() // end the spinner line
+	tokenResp, pollErr := result.resp, result.err
 	if pollErr != nil {
 		return fmt.Errorf("authorization failed: %w", pollErr)
 	}
@@ -387,8 +402,8 @@ func pollWithSpinner(oidcCfg *auth.OIDCConfig, deviceResp *auth.DeviceCodeRespon
 }
 
 var statusCmd = &cobra.Command{
-	Use:     "status",
-	Short:   "Show current authentication status",
+	Use:   "status",
+	Short: "Show current authentication status",
 	Long: `Display detailed information about the current authentication session and server health.
 
 Shows authentication Mode (project token, account API key, or OAuth), Server URL,
@@ -1169,8 +1184,8 @@ func init() {
 
 // mcpGuideCmd prints MCP configuration snippets for connecting AI agents to Memory.
 var mcpGuideCmd = &cobra.Command{
-	Use:     "mcp-guide",
-	Short:   "Show MCP configuration for AI agents",
+	Use:   "mcp-guide",
+	Short: "Show MCP configuration for AI agents",
 	Long: `Print ready-to-use MCP server configuration snippets for connecting AI agents to Memory.
 
 Outputs JSON configuration blocks for Claude Desktop, Cursor, and other MCP-
