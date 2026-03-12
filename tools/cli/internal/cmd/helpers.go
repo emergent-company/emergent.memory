@@ -211,3 +211,28 @@ func promptProjectPicker(cmd *cobra.Command, cfg *config.Config) (string, error)
 	cfg.ProjectName = name
 	return id, nil
 }
+
+// promptResourcePicker shows an interactive picker for any list of PickerItems.
+// It is a no-op in non-interactive contexts (returns "", "", nil).
+// When exactly one item is present it is auto-selected silently.
+// When multiple items are present a Bubbletea arrow-key list is shown on stderr.
+func promptResourcePicker(title string, items []PickerItem) (id, name string, err error) {
+	if isNonInteractive() {
+		return "", "", nil
+	}
+	if len(items) == 0 {
+		return "", "", nil
+	}
+	if len(items) == 1 {
+		fmt.Fprintf(os.Stderr, "\033[2;36mAuto-selected: %s\033[0m\n", items[0].Name)
+		return items[0].ID, items[0].Name, nil
+	}
+
+	// Temporarily override the title rendered by the Bubbletea list.
+	// PickProject already uses a fixed title; we replace it by passing a
+	// copy of items with a custom-titled model. Since PickProject accepts
+	// a slice and constructs its own model, we call the lower-level helper
+	// directly so we can set the title.
+	return pickResourceWithTitle(title, items, 30*time.Second, os.Stderr)
+}
+

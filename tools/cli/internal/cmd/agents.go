@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agents"
+	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -38,7 +39,7 @@ Prints Name, ID, Project ID, Strategy Type, Enabled status, Trigger Type,
 Execution Mode, Cron Schedule (if set), Description (if set), Prompt (if set),
 Reaction Config (Object Types and Events), Last Run At, Last Run Status,
 Created At, Updated At, and any extra Config JSON.`,
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runGetAgent,
 }
 
@@ -58,7 +59,7 @@ var updateAgentCmd = &cobra.Command{
 	Use:   "update [id]",
 	Short: "Update an agent",
 	Long:  "Update an existing agent (partial update)",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runUpdateAgent,
 }
 
@@ -68,7 +69,7 @@ var deleteAgentCmd = &cobra.Command{
 	Long: `Delete an agent by ID.
 
 Prints "Agent <id> deleted successfully." on success.`,
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runDeleteAgent,
 }
 
@@ -79,7 +80,7 @@ var triggerAgentCmd = &cobra.Command{
 
 Prints "Agent triggered successfully!" with an optional message on success, or
 "Agent trigger failed." with an error message on failure.`,
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runTriggerAgent,
 }
 
@@ -94,7 +95,7 @@ var runsAgentCmd = &cobra.Command{
 
 Use --limit to control how many runs are returned (default 10).
 Use "memory agents get-run [run-id]" to get the full breakdown for a specific run.`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runGetAgentRuns,
 }
 
@@ -128,6 +129,50 @@ var (
 	agentReactionObjTypes string
 	agentRunsLimit        int
 )
+
+// resolveAgentArgOrPick resolves an agent ID from args[0], or, when args is
+// empty and stdin is a terminal, lists agents in the current project and shows
+// an interactive picker. Returns the resolved agent ID.
+func resolveAgentArgOrPick(cmd *cobra.Command, c *client.Client, args []string) (string, error) {
+	if len(args) > 0 && args[0] != "" {
+		return args[0], nil
+	}
+
+	if isNonInteractive() {
+		return "", fmt.Errorf("agent ID is required — pass an ID or run interactively to pick from a list")
+	}
+
+	result, err := c.SDK.Agents.List(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("failed to list agents: %w", err)
+	}
+	agentList := result.Data
+	if len(agentList) == 0 {
+		return "", fmt.Errorf("no agents found in the current project")
+	}
+
+	items := make([]PickerItem, len(agentList))
+	for i, a := range agentList {
+		label := a.Name
+		if a.Description != nil && *a.Description != "" {
+			desc := *a.Description
+			if len(desc) > 55 {
+				desc = desc[:52] + "…"
+			}
+			label = a.Name + "  " + desc
+		}
+		items[i] = PickerItem{ID: a.ID, Name: label}
+	}
+
+	id, _, err := promptResourcePicker("Select an agent", items)
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", fmt.Errorf("agent ID is required")
+	}
+	return id, nil
+}
 
 func runListAgents(cmd *cobra.Command, args []string) error {
 	// Resolve project first — this triggers the interactive picker when no
@@ -176,9 +221,12 @@ func runListAgents(cmd *cobra.Command, args []string) error {
 }
 
 func runGetAgent(cmd *cobra.Command, args []string) error {
-	agentID := args[0]
-
 	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	agentID, err := resolveAgentArgOrPick(cmd, c, args)
 	if err != nil {
 		return err
 	}
@@ -297,9 +345,12 @@ func runCreateAgent(cmd *cobra.Command, args []string) error {
 }
 
 func runUpdateAgent(cmd *cobra.Command, args []string) error {
-	agentID := args[0]
-
 	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	agentID, err := resolveAgentArgOrPick(cmd, c, args)
 	if err != nil {
 		return err
 	}
@@ -356,9 +407,12 @@ func runUpdateAgent(cmd *cobra.Command, args []string) error {
 }
 
 func runDeleteAgent(cmd *cobra.Command, args []string) error {
-	agentID := args[0]
-
 	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	agentID, err := resolveAgentArgOrPick(cmd, c, args)
 	if err != nil {
 		return err
 	}
@@ -373,9 +427,12 @@ func runDeleteAgent(cmd *cobra.Command, args []string) error {
 }
 
 func runTriggerAgent(cmd *cobra.Command, args []string) error {
-	agentID := args[0]
-
 	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	agentID, err := resolveAgentArgOrPick(cmd, c, args)
 	if err != nil {
 		return err
 	}
@@ -401,9 +458,12 @@ func runTriggerAgent(cmd *cobra.Command, args []string) error {
 }
 
 func runGetAgentRuns(cmd *cobra.Command, args []string) error {
-	agentID := args[0]
-
 	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	agentID, err := resolveAgentArgOrPick(cmd, c, args)
 	if err != nil {
 		return err
 	}
@@ -636,7 +696,7 @@ var listHooksCmd = &cobra.Command{
 
 Prints a numbered list with each hook's Label, ID, Enabled status, Rate Limit
 configuration (requests/minute and burst size, if set), and Created timestamp.`,
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runListHooks,
 }
 
@@ -648,7 +708,7 @@ var createHookCmd = &cobra.Command{
 Examples:
   emergent-cli agents hooks create <agent-id> --label "CI/CD Pipeline"
   emergent-cli agents hooks create <agent-id> --label "Staging" --rate-limit 30 --burst-size 5`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runCreateHook,
 }
 
@@ -668,9 +728,12 @@ var (
 )
 
 func runListHooks(cmd *cobra.Command, args []string) error {
-	agentID := args[0]
-
 	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	agentID, err := resolveAgentArgOrPick(cmd, c, args)
 	if err != nil {
 		return err
 	}
@@ -702,15 +765,18 @@ func runListHooks(cmd *cobra.Command, args []string) error {
 }
 
 func runCreateHook(cmd *cobra.Command, args []string) error {
-	agentID := args[0]
-
-	if hookLabel == "" {
-		return fmt.Errorf("hook label is required. Use --label flag")
-	}
-
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
+	}
+
+	agentID, err := resolveAgentArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	if hookLabel == "" {
+		return fmt.Errorf("hook label is required. Use --label flag")
 	}
 
 	createReq := &agents.CreateWebhookHookRequest{
