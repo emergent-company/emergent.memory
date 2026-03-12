@@ -6,6 +6,9 @@ import (
 	"os"
 	"time"
 
+	"strings"
+
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/spf13/cobra"
@@ -236,3 +239,37 @@ func promptResourcePicker(title string, items []PickerItem) (id, name string, er
 	return pickResourceWithTitle(title, items, 30*time.Second, os.Stderr)
 }
 
+// isAuthError returns true when err indicates the request was rejected due to
+// a missing, invalid, or expired authentication token (HTTP 401). It handles
+// both *sdkerrors.Error values returned by the SDK and the raw error strings
+// produced by commands that make HTTP requests directly (ask, query).
+func IsAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// SDK errors carry a structured status code.
+	if sdkerrors.IsUnauthorized(err) {
+		return true
+	}
+	// Raw errors from ask/query include the HTTP status in the message.
+	s := err.Error()
+	return strings.Contains(s, "status 401") ||
+		strings.Contains(s, "missing_token") ||
+		strings.Contains(s, "invalid_token") ||
+		strings.Contains(s, "token_expired") ||
+		strings.Contains(s, "Missing authorization token")
+}
+
+// PrintAuthError writes a friendly re-authentication prompt to stderr and
+// returns the exit-ready error to be returned from main (so the original
+// raw error is suppressed).
+func PrintAuthError() {
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "\033[0;33mYour session has expired or you are not authenticated.\033[0m")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Run the following command to log in:")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  \033[1mmemory login\033[0m")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Then retry your command.")
+}
