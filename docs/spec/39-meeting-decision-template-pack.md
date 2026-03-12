@@ -7,7 +7,7 @@ The Meeting & Decision Management Template Pack provides a structured framework 
 ## Version
 
 **Version:** 1.0.0  
-**Author:** Spec Server Team  
+**Author:** Emergent Memory Team  
 **Published:** 2025-10-04
 
 ## Use Cases
@@ -637,7 +637,7 @@ When this template pack is installed:
 
 ## Compatibility
 
-- Requires: Spec Server v0.1.0+
+- Requires: v0.1.0+
 - Compatible with: TOGAF pack, Agile pack (if installed)
 - Extends: Person type with meeting-related attributes
 

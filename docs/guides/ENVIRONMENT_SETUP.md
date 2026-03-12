@@ -1,6 +1,6 @@
 # Environment Setup Guide
 
-This guide provides comprehensive instructions for setting up the Spec Server application across four distinct environments: **Local**, **Dev**, **Staging**, and **Production**.
+This guide provides comprehensive instructions for setting up the Emergent Memory application across four distinct environments: **Local**, **Dev**, **Staging**, and **Production**.
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@ This guide provides comprehensive instructions for setting up the Spec Server ap
 
 ## Environment Overview
 
-The Spec Server system supports four distinct deployment environments, each with different infrastructure patterns:
+The Emergent Memory supports four distinct deployment environments, each with different infrastructure patterns:
 
 ### Environment Comparison
 
@@ -186,7 +186,7 @@ _This guide is organized into environment-specific sections. Jump to the section
 
 ## Local Environment Setup
 
-This section covers setting up the Spec Server on your local development machine. In this configuration, dependencies run in Docker containers while applications run directly on your host machine via the workspace CLI.
+This section covers setting up Emergent Memory on your local development machine. In this configuration, dependencies run in Docker containers while applications run directly on your host machine via the workspace CLI.
 
 ### Architecture
 
@@ -355,7 +355,7 @@ echo "VITE_ZITADEL_CLIENT_ID=<oauth-client-id-from-bootstrap>" >> .env.local
 
 - Loads PAT from Docker volume `/machinekey/pat.txt`
 - Creates organization "Spec Organization" (or uses existing)
-- Creates project "Spec Server" (or uses existing)
+- Creates project "emergent-memory" (or uses existing)
 - Creates OAuth OIDC application (public client with PKCE)
 - Creates API application with JWT authentication
 - Creates two service accounts (CLIENT and API with dual SA pattern)
@@ -579,7 +579,7 @@ npm run workspace:deps:start
 
 ## Dev Environment Setup
 
-This section covers setting up the Spec Server in a shared development environment where dependencies and applications run within the dev infrastructure (not Docker on your local PC).
+This section covers setting up Emergent Memory in a shared development environment where dependencies and applications run within the dev infrastructure (not Docker on your local PC).
 
 ### 🚀 Fast Track - Dev Environment (Copy & Paste)
 
@@ -782,7 +782,7 @@ npm run workspace:restart -- --env dev
 
 ## Staging Environment Setup
 
-This section covers deploying Spec Server to a staging environment using **full Docker Compose** deployment where all dependencies and applications run in containers.
+This section covers deploying Emergent Memory to a staging environment using **full Docker Compose** deployment where all dependencies and applications run in containers.
 
 ### 🚀 Fast Track - Staging Deployment (Copy & Paste)
 
@@ -1072,7 +1072,7 @@ scp backup-staging-*.sql backup-server:/backups/
 
 ## Production Environment Setup
 
-This section covers deploying Spec Server to production using **full Docker Compose** deployment with production-grade security, monitoring, and reliability.
+This section covers deploying Emergent Memory to production using **full Docker Compose** deployment with production-grade security, monitoring, and reliability.
 
 ### 🚀 Fast Track - Production Deployment (Copy & Paste)
 
@@ -1840,7 +1840,7 @@ infisical secrets delete KEY_NAME --env local
 Secrets are organized by path in Infisical (for reference):
 
 ```
-Project: Spec Server
+Project: emergent-memory
 ├── Environment: local
 │   ├── /workspace  - Workspace CLI config
 │   ├── /docker     - Docker dependency config

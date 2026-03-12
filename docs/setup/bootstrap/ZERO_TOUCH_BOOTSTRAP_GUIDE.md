@@ -31,7 +31,7 @@ docker-compose -f docker-compose.zitadel-local.yml up -d
 **What this does:**
 - Reads PAT from `secrets/bootstrap/pat.txt` (NO prompts!)
 - Creates/finds organization "Spec Organization"
-- Creates/finds project "Spec Server"
+- Creates/finds project "emergent-memory"
 - Creates CLIENT service account (for introspection)
 - Creates API service account (for Management API)
 - Generates JWT keys for both accounts

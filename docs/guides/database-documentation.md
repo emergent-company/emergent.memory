@@ -4,7 +4,7 @@ This guide explains how to maintain and generate database schema documentation u
 
 ## Overview
 
-The Spec Server project uses dbdocs to generate human-readable documentation from the PostgreSQL database schema. The documentation is maintained as a DBML file at `docs/database/schema.dbml` and can be viewed locally using the dbdocs CLI.
+The Emergent Memory project uses dbdocs to generate human-readable documentation from the PostgreSQL database schema. The documentation is maintained as a DBML file at `docs/database/schema.dbml` and can be viewed locally using the dbdocs CLI.
 
 ### Related Documentation
 
@@ -110,7 +110,7 @@ Describes the overall database purpose and architecture:
 Project spec_server {
   database_type: 'PostgreSQL'
   Note: '''
-    # Spec Server Database Schema
+    # Emergent Memory Database Schema
     ...
   '''
 }

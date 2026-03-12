@@ -1,6 +1,6 @@
 # Test Commands Reference
 
-Complete reference for running all test suites in the Spec Server project.
+Complete reference for running all test suites in Emergent Memory project.
 
 ## Quick Reference
 

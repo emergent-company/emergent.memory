@@ -1,4 +1,4 @@
-# Spec Server 2 - Authentication Strategy Analysis & Bootstrap Script Improvements
+# Emergent Memory - Authentication Strategy Analysis & Bootstrap Script Improvements
 
 **Date**: November 7, 2025  
 **Purpose**: Document actual authentication flows used and optimize bootstrap script verification

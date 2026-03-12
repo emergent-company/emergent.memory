@@ -68,14 +68,14 @@ AUTH_JWKS_URI=http://localhost:8100/oauth/v2/keys
 Docker containers will be named: `{COMPOSE_PROJECT_NAME}_pg` and `{COMPOSE_PROJECT_NAME}_zitadel`
 
 Examples:
-- Default: `spec_pg`, `spec_zitadel`
+- Default: `emergent_pg`, `emergent_zitadel`
 - Instance 2: `spec2_pg`, `spec2_zitadel`
 
 ### Volume Names
 Docker automatically prefixes volumes with the project name: `{COMPOSE_PROJECT_NAME}_pg_data`
 
 Examples:
-- Default: `spec_pg_data`
+- Default: `emergent_pg_data`
 - Instance 2: `spec2_pg_data`
 
 ### Network Names
@@ -157,8 +157,8 @@ If you get "container name already in use" errors:
 docker ps -a
 
 # Remove specific container
-docker rm -f spec_pg
-docker rm -f spec_zitadel
+docker rm -f emergent_pg
+docker rm -f emergent_zitadel
 
 # Or change COMPOSE_PROJECT_NAME in .env
 ```
@@ -170,7 +170,7 @@ Volumes are automatically isolated by project name, but to list them:
 docker volume ls
 
 # Remove specific project volumes
-docker volume rm spec_pg_data
+docker volume rm emergent_pg_data
 docker volume rm spec2_pg_data
 ```
 

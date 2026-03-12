@@ -247,7 +247,7 @@ The script automatically detects and uses available connection methods:
 
 ### 1. Docker Container (Default)
 
-Connects to `spec_pg` container:
+Connects to `emergent_pg` container:
 
 ```bash
 # No configuration needed - works out of the box
@@ -309,20 +309,20 @@ VALUES ('YOUR_MIGRATION.sql', 'MANUAL', 0, TRUE);
 **Docker container not running:**
 
 ```bash
-docker ps | grep spec_pg
-docker start spec_pg
+docker ps | grep emergent_pg
+docker start emergent_pg
 ```
 
 **Wrong credentials:**
 
 ```bash
-docker exec spec_pg env | grep POSTGRES
+docker exec emergent_pg env | grep POSTGRES
 ```
 
 **Test connection manually:**
 
 ```bash
-docker exec -it spec_pg psql -U spec -d spec -c '\dt kb.*'
+docker exec -it emergent_pg psql -U spec -d spec -c '\dt kb.*'
 ```
 
 ### Permission Issues
