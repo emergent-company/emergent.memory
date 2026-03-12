@@ -285,7 +285,14 @@ Get details for a specific run
 
 ### Synopsis
 
-Get full details (including token usage and cost) for an agent run by run ID
+Get full details for a specific agent run by its run ID. Output includes:
+  - Run ID, agent ID, status, start/end times
+  - Token usage: total input tokens, total output tokens
+  - Estimated cost in USD
+  - Root run ID (for sub-runs triggered by a parent run)
+  - Any output or error message from the run
+
+This is the primary command to check the cost of a specific agent run.
 
 ```
 memory agents get-run [run-id] [flags]
@@ -483,7 +490,14 @@ List agent runs
 
 ### Synopsis
 
-List recent runs for an agent
+List recent runs for an agent. Each run entry shows:
+  - Run ID and status (running, completed, failed)
+  - Start time and duration
+  - Token usage: input tokens / output tokens
+  - Estimated cost in USD (e.g. "Cost: $0.001234")
+
+Use --limit to control how many runs are returned (default 10).
+Use "memory agents get-run [run-id]" to get the full breakdown for a specific run.
 
 ```
 memory agents runs [id] [flags]
