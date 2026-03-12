@@ -117,6 +117,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
+          GOWORK: off
         run: |
           go build \
             -ldflags="-s -w -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
@@ -178,6 +179,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
+          GOWORK: off
         run: |
           EXT=""
           if [ "${{ matrix.goos }}" = "windows" ]; then
