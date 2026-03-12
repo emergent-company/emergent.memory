@@ -21,14 +21,23 @@ var agentsCmd = &cobra.Command{
 var listAgentsCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all agents",
-	Long:  "List all agents for the current project",
+	Long: `List all agents configured for the current project.
+
+Prints a numbered list with each agent's Name, ID, Enabled status, Trigger
+Type, Cron schedule (if any), Description (if set), Last Run timestamp, and
+Last Run Status. Use --project to specify a project other than the active one.`,
 	RunE:  runListAgents,
 }
 
 var getAgentCmd = &cobra.Command{
 	Use:   "get [id]",
 	Short: "Get agent details",
-	Long:  "Get details for a specific agent by ID",
+	Long: `Get full details for a specific agent by its ID.
+
+Prints Name, ID, Project ID, Strategy Type, Enabled status, Trigger Type,
+Execution Mode, Cron Schedule (if set), Description (if set), Prompt (if set),
+Reaction Config (Object Types and Events), Last Run At, Last Run Status,
+Created At, Updated At, and any extra Config JSON.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runGetAgent,
 }
@@ -56,7 +65,9 @@ var updateAgentCmd = &cobra.Command{
 var deleteAgentCmd = &cobra.Command{
 	Use:   "delete [id]",
 	Short: "Delete an agent",
-	Long:  "Delete an agent by ID",
+	Long: `Delete an agent by ID.
+
+Prints "Agent <id> deleted successfully." on success.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runDeleteAgent,
 }
@@ -64,7 +75,10 @@ var deleteAgentCmd = &cobra.Command{
 var triggerAgentCmd = &cobra.Command{
 	Use:   "trigger [id]",
 	Short: "Trigger an agent run",
-	Long:  "Trigger an immediate run of an agent",
+	Long: `Trigger an immediate run of an agent.
+
+Prints "Agent triggered successfully!" with an optional message on success, or
+"Agent trigger failed." with an error message on failure.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runTriggerAgent,
 }
@@ -573,7 +587,10 @@ var questionsCmd = &cobra.Command{
 var listQuestionsCmd = &cobra.Command{
 	Use:   "list [run-id]",
 	Short: "List questions for a run",
-	Long:  "List all questions for a specific agent run",
+	Long: `List all questions asked by the agent during a specific run.
+
+Outputs the full question list as indented JSON, including each question's ID,
+status, prompt text, and response (if already answered).`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runListQuestions,
 }
@@ -581,14 +598,20 @@ var listQuestionsCmd = &cobra.Command{
 var listProjectQuestionsCmd = &cobra.Command{
 	Use:   "list-project",
 	Short: "List questions for a project",
-	Long:  "List all questions for a project with optional status filter",
+	Long: `List all agent questions for the current project.
+
+Outputs the full question list as indented JSON. Use --status to filter by
+question status (e.g. pending, answered).`,
 	RunE:  runListProjectQuestions,
 }
 
 var respondToQuestionCmd = &cobra.Command{
 	Use:   "respond [question-id] [response]",
 	Short: "Respond to a question",
-	Long:  "Respond to a pending agent question and resume the paused run",
+	Long: `Respond to a pending agent question and resume the paused agent run.
+
+Sends the response text as the answer to the specified question. Outputs the
+updated question record as indented JSON on success.`,
 	Args:  cobra.ExactArgs(2),
 	RunE:  runRespondToQuestion,
 }
@@ -609,7 +632,10 @@ var hooksCmd = &cobra.Command{
 var listHooksCmd = &cobra.Command{
 	Use:   "list [agent-id]",
 	Short: "List webhook hooks",
-	Long:  "List all webhook hooks configured for an agent",
+	Long: `List all webhook hooks configured for an agent.
+
+Prints a numbered list with each hook's Label, ID, Enabled status, Rate Limit
+configuration (requests/minute and burst size, if set), and Created timestamp.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runListHooks,
 }

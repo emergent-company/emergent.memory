@@ -24,6 +24,11 @@ func newConfigSetServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-server [url]",
 		Short: "Set the Memory server URL",
+		Long: `Set the Memory server URL in the CLI configuration file.
+
+Prints the new server URL and the path to the configuration file where the
+setting was saved. Use this to point the CLI at a different server environment
+(e.g. local dev vs production).`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			serverURL := args[0]
@@ -61,6 +66,10 @@ func newConfigSetCredentialsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-credentials [email]",
 		Short: "Set the email for authentication",
+		Long: `Set the email address used for authentication in the CLI configuration file.
+
+Prints the email that was set and the path to the configuration file where
+the setting was saved.`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			email := args[0]
@@ -98,6 +107,12 @@ func newConfigShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Display current configuration",
+		Long: `Display the current CLI configuration as a table.
+
+Prints a Setting/Value table with: Server URL, API Key (masked, showing only
+the first 8 and last 4 characters), Email, Organization ID, Project ID, Debug
+mode, and the Config File path. Values are merged from the config file and any
+overriding environment variables.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if configPath == "" {
 				configPath = config.DiscoverPath("")

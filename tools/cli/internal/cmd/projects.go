@@ -30,14 +30,25 @@ var projectsCmd = &cobra.Command{
 var listProjectsCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all projects",
-	Long:  "List all projects you have access to",
+	Long: `List all projects you have access to.
+
+Output prints a numbered list with each project's Name and ID. If the project
+has a project info document set, it is shown beneath the name. Use the --stats
+flag to also display per-project counts for Documents, Graph Objects,
+Relationships, Extraction jobs (total/running/queued), and installed Schemas
+(with their object and relationship type names).`,
 	RunE:  runListProjects,
 }
 
 var getProjectCmd = &cobra.Command{
 	Use:               "get [name-or-id]",
 	Short:             "Get project details",
-	Long:              "Get details for a specific project by name or ID",
+	Long: `Get details for a specific project by name or ID.
+
+Prints the project's Name, ID, and Org ID. If a project info document is set
+it is shown as well. Use the --stats flag to additionally display counts for
+Documents, Graph Objects, Relationships, Extraction jobs, and installed Schemas
+with their object and relationship type names.`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
 	RunE:              runGetProject,
@@ -46,7 +57,12 @@ var getProjectCmd = &cobra.Command{
 var createProjectCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new project",
-	Long:  "Create a new project in the Memory platform",
+	Long: `Create a new project in the Memory platform.
+
+Prints the new project's Name and ID on success. If no LLM provider credentials
+are configured for the organization, a warning is shown explaining that AI
+features (embeddings, search, extraction) will not work until a provider is
+added via 'memory provider configure'.`,
 	RunE:  runCreateProject,
 }
 
@@ -62,7 +78,13 @@ var deleteProjectCmd = &cobra.Command{
 var setProjectCmd = &cobra.Command{
 	Use:               "set [name-or-id]",
 	Short:             "Set active project",
-	Long:              "Set the active project context by writing to .env.local",
+	Long: `Set the active project context by writing credentials to .env.local.
+
+Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_TOKEN into
+.env.local in the current directory so that subsequent CLI commands and
+application code automatically use the selected project. If no existing token
+is found for the project, a new one is created automatically. Run without
+arguments to select interactively from a numbered list of available projects.`,
 	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
 	RunE:              runSetProject,
@@ -139,7 +161,14 @@ func runProjectsCreateToken(cmd *cobra.Command, args []string) error {
 }
 
 var setProjectProviderCmd = &cobra.Command{
-	Use:  "set-provider <project-name-or-id> <provider>",
+	Use:   "set-provider <project-name-or-id> <provider>",
+	Short: "Configure the LLM provider for a project",
+	Long: `Configure the LLM provider credentials for a specific project.
+
+Supported providers: google, google-vertex. Prints the provider name, the
+configured generative model, and the embedding model on success. Use flags
+such as --api-key, --embedding-model, and --generative-model to specify
+credentials and model overrides.`,
 	Args: cobra.ExactArgs(2),
 	RunE: runSetProjectProvider,
 }

@@ -106,7 +106,11 @@ func getGraphClient(cmd *cobra.Command) (*sdkgraph.Client, error) {
 var graphObjectsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List graph objects",
-	Long:  "List graph objects in the current project, optionally filtered by type",
+	Long: `List graph objects (entities) in the current project.
+
+Output is a table with columns: Entity ID, Type, Version, Status, and Created
+date. Use --type to filter by object type, --limit to control result count, and
+--output json to receive the full list as JSON.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)
 		if err != nil {
@@ -163,6 +167,11 @@ var graphObjectsListCmd = &cobra.Command{
 var graphObjectsGetCmd = &cobra.Command{
 	Use:   "get <id>",
 	Short: "Get a graph object by ID",
+	Long: `Get details for a graph object (entity) by its ID.
+
+Prints Entity ID, Version ID, Type, Version number, Key (if set), Status (if
+set), Labels (if any), Created timestamp, and Properties as formatted JSON.
+Use --output json to receive the full object as JSON instead.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)
@@ -348,7 +357,11 @@ var graphObjectsDeleteCmd = &cobra.Command{
 var graphObjectsEdgesCmd = &cobra.Command{
 	Use:   "edges <id>",
 	Short: "Show edges (relationships) for an object",
-	Long:  "Show incoming and outgoing relationships for a graph object",
+	Long: `Show all incoming and outgoing relationships for a graph object.
+
+Prints two sections: Outgoing (format: [Type] → DstID (entity: EntityID)) and
+Incoming (format: [Type] ← SrcID (entity: EntityID)) with counts for each.
+Use --output json to receive the full edges response as JSON.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)
@@ -388,7 +401,12 @@ var graphObjectsEdgesCmd = &cobra.Command{
 var graphRelationshipsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List relationships",
-	Long:  "List relationships in the current project, optionally filtered by type, from, or to",
+	Long: `List relationships in the current project.
+
+Output is a table with columns: Entity ID, Type, From (source entity ID), To
+(destination entity ID), and Created date. Use --type to filter by relationship
+type, --from/--to to filter by endpoint, --limit to control result count, and
+--output json to receive the full list as JSON.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)
 		if err != nil {
@@ -447,6 +465,11 @@ var graphRelationshipsListCmd = &cobra.Command{
 var graphRelationshipsGetCmd = &cobra.Command{
 	Use:   "get <id>",
 	Short: "Get a relationship by ID",
+	Long: `Get details for a graph relationship by its ID.
+
+Prints Entity ID, Version ID, Type, From (source entity ID), To (destination
+entity ID), Version number, Created timestamp, and Properties as formatted
+JSON. Use --output json to receive the full relationship as JSON instead.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)

@@ -20,14 +20,23 @@ var mcpServersCmd = &cobra.Command{
 var listMCPServersCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all MCP servers",
-	Long:  "List all MCP servers configured for the current project",
+	Long: `List all MCP servers configured for the current project.
+
+Prints a numbered list with each server's Name (enabled/disabled), Description
+(if set), ID, Type (sse/http/stdio), URL or Command, Tool count, and Created
+timestamp.`,
 	RunE:  runListMCPServers,
 }
 
 var getMCPServerCmd = &cobra.Command{
 	Use:   "get [server-id]",
 	Short: "Get MCP server details",
-	Long:  "Get detailed information about a specific MCP server, including its tools",
+	Long: `Get full details for a specific MCP server, including its registered tools.
+
+Prints Name (enabled/disabled), ID, Project ID, Description (if set), Type,
+URL (for sse/http), Command and Args (for stdio), Env Vars count, Headers count,
+Created, and Updated timestamps. Also lists all registered tools with their
+enabled/disabled state and description (truncated to 60 characters).`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runGetMCPServer,
 }
@@ -71,7 +80,11 @@ var inspectMCPServerCmd = &cobra.Command{
 var toolsMCPServerCmd = &cobra.Command{
 	Use:   "tools [server-id]",
 	Short: "List tools for an MCP server",
-	Long:  "List all tools registered for a specific MCP server",
+	Long: `List all tools registered for a specific MCP server.
+
+Each tool entry shows its enabled/disabled state and tool name. Use
+'memory mcp-servers sync <id>' first to discover available tools if the list
+is empty.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runListMCPServerTools,
 }
@@ -132,6 +145,9 @@ func runListMCPServers(cmd *cobra.Command, args []string) error {
 			enabledStr = "disabled"
 		}
 		fmt.Printf("%d. %s (%s)\n", i+1, s.Name, enabledStr)
+		if s.Description != nil && *s.Description != "" {
+			fmt.Printf("   Description: %s\n", *s.Description)
+		}
 		fmt.Printf("   ID:        %s\n", s.ID)
 		fmt.Printf("   Type:      %s\n", s.Type)
 		if s.URL != nil && *s.URL != "" {
@@ -176,6 +192,9 @@ func runGetMCPServer(cmd *cobra.Command, args []string) error {
 	fmt.Printf("MCP Server: %s (%s)\n", s.Name, enabledStr)
 	fmt.Printf("  ID:         %s\n", s.ID)
 	fmt.Printf("  Project ID: %s\n", s.ProjectID)
+	if s.Description != nil && *s.Description != "" {
+		fmt.Printf("  Description: %s\n", *s.Description)
+	}
 	fmt.Printf("  Type:       %s\n", s.Type)
 	if s.URL != nil && *s.URL != "" {
 		fmt.Printf("  URL:        %s\n", *s.URL)
