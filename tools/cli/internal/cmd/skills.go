@@ -89,7 +89,12 @@ func resolveSkillScope(cmd *cobra.Command) (projectID, orgID string, err error) 
 var skillListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List skills installed on the server",
-	Long:  "List skills stored on the server and available to agents. Use --project to include project-scoped skills, or --global for global only.",
+	Long: `List skills stored on the server and available to agents.
+
+Output is a table with columns: NAME, DESCRIPTION (truncated to 55 characters),
+SCOPE (global/org/project), and ID. Use --project to include project-scoped
+skills, or --global for global-only skills. Use --json to receive the full
+skill list as JSON.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := getClient(cmd)
 		if err != nil {
@@ -148,6 +153,11 @@ var skillListCmd = &cobra.Command{
 var skillGetCmd = &cobra.Command{
 	Use:   "get <id>",
 	Short: "Get a skill by ID",
+	Long: `Get full details for a skill by its ID.
+
+Prints ID, Name, Description, Scope (global / org / project), Created and
+Updated timestamps, and the full skill Content. Use --json to receive the raw
+JSON response instead.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := getClient(cmd)
@@ -257,6 +267,11 @@ var skillCreateCmd = &cobra.Command{
 var skillUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
 	Short: "Update a skill",
+	Long: `Update the description or content of an existing skill.
+
+Prints "Skill updated." followed by the skill's ID and Name on success. At
+least one of --description, --content, or --content-file must be provided.
+Use --json to receive the full updated skill as JSON instead.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		req := &sdkskills.UpdateSkillRequest{}
@@ -312,6 +327,10 @@ var skillUpdateCmd = &cobra.Command{
 var skillDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a skill by ID",
+	Long: `Permanently delete a skill by its ID.
+
+Prints "Skill <id> deleted." on success. You will be prompted for confirmation
+unless the --confirm flag is provided.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !skillConfirmFlag {

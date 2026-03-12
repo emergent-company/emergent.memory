@@ -59,7 +59,11 @@ func getDocsClient(cmd *cobra.Command) (*sdkdocs.Client, error) {
 var documentsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List documents",
-	Long:  "List documents in the current project",
+	Long: `List documents in the current project.
+
+Output is a table with columns: ID, Filename, MIME Type, Size (bytes), and
+Created date. Use --limit to control how many records are returned. Use
+--output json to receive the full document list as JSON.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		d, err := getDocsClient(cmd)
 		if err != nil {
@@ -121,6 +125,11 @@ var documentsListCmd = &cobra.Command{
 var documentsGetCmd = &cobra.Command{
 	Use:   "get <id>",
 	Short: "Get a document by ID",
+	Long: `Get details for a specific document by its ID.
+
+Prints ID, Filename, MIME Type, Size (bytes), Conversion Status, total Chunks,
+Embedded Chunks, and Created/Updated timestamps. Use --output json to receive
+the full document record as JSON instead.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		d, err := getDocsClient(cmd)
@@ -241,7 +250,11 @@ var documentsUploadCmd = &cobra.Command{
 var documentsDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a document",
-	Long:  "Delete a document and all related entities (chunks, extractions, graph objects)",
+	Long: `Delete a document and all related entities.
+
+Prints the deletion status and a summary of removed entities: Chunks,
+Extraction jobs, Graph objects, and Graph relationships. Use --output json
+for a machine-readable response.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		d, err := getDocsClient(cmd)

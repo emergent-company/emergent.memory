@@ -221,6 +221,12 @@ func printEmbeddingStatus(result map[string]any) {
 var embeddingsStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show pause/run state of all embedding workers",
+	Long: `Show the current state of all embedding workers.
+
+Prints a worker state table for the objects, relationships, and sweep workers.
+Each worker is shown with a symbol indicating its state: running (●), paused (⏸),
+or stopped (○). Also displays the current worker Config: batch_size, concurrency,
+interval_ms, and stale_minutes.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		result, err := embeddingsDoRequest(http.MethodGet, "/api/embeddings/status")
 		if err != nil {
@@ -236,6 +242,11 @@ var embeddingsStatusCmd = &cobra.Command{
 var embeddingsPauseCmd = &cobra.Command{
 	Use:   "pause",
 	Short: "Pause all embedding workers (object, relationship, sweep)",
+	Long: `Pause all embedding workers (objects, relationships, and sweep).
+
+Prints a confirmation message from the server, then displays the updated worker
+state table showing each worker's status symbol (running ●, paused ⏸, stopped ○)
+and the current Config (batch_size, concurrency, interval_ms, stale_minutes).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		result, err := embeddingsDoRequest(http.MethodPost, "/api/embeddings/pause")
 		if err != nil {
@@ -254,6 +265,11 @@ var embeddingsPauseCmd = &cobra.Command{
 var embeddingsResumeCmd = &cobra.Command{
 	Use:   "resume",
 	Short: "Resume all embedding workers",
+	Long: `Resume all paused embedding workers (objects, relationships, and sweep).
+
+Prints a confirmation message from the server, then displays the updated worker
+state table showing each worker's status symbol (running ●, paused ⏸, stopped ○)
+and the current Config (batch_size, concurrency, interval_ms, stale_minutes).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		result, err := embeddingsDoRequest(http.MethodPost, "/api/embeddings/resume")
 		if err != nil {

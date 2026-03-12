@@ -389,7 +389,16 @@ func pollWithSpinner(oidcCfg *auth.OIDCConfig, deviceResp *auth.DeviceCodeRespon
 var statusCmd = &cobra.Command{
 	Use:     "status",
 	Short:   "Show current authentication status",
-	Long:    "Display information about the current authentication session including token expiry and user details.",
+	Long: `Display detailed information about the current authentication session and server health.
+
+Shows authentication Mode (project token, account API key, or OAuth), Server URL,
+masked credential key, and connection Status (Connected or unreachable). Also
+displays server Health and Version. If authenticated as a user, prints the active
+project Name and ID, or a numbered list of all accessible projects.
+
+Additionally prints full Usage Statistics for the active project including:
+Documents, Graph Objects, Relationships, Type Registry (Types, Enabled,
+TypesWithObjects), Template Packs, and Processing Pipeline job queue depths.`,
 	GroupID: "account",
 	RunE:    runStatus,
 }
@@ -1162,7 +1171,12 @@ func init() {
 var mcpGuideCmd = &cobra.Command{
 	Use:     "mcp-guide",
 	Short:   "Show MCP configuration for AI agents",
-	Long:    "Print MCP server configuration snippets for connecting AI agents (Claude Desktop, Cursor, etc.) to Memory.",
+	Long: `Print ready-to-use MCP server configuration snippets for connecting AI agents to Memory.
+
+Outputs JSON configuration blocks for Claude Desktop, Cursor, and other MCP-
+compatible clients. Snippets use the active server URL and API key (project
+token takes precedence over account key). Copy the relevant block into your
+AI client's MCP configuration to enable Memory tools.`,
 	GroupID: "ai",
 	RunE:    runMCPGuide,
 }
