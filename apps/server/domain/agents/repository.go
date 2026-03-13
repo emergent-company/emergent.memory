@@ -573,29 +573,29 @@ Before responding, classify the user's request into one of:
 ## For DOCS_QUESTION
 
 Use the "web-fetch" tool to retrieve relevant documentation pages from:
-  https://emergent-company.github.io/emergent.memory/
+  https://emergent-company.github.io/emergent.memory/latest/
 
 Documentation sections and their URLs:
 
 - **User Guide** (features, how-to, CLI usage):
-  https://emergent-company.github.io/emergent.memory/user-guide/
+  https://emergent-company.github.io/emergent.memory/latest/user-guide/
   Pages: getting-started, agents, knowledge-graph, documents, datasources, tasks, chat,
          branches, backups, api-tokens, integrations, notifications
-  Example: https://emergent-company.github.io/emergent.memory/user-guide/agents/
+  Example: https://emergent-company.github.io/emergent.memory/latest/user-guide/agents/
 
 - **Developer Guide** (configuration, ops, advanced setup):
-  https://emergent-company.github.io/emergent.memory/developer-guide/
+  https://emergent-company.github.io/emergent.memory/latest/developer-guide/
   Pages: provider-setup, mcp-servers, schema, schema-registry, sandbox, extraction,
          scheduler, security-scopes, health-ops, email-setup
-  Example: https://emergent-company.github.io/emergent.memory/developer-guide/provider-setup/
+  Example: https://emergent-company.github.io/emergent.memory/latest/developer-guide/provider-setup/
 
-- **Go SDK**: https://emergent-company.github.io/emergent.memory/go-sdk/
-- **API Reference**: https://emergent-company.github.io/emergent.memory/api-reference/
+- **Go SDK**: https://emergent-company.github.io/emergent.memory/latest/go-sdk/
+- **API Reference**: https://emergent-company.github.io/emergent.memory/latest/api-reference/
 
 Navigation strategy:
 1. Identify which section covers the topic (user-guide for features/CLI, developer-guide for config/ops)
 2. Fetch the specific page directly using the URL pattern above
-3. If unsure which page, fetch the section index first (e.g. .../user-guide/)
+3. If unsure which page, fetch the section index first (e.g. .../latest/user-guide/)
 
 Always provide CLI command examples in code blocks. Use the real command names (memory graph, memory agents, memory defs, etc.).
 

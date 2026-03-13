@@ -40,9 +40,12 @@ var attrRenames = map[string]string{
 // attribute keys (Google ADK gcp.vertex.agent.* and gen_ai.*) to the
 // memory.llm.* namespace before spans are exported.
 //
-// It wraps a delegate processor and must be registered on both the server's
-// sdktrace.TracerProvider and on the ADK's internal tracer via
-// adktelemetry.RegisterSpanProcessor so that all ADK-emitted spans are rewritten.
+// It wraps a delegate processor and is registered on the server's
+// sdktrace.TracerProvider. ADK spans flow through the global OTel provider
+// and are therefore rewritten by this processor automatically — there is no
+// need to register a separate processor on the ADK's local provider via
+// adktelemetry.RegisterSpanProcessor (doing so would cause every ADK span
+// to be exported twice).
 type AttrRewriteProcessor struct {
 	delegate sdktrace.SpanProcessor
 }

@@ -13,7 +13,6 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/fx"
-	adktelemetry "google.golang.org/adk/telemetry"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	pkgtracing "github.com/emergent-company/emergent.memory/pkg/tracing"
@@ -107,12 +106,17 @@ func NewTracerProvider(cfg *config.Config, log *slog.Logger) (tracerProviderResu
 
 	otel.SetTracerProvider(tp)
 
-	// Register the same rewriting processor on the ADK's internal tracer so
-	// that spans emitted by the ADK's own TracerProvider are also rewritten.
-	// This must be called before any ADK spans are emitted.
-	adktelemetry.RegisterSpanProcessor(
-		pkgtracing.NewAttrRewriteProcessor(sdktrace.NewBatchSpanProcessor(exp)),
-	)
+	// NOTE: we intentionally do NOT call adktelemetry.RegisterSpanProcessor here.
+	//
+	// The Google ADK emits every span twice: once via its own local TracerProvider
+	// (populated via RegisterSpanProcessor) and once via otel.GetTracerProvider()
+	// (the global provider). Registering a processor on both paths causes every
+	// ADK span to be exported twice with distinct spanIDs, polluting Tempo with
+	// 100% duplicate spans.
+	//
+	// Since we already set the global provider above (otel.SetTracerProvider(tp)),
+	// and that provider wraps the exporter in an AttrRewriteProcessor, ADK spans
+	// are correctly rewritten and exported through the global path alone.
 
 	return tracerProviderResult{SDKProvider: tp}, nil
 }
