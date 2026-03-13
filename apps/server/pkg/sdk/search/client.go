@@ -56,13 +56,11 @@ type SearchResult struct {
 	Content    string `json:"content,omitempty"`
 
 	// Relationship fields
-	RelationshipType string  `json:"relationship_type,omitempty"`
-	SrcObjectID      string  `json:"src_object_id,omitempty"`
-	SrcObjectType    string  `json:"src_object_type,omitempty"`
-	SrcKey           *string `json:"src_key,omitempty"`
-	DstObjectID      string  `json:"dst_object_id,omitempty"`
-	DstObjectType    string  `json:"dst_object_type,omitempty"`
-	DstKey           *string `json:"dst_key,omitempty"`
+	RelationshipType string         `json:"relationship_type,omitempty"`
+	SourceID         string         `json:"source_id,omitempty"`
+	TargetID         string         `json:"target_id,omitempty"`
+	TripletText      string         `json:"triplet_text,omitempty"`
+	Properties       map[string]any `json:"properties,omitempty"`
 }
 
 // SearchMetadata contains metadata about the search results.

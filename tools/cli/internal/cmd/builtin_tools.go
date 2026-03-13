@@ -65,7 +65,7 @@ Examples:
 }
 
 func runListBuiltinTools(cmd *cobra.Command, args []string) error {
-	projectID, err := resolveProjectContext(cmd, "")
+	projectID, err := resolveProjectContext(cmd, agentProjectID)
 	if err != nil {
 		return err
 	}

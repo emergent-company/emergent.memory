@@ -26,7 +26,7 @@ var listAgentDefsCmd = &cobra.Command{
 
 Prints a numbered list with each definition's Name, ID, FlowType, Visibility,
 IsDefault flag, Tool count, and Description (if set).`,
-	RunE:  runListAgentDefs,
+	RunE: runListAgentDefs,
 }
 
 var getAgentDefCmd = &cobra.Command{
@@ -39,8 +39,8 @@ set), System Prompt (truncated to 200 characters), Model configuration (Name,
 Temperature, MaxTokens), Tools list, MaxSteps, DefaultTimeout, ACP Config
 (DisplayName, Description, Capabilities), CreatedAt and UpdatedAt timestamps,
 and any extra Config JSON.`,
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runGetAgentDef,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runGetAgentDef,
 }
 
 var createAgentDefCmd = &cobra.Command{
@@ -49,8 +49,8 @@ var createAgentDefCmd = &cobra.Command{
 	Long: `Create a new agent definition.
 
 Examples:
-  emergent-cli agent-definitions create --name "my-def" --system-prompt "You are a helpful agent"
-  emergent-cli defs create --name "extractor" --flow-type single --tools "search,graph_query" --visibility project`,
+  memory agent-definitions create --name "my-def" --system-prompt "You are a helpful agent"
+  memory defs create --name "extractor" --flow-type single --tools "search,graph_query" --visibility project`,
 	RunE: runCreateAgentDef,
 }
 

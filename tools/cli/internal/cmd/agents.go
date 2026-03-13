@@ -27,7 +27,7 @@ var listAgentsCmd = &cobra.Command{
 Prints a numbered list with each agent's Name, ID, Enabled status, Trigger
 Type, Cron schedule (if any), Description (if set), Last Run timestamp, and
 Last Run Status. Use --project to specify a project other than the active one.`,
-	RunE:  runListAgents,
+	RunE: runListAgents,
 }
 
 var getAgentCmd = &cobra.Command{
@@ -39,8 +39,8 @@ Prints Name, ID, Project ID, Strategy Type, Enabled status, Trigger Type,
 Execution Mode, Cron Schedule (if set), Description (if set), Prompt (if set),
 Reaction Config (Object Types and Events), Last Run At, Last Run Status,
 Created At, Updated At, and any extra Config JSON.`,
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runGetAgent,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runGetAgent,
 }
 
 var createAgentCmd = &cobra.Command{
@@ -49,9 +49,9 @@ var createAgentCmd = &cobra.Command{
 	Long: `Create a new runtime agent for the current project.
 
 Examples:
-  emergent-cli agents create --name "my-agent" --project <id>
-  emergent-cli agents create --name "cron-agent" --trigger-type schedule --cron "0 */5 * * * *"
-  emergent-cli agents create --name "reaction-agent" --trigger-type reaction --reaction-events created,updated --reaction-object-types document`,
+  memory agents create --name "my-agent" --project <id>
+  memory agents create --name "cron-agent" --trigger-type schedule --cron "0 */5 * * * *"
+  memory agents create --name "reaction-agent" --trigger-type reaction --reaction-events created,updated --reaction-object-types document`,
 	RunE: runCreateAgent,
 }
 
@@ -69,8 +69,8 @@ var deleteAgentCmd = &cobra.Command{
 	Long: `Delete an agent by ID.
 
 Prints "Agent <id> deleted successfully." on success.`,
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runDeleteAgent,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runDeleteAgent,
 }
 
 var triggerAgentCmd = &cobra.Command{
@@ -80,8 +80,8 @@ var triggerAgentCmd = &cobra.Command{
 
 Prints "Agent triggered successfully!" with an optional message on success, or
 "Agent trigger failed." with an error message on failure.`,
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runTriggerAgent,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runTriggerAgent,
 }
 
 var runsAgentCmd = &cobra.Command{
@@ -177,7 +177,8 @@ func resolveAgentArgOrPick(cmd *cobra.Command, c *client.Client, args []string) 
 func runListAgents(cmd *cobra.Command, args []string) error {
 	// Resolve project first — this triggers the interactive picker when no
 	// project is configured and the terminal is interactive.
-	if _, err := resolveProjectContext(cmd, agentProjectID); err != nil {
+	projectID, err := resolveProjectContext(cmd, agentProjectID)
+	if err != nil {
 		return err
 	}
 
@@ -185,6 +186,7 @@ func runListAgents(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	c.SetContext("", projectID)
 
 	result, err := c.SDK.Agents.List(context.Background())
 	if err != nil {
@@ -651,8 +653,8 @@ var listQuestionsCmd = &cobra.Command{
 
 Outputs the full question list as indented JSON, including each question's ID,
 status, prompt text, and response (if already answered).`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runListQuestions,
+	Args: cobra.ExactArgs(1),
+	RunE: runListQuestions,
 }
 
 var listProjectQuestionsCmd = &cobra.Command{
@@ -662,7 +664,7 @@ var listProjectQuestionsCmd = &cobra.Command{
 
 Outputs the full question list as indented JSON. Use --status to filter by
 question status (e.g. pending, answered).`,
-	RunE:  runListProjectQuestions,
+	RunE: runListProjectQuestions,
 }
 
 var respondToQuestionCmd = &cobra.Command{
@@ -672,8 +674,8 @@ var respondToQuestionCmd = &cobra.Command{
 
 Sends the response text as the answer to the specified question. Outputs the
 updated question record as indented JSON on success.`,
-	Args:  cobra.ExactArgs(2),
-	RunE:  runRespondToQuestion,
+	Args: cobra.ExactArgs(2),
+	RunE: runRespondToQuestion,
 }
 
 // Flags for questions
@@ -696,8 +698,8 @@ var listHooksCmd = &cobra.Command{
 
 Prints a numbered list with each hook's Label, ID, Enabled status, Rate Limit
 configuration (requests/minute and burst size, if set), and Created timestamp.`,
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runListHooks,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runListHooks,
 }
 
 var createHookCmd = &cobra.Command{
@@ -706,8 +708,8 @@ var createHookCmd = &cobra.Command{
 	Long: `Create a new webhook hook for an agent. The plaintext token is only shown once.
 
 Examples:
-  emergent-cli agents hooks create <agent-id> --label "CI/CD Pipeline"
-  emergent-cli agents hooks create <agent-id> --label "Staging" --rate-limit 30 --burst-size 5`,
+  memory agents hooks create <agent-id> --label "CI/CD Pipeline"
+  memory agents hooks create <agent-id> --label "Staging" --rate-limit 30 --burst-size 5`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runCreateHook,
 }

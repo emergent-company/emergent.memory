@@ -26,7 +26,7 @@ for the specified project. Each token entry prints: Name, ID, Prefix, Type
 (account or project), Scopes, Created timestamp, and Revoked timestamp (if
 applicable). For project tokens, the full plaintext token value is also fetched
 and displayed — treat this output as sensitive.`,
-	RunE:  runListTokens,
+	RunE: runListTokens,
 }
 
 var createTokenCmd = &cobra.Command{
@@ -52,8 +52,8 @@ var getTokenCmd = &cobra.Command{
 
 Use --project to specify a project-scoped token; without it, looks up an
 account-level token.`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runGetToken,
+	Args: cobra.ExactArgs(1),
+	RunE: runGetToken,
 }
 
 var revokeTokenCmd = &cobra.Command{
@@ -214,7 +214,7 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Scopes:  %s\n", strings.Join(result.Scopes, ", "))
 	fmt.Printf("  Created: %s\n", result.CreatedAt)
 	fmt.Println()
-	fmt.Println("  Retrieve this token later: emergent-cli tokens get " + result.ID)
+	fmt.Println("  Retrieve this token later: memory tokens get " + result.ID)
 	fmt.Println()
 
 	return nil

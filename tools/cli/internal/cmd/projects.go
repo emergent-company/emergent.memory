@@ -3,8 +3,10 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -37,12 +39,12 @@ has a project info document set, it is shown beneath the name. Use the --stats
 flag to also display per-project counts for Documents, Graph Objects,
 Relationships, Extraction jobs (total/running/queued), and installed Schemas
 (with their object and relationship type names).`,
-	RunE:  runListProjects,
+	RunE: runListProjects,
 }
 
 var getProjectCmd = &cobra.Command{
-	Use:               "get [name-or-id]",
-	Short:             "Get project details",
+	Use:   "get [name-or-id]",
+	Short: "Get project details",
 	Long: `Get details for a specific project by name or ID.
 
 Prints the project's Name, ID, and Org ID. If a project info document is set
@@ -63,7 +65,7 @@ Prints the new project's Name and ID on success. If no LLM provider credentials
 are configured for the organization, a warning is shown explaining that AI
 features (embeddings, search, extraction) will not work until a provider is
 added via 'memory provider configure'.`,
-	RunE:  runCreateProject,
+	RunE: runCreateProject,
 }
 
 var deleteProjectCmd = &cobra.Command{
@@ -76,15 +78,18 @@ var deleteProjectCmd = &cobra.Command{
 }
 
 var setProjectCmd = &cobra.Command{
-	Use:               "set [name-or-id]",
-	Short:             "Set active project",
-	Long: `Set the active project context by writing credentials to .env.local.
+	Use:   "set [name-or-id]",
+	Short: "Set active project",
+	Long: `Set the active project context.
 
-Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_TOKEN into
-.env.local in the current directory so that subsequent CLI commands and
-application code automatically use the selected project. If no existing token
-is found for the project, a new one is created automatically. Run without
-arguments to select interactively from a numbered list of available projects.`,
+Updates project_id in ~/.memory/config.yaml and writes MEMORY_PROJECT_ID,
+MEMORY_PROJECT_NAME, and MEMORY_PROJECT_TOKEN into .env.local in the current
+directory so that subsequent CLI commands and application code automatically use
+the selected project. If no existing token is found for the project, a new one
+is created automatically. Run without arguments to select interactively from a
+numbered list of available projects.
+
+Use --clear to remove the active project from the global config.`,
 	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
 	RunE:              runSetProject,
@@ -101,7 +106,7 @@ MEMORY_PROJECT_TOKEN so subsequent CLI commands pick it up automatically.
 Scopes default to: data:read data:write schema:read agents:read agents:write
 
 Example:
-  emergent projects create-token my-project --name onboard-token`,
+  memory projects create-token my-project --name onboard-token`,
 	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
 	RunE:              runProjectsCreateToken,
@@ -204,6 +209,7 @@ var (
 	setProviderLocation   string
 	setProviderEmbedding  string
 	setProviderGenerative string
+	setProjectClearFlag   bool
 )
 
 var (
@@ -305,8 +311,18 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(projectList) == 0 {
+		if output == "json" {
+			fmt.Println("[]")
+			return nil
+		}
 		fmt.Println("No projects found.")
 		return nil
+	}
+
+	if output == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(projectList)
 	}
 
 	fmt.Printf("Found %d project(s):\n\n", len(projectList))
@@ -346,6 +362,12 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 	project, err := c.SDK.Projects.Get(context.Background(), projectID, opts)
 	if err != nil {
 		return fmt.Errorf("failed to get project: %w", err)
+	}
+
+	if output == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(project)
 	}
 
 	fmt.Printf("Project: %s (%s)\n", project.Name, project.ID)
@@ -456,9 +478,18 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to fetch organizations: %w", err)
 		}
 		if len(orgs) == 0 {
-			return fmt.Errorf("no organizations found. Create an organization first or specify --org-id")
+			// Org list may be empty for OAuth users due to membership resolution.
+			// Fall back to deriving the org ID from an existing project.
+			existingProjects, listErr := c.SDK.Projects.List(context.Background(), nil)
+			if listErr == nil && len(existingProjects) > 0 && existingProjects[0].OrgID != "" {
+				orgID = existingProjects[0].OrgID
+			}
+		} else {
+			orgID = orgs[0].ID
 		}
-		orgID = orgs[0].ID
+	}
+	if orgID == "" {
+		return fmt.Errorf("could not determine organization ID.\nSpecify it with: memory projects create --name %q --org-id <org-id>", projectName)
 	}
 
 	req := &projects.CreateProjectRequest{
@@ -480,7 +511,7 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Println("Warning: No LLM provider credentials are configured for your organization.")
 		fmt.Println("AI features (embeddings, search, extraction) will not work until you add one.")
-		fmt.Println("  Run: emergent provider configure google --api-key <api-key>")
+		fmt.Println("  Run: memory provider configure google --api-key <api-key>")
 	}
 
 	return nil
@@ -509,6 +540,30 @@ func runDeleteProject(cmd *cobra.Command, args []string) error {
 }
 
 func runSetProject(cmd *cobra.Command, args []string) error {
+	// Handle --clear: remove project_id from global config and .env.local
+	if setProjectClearFlag {
+		configPath, _ := cmd.Flags().GetString("config")
+		if configPath == "" {
+			configPath = config.DiscoverPath("")
+		}
+		cfg, err := config.Load(configPath)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		if cfg == nil {
+			cfg = &config.Config{}
+		}
+		cfg.ProjectID = ""
+		if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+			return fmt.Errorf("failed to create config directory: %w", err)
+		}
+		if err := config.Save(cfg, configPath); err != nil {
+			return fmt.Errorf("failed to save config: %w", err)
+		}
+		fmt.Println("Active project cleared from config.")
+		return nil
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
@@ -622,7 +677,28 @@ func runSetProject(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write to .env.local: %w", err)
 	}
 
+	// Also update project_id in the global config (~/.memory/config.yaml)
+	configPath, _ := cmd.Flags().GetString("config")
+	if configPath == "" {
+		configPath = config.DiscoverPath("")
+	}
+	globalCfg, loadErr := config.Load(configPath)
+	if loadErr != nil && !os.IsNotExist(loadErr) {
+		fmt.Fprintf(os.Stderr, "Warning: could not load global config: %v\n", loadErr)
+	} else {
+		if globalCfg == nil {
+			globalCfg = &config.Config{}
+		}
+		globalCfg.ProjectID = selectedProjectID
+		if mkErr := os.MkdirAll(filepath.Dir(configPath), 0755); mkErr == nil {
+			if saveErr := config.Save(globalCfg, configPath); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not update global config: %v\n", saveErr)
+			}
+		}
+	}
+
 	fmt.Println("\nSuccessfully updated .env.local with project context!")
+	fmt.Printf("Active project set to: %s (%s)\n", selectedProjectName, selectedProjectID)
 	return nil
 }
 
@@ -756,6 +832,8 @@ func init() {
 	listProjectsCmd.Flags().StringVar(&searchFlag, "search", "", "Search projects by name or description")
 
 	getProjectCmd.Flags().BoolVar(&projectStatsFlag, "stats", false, "Include project statistics (documents, objects, jobs, schemas)")
+
+	setProjectCmd.Flags().BoolVar(&setProjectClearFlag, "clear", false, "Clear the active project from config")
 
 	setProjectProviderCmd.Flags().StringVar(&setProviderAPIKey, "api-key", "", "Google AI API key (for google)")
 	setProjectProviderCmd.Flags().StringVar(&setProviderSAFile, "sa-file", "", "Path to Vertex AI service account JSON (for google-vertex)")

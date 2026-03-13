@@ -53,8 +53,8 @@ Examples:
 }
 
 func init() {
-	embeddingsCmd.PersistentFlags().StringVar(&embeddingsFlags.server, "server", "", "Emergent server URL (overrides config)")
-	embeddingsCmd.PersistentFlags().StringVar(&embeddingsFlags.configPath, "config-path", "", "path to Emergent config.yaml")
+	embeddingsCmd.PersistentFlags().StringVar(&embeddingsFlags.server, "server", "", "Memory server URL (overrides config)")
+	embeddingsCmd.PersistentFlags().StringVar(&embeddingsFlags.configPath, "config-path", "", "path to Memory config.yaml")
 
 	embeddingsCmd.AddCommand(embeddingsStatusCmd)
 	embeddingsCmd.AddCommand(embeddingsPauseCmd)

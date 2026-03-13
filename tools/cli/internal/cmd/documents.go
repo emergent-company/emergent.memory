@@ -130,7 +130,7 @@ var documentsGetCmd = &cobra.Command{
 Prints ID, Filename, MIME Type, Size (bytes), Conversion Status, total Chunks,
 Embedded Chunks, and Created/Updated timestamps. Use --output json to receive
 the full document record as JSON instead.`,
-	Args:  cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		d, err := getDocsClient(cmd)
 		if err != nil {
@@ -222,6 +222,11 @@ var documentsUploadCmd = &cobra.Command{
 		out := cmd.OutOrStdout()
 
 		if docsOutputFlag == "json" {
+			// Output the document directly (flat), consistent with other creation commands.
+			// Fall back to the full response if the document is nil (e.g. duplicate).
+			if result.Document != nil {
+				return json.NewEncoder(out).Encode(result.Document)
+			}
 			return json.NewEncoder(out).Encode(result)
 		}
 
@@ -255,7 +260,7 @@ var documentsDeleteCmd = &cobra.Command{
 Prints the deletion status and a summary of removed entities: Chunks,
 Extraction jobs, Graph objects, and Graph relationships. Use --output json
 for a machine-readable response.`,
-	Args:  cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		d, err := getDocsClient(cmd)
 		if err != nil {

@@ -31,9 +31,9 @@ no agent ID is needed.
 Use --mode=search for direct hybrid search without AI reasoning.
 
 Examples:
-  emergent query "what are the main services and how do they relate?"
-  emergent query --mode=search "auth service"
-  emergent query --project abc123 "list all requirements"`,
+  memory query "what are the main services and how do they relate?"
+  memory query --mode=search "auth service"
+  memory query --project abc123 "list all requirements"`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runQuery,
 }
@@ -301,23 +301,15 @@ func runSearchQuery(ctx context.Context, c *client.Client, query, projectID stri
 
 		case "relationship":
 			resultType = "relationship"
-			srcLabel := ""
-			if result.SrcKey != nil && *result.SrcKey != "" {
-				srcLabel = *result.SrcKey
-			} else if result.SrcObjectID != "" {
-				srcLabel = result.SrcObjectID
+			if result.TripletText != "" {
+				details = result.TripletText
+			} else {
+				details = fmt.Sprintf("(%s) -[%s]-> (%s)",
+					result.SourceID,
+					result.RelationshipType,
+					result.TargetID)
 			}
-			dstLabel := ""
-			if result.DstKey != nil && *result.DstKey != "" {
-				dstLabel = *result.DstKey
-			} else if result.DstObjectID != "" {
-				dstLabel = result.DstObjectID
-			}
-			details = fmt.Sprintf("%s(%s) -[%s]-> %s(%s)",
-				result.SrcObjectType, srcLabel,
-				result.RelationshipType,
-				result.DstObjectType, dstLabel)
-			id = result.SrcObjectID
+			id = result.SourceID
 		}
 
 		details = strings.ReplaceAll(details, "|", "\\|")

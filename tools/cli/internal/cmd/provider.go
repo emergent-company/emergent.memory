@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// providerCmd is the root for the `emergent provider` command group.
+// providerCmd is the root for the `memory provider` command group.
 var providerCmd = &cobra.Command{
 	Use:     "provider",
 	Short:   "Manage LLM provider credentials and models",
@@ -38,9 +38,9 @@ Supported providers:
                 Optionally supply --key-file for a service account JSON key.
 
 Examples:
-  emergent provider configure google --api-key AIzaSy...
-  emergent provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
-  emergent provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004`,
+  memory provider configure google --api-key AIzaSy...
+  memory provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
+  memory provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004`,
 	Args:      cobra.ExactArgs(1),
 	ValidArgs: []string{"google", "google-vertex"},
 	RunE:      runProviderConfigure,
@@ -115,7 +115,7 @@ func runProviderConfigure(cmd *cobra.Command, args []string) error {
 	if cfg.EmbeddingModel != "" {
 		fmt.Printf("  Embedding model:  %s\n", cfg.EmbeddingModel)
 	}
-	fmt.Printf("Run 'emergent provider test' to verify the configuration.\n")
+	fmt.Printf("Run 'memory provider test' to verify the configuration.\n")
 	return nil
 }
 
@@ -136,9 +136,9 @@ Supported providers:
 The project is read from --project or the MEMORY_PROJECT_ID environment variable.
 
 Examples:
-  emergent provider configure-project google --api-key AIzaSy...
-  emergent provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
-  emergent provider configure-project google --remove`,
+  memory provider configure-project google --api-key AIzaSy...
+  memory provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
+  memory provider configure-project google --remove`,
 	Args:      cobra.ExactArgs(1),
 	ValidArgs: []string{"google", "google-vertex"},
 	RunE:      runProviderConfigureProject,
@@ -226,7 +226,7 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 	if cfg.EmbeddingModel != "" {
 		fmt.Printf("  Embedding model:  %s\n", cfg.EmbeddingModel)
 	}
-	fmt.Printf("Run 'emergent provider test --project %s' to verify the configuration.\n", projectID)
+	fmt.Printf("Run 'memory provider test --project %s' to verify the configuration.\n", projectID)
 	return nil
 }
 
@@ -243,15 +243,16 @@ Pass a provider name to filter to a single provider.
 Use --type to filter by model type (embedding or generative).
 
 Examples:
-  emergent provider models
-  emergent provider models google-vertex
-  emergent provider models google --type generative`,
+  memory provider models
+  memory provider models google-vertex
+  memory provider models google --type generative`,
 	Args:      cobra.MaximumNArgs(1),
 	ValidArgs: []string{"google", "google-vertex"},
 	RunE:      runProviderModels,
 }
 
 var modelsTypeFlag string
+var modelsOrgID string
 
 func runProviderModels(cmd *cobra.Command, args []string) error {
 	c, err := getClient(cmd)
@@ -270,7 +271,7 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 		}
 		if len(models) == 0 {
 			fmt.Printf("No models cached for provider %q.\n", providerArg)
-			fmt.Println("Check that credentials are configured with 'emergent provider configure'.")
+			fmt.Println("Check that credentials are configured with 'memory provider configure'.")
 			return nil
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -288,7 +289,10 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	orgID := cfg.OrgID
+	orgID := modelsOrgID
+	if orgID == "" {
+		orgID = cfg.OrgID
+	}
 	if orgID == "" {
 		// Fall back to API discovery if not in config
 		orgID, err = resolveProviderOrgID(c, "")
@@ -303,7 +307,7 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 	}
 	if len(configs) == 0 {
 		fmt.Println("No providers configured.")
-		fmt.Println("Run 'emergent provider configure google --api-key <key>' to configure a provider.")
+		fmt.Println("Run 'memory provider configure google --api-key <key>' to configure a provider.")
 		return nil
 	}
 
@@ -348,9 +352,9 @@ Output is a table with columns: PROVIDER, MODEL, TEXT IN (tokens), IMAGE
 A total estimated cost line is printed below the table.
 
 Examples:
-  emergent provider usage
-  emergent provider usage --project <id>
-  emergent provider usage --since 2024-01-01`,
+  memory provider usage
+  memory provider usage --project <id>
+  memory provider usage --since 2024-01-01`,
 	RunE: runProviderUsage,
 }
 
@@ -454,9 +458,9 @@ Use --project to test using the project-level credential hierarchy
 (project override → org) instead of org credentials only.
 
 Examples:
-  emergent provider test
-  emergent provider test google-vertex
-  emergent provider test google --project <id>`,
+  memory provider test
+  memory provider test google-vertex
+  memory provider test google --project <id>`,
 	Args:      cobra.MaximumNArgs(1),
 	ValidArgs: []string{"google", "google-vertex"},
 	RunE:      runProviderTest,
@@ -499,7 +503,7 @@ func runProviderTest(cmd *cobra.Command, args []string) error {
 		}
 		if len(configs) == 0 {
 			fmt.Println("No providers configured.")
-			fmt.Println("Run 'emergent provider configure google --api-key <key>' to configure a provider.")
+			fmt.Println("Run 'memory provider configure google --api-key <key>' to configure a provider.")
 			return nil
 		}
 		for _, pc := range configs {
@@ -572,6 +576,7 @@ func init() {
 
 	// models flags
 	providerModelsCmd.Flags().StringVar(&modelsTypeFlag, "type", "", "Filter by model type: embedding or generative")
+	providerModelsCmd.Flags().StringVar(&modelsOrgID, "org-id", "", "Organization ID (auto-detected from config)")
 
 	// usage flags
 	providerUsageCmd.Flags().StringVar(&usageProjectID, "project", "", "Filter usage to a specific project ID")

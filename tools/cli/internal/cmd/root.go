@@ -78,6 +78,9 @@ func Execute() error {
 	// block is not printed on every runtime error (only on flag/arg misuse).
 	rootCmd.SilenceErrors = true
 	rootCmd.SilenceUsage = true
+	// Set version so that --version / -v work as aliases for `memory version`.
+	rootCmd.Version = Version
+	rootCmd.SetVersionTemplate("Memory CLI version {{.Version}}\n")
 	return rootCmd.Execute()
 }
 

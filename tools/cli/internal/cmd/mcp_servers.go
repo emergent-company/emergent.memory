@@ -156,7 +156,7 @@ func resolveServerArgOrPick(cmd *cobra.Command, c *client.Client, args []string)
 }
 
 func runListMCPServers(cmd *cobra.Command, args []string) error {
-	projectID, err := resolveProjectContext(cmd, "")
+	projectID, err := resolveProjectContext(cmd, agentProjectID)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/tools/cli/internal/auth"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
@@ -29,7 +30,7 @@ func newConfigSetServerCmd() *cobra.Command {
 Prints the new server URL and the path to the configuration file where the
 setting was saved. Use this to point the CLI at a different server environment
 (e.g. local dev vs production).`,
-		Args:  cobra.ExactArgs(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			serverURL := args[0]
 			if configPath == "" {
@@ -70,7 +71,7 @@ func newConfigSetCredentialsCmd() *cobra.Command {
 
 Prints the email that was set and the path to the configuration file where
 the setting was saved.`,
-		Args:  cobra.ExactArgs(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			email := args[0]
 			if configPath == "" {
@@ -126,11 +127,20 @@ overriding environment variables.`,
 				cfg = &config.Config{}
 			}
 
+			// Load credentials to check the authenticated server URL
+			homeDir, _ := os.UserHomeDir()
+			credsPath := filepath.Join(homeDir, ".memory", "credentials.json")
+			creds, _ := auth.Load(credsPath)
+
 			fmt.Println("Current Configuration:")
 			table := tablewriter.NewWriter(os.Stdout)
 			table.Header("Setting", "Value")
 
-			_ = table.Append("Server URL", cfg.ServerURL)
+			serverURL := cfg.ServerURL
+			if creds != nil && creds.IssuerURL != "" && creds.IssuerURL != cfg.ServerURL {
+				serverURL = fmt.Sprintf("%s (config) / %s (authenticated)", cfg.ServerURL, creds.IssuerURL)
+			}
+			_ = table.Append("Server URL", serverURL)
 
 			if cfg.APIKey != "" {
 				maskedKey := cfg.APIKey[:8] + "..." + cfg.APIKey[len(cfg.APIKey)-4:]
