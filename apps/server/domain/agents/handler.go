@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -1149,21 +1148,21 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 	}
 
 	def := &AgentDefinition{
-		ProjectID:       projectID,
-		Name:            dto.Name,
-		Description:     dto.Description,
-		SystemPrompt:    dto.SystemPrompt,
-		Model:           dto.Model,
-		Tools:           tools,
-		FlowType:        flowType,
-		IsDefault:       isDefault,
-		MaxSteps:        dto.MaxSteps,
-		DefaultTimeout:  dto.DefaultTimeout,
-		Visibility:      visibility,
-		DispatchMode:    dispatchMode,
-		ACPConfig:       dto.ACPConfig,
-		Config:          config,
-		SandboxConfig: dto.SandboxConfig,
+		ProjectID:      projectID,
+		Name:           dto.Name,
+		Description:    dto.Description,
+		SystemPrompt:   dto.SystemPrompt,
+		Model:          dto.Model,
+		Tools:          tools,
+		FlowType:       flowType,
+		IsDefault:      isDefault,
+		MaxSteps:       dto.MaxSteps,
+		DefaultTimeout: dto.DefaultTimeout,
+		Visibility:     visibility,
+		DispatchMode:   dispatchMode,
+		ACPConfig:      dto.ACPConfig,
+		Config:         config,
+		SandboxConfig:  dto.SandboxConfig,
 	}
 
 	if err := h.repo.CreateDefinition(c.Request().Context(), def); err != nil {
@@ -1914,21 +1913,6 @@ func (h *Handler) GetADKSessionByID(c echo.Context) error {
 	eventDTOs := make([]*ADKEventDTO, len(events))
 	for i, e := range events {
 
-		var content map[string]any
-		if len(e.Content) > 0 {
-			_ = json.Unmarshal(e.Content, &content)
-		}
-
-		var actions map[string]any
-		if len(e.Actions) > 0 {
-			_ = json.Unmarshal(e.Actions, &actions)
-		}
-
-		var longRunningToolIDs map[string]any
-		if len(e.LongRunningToolIDsJSON) > 0 {
-			_ = json.Unmarshal(e.LongRunningToolIDsJSON, &longRunningToolIDs)
-		}
-
 		eventDTOs[i] = &ADKEventDTO{
 			ID:                     e.ID,
 			SessionID:              e.SessionID,
@@ -1936,9 +1920,9 @@ func (h *Handler) GetADKSessionByID(c echo.Context) error {
 			Author:                 e.Author,
 			Timestamp:              e.Timestamp,
 			Branch:                 e.Branch,
-			Actions:                actions,
-			LongRunningToolIDsJSON: longRunningToolIDs,
-			Content:                content,
+			Actions:                e.Actions,
+			LongRunningToolIDsJSON: e.LongRunningToolIDsJSON,
+			Content:                e.Content,
 			Partial:                e.Partial,
 			TurnComplete:           e.TurnComplete,
 			ErrorCode:              e.ErrorCode,

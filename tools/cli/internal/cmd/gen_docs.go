@@ -53,9 +53,28 @@ func cleanMarkdown(raw []byte) []byte {
 	return bytes.TrimRight(s, "\n")
 }
 
-func runGenDocs(cmd *cobra.Command, args []string) error {
-	outFile := genDocsOutput
+// cliReferenceSkillFrontmatter is the YAML front matter prepended to the generated SKILL.md.
+const cliReferenceSkillFrontmatter = `---
+name: memory-cli-reference
+description: Full Memory CLI command reference with all subcommands and flags. Use when you need exact command syntax, flag names, or usage examples for any ` + "`" + `memory` + "`" + ` CLI command.
+metadata:
+  author: emergent
+  version: "1.0"
+---
 
+This skill contains the complete ` + "`" + `memory` + "`" + ` CLI command reference, auto-generated from the binary.
+
+Use this when you need to look up:
+- Exact subcommand names (e.g. ` + "`" + `memory agents get-run` + "`" + `, ` + "`" + `memory provider configure-project` + "`" + `)
+- Available flags and their types for any command
+- Usage examples embedded in the help text
+- Which subcommands exist under a parent command
+
+`
+
+// GenerateDocs generates the memory-cli-reference SKILL.md at outFile.
+// It runs in-process (no binary required) and is called by go generate.
+func GenerateDocs(outFile string) error {
 	dir, err := os.MkdirTemp("", "memory-docs-*")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
@@ -74,6 +93,10 @@ func runGenDocs(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("read temp dir: %w", err)
 	}
 
+	if err := os.MkdirAll(filepath.Dir(outFile), 0o755); err != nil {
+		return fmt.Errorf("create output dir: %w", err)
+	}
+
 	out, err := os.Create(outFile)
 	if err != nil {
 		return fmt.Errorf("create output file: %w", err)
@@ -81,6 +104,7 @@ func runGenDocs(cmd *cobra.Command, args []string) error {
 	defer out.Close()
 
 	bw := bufio.NewWriter(out)
+	fmt.Fprint(bw, cliReferenceSkillFrontmatter)
 	fmt.Fprintln(bw, "# Memory CLI Reference")
 	fmt.Fprintln(bw)
 	fmt.Fprintln(bw, "Full command reference auto-generated from `memory --help`. Each section covers one command or subcommand with its synopsis, usage, and flags.")
@@ -114,6 +138,10 @@ func runGenDocs(cmd *cobra.Command, args []string) error {
 	abs, _ := filepath.Abs(outFile)
 	fmt.Fprintf(os.Stdout, "Generated: %s\n", abs)
 	return nil
+}
+
+func runGenDocs(cmd *cobra.Command, args []string) error {
+	return GenerateDocs(genDocsOutput)
 }
 
 func init() {

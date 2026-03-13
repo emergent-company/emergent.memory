@@ -1491,18 +1491,6 @@ func (h *MCPToolHandler) ExecuteGetADKSession(ctx context.Context, projectID str
 
 	eventDTOs := make([]*ADKEventDTO, len(events))
 	for i, e := range events {
-		var content map[string]any
-		if len(e.Content) > 0 {
-			_ = json.Unmarshal(e.Content, &content)
-		}
-		var actions map[string]any
-		if len(e.Actions) > 0 {
-			_ = json.Unmarshal(e.Actions, &actions)
-		}
-		var longRunningToolIDs map[string]any
-		if len(e.LongRunningToolIDsJSON) > 0 {
-			_ = json.Unmarshal(e.LongRunningToolIDsJSON, &longRunningToolIDs)
-		}
 		eventDTOs[i] = &ADKEventDTO{
 			ID:                     e.ID,
 			SessionID:              e.SessionID,
@@ -1510,9 +1498,9 @@ func (h *MCPToolHandler) ExecuteGetADKSession(ctx context.Context, projectID str
 			Author:                 e.Author,
 			Timestamp:              e.Timestamp,
 			Branch:                 e.Branch,
-			Actions:                actions,
-			LongRunningToolIDsJSON: longRunningToolIDs,
-			Content:                content,
+			Actions:                e.Actions,
+			LongRunningToolIDsJSON: e.LongRunningToolIDsJSON,
+			Content:                e.Content,
 			Partial:                e.Partial,
 			TurnComplete:           e.TurnComplete,
 			ErrorCode:              e.ErrorCode,

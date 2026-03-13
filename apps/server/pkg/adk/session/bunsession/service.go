@@ -367,46 +367,46 @@ func mapToADKEvent(e *ADKEvent) (*session.Event, error) {
 	}
 
 	if len(e.Actions) > 0 {
-		if err := json.Unmarshal(e.Actions, &ev.Actions); err != nil {
-			return nil, err
+		if err := unmarshalFromMap(e.Actions, &ev.Actions); err != nil {
+			return nil, fmt.Errorf("unmarshal actions: %w", err)
 		}
 	}
 	if len(e.LongRunningToolIDsJSON) > 0 {
-		if err := json.Unmarshal(e.LongRunningToolIDsJSON, &ev.LongRunningToolIDs); err != nil {
-			return nil, err
+		if err := unmarshalFromMap(e.LongRunningToolIDsJSON, &ev.LongRunningToolIDs); err != nil {
+			return nil, fmt.Errorf("unmarshal long_running_tool_ids: %w", err)
 		}
 	}
 
 	if len(e.Content) > 0 {
 		var c genai.Content
-		if err := json.Unmarshal(e.Content, &c); err != nil {
-			return nil, err
+		if err := unmarshalFromMap(e.Content, &c); err != nil {
+			return nil, fmt.Errorf("unmarshal content: %w", err)
 		}
 		ev.Content = &c
 	}
 	if len(e.GroundingMetadata) > 0 {
 		var gm genai.GroundingMetadata
-		if err := json.Unmarshal(e.GroundingMetadata, &gm); err != nil {
-			return nil, err
+		if err := unmarshalFromMap(e.GroundingMetadata, &gm); err != nil {
+			return nil, fmt.Errorf("unmarshal grounding_metadata: %w", err)
 		}
 		ev.GroundingMetadata = &gm
 	}
 	if len(e.CustomMetadata) > 0 {
-		if err := json.Unmarshal(e.CustomMetadata, &ev.CustomMetadata); err != nil {
-			return nil, err
+		if err := unmarshalFromMap(e.CustomMetadata, &ev.CustomMetadata); err != nil {
+			return nil, fmt.Errorf("unmarshal custom_metadata: %w", err)
 		}
 	}
 	if len(e.UsageMetadata) > 0 {
 		var um genai.GenerateContentResponseUsageMetadata
-		if err := json.Unmarshal(e.UsageMetadata, &um); err != nil {
-			return nil, err
+		if err := unmarshalFromMap(e.UsageMetadata, &um); err != nil {
+			return nil, fmt.Errorf("unmarshal usage_metadata: %w", err)
 		}
 		ev.UsageMetadata = &um
 	}
 	if len(e.CitationMetadata) > 0 {
 		var cm genai.CitationMetadata
-		if err := json.Unmarshal(e.CitationMetadata, &cm); err != nil {
-			return nil, err
+		if err := unmarshalFromMap(e.CitationMetadata, &cm); err != nil {
+			return nil, fmt.Errorf("unmarshal citation_metadata: %w", err)
 		}
 		ev.CitationMetadata = &cm
 	}
@@ -446,46 +446,49 @@ func mapToDBEvent(sess *localSession, e *session.Event) (*ADKEvent, error) {
 	}
 
 	var err error
-	dbEv.Actions, err = json.Marshal(e.Actions)
+
+	// Marshal typed structs → JSON bytes → map[string]any so that Bun stores
+	// them as proper JSONB objects (json.RawMessage is serialised as a string by Bun).
+	dbEv.Actions, err = marshalToMap(e.Actions)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("marshal actions: %w", err)
 	}
 
 	if len(e.LongRunningToolIDs) > 0 {
-		dbEv.LongRunningToolIDsJSON, err = json.Marshal(e.LongRunningToolIDs)
+		dbEv.LongRunningToolIDsJSON, err = marshalToMap(e.LongRunningToolIDs)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("marshal long_running_tool_ids: %w", err)
 		}
 	}
 
 	if e.Content != nil {
-		dbEv.Content, err = json.Marshal(e.Content)
+		dbEv.Content, err = marshalToMap(e.Content)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("marshal content: %w", err)
 		}
 	}
 	if e.GroundingMetadata != nil {
-		dbEv.GroundingMetadata, err = json.Marshal(e.GroundingMetadata)
+		dbEv.GroundingMetadata, err = marshalToMap(e.GroundingMetadata)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("marshal grounding_metadata: %w", err)
 		}
 	}
 	if len(e.CustomMetadata) > 0 {
-		dbEv.CustomMetadata, err = json.Marshal(e.CustomMetadata)
+		dbEv.CustomMetadata, err = marshalToMap(e.CustomMetadata)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("marshal custom_metadata: %w", err)
 		}
 	}
 	if e.UsageMetadata != nil {
-		dbEv.UsageMetadata, err = json.Marshal(e.UsageMetadata)
+		dbEv.UsageMetadata, err = marshalToMap(e.UsageMetadata)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("marshal usage_metadata: %w", err)
 		}
 	}
 	if e.CitationMetadata != nil {
-		dbEv.CitationMetadata, err = json.Marshal(e.CitationMetadata)
+		dbEv.CitationMetadata, err = marshalToMap(e.CitationMetadata)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("marshal citation_metadata: %w", err)
 		}
 	}
 
@@ -501,4 +504,34 @@ func mapToDBEvent(sess *localSession, e *session.Event) (*ADKEvent, error) {
 	}
 
 	return dbEv, nil
+}
+
+// unmarshalFromMap converts a map[string]any (as read from a Bun JSONB field) back
+// into a typed struct via JSON round-trip.
+func unmarshalFromMap(m map[string]any, dst any) error {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, dst)
+}
+
+// marshalToMap converts any value to a map[string]any via JSON round-trip.
+// This is the correct way to store typed structs in Bun JSONB fields — using
+// json.RawMessage directly causes Bun to store a quoted base64 string instead
+// of a JSON object.
+func marshalToMap(v any) (map[string]any, error) {
+	if v == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		// Fallback: wrap non-object types (arrays, scalars) so they fit in map[string]any.
+		return map[string]any{"_value": json.RawMessage(b)}, nil
+	}
+	return m, nil
 }

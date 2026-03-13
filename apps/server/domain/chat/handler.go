@@ -930,6 +930,18 @@ func (h *Handler) QueryStream(c echo.Context) error {
 
 	ctx := c.Request().Context()
 
+	// Start query.run span — mirrors ask.run / agent.run, covers the full query execution.
+	msgPreview := message
+	if len(msgPreview) > 200 {
+		msgPreview = msgPreview[:200] + "..."
+	}
+	ctx, span := tracing.Start(ctx, "query.run",
+		attribute.String("memory.project.id", projectID),
+		attribute.String("memory.query.user_id", user.ID),
+		attribute.String("memory.query.message_preview", msgPreview),
+	)
+	defer span.End()
+
 	// Ensure the project ID from the URL param is in the context so that the
 	// credential resolver (ResolveAny) can look up org-level credentials even
 	// when the caller authenticates via user JWT (which does not set X-Project-ID).
@@ -946,7 +958,7 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		// when LLM_MODEL is not set in the server environment.
 		probeModelName := h.modelFactory.ModelName()
 		if probeModelName == "" {
-			probeModelName = "gemini-2.0-flash"
+			probeModelName = "gemini-3.1-flash-lite-preview"
 		}
 		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
 		if probeErr != nil {
@@ -981,9 +993,12 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		Message: message,
 	})
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return apperror.NewInternal("failed to create conversation", err)
 	}
 	conv.AgentDefinitionID = &agentDefUUID
+	span.SetAttributes(attribute.String("memory.query.conversation_id", conv.ID.String()))
 	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
 		h.log.Warn("failed to set agent_definition_id on query conversation",
 			slog.String("conversation_id", conv.ID.String()),
@@ -1002,6 +1017,7 @@ func (h *Handler) QueryStream(c echo.Context) error {
 	}
 
 	h.streamAgentChat(ctx, conv, message, projectID, sseWriter)
+	span.SetStatus(codes.Ok, "")
 	sseWriter.WriteData(sse.NewDoneEvent())
 	sseWriter.Close()
 	return nil
@@ -1042,6 +1058,18 @@ func (h *Handler) AskStream(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
+
+	// Start ask.run span — mirrors agent.run, covers the full ask execution.
+	msgPreview := message
+	if len(msgPreview) > 200 {
+		msgPreview = msgPreview[:200] + "..."
+	}
+	ctx, span := tracing.Start(ctx, "ask.run",
+		attribute.String("memory.project.id", projectID),
+		attribute.String("memory.ask.user_id", user.ID),
+		attribute.String("memory.ask.message_preview", msgPreview),
+	)
+	defer span.End()
 
 	// Inject project ID into context so credential resolver can locate org-level creds.
 	if auth.ProjectIDFromContext(ctx) == "" && projectID != "" {
@@ -1086,7 +1114,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 	if h.modelFactory != nil {
 		probeModelName := h.modelFactory.ModelName()
 		if probeModelName == "" {
-			probeModelName = "gemini-2.0-flash"
+			probeModelName = "gemini-3.1-flash-lite-preview"
 		}
 		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
 		if probeErr != nil {
@@ -1121,9 +1149,12 @@ func (h *Handler) AskStream(c echo.Context) error {
 		Message: augmentedMessage,
 	})
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return apperror.NewInternal("failed to create conversation", err)
 	}
 	conv.AgentDefinitionID = &agentDefUUID
+	span.SetAttributes(attribute.String("memory.ask.conversation_id", conv.ID.String()))
 	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
 		h.log.Warn("failed to set agent_definition_id on ask conversation",
 			slog.String("conversation_id", conv.ID.String()),
@@ -1142,6 +1173,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 	}
 
 	h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, sseWriter)
+	span.SetStatus(codes.Ok, "")
 	sseWriter.WriteData(sse.NewDoneEvent())
 	sseWriter.Close()
 	return nil

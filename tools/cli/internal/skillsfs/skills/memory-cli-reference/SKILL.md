@@ -261,6 +261,98 @@ Commands for managing runtime agents (scheduling, triggers, execution state)
       --project string   Project name or ID (auto-detected from config/env if not specified)
 ```
 
+## memory agents builtin-tools
+
+Manage built-in tools
+
+### Synopsis
+
+Commands for managing built-in (Go-native) tools in the Memory platform.
+
+Built-in tools are implemented directly in the server and are available to all
+agents without requiring an external MCP server connection. Examples include
+query_entities, brave_web_search, webfetch, and create_document.
+
+Use 'memory agents mcp-servers' to manage externally-connected MCP servers.
+
+### Options
+
+```
+  -h, --help   help for builtin-tools
+```
+
+## memory agents builtin-tools configure
+
+Set runtime config for a built-in tool
+
+### Synopsis
+
+Set runtime configuration key/value pairs for a named built-in tool.
+
+Looks up the tool by name and patches its config. Only the provided keys are
+updated; existing keys not mentioned are left unchanged.
+
+Examples:
+  memory agents builtin-tools configure brave_web_search api_key=YOUR_KEY
+  memory agents builtin-tools configure reddit_search client_id=ID client_secret=SECRET
+
+```
+memory agents builtin-tools configure [tool-name] [key=value ...] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for configure
+```
+
+## memory agents builtin-tools list
+
+List all built-in tools
+
+### Synopsis
+
+List all built-in tools registered for the current project.
+
+Prints each tool's enabled/disabled state, name, and description. Tools that
+require runtime configuration (e.g. API keys) are shown with their config status.
+The 'Source' column shows where the effective settings come from: project, org,
+or global (server default).
+
+```
+memory agents builtin-tools list [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory agents builtin-tools toggle
+
+Enable or disable a built-in tool
+
+### Synopsis
+
+Enable or disable a built-in tool for the current project.
+
+The tool-id is the UUID shown in 'memory agents builtin-tools list'.
+
+Examples:
+  memory agents builtin-tools toggle <tool-id> off
+  memory agents builtin-tools toggle <tool-id> on
+
+```
+memory agents builtin-tools toggle [tool-id] [on|off] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for toggle
+```
+
 ## memory agents create
 
 Create a new agent
@@ -462,6 +554,197 @@ memory agents list [flags]
   -h, --help   help for list
 ```
 
+## memory agents mcp-servers
+
+Manage MCP servers
+
+### Synopsis
+
+Commands for managing Model Context Protocol (MCP) servers in the Memory platform
+
+### Options
+
+```
+  -h, --help   help for mcp-servers
+```
+
+## memory agents mcp-servers configure
+
+Configure a tool's runtime settings
+
+### Synopsis
+
+Set runtime configuration key/value pairs for a named MCP tool.
+
+The command searches all MCP servers in the current project to find the tool
+by name, then patches its config with the provided key=value pairs.
+
+Examples:
+  memory agents mcp-servers configure brave_web_search api_key=YOUR_KEY --project <id>
+  memory agents mcp-servers configure reddit_search client_id=YOUR_ID client_secret=YOUR_SECRET --project <id>
+
+```
+memory agents mcp-servers configure [tool-name] [key=value ...] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for configure
+```
+
+## memory agents mcp-servers create
+
+Create a new MCP server
+
+### Synopsis
+
+Register a new MCP server with the specified configuration.
+
+Examples:
+ memory agents mcp-servers create --name "my-server" --type sse --url "http://localhost:8080/sse"
+ memory agents mcp-servers create --name "stdio-server" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github"
+ memory agents mcp-servers create --name "my-server" --type http --url "http://localhost:8080/mcp" --env "API_KEY=abc123"
+
+```
+memory agents mcp-servers create [flags]
+```
+
+### Options
+
+```
+      --args string          Comma-separated arguments (for stdio type)
+      --command string       Command to run (for stdio type)
+      --description string   Server description
+      --enabled string       Enable server (true/false, default: true)
+      --env strings          Environment variables (KEY=VALUE format, can be specified multiple times)
+  -h, --help                 help for create
+      --name string          Server name (required)
+      --type string          Server type: 'sse', 'stdio', or 'http' (required)
+      --url string           Server URL (for sse/http types)
+```
+
+## memory agents mcp-servers delete
+
+Delete an MCP server
+
+### Synopsis
+
+Remove an MCP server and all its tools from your project configuration
+
+```
+memory agents mcp-servers delete [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+## memory agents mcp-servers get
+
+Get MCP server details
+
+### Synopsis
+
+Get full details for a specific MCP server, including its registered tools.
+
+Prints Name (enabled/disabled), ID, Project ID, Description (if set), Type,
+URL (for sse/http), Command and Args (for stdio), Env Vars count, Headers count,
+Created, and Updated timestamps. Also lists all registered tools with their
+enabled/disabled state and description (truncated to 60 characters).
+
+```
+memory agents mcp-servers get [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory agents mcp-servers inspect
+
+Inspect an MCP server
+
+### Synopsis
+
+Test connection to an MCP server and display its capabilities, tools, prompts, and resources
+
+```
+memory agents mcp-servers inspect [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for inspect
+```
+
+## memory agents mcp-servers list
+
+List all MCP servers
+
+### Synopsis
+
+List all MCP servers configured for the current project.
+
+Prints a numbered list with each server's Name (enabled/disabled), Description
+(if set), ID, Type (sse/http/stdio), URL or Command, Tool count, and Created
+timestamp.
+
+```
+memory agents mcp-servers list [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory agents mcp-servers sync
+
+Sync tools from an MCP server
+
+### Synopsis
+
+Connect to the MCP server and refresh the list of available tools
+
+```
+memory agents mcp-servers sync [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for sync
+```
+
+## memory agents mcp-servers tools
+
+List tools for an MCP server
+
+### Synopsis
+
+List all tools registered for a specific MCP server.
+
+Each tool entry shows its enabled/disabled state and tool name. Use
+'memory agents mcp-servers sync <id>' first to discover available tools if the list
+is empty.
+
+```
+memory agents mcp-servers tools [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for tools
+```
+
 ## memory agents questions
 
 Manage agent questions
@@ -658,7 +941,7 @@ Apply Blueprints (packs, agents, seed data) from a directory or GitHub URL
 
 ### Synopsis
 
-Apply Blueprints — template packs, agent definitions, skills, and seed data — to the
+Apply Blueprints — schemas, agent definitions, skills, and seed data — to the
 current project from a structured directory or a GitHub repository URL.
 
 The source directory (or GitHub repo root) may contain:
@@ -1579,197 +1862,6 @@ memory mcp-guide [flags]
   -h, --help   help for mcp-guide
 ```
 
-## memory mcp-servers
-
-Manage MCP servers
-
-### Synopsis
-
-Commands for managing Model Context Protocol (MCP) servers in the Memory platform
-
-### Options
-
-```
-  -h, --help   help for mcp-servers
-```
-
-## memory mcp-servers configure
-
-Configure a tool's runtime settings
-
-### Synopsis
-
-Set runtime configuration key/value pairs for a named MCP tool.
-
-The command searches all MCP servers in the current project to find the tool
-by name, then patches its config with the provided key=value pairs.
-
-Examples:
-  memory mcp-servers configure brave_web_search api_key=YOUR_KEY --project <id>
-  memory mcp-servers configure reddit_search client_id=YOUR_ID client_secret=YOUR_SECRET --project <id>
-
-```
-memory mcp-servers configure [tool-name] [key=value ...] [flags]
-```
-
-### Options
-
-```
-  -h, --help   help for configure
-```
-
-## memory mcp-servers create
-
-Create a new MCP server
-
-### Synopsis
-
-Register a new MCP server with the specified configuration.
-
-Examples:
-  memory mcp-servers create --name "my-server" --type sse --url "http://localhost:8080/sse"
-  memory mcp-servers create --name "stdio-server" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github"
-  memory mcp-servers create --name "my-server" --type http --url "http://localhost:8080/mcp" --env "API_KEY=abc123"
-
-```
-memory mcp-servers create [flags]
-```
-
-### Options
-
-```
-      --args string          Comma-separated arguments (for stdio type)
-      --command string       Command to run (for stdio type)
-      --description string   Server description
-      --enabled string       Enable server (true/false, default: true)
-      --env strings          Environment variables (KEY=VALUE format, can be specified multiple times)
-  -h, --help                 help for create
-      --name string          Server name (required)
-      --type string          Server type: 'sse', 'stdio', or 'http' (required)
-      --url string           Server URL (for sse/http types)
-```
-
-## memory mcp-servers delete
-
-Delete an MCP server
-
-### Synopsis
-
-Remove an MCP server and all its tools from your project configuration
-
-```
-memory mcp-servers delete [server-id] [flags]
-```
-
-### Options
-
-```
-  -h, --help   help for delete
-```
-
-## memory mcp-servers get
-
-Get MCP server details
-
-### Synopsis
-
-Get full details for a specific MCP server, including its registered tools.
-
-Prints Name (enabled/disabled), ID, Project ID, Description (if set), Type,
-URL (for sse/http), Command and Args (for stdio), Env Vars count, Headers count,
-Created, and Updated timestamps. Also lists all registered tools with their
-enabled/disabled state and description (truncated to 60 characters).
-
-```
-memory mcp-servers get [server-id] [flags]
-```
-
-### Options
-
-```
-  -h, --help   help for get
-```
-
-## memory mcp-servers inspect
-
-Inspect an MCP server
-
-### Synopsis
-
-Test connection to an MCP server and display its capabilities, tools, prompts, and resources
-
-```
-memory mcp-servers inspect [server-id] [flags]
-```
-
-### Options
-
-```
-  -h, --help   help for inspect
-```
-
-## memory mcp-servers list
-
-List all MCP servers
-
-### Synopsis
-
-List all MCP servers configured for the current project.
-
-Prints a numbered list with each server's Name (enabled/disabled), Description
-(if set), ID, Type (sse/http/stdio), URL or Command, Tool count, and Created
-timestamp.
-
-```
-memory mcp-servers list [flags]
-```
-
-### Options
-
-```
-  -h, --help   help for list
-```
-
-## memory mcp-servers sync
-
-Sync tools from an MCP server
-
-### Synopsis
-
-Connect to the MCP server and refresh the list of available tools
-
-```
-memory mcp-servers sync [server-id] [flags]
-```
-
-### Options
-
-```
-  -h, --help   help for sync
-```
-
-## memory mcp-servers tools
-
-List tools for an MCP server
-
-### Synopsis
-
-List all tools registered for a specific MCP server.
-
-Each tool entry shows its enabled/disabled state and tool name. Use
-'memory mcp-servers sync <id>' first to discover available tools if the list
-is empty.
-
-```
-memory mcp-servers tools [server-id] [flags]
-```
-
-### Options
-
-```
-  -h, --help   help for tools
-```
-
 ## memory projects
 
 Manage projects
@@ -1801,7 +1893,7 @@ Example:
   emergent projects create-token my-project --name onboard-token
 
 ```
-memory projects create-token <project-name-or-id> [flags]
+memory projects create-token [project-name-or-id] [flags]
 ```
 
 ### Options
@@ -1848,7 +1940,7 @@ Delete a project
 Permanently delete a project and all its data
 
 ```
-memory projects delete <project-id> [flags]
+memory projects delete [project-id] [flags]
 ```
 
 ### Options
@@ -1955,7 +2047,7 @@ such as --api-key, --embedding-model, and --generative-model to specify
 credentials and model overrides.
 
 ```
-memory projects set-provider <project-name-or-id> <provider> [flags]
+memory projects set-provider [project-name-or-id] <provider> [flags]
 ```
 
 ### Options
@@ -2791,7 +2883,7 @@ Prints "Skill <id> deleted." on success. You will be prompted for confirmation
 unless the --confirm flag is provided.
 
 ```
-memory skills delete <id> [flags]
+memory skills delete [id] [flags]
 ```
 
 ### Options
@@ -2814,7 +2906,7 @@ Updated timestamps, and the full skill Content. Use --json to receive the raw
 JSON response instead.
 
 ```
-memory skills get <id> [flags]
+memory skills get [id] [flags]
 ```
 
 ### Options
@@ -2846,6 +2938,9 @@ Import all discovered skills without prompting:
 Import built-in Memory skills from the embedded catalog:
   memory skills import --builtin
 
+Import built-in skills including experimental ones:
+  memory skills import --builtin --experimental
+
 ```
 memory skills import [path] [flags]
 ```
@@ -2856,6 +2951,7 @@ memory skills import [path] [flags]
       --all               Import all found skills without prompting
       --builtin           Import from the built-in embedded Memory skill catalog
       --discover          Auto-discover skills from well-known locations (.agents/skills/, ~/.claude/skills/, etc.)
+      --experimental      Include experimental skills when importing from the built-in catalog (--builtin)
       --from-dir string   Scan a directory for SKILL.md files and import all found skills
   -h, --help              help for import
 ```
@@ -2896,7 +2992,7 @@ least one of --description, --content, or --content-file must be provided.
 Use --json to receive the full updated skill as JSON instead.
 
 ```
-memory skills update <id> [flags]
+memory skills update [id] [flags]
 ```
 
 ### Options

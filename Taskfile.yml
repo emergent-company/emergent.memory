@@ -80,15 +80,15 @@ tasks:
 
   cli:gen-docs:
     desc: Regenerate the embedded CLI reference skill (memory-cli-reference/SKILL.md)
+    dir: tools/cli
     cmds:
-      - task: cli:install
-      - ~/.memory/bin/memory gen-docs --output tools/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md.body
-      - python3 tools/cli/scripts/gen_cli_reference_skill.py
+      - go generate ./cmd/...
 
   cli:install:
     desc: Build and install the memory CLI to ~/.memory/bin/memory
     dir: tools/cli
     cmds:
+      - go generate ./cmd/...
       - mkdir -p ~/.memory/bin
       - go build -o ~/.memory/bin/memory ./cmd/main.go
       - echo "Installed memory CLI → ~/.memory/bin/memory"

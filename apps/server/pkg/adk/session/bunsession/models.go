@@ -1,7 +1,6 @@
 package bunsession
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -20,6 +19,8 @@ type ADKSession struct {
 }
 
 // ADKEvent corresponds to the 'kb.adk_events' table.
+// JSON fields are stored as map[string]any so that Bun serialises them as JSONB
+// objects (not as quoted base64 strings, which is what happens with json.RawMessage).
 type ADKEvent struct {
 	bun.BaseModel `bun:"table:kb.adk_events,alias:ae"`
 
@@ -28,18 +29,18 @@ type ADKEvent struct {
 	UserID    string `bun:"user_id,notnull,type:text"`
 	SessionID string `bun:"session_id,notnull,type:text"`
 
-	InvocationID           string          `bun:"invocation_id,type:text"`
-	Author                 string          `bun:"author,type:text"`
-	Actions                json.RawMessage `bun:"actions,type:jsonb"`
-	LongRunningToolIDsJSON json.RawMessage `bun:"long_running_tool_ids_json,type:jsonb"`
-	Branch                 *string         `bun:"branch,type:text"`
-	Timestamp              time.Time       `bun:"timestamp,notnull,default:current_timestamp"`
+	InvocationID           string         `bun:"invocation_id,type:text"`
+	Author                 string         `bun:"author,type:text"`
+	Actions                map[string]any `bun:"actions,type:jsonb"`
+	LongRunningToolIDsJSON map[string]any `bun:"long_running_tool_ids_json,type:jsonb"`
+	Branch                 *string        `bun:"branch,type:text"`
+	Timestamp              time.Time      `bun:"timestamp,notnull,default:current_timestamp"`
 
-	Content           json.RawMessage `bun:"content,type:jsonb"`
-	GroundingMetadata json.RawMessage `bun:"grounding_metadata,type:jsonb"`
-	CustomMetadata    json.RawMessage `bun:"custom_metadata,type:jsonb"`
-	UsageMetadata     json.RawMessage `bun:"usage_metadata,type:jsonb"`
-	CitationMetadata  json.RawMessage `bun:"citation_metadata,type:jsonb"`
+	Content           map[string]any `bun:"content,type:jsonb"`
+	GroundingMetadata map[string]any `bun:"grounding_metadata,type:jsonb"`
+	CustomMetadata    map[string]any `bun:"custom_metadata,type:jsonb"`
+	UsageMetadata     map[string]any `bun:"usage_metadata,type:jsonb"`
+	CitationMetadata  map[string]any `bun:"citation_metadata,type:jsonb"`
 
 	Partial      *bool   `bun:"partial"`
 	TurnComplete *bool   `bun:"turn_complete"`

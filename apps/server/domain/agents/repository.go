@@ -663,15 +663,28 @@ Agents & AI:
   memory agents runs <agent-id> [--limit N]   -- lists recent runs with status, token usage, and cost per run
   memory agents get-run <run-id>              -- full detail for one run: tokens in/out + estimated cost in USD
   memory agents hooks|questions
+  memory agents mcp-servers create|list|get|update|delete|inspect|sync|tools|configure
   memory ask "<question>"            Ask the CLI assistant
   memory mcp-guide                   Show MCP config for AI agents
-  memory mcp-servers create|list|get|update|delete|inspect|sync|tools|configure
   memory provider configure <google|google-vertex>
   memory provider configure-project <google|google-vertex> [--remove]
   memory provider models [provider] [--type embedding|generative]
   memory provider test [provider]
   memory provider usage [--project <id>] [--since YYYY-MM-DD]
   memory skills create|list|get|update|delete|import
+
+### IMPORTANT: Relocated commands
+
+The following commands moved to a new location in a recent version. Do NOT suggest the old paths:
+
+| Old (no longer valid)        | New (correct)                              |
+|------------------------------|--------------------------------------------|
+| memory mcp-servers ...       | memory agents mcp-servers ...              |
+
+Examples:
+  memory agents mcp-servers list --project <id>
+  memory agents mcp-servers configure brave_web_search api_key=YOUR_KEY --project <id>
+  memory agents mcp-servers create --name my-server --url http://... --project <id>
 
 Account & Access:
   memory config set|set-server|set-credentials|show
@@ -830,9 +843,13 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 	}
 
 	if existing != nil {
-		// Update tools and system prompt to pick up any changes to the canonical definition.
+		// Update tools, system prompt, and model to pick up any changes to the canonical definition.
 		existing.Tools = canonicalTools
 		existing.SystemPrompt = &systemPrompt
+		if existing.Model == nil {
+			existing.Model = &ModelConfig{}
+		}
+		existing.Model.Name = "gemini-3.1-flash-lite-preview"
 		if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
 			// Non-fatal — return existing as-is rather than failing the ask call.
 			return existing, nil
@@ -846,7 +863,7 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 		Description:  strPtr("CLI and platform assistant — answers documentation questions and executes tasks using available tools"),
 		SystemPrompt: &systemPrompt,
 		Model: &ModelConfig{
-			Name:        "gemini-2.0-flash",
+			Name:        "gemini-3.1-flash-lite-preview",
 			Temperature: &temperature,
 		},
 		Tools:      canonicalTools,
