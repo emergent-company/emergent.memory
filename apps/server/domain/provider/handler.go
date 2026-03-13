@@ -262,12 +262,22 @@ func (h *Handler) ListModels(c echo.Context) error {
 func (h *Handler) GetProjectUsageSummary(c echo.Context) error {
 	projectID := c.Param("projectId")
 
-	if err := h.creds.assertCallerOwnsProject(c.Request().Context(), projectID); err != nil {
+	// Inject the project's org into context when the caller is using a project
+	// token (which doesn't carry an OrgID). This satisfies assertCallerOwnsProject.
+	ctx := c.Request().Context()
+	if auth.OrgIDFromContext(ctx) == "" {
+		orgID, err := h.creds.repo.GetOrgIDForProject(ctx, projectID)
+		if err == nil && orgID != "" {
+			ctx = auth.ContextWithOrgID(ctx, orgID)
+		}
+	}
+
+	if err := h.creds.assertCallerOwnsProject(ctx, projectID); err != nil {
 		return err
 	}
 
 	since, until := parseTimeRange(c)
-	rows, err := h.repo.GetProjectUsageSummary(c.Request().Context(), projectID, since, until)
+	rows, err := h.repo.GetProjectUsageSummary(ctx, projectID, since, until)
 	if err != nil {
 		return err
 	}

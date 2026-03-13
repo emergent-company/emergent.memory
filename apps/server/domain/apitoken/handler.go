@@ -237,6 +237,41 @@ func (h *Handler) ListAccountTokens(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+// GetAccountToken returns an account-level API token by ID
+// @Summary      Get account API token by ID
+// @Description  Returns an account-level API token owned by the authenticated user, including the full token value if encryption is configured.
+// @Tags         api-tokens
+// @Produce      json
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Success      200 {object} GetApiTokenResponseDTO "Token details"
+// @Failure      400 {object} apperror.Error "Invalid token ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens/{tokenId} [get]
+// @Security     bearerAuth
+func (h *Handler) GetAccountToken(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	tokenID := c.Param("tokenId")
+	if tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("tokenId is required")
+	}
+
+	result, err := h.svc.GetAccountToken(c.Request().Context(), tokenID, user.ID)
+	if err != nil {
+		return err
+	}
+	if result == nil {
+		return apperror.ErrNotFound.WithMessage("Token not found")
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
 // RevokeAccountToken revokes an account-level API token
 // @Summary      Revoke account API token
 // @Description  Revokes an account-level API token owned by the authenticated user

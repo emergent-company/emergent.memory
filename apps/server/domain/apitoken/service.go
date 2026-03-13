@@ -297,6 +297,37 @@ func (s *Service) ListAccountTokens(ctx context.Context, userID string) (*ApiTok
 	}, nil
 }
 
+// GetAccountToken returns an account-level token by ID, owned by the user
+func (s *Service) GetAccountToken(ctx context.Context, tokenID, userID string) (*GetApiTokenResponseDTO, error) {
+	token, err := s.repo.GetByIDAndUser(ctx, tokenID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if token == nil {
+		return nil, nil
+	}
+
+	dto := &GetApiTokenResponseDTO{
+		ApiTokenDTO: token.ToDTO(),
+	}
+
+	// Decrypt the token if available
+	if token.TokenEncrypted != nil && *token.TokenEncrypted != "" && s.enc != nil && s.enc.IsConfigured() {
+		decrypted, decErr := s.enc.Decrypt(ctx, *token.TokenEncrypted)
+		if decErr != nil {
+			s.log.Warn("failed to decrypt stored token",
+				slog.String("tokenID", tokenID),
+				slog.String("error", decErr.Error()))
+		} else if val, ok := decrypted["value"]; ok {
+			if tokenStr, ok := val.(string); ok {
+				dto.Token = tokenStr
+			}
+		}
+	}
+
+	return dto, nil
+}
+
 // RevokeAccountToken revokes an account-level token owned by the user
 func (s *Service) RevokeAccountToken(ctx context.Context, tokenID, userID string) error {
 	// Check if token exists

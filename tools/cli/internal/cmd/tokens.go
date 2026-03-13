@@ -223,12 +223,38 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 func runGetToken(cmd *cobra.Command, args []string) error {
 	tokenID := args[0]
 
-	projectID, err := resolveProjectContext(cmd, tokenProjectID)
+	c, err := getClient(cmd)
 	if err != nil {
 		return err
 	}
 
-	c, err := getClient(cmd)
+	// If --project not provided, look up an account-level token
+	if tokenProjectID == "" {
+		token, err := c.SDK.APITokens.GetAccountToken(context.Background(), tokenID)
+		if err != nil {
+			return fmt.Errorf("failed to get account token: %w", err)
+		}
+
+		fmt.Printf("Token: %s\n", token.Name)
+		fmt.Printf("  ID:      %s\n", token.ID)
+		fmt.Printf("  Prefix:  %s\n", token.Prefix)
+		fmt.Printf("  Type:    account\n")
+		if token.Token != "" {
+			fmt.Println()
+			fmt.Println("  ------------------------------------------------------------")
+			fmt.Printf("  Token:   %s\n", token.Token)
+			fmt.Println("  ------------------------------------------------------------")
+		}
+		fmt.Printf("  Scopes:  %s\n", strings.Join(token.Scopes, ", "))
+		fmt.Printf("  Created: %s\n", token.CreatedAt)
+		if token.RevokedAt != nil {
+			fmt.Printf("  Revoked: %s\n", *token.RevokedAt)
+		}
+		return nil
+	}
+
+	// --project provided: look up a project-scoped token
+	projectID, err := resolveProjectContext(cmd, tokenProjectID)
 	if err != nil {
 		return err
 	}
@@ -241,6 +267,7 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Token: %s\n", token.Name)
 	fmt.Printf("  ID:      %s\n", token.ID)
 	fmt.Printf("  Prefix:  %s\n", token.Prefix)
+	fmt.Printf("  Type:    project\n")
 	if token.Token != "" {
 		fmt.Println()
 		fmt.Println("  ------------------------------------------------------------")

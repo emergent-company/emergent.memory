@@ -361,13 +361,16 @@ func (r *Repository) FindAllEnabledTools(ctx context.Context, projectID string) 
 	return tools, nil
 }
 
-// FindAllEnabledBuiltinTools returns all enabled builtin tools for a project.
-// Used by ToolPool.buildCache() to honour per-project enable/disable overrides.
+// FindAllEnabledBuiltinTools returns all enabled builtin tools for a project,
+// respecting org-level overrides: if an org-level setting disables a tool, it
+// is excluded even if the project-level row has enabled = true.
 func (r *Repository) FindAllEnabledBuiltinTools(ctx context.Context, projectID string) ([]*EnabledServerTool, error) {
 	var tools []*EnabledServerTool
 	err := r.db.NewSelect().
 		TableExpr("kb.mcp_server_tools AS mst").
 		Join("JOIN kb.mcp_servers AS ms ON ms.id = mst.server_id").
+		Join("JOIN kb.projects AS p ON p.id = ms.project_id").
+		Join("LEFT JOIN kb.org_tool_settings AS ots ON ots.org_id = p.organization_id AND ots.tool_name = mst.tool_name").
 		ColumnExpr("ms.name AS server_name").
 		ColumnExpr("ms.type AS server_type").
 		ColumnExpr("mst.tool_name AS tool_name").
@@ -378,6 +381,7 @@ func (r *Repository) FindAllEnabledBuiltinTools(ctx context.Context, projectID s
 		Where("ms.enabled = true").
 		Where("mst.enabled = true").
 		Where("ms.type = ?", ServerTypeBuiltin).
+		Where("COALESCE(ots.enabled, true) = true").
 		Order("mst.tool_name ASC").
 		Scan(ctx, &tools)
 	if err != nil {

@@ -263,6 +263,35 @@ func (c *Client) ListAccountTokens(ctx context.Context) (*ListResponse, error) {
 	return &result, nil
 }
 
+// GetAccountToken retrieves a single account-level API token by ID.
+func (c *Client) GetAccountToken(ctx context.Context, tokenID string) (*APIToken, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/tokens/"+url.PathEscape(tokenID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var token APIToken
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &token, nil
+}
+
 // RevokeAccountToken revokes an account-level API token.
 func (c *Client) RevokeAccountToken(ctx context.Context, tokenID string) error {
 	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/tokens/"+url.PathEscape(tokenID), nil)

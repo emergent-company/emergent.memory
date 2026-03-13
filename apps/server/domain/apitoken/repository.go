@@ -9,6 +9,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
 
 // Repository handles data access for API tokens
@@ -31,19 +32,22 @@ func (r *Repository) Create(ctx context.Context, token *ApiToken) error {
 		Model(token).
 		Exec(ctx)
 	if err != nil {
+		if pgutils.IsUniqueViolation(err) {
+			return apperror.New(409, "token_name_exists", "A token with this name already exists")
+		}
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 	return nil
 }
 
-// FindByProjectAndName finds a token by project ID and name (for uniqueness check)
-// Includes ALL tokens (even revoked) since the database constraint is project-wide
+// FindByProjectAndName finds an active token by project ID and name (for uniqueness check)
 func (r *Repository) FindByProjectAndName(ctx context.Context, projectID, name string) (*ApiToken, error) {
 	var token ApiToken
 	err := r.db.NewSelect().
 		Model(&token).
 		Where("project_id = ?", projectID).
 		Where("name = ?", name).
+		Where("revoked_at IS NULL").
 		Scan(ctx)
 
 	if err != nil {
@@ -133,6 +137,9 @@ func (r *Repository) CreateAccountToken(ctx context.Context, token *ApiToken) er
 		Model(token).
 		Exec(ctx)
 	if err != nil {
+		if pgutils.IsUniqueViolation(err) {
+			return apperror.New(409, "token_name_exists", "An account token with this name already exists")
+		}
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 	return nil

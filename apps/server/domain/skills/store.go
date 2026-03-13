@@ -3,6 +3,7 @@ package skills
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -167,11 +168,21 @@ func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*Skill, error)
 func (r *Repository) Create(ctx context.Context, s *Skill, embedding []float32) error {
 	if embedding != nil {
 		vectorStr := pgutils.FormatVector(embedding)
+
+		// JSON-marshal metadata so pgx can bind it to the jsonb column.
+		var metadataJSON []byte
+		if s.Metadata != nil {
+			var err error
+			metadataJSON, err = json.Marshal(s.Metadata)
+			if err != nil {
+				return r.wrapDBError("failed to marshal skill metadata", err)
+			}
+		}
+
 		_, err := r.db.ExecContext(ctx,
 			`INSERT INTO kb.skills (id, name, description, content, metadata, description_embedding, project_id, org_id, created_at, updated_at)
-			 VALUES (gen_random_uuid(), ?, ?, ?, ?, ?::vector, ?, ?, now(), now())
-			 RETURNING id, created_at, updated_at`,
-			s.Name, s.Description, s.Content, s.Metadata, vectorStr, s.ProjectID, s.OrgID,
+			 VALUES (gen_random_uuid(), ?, ?, ?, ?::jsonb, ?::vector, ?, ?, now(), now())`,
+			s.Name, s.Description, s.Content, metadataJSON, vectorStr, s.ProjectID, s.OrgID,
 		)
 		if err != nil {
 			return r.wrapDBError("failed to create skill", err)
