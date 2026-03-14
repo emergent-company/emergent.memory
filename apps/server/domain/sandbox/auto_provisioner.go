@@ -295,23 +295,17 @@ func (ap *AutoProvisioner) attemptProvision(
 		}
 	}
 
-	// Try warm pool first, fall back to cold creation
-	// Note: warm pool only contains default (base) images, so skip it if a
-	// specific BaseImage is requested (e.g., "coder", "researcher", "reviewer")
+	// Try warm pool first, fall back to cold creation.
+	// Pass cfg.BaseImage as the hint so the pool can match containers pre-booted
+	// with that specific image (e.g. "emergent-memory-python-sdk:latest").
+	// If BaseImage is empty the pool matches against its TargetImage (or provider default).
 	var containerProviderID string
-	if cfg.BaseImage == "" {
-		// Only use warm pool for default/base image
-		if wc := ap.warmPool.Acquire(providerType); wc != nil {
-			containerProviderID = wc.ProviderID()
-			ap.log.Info("acquired warm container",
-				"provider_type", providerType,
-				"provider_id", containerProviderID,
-			)
-		}
-	} else {
-		ap.log.Info("skipping warm pool due to specific BaseImage",
-			"base_image", cfg.BaseImage,
+	if wc := ap.warmPool.Acquire(providerType, cfg.BaseImage); wc != nil {
+		containerProviderID = wc.ProviderID()
+		ap.log.Info("acquired warm container",
 			"provider_type", providerType,
+			"provider_id", containerProviderID,
+			"base_image", cfg.BaseImage,
 		)
 	}
 

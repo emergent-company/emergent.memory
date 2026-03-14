@@ -305,7 +305,7 @@ func TestDockerE2E_WarmPoolHitSubMs(t *testing.T) {
 
 	// Measure acquisition time
 	start := time.Now()
-	wc := pool.Acquire(ProviderGVisor)
+	wc := pool.Acquire(ProviderGVisor, "")
 	acquireTime := time.Since(start)
 
 	require.NotNil(t, wc, "should get a warm container")
@@ -336,7 +336,7 @@ func TestDockerE2E_WarmPoolHitSubMs(t *testing.T) {
 
 	// Second acquisition
 	start2 := time.Now()
-	wc2 := pool.Acquire(ProviderGVisor)
+	wc2 := pool.Acquire(ProviderGVisor, "")
 	acquireTime2 := time.Since(start2)
 	require.NotNil(t, wc2, "should get second warm container")
 	destroyOnCleanup(t, p, wc2.ProviderID())
@@ -345,7 +345,7 @@ func TestDockerE2E_WarmPoolHitSubMs(t *testing.T) {
 	assert.Less(t, acquireTime2.Milliseconds(), int64(150), "second acquisition should be sub-150ms")
 
 	// Third acquisition should be a miss (pool is empty, replenishment is async)
-	wc3 := pool.Acquire(ProviderGVisor)
+	wc3 := pool.Acquire(ProviderGVisor, "")
 	// May or may not be nil — if replenishment finished fast enough, it could succeed.
 	// Either way, verify metrics consistency.
 	finalMetrics2 := pool.Metrics()
@@ -558,7 +558,7 @@ func TestDockerE2E_WarmPoolConcurrentAcquire(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			wc := pool.Acquire(ProviderGVisor)
+			wc := pool.Acquire(ProviderGVisor, "")
 			if wc != nil {
 				atomic.AddInt32(&hitCount, 1)
 				mu.Lock()

@@ -48,7 +48,7 @@ func (h *Handler) provisionContainer(ctx context.Context, ws *WorkspaceResponse,
 
 	// Try warm pool first (if enabled and container matches)
 	var providerID string
-	if wc := h.warmPool.Acquire(providerType); wc != nil {
+	if wc := h.warmPool.Acquire(providerType, ""); wc != nil {
 		providerID = wc.ProviderID()
 		h.log.Info("acquired warm container",
 			"workspace_id", ws.ID,

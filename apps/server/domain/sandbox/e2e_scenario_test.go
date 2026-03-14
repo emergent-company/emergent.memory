@@ -848,7 +848,7 @@ func TestE2E_WarmPool_AcquireReturnsPreCreatedContainer(t *testing.T) {
 	assert.Equal(t, 2, metrics.PoolSize, "warm pool should have 2 containers after Start")
 
 	// Acquire should return a pre-created container
-	wc := pool.Acquire(ProviderGVisor)
+	wc := pool.Acquire(ProviderGVisor, "")
 	require.NotNil(t, wc)
 	assert.Contains(t, wc.ProviderID(), "mock-gvisor")
 

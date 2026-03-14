@@ -43,7 +43,7 @@ func TestWarmPool_IsEnabled(t *testing.T) {
 func TestWarmPool_DisabledPool_AcquireReturnsNil(t *testing.T) {
 	wp := NewWarmPool(NewOrchestrator(testLogger()), testLogger(), WarmPoolConfig{Size: 0})
 
-	result := wp.Acquire(ProviderGVisor)
+	result := wp.Acquire(ProviderGVisor, "")
 	assert.Nil(t, result)
 
 	metrics := wp.Metrics()
@@ -77,7 +77,7 @@ func TestWarmPool_Acquire_Hit(t *testing.T) {
 		createdAt:    time.Now(),
 	})
 
-	result := wp.Acquire(ProviderGVisor)
+	result := wp.Acquire(ProviderGVisor, "")
 	require.NotNil(t, result)
 	assert.Equal(t, "warm-1", result.ProviderID())
 	assert.Equal(t, ProviderGVisor, result.Provider())
@@ -101,7 +101,7 @@ func TestWarmPool_Acquire_Miss_WrongProvider(t *testing.T) {
 	})
 
 	// Request a Firecracker container — should miss
-	result := wp.Acquire(ProviderFirecracker)
+	result := wp.Acquire(ProviderFirecracker, "")
 	assert.Nil(t, result)
 
 	// gVisor container should still be in pool
@@ -116,7 +116,7 @@ func TestWarmPool_Acquire_Miss_EmptyPool(t *testing.T) {
 	wp := NewWarmPool(NewOrchestrator(testLogger()), testLogger(), WarmPoolConfig{Size: 2})
 	// Pool is empty — no containers added
 
-	result := wp.Acquire(ProviderGVisor)
+	result := wp.Acquire(ProviderGVisor, "")
 	assert.Nil(t, result)
 
 	metrics := wp.Metrics()
@@ -134,7 +134,7 @@ func TestWarmPool_Acquire_SelectsCorrectProvider(t *testing.T) {
 	)
 
 	// Request gVisor — should get gv-1 (only gVisor container)
-	result := wp.Acquire(ProviderGVisor)
+	result := wp.Acquire(ProviderGVisor, "")
 	require.NotNil(t, result)
 	assert.Equal(t, "gv-1", result.ProviderID())
 
@@ -154,7 +154,7 @@ func TestWarmPool_Acquire_AfterStop(t *testing.T) {
 	_ = wp.Stop(t.Context())
 
 	// After stop, acquire should return nil
-	result := wp.Acquire(ProviderGVisor)
+	result := wp.Acquire(ProviderGVisor, "")
 	assert.Nil(t, result)
 }
 
@@ -181,9 +181,9 @@ func TestWarmPool_Metrics_AfterOperations(t *testing.T) {
 	})
 
 	// Hit
-	_ = wp.Acquire(ProviderGVisor)
+	_ = wp.Acquire(ProviderGVisor, "")
 	// Miss
-	_ = wp.Acquire(ProviderGVisor)
+	_ = wp.Acquire(ProviderGVisor, "")
 
 	metrics := wp.Metrics()
 	assert.Equal(t, int64(1), metrics.Hits)
@@ -354,7 +354,7 @@ func TestWarmPool_Acquire_TriggersReplenishment(t *testing.T) {
 	assert.Equal(t, int64(2), mock.createCount.Load())
 
 	// Acquire one
-	wc := wp.Acquire(ProviderGVisor)
+	wc := wp.Acquire(ProviderGVisor, "")
 	require.NotNil(t, wc)
 
 	// Wait for async replenishment (it creates in background)
@@ -413,7 +413,7 @@ func TestWarmPool_Resize_ShrinkWithProvider(t *testing.T) {
 // --- Constants ---
 
 func TestWarmPoolConstants(t *testing.T) {
-	assert.Equal(t, 0, defaultWarmPoolSize)
+	assert.Equal(t, 2, defaultWarmPoolSize)
 	assert.Equal(t, 60*time.Second, poolResizeTimeout)
 	assert.Equal(t, 30*time.Second, replenishTimeout)
 }

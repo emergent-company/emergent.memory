@@ -10,8 +10,10 @@ import (
 )
 
 const (
-	// defaultWarmPoolSize is the default number of pre-booted containers (0 = disabled).
-	defaultWarmPoolSize = 0
+	// defaultWarmPoolSize is the default number of pre-booted containers.
+	// Set to 2 so warm pool is active out-of-the-box; override with
+	// WORKSPACE_WARM_POOL_SIZE env var (0 to disable).
+	defaultWarmPoolSize = 2
 
 	// poolResizeTimeout is the maximum time to wait for pool resize operations.
 	poolResizeTimeout = 60 * time.Second
@@ -24,6 +26,11 @@ const (
 type WarmPoolConfig struct {
 	// Size is the target number of pre-booted containers to maintain.
 	Size int `json:"size"`
+	// TargetImage is the Docker image to pre-boot containers with.
+	// When empty, the provider's default image is used.
+	// Set this to match the base_image your agents request so warm containers
+	// are compatible with requests that specify a BaseImage.
+	TargetImage string `json:"target_image,omitempty"`
 }
 
 // DefaultWarmPoolConfig returns the default warm pool configuration.
@@ -37,6 +44,7 @@ func DefaultWarmPoolConfig() WarmPoolConfig {
 type warmContainer struct {
 	providerID   string       // Provider-specific container ID
 	providerType ProviderType // Which provider created it
+	image        string       // Docker image the container was booted with (empty = provider default)
 	createdAt    time.Time    // When the container was pre-booted
 }
 
@@ -171,12 +179,24 @@ func (wp *WarmPool) Stop(ctx context.Context) error {
 }
 
 // Acquire attempts to get a pre-booted container from the pool that matches
-// the given provider type. Returns nil if no matching container is available (pool miss).
-// On a hit, a replenishment goroutine is started automatically.
-func (wp *WarmPool) Acquire(providerType ProviderType) *warmContainer {
+// the given provider type and image. Returns nil if no matching container is
+// available (pool miss). On a hit, a replenishment goroutine is started automatically.
+//
+// imageHint is the requested BaseImage from the caller ("" means use provider default).
+// A warm container matches if its image matches the requested image, or if the pool's
+// TargetImage matches the requested image (handles the case where warm containers are
+// pre-booted with the same image the caller needs).
+func (wp *WarmPool) Acquire(providerType ProviderType, imageHint string) *warmContainer {
 	if wp.config.Size <= 0 || wp.stopped.Load() {
 		wp.misses.Add(1)
 		return nil
+	}
+
+	// Normalise: treat empty imageHint as matching the pool's TargetImage
+	// (both represent "use whatever image is configured for the pool")
+	wantImage := imageHint
+	if wantImage == "" {
+		wantImage = wp.config.TargetImage
 	}
 
 	wp.mu.Lock()
@@ -184,29 +204,42 @@ func (wp *WarmPool) Acquire(providerType ProviderType) *warmContainer {
 
 	// Find a matching container
 	for i, wc := range wp.containers {
-		if wc.providerType == providerType {
-			// Remove from pool
-			wp.containers = append(wp.containers[:i], wp.containers[i+1:]...)
-			wp.hits.Add(1)
-
-			wp.log.Info("warm pool hit",
-				"provider_id", wc.providerID,
-				"provider_type", wc.providerType,
-				"age", time.Since(wc.createdAt).Round(time.Millisecond),
-				"remaining", len(wp.containers),
-			)
-
-			// Trigger async replenishment
-			go wp.replenish()
-
-			return wc
+		if wc.providerType != providerType {
+			continue
 		}
+		// Match by image: warm container's image must equal the desired image
+		// (both empty == provider default, or exact string match)
+		wcImage := wc.image
+		if wcImage == "" {
+			wcImage = wp.config.TargetImage
+		}
+		if wcImage != wantImage {
+			continue
+		}
+
+		// Remove from pool
+		wp.containers = append(wp.containers[:i], wp.containers[i+1:]...)
+		wp.hits.Add(1)
+
+		wp.log.Info("warm pool hit",
+			"provider_id", wc.providerID,
+			"provider_type", wc.providerType,
+			"image", wc.image,
+			"age", time.Since(wc.createdAt).Round(time.Millisecond),
+			"remaining", len(wp.containers),
+		)
+
+		// Trigger async replenishment
+		go wp.replenish()
+
+		return wc
 	}
 
 	// No matching container
 	wp.misses.Add(1)
 	wp.log.Debug("warm pool miss",
 		"requested_provider", providerType,
+		"requested_image", imageHint,
 		"pool_size", len(wp.containers),
 	)
 
@@ -398,6 +431,7 @@ func (wp *WarmPool) createWarmContainer(ctx context.Context) (*warmContainer, er
 
 	result, err := provider.Create(ctx, &CreateContainerRequest{
 		ContainerType: ContainerTypeAgentSandbox,
+		BaseImage:     wp.config.TargetImage,
 		Labels: map[string]string{
 			"memory.warm-pool": "true",
 		},
@@ -409,6 +443,7 @@ func (wp *WarmPool) createWarmContainer(ctx context.Context) (*warmContainer, er
 	return &warmContainer{
 		providerID:   result.ProviderID,
 		providerType: providerType,
+		image:        wp.config.TargetImage,
 		createdAt:    time.Now(),
 	}, nil
 }
@@ -435,6 +470,11 @@ func (wp *WarmPool) destroyContainer(ctx context.Context, wc *warmContainer) {
 // IsEnabled returns whether the warm pool is active (size > 0).
 func (wp *WarmPool) IsEnabled() bool {
 	return wp.config.Size > 0
+}
+
+// TargetImage returns the configured image for warm containers (empty = provider default).
+func (wp *WarmPool) TargetImage() string {
+	return wp.config.TargetImage
 }
 
 // ProviderIDFromWarm extracts the provider ID from a warm container.

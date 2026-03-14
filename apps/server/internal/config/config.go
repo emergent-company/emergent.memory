@@ -327,8 +327,12 @@ type SandboxConfig struct {
 	CleanupIntervalMin int `env:"WORKSPACE_CLEANUP_INTERVAL_MIN" envDefault:"60"`
 	// AlertThresholdPct is the usage threshold for resource alerts (0-100)
 	AlertThresholdPct int `env:"WORKSPACE_ALERT_THRESHOLD_PCT" envDefault:"80"`
-	// WarmPoolSize is the number of pre-booted containers to keep ready (0 = disabled)
-	WarmPoolSize int `env:"WORKSPACE_WARM_POOL_SIZE" envDefault:"0"`
+	// WarmPoolSize is the number of pre-booted containers to keep ready (0 = disabled, default: 2)
+	WarmPoolSize int `env:"WORKSPACE_WARM_POOL_SIZE" envDefault:"2"`
+	// WarmPoolTargetImage is the Docker image to pre-boot warm containers with.
+	// Should match the base_image your primary agent uses so warm containers are
+	// immediately compatible. Empty means use the provider's default image.
+	WarmPoolTargetImage string `env:"WORKSPACE_WARM_POOL_TARGET_IMAGE" envDefault:""`
 	// DefaultProvider is the default sandbox provider (gvisor, firecracker, e2b)
 	DefaultProvider string `env:"WORKSPACE_DEFAULT_PROVIDER" envDefault:"gvisor"`
 	// DefaultCPU is the default CPU limit for workspaces (e.g. "2")

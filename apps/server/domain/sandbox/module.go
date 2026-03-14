@@ -188,8 +188,12 @@ func startCleanupJob(lc fx.Lifecycle, job *CleanupJob, cfg *config.Config, log *
 // newWarmPool creates a warm pool with configuration from env vars.
 func newWarmPool(orchestrator *Orchestrator, log *slog.Logger, cfg *config.Config) *WarmPool {
 	poolCfg := DefaultWarmPoolConfig()
-	if cfg.Sandbox.WarmPoolSize > 0 {
-		poolCfg.Size = cfg.Sandbox.WarmPoolSize
+	// WORKSPACE_WARM_POOL_SIZE overrides the compiled-in default in both directions
+	// (set higher to increase pool, set to 0 to disable).
+	// envDefault:"2" means the env var is always present, so always apply it.
+	poolCfg.Size = cfg.Sandbox.WarmPoolSize
+	if cfg.Sandbox.WarmPoolTargetImage != "" {
+		poolCfg.TargetImage = cfg.Sandbox.WarmPoolTargetImage
 	}
 	return NewWarmPool(orchestrator, log, poolCfg)
 }
