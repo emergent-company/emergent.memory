@@ -132,8 +132,8 @@ Create a new agent definition
 Create a new agent definition.
 
 Examples:
-  emergent-cli agent-definitions create --name "my-def" --system-prompt "You are a helpful agent"
-  emergent-cli defs create --name "extractor" --flow-type single --tools "search,graph_query" --visibility project
+  memory agent-definitions create --name "my-def" --system-prompt "You are a helpful agent"
+  memory defs create --name "extractor" --flow-type single --tools "search,graph_query" --visibility project
 
 ```
 memory agent-definitions create [flags]
@@ -362,9 +362,9 @@ Create a new agent
 Create a new runtime agent for the current project.
 
 Examples:
-  emergent-cli agents create --name "my-agent" --project <id>
-  emergent-cli agents create --name "cron-agent" --trigger-type schedule --cron "0 */5 * * * *"
-  emergent-cli agents create --name "reaction-agent" --trigger-type reaction --reaction-events created,updated --reaction-object-types document
+  memory agents create --name "my-agent" --project <id>
+  memory agents create --name "cron-agent" --trigger-type schedule --cron "0 */5 * * * *"
+  memory agents create --name "reaction-agent" --trigger-type reaction --reaction-events created,updated --reaction-object-types document
 
 ```
 memory agents create [flags]
@@ -477,8 +477,8 @@ Create a webhook hook
 Create a new webhook hook for an agent. The plaintext token is only shown once.
 
 Examples:
-  emergent-cli agents hooks create <agent-id> --label "CI/CD Pipeline"
-  emergent-cli agents hooks create <agent-id> --label "Staging" --rate-limit 30 --burst-size 5
+  memory agents hooks create <agent-id> --label "CI/CD Pipeline"
+  memory agents hooks create <agent-id> --label "Staging" --rate-limit 30 --burst-size 5
 
 ```
 memory agents hooks create [agent-id] [flags]
@@ -931,6 +931,7 @@ memory ask <question> [flags]
   -h, --help             help for ask
       --json             Output result as JSON {question, response, tools, elapsedMs}
       --project string   Project ID (optional — uses default project if configured)
+      --runtime string   Sandbox runtime for scripting tasks: python (default) or go
       --show-time        Show elapsed time at the end of the response
       --show-tools       Show tool calls made by the assistant during reasoning
 ```
@@ -1347,9 +1348,9 @@ Examples:
 ### Options
 
 ```
-      --config-path string   path to Emergent config.yaml
+      --config-path string   path to Memory config.yaml
   -h, --help                 help for embeddings
-      --server string        Emergent server URL (overrides config)
+      --server string        Memory server URL (overrides config)
 ```
 
 ## memory embeddings config
@@ -1890,7 +1891,7 @@ MEMORY_PROJECT_TOKEN so subsequent CLI commands pick it up automatically.
 Scopes default to: data:read data:write schema:read agents:read agents:write
 
 Example:
-  emergent projects create-token my-project --name onboard-token
+  memory projects create-token my-project --name onboard-token
 
 ```
 memory projects create-token [project-name-or-id] [flags]
@@ -2003,6 +2004,35 @@ memory projects list [flags]
       --stats           Include project statistics (documents, objects, jobs, schemas)
 ```
 
+## memory projects set-budget
+
+Set a monthly spend budget for a project
+
+### Synopsis
+
+Set or clear the monthly spend budget for a project.
+
+When the project's estimated spend for the current month exceeds
+budget_usd * budget_alert_threshold (default 0.8), an in-app notification
+is sent to all org members. Set --budget 0 to clear an existing budget.
+
+Examples:
+  memory projects set-budget my-project --budget 50
+  memory projects set-budget my-project --budget 100 --threshold 0.9
+  memory projects set-budget --budget 25
+
+```
+memory projects set-budget [project-name-or-id] [flags]
+```
+
+### Options
+
+```
+      --budget float      Monthly budget in USD (set to 0 to clear)
+  -h, --help              help for set-budget
+      --threshold float   Alert threshold as a fraction of budget (e.g. 0.8 = 80%) (default 0.8)
+```
+
 ## memory projects set-info
 
 Set the project info document
@@ -2068,13 +2098,16 @@ Set active project
 
 ### Synopsis
 
-Set the active project context by writing credentials to .env.local.
+Set the active project context.
 
-Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_TOKEN into
-.env.local in the current directory so that subsequent CLI commands and
-application code automatically use the selected project. If no existing token
-is found for the project, a new one is created automatically. Run without
-arguments to select interactively from a numbered list of available projects.
+Updates project_id in ~/.memory/config.yaml and writes MEMORY_PROJECT_ID,
+MEMORY_PROJECT_NAME, and MEMORY_PROJECT_TOKEN into .env.local in the current
+directory so that subsequent CLI commands and application code automatically use
+the selected project. If no existing token is found for the project, a new one
+is created automatically. Run without arguments to select interactively from a
+numbered list of available projects.
+
+Use --clear to remove the active project from the global config.
 
 ```
 memory projects set [name-or-id] [flags]
@@ -2083,7 +2116,8 @@ memory projects set [name-or-id] [flags]
 ### Options
 
 ```
-  -h, --help   help for set
+      --clear   Clear the active project from config
+  -h, --help    help for set
 ```
 
 ## memory provider
@@ -2118,9 +2152,9 @@ Supported providers:
 The project is read from --project or the MEMORY_PROJECT_ID environment variable.
 
 Examples:
-  emergent provider configure-project google --api-key AIzaSy...
-  emergent provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
-  emergent provider configure-project google --remove
+  memory provider configure-project google --api-key AIzaSy...
+  memory provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
+  memory provider configure-project google --remove
 
 ```
 memory provider configure-project <provider> [flags]
@@ -2156,9 +2190,9 @@ Supported providers:
                 Optionally supply --key-file for a service account JSON key.
 
 Examples:
-  emergent provider configure google --api-key AIzaSy...
-  emergent provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
-  emergent provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004
+  memory provider configure google --api-key AIzaSy...
+  memory provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
+  memory provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004
 
 ```
 memory provider configure <provider> [flags]
@@ -2191,9 +2225,9 @@ Pass a provider name to filter to a single provider.
 Use --type to filter by model type (embedding or generative).
 
 Examples:
-  emergent provider models
-  emergent provider models google-vertex
-  emergent provider models google --type generative
+  memory provider models
+  memory provider models google-vertex
+  memory provider models google --type generative
 
 ```
 memory provider models [provider] [flags]
@@ -2202,8 +2236,9 @@ memory provider models [provider] [flags]
 ### Options
 
 ```
-  -h, --help          help for models
-      --type string   Filter by model type: embedding or generative
+  -h, --help            help for models
+      --org-id string   Organization ID (auto-detected from config)
+      --type string     Filter by model type: embedding or generative
 ```
 
 ## memory provider test
@@ -2222,9 +2257,9 @@ Use --project to test using the project-level credential hierarchy
 (project override → org) instead of org credentials only.
 
 Examples:
-  emergent provider test
-  emergent provider test google-vertex
-  emergent provider test google --project <id>
+  memory provider test
+  memory provider test google-vertex
+  memory provider test google --project <id>
 
 ```
 memory provider test [provider] [flags]
@@ -2238,6 +2273,41 @@ memory provider test [provider] [flags]
       --project string   Project ID for project-level credential resolution
 ```
 
+## memory provider timeseries
+
+Show LLM usage over time
+
+### Synopsis
+
+Show LLM token usage and estimated cost broken down by time period.
+
+Without --project, reports org-wide usage. With --project, reports usage for
+that specific project. Use --granularity to control bucket size (default: day).
+
+Output is a table with columns: PERIOD, PROVIDER, MODEL, TEXT IN, IMAGE, VIDEO,
+AUDIO, OUTPUT, and EST. COST (USD). A running subtotal is shown per period.
+
+Examples:
+  memory provider timeseries
+  memory provider timeseries --project <id> --granularity week
+  memory provider timeseries --since 2024-01-01 --until 2024-03-31 --granularity month
+
+```
+memory provider timeseries [flags]
+```
+
+### Options
+
+```
+      --granularity string   Time bucket size: day, week, or month (default "day")
+  -h, --help                 help for timeseries
+      --json                 Output raw JSON
+      --org-id string        Organization ID (auto-detected from config)
+      --project string       Filter to a specific project ID
+      --since string         Start date (YYYY-MM-DD)
+      --until string         End date (YYYY-MM-DD)
+```
+
 ## memory provider usage
 
 Show LLM usage and estimated cost
@@ -2249,14 +2319,17 @@ Show aggregated LLM token usage and estimated cost.
 Without --project, reports org-wide usage across all projects.
 With --project, reports usage for that specific project.
 
+Use --by-project to break org-wide totals down per project instead of per model.
+
 Output is a table with columns: PROVIDER, MODEL, TEXT IN (tokens), IMAGE
 (tokens), VIDEO (tokens), AUDIO (tokens), OUTPUT (tokens), and EST. COST (USD).
 A total estimated cost line is printed below the table.
 
 Examples:
-  emergent provider usage
-  emergent provider usage --project <id>
-  emergent provider usage --since 2024-01-01
+  memory provider usage
+  memory provider usage --project <id>
+  memory provider usage --since 2024-01-01
+  memory provider usage --by-project
 
 ```
 memory provider usage [flags]
@@ -2265,6 +2338,7 @@ memory provider usage [flags]
 ### Options
 
 ```
+      --by-project       Break down org usage by project instead of by model
   -h, --help             help for usage
       --json             Output raw JSON
       --org-id string    Organization ID (auto-detected from config)
@@ -2288,9 +2362,9 @@ no agent ID is needed.
 Use --mode=search for direct hybrid search without AI reasoning.
 
 Examples:
-  emergent query "what are the main services and how do they relate?"
-  emergent query --mode=search "auth service"
-  emergent query --project abc123 "list all requirements"
+  memory query "what are the main services and how do they relate?"
+  memory query --mode=search "auth service"
+  memory query --project abc123 "list all requirements"
 
 ```
 memory query <question> [flags]

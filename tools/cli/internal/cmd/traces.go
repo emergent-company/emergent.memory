@@ -169,7 +169,7 @@ When the --agent-runs flag is used, the table additionally includes: AGENT,
 INPUT TOKENS, OUTPUT TOKENS, and EST. COST columns, and results are filtered
 to traces with agent.run root spans only. Use --since (e.g. 30m, 2h, 24h) and
 --limit to control the time window and result count.`,
-	RunE:  runTracesList,
+	RunE: runTracesList,
 }
 
 var tracesSearchCmd = &cobra.Command{
@@ -181,7 +181,7 @@ Outputs the same table format as 'memory traces list': TRACE ID, ROOT SPAN,
 DURATION, TIMESTAMP. Use --service, --route, --min-duration, --since, and
 --limit flags to narrow results. The query is scoped to the active project
 automatically.`,
-	RunE:  runTracesSearch,
+	RunE: runTracesSearch,
 }
 
 var tracesGetCmd = &cobra.Command{
@@ -193,8 +193,8 @@ Prints the Trace ID, then each span in a tree structure showing the span name
 and duration. If an agent run ID is found in the trace attributes, also prints
 a token usage summary (Input Tokens, Output Tokens, Estimated Cost). Use
 --debug to include internal ADK bookkeeping spans in the tree.`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runTracesGet,
+	Args: cobra.ExactArgs(1),
+	RunE: runTracesGet,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -268,10 +268,52 @@ func fetchRunInfo(cmd *cobra.Command, projectID, runID string) *traceRunInfo {
 	}
 }
 
-// fetchRunTokenUsage is a compatibility shim used by runTracesGet.
+// fetchRunInfoGlobal calls GET /api/v1/runs/:runId (no project required) and
+// returns token usage + agentId. Returns nil on any error (graceful degradation).
+func fetchRunInfoGlobal(cmd *cobra.Command, runID string) *traceRunInfo {
+	c, err := getClient(cmd)
+	if err != nil {
+		return nil
+	}
+	u := strings.TrimRight(c.BaseURL(), "/") + "/api/v1/runs/" + runID
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := c.SDK.Do(context.Background(), req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	var dto agentRunDTOResponse
+	if err := json.Unmarshal(body, &dto); err != nil {
+		return nil
+	}
+	return &traceRunInfo{
+		AgentID: dto.Data.AgentID,
+		Usage:   dto.Data.TokenUsage,
+	}
+}
+
+// fetchRunTokenUsage returns token usage for a run. Uses the global endpoint
+// (no project required); falls back to project-scoped if projectID is provided.
 func fetchRunTokenUsage(cmd *cobra.Command, projectID, runID string) *runTokenUsage {
-	if info := fetchRunInfo(cmd, projectID, runID); info != nil {
+	// Prefer global endpoint — run IDs are globally unique.
+	if info := fetchRunInfoGlobal(cmd, runID); info != nil {
 		return info.Usage
+	}
+	// Fall back to project-scoped endpoint if we have a project.
+	if projectID != "" {
+		if info := fetchRunInfo(cmd, projectID, runID); info != nil {
+			return info.Usage
+		}
 	}
 	return nil
 }
@@ -305,6 +347,40 @@ func fetchAgentName(cmd *cobra.Command, projectID, agentID string) string {
 		return ""
 	}
 	var ag agentGetResponse
+	if err := json.Unmarshal(body, &ag); err != nil {
+		return ""
+	}
+	return ag.Data.Name
+}
+
+// fetchAgentNameGlobal calls GET /api/admin/agents/:agentId and returns the name.
+// Does not require a project ID. Returns "" on any error.
+func fetchAgentNameGlobal(cmd *cobra.Command, agentID string) string {
+	if agentID == "" {
+		return ""
+	}
+	c, err := getClient(cmd)
+	if err != nil {
+		return ""
+	}
+	u := strings.TrimRight(c.BaseURL(), "/") + "/api/admin/agents/" + agentID
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := c.SDK.Do(context.Background(), req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+	var ag adminAgentGetResponse
 	if err := json.Unmarshal(body, &ag); err != nil {
 		return ""
 	}
@@ -934,29 +1010,27 @@ func runTracesGet(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Trace: %s\n\n", traceID)
 
 	// Walk all spans looking for memory.agent.run_id / emergent.agent.run_id to print a token summary.
-	projectID, _ := resolveProjectContext(cmd, "")
-	if projectID != "" {
-		var runID string
-	outer:
-		for _, batch := range resp.Batches {
-			for _, ss := range batch.ScopeSpans {
-				for _, s := range ss.Spans {
-					if v := attrValue(s.Attributes, "memory.agent.run_id"); v != "" {
-						runID = v
-						break outer
-					}
-					if v := attrValue(s.Attributes, "emergent.agent.run_id"); v != "" {
-						runID = v
-						break outer
-					}
+	// The global /api/v1/runs/:runId endpoint requires no project context.
+	var runID string
+outerRunID:
+	for _, batch := range resp.Batches {
+		for _, ss := range batch.ScopeSpans {
+			for _, s := range ss.Spans {
+				if v := attrValue(s.Attributes, "memory.agent.run_id"); v != "" {
+					runID = v
+					break outerRunID
+				}
+				if v := attrValue(s.Attributes, "emergent.agent.run_id"); v != "" {
+					runID = v
+					break outerRunID
 				}
 			}
 		}
-		if runID != "" {
-			if usage := fetchRunTokenUsage(cmd, projectID, runID); usage != nil {
-				fmt.Printf("Tokens: %d in / %d out  Est. Cost: $%.6f\n\n",
-					usage.TotalInputTokens, usage.TotalOutputTokens, usage.EstimatedCostUSD)
-			}
+	}
+	if runID != "" {
+		if usage := fetchRunTokenUsage(cmd, "", runID); usage != nil {
+			fmt.Printf("Tokens: %d in / %d out  Est. Cost: $%.6f\n\n",
+				usage.TotalInputTokens, usage.TotalOutputTokens, usage.EstimatedCostUSD)
 		}
 	}
 

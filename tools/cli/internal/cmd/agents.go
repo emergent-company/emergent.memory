@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agents"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
@@ -109,6 +110,8 @@ var getRunCmd = &cobra.Command{
   - Root run ID (for sub-runs triggered by a parent run)
   - Any output or error message from the run
 
+No --project flag is required — run IDs are globally unique.
+
 This is the primary command to check the cost of a specific agent run.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runGetRunByID,
@@ -128,6 +131,7 @@ var (
 	agentReactionEvents   string
 	agentReactionObjTypes string
 	agentRunsLimit        int
+	getRunJSONOutput      bool
 )
 
 // resolveAgentArgOrPick resolves an agent ID from args[0], or, when args is
@@ -562,40 +566,87 @@ func runGetAgentRuns(cmd *cobra.Command, args []string) error {
 func runGetRunByID(cmd *cobra.Command, args []string) error {
 	runID := args[0]
 
-	// Resolve project ID: use --project flag first, then fall back to
-	// the session → admin agent chain.
-	projectID, err := resolveProjectContext(cmd, agentProjectID)
-	var agentID string
-	if err != nil || projectID == "" {
-		// Fall back to session lookup.
-		projectID, agentID = fetchProjectIDFromRunID(cmd, runID)
-	}
-	if projectID == "" {
-		return fmt.Errorf("could not resolve project for run %s (try --project <id>)", runID)
-	}
-
-	// Fetch full run details including token usage.
-	info := fetchRunInfo(cmd, projectID, runID)
-
-	// Also fetch the full AgentRun from the project endpoint for structured fields.
 	c, clientErr := getClient(cmd)
 	if clientErr != nil {
 		return clientErr
 	}
-	result, runErr := c.SDK.Agents.GetProjectRun(context.Background(), projectID, runID)
+
+	// Use the global endpoint — run IDs are globally unique UUIDs, no project needed.
+	result, runErr := c.SDK.Agents.GetRunByID(context.Background(), runID)
 	if runErr != nil {
 		return fmt.Errorf("failed to get run: %w", runErr)
 	}
 
 	r := result.Data
 
-	// Agent name (best effort).
-	agentName := agentID
+	// Best-effort agent name resolution: try project-scoped endpoint if agentId is known.
+	agentName := r.AgentID
 	if r.AgentID != "" {
-		agentName = r.AgentID
+		// We don't know the project here, but fetchAgentName gracefully returns ""
+		// on failure so it's safe to try with an empty projectID.
+		// For named display we try to resolve via the admin agent endpoint instead.
+		if name := fetchAgentNameGlobal(cmd, r.AgentID); name != "" {
+			agentName = fmt.Sprintf("%s (%s)", name, r.AgentID)
+		}
 	}
-	if name := fetchAgentName(cmd, projectID, r.AgentID); name != "" {
-		agentName = fmt.Sprintf("%s (%s)", name, r.AgentID)
+
+	// Consolidate token usage from the run's TokenUsage field (populated by GetRunByID).
+	var usage *runTokenUsage
+	if r.TokenUsage != nil {
+		usage = &runTokenUsage{
+			TotalInputTokens:  r.TokenUsage.TotalInputTokens,
+			TotalOutputTokens: r.TokenUsage.TotalOutputTokens,
+			EstimatedCostUSD:  r.TokenUsage.EstimatedCostUSD,
+		}
+	}
+
+	if getRunJSONOutput {
+		type jsonOut struct {
+			ID           string         `json:"id"`
+			AgentID      string         `json:"agentId"`
+			AgentName    string         `json:"agentName,omitempty"`
+			Status       string         `json:"status"`
+			StartedAt    string         `json:"startedAt"`
+			CompletedAt  string         `json:"completedAt,omitempty"`
+			DurationMs   *int64         `json:"durationMs,omitempty"`
+			TokenUsage   *runTokenUsage `json:"tokenUsage,omitempty"`
+			TraceID      string         `json:"traceId,omitempty"`
+			RootRunID    string         `json:"rootRunId,omitempty"`
+			ErrorMessage string         `json:"errorMessage,omitempty"`
+			SkipReason   string         `json:"skipReason,omitempty"`
+		}
+		out := jsonOut{
+			ID:        r.ID,
+			AgentID:   r.AgentID,
+			AgentName: agentName,
+			Status:    r.Status,
+			StartedAt: r.StartedAt.Format(time.RFC3339),
+		}
+		if r.CompletedAt != nil {
+			out.CompletedAt = r.CompletedAt.Format(time.RFC3339)
+		}
+		if r.DurationMs != nil {
+			ms := int64(*r.DurationMs)
+			out.DurationMs = &ms
+		}
+		if usage != nil {
+			out.TokenUsage = usage
+		}
+		if r.TraceID != nil {
+			out.TraceID = *r.TraceID
+		}
+		if r.RootRunID != nil && *r.RootRunID != r.ID {
+			out.RootRunID = *r.RootRunID
+		}
+		if r.ErrorMessage != nil {
+			out.ErrorMessage = *r.ErrorMessage
+		}
+		if r.SkipReason != nil {
+			out.SkipReason = *r.SkipReason
+		}
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
 	}
 
 	fmt.Printf("Run: %s\n", r.ID)
@@ -607,18 +658,6 @@ func runGetRunByID(cmd *cobra.Command, args []string) error {
 	}
 	if r.DurationMs != nil {
 		fmt.Printf("  Duration:  %dms\n", *r.DurationMs)
-	}
-	// Token usage — prefer data from fetchRunInfo (agentRunDTOResponse) since
-	// the SDK struct field was just added and may or may not be populated.
-	var usage *runTokenUsage
-	if info != nil && info.Usage != nil {
-		usage = info.Usage
-	} else if r.TokenUsage != nil {
-		usage = &runTokenUsage{
-			TotalInputTokens:  r.TokenUsage.TotalInputTokens,
-			TotalOutputTokens: r.TokenUsage.TotalOutputTokens,
-			EstimatedCostUSD:  r.TokenUsage.EstimatedCostUSD,
-		}
 	}
 	if usage != nil {
 		fmt.Printf("  Tokens:    %d in / %d out\n", usage.TotalInputTokens, usage.TotalOutputTokens)
@@ -935,6 +974,9 @@ func init() {
 
 	// Runs limit flag
 	runsAgentCmd.Flags().IntVar(&agentRunsLimit, "limit", 10, "Maximum number of runs to return")
+
+	// get-run flags
+	getRunCmd.Flags().BoolVar(&getRunJSONOutput, "json", false, "Output result as JSON")
 
 	// Questions flags
 	listProjectQuestionsCmd.Flags().StringVar(&questionStatus, "status", "", "Filter by status (pending, answered, cancelled, expired)")

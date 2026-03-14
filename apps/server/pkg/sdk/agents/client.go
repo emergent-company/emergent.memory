@@ -882,6 +882,42 @@ func (c *Client) GetProjectRun(ctx context.Context, projectID, runID string) (*A
 	return &result, nil
 }
 
+// GetRunByID gets a specific run by its globally unique ID — no project required.
+// GET /api/v1/runs/:runId
+// Requires agents:read scope.
+func (c *Client) GetRunByID(ctx context.Context, runID string) (*APIResponse[AgentRun], error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"GET",
+		c.base+"/api/v1/runs/"+url.PathEscape(runID),
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[AgentRun]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // GetRunMessages gets conversation messages for a run.
 // GET /api/projects/:projectId/agent-runs/:runId/messages
 // Requires project:read scope.

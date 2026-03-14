@@ -79,6 +79,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	sessions.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	sessions.GET("/:id", h.GetSession)
 
+	// --- Global run lookup (no project required — run IDs are globally unique UUIDs) ---
+	globalRuns := e.Group("/api/v1/runs")
+	globalRuns.Use(authMiddleware.RequireAuth())
+	globalRuns.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
+	globalRuns.GET("/:runId", h.GetRunByID)
+
 	// --- Project-scoped ADK session routes ---
 	adkSessions := e.Group("/api/projects/:projectId/adk-sessions")
 	adkSessions.Use(authMiddleware.RequireAuth())

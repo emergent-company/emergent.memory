@@ -1374,6 +1374,47 @@ func (h *Handler) GetProjectRun(c echo.Context) error {
 	return c.JSON(http.StatusOK, SuccessResponse(dto))
 }
 
+// GetRunByID handles GET /api/v1/runs/:runId — global lookup, no project required.
+// The run ID is a globally unique UUID so no project scoping is needed.
+//
+// @Summary      Get a run by ID (global)
+// @Description  Returns full details for an agent run by its globally unique run ID.
+// @Tags         agents
+// @Produce      json
+// @Param        runId path string true "Run ID (UUID)"
+// @Success      200 {object} APIResponse[AgentRunDTO] "Run details"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Run not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v1/runs/{runId} [get]
+// @Security     bearerAuth
+func (h *Handler) GetRunByID(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	runID := c.Param("runId")
+	if runID == "" {
+		return apperror.NewBadRequest("runId is required")
+	}
+
+	run, err := h.repo.FindRunByID(c.Request().Context(), runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent run", err)
+	}
+	if run == nil {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	dto := run.ToDTO()
+	if usage, uErr := h.repo.GetRunTokenUsage(c.Request().Context(), runID); uErr == nil {
+		dto.TokenUsage = usage
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dto))
+}
+
 // GetRunMessages handles GET /api/projects/:projectId/agent-runs/:runId/messages
 func (h *Handler) GetRunMessages(c echo.Context) error {
 	user := auth.GetUser(c)
