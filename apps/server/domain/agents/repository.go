@@ -761,7 +761,7 @@ The sandbox already has credentials injected; `Client.from_env()` picks them up 
 
 ### SDK type reference (authoritative — all methods return plain dicts, not objects)
 
-` + "`" + `` + "`" + `` + "`" + `python
+~~~python
 from emergent import Client
 from typing import Any
 
@@ -812,7 +812,7 @@ def agent_definitions_list() -> list[dict[str, Any]]: ...
 
 # Schemas — client.schemas
 def schemas_list() -> list[dict[str, Any]]: ...
-` + "`" + `` + "`" + `` + "`" + `
+~~~
 
 ### CRITICAL: dict access only
 
@@ -822,7 +822,7 @@ All SDK methods return plain dicts. Attribute access will raise AttributeError:
 
 ### Example: list projects matching a pattern
 
-` + "`" + `` + "`" + `` + "`" + `python
+~~~python
 from emergent import Client
 
 client = Client.from_env()
@@ -832,7 +832,7 @@ for p in matches:
     print(f"{p['id']}  {p['name']}")
 if not matches:
     print("No matching projects found")
-` + "`" + `` + "`" + `` + "`" + `
+~~~
 
 Always print results explicitly — empty stdout means no output was produced.
 Check exit_code: non-zero means an exception was raised; read stderr for the traceback.
