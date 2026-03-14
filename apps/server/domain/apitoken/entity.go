@@ -12,7 +12,7 @@ type ApiToken struct {
 
 	ID             string     `bun:"id,pk,type:uuid,default:uuid_generate_v4()"`
 	ProjectID      *string    `bun:"project_id,type:uuid"`
-	UserID         string     `bun:"user_id,notnull,type:uuid"`
+	UserID         *string    `bun:"user_id,type:uuid"`
 	Name           string     `bun:"name,notnull"`
 	TokenHash      string     `bun:"token_hash,notnull"`
 	TokenPrefix    string     `bun:"token_prefix,notnull"`

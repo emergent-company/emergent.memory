@@ -107,7 +107,7 @@ func (s *Service) Create(ctx context.Context, projectID, userID, name string, sc
 	// Create token record
 	token := &ApiToken{
 		ProjectID:      &projectID,
-		UserID:         userID,
+		UserID:         &userID,
 		Name:           name,
 		TokenHash:      hashToken(rawToken),
 		TokenPrefix:    getTokenPrefix(rawToken),
@@ -258,7 +258,7 @@ func (s *Service) CreateAccountToken(ctx context.Context, userID, name string, s
 	// Create token record with project_id = NULL
 	token := &ApiToken{
 		ProjectID:      nil, // account-level: no project binding
-		UserID:         userID,
+		UserID:         &userID,
 		Name:           name,
 		TokenHash:      hashToken(rawToken),
 		TokenPrefix:    getTokenPrefix(rawToken),
@@ -344,32 +344,13 @@ func (s *Service) CreateEphemeral(ctx context.Context, projectID, orgID string, 
 		return "", "", apperror.ErrInternal.WithInternal(genErr)
 	}
 
-	// Use a synthetic system user ID derived from the project so the FK is satisfied
-	// without tying the token to a real user account.
-	// Format must be a valid UUID — pad the first 12 chars of projectID (hex digits only).
-	pidHex := projectID
-	if idx := 0; len(pidHex) > 0 {
-		// Strip dashes to get raw hex
-		stripped := ""
-		for _, c := range pidHex {
-			if c != '-' {
-				stripped += string(c)
-			}
-		}
-		_ = idx
-		if len(stripped) >= 12 {
-			pidHex = stripped[:12]
-		} else {
-			pidHex = fmt.Sprintf("%-12s", stripped)
-			pidHex = pidHex[:12]
-		}
-	}
-	systemUserID := fmt.Sprintf("00000000-0000-0000-0000-%s", pidHex)
-
+	// Ephemeral tokens are system-minted and have no real user owner (user_id = NULL).
+	// The FK constraint on core.api_tokens.user_id has been relaxed to allow NULL
+	// via migration 00065_api_tokens_nullable_user_id.sql.
 	expiresAt := time.Now().Add(ttl)
 	token := &ApiToken{
 		ProjectID:   &projectID,
-		UserID:      systemUserID,
+		UserID:      nil, // ephemeral — no user owner
 		Name:        fmt.Sprintf("ephemeral-sandbox-%d", time.Now().UnixMilli()),
 		TokenHash:   hashToken(raw),
 		TokenPrefix: getTokenPrefix(raw),

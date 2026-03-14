@@ -463,7 +463,7 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 	// Query the api_tokens table
 	var result struct {
 		ID        string   `bun:"id"`
-		UserID    string   `bun:"user_id"`
+		UserID    *string  `bun:"user_id"`    // nullable: nil for ephemeral sandbox tokens
 		ProjectID *string  `bun:"project_id"` // nullable: nil for account-level tokens
 		Scopes    []string `bun:"scopes,array"`
 	}
@@ -486,13 +486,12 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 		projectID = *result.ProjectID
 	}
 
-	// Ephemeral sandbox tokens use a synthetic system user ID (00000000-0000-0000-0000-*)
-	// that does not exist in core.user_profiles. Skip the user profile lookup for these.
-	isEphemeralSystemUser := len(result.UserID) >= 24 && result.UserID[:24] == "00000000-0000-0000-0000-"
-	if isEphemeralSystemUser {
+	// Ephemeral sandbox tokens have user_id = NULL (no real user owner).
+	// For these tokens we construct an AuthUser directly without a profile lookup.
+	if result.UserID == nil {
 		return &AuthUser{
-			ID:                result.UserID,
-			Sub:               result.UserID,
+			ID:                "",
+			Sub:               "",
 			Scopes:            result.Scopes,
 			APITokenProjectID: projectID,
 			APITokenID:        result.ID,
@@ -500,7 +499,7 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 	}
 
 	// Get user profile
-	user, err := m.userSvc.GetByID(ctx, result.UserID)
+	user, err := m.userSvc.GetByID(ctx, *result.UserID)
 	if err != nil {
 		return nil, apperror.ErrInvalidToken.WithInternal(err)
 	}
