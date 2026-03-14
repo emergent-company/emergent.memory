@@ -347,15 +347,17 @@ func (s *Service) CreateEphemeral(ctx context.Context, projectID, orgID, userID 
 
 	// Ephemeral tokens are minted on behalf of the calling user. Storing the real
 	// user ID allows the token to perform org-level queries (e.g. list all projects)
-	// just like a regular API token. If userID is empty the token has no user
-	// context (user_id = NULL) and is restricted to project-scoped operations only.
+	// just like a regular API token. ProjectID is intentionally left nil so the
+	// token is not restricted to a single project — the Python script may need to
+	// operate across multiple projects. Security is enforced through scopes and the
+	// user's own org membership.
 	expiresAt := time.Now().Add(ttl)
 	var uid *string
 	if userID != "" {
 		uid = &userID
 	}
 	token := &ApiToken{
-		ProjectID:   &projectID,
+		ProjectID:   nil, // org-level (not project-restricted) for cross-project operations
 		UserID:      uid,
 		Name:        fmt.Sprintf("ephemeral-sandbox-%d", time.Now().UnixMilli()),
 		TokenHash:   hashToken(raw),
