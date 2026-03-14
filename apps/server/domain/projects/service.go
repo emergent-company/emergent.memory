@@ -149,10 +149,12 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 		return nil, apperror.New(400, "duplicate", "Project with this name exists in org")
 	}
 
-	// Create the project
+	// Create the project — default monthly budget of $10 USD
+	defaultBudget := 10.0
 	project := &Project{
 		OrganizationID: req.OrgID,
 		Name:           name,
+		BudgetUSD:      &defaultBudget,
 	}
 	if err := s.repo.Create(ctx, tx.Tx, project); err != nil {
 		return nil, err
@@ -251,6 +253,16 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 
 	if req.AutoExtractConfig != nil {
 		project.AutoExtractConfig = req.AutoExtractConfig
+		hasUpdates = true
+	}
+
+	if req.BudgetUSD != nil {
+		project.BudgetUSD = req.BudgetUSD
+		hasUpdates = true
+	}
+
+	if req.BudgetAlertThreshold != nil {
+		project.BudgetAlertThreshold = *req.BudgetAlertThreshold
 		hasUpdates = true
 	}
 

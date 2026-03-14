@@ -321,10 +321,128 @@ func (h *Handler) GetOrgUsageSummary(c echo.Context) error {
 	})
 }
 
+// GetProjectUsageTimeSeries returns time-bucketed usage for a project.
+// @Summary Get project LLM usage time series
+// @Param projectId path string true "Project ID"
+// @Param granularity query string false "Bucket size: day (default), week, or month"
+// @Param since query string false "Start time (RFC3339)"
+// @Param until query string false "End time (RFC3339)"
+// @Success 200 {object} UsageTimeSeriesResponse
+// @Failure 401 {object} apperror.Error
+// @Failure 403 {object} apperror.Error
+// @Router /projects/{projectId}/usage/timeseries [get]
+func (h *Handler) GetProjectUsageTimeSeries(c echo.Context) error {
+	projectID := c.Param("projectId")
+
+	ctx := c.Request().Context()
+	if auth.OrgIDFromContext(ctx) == "" {
+		orgID, err := h.creds.repo.GetOrgIDForProject(ctx, projectID)
+		if err == nil && orgID != "" {
+			ctx = auth.ContextWithOrgID(ctx, orgID)
+		}
+	}
+
+	if err := h.creds.assertCallerOwnsProject(ctx, projectID); err != nil {
+		return err
+	}
+
+	granularity := c.QueryParam("granularity")
+	since, until := parseTimeRange(c)
+	rows, err := h.repo.GetProjectUsageTimeSeries(ctx, projectID, granularity, since, until)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, UsageTimeSeriesResponse{
+		Note: "Costs shown are estimates based on retail pricing and may not reflect your actual provider invoice.",
+		Data: rows,
+	})
+}
+
+// GetOrgUsageTimeSeries returns time-bucketed usage for an organization.
+// @Summary Get org LLM usage time series
+// @Param orgId path string true "Organization ID"
+// @Param granularity query string false "Bucket size: day (default), week, or month"
+// @Param since query string false "Start time (RFC3339)"
+// @Param until query string false "End time (RFC3339)"
+// @Success 200 {object} UsageTimeSeriesResponse
+// @Failure 401 {object} apperror.Error
+// @Failure 403 {object} apperror.Error
+// @Router /organizations/{orgId}/usage/timeseries [get]
+func (h *Handler) GetOrgUsageTimeSeries(c echo.Context) error {
+	orgID := c.Param("orgId")
+
+	ctx := c.Request().Context()
+	if auth.OrgIDFromContext(ctx) == "" {
+		ctx = auth.ContextWithOrgID(ctx, orgID)
+	}
+
+	if err := assertCallerOwnsOrg(ctx, orgID); err != nil {
+		return err
+	}
+
+	granularity := c.QueryParam("granularity")
+	since, until := parseTimeRange(c)
+	rows, err := h.repo.GetOrgUsageTimeSeries(ctx, orgID, granularity, since, until)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, UsageTimeSeriesResponse{
+		Note: "Costs shown are estimates based on retail pricing and may not reflect your actual provider invoice.",
+		Data: rows,
+	})
+}
+
+// GetOrgUsageByProject returns aggregated usage for an org broken down by project.
+// @Summary Get org LLM usage by project
+// @Param orgId path string true "Organization ID"
+// @Param since query string false "Start time (RFC3339)"
+// @Param until query string false "End time (RFC3339)"
+// @Success 200 {object} OrgUsageByProjectResponse
+// @Failure 401 {object} apperror.Error
+// @Failure 403 {object} apperror.Error
+// @Router /organizations/{orgId}/usage/by-project [get]
+func (h *Handler) GetOrgUsageByProject(c echo.Context) error {
+	orgID := c.Param("orgId")
+
+	ctx := c.Request().Context()
+	if auth.OrgIDFromContext(ctx) == "" {
+		ctx = auth.ContextWithOrgID(ctx, orgID)
+	}
+
+	if err := assertCallerOwnsOrg(ctx, orgID); err != nil {
+		return err
+	}
+
+	since, until := parseTimeRange(c)
+	rows, err := h.repo.GetOrgUsageByProject(ctx, orgID, since, until)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, OrgUsageByProjectResponse{
+		Note: "Costs shown are estimates based on retail pricing and may not reflect your actual provider invoice.",
+		Data: rows,
+	})
+}
+
 // UsageSummaryResponse wraps usage rows with a note that costs are estimates.
 type UsageSummaryResponse struct {
 	Note string            `json:"note"`
 	Data []UsageSummaryRow `json:"data"`
+}
+
+// UsageTimeSeriesResponse wraps time-series rows with a disclaimer note.
+type UsageTimeSeriesResponse struct {
+	Note string               `json:"note"`
+	Data []UsageTimeSeriesRow `json:"data"`
+}
+
+// OrgUsageByProjectResponse wraps per-project rows with a disclaimer note.
+type OrgUsageByProjectResponse struct {
+	Note string                 `json:"note"`
+	Data []OrgUsageByProjectRow `json:"data"`
 }
 
 // parseTimeRange extracts optional ?since= and ?until= query params.

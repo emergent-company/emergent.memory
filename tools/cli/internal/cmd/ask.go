@@ -176,6 +176,7 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 	// Parse and stream SSE events.
 	var response strings.Builder
 	var tools []string
+	var streamErr string
 	scanner := bufio.NewScanner(resp.Body)
 
 	for scanner.Scan() {
@@ -211,6 +212,7 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 			}
 		case "error":
 			if errMsg, ok := event["error"].(string); ok {
+				streamErr = errMsg
 				if !askJSON {
 					fmt.Fprintf(os.Stderr, "\nError: %s\n", errMsg)
 				}
@@ -233,6 +235,9 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 		}
 		if projectID != "" {
 			output["projectId"] = projectID
+		}
+		if streamErr != "" {
+			output["error"] = streamErr
 		}
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
@@ -274,5 +279,8 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 		fmt.Fprintf(os.Stderr, "Time: %v\n", elapsed.Round(time.Millisecond))
 	}
 
+	if streamErr != "" {
+		return fmt.Errorf("%s", streamErr)
+	}
 	return nil
 }

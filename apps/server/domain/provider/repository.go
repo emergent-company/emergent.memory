@@ -468,6 +468,158 @@ func (r *Repository) GetOrgUsageSummary(ctx context.Context, orgID string, since
 	return rows, nil
 }
 
+// UsageTimeSeriesRow is a single row from a time-bucketed usage query.
+type UsageTimeSeriesRow struct {
+	Period           time.Time    `bun:"period"`
+	Provider         ProviderType `bun:"provider"`
+	Model            string       `bun:"model"`
+	TotalText        int64        `bun:"total_text"`
+	TotalImage       int64        `bun:"total_image"`
+	TotalVideo       int64        `bun:"total_video"`
+	TotalAudio       int64        `bun:"total_audio"`
+	TotalOutput      int64        `bun:"total_output"`
+	EstimatedCostUSD float64      `bun:"estimated_cost_usd"`
+}
+
+// OrgUsageByProjectRow is a single row from an org-wide usage query grouped by project.
+type OrgUsageByProjectRow struct {
+	ProjectID        string  `bun:"project_id"`
+	ProjectName      string  `bun:"project_name"`
+	TotalText        int64   `bun:"total_text"`
+	TotalImage       int64   `bun:"total_image"`
+	TotalVideo       int64   `bun:"total_video"`
+	TotalAudio       int64   `bun:"total_audio"`
+	TotalOutput      int64   `bun:"total_output"`
+	EstimatedCostUSD float64 `bun:"estimated_cost_usd"`
+}
+
+// GetProjectUsageTimeSeries returns time-bucketed usage for a project.
+// granularity must be "day", "week", or "month".
+func (r *Repository) GetProjectUsageTimeSeries(ctx context.Context, projectID, granularity string, since, until *time.Time) ([]UsageTimeSeriesRow, error) {
+	g := sanitizeGranularity(granularity)
+	var rows []UsageTimeSeriesRow
+	q := r.db.NewSelect().
+		TableExpr("kb.llm_usage_events").
+		ColumnExpr("DATE_TRUNC(?, created_at AT TIME ZONE 'UTC') AS period", g).
+		ColumnExpr("provider, model").
+		ColumnExpr("SUM(text_input_tokens) AS total_text").
+		ColumnExpr("SUM(image_input_tokens) AS total_image").
+		ColumnExpr("SUM(video_input_tokens) AS total_video").
+		ColumnExpr("SUM(audio_input_tokens) AS total_audio").
+		ColumnExpr("SUM(output_tokens) AS total_output").
+		ColumnExpr("SUM(estimated_cost_usd) AS estimated_cost_usd").
+		Where("project_id = ?", projectID).
+		GroupExpr("period, provider, model").
+		OrderExpr("period ASC, provider, model")
+
+	if since != nil {
+		q = q.Where("created_at >= ?", *since)
+	}
+	if until != nil {
+		q = q.Where("created_at <= ?", *until)
+	}
+
+	if err := q.Scan(ctx, &rows); err != nil {
+		r.log.Error("failed to get project usage timeseries", logger.Error(err), slog.String("projectID", projectID))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return rows, nil
+}
+
+// GetOrgUsageTimeSeries returns time-bucketed usage for all projects in an org.
+// granularity must be "day", "week", or "month".
+func (r *Repository) GetOrgUsageTimeSeries(ctx context.Context, orgID, granularity string, since, until *time.Time) ([]UsageTimeSeriesRow, error) {
+	g := sanitizeGranularity(granularity)
+	var rows []UsageTimeSeriesRow
+	q := r.db.NewSelect().
+		TableExpr("kb.llm_usage_events").
+		ColumnExpr("DATE_TRUNC(?, created_at AT TIME ZONE 'UTC') AS period", g).
+		ColumnExpr("provider, model").
+		ColumnExpr("SUM(text_input_tokens) AS total_text").
+		ColumnExpr("SUM(image_input_tokens) AS total_image").
+		ColumnExpr("SUM(video_input_tokens) AS total_video").
+		ColumnExpr("SUM(audio_input_tokens) AS total_audio").
+		ColumnExpr("SUM(output_tokens) AS total_output").
+		ColumnExpr("SUM(estimated_cost_usd) AS estimated_cost_usd").
+		Where("org_id = ?", orgID).
+		GroupExpr("period, provider, model").
+		OrderExpr("period ASC, provider, model")
+
+	if since != nil {
+		q = q.Where("created_at >= ?", *since)
+	}
+	if until != nil {
+		q = q.Where("created_at <= ?", *until)
+	}
+
+	if err := q.Scan(ctx, &rows); err != nil {
+		r.log.Error("failed to get org usage timeseries", logger.Error(err), slog.String("orgID", orgID))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return rows, nil
+}
+
+// GetOrgUsageByProject returns aggregated usage for an org grouped by project.
+func (r *Repository) GetOrgUsageByProject(ctx context.Context, orgID string, since, until *time.Time) ([]OrgUsageByProjectRow, error) {
+	var rows []OrgUsageByProjectRow
+	q := r.db.NewSelect().
+		TableExpr("kb.llm_usage_events AS e").
+		Join("JOIN kb.projects AS p ON p.id = e.project_id").
+		ColumnExpr("e.project_id").
+		ColumnExpr("p.name AS project_name").
+		ColumnExpr("SUM(e.text_input_tokens) AS total_text").
+		ColumnExpr("SUM(e.image_input_tokens) AS total_image").
+		ColumnExpr("SUM(e.video_input_tokens) AS total_video").
+		ColumnExpr("SUM(e.audio_input_tokens) AS total_audio").
+		ColumnExpr("SUM(e.output_tokens) AS total_output").
+		ColumnExpr("SUM(e.estimated_cost_usd) AS estimated_cost_usd").
+		Where("e.org_id = ?", orgID).
+		GroupExpr("e.project_id, p.name").
+		OrderExpr("estimated_cost_usd DESC")
+
+	if since != nil {
+		q = q.Where("e.created_at >= ?", *since)
+	}
+	if until != nil {
+		q = q.Where("e.created_at <= ?", *until)
+	}
+
+	if err := q.Scan(ctx, &rows); err != nil {
+		r.log.Error("failed to get org usage by project", logger.Error(err), slog.String("orgID", orgID))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return rows, nil
+}
+
+// GetProjectCurrentMonthSpend returns the total estimated cost for a project
+// for the current calendar month (UTC).
+func (r *Repository) GetProjectCurrentMonthSpend(ctx context.Context, projectID string) (float64, error) {
+	var total float64
+	err := r.db.NewSelect().
+		TableExpr("kb.llm_usage_events").
+		ColumnExpr("COALESCE(SUM(estimated_cost_usd), 0)").
+		Where("project_id = ?", projectID).
+		Where("DATE_TRUNC('month', created_at AT TIME ZONE 'UTC') = DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')").
+		Scan(ctx, &total)
+
+	if err != nil {
+		r.log.Error("failed to get project current month spend", logger.Error(err), slog.String("projectID", projectID))
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return total, nil
+}
+
+// sanitizeGranularity validates and normalises a DATE_TRUNC granularity string.
+// Falls back to "day" for unrecognised values to prevent SQL injection.
+func sanitizeGranularity(g string) string {
+	switch g {
+	case "week", "month":
+		return g
+	default:
+		return "day"
+	}
+}
+
 // GetOrgIDForProject looks up the organization ID for a given project.
 func (r *Repository) GetOrgIDForProject(ctx context.Context, projectID string) (string, error) {
 	var orgID string

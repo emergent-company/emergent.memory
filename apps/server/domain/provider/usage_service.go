@@ -2,9 +2,11 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -28,15 +30,17 @@ const (
 // persists them to the database with estimated cost calculation.
 type UsageService struct {
 	repo   *Repository
+	db     bun.IDB
 	ch     chan *LLMUsageEvent
 	log    *slog.Logger
 	doneCh chan struct{} // closed when the worker goroutine exits
 }
 
 // NewUsageService creates a UsageService and registers lifecycle hooks with fx.
-func NewUsageService(lc fx.Lifecycle, repo *Repository, log *slog.Logger) *UsageService {
+func NewUsageService(lc fx.Lifecycle, repo *Repository, db bun.IDB, log *slog.Logger) *UsageService {
 	s := &UsageService{
 		repo:   repo,
+		db:     db,
 		ch:     make(chan *LLMUsageEvent, usageBufferSize),
 		log:    log.With(logger.Scope("provider.usage")),
 		doneCh: make(chan struct{}),
@@ -83,10 +87,16 @@ func (s *UsageService) worker() {
 	}
 }
 
-// persist calculates estimated cost and inserts the event into the database.
+// persist calculates estimated cost, inserts the event, then asynchronously
+// checks whether a budget alert should be sent.
 func (s *UsageService) persist(ctx context.Context, event *LLMUsageEvent) error {
 	event.EstimatedCostUSD = s.calculateCost(ctx, event)
-	return s.repo.InsertUsageEvent(ctx, event)
+	if err := s.repo.InsertUsageEvent(ctx, event); err != nil {
+		return err
+	}
+	// Fire-and-forget budget check so it never blocks the event pipeline.
+	go s.checkBudget(context.Background(), event.ProjectID)
+	return nil
 }
 
 // calculateCost resolves pricing via org custom rates → global retail rates
@@ -127,6 +137,127 @@ func computeCost(
 		float64(event.AudioInputTokens)*audioInputPrice/pricePerMillionTokens +
 		float64(event.OutputTokens)*outputPrice/pricePerMillionTokens
 	return cost
+}
+
+// checkBudget checks whether the project's current-month spend has crossed its
+// alert threshold, and if so inserts a warning notification for each project admin.
+// It deduplicates by group_key so at most one unread alert exists per project per month.
+func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
+	// 1. Fetch the project's budget config from kb.projects.
+	var budget struct {
+		BudgetUSD            *float64 `bun:"budget_usd"`
+		BudgetAlertThreshold float64  `bun:"budget_alert_threshold"`
+	}
+	err := s.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("budget_usd, budget_alert_threshold").
+		Where("id = ?", projectID).
+		Scan(ctx, &budget)
+	if err != nil || budget.BudgetUSD == nil || *budget.BudgetUSD <= 0 {
+		// No budget set — nothing to check.
+		return
+	}
+
+	// 2. Get current-month spend.
+	spend, err := s.repo.GetProjectCurrentMonthSpend(ctx, projectID)
+	if err != nil {
+		s.log.Warn("checkBudget: failed to get current month spend", logger.Error(err), slog.String("projectID", projectID))
+		return
+	}
+
+	threshold := *budget.BudgetUSD * budget.BudgetAlertThreshold
+	if spend < threshold {
+		return
+	}
+
+	// 3. Deduplicate — skip if an unread alert already exists for this month.
+	groupKey := fmt.Sprintf("budget-alert-%s-%s", projectID, time.Now().UTC().Format("2006-01"))
+	var existing int
+	_ = s.db.NewSelect().
+		TableExpr("kb.notifications").
+		ColumnExpr("COUNT(*)").
+		Where("group_key = ?", groupKey).
+		Where("read = false").
+		Where("dismissed = false").
+		Scan(ctx, &existing)
+	if existing > 0 {
+		return
+	}
+
+	// 4. Look up project admin user IDs.
+	var adminIDs []string
+	err = s.db.NewSelect().
+		TableExpr("kb.project_memberships").
+		ColumnExpr("user_id").
+		Where("project_id = ?", projectID).
+		Where("role = 'project_admin'").
+		Scan(ctx, &adminIDs)
+	if err != nil || len(adminIDs) == 0 {
+		return
+	}
+
+	// 5. Insert a notification for each admin.
+	pctUsed := (spend / *budget.BudgetUSD) * 100
+	title := "Budget alert"
+	message := fmt.Sprintf(
+		"Project has used $%.2f of its $%.2f monthly budget (%.0f%%).",
+		spend, *budget.BudgetUSD, pctUsed,
+	)
+	sourceType := "project"
+	category := "budget"
+	severity := "warning"
+	importance := "important"
+
+	for _, userID := range adminIDs {
+		gk := groupKey
+		st := sourceType
+		sid := projectID
+		cat := category
+		n := &budgetNotification{
+			ProjectID:  &projectID,
+			UserID:     userID,
+			Title:      title,
+			Message:    message,
+			Severity:   severity,
+			Importance: importance,
+			GroupKey:   &gk,
+			SourceType: &st,
+			SourceID:   &sid,
+			Category:   &cat,
+		}
+		if _, err := s.db.NewInsert().Model(n).Exec(ctx); err != nil {
+			s.log.Warn("checkBudget: failed to insert notification",
+				logger.Error(err),
+				slog.String("projectID", projectID),
+				slog.String("userID", userID),
+			)
+		}
+	}
+
+	s.log.Info("budget alert sent",
+		slog.String("projectID", projectID),
+		slog.Float64("spend", spend),
+		slog.Float64("budget", *budget.BudgetUSD),
+		slog.Int("admins", len(adminIDs)),
+	)
+}
+
+// budgetNotification is a minimal struct for inserting into kb.notifications.
+// Using a local struct avoids importing the notifications package and creating
+// a circular dependency.
+type budgetNotification struct {
+	bun.BaseModel `bun:"table:kb.notifications"`
+
+	ProjectID  *string `bun:"project_id,type:uuid"`
+	UserID     string  `bun:"user_id,notnull,type:uuid"`
+	Title      string  `bun:"title,notnull"`
+	Message    string  `bun:"message,notnull"`
+	Severity   string  `bun:"severity,notnull"`
+	Importance string  `bun:"importance,notnull"`
+	GroupKey   *string `bun:"group_key"`
+	SourceType *string `bun:"source_type"`
+	SourceID   *string `bun:"source_id"`
+	Category   *string `bun:"category"`
 }
 
 // shutdown closes the event channel and waits for the worker to drain.

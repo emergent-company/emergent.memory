@@ -13,7 +13,7 @@ type Project struct {
 	ID                 string         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
 	OrganizationID     string         `bun:"organization_id,notnull,type:uuid" json:"organizationId"`
 	Name               string         `bun:"name,notnull" json:"name"`
-	ProjectInfo         *string        `bun:"project_info" json:"project_info,omitempty"`
+	ProjectInfo        *string        `bun:"project_info" json:"project_info,omitempty"`
 	ChatPromptTemplate *string        `bun:"chat_prompt_template" json:"chat_prompt_template,omitempty"`
 	AutoExtractObjects bool           `bun:"auto_extract_objects,notnull,default:false" json:"auto_extract_objects"`
 	AutoExtractConfig  map[string]any `bun:"auto_extract_config,type:jsonb,default:'{}'" json:"auto_extract_config,omitempty"`
@@ -26,6 +26,10 @@ type Project struct {
 	ExtractionConfig        map[string]any `bun:"extraction_config,type:jsonb" json:"extraction_config,omitempty"`
 	DeletedAt               *time.Time     `bun:"deleted_at" json:"deleted_at,omitempty"`
 	DeletedBy               *string        `bun:"deleted_by,type:uuid" json:"deleted_by,omitempty"`
+
+	// Budget columns added in migration 00063
+	BudgetUSD            *float64 `bun:"budget_usd" json:"budget_usd,omitempty"`
+	BudgetAlertThreshold float64  `bun:"budget_alert_threshold" json:"budget_alert_threshold,omitempty"`
 
 	// Populated only when requested
 	Stats *ProjectStats `bun:"-" json:"stats,omitempty"`
@@ -80,12 +84,12 @@ type InstalledSchema struct {
 
 // ProjectStats represents aggregated statistics for a project
 type ProjectStats struct {
-	DocumentCount     int            `json:"documentCount"`
-	ObjectCount       int            `json:"objectCount"`
-	RelationshipCount int            `json:"relationshipCount"`
-	TotalJobs         int            `json:"totalJobs"`
-	RunningJobs       int            `json:"runningJobs"`
-	QueuedJobs        int            `json:"queuedJobs"`
+	DocumentCount     int               `json:"documentCount"`
+	ObjectCount       int               `json:"objectCount"`
+	RelationshipCount int               `json:"relationshipCount"`
+	TotalJobs         int               `json:"totalJobs"`
+	RunningJobs       int               `json:"runningJobs"`
+	QueuedJobs        int               `json:"queuedJobs"`
 	InstalledSchemas  []InstalledSchema `json:"installedSchemas"`
 }
 
@@ -94,7 +98,7 @@ type ProjectDTO struct {
 	ID                 string         `json:"id"`
 	Name               string         `json:"name"`
 	OrgID              string         `json:"orgId"`
-	ProjectInfo         *string        `json:"project_info,omitempty"`
+	ProjectInfo        *string        `json:"project_info,omitempty"`
 	ChatPromptTemplate *string        `json:"chat_prompt_template,omitempty"`
 	AutoExtractObjects *bool          `json:"auto_extract_objects,omitempty"`
 	AutoExtractConfig  map[string]any `json:"auto_extract_config,omitempty"`
@@ -121,11 +125,13 @@ type CreateProjectRequest struct {
 
 // UpdateProjectRequest is the request body for updating a project
 type UpdateProjectRequest struct {
-	Name               *string        `json:"name,omitempty" validate:"omitempty,min=1"`
-	ProjectInfo         *string        `json:"project_info,omitempty"`
-	ChatPromptTemplate *string        `json:"chat_prompt_template,omitempty"`
-	AutoExtractObjects *bool          `json:"auto_extract_objects,omitempty"`
-	AutoExtractConfig  map[string]any `json:"auto_extract_config,omitempty"`
+	Name                 *string        `json:"name,omitempty" validate:"omitempty,min=1"`
+	ProjectInfo          *string        `json:"project_info,omitempty"`
+	ChatPromptTemplate   *string        `json:"chat_prompt_template,omitempty"`
+	AutoExtractObjects   *bool          `json:"auto_extract_objects,omitempty"`
+	AutoExtractConfig    map[string]any `json:"auto_extract_config,omitempty"`
+	BudgetUSD            *float64       `json:"budget_usd,omitempty"`
+	BudgetAlertThreshold *float64       `json:"budget_alert_threshold,omitempty"`
 }
 
 // ToDTO converts a Project entity to ProjectDTO
@@ -135,7 +141,7 @@ func (p *Project) ToDTO() ProjectDTO {
 		ID:                 p.ID,
 		Name:               p.Name,
 		OrgID:              p.OrganizationID,
-		ProjectInfo:         p.ProjectInfo,
+		ProjectInfo:        p.ProjectInfo,
 		ChatPromptTemplate: p.ChatPromptTemplate,
 		Stats:              p.Stats,
 	}

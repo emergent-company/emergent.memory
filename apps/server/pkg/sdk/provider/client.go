@@ -91,6 +91,43 @@ type UsageSummary struct {
 	Data []UsageSummaryRow `json:"data"`
 }
 
+// UsageTimeSeriesRow is a single time-bucketed row of usage data.
+type UsageTimeSeriesRow struct {
+	Period           time.Time `json:"period"`
+	Provider         string    `json:"provider"`
+	Model            string    `json:"model"`
+	TotalText        int64     `json:"total_text"`
+	TotalImage       int64     `json:"total_image"`
+	TotalVideo       int64     `json:"total_video"`
+	TotalAudio       int64     `json:"total_audio"`
+	TotalOutput      int64     `json:"total_output"`
+	EstimatedCostUSD float64   `json:"estimated_cost_usd"`
+}
+
+// UsageTimeSeries is the API response for a usage time-series query.
+type UsageTimeSeries struct {
+	Note string               `json:"note"`
+	Data []UsageTimeSeriesRow `json:"data"`
+}
+
+// OrgUsageByProjectRow is usage aggregated for a single project within an org.
+type OrgUsageByProjectRow struct {
+	ProjectID        string  `json:"project_id"`
+	ProjectName      string  `json:"project_name"`
+	TotalText        int64   `json:"total_text"`
+	TotalImage       int64   `json:"total_image"`
+	TotalVideo       int64   `json:"total_video"`
+	TotalAudio       int64   `json:"total_audio"`
+	TotalOutput      int64   `json:"total_output"`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
+}
+
+// OrgUsageByProject is the API response for a per-project org usage query.
+type OrgUsageByProject struct {
+	Note string                 `json:"note"`
+	Data []OrgUsageByProjectRow `json:"data"`
+}
+
 // TestProviderResponse is returned by the provider test endpoint.
 type TestProviderResponse struct {
 	Provider  string `json:"provider"`
@@ -254,6 +291,71 @@ func (c *Client) GetOrgUsage(ctx context.Context, orgID string, since, until tim
 	path = appendTimeRange(path, since, until)
 
 	var result UsageSummary
+	err := c.doJSON(ctx, "GET", path, nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetProjectUsageTimeSeries returns time-bucketed usage for a project.
+// granularity is "day", "week", or "month" (defaults to "day" if empty).
+func (c *Client) GetProjectUsageTimeSeries(ctx context.Context, projectID, granularity string, since, until time.Time) (*UsageTimeSeries, error) {
+	path := fmt.Sprintf("/api/v1/projects/%s/usage/timeseries", url.PathEscape(projectID))
+	params := url.Values{}
+	if granularity != "" {
+		params.Set("granularity", granularity)
+	}
+	if !since.IsZero() {
+		params.Set("since", since.UTC().Format(time.RFC3339))
+	}
+	if !until.IsZero() {
+		params.Set("until", until.UTC().Format(time.RFC3339))
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	var result UsageTimeSeries
+	err := c.doJSON(ctx, "GET", path, nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetOrgUsageTimeSeries returns time-bucketed usage for all projects in an org.
+// granularity is "day", "week", or "month" (defaults to "day" if empty).
+func (c *Client) GetOrgUsageTimeSeries(ctx context.Context, orgID, granularity string, since, until time.Time) (*UsageTimeSeries, error) {
+	path := fmt.Sprintf("/api/v1/organizations/%s/usage/timeseries", url.PathEscape(orgID))
+	params := url.Values{}
+	if granularity != "" {
+		params.Set("granularity", granularity)
+	}
+	if !since.IsZero() {
+		params.Set("since", since.UTC().Format(time.RFC3339))
+	}
+	if !until.IsZero() {
+		params.Set("until", until.UTC().Format(time.RFC3339))
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	var result UsageTimeSeries
+	err := c.doJSON(ctx, "GET", path, nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetOrgUsageByProject returns usage aggregated per project for an org.
+func (c *Client) GetOrgUsageByProject(ctx context.Context, orgID string, since, until time.Time) (*OrgUsageByProject, error) {
+	path := fmt.Sprintf("/api/v1/organizations/%s/usage/by-project", url.PathEscape(orgID))
+	path = appendTimeRange(path, since, until)
+
+	var result OrgUsageByProject
 	err := c.doJSON(ctx, "GET", path, nil, &result)
 	if err != nil {
 		return nil, err

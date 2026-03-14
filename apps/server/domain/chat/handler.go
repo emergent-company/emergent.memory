@@ -616,7 +616,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		// Emit error event
 		span.RecordError(llmErr)
 		span.SetStatus(codes.Error, llmErr.Error())
-		sseWriter.WriteData(sse.NewErrorEvent(llmErr.Error()))
+		sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(llmErr)))
 	} else {
 		// Persist assistant response
 		go func() {
@@ -707,6 +707,30 @@ func formatFieldValue(v any) string {
 			return s[:100] + "…"
 		}
 		return s
+	}
+}
+
+// friendlyProviderError returns a short, human-readable message when err is a
+// well-known LLM provider failure (expired/invalid API key, quota exceeded,
+// etc.), or falls back to the raw error string for anything else.
+func friendlyProviderError(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "API_KEY_INVALID"),
+		strings.Contains(msg, "API key expired"),
+		strings.Contains(msg, "API key not valid"):
+		return "The configured Google AI API key is invalid or has expired. " +
+			"Update it with: memory provider configure google --api-key <new-key>"
+	case strings.Contains(msg, "RESOURCE_EXHAUSTED"),
+		strings.Contains(msg, "quota"):
+		return "Google AI quota exceeded. Check your quota limits or switch to a different model."
+	case strings.Contains(msg, "PERMISSION_DENIED"):
+		return "Permission denied by Google AI. Verify that the API key has access to the Generative Language API."
+	case strings.Contains(msg, "no LLM provider"), strings.Contains(msg, "no_provider"):
+		return "No LLM provider is configured for this project. " +
+			"Run: memory provider configure google --api-key <key>"
+	default:
+		return "Agent execution failed: " + msg
 	}
 }
 
@@ -873,7 +897,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			slog.String("agent_definition_id", agentDefID),
 			slog.String("error", err.Error()),
 		)
-		sseWriter.WriteData(sse.NewErrorEvent("Agent execution failed: " + err.Error()))
+		sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(err)))
 		return
 	}
 

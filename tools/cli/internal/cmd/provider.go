@@ -347,6 +347,8 @@ var providerUsageCmd = &cobra.Command{
 Without --project, reports org-wide usage across all projects.
 With --project, reports usage for that specific project.
 
+Use --by-project to break org-wide totals down per project instead of per model.
+
 Output is a table with columns: PROVIDER, MODEL, TEXT IN (tokens), IMAGE
 (tokens), VIDEO (tokens), AUDIO (tokens), OUTPUT (tokens), and EST. COST (USD).
 A total estimated cost line is printed below the table.
@@ -354,7 +356,8 @@ A total estimated cost line is printed below the table.
 Examples:
   memory provider usage
   memory provider usage --project <id>
-  memory provider usage --since 2024-01-01`,
+  memory provider usage --since 2024-01-01
+  memory provider usage --by-project`,
 	RunE: runProviderUsage,
 }
 
@@ -364,6 +367,7 @@ var (
 	usageUntil     string
 	usageOrgID     string
 	usageJSONFlag  bool
+	usageByProject bool
 )
 
 func runProviderUsage(cmd *cobra.Command, args []string) error {
@@ -386,6 +390,57 @@ func runProviderUsage(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("invalid --until value %q: expected YYYY-MM-DD", usageUntil)
 		}
 		until = t
+	}
+
+	// --by-project: org-wide breakdown grouped by project
+	if usageByProject {
+		orgID, err := resolveProviderOrgID(c, usageOrgID)
+		if err != nil {
+			return err
+		}
+		result, err := c.SDK.Provider.GetOrgUsageByProject(context.Background(), orgID, since, until)
+		if err != nil {
+			return fmt.Errorf("failed to get org usage by project: %w", err)
+		}
+
+		if usageJSONFlag {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(result)
+		}
+
+		if result.Note != "" {
+			fmt.Println("Note:", result.Note)
+			fmt.Println()
+		}
+
+		if len(result.Data) == 0 {
+			fmt.Println("No usage data found for the specified period.")
+			return nil
+		}
+
+		var totalCost float64
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "PROJECT\tTEXT IN\tIMAGE\tVIDEO\tAUDIO\tOUTPUT\tEST. COST (USD)")
+		for _, row := range result.Data {
+			name := row.ProjectName
+			if name == "" {
+				name = row.ProjectID
+			}
+			fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%d\t$%.4f\n",
+				name,
+				row.TotalText,
+				row.TotalImage,
+				row.TotalVideo,
+				row.TotalAudio,
+				row.TotalOutput,
+				row.EstimatedCostUSD,
+			)
+			totalCost += row.EstimatedCostUSD
+		}
+		_ = w.Flush()
+		fmt.Printf("\nTotal estimated cost: $%.4f\n", totalCost)
+		return nil
 	}
 
 	var summary *provider.UsageSummary
@@ -441,6 +496,132 @@ func runProviderUsage(cmd *cobra.Command, args []string) error {
 	_ = w.Flush()
 	fmt.Printf("\nTotal estimated cost: $%.4f\n", totalCost)
 	return nil
+}
+
+// ── usage timeseries ──────────────────────────────────────────────────────────
+
+var providerUsageTimeseriesCmd = &cobra.Command{
+	Use:   "timeseries",
+	Short: "Show LLM usage over time",
+	Long: `Show LLM token usage and estimated cost broken down by time period.
+
+Without --project, reports org-wide usage. With --project, reports usage for
+that specific project. Use --granularity to control bucket size (default: day).
+
+Output is a table with columns: PERIOD, PROVIDER, MODEL, TEXT IN, IMAGE, VIDEO,
+AUDIO, OUTPUT, and EST. COST (USD). A running subtotal is shown per period.
+
+Examples:
+  memory provider timeseries
+  memory provider timeseries --project <id> --granularity week
+  memory provider timeseries --since 2024-01-01 --until 2024-03-31 --granularity month`,
+	RunE: runProviderUsageTimeseries,
+}
+
+var (
+	timeseriesProjectID   string
+	timeseriesSince       string
+	timeseriesUntil       string
+	timeseriesOrgID       string
+	timeseriesGranularity string
+	timeseriesJSONFlag    bool
+)
+
+func runProviderUsageTimeseries(cmd *cobra.Command, args []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	var since, until time.Time
+	if timeseriesSince != "" {
+		t, err := time.Parse(time.DateOnly, timeseriesSince)
+		if err != nil {
+			return fmt.Errorf("invalid --since value %q: expected YYYY-MM-DD", timeseriesSince)
+		}
+		since = t
+	}
+	if timeseriesUntil != "" {
+		t, err := time.Parse(time.DateOnly, timeseriesUntil)
+		if err != nil {
+			return fmt.Errorf("invalid --until value %q: expected YYYY-MM-DD", timeseriesUntil)
+		}
+		until = t
+	}
+
+	gran := timeseriesGranularity
+	if gran == "" {
+		gran = "day"
+	}
+
+	var result *provider.UsageTimeSeries
+
+	if timeseriesProjectID != "" {
+		result, err = c.SDK.Provider.GetProjectUsageTimeSeries(context.Background(), timeseriesProjectID, gran, since, until)
+		if err != nil {
+			return fmt.Errorf("failed to get project usage timeseries: %w", err)
+		}
+	} else {
+		orgID, err := resolveProviderOrgID(c, timeseriesOrgID)
+		if err != nil {
+			return err
+		}
+		result, err = c.SDK.Provider.GetOrgUsageTimeSeries(context.Background(), orgID, gran, since, until)
+		if err != nil {
+			return fmt.Errorf("failed to get org usage timeseries: %w", err)
+		}
+	}
+
+	if timeseriesJSONFlag {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result)
+	}
+
+	if result.Note != "" {
+		fmt.Println("Note:", result.Note)
+		fmt.Println()
+	}
+
+	if len(result.Data) == 0 {
+		fmt.Println("No usage data found for the specified period.")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "PERIOD\tPROVIDER\tMODEL\tTEXT IN\tIMAGE\tVIDEO\tAUDIO\tOUTPUT\tEST. COST (USD)")
+
+	var periodTotal float64
+	var currentPeriod string
+	for i, row := range result.Data {
+		period := row.Period.Format("2006-01-02")
+		if period != currentPeriod {
+			// Print subtotal for the previous period before moving to the next
+			if currentPeriod != "" {
+				fmt.Fprintf(w, "\t\t  subtotal\t\t\t\t\t\t$%.4f\n", periodTotal)
+			}
+			currentPeriod = period
+			periodTotal = 0
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t$%.4f\n",
+			period,
+			row.Provider,
+			row.Model,
+			row.TotalText,
+			row.TotalImage,
+			row.TotalVideo,
+			row.TotalAudio,
+			row.TotalOutput,
+			row.EstimatedCostUSD,
+		)
+		periodTotal += row.EstimatedCostUSD
+
+		// Print subtotal at the end of the last period
+		if i == len(result.Data)-1 {
+			fmt.Fprintf(w, "\t\t  subtotal\t\t\t\t\t\t$%.4f\n", periodTotal)
+		}
+	}
+	return w.Flush()
 }
 
 // ── test ──────────────────────────────────────────────────────────────────────
@@ -584,6 +765,15 @@ func init() {
 	providerUsageCmd.Flags().StringVar(&usageUntil, "until", "", "End date for usage window (YYYY-MM-DD)")
 	providerUsageCmd.Flags().StringVar(&usageOrgID, "org-id", "", "Organization ID (auto-detected from config)")
 	providerUsageCmd.Flags().BoolVar(&usageJSONFlag, "json", false, "Output raw JSON")
+	providerUsageCmd.Flags().BoolVar(&usageByProject, "by-project", false, "Break down org usage by project instead of by model")
+
+	// timeseries flags
+	providerUsageTimeseriesCmd.Flags().StringVar(&timeseriesProjectID, "project", "", "Filter to a specific project ID")
+	providerUsageTimeseriesCmd.Flags().StringVar(&timeseriesSince, "since", "", "Start date (YYYY-MM-DD)")
+	providerUsageTimeseriesCmd.Flags().StringVar(&timeseriesUntil, "until", "", "End date (YYYY-MM-DD)")
+	providerUsageTimeseriesCmd.Flags().StringVar(&timeseriesOrgID, "org-id", "", "Organization ID (auto-detected from config)")
+	providerUsageTimeseriesCmd.Flags().StringVar(&timeseriesGranularity, "granularity", "day", "Time bucket size: day, week, or month")
+	providerUsageTimeseriesCmd.Flags().BoolVar(&timeseriesJSONFlag, "json", false, "Output raw JSON")
 
 	// test flags
 	providerTestCmd.Flags().StringVar(&testProviderOrgID, "org-id", "", "Organization ID (auto-detected from config)")
@@ -594,6 +784,7 @@ func init() {
 	providerCmd.AddCommand(configureProjectCmd)
 	providerCmd.AddCommand(providerModelsCmd)
 	providerCmd.AddCommand(providerUsageCmd)
+	providerCmd.AddCommand(providerUsageTimeseriesCmd)
 	providerCmd.AddCommand(providerTestCmd)
 
 	rootCmd.AddCommand(providerCmd)

@@ -30,8 +30,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	orgs.DELETE("/:provider", h.DeleteOrgConfig)
 	orgs.GET("", h.ListOrgConfigs)
 
-	// Org-level usage summary
+	// Org-level usage summary and breakdowns
 	api.GET("/organizations/:orgId/usage", h.GetOrgUsageSummary)
+	api.GET("/organizations/:orgId/usage/timeseries", h.GetOrgUsageTimeSeries)
+	api.GET("/organizations/:orgId/usage/by-project", h.GetOrgUsageByProject)
 
 	// Project-level provider configs
 	projects := api.Group("/projects/:projectId/providers")
@@ -39,8 +41,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	projects.GET("/:provider", h.GetProjectConfig)
 	projects.DELETE("/:provider", h.DeleteProjectConfig)
 
-	// Project-level usage summary
+	// Project-level usage summary and timeseries
 	api.GET("/projects/:projectId/usage", h.GetProjectUsageSummary)
+	api.GET("/projects/:projectId/usage/timeseries", h.GetProjectUsageTimeSeries)
 
 	// Read-only model catalog
 	api.GET("/providers/:provider/models", h.ListModels)

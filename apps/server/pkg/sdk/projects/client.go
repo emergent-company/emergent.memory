@@ -51,14 +51,16 @@ type ProjectStats struct {
 
 // Project represents a project entity
 type Project struct {
-	ID                 string                 `json:"id"`
-	Name               string                 `json:"name"`
-	OrgID              string                 `json:"orgId"`
-	ProjectInfo        *string                `json:"project_info,omitempty"`
-	ChatPromptTemplate *string                `json:"chat_prompt_template,omitempty"`
-	AutoExtractObjects *bool                  `json:"auto_extract_objects,omitempty"`
-	AutoExtractConfig  map[string]interface{} `json:"auto_extract_config,omitempty"`
-	Stats              *ProjectStats          `json:"stats,omitempty"`
+	ID                   string                 `json:"id"`
+	Name                 string                 `json:"name"`
+	OrgID                string                 `json:"orgId"`
+	ProjectInfo          *string                `json:"project_info,omitempty"`
+	ChatPromptTemplate   *string                `json:"chat_prompt_template,omitempty"`
+	AutoExtractObjects   *bool                  `json:"auto_extract_objects,omitempty"`
+	AutoExtractConfig    map[string]interface{} `json:"auto_extract_config,omitempty"`
+	BudgetUSD            *float64               `json:"budget_usd,omitempty"`
+	BudgetAlertThreshold *float64               `json:"budget_alert_threshold,omitempty"`
+	Stats                *ProjectStats          `json:"stats,omitempty"`
 }
 
 // ProjectMember represents a project member
@@ -81,11 +83,13 @@ type CreateProjectRequest struct {
 
 // UpdateProjectRequest represents a project update request
 type UpdateProjectRequest struct {
-	Name               *string                `json:"name,omitempty"`
-	ProjectInfo        *string                `json:"project_info,omitempty"`
-	ChatPromptTemplate *string                `json:"chat_prompt_template,omitempty"`
-	AutoExtractObjects *bool                  `json:"auto_extract_objects,omitempty"`
-	AutoExtractConfig  map[string]interface{} `json:"auto_extract_config,omitempty"`
+	Name                 *string                `json:"name,omitempty"`
+	ProjectInfo          *string                `json:"project_info,omitempty"`
+	ChatPromptTemplate   *string                `json:"chat_prompt_template,omitempty"`
+	AutoExtractObjects   *bool                  `json:"auto_extract_objects,omitempty"`
+	AutoExtractConfig    map[string]interface{} `json:"auto_extract_config,omitempty"`
+	BudgetUSD            *float64               `json:"budget_usd,omitempty"`
+	BudgetAlertThreshold *float64               `json:"budget_alert_threshold,omitempty"`
 }
 
 // ListOptions holds options for listing projects.

@@ -61,8 +61,8 @@ func provideModelCatalogService(repo *Repository, log *slog.Logger) *ModelCatalo
 	return NewModelCatalogService(repo, log)
 }
 
-func provideUsageService(lc fx.Lifecycle, repo *Repository, log *slog.Logger) *UsageService {
-	return NewUsageService(lc, repo, log)
+func provideUsageService(lc fx.Lifecycle, repo *Repository, db bun.IDB, log *slog.Logger) *UsageService {
+	return NewUsageService(lc, repo, db, log)
 }
 
 func providePricingSyncService(repo *Repository, sched *scheduler.Scheduler, log *slog.Logger) *PricingSyncService {

@@ -194,3 +194,6 @@ tools/cli/*.tar.gz
 
 # EPF subtree (removed from tracking)
 docs/EPF/
+
+# auto-added by commit skill — 2026-03-14
+tools/cli/main
