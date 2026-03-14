@@ -327,6 +327,11 @@ func (i *Installer) Install() error {
 	} else {
 		i.output.Success("Python SDK sandbox image built")
 	}
+	if err := docker.BuildSandboxImages(GetGoSDKDockerfile(), "emergent-memory-go-sdk:latest"); err != nil {
+		i.output.Warn("Could not build Go SDK sandbox image (non-fatal): %v", err)
+	} else {
+		i.output.Success("Go SDK sandbox image built")
+	}
 
 	i.printCompletionMessage(apiKey, true, i.config.GoogleAPIKey != "")
 
@@ -458,6 +463,11 @@ func (i *Installer) Upgrade(version string) error {
 		i.output.Warn("Could not build Python SDK sandbox image (non-fatal): %v", err)
 	} else {
 		i.output.Success("Python SDK sandbox image built")
+	}
+	if err := docker.BuildSandboxImages(GetGoSDKDockerfile(), "emergent-memory-go-sdk:latest"); err != nil {
+		i.output.Warn("Could not build Go SDK sandbox image (non-fatal): %v", err)
+	} else {
+		i.output.Success("Go SDK sandbox image built")
 	}
 
 	if version != "" && version != "unknown" {

@@ -7,24 +7,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /workspace
+# Clone the Memory repo and extract the Go SDK source.
+# Using sparse checkout to avoid pulling the entire repo.
+RUN git clone --depth 1 --filter=blob:none --sparse \
+        https://github.com/emergent-company/emergent.memory.git /repo && \
+    cd /repo && \
+    git sparse-checkout set apps/server/pkg/sdk && \
+    cp -r /repo/apps/server/pkg/sdk /sdk && \
+    rm -rf /repo
 
-# Copy the SDK source into the image and set up a module cache.
-# The SDK is vendored as a local replace directive so scripts can import it
-# without network access at run time.
-COPY sdk/ /sdk/
-
-# Create a template module that pre-fetches the SDK's dependencies.
-# Agent scripts will be injected into this module at run time.
+# Create a template module with a stub main.go so go mod tidy keeps the
+# dependency (without any .go files the require line would be stripped).
+# Agent scripts are injected as main.go at run time by the run_go tool.
 RUN mkdir -p /sdk-template && \
     cd /sdk-template && \
     go mod init agent && \
-    echo 'require github.com/emergent-company/emergent.memory/apps/server/pkg/sdk v0.0.0' >> go.mod && \
-    echo 'replace github.com/emergent-company/emergent.memory/apps/server/pkg/sdk => /sdk' >> go.mod && \
+    printf 'require github.com/emergent-company/emergent.memory/apps/server/pkg/sdk v0.0.0\n' >> go.mod && \
+    printf 'replace github.com/emergent-company/emergent.memory/apps/server/pkg/sdk => /sdk\n' >> go.mod && \
+    printf 'package main\nimport _ "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"\nfunc main() {}\n' > main.go && \
     go mod tidy && \
-    # Pre-cache all dependencies so run_go doesn't need network access
-    go build github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/... && \
-    go clean -cache
+    # Pre-cache all SDK dependencies into the module cache
+    go build . && \
+    # Remove the stub — agent scripts will replace main.go at run time
+    rm main.go && \
+    go clean -testcache
 
 # Default working directory for agent scripts
 WORKDIR /workspace
