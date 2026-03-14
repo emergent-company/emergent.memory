@@ -2,7 +2,6 @@ package sandbox
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -94,8 +93,7 @@ func newCheckoutService(log *slog.Logger) *CheckoutService {
 
 // newAutoProvisioner creates the auto-provisioning service for agent sandboxes.
 func newAutoProvisioner(service *Service, orchestrator *Orchestrator, checkoutSvc *CheckoutService, setupExec *SetupExecutor, warmPool *WarmPool, cfg *config.Config, log *slog.Logger) *AutoProvisioner {
-	serverURL := fmt.Sprintf("http://%s:%d", cfg.ServerAddress, cfg.ServerPort)
-	return NewAutoProvisioner(service, orchestrator, checkoutSvc, setupExec, warmPool, serverURL, log)
+	return NewAutoProvisioner(service, orchestrator, checkoutSvc, setupExec, warmPool, log)
 }
 
 // newCleanupJob creates a cleanup job with configuration from env vars.

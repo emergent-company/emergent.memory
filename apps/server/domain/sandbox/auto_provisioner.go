@@ -37,7 +37,6 @@ type AutoProvisioner struct {
 	setupExec     *SetupExecutor
 	warmPool      *WarmPool
 	imageResolver ImageResolver // optional — if nil, falls back to ResolveProviderType()
-	serverURL     string        // base URL injected into sandbox containers as MEMORY_API_URL
 	log           *slog.Logger
 }
 
@@ -48,7 +47,6 @@ func NewAutoProvisioner(
 	checkoutSvc *CheckoutService,
 	setupExec *SetupExecutor,
 	warmPool *WarmPool,
-	serverURL string,
 	log *slog.Logger,
 ) *AutoProvisioner {
 	return &AutoProvisioner{
@@ -57,7 +55,6 @@ func NewAutoProvisioner(
 		checkoutSvc:  checkoutSvc,
 		setupExec:    setupExec,
 		warmPool:     warmPool,
-		serverURL:    serverURL,
 		log:          log.With("component", "workspace-auto-provisioner"),
 	}
 }
@@ -286,14 +283,15 @@ func (ap *AutoProvisioner) attemptProvision(
 		BaseImage:      cfg.BaseImage,
 	}
 
-	// Inject SDK environment variables if an ephemeral token was minted
+	// Inject SDK environment variables if an ephemeral token was minted.
+	// Note: MEMORY_API_URL is already set by the gVisor provider to
+	// http://host.docker.internal:<port> so that sandbox containers can reach
+	// the API server from inside Docker.  We only need to add the token and
+	// project ID here.
 	if authToken != "" {
 		containerReq.Env = map[string]string{
 			"MEMORY_API_KEY":    authToken,
 			"MEMORY_PROJECT_ID": projectID,
-		}
-		if ap.serverURL != "" {
-			containerReq.Env["MEMORY_API_URL"] = ap.serverURL
 		}
 	}
 
