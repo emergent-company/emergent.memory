@@ -324,12 +324,17 @@ A non-zero exit_code means the program failed — check stderr for the error.`,
 			// Copy the sdk-template module, inject the script, and run it.
 			// The template module already has the SDK as a local replace directive
 			// and all dependencies cached, so no network access is needed.
+			// Using go build -o then exec is faster than go run because:
+			//   - go run always creates+deletes a temp binary even with a warm cache
+			//   - go build writes to a known path; the Go build cache makes subsequent
+			//     builds near-instant when nothing has changed
 			runCmd := fmt.Sprintf(
 				`set -e
 cp -r /sdk-template /tmp/_agent_gomod
 cp %s /tmp/_agent_gomod/main.go
 cd /tmp/_agent_gomod
-go run .`,
+go build -o /tmp/_agent_bin .
+/tmp/_agent_bin`,
 				goScriptPath,
 			)
 
