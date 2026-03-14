@@ -34,13 +34,14 @@ func BuildWorkspaceTools(deps WorkspaceToolDeps) ([]tool.Tool, error) {
 
 	// Define all available workspace tool builders
 	builders := map[string]func(WorkspaceToolDeps) (tool.Tool, error){
-		"bash":  buildBashTool,
-		"read":  buildReadTool,
-		"write": buildWriteTool,
-		"edit":  buildEditTool,
-		"glob":  buildGlobTool,
-		"grep":  buildGrepTool,
-		"git":   buildGitTool,
+		"bash":       buildBashTool,
+		"read":       buildReadTool,
+		"write":      buildWriteTool,
+		"edit":       buildEditTool,
+		"glob":       buildGlobTool,
+		"grep":       buildGrepTool,
+		"git":        buildGitTool,
+		"run_python": buildRunPythonTool,
 	}
 
 	var tools []tool.Tool
@@ -83,8 +84,10 @@ func BuildWorkspaceTools(deps WorkspaceToolDeps) ([]tool.Tool, error) {
 // --- Individual tool builders ---
 
 const (
-	defaultBashTimeoutMs = 120000 // 2 minutes
-	workspaceDir         = "/workspace"
+	defaultBashTimeoutMs   = 120000 // 2 minutes
+	defaultPythonTimeoutMs = 60000  // 1 minute
+	workspaceDir           = "/workspace"
+	pythonScriptPath       = "/tmp/_agent_run.py"
 )
 
 func buildBashTool(deps WorkspaceToolDeps) (tool.Tool, error) {
@@ -149,6 +152,96 @@ Usage notes:
 				"exit_code":   result.ExitCode,
 				"duration_ms": result.DurationMs,
 				"truncated":   result.Truncated,
+			}, nil
+		},
+	)
+}
+
+func buildRunPythonTool(deps WorkspaceToolDeps) (tool.Tool, error) {
+	provider := deps.Provider
+	providerID := deps.ProviderID
+
+	return functiontool.New(
+		functiontool.Config{
+			Name: "run_python",
+			Description: `Execute a Python script in one step inside the sandboxed workspace.
+
+Use this instead of workspace_write + workspace_bash for all Python SDK tasks.
+Pass the full script as the "code" parameter — no file write step needed.
+
+The sandbox has the emergent Python SDK pre-installed. Use Client.from_env() to connect:
+
+    from emergent import Client
+    client = Client.from_env()
+
+SDK return types (all methods return plain dicts — use dict access):
+  client.projects.list()                -> list[dict]  keys: id, name, orgId
+  client.projects.get(id)               -> dict        keys: id, name, orgId
+  client.projects.create(payload)       -> dict
+  client.projects.update(id, payload)   -> dict
+  client.projects.delete(id)            -> None
+
+  client.graph.list_objects(type, ...)  -> dict        keys: data (list), cursor, total
+  client.graph.create_object(payload)   -> dict        keys: id, entity_id, type, properties, ...
+  client.graph.update_object(id, pay)   -> dict        (new version — id changes after update)
+  client.graph.delete_object(id)        -> None
+  client.graph.hybrid_search(payload)   -> dict        keys: data (list[{object, score}])
+  client.graph.bulk_create_objects(items)  -> dict     keys: items, errors
+
+  client.agents.list()                  -> list[dict]  keys: id, name, status, ...
+  client.agent_definitions.list()       -> list[dict]  keys: id, name, systemPrompt, ...
+  client.schemas.list()                 -> list[dict]
+  client.search.hybrid(payload)         -> dict
+
+Always print() every result — empty stdout means no output was produced, not that the call succeeded.
+Attribute access (obj.name) raises AttributeError — always use dict access (obj['name']).
+
+Returns structured output: {"stdout": "...", "stderr": "...", "exit_code": N, "duration_ms": N}.
+A non-zero exit_code means the script raised an exception — check stderr for the traceback.`,
+		},
+		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+			code, _ := args["code"].(string)
+			if code == "" {
+				return map[string]any{"error": "code is required"}, nil
+			}
+
+			timeoutMs := defaultPythonTimeoutMs
+			if t, ok := args["timeout_ms"].(float64); ok && t > 0 {
+				timeoutMs = int(t)
+			}
+
+			// Write the script to a temp file, then execute it.
+			// Use printf to avoid shell interpretation of the code content.
+			// We write via workspace_write semantics using the provider's WriteFile.
+			writeErr := provider.WriteFile(ctx, providerID, &sandbox.FileWriteRequest{
+				FilePath: pythonScriptPath,
+				Content:  code,
+			})
+			if writeErr != nil {
+				return map[string]any{"error": fmt.Sprintf("failed to write script: %s", writeErr.Error())}, nil
+			}
+
+			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
+				Command:   fmt.Sprintf("python3 %s", pythonScriptPath),
+				TimeoutMs: timeoutMs,
+			})
+			if err != nil {
+				if result != nil {
+					return map[string]any{
+						"stdout":      result.Stdout,
+						"stderr":      result.Stderr + "\n" + err.Error(),
+						"exit_code":   result.ExitCode,
+						"duration_ms": result.DurationMs,
+					}, nil
+				}
+				return map[string]any{"error": fmt.Sprintf("execution failed: %s", err.Error())}, nil
+			}
+
+			return map[string]any{
+				"stdout":      result.Stdout,
+				"stderr":      result.Stderr,
+				"exit_code":   result.ExitCode,
+				"duration_ms": result.DurationMs,
 			}, nil
 		},
 	)

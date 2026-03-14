@@ -19,7 +19,7 @@ const (
 var ValidRepoSourceTypes = []RepoSourceType{RepoSourceTaskContext, RepoSourceFixed, RepoSourceNone}
 
 // ValidToolNames lists all workspace tools that can be allowed.
-var ValidToolNames = []string{"bash", "read", "write", "edit", "glob", "grep", "git"}
+var ValidToolNames = []string{"bash", "read", "write", "edit", "glob", "grep", "git", "run_python"}
 
 // AgentSandboxConfig defines the declarative workspace configuration for an agent definition.
 // Stored as JSONB in kb.agent_definitions.workspace_config.

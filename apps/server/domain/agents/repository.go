@@ -742,41 +742,100 @@ Do NOT call "skill-list" for general orientation or when you already know the sk
 - **Provider configuration**: set at the organization level via "memory provider configure" or the Admin UI.
   A project inherits the org provider unless overridden with "memory provider configure-project".
 
-## Python Scripting (for bulk write tasks only)
+## Python Scripting (for cross-project or bulk tasks)
 
-Use Python ONLY when a task requires bulk writes or complex multi-step logic that cannot be done
-with a single tool call (e.g. "delete all projects with 'e2e' in the name", "rename 50 objects").
+Use **run_python** when a task cannot be done with a single tool call:
+- Cross-project queries (e.g. "list all projects with 'e2e' in the name") — no direct tool exists
+- Bulk writes (e.g. "delete all objects of type X", "rename 50 objects")
+- Multi-step logic with intermediate values
 
-**DO NOT write Python scripts for read-only queries that have a direct tool** — use the tools instead:
+**DO NOT use run_python for read-only queries that have a direct tool:**
 - Search/filter graph objects → use search_entities or query_entities
 - List agents → use agent-def-list or agent-list
 - Get a specific project → use project-get
 
-For queries that span all projects (e.g. "list all projects with 'e2e' in the name"),
-there is no direct tool — use the Python SDK as described below.
+### run_python usage
 
-When Python IS appropriate:
-1. Use workspace_write to write a script to /workspace/task.py
-2. Use workspace_bash to run it: python3 /workspace/task.py
-3. Always print results explicitly and check exit code:
+Pass the full Python script as the `code` parameter — no separate write step needed.
+The sandbox already has credentials injected; `Client.from_env()` picks them up automatically.
 
-   from emergent import Client
+### SDK type reference (authoritative — all methods return plain dicts, not objects)
 
-   client = Client.from_env()
+` + "`" + `` + "`" + `` + "`" + `python
+from emergent import Client
+from typing import Any
 
-   # SDK methods return plain dicts — use dict access, NOT attribute access
-   # CORRECT:   p['name'], p['id']
-   # INCORRECT: p.name, p.id  (will raise AttributeError)
+client = Client.from_env()
 
-   projects = client.projects.list()
-   e2e = [p for p in projects if 'e2e' in p['name']]
-   for p in e2e:
-       print(f"{p['id']}  {p['name']}")
+# Projects — client.projects
+def projects_list() -> list[dict[str, Any]]:
+    """List all projects. Returns list of dicts with keys: id, name, orgId"""
 
-4. Always verify with print() — empty stdout means your script produced no output, not that the call failed.
-5. If a script exits with code 0 but stdout is empty, add debug prints to verify the data shape.
+def projects_get(id: str) -> dict[str, Any]:
+    """Get project by ID. Returns dict with keys: id, name, orgId"""
 
-The sandbox already has credentials injected — Client.from_env() picks them up automatically.
+def projects_create(payload: dict[str, Any]) -> dict[str, Any]:
+    """payload keys: name (required), orgId (optional)"""
+
+def projects_update(id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """payload keys: name"""
+
+def projects_delete(id: str) -> None: ...
+
+# Graph objects — client.graph
+def graph_list_objects(
+    type: str = None,         # filter by object type
+    status: str = None,       # "active", "archived", etc.
+    limit: int = 50,          # max results per page
+    cursor: str = None,       # pagination cursor from previous response
+) -> dict[str, Any]:
+    """Returns dict with keys: data (list[dict]), cursor (str|None), total (int)
+    Each object dict has keys: id, entity_id, type, properties, labels, status, ..."""
+
+def graph_create_object(payload: dict[str, Any]) -> dict[str, Any]:
+    """Required keys: type. Optional: key, properties, labels, status"""
+
+def graph_update_object(id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """WARNING: returns NEW id (version_id changes on every update)"""
+
+def graph_delete_object(id: str) -> None: ...
+
+def graph_hybrid_search(payload: dict[str, Any]) -> dict[str, Any]:
+    """Required: query. Returns dict with keys: data (list[{object, score}])"""
+
+def graph_bulk_create_objects(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Max 100 items per call. Returns dict with keys: items, errors"""
+
+# Agents — client.agents, client.agent_definitions
+def agents_list() -> list[dict[str, Any]]: ...
+def agent_definitions_list() -> list[dict[str, Any]]: ...
+
+# Schemas — client.schemas
+def schemas_list() -> list[dict[str, Any]]: ...
+` + "`" + `` + "`" + `` + "`" + `
+
+### CRITICAL: dict access only
+
+All SDK methods return plain dicts. Attribute access will raise AttributeError:
+- CORRECT:   `p['name']`, `p['id']`, `obj['entity_id']`
+- INCORRECT: `p.name`, `p.id`, `obj.entity_id`  ← AttributeError
+
+### Example: list projects matching a pattern
+
+` + "`" + `` + "`" + `` + "`" + `python
+from emergent import Client
+
+client = Client.from_env()
+projects = client.projects.list()
+matches = [p for p in projects if 'e2e' in p['name']]
+for p in matches:
+    print(f"{p['id']}  {p['name']}")
+if not matches:
+    print("No matching projects found")
+` + "`" + `` + "`" + `` + "`" + `
+
+Always print results explicitly — empty stdout means no output was produced.
+Check exit_code: non-zero means an exception was raised; read stderr for the traceback.
 
 ## Response Style
 - Keep responses concise and focused
@@ -807,9 +866,9 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 	sandboxCfg := &sandbox.AgentSandboxConfig{
 		Enabled:   true,
 		BaseImage: "emergent-memory-python-sdk:latest",
-		// Allow bash so the agent can execute python scripts; read/write/edit for
-		// writing helper files when needed.
-		Tools: []string{"bash", "read", "write", "edit"},
+		// run_python is the primary tool: executes Python code in one step without
+		// a separate write+bash round trip. bash is retained for diagnostic use.
+		Tools: []string{"run_python", "bash"},
 		RepoSource: &sandbox.RepoSourceConfig{
 			Type: sandbox.RepoSourceNone,
 		},
