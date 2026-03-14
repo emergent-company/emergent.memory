@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -194,6 +195,14 @@ func newWarmPool(orchestrator *Orchestrator, log *slog.Logger, cfg *config.Confi
 	poolCfg.Size = cfg.Sandbox.WarmPoolSize
 	if cfg.Sandbox.WarmPoolTargetImage != "" {
 		poolCfg.TargetImage = cfg.Sandbox.WarmPoolTargetImage
+	}
+	if cfg.Sandbox.WarmPoolExtraImages != "" {
+		for _, img := range strings.Split(cfg.Sandbox.WarmPoolExtraImages, ",") {
+			img = strings.TrimSpace(img)
+			if img != "" {
+				poolCfg.ExtraImages = append(poolCfg.ExtraImages, img)
+			}
+		}
 	}
 	return NewWarmPool(orchestrator, log, poolCfg)
 }

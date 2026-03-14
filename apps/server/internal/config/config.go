@@ -333,6 +333,10 @@ type SandboxConfig struct {
 	// Should match the base_image your primary agent uses so warm containers are
 	// immediately compatible. Empty means use the provider's default image.
 	WarmPoolTargetImage string `env:"WORKSPACE_WARM_POOL_TARGET_IMAGE" envDefault:""`
+	// WarmPoolExtraImages is a comma-separated list of additional Docker images to
+	// pre-boot (one warm container each). Useful for secondary runtimes such as
+	// the Go SDK image. Example: "emergent-memory-go-sdk:latest"
+	WarmPoolExtraImages string `env:"WORKSPACE_WARM_POOL_EXTRA_IMAGES" envDefault:""`
 	// DefaultProvider is the default sandbox provider (gvisor, firecracker, e2b)
 	DefaultProvider string `env:"WORKSPACE_DEFAULT_PROVIDER" envDefault:"gvisor"`
 	// DefaultCPU is the default CPU limit for workspaces (e.g. "2")

@@ -24,13 +24,17 @@ const (
 
 // WarmPoolConfig configures the warm container pool.
 type WarmPoolConfig struct {
-	// Size is the target number of pre-booted containers to maintain.
+	// Size is the target number of pre-booted containers to maintain for TargetImage.
 	Size int `json:"size"`
-	// TargetImage is the Docker image to pre-boot containers with.
+	// TargetImage is the primary Docker image to pre-boot containers with.
 	// When empty, the provider's default image is used.
-	// Set this to match the base_image your agents request so warm containers
+	// Set this to match the base_image your primary agent uses so warm containers
 	// are compatible with requests that specify a BaseImage.
 	TargetImage string `json:"target_image,omitempty"`
+	// ExtraImages is a list of additional Docker images to pre-boot.
+	// Each image gets one pre-booted container maintained at all times.
+	// Useful for secondary runtimes (e.g. Go SDK) that also benefit from warm containers.
+	ExtraImages []string `json:"extra_images,omitempty"`
 }
 
 // DefaultWarmPoolConfig returns the default warm pool configuration.
@@ -38,6 +42,29 @@ func DefaultWarmPoolConfig() WarmPoolConfig {
 	return WarmPoolConfig{
 		Size: defaultWarmPoolSize,
 	}
+}
+
+// allImages returns the full list of images this pool manages (primary + extras).
+// The primary image is at index 0.
+func (c WarmPoolConfig) allImages() []string {
+	images := make([]string, 0, 1+len(c.ExtraImages))
+	images = append(images, c.TargetImage)
+	images = append(images, c.ExtraImages...)
+	return images
+}
+
+// targetCountForImage returns how many warm containers should be maintained for the
+// given image. The primary TargetImage gets Size; each ExtraImage gets 1.
+func (c WarmPoolConfig) targetCountForImage(image string) int {
+	if image == c.TargetImage {
+		return c.Size
+	}
+	for _, img := range c.ExtraImages {
+		if img == image {
+			return 1
+		}
+	}
+	return 0
 }
 
 // warmContainer represents a pre-booted container ready for assignment.
@@ -99,24 +126,30 @@ func (wp *WarmPool) Start(ctx context.Context) error {
 		return nil
 	}
 
-	wp.log.Info("initializing warm pool", "target_size", wp.config.Size)
+	allImages := wp.config.allImages()
+	totalTarget := wp.config.Size + len(wp.config.ExtraImages)
+	wp.log.Info("initializing warm pool", "target_size", totalTarget, "images", len(allImages))
 
-	// Create containers in parallel
+	// Create containers in parallel across all managed images.
+	created := make(chan *warmContainer, totalTarget)
+	errors := make(chan error, totalTarget)
+
 	var wg sync.WaitGroup
-	created := make(chan *warmContainer, wp.config.Size)
-	errors := make(chan error, wp.config.Size)
-
-	for i := 0; i < wp.config.Size; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			wc, err := wp.createWarmContainer(ctx)
-			if err != nil {
-				errors <- err
-				return
-			}
-			created <- wc
-		}()
+	for _, img := range allImages {
+		count := wp.config.targetCountForImage(img)
+		for i := 0; i < count; i++ {
+			wg.Add(1)
+			imgCopy := img
+			go func() {
+				defer wg.Done()
+				wc, err := wp.createWarmContainer(ctx, imgCopy)
+				if err != nil {
+					errors <- err
+					return
+				}
+				created <- wc
+			}()
+		}
 	}
 
 	// Wait for all creation goroutines
@@ -139,7 +172,7 @@ func (wp *WarmPool) Start(ctx context.Context) error {
 	wp.log.Info("warm pool initialized",
 		"ready", len(wp.containers),
 		"failed", errCount,
-		"target", wp.config.Size,
+		"target", totalTarget,
 	)
 
 	return nil
@@ -229,8 +262,9 @@ func (wp *WarmPool) Acquire(providerType ProviderType, imageHint string) *warmCo
 			"remaining", len(wp.containers),
 		)
 
-		// Trigger async replenishment
-		go wp.replenish()
+		// Trigger async replenishment for the consumed image.
+		consumedImage := wc.image
+		go wp.replenishImage(consumedImage)
 
 		return wc
 	}
@@ -293,37 +327,58 @@ func (wp *WarmPool) Resize(ctx context.Context, newSize int) error {
 	return nil
 }
 
-// replenish creates a single new container to maintain pool size.
-// Called asynchronously after a container is acquired.
-func (wp *WarmPool) replenish() {
+// replenishImage creates a single new container for the given image to maintain
+// the per-image target count. Called asynchronously after a container is acquired.
+func (wp *WarmPool) replenishImage(image string) {
 	if wp.stopped.Load() {
 		return
 	}
 
+	target := wp.config.targetCountForImage(image)
+	if target <= 0 {
+		return
+	}
+
 	wp.mu.Lock()
-	currentCount := len(wp.containers)
-	targetSize := wp.config.Size
+	var currentCount int
+	for _, wc := range wp.containers {
+		if wc.image == image {
+			currentCount++
+		}
+	}
 	wp.mu.Unlock()
 
-	if currentCount >= targetSize {
+	if currentCount >= target {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), replenishTimeout)
 	defer cancel()
 
-	wc, err := wp.createWarmContainer(ctx)
+	wc, err := wp.createWarmContainer(ctx, image)
 	if err != nil {
-		wp.log.Warn("failed to replenish warm container", "error", err)
+		wp.log.Warn("failed to replenish warm container", "image", image, "error", err)
 		return
 	}
 
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
 
-	// Re-check — pool may have been resized or stopped
-	if wp.stopped.Load() || len(wp.containers) >= wp.config.Size {
-		// Discard — pool is full or stopped
+	// Re-check — pool may have been stopped
+	if wp.stopped.Load() {
+		go wp.destroyContainer(context.Background(), wc)
+		return
+	}
+
+	// Count again under lock
+	var countNow int
+	for _, c := range wp.containers {
+		if c.image == image {
+			countNow++
+		}
+	}
+	if countNow >= target {
+		// Already at target (race) — discard
 		go wp.destroyContainer(context.Background(), wc)
 		return
 	}
@@ -331,11 +386,13 @@ func (wp *WarmPool) replenish() {
 	wp.containers = append(wp.containers, wc)
 	wp.log.Debug("warm container replenished",
 		"provider_id", wc.providerID,
+		"image", image,
 		"pool_size", len(wp.containers),
 	)
 }
 
 // fillToTarget creates containers until the pool reaches the target size.
+// Only creates containers for the primary TargetImage (used by Resize).
 func (wp *WarmPool) fillToTarget(ctx context.Context, target int) error {
 	resizeCtx, cancel := context.WithTimeout(ctx, poolResizeTimeout)
 	defer cancel()
@@ -356,7 +413,7 @@ func (wp *WarmPool) fillToTarget(ctx context.Context, target int) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			wc, err := wp.createWarmContainer(resizeCtx)
+			wc, err := wp.createWarmContainer(resizeCtx, wp.config.TargetImage)
 			if err != nil {
 				errors <- err
 				return
@@ -418,7 +475,8 @@ func (wp *WarmPool) drainExcess(ctx context.Context, target int) error {
 }
 
 // createWarmContainer provisions a new pre-booted container using the default provider.
-func (wp *WarmPool) createWarmContainer(ctx context.Context) (*warmContainer, error) {
+// image specifies the Docker image to use; empty string uses the provider's default.
+func (wp *WarmPool) createWarmContainer(ctx context.Context, image string) (*warmContainer, error) {
 	// Select the default provider for agent workspaces
 	provider, providerType, err := wp.orchestrator.SelectProvider(
 		ContainerTypeAgentSandbox,
@@ -431,7 +489,7 @@ func (wp *WarmPool) createWarmContainer(ctx context.Context) (*warmContainer, er
 
 	result, err := provider.Create(ctx, &CreateContainerRequest{
 		ContainerType: ContainerTypeAgentSandbox,
-		BaseImage:     wp.config.TargetImage,
+		BaseImage:     image,
 		Labels: map[string]string{
 			"memory.warm-pool": "true",
 		},
@@ -443,7 +501,7 @@ func (wp *WarmPool) createWarmContainer(ctx context.Context) (*warmContainer, er
 	return &warmContainer{
 		providerID:   result.ProviderID,
 		providerType: providerType,
-		image:        wp.config.TargetImage,
+		image:        image,
 		createdAt:    time.Now(),
 	}, nil
 }

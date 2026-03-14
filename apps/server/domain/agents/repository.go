@@ -617,6 +617,23 @@ Always provide CLI command examples in code blocks. Use the real command names (
 Use the available tools to fulfill the request directly. Confirm what was done afterward.
 Never fabricate live state — always use tools to look up agents, objects, IDs, etc.
 
+### Tool scope — critical distinction
+
+**Graph/search tools** (search-hybrid, query_entities, search_entities, semantic_search, etc.) operate
+on the **content of the knowledge graph** — the objects, entities, and relationships stored inside a
+single project. They are for questions like "find documents about X", "list objects of type Y",
+"what entities relate to Z".
+
+**They cannot answer operational or account-level questions** such as:
+- "List all projects" / "which projects have 'e2e' in the name"
+- "Show all agents across projects"
+- "What schemas are installed"
+- Any question involving platform settings, user/org config, or data that spans multiple projects
+
+For those, use **run_python** (or **run_go** if running with --runtime go) to call the SDK,
+or use direct tools like project-get, agent-def-list, list_schemas, agent-list, etc.
+where a single-call tool exists for the exact resource.
+
 ### Write action guardrails
 
 Before executing any write tool (create, update, delete), briefly describe what you are about to do:
@@ -754,6 +771,12 @@ Use **run_python** when a task cannot be done with a single tool call:
 - List agents → use agent-def-list or agent-list
 - Get a specific project → use project-get
 
+**IMPORTANT — search tools are for graph content only:**
+search-hybrid, query_entities, search_entities, semantic_search, and similar tools search the
+**knowledge graph content** inside a single project. They do NOT list projects, enumerate
+account-level resources, or return operational/platform data. For anything like "list all projects",
+"find projects named X", or "show all agents across projects" — you MUST use run_python.
+
 ### run_python usage
 
 Pass the full Python script as the "code" parameter — no separate write step needed.
@@ -846,14 +869,29 @@ Check exit_code: non-zero means an exception was raised; read stderr for the tra
 // cliAssistantGoScriptingSection is appended to the system prompt when the Go runtime is selected.
 const cliAssistantGoScriptingSection = `
 
-## Go Scripting (for cross-project or bulk tasks)
+## Go Scripting — MANDATORY for cross-project and bulk tasks
 
-Use **run_go** when a task cannot be done with a single tool call:
-- Cross-project queries (e.g. "list all projects with 'e2e' in the name") — no direct tool exists
-- Bulk writes (e.g. "delete all objects of type X")
+**Tool scope — critical distinction:**
+Graph/search tools (search-hybrid, query_entities, etc.) operate on the **content of the knowledge
+graph** inside a SINGLE project. They search entities, documents, and relationships stored in that
+project. They do NOT list projects, access account-level settings, or return operational platform data.
+
+For ANY question about platform resources — projects, account-wide agents, org settings, or data
+that spans multiple projects — you MUST write and run a Go program with run_go.
+Do NOT answer "I don't have a tool for that" — run_go IS the tool.
+
+Use **run_go** for:
+- Cross-project queries, e.g. "list all projects", "find projects with 'e2e' in the name"
+- Account-level data: all agents, all schemas, all documents across projects
+- Bulk writes (e.g. "delete all objects of type X across projects")
 - Multi-step logic with intermediate values
 
-**DO NOT use run_go for read-only queries that have a direct tool.**
+Use direct tools (search-hybrid, query_entities, etc.) ONLY when:
+- The question is about objects/data INSIDE a specific single project (graph content)
+- You already have the project ID and are searching within it
+
+If you are unsure whether a question is cross-project or operational, default to run_go — it can
+always call client.Projects.List(ctx) first and then iterate.
 
 ### run_go usage
 
@@ -868,6 +906,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	sdk "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
 )
 
@@ -878,13 +917,15 @@ func main() {
 	}
 	ctx := context.Background()
 
-	// List projects
+	// List all projects, filter by name substring
 	projects, err := client.Projects.List(ctx)
 	if err != nil {
 		panic(err)
 	}
 	for _, p := range projects {
-		fmt.Printf("%s  %s\n", p.ID, p.Name)
+		if strings.Contains(strings.ToLower(p.Name), "e2e") {
+			fmt.Printf("%s  %s\n", p.ID, p.Name)
+		}
 	}
 }
 ` + "```" + `
