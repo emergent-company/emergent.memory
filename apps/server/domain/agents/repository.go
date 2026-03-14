@@ -756,8 +756,8 @@ Use **run_python** when a task cannot be done with a single tool call:
 
 ### run_python usage
 
-Pass the full Python script as the `code` parameter — no separate write step needed.
-The sandbox already has credentials injected; `Client.from_env()` picks them up automatically.
+Pass the full Python script as the "code" parameter — no separate write step needed.
+The sandbox already has credentials injected; Client.from_env() picks them up automatically.
 
 ### SDK type reference (authoritative — all methods return plain dicts, not objects)
 
@@ -817,8 +817,8 @@ def schemas_list() -> list[dict[str, Any]]: ...
 ### CRITICAL: dict access only
 
 All SDK methods return plain dicts. Attribute access will raise AttributeError:
-- CORRECT:   `p['name']`, `p['id']`, `obj['entity_id']`
-- INCORRECT: `p.name`, `p.id`, `obj.entity_id`  ← AttributeError
+- CORRECT:   p['name'], p['id'], obj['entity_id']
+- INCORRECT: p.name, p.id, obj.entity_id  <- AttributeError
 
 ### Example: list projects matching a pattern
 
