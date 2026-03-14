@@ -186,6 +186,7 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       - '${SERVER_PORT:-3002}:3002'
     volumes:
       - memory_cli_config:/root/.memory
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       STANDALONE_MODE: 'true'
       STANDALONE_API_KEY: ${STANDALONE_API_KEY}
@@ -280,6 +281,39 @@ storage:
       path: /var/tempo/traces
     wal:
       path: /var/tempo/wal
+`
+}
+
+// GetPythonSDKDockerfile returns the Dockerfile used to build the
+// emergent-memory-python-sdk sandbox image. The content is embedded here so
+// that every `memory server install` and `memory server upgrade` can
+// (re)build the image without needing the source repository present.
+func GetPythonSDKDockerfile() string {
+	return `FROM python:3.12-slim
+
+# Install system deps needed by pip/git and common packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Install the emergent-memory Python SDK from the public GitHub repository
+RUN pip install --no-cache-dir \
+        "git+https://github.com/emergent-company/emergent.memory.git#subdirectory=sdk/python"
+
+# Pre-install common helper packages agents are likely to import
+RUN pip install --no-cache-dir \
+        requests \
+        pydantic \
+        python-dateutil
+
+# Default working directory for agent scripts
+WORKDIR /workspace
+
+CMD ["python3"]
 `
 }
 

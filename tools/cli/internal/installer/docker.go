@@ -3,6 +3,7 @@ package installer
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -103,6 +104,31 @@ func (d *DockerManager) WaitForHealth(port int, timeoutSeconds int) error {
 	}
 
 	return fmt.Errorf("health check timed out after %d seconds", timeoutSeconds)
+}
+
+// BuildSandboxImages builds Docker images required by the agent sandbox.
+// dockerfileContent is the content of the Dockerfile to use; it is written to a
+// temporary directory so that docker build has an isolated context.
+// imageName is the tag to apply (e.g. "emergent-memory-python-sdk:latest").
+// Failures are non-fatal warnings — the server can still run without the image.
+func (d *DockerManager) BuildSandboxImages(dockerfileContent, imageName string) error {
+	tmpDir, err := os.MkdirTemp("", "memory-sdk-build-*")
+	if err != nil {
+		return fmt.Errorf("failed to create build context: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte(dockerfileContent), 0644); err != nil {
+		return fmt.Errorf("failed to write Dockerfile: %w", err)
+	}
+
+	cmd := exec.Command("docker", "build", "-t", imageName, tmpDir)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker build %s failed: %w\n%s", imageName, err, string(output))
+	}
+	return nil
 }
 
 func (d *DockerManager) Logs(service string, lines int) (string, error) {

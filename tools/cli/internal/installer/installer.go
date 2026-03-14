@@ -320,6 +320,14 @@ func (i *Installer) Install() error {
 		i.output.Success("Server is healthy!")
 	}
 
+	// Build sandbox images required by the agent (non-fatal if Docker unavailable).
+	i.output.Step("Building sandbox images...")
+	if err := docker.BuildSandboxImages(GetPythonSDKDockerfile(), "emergent-memory-python-sdk:latest"); err != nil {
+		i.output.Warn("Could not build Python SDK sandbox image (non-fatal): %v", err)
+	} else {
+		i.output.Success("Python SDK sandbox image built")
+	}
+
 	i.printCompletionMessage(apiKey, true, i.config.GoogleAPIKey != "")
 
 	// Prompt for Google API key if not provided via flag
@@ -442,6 +450,14 @@ func (i *Installer) Upgrade(version string) error {
 		i.output.Warn("Health check timeout - services may still be starting")
 	} else {
 		i.output.Success("Server is healthy!")
+	}
+
+	// Build sandbox images required by the agent (non-fatal if Docker unavailable).
+	i.output.Step("Building sandbox images...")
+	if err := docker.BuildSandboxImages(GetPythonSDKDockerfile(), "emergent-memory-python-sdk:latest"); err != nil {
+		i.output.Warn("Could not build Python SDK sandbox image (non-fatal): %v", err)
+	} else {
+		i.output.Success("Python SDK sandbox image built")
 	}
 
 	if version != "" && version != "unknown" {
