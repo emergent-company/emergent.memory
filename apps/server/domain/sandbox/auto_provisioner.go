@@ -37,6 +37,7 @@ type AutoProvisioner struct {
 	setupExec     *SetupExecutor
 	warmPool      *WarmPool
 	imageResolver ImageResolver // optional — if nil, falls back to ResolveProviderType()
+	serverURL     string        // base URL injected into sandbox containers as MEMORY_API_URL
 	log           *slog.Logger
 }
 
@@ -47,6 +48,7 @@ func NewAutoProvisioner(
 	checkoutSvc *CheckoutService,
 	setupExec *SetupExecutor,
 	warmPool *WarmPool,
+	serverURL string,
 	log *slog.Logger,
 ) *AutoProvisioner {
 	return &AutoProvisioner{
@@ -55,6 +57,7 @@ func NewAutoProvisioner(
 		checkoutSvc:  checkoutSvc,
 		setupExec:    setupExec,
 		warmPool:     warmPool,
+		serverURL:    serverURL,
 		log:          log.With("component", "workspace-auto-provisioner"),
 	}
 }
@@ -89,6 +92,7 @@ func (ap *AutoProvisioner) ProvisionForSession(
 	projectID string,
 	workspaceConfig map[string]any,
 	taskMetadata map[string]any,
+	authToken string,
 ) (*ProvisioningResult, error) {
 	// Parse workspace config
 	cfg, err := ParseAgentSandboxConfig(workspaceConfig)
@@ -112,7 +116,7 @@ func (ap *AutoProvisioner) ProvisionForSession(
 	)
 
 	// Attempt provisioning (with one retry on fallback provider)
-	result, err := ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout)
+	result, err := ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout, authToken)
 	if err != nil {
 		ap.log.Warn("first provisioning attempt failed, retrying with fallback",
 			"agent_definition_id", agentDefID,
@@ -125,7 +129,7 @@ func (ap *AutoProvisioner) ProvisionForSession(
 		}
 
 		// Retry once with fallback
-		result, err = ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout)
+		result, err = ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout, authToken)
 		if err != nil {
 			ap.log.Error("workspace provisioning failed after retry, starting in degraded mode",
 				"agent_definition_id", agentDefID,
@@ -221,6 +225,7 @@ func (ap *AutoProvisioner) attemptProvision(
 	cfg *AgentSandboxConfig,
 	repoURL, branch string,
 	shouldCheckout bool,
+	authToken string,
 ) (*ProvisioningResult, error) {
 	ap.log.Info("starting workspace provisioning attempt",
 		"repo_url", repoURL,
@@ -279,6 +284,17 @@ func (ap *AutoProvisioner) attemptProvision(
 		ContainerType:  ContainerTypeAgentSandbox,
 		ResourceLimits: cfg.ResourceLimits,
 		BaseImage:      cfg.BaseImage,
+	}
+
+	// Inject SDK environment variables if an ephemeral token was minted
+	if authToken != "" {
+		containerReq.Env = map[string]string{
+			"MEMORY_API_KEY":    authToken,
+			"MEMORY_PROJECT_ID": projectID,
+		}
+		if ap.serverURL != "" {
+			containerReq.Env["MEMORY_API_URL"] = ap.serverURL
+		}
 	}
 
 	// Try warm pool first, fall back to cold creation

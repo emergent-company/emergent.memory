@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
 	"github.com/uptrace/bun"
 )
@@ -741,6 +742,21 @@ Do NOT call "skill-list" for general orientation or when you already know the sk
 - **Provider configuration**: set at the organization level via "memory provider configure" or the Admin UI.
   A project inherits the org provider unless overridden with "memory provider configure-project".
 
+## Python Scripting (for bulk or complex tasks)
+
+When a task involves many items or complex logic that would be tedious with individual tool calls
+(e.g. "delete all projects with 'e2e' in the name"), write and run a Python script instead:
+
+1. Use workspace_write to write a script to /workspace/task.py
+2. Use workspace_bash to run it: python3 /workspace/task.py
+3. The script can use the pre-installed emergent-memory SDK:
+
+   from emergent import Client
+   client = Client.from_env()
+   # client.projects, client.documents, etc. are ready to use
+
+The sandbox already has credentials injected — Client.from_env() picks them up automatically.
+
 ## Response Style
 - Keep responses concise and focused
 - Use markdown with code blocks for CLI commands and API examples
@@ -749,8 +765,8 @@ Do NOT call "skill-list" for general orientation or when you already know the sk
 
 // EnsureCliAssistantAgent returns the cli-assistant-agent for the project (or with an empty
 // project ID for the user-level /api/ask endpoint), creating it if it does not exist yet.
-// If it already exists, its Tools list and SystemPrompt are updated to reflect any changes
-// made to cliAssistantAgentSystemPrompt and the canonical tool whitelist.
+// If it already exists, its Tools list, SystemPrompt, and SandboxConfig are updated to
+// reflect any changes made to cliAssistantAgentSystemPrompt and the canonical tool whitelist.
 // Uses VisibilityInternal so it never appears in the public agent list.
 // Safe to call concurrently — a race between two callers results in one insert and one
 // subsequent read (FindDefinitionByName will find the winner's row).
@@ -763,6 +779,25 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 	temperature := float32(0.3)
 	maxSteps := 20
 	systemPrompt := cliAssistantAgentSystemPrompt
+
+	// Build the Python SDK sandbox config. The sandbox image has emergent-memory
+	// pre-installed; ephemeral credentials are injected as env vars at runtime so
+	// the agent can use Client.from_env() without any explicit credential handling.
+	sandboxCfg := &sandbox.AgentSandboxConfig{
+		Enabled:   true,
+		BaseImage: "emergent-memory-python-sdk:latest",
+		// Allow bash so the agent can execute python scripts; read/write/edit for
+		// writing helper files when needed.
+		Tools: []string{"bash", "read", "write", "edit"},
+		RepoSource: &sandbox.RepoSourceConfig{
+			Type: sandbox.RepoSourceNone,
+		},
+	}
+	sandboxMap, sandboxMapErr := sandboxCfg.ToMap()
+	if sandboxMapErr != nil {
+		// Non-fatal: proceed without sandbox config rather than blocking ask calls.
+		sandboxMap = nil
+	}
 
 	canonicalTools := []string{
 		// Web access for documentation
@@ -852,13 +887,16 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 	}
 
 	if existing != nil {
-		// Update tools, system prompt, and model to pick up any changes to the canonical definition.
+		// Update tools, system prompt, model, and sandbox config to pick up any changes.
 		existing.Tools = canonicalTools
 		existing.SystemPrompt = &systemPrompt
 		if existing.Model == nil {
 			existing.Model = &ModelConfig{}
 		}
 		existing.Model.Name = "gemini-3.1-flash-lite-preview"
+		if sandboxMap != nil {
+			existing.SandboxConfig = sandboxMap
+		}
 		if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
 			// Non-fatal — return existing as-is rather than failing the ask call.
 			return existing, nil
@@ -875,12 +913,13 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 			Name:        "gemini-3.1-flash-lite-preview",
 			Temperature: &temperature,
 		},
-		Tools:      canonicalTools,
-		FlowType:   FlowTypeSingle,
-		IsDefault:  false,
-		MaxSteps:   &maxSteps,
-		Visibility: VisibilityInternal,
-		Config:     map[string]any{},
+		Tools:         canonicalTools,
+		FlowType:      FlowTypeSingle,
+		IsDefault:     false,
+		MaxSteps:      &maxSteps,
+		Visibility:    VisibilityInternal,
+		Config:        map[string]any{},
+		SandboxConfig: sandboxMap,
 	}
 
 	if err := r.CreateDefinition(ctx, def); err != nil {

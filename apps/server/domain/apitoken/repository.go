@@ -184,6 +184,45 @@ func (r *Repository) GetByIDAndUser(ctx context.Context, tokenID, userID string)
 	return &token, nil
 }
 
+// RevokeByID revokes any token by ID regardless of project (used for ephemeral token teardown).
+func (r *Repository) RevokeByID(ctx context.Context, tokenID string) (bool, error) {
+	result, err := r.db.NewUpdate().
+		Model((*ApiToken)(nil)).
+		Set("revoked_at = NOW()").
+		Where("id = ?", tokenID).
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return rows > 0, nil
+}
+
+// FindByHash looks up a token by its SHA-256 hash.
+// Returns nil (no error) when the token is not found.
+func (r *Repository) FindByHash(ctx context.Context, tokenHash string) (*ApiToken, error) {
+	var token ApiToken
+	err := r.db.NewSelect().
+		Model(&token).
+		Where("token_hash = ?", tokenHash).
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &token, nil
+}
+
 // Revoke sets the revoked_at timestamp on a token
 func (r *Repository) Revoke(ctx context.Context, tokenID, projectID string) (bool, error) {
 	result, err := r.db.NewUpdate().

@@ -197,3 +197,8 @@ docs/EPF/
 
 # auto-added by commit skill — 2026-03-14
 tools/cli/main
+
+# Python bytecode
+**/__pycache__/
+**/*.pyc
+**/*.pyo

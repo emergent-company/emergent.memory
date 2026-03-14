@@ -6,14 +6,15 @@ import (
 
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 	"github.com/emergent-company/emergent.memory/domain/skills"
-	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
@@ -75,9 +76,10 @@ func provideAgentExecutor(
 	cfg *config.Config,
 	sessionService session.Service,
 	providerRepo *provider.Repository,
+	apiTokenSvc *apitoken.Service,
 	log *slog.Logger,
 ) *AgentExecutor {
-	return NewAgentExecutor(modelFactory, toolPool, repo, skillRepo, embeddingsSvc, provisioner, cfg, sessionService, providerRepo, log)
+	return NewAgentExecutor(modelFactory, toolPool, repo, skillRepo, embeddingsSvc, provisioner, cfg, sessionService, providerRepo, apiTokenSvc, log)
 }
 
 // provideHandler creates a Handler with both repo and executor.

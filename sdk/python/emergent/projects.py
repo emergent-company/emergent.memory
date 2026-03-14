@@ -3,9 +3,11 @@ Projects sub-client.
 
 Endpoints covered
 -----------------
-GET  /api/projects
-POST /api/projects
-GET  /api/projects/:id
+GET    /api/projects
+POST   /api/projects
+GET    /api/projects/:id
+PATCH  /api/projects/:id
+DELETE /api/projects/:id
 """
 from __future__ import annotations
 
@@ -32,3 +34,11 @@ class ProjectsClient(BaseClient):
     def create(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new project. POST /api/projects"""
         return self._post("/api/projects", json=payload)
+
+    def update(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an existing project. PATCH /api/projects/:id"""
+        return self._patch(f"/api/projects/{quote(project_id, safe='')}", json=payload)
+
+    def delete(self, project_id: str) -> None:
+        """Delete a project by ID. DELETE /api/projects/:id"""
+        self._delete(f"/api/projects/{quote(project_id, safe='')}")

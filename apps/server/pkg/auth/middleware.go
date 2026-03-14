@@ -473,14 +473,9 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 		Column("id", "user_id", "project_id", "scopes").
 		Where("token_hash = ?", tokenHash).
 		Where("revoked_at IS NULL").
+		Where("(expires_at IS NULL OR expires_at > NOW())").
 		Scan(ctx, &result)
 
-	if err != nil {
-		return nil, apperror.ErrInvalidToken.WithInternal(err)
-	}
-
-	// Get user profile
-	user, err := m.userSvc.GetByID(ctx, result.UserID)
 	if err != nil {
 		return nil, apperror.ErrInvalidToken.WithInternal(err)
 	}
@@ -489,6 +484,25 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 	projectID := ""
 	if result.ProjectID != nil {
 		projectID = *result.ProjectID
+	}
+
+	// Ephemeral sandbox tokens use a synthetic system user ID (00000000-0000-0000-0000-*)
+	// that does not exist in core.user_profiles. Skip the user profile lookup for these.
+	isEphemeralSystemUser := len(result.UserID) >= 24 && result.UserID[:24] == "00000000-0000-0000-0000-"
+	if isEphemeralSystemUser {
+		return &AuthUser{
+			ID:                result.UserID,
+			Sub:               result.UserID,
+			Scopes:            result.Scopes,
+			APITokenProjectID: projectID,
+			APITokenID:        result.ID,
+		}, nil
+	}
+
+	// Get user profile
+	user, err := m.userSvc.GetByID(ctx, result.UserID)
+	if err != nil {
+		return nil, apperror.ErrInvalidToken.WithInternal(err)
 	}
 
 	return &AuthUser{

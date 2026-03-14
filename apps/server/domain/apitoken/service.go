@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/encryption"
@@ -326,6 +328,83 @@ func (s *Service) GetAccountToken(ctx context.Context, tokenID, userID string) (
 	}
 
 	return dto, nil
+}
+
+// CreateEphemeral mints a short-lived project-scoped emt_* token for use inside
+// sandbox containers. The token is automatically bound to the given project and
+// expires after ttl from now. The caller must call RevokeEphemeral when the
+// sandbox is torn down to ensure early revocation.
+//
+// Returns (tokenID, rawToken, error). rawToken must be injected into the container
+// as MEMORY_API_KEY; it is never stored in plaintext.
+func (s *Service) CreateEphemeral(ctx context.Context, projectID, orgID string, ttl time.Duration) (tokenID, rawToken string, err error) {
+	// Generate a new emt_* token
+	raw, genErr := generateToken()
+	if genErr != nil {
+		return "", "", apperror.ErrInternal.WithInternal(genErr)
+	}
+
+	// Use a synthetic system user ID derived from the project so the FK is satisfied
+	// without tying the token to a real user account.
+	// Format must be a valid UUID — pad the first 12 chars of projectID (hex digits only).
+	pidHex := projectID
+	if idx := 0; len(pidHex) > 0 {
+		// Strip dashes to get raw hex
+		stripped := ""
+		for _, c := range pidHex {
+			if c != '-' {
+				stripped += string(c)
+			}
+		}
+		_ = idx
+		if len(stripped) >= 12 {
+			pidHex = stripped[:12]
+		} else {
+			pidHex = fmt.Sprintf("%-12s", stripped)
+			pidHex = pidHex[:12]
+		}
+	}
+	systemUserID := fmt.Sprintf("00000000-0000-0000-0000-%s", pidHex)
+
+	expiresAt := time.Now().Add(ttl)
+	token := &ApiToken{
+		ProjectID:   &projectID,
+		UserID:      systemUserID,
+		Name:        fmt.Sprintf("ephemeral-sandbox-%d", time.Now().UnixMilli()),
+		TokenHash:   hashToken(raw),
+		TokenPrefix: getTokenPrefix(raw),
+		Scopes:      []string{"data:read", "data:write", "schema:read", "agents:read", "agents:write", "projects:read", "projects:write"},
+		ExpiresAt:   &expiresAt,
+	}
+
+	if err := s.repo.Create(ctx, token); err != nil {
+		return "", "", fmt.Errorf("CreateEphemeral: %w", err)
+	}
+
+	s.log.Info("created ephemeral sandbox token",
+		slog.String("token_id", token.ID),
+		slog.String("project_id", projectID),
+		slog.Time("expires_at", expiresAt),
+	)
+
+	return token.ID, raw, nil
+}
+
+// RevokeEphemeral immediately revokes an ephemeral token by ID.
+// Non-fatal: logs a warning on failure but does not return an error so teardown
+// cannot be blocked.
+func (s *Service) RevokeEphemeral(ctx context.Context, tokenID string) {
+	if tokenID == "" {
+		return
+	}
+	if _, err := s.repo.RevokeByID(ctx, tokenID); err != nil {
+		s.log.Warn("failed to revoke ephemeral sandbox token",
+			slog.String("token_id", tokenID),
+			slog.String("error", err.Error()),
+		)
+	} else {
+		s.log.Info("revoked ephemeral sandbox token", slog.String("token_id", tokenID))
+	}
 }
 
 // RevokeAccountToken revokes an account-level token owned by the user

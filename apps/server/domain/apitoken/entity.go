@@ -21,6 +21,7 @@ type ApiToken struct {
 	CreatedAt      time.Time  `bun:"created_at,notnull,default:now()"`
 	LastUsedAt     *time.Time `bun:"last_used_at"`
 	RevokedAt      *time.Time `bun:"revoked_at"`
+	ExpiresAt      *time.Time `bun:"expires_at"`
 }
 
 // ApiTokenDTO is the response DTO for API token endpoints (without sensitive data)
@@ -33,6 +34,7 @@ type ApiTokenDTO struct {
 	CreatedAt   time.Time  `json:"createdAt"`
 	LastUsedAt  *time.Time `json:"lastUsedAt,omitempty"`
 	IsRevoked   bool       `json:"isRevoked"`
+	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
 }
 
 // CreateApiTokenResponseDTO extends ApiTokenDTO with the full token value (only at creation)
@@ -87,5 +89,6 @@ func (t *ApiToken) ToDTO() ApiTokenDTO {
 		CreatedAt:   t.CreatedAt,
 		LastUsedAt:  t.LastUsedAt,
 		IsRevoked:   t.RevokedAt != nil,
+		ExpiresAt:   t.ExpiresAt,
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 
+	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/skills"
@@ -101,6 +102,12 @@ type ExecuteRequest struct {
 	TriggerSource   *string
 	TriggerMetadata map[string]any
 	StreamCallback  StreamCallback // Optional: enables streaming of text deltas and tool call events
+
+	// Ephemeral sandbox token — set by the chat handler before calling Execute.
+	// AuthToken is the raw emt_* token value to inject into sandbox containers as MEMORY_API_KEY.
+	// EphemeralTokenID is the DB id of the token; the executor revokes it on workspace teardown.
+	AuthToken        string
+	EphemeralTokenID string
 }
 
 // ExecuteResult is the outcome of an agent execution.
@@ -130,6 +137,7 @@ type AgentExecutor struct {
 	wsEnabled      bool                     // cached feature flag
 	sessionService session.Service
 	modelLimits    ModelLimitsLookup // nil if provider module is not registered
+	apiTokenSvc    *apitoken.Service // nil if not configured; used for ephemeral sandbox tokens
 	log            *slog.Logger
 }
 
@@ -144,6 +152,7 @@ func NewAgentExecutor(
 	cfg *config.Config,
 	sessionService session.Service,
 	modelLimits ModelLimitsLookup,
+	apiTokenSvc *apitoken.Service,
 	log *slog.Logger,
 ) *AgentExecutor {
 	wsEnabled := cfg.Sandbox.IsEnabled()
@@ -160,6 +169,7 @@ func NewAgentExecutor(
 		wsEnabled:      wsEnabled,
 		sessionService: sessionService,
 		modelLimits:    modelLimits,
+		apiTokenSvc:    apiTokenSvc,
 		log:            log.With(logger.Scope("agents.executor")),
 	}
 }
@@ -242,7 +252,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 
 	wsResult := ae.provisionWorkspace(ctx, run.ID, req)
 	if wsResult != nil && wsResult.Workspace != nil {
-		defer ae.teardownWorkspace(ctx, wsResult)
+		defer ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
 	}
 
 	// Workspace provisioning complete (or skipped) — mark session active
@@ -367,7 +377,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 
 	wsResult := ae.provisionWorkspace(ctx, run.ID, req)
 	if wsResult != nil && wsResult.Workspace != nil {
-		defer ae.teardownWorkspace(ctx, wsResult)
+		defer ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
 	}
 
 	if hasSandboxConfig {
@@ -485,7 +495,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 
 	wsResult := ae.provisionWorkspace(ctx, newRun.ID, req)
 	if wsResult != nil && wsResult.Workspace != nil {
-		defer ae.teardownWorkspace(ctx, wsResult)
+		defer ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
 	}
 
 	// Workspace provisioning complete (or skipped) — mark session active
@@ -531,7 +541,7 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 		slog.String("agent_definition_id", req.AgentDefinition.ID),
 	)
 
-	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.SandboxConfig, nil)
+	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.SandboxConfig, nil, req.AuthToken)
 	if err != nil {
 		ae.log.Error("workspace provisioning returned error, running without workspace",
 			slog.String("run_id", runID),
@@ -572,7 +582,7 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 
 // teardownWorkspace destroys the provisioned workspace after the agent run completes.
 // Called via defer so it runs regardless of how the run exits.
-func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *sandbox.ProvisioningResult) {
+func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *sandbox.ProvisioningResult, tokenID string) {
 	if result == nil || result.Workspace == nil || ae.provisioner == nil {
 		return
 	}
@@ -582,6 +592,11 @@ func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *sandbox.
 	defer cancel()
 
 	ae.provisioner.TeardownWorkspace(teardownCtx, result.Workspace)
+
+	// Revoke the ephemeral token if one was minted for this run
+	if tokenID != "" && ae.apiTokenSvc != nil {
+		ae.apiTokenSvc.RevokeEphemeral(teardownCtx, tokenID)
+	}
 }
 
 func (ae *AgentExecutor) getRootRunID(ctx context.Context, run *AgentRun) string {
