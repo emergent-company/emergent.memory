@@ -96,6 +96,7 @@ type RunTokenUsage struct {
 type AgentRun struct {
 	ID           string         `json:"id"`
 	AgentID      string         `json:"agentId"`
+	AgentName    string         `json:"agentName,omitempty"`
 	Status       string         `json:"status"`
 	StartedAt    time.Time      `json:"startedAt"`
 	CompletedAt  *time.Time     `json:"completedAt"`

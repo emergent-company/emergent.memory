@@ -27,6 +27,7 @@ type AgentDTO struct {
 type AgentRunDTO struct {
 	ID            string         `json:"id"`
 	AgentID       string         `json:"agentId"`
+	AgentName     string         `json:"agentName,omitempty"`
 	Status        AgentRunStatus `json:"status"`
 	SessionStatus SessionStatus  `json:"sessionStatus"`
 	StartedAt     time.Time      `json:"startedAt"`
@@ -169,7 +170,7 @@ func (a *Agent) ToDTO() *AgentDTO {
 
 // ToDTO converts an AgentRun entity to AgentRunDTO
 func (r *AgentRun) ToDTO() *AgentRunDTO {
-	return &AgentRunDTO{
+	dto := &AgentRunDTO{
 		ID:            r.ID,
 		AgentID:       r.AgentID,
 		Status:        r.Status,
@@ -187,6 +188,10 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 		TraceID:       r.TraceID,
 		RootRunID:     r.RootRunID,
 	}
+	if r.Agent != nil {
+		dto.AgentName = r.Agent.Name
+	}
+	return dto
 }
 
 // SuccessResponse creates a successful API response

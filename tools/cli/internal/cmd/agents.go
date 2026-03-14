@@ -579,15 +579,11 @@ func runGetRunByID(cmd *cobra.Command, args []string) error {
 
 	r := result.Data
 
-	// Best-effort agent name resolution: try project-scoped endpoint if agentId is known.
+	// AgentName is now returned by the server in the global run response.
+	// Fall back to the ID if the server is older and doesn't populate it.
 	agentName := r.AgentID
-	if r.AgentID != "" {
-		// We don't know the project here, but fetchAgentName gracefully returns ""
-		// on failure so it's safe to try with an empty projectID.
-		// For named display we try to resolve via the admin agent endpoint instead.
-		if name := fetchAgentNameGlobal(cmd, r.AgentID); name != "" {
-			agentName = fmt.Sprintf("%s (%s)", name, r.AgentID)
-		}
+	if r.AgentName != "" {
+		agentName = fmt.Sprintf("%s (%s)", r.AgentName, r.AgentID)
 	}
 
 	// Consolidate token usage from the run's TokenUsage field (populated by GetRunByID).

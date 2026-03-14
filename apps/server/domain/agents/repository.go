@@ -1201,7 +1201,8 @@ func (r *Repository) FindRunByID(ctx context.Context, runID string) (*AgentRun, 
 	run := new(AgentRun)
 	err := r.db.NewSelect().
 		Model(run).
-		Where("id = ?", runID).
+		Relation("Agent").
+		Where("ar.id = ?", runID).
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
