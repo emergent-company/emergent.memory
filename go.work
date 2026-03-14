@@ -3,9 +3,6 @@ go 1.25.6
 use (
 	./apps/server
 	./apps/server/pkg/sdk
-	./tests/api
-	./tools/e2e-suite
 	./tools/cli
-	./tools/huma-test-suite
 	./tools/opencode-test-suite
 )
