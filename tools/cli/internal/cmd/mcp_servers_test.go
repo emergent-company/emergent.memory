@@ -139,13 +139,13 @@ func TestMCPServersCreateFlags(t *testing.T) {
 }
 
 func TestMCPServersRootCommand(t *testing.T) {
-	// Verify the mcp-servers command is registered on root
+	// Verify the mcp-servers command is registered under the agents command
 	found := false
-	for _, cmd := range rootCmd.Commands() {
+	for _, cmd := range agentsCmd.Commands() {
 		if cmd.Name() == "mcp-servers" {
 			found = true
 			break
 		}
 	}
-	assert.True(t, found, "mcp-servers command should be registered on root")
+	assert.True(t, found, "mcp-servers command should be registered under agents")
 }
