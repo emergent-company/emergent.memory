@@ -331,26 +331,32 @@ func (s *Service) GetAccountToken(ctx context.Context, tokenID, userID string) (
 }
 
 // CreateEphemeral mints a short-lived project-scoped emt_* token for use inside
-// sandbox containers. The token is automatically bound to the given project and
-// expires after ttl from now. The caller must call RevokeEphemeral when the
-// sandbox is torn down to ensure early revocation.
+// sandbox containers. The token is bound to the given project and expires after
+// ttl from now. If userID is non-empty the token acts on behalf of that user
+// (enabling org-level queries such as listing all projects). The caller must
+// call RevokeEphemeral when the sandbox is torn down to ensure early revocation.
 //
 // Returns (tokenID, rawToken, error). rawToken must be injected into the container
 // as MEMORY_API_KEY; it is never stored in plaintext.
-func (s *Service) CreateEphemeral(ctx context.Context, projectID, orgID string, ttl time.Duration) (tokenID, rawToken string, err error) {
+func (s *Service) CreateEphemeral(ctx context.Context, projectID, orgID, userID string, ttl time.Duration) (tokenID, rawToken string, err error) {
 	// Generate a new emt_* token
 	raw, genErr := generateToken()
 	if genErr != nil {
 		return "", "", apperror.ErrInternal.WithInternal(genErr)
 	}
 
-	// Ephemeral tokens are system-minted and have no real user owner (user_id = NULL).
-	// The FK constraint on core.api_tokens.user_id has been relaxed to allow NULL
-	// via migration 00065_api_tokens_nullable_user_id.sql.
+	// Ephemeral tokens are minted on behalf of the calling user. Storing the real
+	// user ID allows the token to perform org-level queries (e.g. list all projects)
+	// just like a regular API token. If userID is empty the token has no user
+	// context (user_id = NULL) and is restricted to project-scoped operations only.
 	expiresAt := time.Now().Add(ttl)
+	var uid *string
+	if userID != "" {
+		uid = &userID
+	}
 	token := &ApiToken{
 		ProjectID:   &projectID,
-		UserID:      nil, // ephemeral — no user owner
+		UserID:      uid,
 		Name:        fmt.Sprintf("ephemeral-sandbox-%d", time.Now().UnixMilli()),
 		TokenHash:   hashToken(raw),
 		TokenPrefix: getTokenPrefix(raw),

@@ -526,7 +526,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 	// Branch: agent-backed vs direct-LLM flow
 	if conv.AgentDefinitionID != nil {
-		h.streamAgentChat(ctx, conv, message, user.ProjectID, user.OrgID, sseWriter)
+		h.streamAgentChat(ctx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter)
 		sseWriter.WriteData(sse.NewDoneEvent())
 		sseWriter.Close()
 		return nil
@@ -740,7 +740,7 @@ func friendlyProviderError(err error) string {
 // streamAgentChat handles the agent-backed chat flow. It loads the agent definition,
 // builds conversation history, calls the agent executor with a StreamCallback, and
 // maps streaming events to SSE events. Final assistant text is persisted to kb.chat_messages.
-func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, message, projectID, orgID string, sseWriter *sse.Writer) {
+func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, message, projectID, orgID, userID string, sseWriter *sse.Writer) {
 	agentDefID := conv.AgentDefinitionID.String()
 
 	// Load the agent definition
@@ -889,7 +889,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		if h.apiTokenSvc != nil && def.SandboxConfig != nil && len(def.SandboxConfig) > 0 && projectID != "" {
 			ttl := 2 * time.Hour // default sandbox TTL
 			var mintErr error
-			ephemeralTokenID, authToken, mintErr = h.apiTokenSvc.CreateEphemeral(ctx, projectID, orgID, ttl)
+			ephemeralTokenID, authToken, mintErr = h.apiTokenSvc.CreateEphemeral(ctx, projectID, orgID, userID, ttl)
 			if mintErr != nil {
 				h.log.Warn("failed to mint ephemeral sandbox token, sandbox will run without API access",
 					slog.String("project_id", projectID),
@@ -1062,7 +1062,7 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		return nil
 	}
 
-	h.streamAgentChat(ctx, conv, message, projectID, user.OrgID, sseWriter)
+	h.streamAgentChat(ctx, conv, message, projectID, user.OrgID, user.ID, sseWriter)
 	span.SetStatus(codes.Ok, "")
 	sseWriter.WriteData(sse.NewDoneEvent())
 	sseWriter.Close()
@@ -1218,7 +1218,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 		return nil
 	}
 
-	h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, user.OrgID, sseWriter)
+	h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, user.OrgID, user.ID, sseWriter)
 	span.SetStatus(codes.Ok, "")
 	sseWriter.WriteData(sse.NewDoneEvent())
 	sseWriter.Close()
