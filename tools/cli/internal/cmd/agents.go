@@ -581,9 +581,9 @@ func runGetRunByID(cmd *cobra.Command, args []string) error {
 
 	// AgentName is now returned by the server in the global run response.
 	// Fall back to the ID if the server is older and doesn't populate it.
-	agentName := r.AgentID
+	agentDisplayName := r.AgentID
 	if r.AgentName != "" {
-		agentName = fmt.Sprintf("%s (%s)", r.AgentName, r.AgentID)
+		agentDisplayName = fmt.Sprintf("%s (%s)", r.AgentName, r.AgentID)
 	}
 
 	// Consolidate token usage from the run's TokenUsage field (populated by GetRunByID).
@@ -614,7 +614,7 @@ func runGetRunByID(cmd *cobra.Command, args []string) error {
 		out := jsonOut{
 			ID:        r.ID,
 			AgentID:   r.AgentID,
-			AgentName: agentName,
+			AgentName: r.AgentName,
 			Status:    r.Status,
 			StartedAt: r.StartedAt.Format(time.RFC3339),
 		}
@@ -646,7 +646,7 @@ func runGetRunByID(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Run: %s\n", r.ID)
-	fmt.Printf("  Agent:     %s\n", agentName)
+	fmt.Printf("  Agent:     %s\n", agentDisplayName)
 	fmt.Printf("  Status:    %s\n", r.Status)
 	fmt.Printf("  Started:   %s\n", r.StartedAt.Format("2006-01-02 15:04:05"))
 	if r.CompletedAt != nil {
