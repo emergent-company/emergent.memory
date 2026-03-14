@@ -53,6 +53,7 @@ var (
 	askShowTools bool
 	askShowTime  bool
 	askJSON      bool
+	askRuntime   string
 )
 
 func init() {
@@ -62,6 +63,7 @@ func init() {
 	askCmd.Flags().BoolVar(&askShowTools, "show-tools", false, "Show tool calls made by the assistant during reasoning")
 	askCmd.Flags().BoolVar(&askShowTime, "show-time", false, "Show elapsed time at the end of the response")
 	askCmd.Flags().BoolVar(&askJSON, "json", false, "Output result as JSON {question, response, tools, elapsedMs}")
+	askCmd.Flags().StringVar(&askRuntime, "runtime", "", "Sandbox runtime for scripting tasks: python (default) or go")
 }
 
 func runAsk(cmd *cobra.Command, args []string) error {
@@ -121,14 +123,17 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		c.SetContext("", projectID)
 	}
 
-	return runAskStream(cmd.Context(), c, baseURL, question, projectID)
+	return runAskStream(cmd.Context(), c, baseURL, question, projectID, askRuntime)
 }
 
 // runAskStream posts to the appropriate ask endpoint and streams the SSE response.
 // c may be nil when the caller has no valid credentials (unauthenticated path).
-func runAskStream(ctx context.Context, c *client.Client, baseURL, question, projectID string) error {
+func runAskStream(ctx context.Context, c *client.Client, baseURL, question, projectID, runtime string) error {
 	reqBody := map[string]interface{}{
 		"message": question,
+	}
+	if runtime != "" {
+		reqBody["runtime"] = runtime
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)

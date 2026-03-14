@@ -28,6 +28,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -174,6 +175,37 @@ func New(cfg Config) (*Client, error) {
 	initClients(client)
 
 	return client, nil
+}
+
+// NewFromEnv creates a new Emergent API client from environment variables.
+// Required env vars:
+//   - MEMORY_API_KEY   — API key or emt_* token
+//   - MEMORY_API_URL   — server URL (e.g. http://localhost:3002); MEMORY_SERVER_URL is also accepted
+//
+// Optional env vars:
+//   - MEMORY_PROJECT_ID — default project ID
+func NewFromEnv() (*Client, error) {
+	apiKey := os.Getenv("MEMORY_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("MEMORY_API_KEY environment variable is not set")
+	}
+
+	serverURL := os.Getenv("MEMORY_API_URL")
+	if serverURL == "" {
+		serverURL = os.Getenv("MEMORY_SERVER_URL")
+	}
+	if serverURL == "" {
+		serverURL = "http://localhost:3002"
+	}
+
+	return New(Config{
+		ServerURL: serverURL,
+		Auth: AuthConfig{
+			Mode:   "apikey",
+			APIKey: apiKey,
+		},
+		ProjectID: os.Getenv("MEMORY_PROJECT_ID"),
+	})
 }
 
 // NewWithDeviceFlow creates a new client using OAuth device flow.

@@ -22,6 +22,7 @@ type WorkspaceToolDeps struct {
 	Config          *sandbox.AgentSandboxConfig
 	Logger          *slog.Logger
 	CheckoutService *sandbox.CheckoutService // optional; enables credential-aware git clone
+	SessionEnv      map[string]string        // per-session env vars (e.g. MEMORY_API_KEY for warm containers)
 }
 
 // BuildWorkspaceTools creates ADK tool.Tool wrappers for workspace tools.
@@ -42,6 +43,7 @@ func BuildWorkspaceTools(deps WorkspaceToolDeps) ([]tool.Tool, error) {
 		"grep":       buildGrepTool,
 		"git":        buildGitTool,
 		"run_python": buildRunPythonTool,
+		"run_go":     buildRunGoTool,
 	}
 
 	var tools []tool.Tool
@@ -86,13 +88,16 @@ func BuildWorkspaceTools(deps WorkspaceToolDeps) ([]tool.Tool, error) {
 const (
 	defaultBashTimeoutMs   = 120000 // 2 minutes
 	defaultPythonTimeoutMs = 60000  // 1 minute
+	defaultGoTimeoutMs     = 60000  // 1 minute
 	workspaceDir           = "/workspace"
 	pythonScriptPath       = "/tmp/_agent_run.py"
+	goScriptPath           = "/tmp/_agent_run.go"
 )
 
 func buildBashTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 	provider := deps.Provider
 	providerID := deps.ProviderID
+	sessionEnv := deps.SessionEnv
 
 	return functiontool.New(
 		functiontool.Config{
@@ -131,6 +136,7 @@ Usage notes:
 				Command:   command,
 				Workdir:   workdir,
 				TimeoutMs: timeoutMs,
+				Env:       sessionEnv,
 			})
 			if err != nil {
 				// Timeout errors may still return partial output
@@ -160,6 +166,7 @@ Usage notes:
 func buildRunPythonTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 	provider := deps.Provider
 	providerID := deps.ProviderID
+	sessionEnv := deps.SessionEnv
 
 	return functiontool.New(
 		functiontool.Config{
@@ -224,6 +231,112 @@ A non-zero exit_code means the script raised an exception — check stderr for t
 			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
 				Command:   fmt.Sprintf("python3 %s", pythonScriptPath),
 				TimeoutMs: timeoutMs,
+				Env:       sessionEnv,
+			})
+			if err != nil {
+				if result != nil {
+					return map[string]any{
+						"stdout":      result.Stdout,
+						"stderr":      result.Stderr + "\n" + err.Error(),
+						"exit_code":   result.ExitCode,
+						"duration_ms": result.DurationMs,
+					}, nil
+				}
+				return map[string]any{"error": fmt.Sprintf("execution failed: %s", err.Error())}, nil
+			}
+
+			return map[string]any{
+				"stdout":      result.Stdout,
+				"stderr":      result.Stderr,
+				"exit_code":   result.ExitCode,
+				"duration_ms": result.DurationMs,
+			}, nil
+		},
+	)
+}
+
+func buildRunGoTool(deps WorkspaceToolDeps) (tool.Tool, error) {
+	provider := deps.Provider
+	providerID := deps.ProviderID
+	sessionEnv := deps.SessionEnv
+
+	return functiontool.New(
+		functiontool.Config{
+			Name: "run_go",
+			Description: `Execute a Go program in one step inside the sandboxed workspace.
+
+Use this instead of workspace_write + workspace_bash for all Go SDK tasks.
+Pass the full Go source as the "code" parameter — no file write step needed.
+
+The sandbox has the Emergent Go SDK pre-installed. Use sdk.NewFromEnv() to connect:
+
+    package main
+
+    import (
+        "context"
+        "fmt"
+        "log"
+
+        "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
+    )
+
+    func main() {
+        client, err := sdk.NewFromEnv()
+        if err != nil {
+            log.Fatal(err)
+        }
+        ctx := context.Background()
+        projects, err := client.Projects.List(ctx, nil)
+        if err != nil {
+            log.Fatal(err)
+        }
+        for _, p := range projects {
+            fmt.Printf("%s  %s\n", p.ID, p.Name)
+        }
+    }
+
+The code must define package main with a main() function.
+Credentials are injected automatically via MEMORY_API_KEY / MEMORY_API_URL.
+
+Returns structured output: {"stdout": "...", "stderr": "...", "exit_code": N, "duration_ms": N}.
+A non-zero exit_code means the program failed — check stderr for the error.`,
+		},
+		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+			code, _ := args["code"].(string)
+			if code == "" {
+				return map[string]any{"error": "code is required"}, nil
+			}
+
+			timeoutMs := defaultGoTimeoutMs
+			if t, ok := args["timeout_ms"].(float64); ok && t > 0 {
+				timeoutMs = int(t)
+			}
+
+			// Write the Go source to a temp file.
+			writeErr := provider.WriteFile(ctx, providerID, &sandbox.FileWriteRequest{
+				FilePath: goScriptPath,
+				Content:  code,
+			})
+			if writeErr != nil {
+				return map[string]any{"error": fmt.Sprintf("failed to write script: %s", writeErr.Error())}, nil
+			}
+
+			// Copy the sdk-template module, inject the script, and run it.
+			// The template module already has the SDK as a local replace directive
+			// and all dependencies cached, so no network access is needed.
+			runCmd := fmt.Sprintf(
+				`set -e
+cp -r /sdk-template /tmp/_agent_gomod
+cp %s /tmp/_agent_gomod/main.go
+cd /tmp/_agent_gomod
+go run .`,
+				goScriptPath,
+			)
+
+			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
+				Command:   runCmd,
+				TimeoutMs: timeoutMs,
+				Env:       sessionEnv,
 			})
 			if err != nil {
 				if result != nil {

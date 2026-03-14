@@ -1387,6 +1387,19 @@ func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *sandbox.ProvisioningRes
 		wsCfg, _ = sandbox.ParseAgentSandboxConfig(req.AgentDefinition.SandboxConfig)
 	}
 
+	// Build per-session env vars so that tools executing inside the container
+	// (run_python, bash) have credentials even when a warm-pool container was
+	// used (warm containers are pre-booted without session-specific env vars).
+	sessionEnv := map[string]string{}
+	if req.AuthToken != "" {
+		sessionEnv["MEMORY_API_KEY"] = req.AuthToken
+		sessionEnv["MEMORY_PROJECT_ID"] = req.ProjectID
+		// Go SDK uses MEMORY_SERVER_URL; Python SDK uses MEMORY_API_URL.
+		// Both are already baked into the container image as MEMORY_API_URL;
+		// we also export the alias so Go programs work without extra config.
+		sessionEnv["MEMORY_SERVER_URL"] = "http://host.docker.internal:3002"
+	}
+
 	return BuildWorkspaceTools(WorkspaceToolDeps{
 		Provider:        provider,
 		ProviderID:      wsResult.Workspace.ProviderWorkspaceID,
@@ -1394,6 +1407,7 @@ func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *sandbox.ProvisioningRes
 		Config:          wsCfg,
 		Logger:          ae.log,
 		CheckoutService: ae.provisioner.CheckoutService(),
+		SessionEnv:      sessionEnv,
 	})
 }
 

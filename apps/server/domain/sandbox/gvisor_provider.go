@@ -595,6 +595,11 @@ func (p *GVisorProvider) Exec(ctx context.Context, providerID string, req *ExecR
 		AttachStderr: true,
 	}
 
+	// Inject per-exec environment variables (e.g. session credentials for warm containers)
+	for k, v := range req.Env {
+		execConfig.Env = append(execConfig.Env, k+"="+v)
+	}
+
 	execResp, err := p.client.ContainerExecCreate(ctx, providerID, execConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create exec: %w", err)

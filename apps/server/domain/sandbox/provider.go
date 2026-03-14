@@ -83,9 +83,10 @@ type CreateContainerResult struct {
 
 // ExecRequest holds parameters for executing a command inside a workspace.
 type ExecRequest struct {
-	Command   string `json:"command"`
-	Workdir   string `json:"workdir,omitempty"`
-	TimeoutMs int    `json:"timeout_ms,omitempty"` // 0 = default (120000ms)
+	Command   string            `json:"command"`
+	Workdir   string            `json:"workdir,omitempty"`
+	TimeoutMs int               `json:"timeout_ms,omitempty"` // 0 = default (120000ms)
+	Env       map[string]string `json:"env,omitempty"`        // additional env vars for this exec
 }
 
 // ExecResult holds the result of a command execution.

@@ -843,6 +843,55 @@ Check exit_code: non-zero means an exception was raised; read stderr for the tra
 - For lists of items (agents, objects, etc.), use tables when there are multiple columns
 - If a task has multiple steps, number them clearly`
 
+// cliAssistantGoScriptingSection is appended to the system prompt when the Go runtime is selected.
+const cliAssistantGoScriptingSection = `
+
+## Go Scripting (for cross-project or bulk tasks)
+
+Use **run_go** when a task cannot be done with a single tool call:
+- Cross-project queries (e.g. "list all projects with 'e2e' in the name") — no direct tool exists
+- Bulk writes (e.g. "delete all objects of type X")
+- Multi-step logic with intermediate values
+
+**DO NOT use run_go for read-only queries that have a direct tool.**
+
+### run_go usage
+
+Pass the full Go program as the "code" parameter. The sandbox injects credentials
+automatically; use sdk.NewFromEnv() to get a configured client.
+
+### SDK quick reference
+
+` + "```go" + `
+package main
+
+import (
+	"context"
+	"fmt"
+	sdk "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
+)
+
+func main() {
+	client, err := sdk.NewFromEnv()
+	if err != nil {
+		panic(err)
+	}
+	ctx := context.Background()
+
+	// List projects
+	projects, err := client.Projects.List(ctx)
+	if err != nil {
+		panic(err)
+	}
+	for _, p := range projects {
+		fmt.Printf("%s  %s\n", p.ID, p.Name)
+	}
+}
+` + "```" + `
+
+Always use fmt.Println / fmt.Printf to print results — empty stdout means no output.
+A non-zero exit code means a panic or error occurred; read stderr for the details.`
+
 // EnsureCliAssistantAgent returns the cli-assistant-agent for the project (or with an empty
 // project ID for the user-level /api/ask endpoint), creating it if it does not exist yet.
 // If it already exists, its Tools list, SystemPrompt, and SandboxConfig are updated to
@@ -850,25 +899,39 @@ Check exit_code: non-zero means an exception was raised; read stderr for the tra
 // Uses VisibilityInternal so it never appears in the public agent list.
 // Safe to call concurrently — a race between two callers results in one insert and one
 // subsequent read (FindDefinitionByName will find the winner's row).
-func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID string) (*AgentDefinition, error) {
-	existing, err := r.FindDefinitionByName(ctx, projectID, "cli-assistant-agent")
+// runtime may be "go" or "" / "python" (default).
+func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID string, runtime string) (*AgentDefinition, error) {
+	useGo := runtime == "go"
+
+	agentName := "cli-assistant-agent"
+	if useGo {
+		agentName = "cli-assistant-agent-go"
+	}
+
+	existing, err := r.FindDefinitionByName(ctx, projectID, agentName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to look up cli-assistant-agent: %w", err)
+		return nil, fmt.Errorf("failed to look up %s: %w", agentName, err)
 	}
 
 	temperature := float32(0.3)
 	maxSteps := 20
 	systemPrompt := cliAssistantAgentSystemPrompt
+	if useGo {
+		systemPrompt += cliAssistantGoScriptingSection
+	}
 
-	// Build the Python SDK sandbox config. The sandbox image has emergent-memory
-	// pre-installed; ephemeral credentials are injected as env vars at runtime so
-	// the agent can use Client.from_env() without any explicit credential handling.
+	// Build the sandbox config based on runtime.
+	sandboxImage := "emergent-memory-python-sdk:latest"
+	sandboxTools := []string{"run_python", "bash"}
+	if useGo {
+		sandboxImage = "emergent-memory-go-sdk:latest"
+		sandboxTools = []string{"run_go", "bash"}
+	}
+
 	sandboxCfg := &sandbox.AgentSandboxConfig{
 		Enabled:   true,
-		BaseImage: "emergent-memory-python-sdk:latest",
-		// run_python is the primary tool: executes Python code in one step without
-		// a separate write+bash round trip. bash is retained for diagnostic use.
-		Tools: []string{"run_python", "bash"},
+		BaseImage: sandboxImage,
+		Tools:     sandboxTools,
 		RepoSource: &sandbox.RepoSourceConfig{
 			Type: sandbox.RepoSourceNone,
 		},
@@ -986,7 +1049,7 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 
 	def := &AgentDefinition{
 		ProjectID:    projectID,
-		Name:         "cli-assistant-agent",
+		Name:         agentName,
 		Description:  strPtr("CLI and platform assistant — answers documentation questions and executes tasks using available tools"),
 		SystemPrompt: &systemPrompt,
 		Model: &ModelConfig{
@@ -1004,10 +1067,10 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 
 	if err := r.CreateDefinition(ctx, def); err != nil {
 		// Race condition: another caller inserted first — retry the read.
-		if existing, err2 := r.FindDefinitionByName(ctx, projectID, "cli-assistant-agent"); err2 == nil && existing != nil {
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, agentName); err2 == nil && existing != nil {
 			return existing, nil
 		}
-		return nil, fmt.Errorf("failed to create cli-assistant-agent: %w", err)
+		return nil, fmt.Errorf("failed to create %s: %w", agentName, err)
 	}
 
 	return def, nil

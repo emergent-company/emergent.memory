@@ -1072,6 +1072,7 @@ func (h *Handler) QueryStream(c echo.Context) error {
 // AskStreamRequest is the request body for the stateless CLI assistant endpoint.
 type AskStreamRequest struct {
 	Message string `json:"message"`
+	Runtime string `json:"runtime,omitempty"` // "python" (default) or "go"
 }
 
 // AskStream handles POST /api/projects/:projectId/ask and POST /api/ask.
@@ -1174,7 +1175,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 	}
 
 	// Ensure the cli-assistant-agent exists for this project (idempotent, internal).
-	agentDef, err := h.agentRepo.EnsureCliAssistantAgent(ctx, agentProjectID)
+	agentDef, err := h.agentRepo.EnsureCliAssistantAgent(ctx, agentProjectID, req.Runtime)
 	if err != nil {
 		return apperror.NewInternal("failed to ensure cli-assistant-agent", err)
 	}
