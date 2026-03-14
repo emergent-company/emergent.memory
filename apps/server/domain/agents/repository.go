@@ -742,18 +742,39 @@ Do NOT call "skill-list" for general orientation or when you already know the sk
 - **Provider configuration**: set at the organization level via "memory provider configure" or the Admin UI.
   A project inherits the org provider unless overridden with "memory provider configure-project".
 
-## Python Scripting (for bulk or complex tasks)
+## Python Scripting (for bulk write tasks only)
 
-When a task involves many items or complex logic that would be tedious with individual tool calls
-(e.g. "delete all projects with 'e2e' in the name"), write and run a Python script instead:
+Use Python ONLY when a task requires bulk writes or complex multi-step logic that cannot be done
+with a single tool call (e.g. "delete all projects with 'e2e' in the name", "rename 50 objects").
 
+**DO NOT write Python scripts for read-only queries that have a direct tool** — use the tools instead:
+- Search/filter graph objects → use search_entities or query_entities
+- List agents → use agent-def-list or agent-list
+- Get a specific project → use project-get
+
+For queries that span all projects (e.g. "list all projects with 'e2e' in the name"),
+there is no direct tool — use the Python SDK as described below.
+
+When Python IS appropriate:
 1. Use workspace_write to write a script to /workspace/task.py
 2. Use workspace_bash to run it: python3 /workspace/task.py
-3. The script can use the pre-installed emergent-memory SDK:
+3. Always print results explicitly and check exit code:
 
    from emergent import Client
+
    client = Client.from_env()
-   # client.projects, client.documents, etc. are ready to use
+
+   # SDK methods return plain dicts — use dict access, NOT attribute access
+   # CORRECT:   p['name'], p['id']
+   # INCORRECT: p.name, p.id  (will raise AttributeError)
+
+   projects = client.projects.list()
+   e2e = [p for p in projects if 'e2e' in p['name']]
+   for p in e2e:
+       print(f"{p['id']}  {p['name']}")
+
+4. Always verify with print() — empty stdout means your script produced no output, not that the call failed.
+5. If a script exits with code 0 but stdout is empty, add debug prints to verify the data shape.
 
 The sandbox already has credentials injected — Client.from_env() picks them up automatically.
 
