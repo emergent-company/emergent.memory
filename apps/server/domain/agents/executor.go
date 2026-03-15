@@ -220,11 +220,18 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	}
 
 	// Start OTel span now that we have the run ID
+	agentName := ae.resolveAgentName(req)
+	modelName := ""
+	if req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
+		modelName = req.AgentDefinition.Model.Name
+	}
 	ctx, span := tracing.Start(ctx, "agent.run",
 		attribute.String("memory.agent.id", ae.resolveAgentID(req)),
+		attribute.String("memory.agent.name", agentName),
 		attribute.String("memory.agent.run_id", run.ID),
 		attribute.String("memory.agent.root_run_id", *req.RootRunID),
 		attribute.String("memory.project.id", req.ProjectID),
+		attribute.String("memory.agent.model", modelName),
 	)
 	defer span.End()
 
@@ -242,7 +249,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	ae.log.Info("executing agent",
 		slog.String("run_id", run.ID),
 		slog.String("project_id", req.ProjectID),
-		slog.String("agent_name", ae.resolveAgentName(req)),
+		slog.String("agent_name", agentName),
 		slog.Int("depth", req.Depth),
 		slog.Int("max_steps", maxSteps),
 	)
@@ -355,11 +362,18 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	}
 
 	// Start OTel span
+	agentName := ae.resolveAgentName(req)
+	modelName := ""
+	if req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
+		modelName = req.AgentDefinition.Model.Name
+	}
 	ctx, span := tracing.Start(ctx, "agent.run",
 		attribute.String("memory.agent.id", ae.resolveAgentID(req)),
+		attribute.String("memory.agent.name", agentName),
 		attribute.String("memory.agent.run_id", run.ID),
 		attribute.String("memory.agent.root_run_id", *req.RootRunID),
 		attribute.String("memory.project.id", req.ProjectID),
+		attribute.String("memory.agent.model", modelName),
 	)
 	defer span.End()
 
@@ -377,7 +391,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	ae.log.Info("executing agent (async)",
 		slog.String("run_id", run.ID),
 		slog.String("project_id", req.ProjectID),
-		slog.String("agent_name", ae.resolveAgentName(req)),
+		slog.String("agent_name", agentName),
 		slog.Int("depth", req.Depth),
 		slog.Int("max_steps", maxSteps),
 	)

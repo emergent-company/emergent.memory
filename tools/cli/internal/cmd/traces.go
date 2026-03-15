@@ -973,6 +973,23 @@ func runTracesGet(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Sort children by start time so spans appear chronologically.
+	var sortChildren func(n *spanNode)
+	sortChildren = func(n *spanNode) {
+		sort.Slice(n.children, func(i, j int) bool {
+			return n.children[i].span.StartTimeUnixNano < n.children[j].span.StartTimeUnixNano
+		})
+		for _, c := range n.children {
+			sortChildren(c)
+		}
+	}
+	for _, r := range roots {
+		sortChildren(r)
+	}
+	sort.Slice(roots, func(i, j int) bool {
+		return roots[i].span.StartTimeUnixNano < roots[j].span.StartTimeUnixNano
+	})
+
 	fmt.Printf("Trace: %s\n\n", traceID)
 
 	// Walk all spans looking for memory.agent.run_id / emergent.agent.run_id to print a token summary.
@@ -1020,15 +1037,81 @@ outerRunID:
 		}
 
 		prefix := strings.Repeat("  ", indent)
-		fmt.Printf("%s%s %s  [%s]\n", prefix, statusIcon, s.Name, formatDuration(durMs))
 
-		// Print key HTTP attributes
-		for _, key := range []string{"http.method", "http.route", "http.status_code", "http.url", "db.statement", "error", "memory.agent.run_id", "emergent.agent.run_id"} {
-			if v := attrValue(s.Attributes, key); v != "" {
-				if len(v) > 80 {
-					v = v[:79] + "…"
+		// ── agent.run spans: show agent name, model, steps, status ──
+		if s.Name == "agent.run" {
+			agentNameVal := attrValue(s.Attributes, "memory.agent.name")
+			modelVal := attrValue(s.Attributes, "memory.agent.model")
+			stepsVal := attrValue(s.Attributes, "memory.agent.step_count")
+			runStatusVal := attrValue(s.Attributes, "memory.agent.run_status")
+
+			// Build the span header line
+			label := "agent.run"
+			if agentNameVal != "" {
+				label = agentNameVal
+			}
+			line := fmt.Sprintf("%s%s %s  [%s]", prefix, statusIcon, label, formatDuration(durMs))
+			if modelVal != "" {
+				line += fmt.Sprintf("  model=%s", modelVal)
+			}
+			if stepsVal != "" {
+				line += fmt.Sprintf("  steps=%s", stepsVal)
+			}
+			if runStatusVal != "" {
+				line += fmt.Sprintf("  status=%s", runStatusVal)
+			}
+			fmt.Println(line)
+
+			// Show run_id on indented line
+			if v := attrValue(s.Attributes, "memory.agent.run_id"); v != "" {
+				fmt.Printf("%s    run_id: %s\n", prefix, v)
+			}
+
+			// ── call_llm spans: show model and per-call token counts ──
+		} else if s.Name == "call_llm" {
+			modelVal := attrValue(s.Attributes, "memory.llm.request.model")
+			inputTok := attrValue(s.Attributes, "memory.llm.response.input_tokens")
+			outputTok := attrValue(s.Attributes, "memory.llm.response.output_tokens")
+			cachedTok := attrValue(s.Attributes, "memory.llm.response.cached_tokens")
+			finishReason := attrValue(s.Attributes, "memory.llm.response.finish_reason")
+
+			line := fmt.Sprintf("%s%s call_llm  [%s]", prefix, statusIcon, formatDuration(durMs))
+			if modelVal != "" {
+				line += fmt.Sprintf("  %s", modelVal)
+			}
+			if inputTok != "" || outputTok != "" {
+				in := inputTok
+				if in == "" {
+					in = "?"
 				}
-				fmt.Printf("%s    %s: %s\n", prefix, key, v)
+				out := outputTok
+				if out == "" {
+					out = "?"
+				}
+				line += fmt.Sprintf("  %s in → %s out", in, out)
+				if cachedTok != "" && cachedTok != "0" {
+					line += fmt.Sprintf(" (%s cached)", cachedTok)
+				}
+			}
+			if finishReason != "" && finishReason != "STOP" {
+				line += fmt.Sprintf("  finish=%s", finishReason)
+			}
+			fmt.Println(line)
+
+			// ── execute_tool spans: show tool name (already in span name) ──
+		} else if strings.HasPrefix(s.Name, "execute_tool") {
+			fmt.Printf("%s%s %s  [%s]\n", prefix, statusIcon, s.Name, formatDuration(durMs))
+
+			// ── all other spans: default rendering with generic attributes ──
+		} else {
+			fmt.Printf("%s%s %s  [%s]\n", prefix, statusIcon, s.Name, formatDuration(durMs))
+			for _, key := range []string{"http.method", "http.route", "http.status_code", "http.url", "db.statement", "error", "memory.agent.run_id", "emergent.agent.run_id"} {
+				if v := attrValue(s.Attributes, key); v != "" {
+					if len(v) > 80 {
+						v = v[:79] + "…"
+					}
+					fmt.Printf("%s    %s: %s\n", prefix, key, v)
+				}
 			}
 		}
 
