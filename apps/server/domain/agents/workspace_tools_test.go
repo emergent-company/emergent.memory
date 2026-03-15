@@ -457,7 +457,7 @@ func TestTeardownWorkspace_NilResult(t *testing.T) {
 		log:         testAgentLogger(),
 	}
 	// Should not panic
-	ae.teardownWorkspace(context.Background(), nil)
+	ae.teardownWorkspace(context.Background(), nil, "")
 }
 
 func TestTeardownWorkspace_NilWorkspace(t *testing.T) {
@@ -466,7 +466,7 @@ func TestTeardownWorkspace_NilWorkspace(t *testing.T) {
 		log:         testAgentLogger(),
 	}
 	// Should not panic
-	ae.teardownWorkspace(context.Background(), &sandbox.ProvisioningResult{Workspace: nil})
+	ae.teardownWorkspace(context.Background(), &sandbox.ProvisioningResult{Workspace: nil}, "")
 }
 
 func TestTeardownWorkspace_NilProvisioner(t *testing.T) {
@@ -477,7 +477,7 @@ func TestTeardownWorkspace_NilProvisioner(t *testing.T) {
 	// Should not panic
 	ae.teardownWorkspace(context.Background(), &sandbox.ProvisioningResult{
 		Workspace: &sandbox.AgentSandbox{ID: "ws-1"},
-	})
+	}, "")
 }
 
 // --- resolveWorkspaceTools tests ---

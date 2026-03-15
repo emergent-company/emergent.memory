@@ -354,6 +354,9 @@ func executeSingleSpawn(ctx context.Context, deps CoordinationToolDeps, req Spaw
 		)
 
 		result, err := deps.Executor.Resume(ctx, priorRun, execReq)
+		if result != nil && result.Cleanup != nil {
+			defer result.Cleanup()
+		}
 		if err != nil {
 			return SpawnResult{
 				AgentName: req.AgentName,
@@ -379,6 +382,9 @@ func executeSingleSpawn(ctx context.Context, deps CoordinationToolDeps, req Spaw
 
 	// Execute the sub-agent (context propagation happens automatically via ctx)
 	result, err := deps.Executor.Execute(ctx, execReq)
+	if result != nil && result.Cleanup != nil {
+		defer result.Cleanup()
+	}
 	if err != nil {
 		return SpawnResult{
 			AgentName: req.AgentName,

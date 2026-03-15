@@ -563,6 +563,9 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		OrgID:           orgID,
 		UserMessage:     userMessage,
 	})
+	if result != nil && result.Cleanup != nil {
+		defer result.Cleanup()
+	}
 	if err != nil {
 		return errResult("failed to execute agent: " + err.Error())
 	}
@@ -1320,12 +1323,15 @@ func (h *MCPToolHandler) ExecuteRespondToAgentQuestion(ctx context.Context, proj
 				)
 				go func() {
 					bgCtx := context.Background()
-					_, _ = h.executor.Resume(bgCtx, run, ExecuteRequest{
+					resumeResult, _ := h.executor.Resume(bgCtx, run, ExecuteRequest{
 						Agent:           agent,
 						AgentDefinition: agentDef,
 						ProjectID:       agent.ProjectID,
 						UserMessage:     userMessage,
 					})
+					if resumeResult != nil && resumeResult.Cleanup != nil {
+						resumeResult.Cleanup()
+					}
 				}()
 			}
 		}

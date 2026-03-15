@@ -529,9 +529,12 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 	// Branch: agent-backed vs direct-LLM flow
 	if conv.AgentDefinitionID != nil {
-		h.streamAgentChat(ctx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter)
+		agentResult := h.streamAgentChat(ctx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter)
 		sseWriter.WriteData(sse.NewDoneEvent())
 		sseWriter.Close()
+		if agentResult != nil && agentResult.Cleanup != nil {
+			go agentResult.Cleanup()
+		}
 		return nil
 	}
 
@@ -743,7 +746,7 @@ func friendlyProviderError(err error) string {
 // streamAgentChat handles the agent-backed chat flow. It loads the agent definition,
 // builds conversation history, calls the agent executor with a StreamCallback, and
 // maps streaming events to SSE events. Final assistant text is persisted to kb.chat_messages.
-func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, message, projectID, orgID, userID string, sseWriter *sse.Writer) {
+func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, message, projectID, orgID, userID string, sseWriter *sse.Writer) *agents.ExecuteResult {
 	agentDefID := conv.AgentDefinitionID.String()
 
 	// Load the agent definition
@@ -754,7 +757,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			slog.String("conversation_id", conv.ID.String()),
 		)
 		sseWriter.WriteData(sse.NewErrorEvent("Failed to load agent definition"))
-		return
+		return nil
 	}
 
 	// Load conversation history (last 10 messages for context)
@@ -830,7 +833,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 				slog.String("agent_definition_id", agentDefID),
 			)
 			sseWriter.WriteData(sse.NewErrorEvent("Failed to create agent session: " + err.Error()))
-			return
+			return nil
 		}
 	}
 
@@ -843,7 +846,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		if err != nil {
 			h.log.Error("failed to create stub run", slog.String("error", err.Error()))
 			sseWriter.WriteData(sse.NewErrorEvent("Failed to create stub run"))
-			return
+			return nil
 		}
 		runID := run.ID
 
@@ -923,7 +926,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			slog.String("error", err.Error()),
 		)
 		sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(err)))
-		return
+		return nil
 	}
 
 	// Persist assistant response to kb.chat_messages with agent_run_id reference
@@ -943,6 +946,8 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			})
 		}()
 	}
+
+	return result
 }
 
 // QueryStreamRequest is the request body for the stateless query endpoint.
@@ -1065,10 +1070,13 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		return nil
 	}
 
-	h.streamAgentChat(ctx, conv, message, projectID, user.OrgID, user.ID, sseWriter)
+	queryResult := h.streamAgentChat(ctx, conv, message, projectID, user.OrgID, user.ID, sseWriter)
 	span.SetStatus(codes.Ok, "")
 	sseWriter.WriteData(sse.NewDoneEvent())
 	sseWriter.Close()
+	if queryResult != nil && queryResult.Cleanup != nil {
+		go queryResult.Cleanup()
+	}
 	return nil
 }
 
@@ -1231,10 +1239,13 @@ func (h *Handler) AskStream(c echo.Context) error {
 		return nil
 	}
 
-	h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, user.OrgID, user.ID, sseWriter)
+	askResult := h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, user.OrgID, user.ID, sseWriter)
 	span.SetStatus(codes.Ok, "")
 	sseWriter.WriteData(sse.NewDoneEvent())
 	sseWriter.Close()
+	if askResult != nil && askResult.Cleanup != nil {
+		go askResult.Cleanup()
+	}
 	return nil
 }
 

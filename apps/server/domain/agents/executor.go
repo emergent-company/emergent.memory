@@ -117,6 +117,15 @@ type ExecuteResult struct {
 	Summary  map[string]any
 	Steps    int
 	Duration time.Duration
+
+	// Cleanup tears down the workspace (container + ephemeral token) provisioned
+	// for this run.  It is safe to call multiple times (idempotent via sync.Once).
+	//
+	// The executor always defers Cleanup as a safety net, but callers that want
+	// lower latency (e.g. SSE streams) can call Cleanup *asynchronously* after
+	// they have finished writing the response — the deferred call will then be a
+	// no-op.
+	Cleanup func()
 }
 
 // AgentExecutor is the core execution engine for running agents via ADK.
@@ -251,8 +260,16 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	}
 
 	wsResult := ae.provisionWorkspace(ctx, run.ID, req)
-	if wsResult != nil && wsResult.Workspace != nil {
-		defer ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+
+	// Build an idempotent cleanup function so teardown runs exactly once.
+	// Callers are responsible for invoking Cleanup on the returned ExecuteResult.
+	// SSE callers can invoke it asynchronously after flushing the response;
+	// non-SSE callers should defer it or call it synchronously.
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+		})
 	}
 
 	// Workspace provisioning complete (or skipped) — mark session active
@@ -282,6 +299,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 			Summary:  map[string]any{"error": err.Error()},
 			Steps:    0,
 			Duration: time.Since(startTime),
+			Cleanup:  cleanup,
 		}, nil
 	}
 
@@ -306,6 +324,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		span.SetStatus(codes.Ok, "")
 	}
 
+	result.Cleanup = cleanup
 	return result, nil
 }
 
@@ -376,8 +395,13 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	}
 
 	wsResult := ae.provisionWorkspace(ctx, run.ID, req)
-	if wsResult != nil && wsResult.Workspace != nil {
-		defer ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+
+	// Build an idempotent cleanup function so teardown runs exactly once.
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+		})
 	}
 
 	if hasSandboxConfig {
@@ -404,6 +428,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 			Summary:  map[string]any{"error": err.Error()},
 			Steps:    0,
 			Duration: time.Since(startTime),
+			Cleanup:  cleanup,
 		}, nil
 	}
 
@@ -427,6 +452,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		span.SetStatus(codes.Ok, "")
 	}
 
+	result.Cleanup = cleanup
 	return result, nil
 }
 func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
@@ -494,8 +520,13 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	}
 
 	wsResult := ae.provisionWorkspace(ctx, newRun.ID, req)
-	if wsResult != nil && wsResult.Workspace != nil {
-		defer ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+
+	// Build an idempotent cleanup function so teardown runs exactly once.
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+		})
 	}
 
 	// Workspace provisioning complete (or skipped) — mark session active
@@ -518,9 +549,11 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			Summary:  map[string]any{"error": err.Error()},
 			Steps:    priorRun.StepCount,
 			Duration: time.Since(startTime),
+			Cleanup:  cleanup,
 		}, nil
 	}
 
+	result.Cleanup = cleanup
 	return result, nil
 }
 

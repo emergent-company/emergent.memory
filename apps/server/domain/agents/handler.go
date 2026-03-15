@@ -488,7 +488,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 	// is not cancelled when the HTTP response is sent.
 	go func() {
 		bgCtx := context.Background()
-		_, execErr := h.executor.ExecuteWithRun(bgCtx, run, ExecuteRequest{
+		execResult, execErr := h.executor.ExecuteWithRun(bgCtx, run, ExecuteRequest{
 			Agent:           agent,
 			AgentDefinition: agentDef,
 			ProjectID:       agent.ProjectID,
@@ -496,6 +496,9 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			UserMessage:     userMessage,
 			TriggerMetadata: triggerReq.Context,
 		})
+		if execResult != nil && execResult.Cleanup != nil {
+			execResult.Cleanup()
+		}
 		if execErr != nil {
 			h.executor.log.Error("async agent execution failed",
 				slog.String("run_id", run.ID),
@@ -1020,6 +1023,9 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 	}
 
 	result, err := h.executor.Execute(c.Request().Context(), req)
+	if result != nil && result.Cleanup != nil {
+		defer result.Cleanup()
+	}
 	if err != nil {
 		return apperror.NewInternal("failed to execute agent", err)
 	}
@@ -1762,12 +1768,15 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 
 		go func() {
 			ctx := context.Background()
-			_, err := h.executor.Resume(ctx, run, ExecuteRequest{
+			result, err := h.executor.Resume(ctx, run, ExecuteRequest{
 				Agent:           agent,
 				AgentDefinition: agentDef,
 				ProjectID:       agent.ProjectID,
 				UserMessage:     userMessage,
 			})
+			if result != nil && result.Cleanup != nil {
+				result.Cleanup()
+			}
 			if err != nil {
 				slog.Error("failed to resume agent after question response",
 					slog.String("run_id", run.ID),

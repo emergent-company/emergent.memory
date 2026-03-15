@@ -385,6 +385,9 @@ func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID str
 		UserMessage:     userMessage,
 		MaxSteps:        maxSteps,
 	})
+	if result != nil && result.Cleanup != nil {
+		defer result.Cleanup()
+	}
 	if err != nil {
 		return fmt.Errorf("agent execution failed: %w", err)
 	}

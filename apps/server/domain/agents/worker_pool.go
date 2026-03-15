@@ -146,6 +146,9 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		OrgID:           orgID,
 		UserMessage:     userMessage,
 	})
+	if result != nil && result.Cleanup != nil {
+		defer result.Cleanup()
+	}
 	if execErr != nil {
 		log.Warn("queued agent run failed", slog.String("error", execErr.Error()))
 		requeue := job.AttemptCount < job.MaxAttempts
