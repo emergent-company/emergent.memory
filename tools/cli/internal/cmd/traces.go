@@ -353,40 +353,6 @@ func fetchAgentName(cmd *cobra.Command, projectID, agentID string) string {
 	return ag.Data.Name
 }
 
-// fetchAgentNameGlobal calls GET /api/admin/agents/:agentId and returns the name.
-// Does not require a project ID. Returns "" on any error.
-func fetchAgentNameGlobal(cmd *cobra.Command, agentID string) string {
-	if agentID == "" {
-		return ""
-	}
-	c, err := getClient(cmd)
-	if err != nil {
-		return ""
-	}
-	u := strings.TrimRight(c.BaseURL(), "/") + "/api/admin/agents/" + agentID
-	req, err := http.NewRequest(http.MethodGet, u, nil)
-	if err != nil {
-		return ""
-	}
-	resp, err := c.SDK.Do(context.Background(), req)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return ""
-	}
-	var ag adminAgentGetResponse
-	if err := json.Unmarshal(body, &ag); err != nil {
-		return ""
-	}
-	return ag.Data.Name
-}
-
 // fetchProjectName calls GET /api/projects/:pid and returns the project name.
 // Returns "" on any error.
 func fetchProjectName(cmd *cobra.Command, projectID string) string {
