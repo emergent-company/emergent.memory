@@ -55,6 +55,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	defsWrite.DELETE("/:id", h.DeleteDefinition)
 	defsWrite.PUT("/:id/sandbox-config", h.UpdateSandboxConfig)
 
+	// --- Agent Definition Overrides (per-project config overrides) ---
+	defsRead.GET("/overrides", h.ListAgentOverrides)
+	defsRead.GET("/overrides/:agentName", h.GetAgentOverride)
+	defsWrite.PUT("/overrides/:agentName", h.SetAgentOverride)
+	defsWrite.DELETE("/overrides/:agentName", h.DeleteAgentOverride)
+
 	// --- Project-scoped run history routes ---
 	runs := e.Group("/api/projects/:projectId/agent-runs")
 	runs.Use(authMiddleware.RequireAuth())

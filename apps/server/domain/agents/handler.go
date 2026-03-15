@@ -1991,3 +1991,147 @@ func (h *Handler) GetADKSessionByID(c echo.Context) error {
 func strPtr(s string) *string {
 	return &s
 }
+
+// --- Agent Override Handlers ---
+
+// ListAgentOverrides handles GET /api/projects/:projectId/agent-definitions/overrides
+func (h *Handler) ListAgentOverrides(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	settings, err := h.repo.ListProjectSettings(c.Request().Context(), projectID, SettingsCategoryAgentOverride)
+	if err != nil {
+		return apperror.NewInternal("failed to list agent overrides", err)
+	}
+
+	type OverrideEntry struct {
+		AgentName string         `json:"agentName"`
+		Override  map[string]any `json:"override"`
+	}
+
+	entries := make([]OverrideEntry, len(settings))
+	for i, s := range settings {
+		entries[i] = OverrideEntry{
+			AgentName: s.Key,
+			Override:  s.Value,
+		}
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(entries))
+}
+
+// GetAgentOverride handles GET /api/projects/:projectId/agent-definitions/overrides/:agentName
+func (h *Handler) GetAgentOverride(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	agentName := c.Param("agentName")
+	if agentName == "" {
+		return apperror.NewBadRequest("agentName is required")
+	}
+
+	override, err := h.repo.GetAgentOverride(c.Request().Context(), projectID, agentName)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent override", err)
+	}
+	if override == nil {
+		return apperror.NewNotFound("AgentOverride", agentName)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(override))
+}
+
+// SetAgentOverride handles PUT /api/projects/:projectId/agent-definitions/overrides/:agentName
+func (h *Handler) SetAgentOverride(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	agentName := c.Param("agentName")
+	if agentName == "" {
+		return apperror.NewBadRequest("agentName is required")
+	}
+
+	var override AgentOverride
+	if err := c.Bind(&override); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	setting, err := h.repo.SetAgentOverride(c.Request().Context(), projectID, agentName, &override)
+	if err != nil {
+		return apperror.NewInternal("failed to set agent override", err)
+	}
+
+	slog.Info("agent override set",
+		slog.String("projectID", projectID),
+		slog.String("agentName", agentName),
+		slog.String("userID", user.ID))
+
+	return c.JSON(http.StatusOK, SuccessResponse(setting))
+}
+
+// DeleteAgentOverride handles DELETE /api/projects/:projectId/agent-definitions/overrides/:agentName
+func (h *Handler) DeleteAgentOverride(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	agentName := c.Param("agentName")
+	if agentName == "" {
+		return apperror.NewBadRequest("agentName is required")
+	}
+
+	deleted, err := h.repo.DeleteAgentOverride(c.Request().Context(), projectID, agentName)
+	if err != nil {
+		return apperror.NewInternal("failed to delete agent override", err)
+	}
+	if !deleted {
+		return apperror.NewNotFound("AgentOverride", agentName)
+	}
+
+	slog.Info("agent override deleted",
+		slog.String("projectID", projectID),
+		slog.String("agentName", agentName),
+		slog.String("userID", user.ID))
+
+	msg := fmt.Sprintf("Override for %s deleted — agent will use canonical defaults", agentName)
+	return c.JSON(http.StatusOK, APIResponse[any]{Success: true, Message: &msg})
+}

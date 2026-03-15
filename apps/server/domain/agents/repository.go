@@ -575,9 +575,6 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 	if err != nil {
 		return nil, fmt.Errorf("failed to look up graph-query-agent: %w", err)
 	}
-	if existing != nil {
-		return existing, nil
-	}
 
 	temperature := float32(0.1)
 	maxSteps := 15
@@ -600,17 +597,29 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 	canonicalTools := []string{}
 
 	if existing != nil {
-		// Update tools, system prompt, model, and sandbox config to pick up any changes.
+		// Self-heal: update tools, system prompt, model, and sandbox config to pick up
+		// any changes deployed in code.
 		existing.Tools = canonicalTools
 		existing.SystemPrompt = &systemPrompt
 		if existing.Model == nil {
 			existing.Model = &ModelConfig{}
 		}
 		existing.Model.Name = "gemini-3.1-flash-lite-preview"
+		existing.Model.Temperature = &temperature
+		existing.MaxSteps = &maxSteps
 		if sandboxMap != nil {
 			existing.SandboxConfig = sandboxMap
 		}
+
+		// Apply per-project overrides (if any) on top of canonical defaults.
+		if projectID != "" {
+			if override, oErr := r.GetAgentOverride(ctx, projectID, "graph-query-agent"); oErr == nil && override != nil {
+				ApplyAgentOverride(existing, override)
+			}
+		}
+
 		if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
+			// Non-fatal — return existing as-is rather than failing the query call.
 			return existing, nil
 		}
 		return existing, nil
@@ -632,6 +641,13 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 		Visibility:    VisibilityInternal,
 		Config:        map[string]any{},
 		SandboxConfig: sandboxMap,
+	}
+
+	// Apply per-project overrides (if any) on top of canonical defaults.
+	if projectID != "" {
+		if override, oErr := r.GetAgentOverride(ctx, projectID, "graph-query-agent"); oErr == nil && override != nil {
+			ApplyAgentOverride(def, override)
+		}
 	}
 
 	if err := r.CreateDefinition(ctx, def); err != nil {
@@ -941,6 +957,14 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 		if sandboxMap != nil {
 			existing.SandboxConfig = sandboxMap
 		}
+
+		// Apply per-project overrides (if any) on top of canonical defaults.
+		if projectID != "" {
+			if override, oErr := r.GetAgentOverride(ctx, projectID, agentName); oErr == nil && override != nil {
+				ApplyAgentOverride(existing, override)
+			}
+		}
+
 		if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
 			// Non-fatal — return existing as-is rather than failing the ask call.
 			return existing, nil
@@ -964,6 +988,13 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 		Visibility:    VisibilityInternal,
 		Config:        map[string]any{},
 		SandboxConfig: sandboxMap,
+	}
+
+	// Apply per-project overrides (if any) on top of canonical defaults.
+	if projectID != "" {
+		if override, oErr := r.GetAgentOverride(ctx, projectID, agentName); oErr == nil && override != nil {
+			ApplyAgentOverride(def, override)
+		}
 	}
 
 	if err := r.CreateDefinition(ctx, def); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions"
@@ -427,6 +428,239 @@ func runDeleteAgentDef(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// --- Agent Override Commands ---
+
+// Override flags (separate from definition flags to avoid conflicts)
+var (
+	overrideModel            string
+	overrideTemperature      float32
+	overrideMaxSteps         int
+	overrideTools            string
+	overrideSystemPrompt     string
+	overrideSystemPromptFile string
+	overrideClear            bool
+)
+
+var overrideAgentCmd = &cobra.Command{
+	Use:   "override [agentName]",
+	Short: "View or set per-project agent overrides",
+	Long: `View or set per-project configuration overrides for an agent definition.
+
+Without flags, shows the current override for the agent. With flags, sets
+or updates the override. Overrides are merged on top of canonical defaults
+each time the agent runs — non-overridden fields always get the latest code defaults.
+
+Examples:
+  memory defs override graph-query-agent                          # view current override
+  memory defs override graph-query-agent --model gemini-2.5-pro   # override model
+  memory defs override cli-assistant-agent --max-steps 30         # override max steps
+  memory defs override graph-query-agent --model gemini-2.5-pro --temperature 0.2 --max-steps 20
+  memory defs override graph-query-agent --system-prompt-file prompt.txt
+  memory defs override graph-query-agent --clear                  # remove override`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runOverrideAgent,
+}
+
+var listOverridesCmd = &cobra.Command{
+	Use:   "overrides",
+	Short: "List all agent overrides for the project",
+	Long:  "List all per-project agent configuration overrides.",
+	RunE:  runListOverrides,
+}
+
+func runOverrideAgent(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	// Resolve agent name from args or interactive picker of known internal agents.
+	agentName := ""
+	if len(args) > 0 && args[0] != "" {
+		agentName = args[0]
+	}
+	if agentName == "" {
+		if isNonInteractive() {
+			return fmt.Errorf("agent name is required — pass as argument (e.g., graph-query-agent)")
+		}
+		items := []PickerItem{
+			{ID: "graph-query-agent", Name: "graph-query-agent"},
+			{ID: "cli-assistant-agent", Name: "cli-assistant-agent"},
+			{ID: "cli-assistant-agent-go", Name: "cli-assistant-agent-go"},
+		}
+		_, agentName, err = promptResourcePicker("Select an agent to override", items)
+		if err != nil {
+			return err
+		}
+		if agentName == "" {
+			return fmt.Errorf("agent name is required")
+		}
+	}
+
+	// Handle --clear
+	if overrideClear {
+		err := c.SDK.AgentDefinitions.DeleteOverride(context.Background(), agentName)
+		if err != nil {
+			return fmt.Errorf("failed to delete override: %w", err)
+		}
+		fmt.Printf("Override for %s removed — agent will use canonical defaults.\n", agentName)
+		return nil
+	}
+
+	// Check if any override flags were set.
+	hasOverrideFlag := cmd.Flags().Changed("model") ||
+		cmd.Flags().Changed("temperature") ||
+		cmd.Flags().Changed("max-steps") ||
+		cmd.Flags().Changed("tools") ||
+		cmd.Flags().Changed("system-prompt") ||
+		cmd.Flags().Changed("system-prompt-file")
+
+	if !hasOverrideFlag {
+		// View mode: show current override
+		result, err := c.SDK.AgentDefinitions.GetOverride(context.Background(), agentName)
+		if err != nil {
+			// 404 means no override — show a helpful message
+			fmt.Printf("No override set for %s — agent uses canonical defaults.\n", agentName)
+			fmt.Printf("\nSet an override with:\n")
+			fmt.Printf("  memory defs override %s --model gemini-2.5-pro\n", agentName)
+			return nil
+		}
+
+		o := result.Data
+		fmt.Printf("Override for %s:\n", agentName)
+		if o.SystemPrompt != nil {
+			prompt := *o.SystemPrompt
+			if len(prompt) > 200 {
+				prompt = prompt[:200] + "..."
+			}
+			fmt.Printf("  System Prompt: %s\n", prompt)
+		}
+		if o.Model != nil {
+			if o.Model.Name != "" {
+				fmt.Printf("  Model:         %s\n", o.Model.Name)
+			}
+			if o.Model.Temperature != nil {
+				fmt.Printf("  Temperature:   %.2f\n", *o.Model.Temperature)
+			}
+		}
+		if o.Tools != nil {
+			fmt.Printf("  Tools:         %s\n", strings.Join(o.Tools, ", "))
+		}
+		if o.MaxSteps != nil {
+			fmt.Printf("  Max Steps:     %d\n", *o.MaxSteps)
+		}
+		if o.SandboxConfig != nil {
+			cfgJSON, _ := json.MarshalIndent(o.SandboxConfig, "  ", "  ")
+			fmt.Printf("  Sandbox:       %s\n", string(cfgJSON))
+		}
+		return nil
+	}
+
+	// Set mode: build override from flags
+	override := &agentdefinitions.AgentOverride{}
+
+	if cmd.Flags().Changed("model") || cmd.Flags().Changed("temperature") {
+		override.Model = &agentdefinitions.ModelConfig{}
+		if cmd.Flags().Changed("model") {
+			override.Model.Name = overrideModel
+		}
+		if cmd.Flags().Changed("temperature") {
+			override.Model.Temperature = &overrideTemperature
+		}
+	}
+	if cmd.Flags().Changed("max-steps") {
+		override.MaxSteps = &overrideMaxSteps
+	}
+	if cmd.Flags().Changed("tools") {
+		tools := strings.Split(overrideTools, ",")
+		for i := range tools {
+			tools[i] = strings.TrimSpace(tools[i])
+		}
+		override.Tools = tools
+	}
+	if cmd.Flags().Changed("system-prompt") {
+		override.SystemPrompt = &overrideSystemPrompt
+	}
+	if cmd.Flags().Changed("system-prompt-file") {
+		data, err := os.ReadFile(overrideSystemPromptFile)
+		if err != nil {
+			return fmt.Errorf("failed to read system prompt file: %w", err)
+		}
+		prompt := string(data)
+		override.SystemPrompt = &prompt
+	}
+
+	_, err = c.SDK.AgentDefinitions.SetOverride(context.Background(), agentName, override)
+	if err != nil {
+		return fmt.Errorf("failed to set override: %w", err)
+	}
+
+	fmt.Printf("Override set for %s:\n", agentName)
+	if override.Model != nil {
+		if override.Model.Name != "" {
+			fmt.Printf("  Model:       %s\n", override.Model.Name)
+		}
+		if override.Model.Temperature != nil {
+			fmt.Printf("  Temperature: %.2f\n", *override.Model.Temperature)
+		}
+	}
+	if override.MaxSteps != nil {
+		fmt.Printf("  Max Steps:   %d\n", *override.MaxSteps)
+	}
+	if override.Tools != nil {
+		fmt.Printf("  Tools:       %s\n", strings.Join(override.Tools, ", "))
+	}
+	if override.SystemPrompt != nil {
+		prompt := *override.SystemPrompt
+		if len(prompt) > 100 {
+			prompt = prompt[:100] + "..."
+		}
+		fmt.Printf("  Prompt:      %s\n", prompt)
+	}
+	fmt.Printf("\nThe next ask/query call will use these overrides.\n")
+	return nil
+}
+
+func runListOverrides(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	result, err := c.SDK.AgentDefinitions.ListOverrides(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to list overrides: %w", err)
+	}
+
+	entries := result.Data
+	if len(entries) == 0 {
+		fmt.Println("No agent overrides set for this project.")
+		fmt.Println("\nSet one with:")
+		fmt.Println("  memory defs override graph-query-agent --model gemini-2.5-pro")
+		return nil
+	}
+
+	fmt.Printf("Found %d agent override(s):\n\n", len(entries))
+	for i, entry := range entries {
+		fmt.Printf("%d. %s\n", i+1, entry.AgentName)
+		overrideJSON, _ := json.MarshalIndent(entry.Override, "   ", "  ")
+		fmt.Printf("   %s\n\n", string(overrideJSON))
+	}
+	return nil
+}
+
 func init() {
 	// Create definition flags
 	createAgentDefCmd.Flags().StringVar(&defName, "name", "", "Definition name (required)")
@@ -453,11 +687,22 @@ func init() {
 	updateAgentDefCmd.Flags().IntVar(&defMaxSteps, "max-steps", 0, "New max steps")
 	updateAgentDefCmd.Flags().IntVar(&defDefaultTimeout, "default-timeout", 0, "New default timeout")
 
+	// Override flags
+	overrideAgentCmd.Flags().StringVar(&overrideModel, "model", "", "Override model name (e.g., gemini-2.5-pro)")
+	overrideAgentCmd.Flags().Float32Var(&overrideTemperature, "temperature", -1, "Override temperature (0.0-2.0)")
+	overrideAgentCmd.Flags().IntVar(&overrideMaxSteps, "max-steps", 0, "Override max steps")
+	overrideAgentCmd.Flags().StringVar(&overrideTools, "tools", "", "Override tools (comma-separated)")
+	overrideAgentCmd.Flags().StringVar(&overrideSystemPrompt, "system-prompt", "", "Override system prompt")
+	overrideAgentCmd.Flags().StringVar(&overrideSystemPromptFile, "system-prompt-file", "", "Read system prompt from file")
+	overrideAgentCmd.Flags().BoolVar(&overrideClear, "clear", false, "Remove override — revert to canonical defaults")
+
 	// Register subcommands
 	agentDefsCmd.AddCommand(listAgentDefsCmd)
 	agentDefsCmd.AddCommand(getAgentDefCmd)
 	agentDefsCmd.AddCommand(createAgentDefCmd)
 	agentDefsCmd.AddCommand(updateAgentDefCmd)
 	agentDefsCmd.AddCommand(deleteAgentDefCmd)
+	agentDefsCmd.AddCommand(overrideAgentCmd)
+	agentDefsCmd.AddCommand(listOverridesCmd)
 	rootCmd.AddCommand(agentDefsCmd)
 }

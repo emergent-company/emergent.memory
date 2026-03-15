@@ -331,3 +331,146 @@ func (c *Client) Delete(ctx context.Context, definitionID string) error {
 
 	return nil
 }
+
+// --- Agent Override Types ---
+
+// AgentOverride represents a partial agent definition override.
+// Fields that are nil/empty are not overridden — they inherit the canonical defaults.
+type AgentOverride struct {
+	SystemPrompt  *string        `json:"systemPrompt,omitempty"`
+	Model         *ModelConfig   `json:"model,omitempty"`
+	Tools         []string       `json:"tools,omitempty"`
+	MaxSteps      *int           `json:"maxSteps,omitempty"`
+	SandboxConfig map[string]any `json:"sandboxConfig,omitempty"`
+}
+
+// OverrideEntry is a single agent override as returned by the list endpoint.
+type OverrideEntry struct {
+	AgentName string         `json:"agentName"`
+	Override  map[string]any `json:"override"`
+}
+
+// --- Agent Override Methods ---
+
+// ListOverrides returns all agent overrides for the current project.
+// GET /api/projects/:projectId/agent-definitions/overrides
+func (c *Client) ListOverrides(ctx context.Context) (*APIResponse[[]OverrideEntry], error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.projectPath()+"/agent-definitions/overrides", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[[]OverrideEntry]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetOverride returns the agent override for a specific agent name.
+// GET /api/projects/:projectId/agent-definitions/overrides/:agentName
+func (c *Client) GetOverride(ctx context.Context, agentName string) (*APIResponse[AgentOverride], error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.projectPath()+"/agent-definitions/overrides/"+url.PathEscape(agentName), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[AgentOverride]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// SetOverride creates or updates the agent override for a specific agent name.
+// PUT /api/projects/:projectId/agent-definitions/overrides/:agentName
+func (c *Client) SetOverride(ctx context.Context, agentName string, override *AgentOverride) (*APIResponse[map[string]any], error) {
+	body, err := json.Marshal(override)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT", c.projectPath()+"/agent-definitions/overrides/"+url.PathEscape(agentName), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[map[string]any]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// DeleteOverride removes the agent override, reverting to canonical defaults.
+// DELETE /api/projects/:projectId/agent-definitions/overrides/:agentName
+func (c *Client) DeleteOverride(ctx context.Context, agentName string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.projectPath()+"/agent-definitions/overrides/"+url.PathEscape(agentName), nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return nil
+}
