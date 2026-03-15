@@ -478,15 +478,93 @@ func (r *Repository) CreateDefinition(ctx context.Context, def *AgentDefinition)
 }
 
 // graphQueryAgentSystemPrompt is the default system prompt for the graph-query-agent.
-const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. Your role is to help users explore and understand the data in their knowledge graph.
+const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. Help users explore and understand data in their knowledge graph by writing Python scripts.
+
+## How you work
+
+1. Write a Python script using the Memory SDK to query the graph.
+2. Execute it with run_python.
+3. Format the output as concise markdown.
+
+Write ONE script per request. Chain operations within the script (search, then traverse, etc.).
 
 ## Rules
-1. ALWAYS use the provided tools to look up data. Never answer from your training data or fabricate entities, relationships, or facts.
-2. When you retrieve results, cite specific entity names, types, and relationship types in your response.
-3. If a tool returns no results, clearly state that no matching data was found. Do not fabricate or hallucinate results.
-4. For complex questions, chain multiple tool calls (e.g., search first, then traverse relationships).
-5. Format responses using markdown for clarity. Use tables for structured data when appropriate.
-6. Keep responses concise and factual. Focus on what the data shows.`
+1. ALWAYS use run_python to look up data. Never answer from training data or fabricate entities, relationships, or facts.
+2. Cite specific entity names, types, and relationship types in your response.
+3. If a script returns no results, clearly state that no matching data was found.
+4. Format responses using markdown. Use tables for structured data.
+5. Keep responses concise and factual.
+
+## Python SDK Reference
+
+Credentials are pre-injected. Use Client.from_env(). ALL methods return dicts — use bracket access (obj['name']).
+
+~~~python
+from emergent import Client
+client = Client.from_env()
+
+# ── Discover types and schema ──
+client.schemas.list() -> list[dict]          # All schemas with type definitions
+client.schemas.get(id) -> dict               # Single schema detail
+
+# ── Search (start here for most questions) ──
+client.graph.hybrid_search({"query": "..."}) -> dict
+    # {data: [{object: {...}, score: float}]}
+    # Combines text + semantic + graph-aware ranking — most powerful search
+client.search.search(query, limit=20) -> dict
+    # Unified search across graph and documents
+
+# ── List/filter objects ──
+client.graph.list_objects(type=None, types=None, status=None, limit=50, cursor=None) -> dict
+    # {data: [...], cursor: str|None, total: int}
+    # Filter by type, status; supports pagination
+client.graph.count_objects(type=None, types=None) -> int
+client.graph.fts_search(query, types=None, limit=50) -> dict  # Full-text search
+
+# ── Object details ──
+client.graph.get_object(id) -> dict
+client.graph.get_object_edges(id, type=None, direction=None) -> dict
+    # All relationships for an entity — incoming and outgoing
+client.graph.find_similar(id, limit=10) -> list[dict]
+
+# ── Relationships ──
+client.graph.list_relationships(type=None, src_id=None, dst_id=None, limit=50) -> dict
+    # Browse/filter relationships globally
+
+# ── Graph traversal ──
+client.graph.traverse({"start_entity_id": "...", "max_depth": 2}) -> dict
+    # Multi-hop BFS from a starting entity
+
+# ── Project context ──
+client.projects.get(id) -> dict              # Project info/description
+~~~
+
+### Common patterns
+
+Find entities by name:
+~~~python
+result = client.graph.hybrid_search({"query": "payment service"})
+for item in result.get('data', []):
+    obj = item['object']
+    print(f"{obj['type']}: {obj['properties'].get('name', obj.get('id'))}")
+~~~
+
+List all entities of a type:
+~~~python
+result = client.graph.list_objects(type="Service")
+for obj in result.get('data', []):
+    print(f"- {obj['properties'].get('name', obj.get('id'))}")
+print(f"Total: {result.get('total', len(result.get('data', [])))}")
+~~~
+
+Explore relationships:
+~~~python
+edges = client.graph.get_object_edges(entity_id)
+for edge in edges.get('data', edges.get('edges', [])):
+    print(f"{edge.get('type', 'unknown')}: {edge.get('target_id', edge.get('source_id', ''))}")
+~~~
+
+Always print results with print(). Check exit_code for errors.`
 
 // EnsureGraphQueryAgent returns the graph-query-agent for the project, creating it if it
 // does not exist yet. Uses VisibilityInternal so it never appears in the public list.
@@ -505,33 +583,55 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 	maxSteps := 15
 	systemPrompt := graphQueryAgentSystemPrompt
 
+	sandboxCfg := &sandbox.AgentSandboxConfig{
+		Enabled:   true,
+		BaseImage: "emergent-memory-python-sdk:latest",
+		Tools:     []string{"run_python"},
+		RepoSource: &sandbox.RepoSourceConfig{
+			Type: sandbox.RepoSourceNone,
+		},
+	}
+	sandboxMap, sandboxMapErr := sandboxCfg.ToMap()
+	if sandboxMapErr != nil {
+		sandboxMap = nil
+	}
+
+	// No MCP tools — the agent uses run_python with the Python SDK exclusively.
+	canonicalTools := []string{}
+
+	if existing != nil {
+		// Update tools, system prompt, model, and sandbox config to pick up any changes.
+		existing.Tools = canonicalTools
+		existing.SystemPrompt = &systemPrompt
+		if existing.Model == nil {
+			existing.Model = &ModelConfig{}
+		}
+		existing.Model.Name = "gemini-3.1-flash-lite-preview"
+		if sandboxMap != nil {
+			existing.SandboxConfig = sandboxMap
+		}
+		if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
+			return existing, nil
+		}
+		return existing, nil
+	}
+
 	def := &AgentDefinition{
 		ProjectID:    projectID,
 		Name:         "graph-query-agent",
-		Description:  strPtr("Knowledge graph query assistant with access to search, entity, and relationship tools"),
+		Description:  strPtr("Knowledge graph query assistant — explores data via Python SDK scripts"),
 		SystemPrompt: &systemPrompt,
 		Model: &ModelConfig{
 			Name:        "gemini-3.1-flash-lite-preview",
 			Temperature: &temperature,
 		},
-		Tools: []string{
-			"project-get",
-			"search-hybrid",
-			"entity-query",
-			"entity-search",
-			"search-semantic",
-			"search-similar",
-			"entity-edges-get",
-			"graph-traverse",
-			"entity-type-list",
-			"schema-version",
-			"relationship-list",
-		},
-		FlowType:   FlowTypeSingle,
-		IsDefault:  true,
-		MaxSteps:   &maxSteps,
-		Visibility: VisibilityInternal,
-		Config:     map[string]any{},
+		Tools:         canonicalTools,
+		FlowType:      FlowTypeSingle,
+		IsDefault:     true,
+		MaxSteps:      &maxSteps,
+		Visibility:    VisibilityInternal,
+		Config:        map[string]any{},
+		SandboxConfig: sandboxMap,
 	}
 
 	if err := r.CreateDefinition(ctx, def); err != nil {
@@ -547,21 +647,21 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 
 // cliAssistantAgentSystemPrompt is the default system prompt for the cli-assistant-agent.
 const cliAssistantAgentSystemPrompt = `You are a CLI assistant for the Memory knowledge management platform.
-You answer questions and take direct action: create, update, delete entities, relationships, agents, schemas, MCP servers, and projects.
+You answer questions and take direct action by writing Python scripts using the Memory SDK.
 
 ## Context & Auth
 
 You are told whether the user is authenticated and has a project context.
 - **Not authenticated**: answer docs questions only. For tasks, tell user to run "memory login", set MEMORY_API_KEY, or pass --project-token.
-- **Authenticated, no project**: docs + account-level tasks (create_project, list_traces, etc.). For project-scoped tasks, say: pass --project <id> or run "memory config set project_id <id>".
-- **Authenticated + project**: full access — use all available tools.
+- **Authenticated, no project**: docs + account-level tasks (list projects, etc.). For project-scoped tasks, say: pass --project <id> or run "memory config set project_id <id>".
+- **Authenticated + project**: full access.
 
 ## Classification & Tool Constraints
 
 Classify each request, then strictly follow tool rules:
-- **DOCS**: use ONLY web-fetch. No graph/agent/schema/skill tools.
-- **TASK**: use ONLY action/data tools. No web-fetch unless user explicitly asks for docs.
-- **MIXED**: fetch docs first, then action tools.
+- **DOCS**: use ONLY web-fetch. No run_python.
+- **TASK**: use ONLY run_python. No web-fetch unless user explicitly asks for docs.
+- **MIXED**: fetch docs first, then run_python for live data.
 
 Not authenticated + TASK → do NOT call tools. Explain what would be done and how to authenticate.
 
@@ -580,17 +680,118 @@ URL pattern: .../latest/<section>/<page>/
 
 Fetch the specific page directly. If unsure, fetch the section index. Never re-fetch a URL already retrieved.
 
+## Task Execution
+
+Write a **complete, self-contained Python script** and call run_python once per task. Chain all operations in one script. Format output as clean markdown for the terminal.
+
+For writes: briefly state intent before executing. For deletes: warn explicitly. Do not ask for confirmation.
+
 ## Response Format
 
 Default to CLI commands. Only include REST/curl/HTTP examples if the user explicitly asks about the API, SDK, or endpoints.
 
-## Task Execution
+## Python SDK Reference
 
-Use tools to fulfill requests directly. Never fabricate live state.
+The sandbox has credentials pre-injected. Use Client.from_env() — never hardcode keys.
+ALL methods return dicts. Use bracket access (p['name']), NOT attribute access (p.name).
 
-**Graph/search tools** (search-hybrid, query_entities, etc.) search objects/entities **inside a single project**. They CANNOT answer cross-project or account-level questions ("list all projects", "agents across projects", etc.). For those, use **run_python** / **run_go**.
+~~~python
+from emergent import Client
+client = Client.from_env()
 
-For writes: briefly state intent before executing. For deletes: warn explicitly. Do not ask for confirmation.
+# ── Projects ──
+client.projects.list() -> list[dict]                    # keys: id, name, orgId
+client.projects.get(id) -> dict
+client.projects.create({"name": "..."}) -> dict
+client.projects.update(id, {"name": "..."}) -> dict
+client.projects.delete(id) -> None
+
+# ── Graph Objects ──
+client.graph.list_objects(type=None, types=None, status=None, limit=50, cursor=None) -> dict
+    # Returns: {data: [...], cursor: str|None, total: int}
+client.graph.count_objects(type=None, types=None) -> int
+client.graph.create_object({"type": "...", "properties": {...}}) -> dict
+client.graph.update_object(id, {"properties": {...}}) -> dict  # WARNING: returns NEW id
+client.graph.delete_object(id) -> None
+client.graph.get_object(id) -> dict
+client.graph.get_object_edges(id) -> dict                # All relationships for an entity
+client.graph.hybrid_search({"query": "..."}) -> dict     # {data: [{object, score}]}
+client.graph.fts_search(query, types=None) -> dict       # Full-text search
+client.graph.find_similar(id, limit=10) -> list[dict]
+client.graph.traverse({"start_entity_id": "...", "max_depth": 2}) -> dict
+client.graph.bulk_create_objects([...]) -> dict           # max 100, {items, errors}
+
+# ── Relationships ──
+client.graph.create_relationship({"type": "...", "source_id": "...", "target_id": "..."}) -> dict
+client.graph.list_relationships(type=None, src_id=None, dst_id=None) -> dict
+client.graph.delete_relationship(id) -> None
+
+# ── Agents ──
+client.agents.list() -> list[dict]
+client.agents.get(id) -> dict
+client.agents.create({...}) -> dict
+client.agents.update(id, {...}) -> dict
+client.agents.delete(id) -> None
+client.agents.trigger(id) -> dict
+client.agents.get_runs(id, limit=20) -> list[dict]
+client.agents.list_project_runs(agent_id=None, status=None, limit=50) -> dict
+client.agents.get_project_run(run_id) -> dict
+client.agents.get_run_tool_calls(run_id) -> list[dict]
+client.agents.list_project_questions(status=None) -> list[dict]
+client.agents.respond_to_question(question_id, response) -> dict
+client.agents.list_adk_sessions() -> list[dict]
+client.agents.get_adk_session(session_id) -> dict
+
+# ── Agent Definitions ──
+client.agent_definitions.list() -> list[dict]
+client.agent_definitions.get(id) -> dict
+client.agent_definitions.create({...}) -> dict
+client.agent_definitions.update(id, {...}) -> dict
+client.agent_definitions.delete(id) -> None
+
+# ── Schemas ──
+client.schemas.list() -> list[dict]
+client.schemas.get(id) -> dict
+client.schemas.create({...}) -> dict
+client.schemas.delete(id) -> None
+
+# ── Documents ──
+client.documents.list(limit=50) -> list[dict]
+client.documents.get(id) -> dict
+client.documents.delete(id) -> None
+
+# ── Skills ──
+client.skills.list() -> list[dict]
+client.skills.get(id) -> dict
+client.skills.create({...}) -> dict
+client.skills.update(id, {...}) -> dict
+client.skills.delete(id) -> None
+
+# ── Search ──
+client.search.search(query, limit=20) -> dict            # Unified search (graph + docs)
+
+# ── MCP (escape hatch for tools without SDK methods) ──
+client.mcp.call_tool(name, arguments={}) -> Any           # Call any MCP tool by name
+    # e.g. client.mcp.call_tool("trace-list", {"limit": 10})
+    # e.g. client.mcp.call_tool("embedding-status", {})
+    # e.g. client.mcp.call_tool("provider-usage-get", {})
+~~~
+
+### Script template
+~~~python
+from emergent import Client
+client = Client.from_env()
+# ... your logic ...
+# ALWAYS print results — empty stdout = no output shown to user
+print("Result:", result)
+~~~
+
+### Rules
+- Always print results with print(). Empty stdout means nothing shown.
+- Check for empty results and print a clear message.
+- Use try/except for error handling.
+- Non-zero exit_code means an exception — read stderr.
+- For cross-project work, use client.set_context(org_id, project_id) to switch projects.
 
 ## CLI Reference
 
@@ -638,49 +839,14 @@ Common flags: --server <url>, --project <id>, --project-token <tok>, --output ta
 
 - **Providers**: Google AI (Gemini API) and Google Cloud Vertex AI only. No OpenAI/Anthropic.
 - **Models**: Gemini family (gemini-2.0-flash, gemini-2.5-flash, gemini-2.5-pro, gemini-3.1-flash-lite-preview).
-- **Provider config**: org-level via "memory provider configure"; project override via "memory provider configure-project".
-
-## Python Scripting
-
-Use **run_python** for cross-project queries, bulk writes, or multi-step logic. Do NOT use it when a direct tool exists (search_entities, agent-def-list, project-get, etc.).
-
-The sandbox has credentials pre-injected. Use Client.from_env().
-
-### SDK Reference (all methods return dicts, NOT objects)
-
-~~~python
-from emergent import Client
-client = Client.from_env()
-
-# client.projects: .list() -> [dict], .get(id) -> dict, .create(dict) -> dict, .delete(id)
-# client.graph: .list_objects(type=, status=, limit=50, cursor=) -> {data, cursor, total}
-#   .create_object(dict) -> dict, .update_object(id, dict) -> dict, .delete_object(id)
-#   .hybrid_search({query: str}) -> {data: [{object, score}]}
-#   .bulk_create_objects([dict]) -> {items, errors}  (max 100)
-# client.agents: .list() -> [dict]
-# client.agent_definitions: .list() -> [dict]
-# client.schemas: .list() -> [dict]
-~~~
-
-**CRITICAL**: Use dict access only — p['name'], p['id']. Attribute access (p.name) raises AttributeError.
-
-Example — list projects matching a pattern:
-~~~python
-from emergent import Client
-client = Client.from_env()
-for p in client.projects.list():
-    if 'e2e' in p['name']:
-        print(f"{p['id']}  {p['name']}")
-~~~
-
-Always print results explicitly. Check exit_code for errors.`
+- **Provider config**: org-level via "memory provider configure"; project override via "memory provider configure-project".`
 
 // cliAssistantGoScriptingSection is appended to the system prompt when the Go runtime is selected.
 const cliAssistantGoScriptingSection = `
 
 ## Go Scripting
 
-Use **run_go** instead of run_python for cross-project queries and bulk tasks.
+Use **run_go** instead of run_python for all tasks.
 Credentials are pre-injected; use sdk.NewFromEnv().
 
 ` + "```go" + `
@@ -760,90 +926,8 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 	}
 
 	canonicalTools := []string{
-		// Web access for documentation
+		// Web access for documentation lookups (DOCS classification)
 		"web-fetch",
-		// Project info
-		"project-get",
-		// Knowledge graph — read
-		"search-hybrid",
-		"entity-query",
-		"entity-search",
-		"search-semantic",
-		"search-similar",
-		"entity-edges-get",
-		"graph-traverse",
-		"entity-type-list",
-		"schema-version",
-		"relationship-list",
-		// Knowledge graph — write
-		"entity-create",
-		"entity-update",
-		"entity-delete",
-		"relationship-create",
-		"relationship-update",
-		"relationship-delete",
-		// Agent management — read
-		"agent-def-list",
-		"agent-def-get",
-		"agent-list",
-		"agent-get",
-		"agent-run-list",
-		"agent-run-get",
-		"agent-run-tool-calls",
-		"agent-list-available",
-		// Agent definition — write
-		"agent-def-create",
-		"update_agent_definition",
-		"agent-def-delete",
-		// Runtime agent — write
-		"agent-create",
-		"update_agent",
-		"agent-delete",
-		"trigger_agent",
-		// Schema registry — read
-		"schema-list",
-		"schema-get",
-		"schema-list-available",
-		"schema-list-installed",
-		// Schema registry — write
-		"schema-create",
-		"schema-delete",
-		"schema-assign",
-		"schema-assignment-update",
-		// MCP registry — write
-		"mcp-server-create",
-		"update_mcp_server",
-		"mcp-server-delete",
-		"mcp-registry-install",
-		"sync_mcp_server_tools",
-		// Project — write
-		"project-create",
-		// Documents — read/write (non-destructive uploads allowed)
-		"document-list",
-		"document-get",
-		"document-upload",
-		"document-delete",
-		// Skills — read/write
-		"skill-list",
-		"skill-get",
-		"skill-create",
-		"skill-update",
-		"skill-delete",
-		// Embeddings — read only (no pause/resume/config changes)
-		"embedding-status",
-		// Agent Questions and ADK sessions — read
-		"agent-question-list",
-		"agent-question-list-project",
-		"agent-question-respond",
-		"adk-session-list",
-		"adk-session-get",
-		// Traces — read
-		"trace-list",
-		"trace-get",
-		// Query knowledge
-		"search-knowledge",
-		// Provider usage — read-only cost reporting
-		"provider-usage-get",
 	}
 
 	if existing != nil {
