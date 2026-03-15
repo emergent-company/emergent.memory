@@ -439,6 +439,7 @@ var (
 	overrideSystemPrompt     string
 	overrideSystemPromptFile string
 	overrideClear            bool
+	overrideSandboxEnabled   string // "true", "false", or "" (not set)
 )
 
 var overrideAgentCmd = &cobra.Command{
@@ -456,6 +457,7 @@ Examples:
   memory defs override cli-assistant-agent --max-steps 30         # override max steps
   memory defs override graph-query-agent --model gemini-2.5-pro --temperature 0.2 --max-steps 20
   memory defs override graph-query-agent --system-prompt-file prompt.txt
+  memory defs override graph-query-agent --sandbox-enabled false  # disable sandbox
   memory defs override graph-query-agent --clear                  # remove override`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runOverrideAgent,
@@ -519,7 +521,8 @@ func runOverrideAgent(cmd *cobra.Command, args []string) error {
 		cmd.Flags().Changed("max-steps") ||
 		cmd.Flags().Changed("tools") ||
 		cmd.Flags().Changed("system-prompt") ||
-		cmd.Flags().Changed("system-prompt-file")
+		cmd.Flags().Changed("system-prompt-file") ||
+		cmd.Flags().Changed("sandbox-enabled")
 
 	if !hasOverrideFlag {
 		// View mode: show current override
@@ -595,6 +598,16 @@ func runOverrideAgent(cmd *cobra.Command, args []string) error {
 		prompt := string(data)
 		override.SystemPrompt = &prompt
 	}
+	if cmd.Flags().Changed("sandbox-enabled") {
+		switch strings.ToLower(overrideSandboxEnabled) {
+		case "true":
+			override.SandboxConfig = map[string]any{"enabled": true}
+		case "false":
+			override.SandboxConfig = map[string]any{"enabled": false}
+		default:
+			return fmt.Errorf("--sandbox-enabled must be 'true' or 'false', got %q", overrideSandboxEnabled)
+		}
+	}
 
 	_, err = c.SDK.AgentDefinitions.SetOverride(context.Background(), agentName, override)
 	if err != nil {
@@ -622,6 +635,11 @@ func runOverrideAgent(cmd *cobra.Command, args []string) error {
 			prompt = prompt[:100] + "..."
 		}
 		fmt.Printf("  Prompt:      %s\n", prompt)
+	}
+	if override.SandboxConfig != nil {
+		if enabled, ok := override.SandboxConfig["enabled"]; ok {
+			fmt.Printf("  Sandbox:     enabled=%v\n", enabled)
+		}
 	}
 	fmt.Printf("\nThe next ask/query call will use these overrides.\n")
 	return nil
@@ -695,6 +713,7 @@ func init() {
 	overrideAgentCmd.Flags().StringVar(&overrideSystemPrompt, "system-prompt", "", "Override system prompt")
 	overrideAgentCmd.Flags().StringVar(&overrideSystemPromptFile, "system-prompt-file", "", "Read system prompt from file")
 	overrideAgentCmd.Flags().BoolVar(&overrideClear, "clear", false, "Remove override — revert to canonical defaults")
+	overrideAgentCmd.Flags().StringVar(&overrideSandboxEnabled, "sandbox-enabled", "", "Override sandbox enabled state (true/false)")
 
 	// Register subcommands
 	agentDefsCmd.AddCommand(listAgentDefsCmd)

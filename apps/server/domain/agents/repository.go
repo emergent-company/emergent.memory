@@ -478,93 +478,15 @@ func (r *Repository) CreateDefinition(ctx context.Context, def *AgentDefinition)
 }
 
 // graphQueryAgentSystemPrompt is the default system prompt for the graph-query-agent.
-const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. Help users explore and understand data in their knowledge graph by writing Python scripts.
-
-## How you work
-
-1. Write a Python script using the Memory SDK to query the graph.
-2. Execute it with run_python.
-3. Format the output as concise markdown.
-
-Write ONE script per request. Chain operations within the script (search, then traverse, etc.).
+const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. Help users explore and understand data in their knowledge graph.
 
 ## Rules
-1. ALWAYS use run_python to look up data. Never answer from training data or fabricate entities, relationships, or facts.
-2. Cite specific entity names, types, and relationship types in your response.
-3. If a script returns no results, clearly state that no matching data was found.
+1. ALWAYS use tools to look up data. Never answer from training data or fabricate entities, relationships, or facts.
+2. Cite specific entity names, types, and relationship types from tool results.
+3. If tools return no results, clearly state that no matching data was found.
 4. Format responses using markdown. Use tables for structured data.
 5. Keep responses concise and factual.
-
-## Python SDK Reference
-
-Credentials are pre-injected. Use Client.from_env(). ALL methods return dicts — use bracket access (obj['name']).
-
-~~~python
-from emergent import Client
-client = Client.from_env()
-
-# ── Discover types and schema ──
-client.schemas.list() -> list[dict]          # All schemas with type definitions
-client.schemas.get(id) -> dict               # Single schema detail
-
-# ── Search (start here for most questions) ──
-client.graph.hybrid_search({"query": "..."}) -> dict
-    # {data: [{object: {...}, score: float}]}
-    # Combines text + semantic + graph-aware ranking — most powerful search
-client.search.search(query, limit=20) -> dict
-    # Unified search across graph and documents
-
-# ── List/filter objects ──
-client.graph.list_objects(type=None, types=None, status=None, limit=50, cursor=None) -> dict
-    # {data: [...], cursor: str|None, total: int}
-    # Filter by type, status; supports pagination
-client.graph.count_objects(type=None, types=None) -> int
-client.graph.fts_search(query, types=None, limit=50) -> dict  # Full-text search
-
-# ── Object details ──
-client.graph.get_object(id) -> dict
-client.graph.get_object_edges(id, type=None, direction=None) -> dict
-    # All relationships for an entity — incoming and outgoing
-client.graph.find_similar(id, limit=10) -> list[dict]
-
-# ── Relationships ──
-client.graph.list_relationships(type=None, src_id=None, dst_id=None, limit=50) -> dict
-    # Browse/filter relationships globally
-
-# ── Graph traversal ──
-client.graph.traverse({"start_entity_id": "...", "max_depth": 2}) -> dict
-    # Multi-hop BFS from a starting entity
-
-# ── Project context ──
-client.projects.get(id) -> dict              # Project info/description
-~~~
-
-### Common patterns
-
-Find entities by name:
-~~~python
-result = client.graph.hybrid_search({"query": "payment service"})
-for item in result.get('data', []):
-    obj = item['object']
-    print(f"{obj['type']}: {obj['properties'].get('name', obj.get('id'))}")
-~~~
-
-List all entities of a type:
-~~~python
-result = client.graph.list_objects(type="Service")
-for obj in result.get('data', []):
-    print(f"- {obj['properties'].get('name', obj.get('id'))}")
-print(f"Total: {result.get('total', len(result.get('data', [])))}")
-~~~
-
-Explore relationships:
-~~~python
-edges = client.graph.get_object_edges(entity_id)
-for edge in edges.get('data', edges.get('edges', [])):
-    print(f"{edge.get('type', 'unknown')}: {edge.get('target_id', edge.get('source_id', ''))}")
-~~~
-
-Always print results with print(). Check exit_code for errors.`
+6. Start with search-hybrid for most queries. Use entity-query to list by type. Use entity-edges-get to explore relationships.`
 
 // EnsureGraphQueryAgent returns the graph-query-agent for the project, creating it if it
 // does not exist yet. Uses VisibilityInternal so it never appears in the public list.
@@ -580,21 +502,14 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 	maxSteps := 15
 	systemPrompt := graphQueryAgentSystemPrompt
 
-	sandboxCfg := &sandbox.AgentSandboxConfig{
-		Enabled:   true,
-		BaseImage: "emergent-memory-python-sdk:latest",
-		Tools:     []string{"run_python"},
-		RepoSource: &sandbox.RepoSourceConfig{
-			Type: sandbox.RepoSourceNone,
-		},
+	// MCP tools for direct graph queries — no sandbox/SDK needed.
+	canonicalTools := []string{
+		"search-hybrid",
+		"entity-query",
+		"entity-edges-get",
+		"relationship-list",
+		"entity-type-list",
 	}
-	sandboxMap, sandboxMapErr := sandboxCfg.ToMap()
-	if sandboxMapErr != nil {
-		sandboxMap = nil
-	}
-
-	// No MCP tools — the agent uses run_python with the Python SDK exclusively.
-	canonicalTools := []string{}
 
 	if existing != nil {
 		// Self-heal: update tools, system prompt, model, and sandbox config to pick up
@@ -607,9 +522,8 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 		existing.Model.Name = "gemini-3.1-flash-lite-preview"
 		existing.Model.Temperature = &temperature
 		existing.MaxSteps = &maxSteps
-		if sandboxMap != nil {
-			existing.SandboxConfig = sandboxMap
-		}
+		// Clear sandbox config — this agent uses MCP tools, not SDK/sandbox.
+		existing.SandboxConfig = nil
 
 		// Apply per-project overrides (if any) on top of canonical defaults.
 		if projectID != "" {
@@ -628,19 +542,18 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 	def := &AgentDefinition{
 		ProjectID:    projectID,
 		Name:         "graph-query-agent",
-		Description:  strPtr("Knowledge graph query assistant — explores data via Python SDK scripts"),
+		Description:  strPtr("Knowledge graph query assistant — explores data via MCP tools"),
 		SystemPrompt: &systemPrompt,
 		Model: &ModelConfig{
 			Name:        "gemini-3.1-flash-lite-preview",
 			Temperature: &temperature,
 		},
-		Tools:         canonicalTools,
-		FlowType:      FlowTypeSingle,
-		IsDefault:     true,
-		MaxSteps:      &maxSteps,
-		Visibility:    VisibilityInternal,
-		Config:        map[string]any{},
-		SandboxConfig: sandboxMap,
+		Tools:      canonicalTools,
+		FlowType:   FlowTypeSingle,
+		IsDefault:  true,
+		MaxSteps:   &maxSteps,
+		Visibility: VisibilityInternal,
+		Config:     map[string]any{},
 	}
 
 	// Apply per-project overrides (if any) on top of canonical defaults.

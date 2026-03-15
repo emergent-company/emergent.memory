@@ -218,6 +218,63 @@ memory agent-definitions list [flags]
   -h, --help   help for list
 ```
 
+## memory agent-definitions override
+
+View or set per-project agent overrides
+
+### Synopsis
+
+View or set per-project configuration overrides for an agent definition.
+
+Without flags, shows the current override for the agent. With flags, sets
+or updates the override. Overrides are merged on top of canonical defaults
+each time the agent runs — non-overridden fields always get the latest code defaults.
+
+Examples:
+  memory defs override graph-query-agent                          # view current override
+  memory defs override graph-query-agent --model gemini-2.5-pro   # override model
+  memory defs override cli-assistant-agent --max-steps 30         # override max steps
+  memory defs override graph-query-agent --model gemini-2.5-pro --temperature 0.2 --max-steps 20
+  memory defs override graph-query-agent --system-prompt-file prompt.txt
+  memory defs override graph-query-agent --sandbox-enabled false  # disable sandbox
+  memory defs override graph-query-agent --clear                  # remove override
+
+```
+memory agent-definitions override [agentName] [flags]
+```
+
+### Options
+
+```
+      --clear                       Remove override — revert to canonical defaults
+  -h, --help                        help for override
+      --max-steps int               Override max steps
+      --model string                Override model name (e.g., gemini-2.5-pro)
+      --sandbox-enabled string      Override sandbox enabled state (true/false)
+      --system-prompt string        Override system prompt
+      --system-prompt-file string   Read system prompt from file
+      --temperature float32         Override temperature (0.0-2.0) (default -1)
+      --tools string                Override tools (comma-separated)
+```
+
+## memory agent-definitions overrides
+
+List all agent overrides for the project
+
+### Synopsis
+
+List all per-project agent configuration overrides.
+
+```
+memory agent-definitions overrides [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for overrides
+```
+
 ## memory agent-definitions update
 
 Update an agent definition
@@ -419,6 +476,8 @@ Get full details for a specific agent run by its run ID. Output includes:
   - Root run ID (for sub-runs triggered by a parent run)
   - Any output or error message from the run
 
+No --project flag is required — run IDs are globally unique.
+
 This is the primary command to check the cost of a specific agent run.
 
 ```
@@ -429,6 +488,7 @@ memory agents get-run [run-id] [flags]
 
 ```
   -h, --help   help for get-run
+      --json   Output result as JSON
 ```
 
 ## memory agents get
@@ -934,6 +994,7 @@ memory ask <question> [flags]
       --runtime string   Sandbox runtime for scripting tasks: python (default) or go
       --show-time        Show elapsed time at the end of the response
       --show-tools       Show tool calls made by the assistant during reasoning
+      --v2               Use the v2 code-generation agent (fewer round-trips, faster)
 ```
 
 ## memory blueprints
