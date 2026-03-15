@@ -310,10 +310,135 @@ RUN pip install --no-cache-dir \
         pydantic \
         python-dateutil
 
+# Install pyrunner daemon for zero-cold-start script execution.
+# Inlined because this Dockerfile is built from a temp dir with no COPY context.
+RUN cat > /usr/local/bin/pyrunner.py << 'PYEOF'
+#!/usr/bin/env python3
+"""pyrunner - pre-forking Python daemon for zero-cold-start script execution."""
+import json, os, signal, sys, time, traceback
+
+FIFO_IN  = "/tmp/pyrunner.in"
+FIFO_OUT = "/tmp/pyrunner.out"
+MAX_OUTPUT = 50 * 1024
+
+try:
+    import emergent
+except ImportError:
+    pass
+
+def _make_fifo(path):
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    os.mkfifo(path)
+
+def _run_child(script_path, env_vars, stdout_fd, stderr_fd):
+    try:
+        os.dup2(stdout_fd, 1)
+        os.dup2(stderr_fd, 2)
+        if env_vars:
+            os.environ.update(env_vars)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        with open(script_path) as f:
+            code = f.read()
+        compiled = compile(code, script_path, "exec")
+        exec(compiled, {"__name__": "__main__", "__file__": script_path})
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+    except SystemExit as e:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(e.code if isinstance(e.code, int) else 1)
+    except Exception:
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(1)
+
+def _read_pipe(fd, max_bytes=MAX_OUTPUT):
+    chunks = []
+    total = 0
+    while True:
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            keep = max_bytes - (total - len(chunk))
+            if keep > 0:
+                chunks.append(chunk[:keep])
+            break
+        chunks.append(chunk)
+    os.close(fd)
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+def _write_response(resp):
+    with open(FIFO_OUT, "w") as fout:
+        fout.write(json.dumps(resp) + "\n")
+        fout.flush()
+
+def _daemon_loop():
+    while True:
+        with open(FIFO_IN, "r") as fin:
+            line = fin.readline().strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except json.JSONDecodeError:
+            _write_response({"exit_code": 1, "duration_ms": 0, "stdout": "", "stderr": "pyrunner: invalid JSON request\n"})
+            continue
+        script_path = req.get("script", "")
+        env_vars = req.get("env", {})
+        if not script_path or not os.path.isfile(script_path):
+            _write_response({"exit_code": 1, "duration_ms": 0, "stdout": "", "stderr": f"pyrunner: script not found: {script_path}\n"})
+            continue
+        stdout_r, stdout_w = os.pipe()
+        stderr_r, stderr_w = os.pipe()
+        t0 = time.monotonic()
+        pid = os.fork()
+        if pid == 0:
+            os.close(stdout_r)
+            os.close(stderr_r)
+            _run_child(script_path, env_vars, stdout_w, stderr_w)
+        else:
+            os.close(stdout_w)
+            os.close(stderr_w)
+            stdout_data = _read_pipe(stdout_r)
+            stderr_data = _read_pipe(stderr_r)
+            _, status = os.waitpid(pid, 0)
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            if os.WIFEXITED(status):
+                exit_code = os.WEXITSTATUS(status)
+            elif os.WIFSIGNALED(status):
+                exit_code = 128 + os.WTERMSIG(status)
+            else:
+                exit_code = 1
+            _write_response({"exit_code": exit_code, "duration_ms": duration_ms, "stdout": stdout_data, "stderr": stderr_data})
+
+def main():
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    _make_fifo(FIFO_IN)
+    _make_fifo(FIFO_OUT)
+    _daemon_loop()
+
+if __name__ == "__main__":
+    main()
+PYEOF
+RUN chmod +x /usr/local/bin/pyrunner.py
+
+# Entrypoint: start pyrunner daemon in background, then exec CMD.
+# gvisor_provider.go overrides CMD with ["sleep", "infinity"] so the
+# daemon starts automatically at container boot regardless of CMD.
+ENTRYPOINT ["sh", "-c", "python3 /usr/local/bin/pyrunner.py & exec \"$@\"", "--"]
+
 # Default working directory for agent scripts
 WORKDIR /workspace
 
-CMD ["python3"]
+CMD ["sleep", "infinity"]
 `
 }
 

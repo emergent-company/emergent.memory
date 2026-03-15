@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -163,10 +164,105 @@ Usage notes:
 	)
 }
 
+// daemonFIFOIn and daemonFIFOOut are the named FIFO paths used by pyrunner.py
+// inside the sandbox container for zero-cold-start Python execution.
+const (
+	daemonFIFOIn  = "/tmp/pyrunner.in"
+	daemonFIFOOut = "/tmp/pyrunner.out"
+)
+
+// daemonAvailable checks whether the pyrunner daemon FIFO exists in the
+// container, indicating the daemon is running and ready to accept requests.
+func daemonAvailable(ctx tool.Context, provider sandbox.Provider, providerID string) bool {
+	result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
+		Command:   fmt.Sprintf("test -p %s", daemonFIFOIn),
+		TimeoutMs: 3000, // 3s — should be near-instant
+	})
+	if err != nil {
+		return false
+	}
+	return result.ExitCode == 0
+}
+
+// daemonResponse is the JSON structure returned by pyrunner.py via the output FIFO.
+type daemonResponse struct {
+	ExitCode   int    `json:"exit_code"`
+	DurationMs int    `json:"duration_ms"`
+	Stdout     string `json:"stdout"`
+	Stderr     string `json:"stderr"`
+}
+
+// runViaDaemon dispatches a Python script to the pre-forking pyrunner daemon
+// inside the container. It writes the script file, sends a JSON request to the
+// input FIFO, and reads the JSON response from the output FIFO.
+// Returns the structured result or an error if the daemon dispatch fails.
+func runViaDaemon(
+	ctx tool.Context,
+	provider sandbox.Provider,
+	providerID string,
+	scriptPath string,
+	sessionEnv map[string]string,
+	timeoutMs int,
+) (map[string]any, error) {
+	// Build the JSON request payload for the daemon.
+	reqPayload := map[string]any{
+		"script": scriptPath,
+		"env":    sessionEnv,
+	}
+	reqJSON, err := json.Marshal(reqPayload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal daemon request: %w", err)
+	}
+
+	// Escape single quotes for safe shell embedding: replace ' with '\''
+	escapedJSON := strings.ReplaceAll(string(reqJSON), "'", "'\\''")
+
+	// Send request to the input FIFO and read the response from the output FIFO.
+	// printf writes the JSON line, then cat blocks until the daemon writes the response.
+	cmd := fmt.Sprintf("printf '%%s\\n' '%s' > %s && cat %s", escapedJSON, daemonFIFOIn, daemonFIFOOut)
+
+	result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
+		Command:   cmd,
+		TimeoutMs: timeoutMs,
+	})
+	if err != nil {
+		// If we got partial output (timeout), pass it through
+		if result != nil && result.Stdout != "" {
+			// Try to parse whatever we got
+			var resp daemonResponse
+			if jsonErr := json.Unmarshal([]byte(strings.TrimSpace(result.Stdout)), &resp); jsonErr == nil {
+				return map[string]any{
+					"stdout":      resp.Stdout,
+					"stderr":      resp.Stderr + "\n" + err.Error(),
+					"exit_code":   resp.ExitCode,
+					"duration_ms": resp.DurationMs,
+					"daemon_hit":  true,
+				}, nil
+			}
+		}
+		return nil, fmt.Errorf("daemon exec failed: %w", err)
+	}
+
+	// Parse the daemon's JSON response from stdout
+	var resp daemonResponse
+	if jsonErr := json.Unmarshal([]byte(strings.TrimSpace(result.Stdout)), &resp); jsonErr != nil {
+		return nil, fmt.Errorf("failed to parse daemon response: %w (raw: %s)", jsonErr, result.Stdout)
+	}
+
+	return map[string]any{
+		"stdout":      resp.Stdout,
+		"stderr":      resp.Stderr,
+		"exit_code":   resp.ExitCode,
+		"duration_ms": resp.DurationMs,
+		"daemon_hit":  true,
+	}, nil
+}
+
 func buildRunPythonTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 	provider := deps.Provider
 	providerID := deps.ProviderID
 	sessionEnv := deps.SessionEnv
+	logger := deps.Logger
 
 	return functiontool.New(
 		functiontool.Config{
@@ -217,9 +313,7 @@ A non-zero exit_code means the script raised an exception — check stderr for t
 				timeoutMs = int(t)
 			}
 
-			// Write the script to a temp file, then execute it.
-			// Use printf to avoid shell interpretation of the code content.
-			// We write via workspace_write semantics using the provider's WriteFile.
+			// Write the script to a temp file (needed by both daemon and cold paths).
 			writeErr := provider.WriteFile(ctx, providerID, &sandbox.FileWriteRequest{
 				FilePath: pythonScriptPath,
 				Content:  code,
@@ -228,6 +322,28 @@ A non-zero exit_code means the script raised an exception — check stderr for t
 				return map[string]any{"error": fmt.Sprintf("failed to write script: %s", writeErr.Error())}, nil
 			}
 
+			// Try the daemon path first for zero-cold-start execution.
+			if daemonAvailable(ctx, provider, providerID) {
+				result, err := runViaDaemon(ctx, provider, providerID, pythonScriptPath, sessionEnv, timeoutMs)
+				if err == nil {
+					logger.Debug("run_python via daemon",
+						slog.String("workspace_id", deps.WorkspaceID),
+						slog.Bool("daemon_hit", true),
+					)
+					return result, nil
+				}
+				// Daemon dispatch failed — fall through to cold path
+				logger.Warn("pyrunner daemon dispatch failed, falling back to cold python3",
+					slog.String("workspace_id", deps.WorkspaceID),
+					slog.String("error", err.Error()),
+				)
+			} else {
+				logger.Warn("pyrunner daemon FIFO not found, falling back to cold python3",
+					slog.String("workspace_id", deps.WorkspaceID),
+				)
+			}
+
+			// Fallback: cold python3 execution (original path).
 			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
 				Command:   fmt.Sprintf("python3 %s", pythonScriptPath),
 				TimeoutMs: timeoutMs,
@@ -240,6 +356,7 @@ A non-zero exit_code means the script raised an exception — check stderr for t
 						"stderr":      result.Stderr + "\n" + err.Error(),
 						"exit_code":   result.ExitCode,
 						"duration_ms": result.DurationMs,
+						"daemon_hit":  false,
 					}, nil
 				}
 				return map[string]any{"error": fmt.Sprintf("execution failed: %s", err.Error())}, nil
@@ -250,6 +367,7 @@ A non-zero exit_code means the script raised an exception — check stderr for t
 				"stderr":      result.Stderr,
 				"exit_code":   result.ExitCode,
 				"duration_ms": result.DurationMs,
+				"daemon_hit":  false,
 			}, nil
 		},
 	)

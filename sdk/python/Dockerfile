@@ -19,7 +19,17 @@ RUN pip install --no-cache-dir \
         pydantic \
         python-dateutil
 
+# Install the pyrunner daemon for zero-cold-start script execution.
+# The daemon pre-imports the emergent SDK and forks a child per request.
+COPY pyrunner.py /usr/local/bin/pyrunner.py
+RUN chmod +x /usr/local/bin/pyrunner.py
+
+# Entrypoint: start the pyrunner daemon in background, then exec CMD.
+# gvisor_provider.go overrides CMD with ["sleep", "infinity"] so the
+# daemon starts automatically at container boot regardless of CMD.
+ENTRYPOINT ["sh", "-c", "python3 /usr/local/bin/pyrunner.py & exec \"$@\"", "--"]
+
 # Default working directory for agent scripts
 WORKDIR /workspace
 
-CMD ["python3"]
+CMD ["sleep", "infinity"]
