@@ -569,7 +569,7 @@ Not authenticated + TASK → do NOT call tools. Explain what would be done and h
 
 Fetch from: https://emergent-company.github.io/emergent.memory/latest/
 
-URL pattern: .../latest/{section}/{page}/
+URL pattern: .../latest/<section>/<page>/
 
 | Section | Pages |
 |---|---|
