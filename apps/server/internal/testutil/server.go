@@ -214,7 +214,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register chat routes
 	chatRepo := chat.NewRepository(db, log)
 	chatSvc := chat.NewService(chatRepo, log)
-	chatHandler := chat.NewHandler(chatSvc, nil, searchSvc, nil, agentRepo, nil, nil, nil, log) // nil LLM client, executor, credSvc, modelFactory, apiTokenSvc for tests
+	chatHandler := chat.NewHandler(chatSvc, nil, searchSvc, nil, agentRepo, nil, nil, nil, testDB.Config, log) // nil LLM client, executor, credSvc, modelFactory, apiTokenSvc for tests
 	chat.RegisterRoutes(e, chatHandler, authMiddleware)
 
 	// Register MCP routes

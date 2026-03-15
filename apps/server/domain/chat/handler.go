@@ -19,6 +19,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/search"
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -38,11 +39,12 @@ type Handler struct {
 	credSvc       *provider.CredentialService
 	modelFactory  *adk.ModelFactory
 	apiTokenSvc   *apitoken.Service // optional: mints ephemeral tokens for sandbox agents
+	askV2Default  bool              // server-level default for v2 code-gen agent
 	log           *slog.Logger
 }
 
 // NewHandler creates a new chat handler
-func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, credSvc *provider.CredentialService, modelFactory *adk.ModelFactory, apiTokenSvc *apitoken.Service, log *slog.Logger) *Handler {
+func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, credSvc *provider.CredentialService, modelFactory *adk.ModelFactory, apiTokenSvc *apitoken.Service, cfg *config.Config, log *slog.Logger) *Handler {
 	return &Handler{
 		svc:           svc,
 		llmClient:     llmClient,
@@ -52,6 +54,7 @@ func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Servic
 		credSvc:       credSvc,
 		modelFactory:  modelFactory,
 		apiTokenSvc:   apiTokenSvc,
+		askV2Default:  cfg.AskV2,
 		log:           log.With(logger.Scope("chat.handler")),
 	}
 }
@@ -1073,6 +1076,7 @@ func (h *Handler) QueryStream(c echo.Context) error {
 type AskStreamRequest struct {
 	Message string `json:"message"`
 	Runtime string `json:"runtime,omitempty"` // "python" (default) or "go"
+	V2      bool   `json:"v2,omitempty"`      // use code-generation agent variant
 }
 
 // AskStream handles POST /api/projects/:projectId/ask and POST /api/ask.
@@ -1175,9 +1179,17 @@ func (h *Handler) AskStream(c echo.Context) error {
 	}
 
 	// Ensure the cli-assistant-agent exists for this project (idempotent, internal).
-	agentDef, err := h.agentRepo.EnsureCliAssistantAgent(ctx, agentProjectID, req.Runtime)
-	if err != nil {
-		return apperror.NewInternal("failed to ensure cli-assistant-agent", err)
+	// Use v2 code-gen variant if requested by client or enabled server-wide.
+	useV2 := req.V2 || h.askV2Default
+	var agentDef *agents.AgentDefinition
+	var ensureErr error
+	if useV2 {
+		agentDef, ensureErr = h.agentRepo.EnsureCliAssistantAgentV2(ctx, agentProjectID, req.Runtime)
+	} else {
+		agentDef, ensureErr = h.agentRepo.EnsureCliAssistantAgent(ctx, agentProjectID, req.Runtime)
+	}
+	if ensureErr != nil {
+		return apperror.NewInternal("failed to ensure cli-assistant-agent", ensureErr)
 	}
 
 	agentDefUUID, err := uuid.Parse(agentDef.ID)

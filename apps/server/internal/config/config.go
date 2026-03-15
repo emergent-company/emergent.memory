@@ -65,6 +65,11 @@ type Config struct {
 	// OpenTelemetry tracing configuration
 	Otel OtelConfig
 
+	// AskV2 enables the code-generation variant of the CLI assistant agent.
+	// When true, POST /api/ask and /api/projects/:id/ask use EnsureCliAssistantAgentV2
+	// which generates Python SDK scripts instead of calling 57 individual MCP tools.
+	AskV2 bool `env:"MEMORY_ASK_V2" envDefault:"false"`
+
 	// Server timeouts
 	ReadTimeout     time.Duration `env:"SERVER_READ_TIMEOUT" envDefault:"3600s"`   // 1 hour for large file uploads
 	WriteTimeout    time.Duration `env:"SERVER_WRITE_TIMEOUT" envDefault:"28800s"` // 8 hours for SSE
