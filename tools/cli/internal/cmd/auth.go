@@ -1058,17 +1058,32 @@ func printMCPConfig(cfg *config.Config, project *projectResponse) {
 	fmt.Println()
 }
 
+// logoutAll is bound to the --all flag on the logout command.
+var logoutAll bool
+
 func newLogoutCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "logout",
-		Short:   "Clear stored credentials",
-		Long:    "Remove locally stored OAuth credentials and log out from the Memory platform.",
+	cmd := &cobra.Command{
+		Use:   "logout",
+		Short: "Clear stored credentials",
+		Long: `Remove locally stored OAuth credentials and log out from the Memory platform.
+
+Before deleting local credentials, attempts to revoke tokens server-side via
+the OIDC revocation endpoint. Revocation is best-effort — if it fails, local
+credentials are still removed.
+
+Use --all to also clear api_key and project_token from your config file,
+removing all locally stored authentication state.`,
 		GroupID: "account",
 		RunE:    runLogout,
 	}
+	cmd.Flags().BoolVar(&logoutAll, "all", false, "Also clear api_key and project_token from config")
+	return cmd
 }
 
 var logoutCmd = newLogoutCmd()
+
+// oidcClientID is the OAuth client ID used for device flow authentication.
+const oidcClientID = "362800068257972227"
 
 func runLogout(cmd *cobra.Command, args []string) error {
 	homeDir, err := os.UserHomeDir()
@@ -1077,18 +1092,76 @@ func runLogout(cmd *cobra.Command, args []string) error {
 	}
 
 	credsPath := filepath.Join(homeDir, ".memory", "credentials.json")
+	clearedAnything := false
 
+	// --- OAuth credentials ---
 	if _, err := os.Stat(credsPath); os.IsNotExist(err) {
-		fmt.Println("No credentials found")
-		return nil
+		fmt.Fprintln(os.Stderr, "No OAuth credentials found")
+	} else {
+		// Load credentials to attempt revocation before deleting
+		creds, loadErr := auth.Load(credsPath)
+		if loadErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not load credentials for revocation: %v\n", loadErr)
+		} else {
+			// Attempt server-side token revocation (best-effort)
+			warnings := auth.RevokeCredentials(creds, oidcClientID)
+			for _, w := range warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+			if len(warnings) == 0 {
+				fmt.Println("Tokens revoked server-side")
+			}
+		}
+
+		// Always delete local credentials regardless of revocation outcome
+		if err := os.Remove(credsPath); err != nil {
+			return fmt.Errorf("failed to remove credentials: %w", err)
+		}
+		fmt.Printf("OAuth credentials removed: %s\n", credsPath)
+		clearedAnything = true
 	}
 
-	if err := os.Remove(credsPath); err != nil {
-		return fmt.Errorf("failed to remove credentials: %w", err)
+	// --- Config auth fields (--all) ---
+	if logoutAll {
+		var configPath string
+		configPath, _ = cmd.Flags().GetString("config")
+		if configPath == "" {
+			configPath = config.DiscoverPath("")
+		}
+
+		cfg, loadErr := config.Load(configPath)
+		if loadErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not load config: %v\n", loadErr)
+		} else {
+			changed := false
+
+			if cfg.APIKey != "" {
+				cfg.APIKey = ""
+				fmt.Println("Cleared api_key from config")
+				changed = true
+			}
+			if cfg.ProjectToken != "" {
+				cfg.ProjectToken = ""
+				fmt.Println("Cleared project_token from config")
+				changed = true
+			}
+
+			if changed {
+				if saveErr := config.Save(cfg, configPath); saveErr != nil {
+					return fmt.Errorf("failed to save config: %w", saveErr)
+				}
+				clearedAnything = true
+			} else {
+				fmt.Println("No api_key or project_token in config to clear")
+			}
+		}
 	}
 
-	fmt.Println("Logged out successfully")
-	fmt.Printf("Credentials removed from: %s\n", credsPath)
+	if clearedAnything {
+		fmt.Println("Logged out successfully")
+	} else {
+		fmt.Println("No credentials found to clear")
+	}
 	return nil
 }
 

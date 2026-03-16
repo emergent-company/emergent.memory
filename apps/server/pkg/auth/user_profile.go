@@ -96,13 +96,14 @@ func (s *UserProfileService) GetByZitadelUserID(ctx context.Context, zitadelUser
 	return &profile, nil
 }
 
-// EnsureProfile ensures a user profile exists for the given subject ID
+// EnsureProfile ensures a user profile exists for the given subject ID.
+// Returns the profile, a boolean indicating whether a new profile was created, and any error.
 // This matches the NestJS upsertBase behavior
-func (s *UserProfileService) EnsureProfile(ctx context.Context, subjectID string, info *UserProfileInfo) (*UserProfile, error) {
+func (s *UserProfileService) EnsureProfile(ctx context.Context, subjectID string, info *UserProfileInfo) (*UserProfile, bool, error) {
 	// 1. Check for active (non-deleted) user profile
 	profile, err := s.GetByZitadelUserID(ctx, subjectID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if profile != nil {
@@ -110,7 +111,7 @@ func (s *UserProfileService) EnsureProfile(ctx context.Context, subjectID string
 		if info != nil && info.Email != "" {
 			_ = s.syncEmail(ctx, profile.ID, info.Email)
 		}
-		return profile, nil
+		return profile, false, nil
 	}
 
 	// 2. Check for soft-deleted profile to reactivate
@@ -139,7 +140,7 @@ func (s *UserProfileService) EnsureProfile(ctx context.Context, subjectID string
 			Exec(ctx)
 
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 
 		deletedProfile.DeletedAt = nil
@@ -151,7 +152,7 @@ func (s *UserProfileService) EnsureProfile(ctx context.Context, subjectID string
 			deletedProfile.Email = info.Email
 		}
 
-		return &deletedProfile, nil
+		return &deletedProfile, false, nil
 	}
 
 	// 3. Create new profile (with conflict handling for race conditions)
@@ -184,7 +185,7 @@ func (s *UserProfileService) EnsureProfile(ctx context.Context, subjectID string
 		Exec(ctx)
 
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// Sync email if provided
@@ -193,7 +194,7 @@ func (s *UserProfileService) EnsureProfile(ctx context.Context, subjectID string
 		newProfile.Email = info.Email
 	}
 
-	return newProfile, nil
+	return newProfile, true, nil
 }
 
 // getEmail retrieves the verified email for a user

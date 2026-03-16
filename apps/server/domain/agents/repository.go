@@ -576,21 +576,21 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 
 // cliAssistantAgentSystemPrompt is the default system prompt for the cli-assistant-agent.
 const cliAssistantAgentSystemPrompt = `You are a CLI assistant for the Memory knowledge management platform.
-You answer questions and take direct action by writing Python scripts using the Memory SDK.
+You answer questions and take direct action: create, update, delete entities, relationships, agents, schemas, MCP servers, and projects.
 
 ## Context & Auth
 
 You are told whether the user is authenticated and has a project context.
 - **Not authenticated**: answer docs questions only. For tasks, tell user to run "memory login", set MEMORY_API_KEY, or pass --project-token.
-- **Authenticated, no project**: docs + account-level tasks (list projects, etc.). For project-scoped tasks, say: pass --project <id> or run "memory config set project_id <id>".
-- **Authenticated + project**: full access.
+- **Authenticated, no project**: docs + account-level tasks (create_project, list_traces, etc.). For project-scoped tasks, say: pass --project <id> or run "memory config set project_id <id>".
+- **Authenticated + project**: full access — use all available tools.
 
 ## Classification & Tool Constraints
 
 Classify each request, then strictly follow tool rules:
-- **DOCS**: use ONLY web-fetch. No run_python.
-- **TASK**: use ONLY run_python. No web-fetch unless user explicitly asks for docs.
-- **MIXED**: fetch docs first, then run_python for live data.
+- **DOCS**: use ONLY web-fetch. No graph/agent/schema/skill tools.
+- **TASK**: use ONLY action/data tools. No web-fetch unless user explicitly asks for docs.
+- **MIXED**: fetch docs first, then action tools.
 
 Not authenticated + TASK → do NOT call tools. Explain what would be done and how to authenticate.
 
@@ -609,118 +609,15 @@ URL pattern: .../latest/<section>/<page>/
 
 Fetch the specific page directly. If unsure, fetch the section index. Never re-fetch a URL already retrieved.
 
-## Task Execution
-
-Write a **complete, self-contained Python script** and call run_python once per task. Chain all operations in one script. Format output as clean markdown for the terminal.
-
-For writes: briefly state intent before executing. For deletes: warn explicitly. Do not ask for confirmation.
-
 ## Response Format
 
 Default to CLI commands. Only include REST/curl/HTTP examples if the user explicitly asks about the API, SDK, or endpoints.
 
-## Python SDK Reference
+## Task Execution
 
-The sandbox has credentials pre-injected. Use Client.from_env() — never hardcode keys.
-ALL methods return dicts. Use bracket access (p['name']), NOT attribute access (p.name).
+Use tools to fulfill requests directly. Never fabricate live state.
 
-~~~python
-from emergent import Client
-client = Client.from_env()
-
-# ── Projects ──
-client.projects.list() -> list[dict]                    # keys: id, name, orgId
-client.projects.get(id) -> dict
-client.projects.create({"name": "..."}) -> dict
-client.projects.update(id, {"name": "..."}) -> dict
-client.projects.delete(id) -> None
-
-# ── Graph Objects ──
-client.graph.list_objects(type=None, types=None, status=None, limit=50, cursor=None) -> dict
-    # Returns: {data: [...], cursor: str|None, total: int}
-client.graph.count_objects(type=None, types=None) -> int
-client.graph.create_object({"type": "...", "properties": {...}}) -> dict
-client.graph.update_object(id, {"properties": {...}}) -> dict  # WARNING: returns NEW id
-client.graph.delete_object(id) -> None
-client.graph.get_object(id) -> dict
-client.graph.get_object_edges(id) -> dict                # All relationships for an entity
-client.graph.hybrid_search({"query": "..."}) -> dict     # {data: [{object, score}]}
-client.graph.fts_search(query, types=None) -> dict       # Full-text search
-client.graph.find_similar(id, limit=10) -> list[dict]
-client.graph.traverse({"start_entity_id": "...", "max_depth": 2}) -> dict
-client.graph.bulk_create_objects([...]) -> dict           # max 100, {items, errors}
-
-# ── Relationships ──
-client.graph.create_relationship({"type": "...", "source_id": "...", "target_id": "..."}) -> dict
-client.graph.list_relationships(type=None, src_id=None, dst_id=None) -> dict
-client.graph.delete_relationship(id) -> None
-
-# ── Agents ──
-client.agents.list() -> list[dict]
-client.agents.get(id) -> dict
-client.agents.create({...}) -> dict
-client.agents.update(id, {...}) -> dict
-client.agents.delete(id) -> None
-client.agents.trigger(id) -> dict
-client.agents.get_runs(id, limit=20) -> list[dict]
-client.agents.list_project_runs(agent_id=None, status=None, limit=50) -> dict
-client.agents.get_project_run(run_id) -> dict
-client.agents.get_run_tool_calls(run_id) -> list[dict]
-client.agents.list_project_questions(status=None) -> list[dict]
-client.agents.respond_to_question(question_id, response) -> dict
-client.agents.list_adk_sessions() -> list[dict]
-client.agents.get_adk_session(session_id) -> dict
-
-# ── Agent Definitions ──
-client.agent_definitions.list() -> list[dict]
-client.agent_definitions.get(id) -> dict
-client.agent_definitions.create({...}) -> dict
-client.agent_definitions.update(id, {...}) -> dict
-client.agent_definitions.delete(id) -> None
-
-# ── Schemas ──
-client.schemas.list() -> list[dict]
-client.schemas.get(id) -> dict
-client.schemas.create({...}) -> dict
-client.schemas.delete(id) -> None
-
-# ── Documents ──
-client.documents.list(limit=50) -> list[dict]
-client.documents.get(id) -> dict
-client.documents.delete(id) -> None
-
-# ── Skills ──
-client.skills.list() -> list[dict]
-client.skills.get(id) -> dict
-client.skills.create({...}) -> dict
-client.skills.update(id, {...}) -> dict
-client.skills.delete(id) -> None
-
-# ── Search ──
-client.search.search(query, limit=20) -> dict            # Unified search (graph + docs)
-
-# ── MCP (escape hatch for tools without SDK methods) ──
-client.mcp.call_tool(name, arguments={}) -> Any           # Call any MCP tool by name
-    # e.g. client.mcp.call_tool("trace-list", {"limit": 10})
-    # e.g. client.mcp.call_tool("embedding-status", {})
-    # e.g. client.mcp.call_tool("provider-usage-get", {})
-~~~
-
-### Script template
-~~~python
-from emergent import Client
-client = Client.from_env()
-# ... your logic ...
-# ALWAYS print results — empty stdout = no output shown to user
-print("Result:", result)
-~~~
-
-### Rules
-- Always print results with print(). Empty stdout means nothing shown.
-- Check for empty results and print a clear message.
-- Use try/except for error handling.
-- Non-zero exit_code means an exception — read stderr.
-- For cross-project work, use client.set_context(org_id, project_id) to switch projects.
+For writes: briefly state intent before executing. For deletes: warn explicitly. Do not ask for confirmation.
 
 ## CLI Reference
 
@@ -770,40 +667,6 @@ Common flags: --server <url>, --project <id>, --project-token <tok>, --output ta
 - **Models**: Gemini family (gemini-2.0-flash, gemini-2.5-flash, gemini-2.5-pro, gemini-3.1-flash-lite-preview).
 - **Provider config**: org-level via "memory provider configure"; project override via "memory provider configure-project".`
 
-// cliAssistantGoScriptingSection is appended to the system prompt when the Go runtime is selected.
-const cliAssistantGoScriptingSection = `
-
-## Go Scripting
-
-Use **run_go** instead of run_python for all tasks.
-Credentials are pre-injected; use sdk.NewFromEnv().
-
-` + "```go" + `
-package main
-
-import (
-	"context"
-	"fmt"
-	"strings"
-	sdk "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
-)
-
-func main() {
-	client, err := sdk.NewFromEnv()
-	if err != nil { panic(err) }
-	ctx := context.Background()
-	projects, err := client.Projects.List(ctx)
-	if err != nil { panic(err) }
-	for _, p := range projects {
-		if strings.Contains(strings.ToLower(p.Name), "e2e") {
-			fmt.Printf("%s  %s\n", p.ID, p.Name)
-		}
-	}
-}
-` + "```" + `
-
-Print results with fmt.Println/Printf. Non-zero exit code means error; check stderr.`
-
 // EnsureCliAssistantAgent returns the cli-assistant-agent for the project (or with an empty
 // project ID for the user-level /api/ask endpoint), creating it if it does not exist yet.
 // If it already exists, its Tools list, SystemPrompt, and SandboxConfig are updated to
@@ -811,14 +674,10 @@ Print results with fmt.Println/Printf. Non-zero exit code means error; check std
 // Uses VisibilityInternal so it never appears in the public agent list.
 // Safe to call concurrently — a race between two callers results in one insert and one
 // subsequent read (FindDefinitionByName will find the winner's row).
-// runtime may be "go" or "" / "python" (default).
+// runtime parameter is accepted for API compatibility but no longer affects behavior
+// (both variants use MCP tools, not sandbox).
 func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID string, runtime string) (*AgentDefinition, error) {
-	useGo := runtime == "go"
-
 	agentName := "cli-assistant-agent"
-	if useGo {
-		agentName = "cli-assistant-agent-go"
-	}
 
 	existing, err := r.FindDefinitionByName(ctx, projectID, agentName)
 	if err != nil {
@@ -828,48 +687,104 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 	temperature := float32(0.3)
 	maxSteps := 20
 	systemPrompt := cliAssistantAgentSystemPrompt
-	if useGo {
-		systemPrompt += cliAssistantGoScriptingSection
-	}
 
-	// Build the sandbox config based on runtime.
-	sandboxImage := "emergent-memory-python-sdk:latest"
-	sandboxTools := []string{"run_python", "bash"}
-	if useGo {
-		sandboxImage = "emergent-memory-go-sdk:latest"
-		sandboxTools = []string{"run_go", "bash"}
-	}
-
-	sandboxCfg := &sandbox.AgentSandboxConfig{
-		Enabled:   true,
-		BaseImage: sandboxImage,
-		Tools:     sandboxTools,
-		RepoSource: &sandbox.RepoSourceConfig{
-			Type: sandbox.RepoSourceNone,
-		},
-	}
-	sandboxMap, sandboxMapErr := sandboxCfg.ToMap()
-	if sandboxMapErr != nil {
-		// Non-fatal: proceed without sandbox config rather than blocking ask calls.
-		sandboxMap = nil
-	}
-
+	// MCP tools — no sandbox/SDK needed.
 	canonicalTools := []string{
 		// Web access for documentation lookups (DOCS classification)
 		"web-fetch",
+		// Project info
+		"project-get",
+		// Knowledge graph — read
+		"search-hybrid",
+		"entity-query",
+		"entity-search",
+		"search-semantic",
+		"search-similar",
+		"entity-edges-get",
+		"graph-traverse",
+		"entity-type-list",
+		"schema-version",
+		"relationship-list",
+		// Knowledge graph — write
+		"entity-create",
+		"entity-update",
+		"entity-delete",
+		"relationship-create",
+		"relationship-update",
+		"relationship-delete",
+		// Agent management — read
+		"agent-def-list",
+		"agent-def-get",
+		"agent-list",
+		"agent-get",
+		"agent-run-list",
+		"agent-run-get",
+		"agent-run-tool-calls",
+		"agent-list-available",
+		// Agent definition — write
+		"agent-def-create",
+		"update_agent_definition",
+		"agent-def-delete",
+		// Runtime agent — write
+		"agent-create",
+		"update_agent",
+		"agent-delete",
+		"trigger_agent",
+		// Schema registry — read
+		"schema-list",
+		"schema-get",
+		"schema-list-available",
+		"schema-list-installed",
+		// Schema registry — write
+		"schema-create",
+		"schema-delete",
+		"schema-assign",
+		"schema-assignment-update",
+		// MCP registry — write
+		"mcp-server-create",
+		"update_mcp_server",
+		"mcp-server-delete",
+		"mcp-registry-install",
+		"sync_mcp_server_tools",
+		// Project — write
+		"project-create",
+		// Documents — read/write (non-destructive uploads allowed)
+		"document-list",
+		"document-get",
+		"document-upload",
+		"document-delete",
+		// Skills — read/write
+		"skill-list",
+		"skill-get",
+		"skill-create",
+		"skill-update",
+		"skill-delete",
+		// Embeddings — read only (no pause/resume/config changes)
+		"embedding-status",
+		// Agent Questions and ADK sessions — read
+		"agent-question-list",
+		"agent-question-list-project",
+		"agent-question-respond",
+		"adk-session-list",
+		"adk-session-get",
+		// Traces — read
+		"trace-list",
+		"trace-get",
 	}
 
 	if existing != nil {
-		// Update tools, system prompt, model, and sandbox config to pick up any changes.
+		// Self-heal: update tools, system prompt, model, and clear sandbox config
+		// to pick up any changes deployed in code.
 		existing.Tools = canonicalTools
 		existing.SystemPrompt = &systemPrompt
 		if existing.Model == nil {
 			existing.Model = &ModelConfig{}
 		}
 		existing.Model.Name = "gemini-3.1-flash-lite-preview"
-		if sandboxMap != nil {
-			existing.SandboxConfig = sandboxMap
-		}
+		existing.Model.Temperature = &temperature
+		existing.MaxSteps = &maxSteps
+		// Clear sandbox config — this agent uses MCP tools, not SDK/sandbox.
+		existing.SandboxConfig = nil
 
 		// Apply per-project overrides (if any) on top of canonical defaults.
 		if projectID != "" {
@@ -894,13 +809,12 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 			Name:        "gemini-3.1-flash-lite-preview",
 			Temperature: &temperature,
 		},
-		Tools:         canonicalTools,
-		FlowType:      FlowTypeSingle,
-		IsDefault:     false,
-		MaxSteps:      &maxSteps,
-		Visibility:    VisibilityInternal,
-		Config:        map[string]any{},
-		SandboxConfig: sandboxMap,
+		Tools:      canonicalTools,
+		FlowType:   FlowTypeSingle,
+		IsDefault:  false,
+		MaxSteps:   &maxSteps,
+		Visibility: VisibilityInternal,
+		Config:     map[string]any{},
 	}
 
 	// Apply per-project overrides (if any) on top of canonical defaults.

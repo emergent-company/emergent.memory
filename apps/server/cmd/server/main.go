@@ -27,6 +27,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/authinfo"
+	"github.com/emergent-company/emergent.memory/domain/autoprovision"
 	"github.com/emergent-company/emergent.memory/domain/backups"
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/chat"
@@ -129,6 +130,7 @@ func main() {
 		chunks.Module,
 		orgs.Module,
 		projects.Module,
+		autoprovision.Module,
 		users.Module,
 		userprofile.Module,
 		apitoken.Module,

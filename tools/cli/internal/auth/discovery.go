@@ -14,6 +14,7 @@ type OIDCConfig struct {
 	TokenEndpoint               string `json:"token_endpoint"`
 	UserinfoEndpoint            string `json:"userinfo_endpoint"`
 	AuthorizationEndpoint       string `json:"authorization_endpoint,omitempty"`
+	RevocationEndpoint          string `json:"revocation_endpoint,omitempty"`
 	JwksURI                     string `json:"jwks_uri,omitempty"`
 }
 

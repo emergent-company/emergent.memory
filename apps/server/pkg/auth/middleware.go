@@ -12,6 +12,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/uptrace/bun"
+	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -84,27 +85,39 @@ func GetProjectID(c echo.Context) (string, error) {
 
 // Middleware handles authentication for routes
 type Middleware struct {
-	db         bun.IDB
-	cfg        *config.Config
-	log        *slog.Logger
-	userSvc    *UserProfileService
-	zitadelSvc *ZitadelService
-	debugToken string
+	db               bun.IDB
+	cfg              *config.Config
+	log              *slog.Logger
+	userSvc          *UserProfileService
+	zitadelSvc       *ZitadelService
+	autoProvisionSvc AutoProvisionService
+	debugToken       string
+}
+
+// MiddlewareParams holds the dependencies for creating the auth middleware.
+type MiddlewareParams struct {
+	fx.In
+	DB               bun.IDB
+	Cfg              *config.Config
+	Log              *slog.Logger
+	UserSvc          *UserProfileService
+	AutoProvisionSvc AutoProvisionService `optional:"true"`
 }
 
 // NewMiddleware creates a new auth middleware
-func NewMiddleware(db bun.IDB, cfg *config.Config, log *slog.Logger, userSvc *UserProfileService) *Middleware {
+func NewMiddleware(p MiddlewareParams) *Middleware {
 	m := &Middleware{
-		db:         db,
-		cfg:        cfg,
-		log:        log.With(logger.Scope("auth")),
-		userSvc:    userSvc,
-		zitadelSvc: NewZitadelService(db, cfg, log),
+		db:               p.DB,
+		cfg:              p.Cfg,
+		log:              p.Log.With(logger.Scope("auth")),
+		userSvc:          p.UserSvc,
+		zitadelSvc:       NewZitadelService(p.DB, p.Cfg, p.Log),
+		autoProvisionSvc: p.AutoProvisionSvc,
 	}
 
 	// Set up debug token for development
-	if cfg.Debug && cfg.Zitadel.DebugToken != "" {
-		m.debugToken = "Bearer " + cfg.Zitadel.DebugToken
+	if p.Cfg.Debug && p.Cfg.Zitadel.DebugToken != "" {
+		m.debugToken = "Bearer " + p.Cfg.Zitadel.DebugToken
 	}
 
 	return m
@@ -427,10 +440,13 @@ func (m *Middleware) validateToken(ctx context.Context, token string) (*AuthUser
 	userInfo, err := m.zitadelSvc.GetUserInfo(ctx, token)
 	if err == nil && userInfo != nil && userInfo.Sub != "" {
 		claims := &TokenClaims{
-			Sub:       userInfo.Sub,
-			Email:     userInfo.Email,
-			Scopes:    GetAllScopes(),                // Userinfo doesn't return scopes, grant all for now
-			ExpiresAt: time.Now().Add(1 * time.Hour), // Default expiry
+			Sub:        userInfo.Sub,
+			Email:      userInfo.Email,
+			Scopes:     GetAllScopes(),                // Userinfo doesn't return scopes, grant all for now
+			ExpiresAt:  time.Now().Add(1 * time.Hour), // Default expiry
+			GivenName:  userInfo.GivenName,
+			FamilyName: userInfo.FamilyName,
+			Name:       userInfo.Name,
 		}
 		// Cache this result
 		_ = m.cacheIntrospection(ctx, token, claims)
@@ -448,10 +464,13 @@ func (m *Middleware) validateToken(ctx context.Context, token string) (*AuthUser
 
 // TokenClaims represents parsed token claims
 type TokenClaims struct {
-	Sub       string    // Subject (user ID)
-	Email     string    // Email address
-	Scopes    []string  // Token scopes
-	ExpiresAt time.Time // Token expiration
+	Sub        string    // Subject (user ID)
+	Email      string    // Email address
+	Scopes     []string  // Token scopes
+	ExpiresAt  time.Time // Token expiration
+	GivenName  string    // First name from OIDC claims
+	FamilyName string    // Last name from OIDC claims
+	Name       string    // Display name from OIDC claims
 }
 
 // validateAPIToken validates an API token (emt_* prefix)
@@ -535,7 +554,7 @@ func (m *Middleware) checkTestToken(ctx context.Context, token string) *AuthUser
 
 	// Check if token is in the known test tokens map
 	if config, ok := testTokens[token]; ok {
-		user, err := m.userSvc.EnsureProfile(ctx, config.sub, nil)
+		user, _, err := m.userSvc.EnsureProfile(ctx, config.sub, nil)
 		if err != nil {
 			m.log.Error("failed to ensure test user profile", logger.Error(err))
 			return nil
@@ -551,7 +570,7 @@ func (m *Middleware) checkTestToken(ctx context.Context, token string) *AuthUser
 	// Check for dynamic e2e-* pattern (tokens not in the map above)
 	// These create ad-hoc user profiles using the token as the subject ID
 	if strings.HasPrefix(token, "e2e-") {
-		user, err := m.userSvc.EnsureProfile(ctx, token, nil)
+		user, _, err := m.userSvc.EnsureProfile(ctx, token, nil)
 		if err != nil {
 			m.log.Error("failed to ensure dynamic e2e user profile", logger.Error(err))
 			return nil
@@ -617,12 +636,26 @@ func (m *Middleware) checkStandaloneAPIKey(r *http.Request) *AuthUser {
 // ensureUserProfile ensures the user has a profile and returns AuthUser
 func (m *Middleware) ensureUserProfile(ctx context.Context, claims *TokenClaims) (*AuthUser, error) {
 	profile := &UserProfileInfo{
-		Email: claims.Email,
+		Email:       claims.Email,
+		FirstName:   claims.GivenName,
+		LastName:    claims.FamilyName,
+		DisplayName: claims.Name,
 	}
 
-	user, err := m.userSvc.EnsureProfile(ctx, claims.Sub, profile)
+	user, isNew, err := m.userSvc.EnsureProfile(ctx, claims.Sub, profile)
 	if err != nil {
 		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+
+	// Auto-provision default org and project for brand-new users
+	if isNew && m.autoProvisionSvc != nil {
+		if provErr := m.autoProvisionSvc.ProvisionNewUser(ctx, user.ID, profile); provErr != nil {
+			// Log but do not block authentication
+			m.log.Error("auto-provision failed for new user",
+				slog.String("userID", user.ID),
+				logger.Error(provErr),
+			)
+		}
 	}
 
 	return &AuthUser{
@@ -665,6 +698,15 @@ func (m *Middleware) getCachedIntrospection(ctx context.Context, token string) (
 	if scope, ok := result.IntrospectionData["scope"].(string); ok {
 		claims.Scopes = strings.Split(scope, " ")
 	}
+	if givenName, ok := result.IntrospectionData["given_name"].(string); ok {
+		claims.GivenName = givenName
+	}
+	if familyName, ok := result.IntrospectionData["family_name"].(string); ok {
+		claims.FamilyName = familyName
+	}
+	if name, ok := result.IntrospectionData["name"].(string); ok {
+		claims.Name = name
+	}
 	claims.ExpiresAt = result.ExpiresAt
 
 	return claims, nil
@@ -685,9 +727,12 @@ func (m *Middleware) cacheIntrospection(ctx context.Context, token string, claim
 	expiresAt := time.Now().Add(ttl)
 
 	data := map[string]any{
-		"sub":   claims.Sub,
-		"email": claims.Email,
-		"scope": strings.Join(claims.Scopes, " "),
+		"sub":         claims.Sub,
+		"email":       claims.Email,
+		"scope":       strings.Join(claims.Scopes, " "),
+		"given_name":  claims.GivenName,
+		"family_name": claims.FamilyName,
+		"name":        claims.Name,
 	}
 
 	_, err := m.db.NewInsert().
@@ -727,10 +772,13 @@ func (m *Middleware) introspectToken(ctx context.Context, token string) (*TokenC
 	}
 
 	return &TokenClaims{
-		Sub:       result.Sub,
-		Email:     result.Email,
-		Scopes:    ParseScopes(result.Scope),
-		ExpiresAt: time.Unix(result.Exp, 0),
+		Sub:        result.Sub,
+		Email:      result.Email,
+		Scopes:     ParseScopes(result.Scope),
+		ExpiresAt:  time.Unix(result.Exp, 0),
+		GivenName:  result.GivenName,
+		FamilyName: result.FamilyName,
+		Name:       result.Name,
 	}, nil
 }
 

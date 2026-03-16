@@ -50,15 +50,17 @@ type inflightRequest struct {
 
 // IntrospectionResult holds the parsed introspection response
 type IntrospectionResult struct {
-	Active   bool      `json:"active"`
-	Sub      string    `json:"sub"`
-	Email    string    `json:"email"`
-	Scope    string    `json:"scope"`    // Space-separated scopes
-	Exp      int64     `json:"exp"`      // Expiration timestamp (Unix)
-	ClientID string    `json:"client_id"`
-	Username string    `json:"username"`
-	Name     string    `json:"name"`
-	
+	Active     bool   `json:"active"`
+	Sub        string `json:"sub"`
+	Email      string `json:"email"`
+	Scope      string `json:"scope"` // Space-separated scopes
+	Exp        int64  `json:"exp"`   // Expiration timestamp (Unix)
+	ClientID   string `json:"client_id"`
+	Username   string `json:"username"`
+	Name       string `json:"name"`
+	GivenName  string `json:"given_name"`
+	FamilyName string `json:"family_name"`
+
 	// Zitadel-specific claims
 	Claims map[string]any `json:"-"` // All claims for role extraction
 }
@@ -174,15 +176,17 @@ func (z *ZitadelService) doIntrospect(ctx context.Context, token string) (*Intro
 
 	// Convert response to our result type
 	result := &IntrospectionResult{
-		Active:   resp.Active,
-		Sub:      resp.Subject,
-		Email:    resp.GetEmail(),
-		Scope:    resp.Scope,
-		Exp:      resp.Expiration.AsTime().Unix(),
-		ClientID: resp.ClientID,
-		Username: resp.GetPreferredUsername(),
-		Name:     resp.GetName(),
-		Claims:   resp.Claims,
+		Active:     resp.Active,
+		Sub:        resp.Subject,
+		Email:      resp.GetEmail(),
+		Scope:      resp.Scope,
+		Exp:        resp.Expiration.AsTime().Unix(),
+		ClientID:   resp.ClientID,
+		Username:   resp.GetPreferredUsername(),
+		Name:       resp.GetName(),
+		GivenName:  resp.GivenName,
+		FamilyName: resp.FamilyName,
+		Claims:     resp.Claims,
 	}
 
 	// Cache the result
@@ -248,7 +252,7 @@ type introspectionResponse struct {
 	Audience   any    `json:"aud"`
 	Issuer     string `json:"iss"`
 	JWTID      string `json:"jti"`
-	
+
 	// Standard OIDC claims
 	Email             string `json:"email"`
 	EmailVerified     bool   `json:"email_verified"`
@@ -256,17 +260,17 @@ type introspectionResponse struct {
 	PreferredUsername string `json:"preferred_username"`
 	GivenName         string `json:"given_name"`
 	FamilyName        string `json:"family_name"`
-	
+
 	// All claims for extension
 	Claims map[string]any `json:"-"`
 }
 
 // Implement required interface methods
-func (r *introspectionResponse) IsActive() bool            { return r.Active }
-func (r *introspectionResponse) SetActive(active bool)     { r.Active = active }
-func (r *introspectionResponse) GetEmail() string          { return r.Email }
+func (r *introspectionResponse) IsActive() bool               { return r.Active }
+func (r *introspectionResponse) SetActive(active bool)        { r.Active = active }
+func (r *introspectionResponse) GetEmail() string             { return r.Email }
 func (r *introspectionResponse) GetPreferredUsername() string { return r.PreferredUsername }
-func (r *introspectionResponse) GetName() string           { return r.Name }
+func (r *introspectionResponse) GetName() string              { return r.Name }
 
 // Time wraps time.Time for JSON unmarshaling from Unix timestamp
 type Time struct {

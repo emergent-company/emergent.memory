@@ -83,7 +83,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Create auth components
 	userSvc := auth.NewUserProfileService(db, log)
-	authMiddleware := auth.NewMiddleware(db, testDB.Config, log, userSvc)
+	authMiddleware := auth.NewMiddleware(auth.MiddlewareParams{
+		DB:      db,
+		Cfg:     testDB.Config,
+		Log:     log,
+		UserSvc: userSvc,
+	})
 
 	// Register health routes (public)
 	healthHandler := health.NewHandler(testDB.Pool, testDB.Config)

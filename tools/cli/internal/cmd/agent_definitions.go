@@ -494,7 +494,6 @@ func runOverrideAgent(cmd *cobra.Command, args []string) error {
 		items := []PickerItem{
 			{ID: "graph-query-agent", Name: "graph-query-agent"},
 			{ID: "cli-assistant-agent", Name: "cli-assistant-agent"},
-			{ID: "cli-assistant-agent-go", Name: "cli-assistant-agent-go"},
 		}
 		_, agentName, err = promptResourcePicker("Select an agent to override", items)
 		if err != nil {
