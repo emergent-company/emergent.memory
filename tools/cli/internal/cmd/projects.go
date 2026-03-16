@@ -599,7 +599,7 @@ func runDeleteProject(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete project: %w", err)
 	}
 
-	fmt.Printf("Project %s deleted.\n", projectID)
+	fmt.Printf("Project %s deletion initiated. It will be removed in the background.\n", projectID)
 	return nil
 }
 

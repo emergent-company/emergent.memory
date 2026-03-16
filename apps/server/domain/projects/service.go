@@ -306,26 +306,26 @@ func (s *Service) Delete(ctx context.Context, id string, userID string) error {
 	return nil
 }
 
-// DeleteAsync validates access synchronously (returns error to caller if project
-// not found / invalid), then fires the actual DELETE in a background goroutine.
-// The PostgreSQL cascade through graph objects and relationships can take several
-// minutes for large projects — this avoids blocking the HTTP request.
+// DeleteAsync marks the project as deleted synchronously (so it immediately
+// disappears from listings), then fires the actual hard DELETE in a background
+// goroutine. The PostgreSQL cascade through graph objects and relationships can
+// take several minutes for large projects — this avoids blocking the HTTP request.
 func (s *Service) DeleteAsync(ctx context.Context, id string, userID string) error {
 	if !isValidUUID(id) {
 		return apperror.New(400, "invalid-uuid", "id must be a valid UUID")
 	}
 
-	// Check the project exists before returning 202 — caller gets a proper 404
-	// if the project is not found rather than a silent no-op.
-	project, err := s.repo.GetByID(ctx, id, false)
+	// Synchronously mark the project as deleted so it immediately disappears
+	// from list/get queries. This sets deleted_at = now(), deleted_by = userID.
+	marked, err := s.repo.MarkDeleted(ctx, id, userID)
 	if err != nil {
 		return err
 	}
-	if project == nil {
+	if !marked {
 		return apperror.ErrNotFound.WithMessage("Project not found")
 	}
 
-	s.log.Info("project delete initiated (async)",
+	s.log.Info("project marked for deletion, starting background cleanup",
 		slog.String("projectID", id),
 		slog.String("initiatedBy", userID))
 

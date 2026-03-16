@@ -76,6 +76,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Project, er
 		ModelTableExpr("kb.projects AS p").
 		Join("INNER JOIN kb.project_memberships AS pm ON pm.project_id = p.id").
 		Where("pm.user_id = ?", params.UserID).
+		Where("p.deleted_at IS NULL").
 		Order("p.created_at DESC")
 
 	if params.IncludeStats {
@@ -144,7 +145,8 @@ func (r *Repository) GetByID(ctx context.Context, id string, includeStats bool) 
 	query := r.db.NewSelect().
 		Model(&dbProject).
 		ModelTableExpr("kb.projects AS p").
-		Where("p.id = ?", id)
+		Where("p.id = ?", id).
+		Where("p.deleted_at IS NULL")
 
 	if includeStats {
 		query = query.
@@ -239,7 +241,8 @@ func (r *Repository) CheckDuplicateName(ctx context.Context, db bun.IDB, orgID, 
 	query := db.NewSelect().
 		Model((*Project)(nil)).
 		Where("organization_id = ?", orgID).
-		Where("LOWER(name) = LOWER(?)", strings.TrimSpace(name))
+		Where("LOWER(name) = LOWER(?)", strings.TrimSpace(name)).
+		Where("deleted_at IS NULL")
 
 	if excludeID != "" {
 		query = query.Where("id != ?", excludeID)
@@ -309,9 +312,28 @@ func (r *Repository) Update(ctx context.Context, project *Project) error {
 	return nil
 }
 
-// Delete permanently deletes a project
-// Note: Using hard delete since soft delete columns (deleted_at, deleted_by)
-// are added in a later migration (1765826000000-AddSoftDeleteColumns)
+// MarkDeleted sets deleted_at and deleted_by on a project so it is immediately
+// hidden from listings. The actual row deletion (hard delete) happens later in
+// a background goroutine.
+func (r *Repository) MarkDeleted(ctx context.Context, id string, userID string) (bool, error) {
+	result, err := r.db.NewUpdate().
+		Model((*Project)(nil)).
+		Set("deleted_at = now()").
+		Set("deleted_by = ?", userID).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		r.log.Error("failed to mark project as deleted", logger.Error(err), slog.String("id", id))
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	return rowsAffected > 0, nil
+}
+
+// Delete permanently deletes a project (hard delete).
 func (r *Repository) Delete(ctx context.Context, id string) (bool, error) {
 	result, err := r.db.NewDelete().
 		Model((*Project)(nil)).
