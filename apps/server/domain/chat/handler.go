@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -929,8 +930,26 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		return nil
 	}
 
-	// Persist assistant response to kb.chat_messages with agent_run_id reference
+	// Safety net: Execute() returns (result, nil) even on pipeline failures —
+	// the error is encoded in result.Status, not as a Go error.  The
+	// StreamCallback normally emits a StreamEventError during execution, but
+	// some early-failure paths (session creation, context cancellation) skip
+	// the callback.  Emit the error event here so the client always sees it.
 	responseText := fullResponse.String()
+	if result != nil && result.Status == agents.RunStatusError && responseText == "" {
+		if errMsg, ok := result.Summary["error"].(string); ok && errMsg != "" {
+			h.log.Warn("agent run ended with error status",
+				slog.String("conversation_id", conv.ID.String()),
+				slog.String("agent_definition_id", agentDefID),
+				slog.String("run_id", result.RunID),
+				slog.String("error", errMsg),
+			)
+			sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(fmt.Errorf("%s", errMsg))))
+		}
+		return result
+	}
+
+	// Persist assistant response to kb.chat_messages with agent_run_id reference
 	if responseText != "" {
 		var retrievalCtx json.RawMessage
 		if result != nil {

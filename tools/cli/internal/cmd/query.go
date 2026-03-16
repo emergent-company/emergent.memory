@@ -128,6 +128,7 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	// Parse SSE stream
 	var response strings.Builder
 	var tools []string
+	var streamErr string
 	scanner := bufio.NewScanner(resp.Body)
 
 	for scanner.Scan() {
@@ -164,6 +165,13 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 					}
 				}
 			}
+		case "error":
+			if errMsg, ok := event["error"].(string); ok {
+				streamErr = errMsg
+				if !queryJSON {
+					fmt.Fprintf(os.Stderr, "\nError: %s\n", errMsg)
+				}
+			}
 		}
 	}
 
@@ -181,6 +189,9 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 			"tools":     tools,
 			"elapsedMs": elapsed.Milliseconds(),
 		}
+		if streamErr != "" {
+			output["error"] = streamErr
+		}
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(output)
@@ -194,6 +205,9 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 		fmt.Printf("Time: %v\n", elapsed.Round(time.Millisecond))
 	}
 
+	if streamErr != "" {
+		return fmt.Errorf("%s", streamErr)
+	}
 	return nil
 }
 
