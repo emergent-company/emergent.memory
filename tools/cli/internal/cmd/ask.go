@@ -180,7 +180,7 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+		return parseAPIError(resp.StatusCode, body)
 	}
 
 	// Parse and stream SSE events.

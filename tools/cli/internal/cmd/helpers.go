@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -299,6 +300,58 @@ func PrintAuthError() {
 	fmt.Fprintln(os.Stderr, "Run the following command to log in:")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  \033[1mmemory login\033[0m")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Then retry your command.")
+}
+
+// apiErrorResponse represents the JSON error envelope returned by the server:
+//
+//	{"error":{"code":"...","message":"..."}}
+type apiErrorResponse struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// parseAPIError attempts to parse a JSON error body from the server and returns
+// a clean, human-readable error. If the body is not valid JSON or does not
+// match the expected envelope, it falls back to including the raw body.
+func parseAPIError(statusCode int, body []byte) error {
+	var parsed apiErrorResponse
+	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Error.Code != "" {
+		return fmt.Errorf("[%s] %s", parsed.Error.Code, parsed.Error.Message)
+	}
+	// Fallback: raw body (trimmed).
+	raw := strings.TrimSpace(string(body))
+	if raw == "" {
+		return fmt.Errorf("request failed with status %d", statusCode)
+	}
+	return fmt.Errorf("request failed with status %d: %s", statusCode, raw)
+}
+
+// IsNoProviderError returns true when err indicates the server has no LLM
+// provider configured for the target project (HTTP 503, code "no_provider").
+func IsNoProviderError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "no_provider") ||
+		strings.Contains(s, "No LLM provider configured")
+}
+
+// PrintNoProviderError writes a friendly provider-setup prompt to stderr.
+func PrintNoProviderError() {
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "\033[0;33mNo LLM provider is configured for this project.\033[0m")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Set up a provider with one of the following commands:")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  \033[1mmemory provider configure google --api-key <key>\033[0m")
+	fmt.Fprintln(os.Stderr, "  \033[1mmemory provider configure vertex --project <gcp-project> --location <region>\033[0m")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Or configure a credential in the admin UI under Project Settings > Providers.")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Then retry your command.")
 }

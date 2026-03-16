@@ -13,6 +13,8 @@ func main() {
 	if err := cmd.Execute(); err != nil {
 		if cmd.IsAuthError(err) {
 			cmd.PrintAuthError()
+		} else if cmd.IsNoProviderError(err) {
+			cmd.PrintNoProviderError()
 		} else {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}

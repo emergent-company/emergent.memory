@@ -1832,6 +1832,39 @@ memory graph relationships list [flags]
       --type string   Filter by relationship type
 ```
 
+## memory init
+
+Initialize a Memory project in the current directory
+
+### Synopsis
+
+Interactive wizard that sets up a Memory project in the current directory.
+
+Walks through:
+  1. Project selection or creation
+  2. LLM provider configuration (org-level)
+  3. Memory skills installation for AI agents
+
+Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_TOKEN
+to .env.local and auto-adds .env.local to .gitignore.
+
+Running 'memory init' again detects existing configuration and offers
+to verify or reconfigure each step.
+
+Use --skip-provider or --skip-skills to skip individual steps.
+
+```
+memory init [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for init
+      --skip-provider   skip LLM provider configuration step
+      --skip-skills     skip Memory skills installation step
+```
+
 ## memory install-memory-skills
 
 Install Memory skills to .agents/skills/
@@ -1891,6 +1924,13 @@ Clear stored credentials
 
 Remove locally stored OAuth credentials and log out from the Memory platform.
 
+Before deleting local credentials, attempts to revoke tokens server-side via
+the OIDC revocation endpoint. Revocation is best-effort — if it fails, local
+credentials are still removed.
+
+Use --all to also clear api_key and project_token from your config file,
+removing all locally stored authentication state.
+
 ```
 memory logout [flags]
 ```
@@ -1898,6 +1938,7 @@ memory logout [flags]
 ### Options
 
 ```
+      --all    Also clear api_key and project_token from config
   -h, --help   help for logout
 ```
 
