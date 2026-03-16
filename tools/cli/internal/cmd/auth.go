@@ -16,6 +16,7 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/auth"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -361,8 +362,35 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		fmt.Println("  Logged in successfully.")
 	}
 	fmt.Println()
-	fmt.Println("  Run 'memory status' to see your account and available projects.")
-	fmt.Println()
+
+	// Context-aware post-login hint: check if current folder has an initialized project.
+	envMap, _ := godotenv.Read(".env.local")
+	projectID := envMap["MEMORY_PROJECT_ID"]
+
+	if projectID != "" {
+		// Folder is initialized — show inline auth status + project info.
+		fmt.Println("Authentication Status:")
+		fmt.Println()
+		fmt.Println("  Mode:        OAuth")
+		if userInfo != nil && userInfo.Email != "" {
+			fmt.Printf("  User:        %s\n", userInfo.Email)
+		}
+		fmt.Println("  Status:      ✓ Authenticated")
+		fmt.Println()
+
+		projectName := envMap["MEMORY_PROJECT_NAME"]
+		if projectName != "" {
+			fmt.Printf("  Current project:  %s (%s)\n", projectName, projectID)
+		} else {
+			fmt.Printf("  Current project:  %s\n", projectID)
+		}
+		fmt.Println()
+	} else {
+		// Folder not initialized — suggest memory init.
+		fmt.Println("  Run 'memory init' to set up a project in this folder.")
+		fmt.Println()
+	}
+
 	return nil
 }
 

@@ -10,6 +10,7 @@ import (
 
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
+	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -75,6 +76,34 @@ func printProjectIndicator(cmd *cobra.Command, cfg *config.Config) {
 	} else {
 		fmt.Fprintf(os.Stderr, "Project: %s  (%s)\n", name, source)
 	}
+}
+
+// getAccountClient creates a client that uses account-level credentials,
+// skipping any project-scoped token. This is for commands that operate at the
+// account or org level (e.g. listing all projects, managing account tokens).
+func getAccountClient(cmd *cobra.Command) (*client.Client, error) {
+	configPath, _ := cmd.Flags().GetString("config")
+	if configPath == "" {
+		configPath = config.DiscoverPath("")
+	}
+
+	cfg, err := config.LoadWithEnv(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Apply persistent flag values from global viper (same as getClient).
+	if v := viper.GetString("server"); v != "" {
+		cfg.ServerURL = v
+	}
+	// Note: we intentionally do NOT apply viper's "project_token" here —
+	// the whole point is to skip project-scoped tokens.
+
+	if cfg.ServerURL == "" {
+		return nil, fmt.Errorf("no server URL configured. Set MEMORY_SERVER_URL or run: memory config set-server <url>")
+	}
+
+	return client.NewAccountClient(cfg)
 }
 
 // resolveProjectNameFromToken attempts a quick API call to get the project name

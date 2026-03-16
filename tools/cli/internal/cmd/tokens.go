@@ -71,13 +71,13 @@ var (
 )
 
 func runListTokens(cmd *cobra.Command, args []string) error {
-	c, err := getClient(cmd)
-	if err != nil {
-		return err
-	}
-
-	// If --project not provided, list account-level tokens
+	// If --project not provided, list account-level tokens (requires account credentials)
 	if tokenProjectID == "" {
+		c, err := getAccountClient(cmd)
+		if err != nil {
+			return err
+		}
+
 		result, err := c.SDK.APITokens.ListAccountTokens(context.Background())
 		if err != nil {
 			return fmt.Errorf("failed to list account tokens: %w", err)
@@ -105,6 +105,11 @@ func runListTokens(cmd *cobra.Command, args []string) error {
 	}
 
 	// --project provided: list project-scoped tokens
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
 	projectID, err := resolveProjectContext(cmd, tokenProjectID)
 	if err != nil {
 		return err
@@ -158,18 +163,18 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	c, err := getClient(cmd)
-	if err != nil {
-		return err
-	}
-
 	req := &apitokens.CreateTokenRequest{
 		Name:   tokenName,
 		Scopes: scopes,
 	}
 
-	// If --project not provided, create an account-level token
+	// If --project not provided, create an account-level token (requires account credentials)
 	if tokenProjectID == "" {
+		c, err := getAccountClient(cmd)
+		if err != nil {
+			return err
+		}
+
 		result, err := c.SDK.APITokens.CreateAccountToken(context.Background(), req)
 		if err != nil {
 			return fmt.Errorf("failed to create account token: %w", err)
@@ -192,6 +197,11 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 	}
 
 	// --project provided: create a project-scoped token
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
 	projectID, err := resolveProjectContext(cmd, tokenProjectID)
 	if err != nil {
 		return err
@@ -223,13 +233,13 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 func runGetToken(cmd *cobra.Command, args []string) error {
 	tokenID := args[0]
 
-	c, err := getClient(cmd)
-	if err != nil {
-		return err
-	}
-
 	// If --project not provided, look up an account-level token
 	if tokenProjectID == "" {
+		c, err := getAccountClient(cmd)
+		if err != nil {
+			return err
+		}
+
 		token, err := c.SDK.APITokens.GetAccountToken(context.Background(), tokenID)
 		if err != nil {
 			return fmt.Errorf("failed to get account token: %w", err)
@@ -254,6 +264,11 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	}
 
 	// --project provided: look up a project-scoped token
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
 	projectID, err := resolveProjectContext(cmd, tokenProjectID)
 	if err != nil {
 		return err
@@ -286,13 +301,13 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 func runRevokeToken(cmd *cobra.Command, args []string) error {
 	tokenID := args[0]
 
-	c, err := getClient(cmd)
-	if err != nil {
-		return err
-	}
-
 	// If --project not provided, revoke an account-level token
 	if tokenProjectID == "" {
+		c, err := getAccountClient(cmd)
+		if err != nil {
+			return err
+		}
+
 		err = c.SDK.APITokens.RevokeAccountToken(context.Background(), tokenID)
 		if err != nil {
 			return fmt.Errorf("failed to revoke account token: %w", err)
@@ -303,6 +318,11 @@ func runRevokeToken(cmd *cobra.Command, args []string) error {
 	}
 
 	// --project provided: revoke a project-scoped token
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
 	projectID, err := resolveProjectContext(cmd, tokenProjectID)
 	if err != nil {
 		return err

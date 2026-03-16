@@ -359,7 +359,7 @@ func printProjectStats(stats *projects.ProjectStats) {
 }
 
 func runListProjects(cmd *cobra.Command, args []string) error {
-	c, err := getClient(cmd)
+	c, err := getAccountClient(cmd)
 	if err != nil {
 		return err
 	}
@@ -530,7 +530,7 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("project name is required. Use --name flag")
 	}
 
-	c, err := getClient(cmd)
+	c, err := getAccountClient(cmd)
 	if err != nil {
 		return err
 	}
@@ -582,7 +582,7 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 }
 
 func runDeleteProject(cmd *cobra.Command, args []string) error {
-	c, err := getClient(cmd)
+	c, err := getAccountClient(cmd)
 	if err != nil {
 		return err
 	}
@@ -628,7 +628,7 @@ func runSetProject(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	c, err := getClient(cmd)
+	c, err := getAccountClient(cmd)
 	if err != nil {
 		return err
 	}
