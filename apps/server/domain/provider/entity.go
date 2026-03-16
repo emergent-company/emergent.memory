@@ -96,6 +96,21 @@ type ProviderConfigResponse struct {
 	UpdatedAt       time.Time    `json:"updatedAt"`
 }
 
+// ProjectProviderConfigResponse is the public-safe representation of a
+// project-level provider config. It includes the ProjectID so consumers
+// can identify which project the override belongs to.
+type ProjectProviderConfigResponse struct {
+	ID              string       `json:"id"`
+	ProjectID       string       `json:"projectId"`
+	Provider        ProviderType `json:"provider"`
+	GCPProject      string       `json:"gcpProject,omitempty"`
+	Location        string       `json:"location,omitempty"`
+	GenerativeModel string       `json:"generativeModel,omitempty"`
+	EmbeddingModel  string       `json:"embeddingModel,omitempty"`
+	CreatedAt       time.Time    `json:"createdAt"`
+	UpdatedAt       time.Time    `json:"updatedAt"`
+}
+
 // ProviderSupportedModel is a cached entry of a model available from a provider.
 // Table: kb.provider_supported_models (migration 00038)
 type ProviderSupportedModel struct {

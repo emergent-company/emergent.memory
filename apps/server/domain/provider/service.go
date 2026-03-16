@@ -238,7 +238,7 @@ func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential
 //  1. Assert caller owns org.
 //  2. Encrypt credential.
 //  3. Live-test the credential (5 s timeout).
-//  4. SyncModels (5 s timeout + static fallback on failure).
+//  4. SyncModels (15 s timeout; non-fatal — logs warning on failure).
 //  5. Auto-select top generative/embedding model if not in req.
 //  6. Upsert row.
 func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, provider ProviderType, req UpsertProviderConfigRequest) (*ProviderConfigResponse, error) {
@@ -259,11 +259,16 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 	// Build a temporary resolved cred for live-test and sync.
 	tempCred := s.buildTempResolvedCred(provider, req)
 
-	// Sync model catalog first (15s timeout) so TestGenerate has real models.
+	// Sync model catalog (15s timeout). Non-fatal: a sync failure (e.g. missing
+	// DB column, API timeout) should not block credential storage. The catalog
+	// will be populated on the next startup sync or manual retry.
+	catalogSynced := true
 	syncCtx, syncCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer syncCancel()
 	if err := s.catalog.SyncModels(syncCtx, provider, tempCred); err != nil {
-		return nil, fmt.Errorf("model catalog sync failed: %w", err)
+		s.log.Warn("model catalog sync failed during configure; continuing without catalog update",
+			logger.Error(err), slog.String("provider", string(provider)))
+		catalogSynced = false
 	}
 
 	// Live test using a model from the freshly synced catalog (15s timeout).
@@ -289,15 +294,18 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 		}
 	}
 
-	// Validate explicitly-provided model names against the synced catalog.
-	if req.GenerativeModel != "" {
-		if err := s.validateModelInCatalog(ctx, provider, req.GenerativeModel, ModelTypeGenerative); err != nil {
-			return nil, err
+	// Validate explicitly-provided model names against the synced catalog
+	// (only meaningful when catalog sync succeeded).
+	if catalogSynced {
+		if req.GenerativeModel != "" {
+			if err := s.validateModelInCatalog(ctx, provider, req.GenerativeModel, ModelTypeGenerative); err != nil {
+				return nil, err
+			}
 		}
-	}
-	if req.EmbeddingModel != "" {
-		if err := s.validateModelInCatalog(ctx, provider, req.EmbeddingModel, ModelTypeEmbedding); err != nil {
-			return nil, err
+		if req.EmbeddingModel != "" {
+			if err := s.validateModelInCatalog(ctx, provider, req.EmbeddingModel, ModelTypeEmbedding); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -385,6 +393,33 @@ func (s *CredentialService) ListOrgConfigs(ctx context.Context, orgID string) ([
 	return resp, nil
 }
 
+// ListProjectConfigsByOrg returns all project-level provider configs for
+// projects belonging to the given organization (metadata only).
+func (s *CredentialService) ListProjectConfigsByOrg(ctx context.Context, orgID string) ([]ProjectProviderConfigResponse, error) {
+	if err := assertCallerOwnsOrg(ctx, orgID); err != nil {
+		return nil, err
+	}
+	cfgs, err := s.repo.ListProjectProviderConfigsByOrg(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	resp := make([]ProjectProviderConfigResponse, len(cfgs))
+	for i, cfg := range cfgs {
+		resp[i] = ProjectProviderConfigResponse{
+			ID:              cfg.ID,
+			ProjectID:       cfg.ProjectID,
+			Provider:        cfg.Provider,
+			GCPProject:      cfg.GCPProject,
+			Location:        cfg.Location,
+			GenerativeModel: cfg.GenerativeModel,
+			EmbeddingModel:  cfg.EmbeddingModel,
+			CreatedAt:       cfg.CreatedAt,
+			UpdatedAt:       cfg.UpdatedAt,
+		}
+	}
+	return resp, nil
+}
+
 // UpsertProjectConfig saves provider credentials+models for a project.
 // Same flow as UpsertOrgConfig (test + sync + auto-select + upsert).
 func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID string, provider ProviderType, req UpsertProviderConfigRequest) (*ProviderConfigResponse, error) {
@@ -404,11 +439,14 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 
 	tempCred := s.buildTempResolvedCred(provider, req)
 
-	// Sync model catalog first (15s timeout) so TestGenerate has real models.
+	// Sync model catalog (15s timeout). Non-fatal — same as UpsertOrgConfig.
+	catalogSynced := true
 	syncCtx, syncCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer syncCancel()
 	if err := s.catalog.SyncModels(syncCtx, provider, tempCred); err != nil {
-		return nil, fmt.Errorf("model catalog sync failed: %w", err)
+		s.log.Warn("model catalog sync failed during project configure; continuing without catalog update",
+			logger.Error(err), slog.String("provider", string(provider)))
+		catalogSynced = false
 	}
 
 	// Live test using a model from the freshly synced catalog (15s timeout).
@@ -433,15 +471,18 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 		}
 	}
 
-	// Validate explicitly-provided model names against the synced catalog.
-	if req.GenerativeModel != "" {
-		if err := s.validateModelInCatalog(ctx, provider, req.GenerativeModel, ModelTypeGenerative); err != nil {
-			return nil, err
+	// Validate explicitly-provided model names against the synced catalog
+	// (only meaningful when catalog sync succeeded).
+	if catalogSynced {
+		if req.GenerativeModel != "" {
+			if err := s.validateModelInCatalog(ctx, provider, req.GenerativeModel, ModelTypeGenerative); err != nil {
+				return nil, err
+			}
 		}
-	}
-	if req.EmbeddingModel != "" {
-		if err := s.validateModelInCatalog(ctx, provider, req.EmbeddingModel, ModelTypeEmbedding); err != nil {
-			return nil, err
+		if req.EmbeddingModel != "" {
+			if err := s.validateModelInCatalog(ctx, provider, req.EmbeddingModel, ModelTypeEmbedding); err != nil {
+				return nil, err
+			}
 		}
 	}
 

@@ -186,6 +186,28 @@ func (r *Repository) DeleteProjectProviderConfig(ctx context.Context, projectID 
 	return nil
 }
 
+// ListProjectProviderConfigsByOrg lists all project-level provider configs for
+// projects belonging to the given organization (metadata only, no secrets).
+func (r *Repository) ListProjectProviderConfigsByOrg(ctx context.Context, orgID string) ([]ProjectProviderConfig, error) {
+	var cfgs []ProjectProviderConfig
+	err := r.db.NewSelect().
+		Model(&cfgs).
+		Column("ppc.id", "ppc.project_id", "ppc.provider", "ppc.gcp_project", "ppc.location", "ppc.generative_model", "ppc.embedding_model", "ppc.created_at", "ppc.updated_at").
+		Join("JOIN kb.projects AS p ON p.id = ppc.project_id").
+		Where("p.organization_id = ?", orgID).
+		Order("ppc.provider ASC").
+		Scan(ctx)
+
+	if err != nil {
+		r.log.Error("failed to list project provider configs by org",
+			logger.Error(err),
+			slog.String("orgID", orgID),
+		)
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return cfgs, nil
+}
+
 // --- Provider Supported Models ---
 
 // ListSupportedModels returns all cached supported models for a provider, optionally filtered by type.

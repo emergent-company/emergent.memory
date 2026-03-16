@@ -63,6 +63,20 @@ type ProviderConfig struct {
 	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
+// ProjectProviderConfig is the public-safe representation of a project-level
+// provider config override. It includes the ProjectID field.
+type ProjectProviderConfig struct {
+	ID              string    `json:"id"`
+	ProjectID       string    `json:"projectId"`
+	Provider        string    `json:"provider"`
+	GCPProject      string    `json:"gcpProject,omitempty"`
+	Location        string    `json:"location,omitempty"`
+	GenerativeModel string    `json:"generativeModel,omitempty"`
+	EmbeddingModel  string    `json:"embeddingModel,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
 // SupportedModel is a cached model entry from the provider catalog.
 type SupportedModel struct {
 	ID          string    `json:"id"`
@@ -194,6 +208,16 @@ func (c *Client) ListOrgConfigs(ctx context.Context, orgID string) ([]ProviderCo
 	var result []ProviderConfig
 	err := c.doJSON(ctx, "GET",
 		fmt.Sprintf("/api/v1/organizations/%s/providers", url.PathEscape(orgID)),
+		nil, &result)
+	return result, err
+}
+
+// ListProjectConfigsByOrg returns all project-level provider config overrides
+// for projects belonging to the given organization.
+func (c *Client) ListProjectConfigsByOrg(ctx context.Context, orgID string) ([]ProjectProviderConfig, error) {
+	var result []ProjectProviderConfig
+	err := c.doJSON(ctx, "GET",
+		fmt.Sprintf("/api/v1/organizations/%s/project-providers", url.PathEscape(orgID)),
 		nil, &result)
 	return result, err
 }

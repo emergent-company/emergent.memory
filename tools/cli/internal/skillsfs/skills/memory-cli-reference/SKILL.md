@@ -2313,6 +2313,35 @@ memory provider configure <provider> [flags]
       --org-id string             Organization ID (auto-detected from config)
 ```
 
+## memory provider list
+
+Show current provider configurations
+
+### Synopsis
+
+List all configured LLM providers at the organization level, plus any
+project-level overrides across all projects in the organization.
+
+The output is a table with columns: SCOPE, PROVIDER, GENERATIVE MODEL,
+EMBEDDING MODEL, GCP PROJECT, LOCATION, and UPDATED.
+
+Examples:
+  memory provider list
+  memory provider list --org-id <id>
+  memory provider list --json
+
+```
+memory provider list [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for list
+      --json            Output raw JSON
+      --org-id string   Organization ID (auto-detected from config)
+```
+
 ## memory provider models
 
 List available models from the provider catalog

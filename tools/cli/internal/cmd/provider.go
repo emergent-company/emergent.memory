@@ -712,6 +712,118 @@ func runProviderTest(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// ── list ──────────────────────────────────────────────────────────────────────
+
+var providerListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "Show current provider configurations",
+	Long: `List all configured LLM providers at the organization level, plus any
+project-level overrides across all projects in the organization.
+
+The output is a table with columns: SCOPE, PROVIDER, GENERATIVE MODEL,
+EMBEDDING MODEL, GCP PROJECT, LOCATION, and UPDATED.
+
+Examples:
+  memory provider list
+  memory provider list --org-id <id>
+  memory provider list --json`,
+	RunE: runProviderList,
+}
+
+var (
+	listOrgID    string
+	listJSONFlag bool
+)
+
+func runProviderList(cmd *cobra.Command, _ []string) error {
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	orgID, err := resolveProviderOrgID(c, listOrgID)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	// Fetch org-level configs and project-level overrides in parallel.
+	orgConfigs, orgErr := c.SDK.Provider.ListOrgConfigs(ctx, orgID)
+	if orgErr != nil {
+		return fmt.Errorf("failed to list org provider configs: %w", orgErr)
+	}
+
+	projectConfigs, projErr := c.SDK.Provider.ListProjectConfigsByOrg(ctx, orgID)
+	if projErr != nil {
+		return fmt.Errorf("failed to list project provider configs: %w", projErr)
+	}
+
+	if len(orgConfigs) == 0 && len(projectConfigs) == 0 {
+		fmt.Println("No providers configured.")
+		fmt.Println("Run 'memory provider configure google --api-key <key>' to get started.")
+		return nil
+	}
+
+	// JSON output
+	if listJSONFlag {
+		out := struct {
+			Org      []provider.ProviderConfig        `json:"org"`
+			Projects []provider.ProjectProviderConfig `json:"projects"`
+		}{
+			Org:      orgConfigs,
+			Projects: projectConfigs,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
+
+	// Table output
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "SCOPE\tPROVIDER\tGENERATIVE MODEL\tEMBEDDING MODEL\tGCP PROJECT\tLOCATION\tUPDATED")
+
+	for _, cfg := range orgConfigs {
+		fmt.Fprintf(w, "org\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			cfg.Provider,
+			valueOrDash(cfg.GenerativeModel),
+			valueOrDash(cfg.EmbeddingModel),
+			valueOrDash(cfg.GCPProject),
+			valueOrDash(cfg.Location),
+			cfg.UpdatedAt.Format(time.DateOnly),
+		)
+	}
+	for _, cfg := range projectConfigs {
+		scope := "project:" + shortID(cfg.ProjectID)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			scope,
+			cfg.Provider,
+			valueOrDash(cfg.GenerativeModel),
+			valueOrDash(cfg.EmbeddingModel),
+			valueOrDash(cfg.GCPProject),
+			valueOrDash(cfg.Location),
+			cfg.UpdatedAt.Format(time.DateOnly),
+		)
+	}
+	return w.Flush()
+}
+
+// valueOrDash returns the value or "-" if empty.
+func valueOrDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// shortID returns the first 8 characters of a UUID for compact display.
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
 // ── resolveProviderOrgID helper ───────────────────────────────────────────────
 
 // resolveProviderOrgID returns the explicit orgID if provided; otherwise it
@@ -779,9 +891,14 @@ func init() {
 	providerTestCmd.Flags().StringVar(&testProviderOrgID, "org-id", "", "Organization ID (auto-detected from config)")
 	providerTestCmd.Flags().StringVar(&testProviderProjectID, "project", "", "Project ID for project-level credential resolution")
 
+	// list flags
+	providerListCmd.Flags().StringVar(&listOrgID, "org-id", "", "Organization ID (auto-detected from config)")
+	providerListCmd.Flags().BoolVar(&listJSONFlag, "json", false, "Output raw JSON")
+
 	// Wire sub-commands
 	providerCmd.AddCommand(configureCmd)
 	providerCmd.AddCommand(configureProjectCmd)
+	providerCmd.AddCommand(providerListCmd)
 	providerCmd.AddCommand(providerModelsCmd)
 	providerCmd.AddCommand(providerUsageCmd)
 	providerCmd.AddCommand(providerUsageTimeseriesCmd)
