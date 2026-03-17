@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/apitokens"
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
@@ -716,11 +717,19 @@ func runSetProject(cmd *cobra.Command, args []string) error {
 	if tokenValue == "" {
 		// Generate a new one
 		fmt.Println("No existing viewable token found. Generating a new one...")
+		tokenName := cliTokenName()
 		req := &apitokens.CreateTokenRequest{
-			Name:   "cli-auto-token",
+			Name:   tokenName,
 			Scopes: []string{"data:read", "data:write", "schema:read"},
 		}
 		createResp, err := c.SDK.APITokens.Create(context.Background(), selectedProjectID, req)
+		if err != nil && sdkerrors.IsConflict(err) {
+			// Token name already exists (e.g. re-running setup on same machine).
+			// Retry with a timestamp suffix so we never collide.
+			tokenName = fmt.Sprintf("%s-%d", tokenName, time.Now().Unix())
+			req.Name = tokenName
+			createResp, err = c.SDK.APITokens.Create(context.Background(), selectedProjectID, req)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to create token: %w", err)
 		}

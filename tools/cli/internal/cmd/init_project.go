@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/apitokens"
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
@@ -296,6 +297,16 @@ func initCreateProject(c *client.Client) (id, name string, err error) {
 // 4. Token + .env.local + global config
 // ---------------------------------------------------------------------------
 
+// cliTokenName returns a token name based on the machine hostname (e.g. "cli-mypc").
+// Falls back to "cli-auto-token" if the hostname cannot be determined.
+func cliTokenName() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		return "cli-auto-token"
+	}
+	return "cli-" + host
+}
+
 func initPersistProject(cmd *cobra.Command, c *client.Client, projectID, projectName string) error {
 	fmt.Println("Configuring project token...")
 
@@ -312,10 +323,20 @@ func initPersistProject(cmd *cobra.Command, c *client.Client, projectID, project
 
 	// 4.2  Create a new token if none available.
 	if tokenValue == "" {
+		tokenName := cliTokenName()
 		createResp, err := c.SDK.APITokens.Create(context.Background(), projectID, &apitokens.CreateTokenRequest{
-			Name:   "cli-auto-token",
+			Name:   tokenName,
 			Scopes: []string{"data:read", "data:write", "schema:read"},
 		})
+		if err != nil && sdkerrors.IsConflict(err) {
+			// Token name already exists (e.g. re-running init on same machine).
+			// Retry with a timestamp suffix so we never collide.
+			tokenName = fmt.Sprintf("%s-%d", tokenName, time.Now().Unix())
+			createResp, err = c.SDK.APITokens.Create(context.Background(), projectID, &apitokens.CreateTokenRequest{
+				Name:   tokenName,
+				Scopes: []string{"data:read", "data:write", "schema:read"},
+			})
+		}
 		if err != nil {
 			return fmt.Errorf("failed to create API token: %w", err)
 		}

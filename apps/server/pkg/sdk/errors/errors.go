@@ -56,6 +56,14 @@ func IsBadRequest(err error) bool {
 	return false
 }
 
+// IsConflict returns true if the error is a 409 Conflict error.
+func IsConflict(err error) bool {
+	if e, ok := err.(*Error); ok {
+		return e.StatusCode == http.StatusConflict
+	}
+	return false
+}
+
 // ParseErrorResponse parses an HTTP error response into an Error.
 func ParseErrorResponse(resp *http.Response) error {
 	body, err := io.ReadAll(resp.Body)
