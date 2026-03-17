@@ -427,6 +427,7 @@ echo -e "${CYAN}Generating secure configuration...${NC}"
 POSTGRES_PASSWORD=$(generate_secret)
 MINIO_PASSWORD=$(generate_secret)
 API_KEY=$(generate_secret)
+LLM_ENCRYPTION_KEY=$(generate_secret)
 
 cat > "${INSTALL_DIR}/config/.env.local" <<EOF
 POSTGRES_USER=emergent
@@ -450,6 +451,8 @@ SERVER_PORT=${SERVER_PORT}
 GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
 EMBEDDING_DIMENSION=768
 KREUZBERG_LOG_LEVEL=info
+
+LLM_ENCRYPTION_KEY=${LLM_ENCRYPTION_KEY}
 EOF
 
 echo -e "${GREEN}✓${NC} Configuration created"

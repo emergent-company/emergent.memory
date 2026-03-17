@@ -157,6 +157,11 @@ func (i *Installer) GenerateEnvFile() (string, error) {
 		return "", err
 	}
 
+	llmEncryptionKey, err := GenerateSecret(32)
+	if err != nil {
+		return "", err
+	}
+
 	envContent := fmt.Sprintf(`POSTGRES_USER=emergent
 POSTGRES_PASSWORD=%s
 POSTGRES_DB=emergent
@@ -178,7 +183,9 @@ SERVER_PORT=%d
 GOOGLE_API_KEY=%s
 EMBEDDING_DIMENSION=768
 KREUZBERG_LOG_LEVEL=info
-`, postgresPassword, minioPassword, apiKey, i.config.ServerPort, i.config.GoogleAPIKey)
+
+LLM_ENCRYPTION_KEY=%s
+`, postgresPassword, minioPassword, apiKey, i.config.ServerPort, i.config.GoogleAPIKey, llmEncryptionKey)
 
 	envPath := filepath.Join(i.config.InstallDir, "config", ".env.local")
 	if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {

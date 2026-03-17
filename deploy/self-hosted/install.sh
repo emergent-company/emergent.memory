@@ -59,6 +59,7 @@ echo "🔐 Generating secure passwords..."
 POSTGRES_PASSWORD=$(generate_password)
 MINIO_PASSWORD=$(generate_password)
 API_KEY=$(generate_password)
+LLM_ENCRYPTION_KEY=$(generate_password)
 
 echo "📝 Creating environment configuration..."
 cat > .env.local <<EOF
@@ -85,6 +86,8 @@ GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
 EMBEDDING_DIMENSION=768
 
 KREUZBERG_LOG_LEVEL=info
+
+LLM_ENCRYPTION_KEY=$LLM_ENCRYPTION_KEY
 EOF
 
 echo "✅ Configuration created"
