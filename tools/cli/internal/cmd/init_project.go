@@ -439,10 +439,11 @@ func initConfigureProvider(c *client.Client) (string, error) {
 		return "", fmt.Errorf("failed to check provider config: %w", err)
 	}
 
-	// 6.3  Already configured.
+	// 6.3  Already configured (org-level).
 	if len(configs) > 0 {
-		fmt.Printf("LLM provider already configured (%s).\n", configs[0].Provider)
-		return "already configured", nil
+		fmt.Printf("LLM provider already configured at org level (%s).\n", configs[0].Provider)
+		fmt.Println("  This org-level provider will be used by all projects in the organization.")
+		return "already configured (org-level: " + string(configs[0].Provider) + ")", nil
 	}
 
 	// 6.4  Display provider picker.
@@ -704,13 +705,13 @@ func initVerifyProvider(c *client.Client) (string, error) {
 	}
 
 	if len(configs) > 0 {
-		fmt.Printf("  Provider: %s (configured)\n", configs[0].Provider)
+		fmt.Printf("  Provider: %s (configured, org-level)\n", configs[0].Provider)
 		yes, err := promptYesNoDefault("  Reconfigure provider? [y/N] ", false)
 		if err != nil {
-			return "already configured", err
+			return "already configured (org-level: " + string(configs[0].Provider) + ")", err
 		}
 		if !yes {
-			return "already configured", nil
+			return "already configured (org-level: " + string(configs[0].Provider) + ")", nil
 		}
 		return initProviderPicker(c, orgID)
 	}

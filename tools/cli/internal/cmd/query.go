@@ -122,7 +122,12 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return parseAPIError(resp.StatusCode, body)
+		apiErr := parseAPIError(resp.StatusCode, body)
+		if IsNoProviderError(apiErr) {
+			PrintNoProviderError()
+			return apiErr
+		}
+		return apiErr
 	}
 
 	// Parse SSE stream

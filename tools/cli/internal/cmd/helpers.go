@@ -358,7 +358,7 @@ func PrintNoProviderError() {
 	fmt.Fprintln(os.Stderr, "Set up a provider with one of the following commands:")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  \033[1mmemory provider configure google --api-key <key>\033[0m")
-	fmt.Fprintln(os.Stderr, "  \033[1mmemory provider configure vertex --project <gcp-project> --location <region>\033[0m")
+	fmt.Fprintln(os.Stderr, "  \033[1mmemory provider configure google-vertex --gcp-project <project> --location <region>\033[0m")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Or configure a credential in the admin UI under Project Settings > Providers.")
 	fmt.Fprintln(os.Stderr, "")
