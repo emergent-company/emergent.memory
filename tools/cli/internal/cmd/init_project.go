@@ -67,7 +67,10 @@ func runInitProject(cmd *cobra.Command, args []string) error {
 	fmt.Println("Welcome to Memory project setup!")
 	fmt.Println()
 
-	c, err := getClient(cmd)
+	// Use account-level credentials (OAuth / account API key), not
+	// the project token. Init needs to list projects, create tokens, etc.
+	// which a limited project-scoped token may not have permissions for.
+	c, err := getAccountClient(cmd)
 	if err != nil {
 		return err
 	}
