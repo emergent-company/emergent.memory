@@ -92,7 +92,7 @@ Created date. Use --limit to control how many records are returned. Use
 		}
 
 		table := tablewriter.NewWriter(out)
-		table.Header("ID", "Filename", "MIME Type", "Size (bytes)", "Created")
+		table.Header("ID", "Filename", "MIME Type", "Size (bytes)", "Status", "Created")
 		for _, doc := range result.Documents {
 			filename := ""
 			if doc.Filename != nil {
@@ -106,11 +106,16 @@ Created date. Use --limit to control how many records are returned. Use
 			if doc.FileSizeBytes != nil {
 				size = fmt.Sprintf("%d", *doc.FileSizeBytes)
 			}
+			status := ""
+			if doc.ProcessingStatus != nil {
+				status = *doc.ProcessingStatus
+			}
 			_ = table.Append(
 				doc.ID,
 				filename,
 				mime,
 				size,
+				status,
 				doc.CreatedAt.Format("2006-01-02"),
 			)
 		}
@@ -168,8 +173,20 @@ the full document record as JSON instead.`,
 			fmt.Fprintf(out, "Size:               %d bytes\n", *doc.FileSizeBytes)
 		}
 		fmt.Fprintf(out, "Conversion Status:  %s\n", convStatus)
+		if doc.ProcessingStatus != nil {
+			fmt.Fprintf(out, "Processing Status:  %s\n", *doc.ProcessingStatus)
+		}
 		fmt.Fprintf(out, "Chunks:             %d\n", doc.Chunks)
 		fmt.Fprintf(out, "Embedded Chunks:    %d\n", doc.EmbeddedChunks)
+		if doc.ObjectsCreated != nil {
+			fmt.Fprintf(out, "Objects Created:    %d\n", *doc.ObjectsCreated)
+		}
+		if doc.RelationshipsCreated != nil {
+			fmt.Fprintf(out, "Relationships:      %d\n", *doc.RelationshipsCreated)
+		}
+		if doc.LastExtractionAt != nil {
+			fmt.Fprintf(out, "Last Extracted:     %s\n", doc.LastExtractionAt.Format("2006-01-02 15:04:05"))
+		}
 		fmt.Fprintf(out, "Created:            %s\n", doc.CreatedAt.Format("2006-01-02 15:04:05"))
 		fmt.Fprintf(out, "Updated:            %s\n", doc.UpdatedAt.Format("2006-01-02 15:04:05"))
 
@@ -290,6 +307,61 @@ for a machine-readable response.`,
 }
 
 // ─────────────────────────────────────────────
+// documents extraction-summary
+// ─────────────────────────────────────────────
+
+var documentsExtractionSummaryCmd = &cobra.Command{
+	Use:   "extraction-summary <id>",
+	Short: "Show extraction summary for a document",
+	Long: `Show the extraction summary for the most recently completed extraction
+job on a document.
+
+Displays counts of objects created (broken down by type), relationships
+created, chunks processed, and the completion timestamp. Use --output json
+for a machine-readable response.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		d, err := getDocsClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		summary, err := d.GetExtractionSummary(context.Background(), args[0])
+		if err != nil {
+			return fmt.Errorf("failed to get extraction summary: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+
+		if docsOutputFlag == "json" {
+			return json.NewEncoder(out).Encode(summary)
+		}
+
+		fmt.Fprintf(out, "Job ID:               %s\n", summary.JobID)
+		fmt.Fprintf(out, "Completed At:         %s\n", summary.CompletedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(out, "Objects Created:      %d\n", summary.ObjectsCreated)
+		fmt.Fprintf(out, "Relationships:        %d\n", summary.RelationshipsCreated)
+		fmt.Fprintf(out, "Chunks Processed:     %d / %d\n", summary.ChunksProcessed, summary.TotalChunks)
+		fmt.Fprintf(out, "Has Errors:           %v\n", summary.HasErrors)
+		if summary.ErrorSummary != nil && *summary.ErrorSummary != "" {
+			fmt.Fprintf(out, "Error Summary:        %s\n", *summary.ErrorSummary)
+		}
+
+		if len(summary.ObjectsByType) > 0 {
+			fmt.Fprintln(out, "\nObjects by Type:")
+			table := tablewriter.NewWriter(out)
+			table.Header("Type", "Count")
+			for typLabel, count := range summary.ObjectsByType {
+				_ = table.Append(typLabel, fmt.Sprintf("%d", count))
+			}
+			return table.Render()
+		}
+
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
 // init — wire up the command tree
 // ─────────────────────────────────────────────
 
@@ -308,6 +380,7 @@ func init() {
 	documentsCmd.AddCommand(documentsGetCmd)
 	documentsCmd.AddCommand(documentsUploadCmd)
 	documentsCmd.AddCommand(documentsDeleteCmd)
+	documentsCmd.AddCommand(documentsExtractionSummaryCmd)
 
 	rootCmd.AddCommand(documentsCmd)
 }

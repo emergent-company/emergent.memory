@@ -74,6 +74,16 @@ type Document struct {
 	EmbeddedChunks   int     `json:"embeddedChunks"`
 	TotalChars       int     `json:"totalChars"`
 	ExtractionStatus *string `json:"extractionStatus,omitempty"`
+
+	// Unified processing status (derived from conversion + extraction state).
+	// One of: converting, conversion_failed, ready_for_extraction,
+	// extracting, extraction_failed, completed.
+	ProcessingStatus *string `json:"processingStatus,omitempty"`
+
+	// Compact extraction summary from the most recent completed extraction job.
+	LastExtractionAt     *time.Time `json:"lastExtractionAt,omitempty"`
+	ObjectsCreated       *int       `json:"objectsCreated,omitempty"`
+	RelationshipsCreated *int       `json:"relationshipsCreated,omitempty"`
 }
 
 // ListOptions holds options for listing documents.
@@ -733,6 +743,59 @@ func (c *Client) UploadWithOptions(ctx context.Context, input *UploadFileInput, 
 //	})
 func (c *Client) UploadBatch(ctx context.Context, files []UploadFileInput) (*BatchUploadResult, error) {
 	return c.UploadBatchWithOptions(ctx, files, false)
+}
+
+// ExtractionSummary contains details about the most recent completed extraction
+// job for a document.
+type ExtractionSummary struct {
+	JobID                string         `json:"jobId"`
+	CompletedAt          time.Time      `json:"completedAt"`
+	ObjectsCreated       int            `json:"objectsCreated"`
+	RelationshipsCreated int            `json:"relationshipsCreated"`
+	ObjectsByType        map[string]int `json:"objectsByType"`
+	ChunksProcessed      int            `json:"chunksProcessed"`
+	TotalChunks          int            `json:"totalChunks"`
+	HasErrors            bool           `json:"hasErrors"`
+	ErrorSummary         *string        `json:"errorSummary,omitempty"`
+}
+
+// GetExtractionSummary returns the extraction summary for the most recently
+// completed extraction job on a document. Returns an sdkerrors.NotFoundError
+// if no completed extraction job exists for the document.
+//
+// Example:
+//
+//	summary, err := client.Documents.GetExtractionSummary(ctx, "doc-uuid")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	fmt.Printf("Objects created: %d\n", summary.ObjectsCreated)
+func (c *Client) GetExtractionSummary(ctx context.Context, id string) (*ExtractionSummary, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents/"+url.PathEscape(id)+"/extraction-summary", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result ExtractionSummary
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
 }
 
 // UploadBatchWithOptions uploads multiple files with additional options.

@@ -20,17 +20,17 @@
 
 ## 4. Frontend — Status Badge System
 
-- [ ] 4.1 Add `processingStatus` field to the `DocumentRow` type in `/root/emergent.memory.ui/src/pages/admin/apps/documents/index.tsx`
-- [ ] 4.2 Add `lastExtractionAt`, `objectsCreated`, `relationshipsCreated` fields to `DocumentRow`
-- [ ] 4.3 Create a `getProcessingStatusBadge(status: ProcessingStatus)` helper in the documents page that maps each of the 6 statuses to a DaisyUI badge class + label
-- [ ] 4.4 Replace the existing separate conversion-status and extraction-status badge display in the document list row with a single `processingStatus` badge
-- [ ] 4.5 Update `DocumentDetailModal` Properties tab Processing Status section to use the unified `processingStatus` badge (replacing the existing `getConversionStatusBadge` display)
+- [x] 4.1 Add `processingStatus` field to the `DocumentRow` type in `/root/emergent.memory.ui/src/pages/admin/apps/documents/index.tsx`
+- [x] 4.2 Add `lastExtractionAt`, `objectsCreated`, `relationshipsCreated` fields to `DocumentRow`
+- [x] 4.3 Create a `getProcessingStatusBadge(status: ProcessingStatus)` helper in the documents page that maps each of the 6 statuses to a DaisyUI badge class + label
+- [x] 4.4 Replace the existing separate conversion-status and extraction-status badge display in the document list row with a single `processingStatus` badge
+- [x] 4.5 Update `DocumentDetailModal` Properties tab Processing Status section to use the unified `processingStatus` badge (replacing the existing `getConversionStatusBadge` display)
 
 ## 5. Frontend — Extraction Trigger from Document Row
 
-- [ ] 5.1 Update the document row actions menu in `apps/documents/index.tsx` to show "Extract Objects" when `processingStatus` is `ready_for_extraction`, `extraction_failed`, or `completed` (already calls `ExtractionConfigModal` — ensure it passes `documentId` correctly)
-- [ ] 5.2 Disable / hide "Extract Objects" action when `processingStatus` is `converting` or `extracting`, adding a tooltip explaining why
-- [ ] 5.3 Ensure SSE handler (`useDataUpdates('extraction_job:*', ...)`) updates individual document row status without full page reload (targeted row update rather than full list refetch)
+- [x] 5.1 Update the document row actions menu in `apps/documents/index.tsx` to show "Extract Objects" when `processingStatus` is `ready_for_extraction`, `extraction_failed`, or `completed` (already calls `ExtractionConfigModal` — ensure it passes `documentId` correctly)
+- [x] 5.2 Disable / hide "Extract Objects" action when `processingStatus` is `converting` or `extracting`, adding a tooltip explaining why
+- [x] 5.3 Ensure SSE handler (`useDataUpdates('extraction_job:*', ...)`) updates individual document row status without full page reload (targeted row update rather than full list refetch)
 
 ## 6. Frontend — Extraction Progress on Document Row and Detail Modal
 
@@ -40,7 +40,7 @@
 
 ## 7. Frontend — Extraction Summary in Detail Modal and List Row
 
-- [ ] 7.1 Add `GET /api/documents/:id/extraction-summary` call to `/root/emergent.memory.ui/src/api/documents.ts` client as `getExtractionSummary(id)`
+- [x] 7.1 Add `GET /api/documents/:id/extraction-summary` call to `/root/emergent.memory.ui/src/api/documents.ts` client as `getExtractionSummary(id)`
 - [ ] 7.2 In `DocumentDetailModal` Properties tab, add an "Extraction Results" sub-section that lazy-loads `getExtractionSummary(id)` when `processingStatus` is `completed`; display object counts by type, relationship count, and last extraction timestamp
 - [ ] 7.3 Show a "Re-extract" button in the Extraction Results section of the detail modal that re-opens `ExtractionConfigModal`
 - [ ] 7.4 Render compact extraction stats (`objectsCreated` · `relationshipsCreated`) on the document list row when `processingStatus` is `completed`, sourced from the compact fields already returned in the list response (no extra API call)
