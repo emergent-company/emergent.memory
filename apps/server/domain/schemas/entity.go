@@ -60,8 +60,8 @@ type ObjectTypeSchema struct {
 	Label       string          `json:"label,omitempty"`
 	Description string          `json:"description,omitempty"`
 	Properties  json.RawMessage `json:"properties,omitempty"`
-	PackID      string          `json:"packId,omitempty"`
-	PackName    string          `json:"packName,omitempty"`
+	SchemaID    string          `json:"schemaId,omitempty"`
+	SchemaName  string          `json:"schemaName,omitempty"`
 }
 
 // RelationshipTypeSchema represents a relationship type definition
@@ -71,8 +71,8 @@ type RelationshipTypeSchema struct {
 	Description string `json:"description,omitempty"`
 	SourceType  string `json:"sourceType,omitempty"`
 	TargetType  string `json:"targetType,omitempty"`
-	PackID      string `json:"packId,omitempty"`
-	PackName    string `json:"packName,omitempty"`
+	SchemaID    string `json:"schemaId,omitempty"`
+	SchemaName  string `json:"schemaName,omitempty"`
 }
 
 // MemorySchemaListItem is a simplified schema for listing

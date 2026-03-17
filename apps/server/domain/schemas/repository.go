@@ -67,8 +67,8 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 			} else {
 				// Add pack info to each type
 				for i := range objectTypes {
-					objectTypes[i].PackID = tp.ID
-					objectTypes[i].PackName = tp.Name
+					objectTypes[i].SchemaID = tp.ID
+					objectTypes[i].SchemaName = tp.Name
 				}
 				response.ObjectTypes = append(response.ObjectTypes, objectTypes...)
 			}
@@ -238,8 +238,8 @@ func parseRelationshipTypeSchemas(data json.RawMessage, packID, packName string)
 				Description: def.Description,
 				SourceType:  firstNonEmpty(joinTypes(def.SourceTypes), joinTypes(def.FromTypes), joinTypes(def.SnakeSourceTypes), def.Source),
 				TargetType:  firstNonEmpty(joinTypes(def.TargetTypes), joinTypes(def.ToTypes), joinTypes(def.SnakeTargetTypes), def.Target),
-				PackID:      packID,
-				PackName:    packName,
+				SchemaID:    packID,
+				SchemaName:  packName,
 			})
 		}
 		return result
@@ -249,8 +249,8 @@ func parseRelationshipTypeSchemas(data json.RawMessage, packID, packName string)
 	var arr []RelationshipTypeSchema
 	if err := json.Unmarshal(data, &arr); err == nil {
 		for i := range arr {
-			arr[i].PackID = packID
-			arr[i].PackName = packName
+			arr[i].SchemaID = packID
+			arr[i].SchemaName = packName
 		}
 		return arr
 	}
