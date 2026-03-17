@@ -39,6 +39,7 @@ For self-hosted deployments, use 'memory server' to install and manage your serv
       --config string          config file (default is $HOME/.memory/config.yaml)
       --debug                  enable debug logging
   -h, --help                   help for memory
+      --json                   shorthand for --output json
       --no-color               disable colored output
       --output string          output format (table, json, yaml, csv) (default "table")
       --project string         project ID (overrides config and environment)

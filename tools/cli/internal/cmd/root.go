@@ -15,6 +15,7 @@ var (
 	cfgFile      string
 	serverURL    string
 	output       string
+	jsonFlag     bool
 	debug        bool
 	noColor      bool
 	compact      bool
@@ -32,6 +33,16 @@ Manage projects, documents, graph objects, AI agents, and MCP integrations.
 
 For self-hosted deployments, use 'memory server' to install and manage your server.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// --json is shorthand for --output json. Apply it to the global
+		// output variable as well as any command-group-local output flags
+		// (graph, documents, schemas) that shadow the global one.
+		if jsonFlag {
+			output = "json"
+			graphOutputFlag = "json"
+			docsOutputFlag = "json"
+			schemaOutputFlag = "json"
+		}
+
 		configPath, _ := cmd.Flags().GetString("config")
 		if configPath == "" {
 			configPath = config.DiscoverPath("")
@@ -91,6 +102,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.memory/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "", "Memory server URL")
 	rootCmd.PersistentFlags().StringVar(&output, "output", "table", "output format (table, json, yaml, csv)")
+	rootCmd.PersistentFlags().BoolVar(&jsonFlag, "json", false, "shorthand for --output json")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "enable debug logging")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output")
 	rootCmd.PersistentFlags().BoolVar(&compact, "compact", false, "use compact output layout")
