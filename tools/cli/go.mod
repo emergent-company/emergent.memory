@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/term v0.2.2
-	github.com/emergent-company/emergent.memory/apps/server/pkg/sdk v0.0.0-20260212094821-53f928f864d0
+	github.com/emergent-company/emergent.memory/apps/server/pkg/sdk v0.35.53-0.20260317173313-f29a535fd9cf
 	github.com/go-resty/resty/v2 v2.17.1
 	github.com/joho/godotenv v1.5.1
 	github.com/olekukonko/tablewriter v1.1.3
