@@ -9,6 +9,7 @@ type (
 	userCtxKey      struct{}
 	projectIDCtxKey struct{}
 	orgIDCtxKey     struct{}
+	rawTokenCtxKey  struct{}
 )
 
 // ContextWithUser returns a new context with the AuthUser embedded.
@@ -49,6 +50,22 @@ func ContextWithOrgID(ctx context.Context, orgID string) context.Context {
 func OrgIDFromContext(ctx context.Context) string {
 	if id, ok := ctx.Value(orgIDCtxKey{}).(string); ok {
 		return id
+	}
+	return ""
+}
+
+// ContextWithRawToken returns a new context with the raw bearer/API token embedded.
+// This allows downstream code (e.g. internal HTTP loopback calls) to forward the
+// original credential without re-extracting it from HTTP headers.
+func ContextWithRawToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, rawTokenCtxKey{}, token)
+}
+
+// RawTokenFromContext extracts the raw bearer/API token from a standard context.Context.
+// Returns empty string if no token is present.
+func RawTokenFromContext(ctx context.Context) string {
+	if token, ok := ctx.Value(rawTokenCtxKey{}).(string); ok {
+		return token
 	}
 	return ""
 }

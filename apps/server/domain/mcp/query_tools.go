@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // ============================================================================
@@ -152,14 +154,8 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	})
 }
 
-// tokenFromContext tries to extract a bearer token from context (e.g. set by the MCP auth middleware).
+// tokenFromContext extracts the raw bearer/API token stored by the auth middleware.
 // Returns empty string if none is found.
 func tokenFromContext(ctx context.Context) string {
-	type ctxKey string
-	if v := ctx.Value(ctxKey("bearer_token")); v != nil {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
+	return auth.RawTokenFromContext(ctx)
 }

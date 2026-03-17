@@ -141,12 +141,12 @@ func TestRequiresProject(t *testing.T) {
 		// Template pack tools that require project (project-scoped)
 		{
 			name:     "get_available_templates requires project",
-			toolName: "template-list-available",
+			toolName: "schema-list-available",
 			expected: true,
 		},
 		{
 			name:     "get_installed_templates requires project",
-			toolName: "template-list-installed",
+			toolName: "schema-list-installed",
 			expected: true,
 		},
 		{
@@ -441,8 +441,8 @@ func TestGetToolDefinitions(t *testing.T) {
 		"entity-edges-get",
 		"schema-list",
 		"schema-get",
-		"template-list-available",
-		"template-list-installed",
+		"schema-list-available",
+		"schema-list-installed",
 		"schema-assign",
 		"schema-assignment-update",
 		"schema-uninstall",

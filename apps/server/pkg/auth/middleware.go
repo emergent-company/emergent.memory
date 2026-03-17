@@ -164,6 +164,14 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 			// downstream service layers can access user, project ID,
 			// and org ID without an Echo dependency.
 			enrichedCtx := InjectAuthContext(c.Request().Context(), user)
+
+			// Also store the raw bearer/API token so internal loopback
+			// HTTP calls (e.g. MCP search-knowledge → /query) can forward
+			// the original credential.
+			if rawToken := m.extractToken(c.Request()); rawToken != "" {
+				enrichedCtx = ContextWithRawToken(enrichedCtx, rawToken)
+			}
+
 			c.SetRequest(c.Request().WithContext(enrichedCtx))
 
 			return next(c)
