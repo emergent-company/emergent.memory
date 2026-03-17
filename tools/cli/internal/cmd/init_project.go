@@ -13,6 +13,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/apitokens"
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/orgs"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
@@ -172,8 +173,12 @@ func runInitProject(cmd *cobra.Command, args []string) error {
 	}
 
 	// ------------------------------------------------------------------
-	// 3. Fresh run — project selection/creation
+	// 3. Fresh run — ensure org exists, then project selection/creation
 	// ------------------------------------------------------------------
+	if err := initEnsureOrg(c); err != nil {
+		return err
+	}
+
 	projectID, projectName, err = initSelectOrCreateProject(c)
 	if err != nil {
 		return err
@@ -294,6 +299,72 @@ func initCreateProject(c *client.Client) (id, name string, err error) {
 
 	fmt.Printf("Project %q created.\n", project.Name)
 	return project.ID, project.Name, nil
+}
+
+// ---------------------------------------------------------------------------
+// 3b. Ensure at least one organization exists
+// ---------------------------------------------------------------------------
+
+// initEnsureOrg checks that the user belongs to at least one organization.
+// If not, it offers to create one interactively. Returns nil when an org is
+// available (either pre-existing or just created).
+func initEnsureOrg(c *client.Client) error {
+	orgList, err := c.SDK.Orgs.List(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to list organizations: %w", err)
+	}
+
+	if len(orgList) > 0 {
+		return nil // at least one org exists — proceed normally
+	}
+
+	// No orgs found — prompt the user to create one.
+	fmt.Println("No organization found. An organization is required to create projects.")
+	fmt.Println()
+
+	yes, err := promptYesNoDefault("Create an organization now? [Y/n] ", true)
+	if err != nil {
+		return err
+	}
+	if !yes {
+		fmt.Println()
+		fmt.Println("You can create one later with:")
+		fmt.Println("  memory orgs create --name <name>")
+		return fmt.Errorf("no organization available — cannot continue setup")
+	}
+
+	// Prompt for org name, defaulting to cwd folder name.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+	folderName := filepath.Base(cwd)
+
+	fmt.Printf("Organization name [%s]: ", folderName)
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+		return fmt.Errorf("no input received")
+	}
+	input := strings.TrimSpace(scanner.Text())
+	if input == "" {
+		input = folderName
+	}
+
+	fmt.Printf("Creating organization %q...\n", input)
+
+	org, err := c.SDK.Orgs.Create(context.Background(), &orgs.CreateOrganizationRequest{
+		Name: input,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create organization: %w", err)
+	}
+
+	fmt.Printf("Organization %q created (%s).\n", org.Name, org.ID)
+	fmt.Println()
+	return nil
 }
 
 // ---------------------------------------------------------------------------
