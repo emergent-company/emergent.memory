@@ -274,7 +274,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		)
 	}
 
-	deviceResp, err := auth.RequestDeviceCode(oidcConfig, clientID, []string{"openid", "profile", "email"})
+	deviceResp, err := auth.RequestDeviceCode(oidcConfig, clientID, []string{"openid", "profile", "email", "offline_access"})
 	if err != nil {
 		return fmt.Errorf("failed to request device code: %w", err)
 	}
