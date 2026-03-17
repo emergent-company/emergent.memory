@@ -47,7 +47,7 @@ Primary schema for all knowledge management data.
 - `kb.orgs` - Organizations
 - `kb.projects` - Projects within organizations
 - `kb.organization_memberships` - User-to-org membership
-- `kb.project_memberships` - User-to-project membership
+- `kb.project_memberships` - User-to-project membership (`role`: `project_admin` | `project_user` | `project_viewer`)
 
 **Chat:**
 
@@ -56,9 +56,9 @@ Primary schema for all knowledge management data.
 
 **Schema & Templates:**
 
-- `kb.graph_template_packs` - Reusable object/relationship schemas
-- `kb.project_template_packs` - Template packs installed per project
-- `kb.project_object_type_registry` - Per-project object type configuration
+- `kb.graph_schemas` - Reusable object/relationship schemas
+- `kb.project_schemas` - Schemas installed per project
+- `kb.project_object_schema_registry` - Per-project object type configuration
 - `kb.object_type_schemas` - Object type JSON schemas
 
 **Other:**

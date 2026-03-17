@@ -150,7 +150,7 @@ func TestRequiresProject(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "assign_template_pack requires project",
+			name:     "assign_schema requires project",
 			toolName: "schema-assign",
 			expected: true,
 		},
@@ -532,21 +532,21 @@ func TestToolInputSchemas(t *testing.T) {
 		}
 	})
 
-	t.Run("template-get requires pack_id", func(t *testing.T) {
+	t.Run("schema-get requires schema_id", func(t *testing.T) {
 		tool := toolMap["schema-get"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
-			if r == "pack_id" {
+			if r == "schema_id" {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Error("template-get should require pack_id")
+			t.Error("schema-get should require schema_id")
 		}
 	})
 
-	t.Run("assign_template_pack requires template_pack_id", func(t *testing.T) {
+	t.Run("assign_schema requires schema_id", func(t *testing.T) {
 		tool := toolMap["schema-assign"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
@@ -556,7 +556,7 @@ func TestToolInputSchemas(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Error("assign_template_pack should require template_pack_id")
+			t.Error("assign_schema should require schema_id")
 		}
 	})
 
@@ -631,17 +631,17 @@ func TestToolInputSchemas(t *testing.T) {
 		}
 	})
 
-	t.Run("template-delete requires pack_id", func(t *testing.T) {
+	t.Run("schema-delete requires schema_id", func(t *testing.T) {
 		tool := toolMap["schema-delete"]
 		found := false
 		for _, r := range tool.InputSchema.Required {
-			if r == "pack_id" {
+			if r == "schema_id" {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Error("template-delete should require pack_id")
+			t.Error("schema-delete should require schema_id")
 		}
 	})
 }

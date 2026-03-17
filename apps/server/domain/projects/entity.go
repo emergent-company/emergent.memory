@@ -61,7 +61,7 @@ type ProjectMembership struct {
 	ID        string    `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
 	ProjectID string    `bun:"project_id,notnull,type:uuid" json:"projectId"`
 	UserID    string    `bun:"user_id,notnull,type:uuid" json:"userId"`
-	Role      string    `bun:"role,notnull" json:"role"` // "project_admin" | "project_user"
+	Role      string    `bun:"role,notnull" json:"role"` // "project_admin" | "project_user" | "project_viewer"
 	CreatedAt time.Time `bun:"created_at,notnull,default:now()" json:"createdAt"`
 
 	// Relations (for joining)
@@ -70,9 +70,18 @@ type ProjectMembership struct {
 
 // Role constants
 const (
-	RoleProjectAdmin = "project_admin"
-	RoleProjectUser  = "project_user"
+	RoleProjectAdmin  = "project_admin"
+	RoleProjectUser   = "project_user"
+	RoleProjectViewer = "project_viewer"
 )
+
+// ViewerReadOnlyScopes are the only scopes a project_viewer may request on a token
+var ViewerReadOnlyScopes = map[string]bool{
+	"data:read":     true,
+	"schema:read":   true,
+	"agents:read":   true,
+	"projects:read": true,
+}
 
 // InstalledSchema represents an installed schema for a project
 type InstalledSchema struct {
@@ -107,14 +116,15 @@ type ProjectDTO struct {
 
 // ProjectMemberDTO is the response DTO for project member endpoints
 type ProjectMemberDTO struct {
-	ID          string    `json:"id"`
-	Email       string    `json:"email"`
-	DisplayName *string   `json:"displayName,omitempty"`
-	FirstName   *string   `json:"firstName,omitempty"`
-	LastName    *string   `json:"lastName,omitempty"`
-	AvatarURL   *string   `json:"avatarUrl,omitempty"`
-	Role        string    `json:"role"`
-	JoinedAt    time.Time `json:"joinedAt"`
+	ID          string     `json:"id"`
+	Email       string     `json:"email"`
+	DisplayName *string    `json:"displayName,omitempty"`
+	FirstName   *string    `json:"firstName,omitempty"`
+	LastName    *string    `json:"lastName,omitempty"`
+	AvatarURL   *string    `json:"avatarUrl,omitempty"`
+	Role        string     `json:"role"`
+	JoinedAt    time.Time  `json:"joinedAt"`
+	LastActiveAt *time.Time `json:"lastActiveAt,omitempty"`
 }
 
 // CreateProjectRequest is the request body for creating a project

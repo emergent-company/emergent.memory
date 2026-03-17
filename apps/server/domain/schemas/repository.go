@@ -552,8 +552,8 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 	// Build result scaffold
 	result := &AssignPackResult{
 		DryRun:           req.DryRun,
-		PackID:           pack.ID,
-		PackName:         pack.Name,
+		SchemaID:         pack.ID,
+		SchemaName:       pack.Name,
 		InstalledTypes:   []string{},
 		SkippedTypes:     []string{},
 		MergedTypes:      []string{},

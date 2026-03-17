@@ -78,7 +78,7 @@ type JobStatusResponse struct {
 	ErrorMessage            *string    `json:"error_message,omitempty"`
 	DiscoveredTypes         JSONArray  `json:"discovered_types"`
 	DiscoveredRelationships JSONArray  `json:"discovered_relationships"`
-	TemplatePackID          *string    `json:"template_pack_id,omitempty"`
+	SchemaID                *string    `json:"schema_id,omitempty"`
 }
 
 // JobListItem is a summary of a discovery job for listing.
@@ -90,7 +90,7 @@ type JobListItem struct {
 	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 	DiscoveredTypes         JSONArray  `json:"discovered_types"`
 	DiscoveredRelationships JSONArray  `json:"discovered_relationships"`
-	TemplatePackID          *string    `json:"template_pack_id,omitempty"`
+	SchemaID                *string    `json:"schema_id,omitempty"`
 }
 
 // CancelJobResponse is the response from cancelling a job.
@@ -98,7 +98,7 @@ type CancelJobResponse struct {
 	Message string `json:"message"`
 }
 
-// FinalizeDiscoveryRequest is the request to finalize a discovery job into a template pack.
+// FinalizeDiscoveryRequest is the request to finalize a discovery job into a schema.
 type FinalizeDiscoveryRequest struct {
 	PackName              string                 `json:"packName"`
 	Mode                  string                 `json:"mode"`
@@ -128,8 +128,8 @@ type IncludedRelationship struct {
 
 // FinalizeDiscoveryResponse is the response from finalizing discovery.
 type FinalizeDiscoveryResponse struct {
-	TemplatePackID string `json:"template_pack_id"`
-	Message        string `json:"message"`
+	SchemaID string `json:"schema_id"`
+	Message  string `json:"message"`
 }
 
 // --- Methods ---
@@ -284,7 +284,7 @@ func (c *Client) CancelJob(ctx context.Context, jobID string) (*CancelJobRespons
 	return &result, nil
 }
 
-// FinalizeDiscovery finalizes a discovery job into a template pack.
+// FinalizeDiscovery finalizes a discovery job into a schema.
 // POST /api/discovery-jobs/:id/finalize
 func (c *Client) FinalizeDiscovery(ctx context.Context, jobID string, req *FinalizeDiscoveryRequest) (*FinalizeDiscoveryResponse, error) {
 	c.mu.RLock()

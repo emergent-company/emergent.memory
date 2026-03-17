@@ -935,5 +935,10 @@ func init() {
 	projectsCmd.AddCommand(setProjectProviderCmd)
 	projectsCmd.AddCommand(projectsCreateTokenCmd)
 	projectsCmd.AddCommand(setBudgetCmd)
+
+	// Team management subcommands
+	initTeamCmd()
+	projectsCmd.AddCommand(teamCmd)
+
 	rootCmd.AddCommand(projectsCmd)
 }

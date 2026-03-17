@@ -6,22 +6,33 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/email"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // Service handles invitation operations
 type Service struct {
-	db bun.IDB
+	db       bun.IDB
+	emailSvc *email.JobsService
+	baseURL  string
+	log      *slog.Logger
 }
 
 // NewService creates a new invites service
-func NewService(db bun.IDB) *Service {
-	return &Service{db: db}
+func NewService(db bun.IDB, emailSvc *email.JobsService, log *slog.Logger) *Service {
+	return &Service{
+		db:       db,
+		emailSvc: emailSvc,
+		baseURL:  "https://app.emergent.memory", // overridden via env in production
+		log:      log,
+	}
 }
 
 type inviteRow struct {
@@ -160,9 +171,10 @@ func (s *Service) ListByProject(ctx context.Context, projectID string) ([]SentIn
 func (s *Service) Create(ctx context.Context, req *CreateInviteRequest) (*Invite, error) {
 	// Validate role
 	validRoles := map[string]bool{
-		"org_admin":     true,
-		"project_admin": true,
-		"project_user":  true,
+		"org_admin":      true,
+		"project_admin":  true,
+		"project_user":   true,
+		"project_viewer": true,
 	}
 	if !validRoles[req.Role] {
 		return nil, apperror.ErrBadRequest.WithMessage("invalid role")
@@ -209,15 +221,21 @@ func (s *Service) Create(ctx context.Context, req *CreateInviteRequest) (*Invite
 	// Set expiry (7 days from now)
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 
+	var inviterID *string
+	if req.InviterID != "" {
+		inviterID = &req.InviterID
+	}
+
 	invite := &Invite{
-		OrganizationID: req.OrgID,
-		ProjectID:      projectIDPtr,
-		Email:          strings.ToLower(req.Email),
-		Role:           req.Role,
-		Token:          token,
-		Status:         "pending",
-		ExpiresAt:      &expiresAt,
-		CreatedAt:      time.Now(),
+		OrganizationID:  req.OrgID,
+		ProjectID:       projectIDPtr,
+		Email:           strings.ToLower(req.Email),
+		Role:            req.Role,
+		Token:           token,
+		Status:          "pending",
+		ExpiresAt:       &expiresAt,
+		CreatedAt:       time.Now(),
+		InvitedByUserID: inviterID,
 	}
 
 	_, err = s.db.NewInsert().Model(invite).Exec(ctx)
@@ -225,7 +243,61 @@ func (s *Service) Create(ctx context.Context, req *CreateInviteRequest) (*Invite
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
+	// Enqueue invitation email (non-fatal: invitation is still valid even if email fails to queue)
+	if s.emailSvc != nil {
+		roleLabel := roleLabelFor(req.Role)
+		acceptURL := fmt.Sprintf("%s/invites/accept?token=%s", s.baseURL, token)
+		projectName := req.ProjectName
+		if projectName == "" {
+			projectName = "the project"
+		}
+		inviterName := req.InviterName
+		if inviterName == "" {
+			inviterName = "A team member"
+		}
+		toName := req.Email
+		_, emailErr := s.emailSvc.Enqueue(ctx, email.EnqueueOptions{
+			TemplateName: "project-invitation",
+			ToEmail:      req.Email,
+			ToName:       &toName,
+			Subject:      fmt.Sprintf("You've been invited to join %s on emergent memory", projectName),
+			TemplateData: map[string]interface{}{
+				"inviterName": inviterName,
+				"projectName": projectName,
+				"roleLabel":   roleLabel,
+				"acceptUrl":   acceptURL,
+			},
+			SourceType: stringPtr("invite"),
+			SourceID:   &invite.ID,
+		})
+		if emailErr != nil {
+			s.log.Warn("failed to enqueue project invitation email",
+				slog.String("inviteID", invite.ID),
+				slog.String("email", req.Email),
+				slog.String("error", emailErr.Error()))
+		}
+	}
+
 	return invite, nil
+}
+
+func roleLabelFor(role string) string {
+	switch role {
+	case "project_admin":
+		return "Admin"
+	case "project_user":
+		return "Member"
+	case "project_viewer":
+		return "Viewer (read-only)"
+	case "org_admin":
+		return "Organization Admin"
+	default:
+		return role
+	}
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
 
 // Accept accepts an invitation by token

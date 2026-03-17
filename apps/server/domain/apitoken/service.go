@@ -61,6 +61,14 @@ func getTokenPrefix(token string) string {
 	return token[:12]
 }
 
+// viewerReadOnlyScopes lists the only scopes a project_viewer may include in a token.
+var viewerReadOnlyScopes = map[string]bool{
+	"data:read":     true,
+	"schema:read":   true,
+	"agents:read":   true,
+	"projects:read": true,
+}
+
 // Create creates a new API token
 func (s *Service) Create(ctx context.Context, projectID, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
 	// Validate scopes
@@ -74,6 +82,22 @@ func (s *Service) Create(ctx context.Context, projectID, userID, name string, sc
 		}
 		if !valid {
 			return nil, apperror.ErrBadRequest.WithMessage("invalid scope: " + scope)
+		}
+	}
+
+	// Viewers may only create read-only tokens
+	if userID != "" && projectID != "" {
+		role, err := s.repo.GetUserProjectRole(ctx, projectID, userID)
+		if err != nil {
+			return nil, err
+		}
+		if role == "project_viewer" {
+			for _, scope := range scopes {
+				if !viewerReadOnlyScopes[scope] {
+					return nil, apperror.New(403, "viewer-write-scope-denied",
+						"project_viewer may only request read-only scopes (data:read, schema:read, agents:read, projects:read)")
+				}
+			}
 		}
 	}
 

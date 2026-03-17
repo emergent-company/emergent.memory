@@ -54,12 +54,13 @@ Project membership ⇒ implicit **Org Visibility** (read‑only): can list org m
 | Role          | Level   | Summary                                                                                                                                                                                                                                                                      |
 | ------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | org_admin     | Org     | Full control over organization metadata & all contained projects (create/update/delete project, manage org invites, upgrade/downgrade roles, delete org).                                                                                                                    |
-| project_admin | Project | Full control over a single project (settings, documents, ingestion, chat, invite/remove project members). No organization-wide modifications.                                                                                                                                |
-| project_user  | Project | Standard usage within a project (read/search documents, use chat, create personal conversations, upload documents if allowed by future scope mapping). Cannot manage project settings, membership, or delete documents unless explicitly granted by future scope expansions. |
+| project_admin  | Project | Full control over a single project (settings, documents, ingestion, chat, invite/remove project members). No organization-wide modifications.                                                                                                                                |
+| project_user   | Project | Standard usage within a project (read/search documents, use chat, create personal conversations, upload documents if allowed by future scope mapping). Cannot manage project settings, membership, or delete documents unless explicitly granted by future scope expansions. |
+| project_viewer | Project | Read-only access to a project. May only request read-only API token scopes (`data:read`, `schema:read`, `agents:read`, `projects:read`). Cannot write, upload, or manage project settings/membership.                                                                       |
 
 ### 3.2 Future Roles (Not Implemented Yet)
 
-Examples (for planning / mapping): `org_viewer`, `org_billing`, `project_viewer`, `project_analyst`, `project_ingest`, `project_chat_only`.
+Examples (for planning / mapping): `org_viewer`, `org_billing`, `project_analyst`, `project_ingest`, `project_chat_only`.
 
 ### 3.3 Automatic Role Assignment
 
@@ -97,9 +98,10 @@ Although the initial enforcement can be strictly role → permission, we formali
 
 | Role          | org:read   | org:write | org:project:create | org:project:delete | org:invite | project:read | project:write | project:invite | docs:read | docs:write             | docs:delete | chat:use | chat:admin       |
 | ------------- | ---------- | --------- | ------------------ | ------------------ | ---------- | ------------ | ------------- | -------------- | --------- | ---------------------- | ----------- | -------- | ---------------- |
-| org_admin     | ✅         | ✅        | ✅                 | ✅                 | ✅         | ✅ (all)     | ✅ (all)      | ✅ (all)       | ✅        | ✅                     | ✅          | ✅       | ✅               |
-| project_admin | (implicit) | ❌        | ❌                 | ❌                 | ❌         | ✅ (own)     | ✅ (own)      | ✅ (own)       | ✅        | ✅                     | ✅          | ✅       | ✅ (own project) |
-| project_user  | (implicit) | ❌        | ❌                 | ❌                 | ❌         | ✅ (own)     | ❌            | ❌             | ✅        | (future config: maybe) | ❌          | ✅       | ❌               |
+| org_admin      | ✅         | ✅        | ✅                 | ✅                 | ✅         | ✅ (all)     | ✅ (all)      | ✅ (all)       | ✅        | ✅                     | ✅          | ✅       | ✅               |
+| project_admin  | (implicit) | ❌        | ❌                 | ❌                 | ❌         | ✅ (own)     | ✅ (own)      | ✅ (own)       | ✅        | ✅                     | ✅          | ✅       | ✅ (own project) |
+| project_user   | (implicit) | ❌        | ❌                 | ❌                 | ❌         | ✅ (own)     | ❌            | ❌             | ✅        | (future config: maybe) | ❌          | ✅       | ❌               |
+| project_viewer | (implicit) | ❌        | ❌                 | ❌                 | ❌         | ✅ (own)     | ❌            | ❌             | ✅        | ❌                     | ❌          | ❌       | ❌               |
 
 Implicit org visibility for project roles corresponds only to `org:read` for the owning org + `project:read` for their projects.
 
@@ -136,7 +138,7 @@ CREATE TABLE organization_memberships (
 CREATE TABLE project_memberships (
   user_id UUID NOT NULL,
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('project_admin','project_user')),
+  role TEXT NOT NULL CHECK (role IN ('project_admin','project_user','project_viewer')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, project_id)
 );

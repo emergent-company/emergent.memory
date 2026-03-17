@@ -363,7 +363,7 @@ type GetEntityEdgesResult struct {
 }
 
 // ============================================================================
-// Template Pack DTOs
+// Schema DTOs
 // ============================================================================
 
 // MemorySchema represents a memory schema from the global registry
@@ -509,9 +509,9 @@ type CreateSchemaResult struct {
 
 // DeleteSchemaResult represents the result of delete_schema tool
 type DeleteSchemaResult struct {
-	Success bool   `json:"success"`
-	PackID  string `json:"pack_id"`
-	Message string `json:"message"`
+	Success  bool   `json:"success"`
+	SchemaID string `json:"schema_id"`
+	Message  string `json:"message"`
 }
 
 // ============================================================================

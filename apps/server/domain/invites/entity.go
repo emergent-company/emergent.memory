@@ -19,8 +19,9 @@ type Invite struct {
 	Status         string     `bun:"status,notnull,default:'pending'" json:"status"`
 	ExpiresAt      *time.Time `bun:"expires_at" json:"expiresAt,omitempty"`
 	AcceptedAt     *time.Time `bun:"accepted_at" json:"acceptedAt,omitempty"`
-	RevokedAt      *time.Time `bun:"revoked_at" json:"revokedAt,omitempty"`
-	CreatedAt      time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	RevokedAt        *time.Time `bun:"revoked_at" json:"revokedAt,omitempty"`
+	CreatedAt        time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	InvitedByUserID  *string    `bun:"invited_by_user_id,type:uuid" json:"invitedByUserId,omitempty"`
 }
 
 // PendingInvite represents a pending invitation for a user
@@ -48,10 +49,13 @@ type SentInvite struct {
 
 // CreateInviteRequest is the request to create a new invite
 type CreateInviteRequest struct {
-	OrgID     string `json:"orgId"`
-	ProjectID string `json:"projectId"`
-	Email     string `json:"email"`
-	Role      string `json:"role"`
+	OrgID       string `json:"orgId"`
+	ProjectID   string `json:"projectId"`
+	Email       string `json:"email"`
+	Role        string `json:"role"`
+	InviterName string `json:"inviterName,omitempty"` // display name of the inviting user
+	ProjectName string `json:"projectName,omitempty"` // display name of the project
+	InviterID   string `json:"inviterId,omitempty"`   // user ID of the inviting user
 }
 
 // AcceptInviteRequest is the request to accept an invite

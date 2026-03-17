@@ -257,8 +257,8 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	useraccessHandler := useraccess.NewHandler(useraccessSvc)
 	useraccess.RegisterRoutes(e, useraccessHandler, authMiddleware)
 
-	// Register invites routes
-	invitesSvc := invites.NewService(db)
+	// Register invites routes (nil email service in test mode — emails are no-op)
+	invitesSvc := invites.NewService(db, nil, log)
 	invitesHandler := invites.NewHandler(invitesSvc)
 	invites.RegisterRoutes(e, invitesHandler, authMiddleware)
 

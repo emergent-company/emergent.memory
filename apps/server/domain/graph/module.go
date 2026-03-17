@@ -91,7 +91,7 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 	p.log.Debug("schema cache miss, loading from database", slog.String("project_id", projectID))
 
 	type GraphSchema struct {
-		bun.BaseModel           `bun:"kb.graph_template_packs,alias:gtp"`
+		bun.BaseModel           `bun:"kb.graph_schemas,alias:gs"`
 		ID                      string  `bun:"id,pk,type:uuid"`
 		Name                    string  `bun:"name,notnull"`
 		Version                 string  `bun:"version,notnull"`
@@ -100,19 +100,19 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 	}
 
 	type ProjectSchemaAssignment struct {
-		bun.BaseModel  `bun:"kb.project_template_packs,alias:ptp"`
-		ProjectID      string             `bun:"project_id,notnull,type:uuid"`
-		TemplatePackID string             `bun:"template_pack_id,notnull,type:uuid"`
-		Active         bool               `bun:"active,default:true"`
-		Schema         *GraphSchema `bun:"rel:belongs-to,join:template_pack_id=id"`
+		bun.BaseModel `bun:"kb.project_schemas,alias:ps"`
+		ProjectID     string       `bun:"project_id,notnull,type:uuid"`
+		SchemaID      string       `bun:"schema_id,notnull,type:uuid"`
+		Active        bool         `bun:"active,default:true"`
+		Schema        *GraphSchema `bun:"rel:belongs-to,join:schema_id=id"`
 	}
 
 	var assignments []ProjectSchemaAssignment
 	err := p.db.NewSelect().
 		Model(&assignments).
 		Relation("Schema").
-		Where("ptp.project_id = ?", projectID).
-		Where("ptp.active = true").
+		Where("ps.project_id = ?", projectID).
+		Where("ps.active = true").
 		Scan(ctx)
 
 	objectSchemas := make(map[string]agents.ObjectSchema)
@@ -347,13 +347,13 @@ func (p *inverseTypeProviderAdapter) getOrLoadInverseMap(ctx context.Context, pr
 		return cached.inverseMap
 	}
 
-	// Load from DB: get relationship_type_schemas from all active template packs for this project
+	// Load from DB: get relationship_type_schemas from all active schemas for this project
 	query := `
-		SELECT tp.relationship_type_schemas
-		FROM kb.project_template_packs ptp
-		JOIN kb.graph_template_packs tp ON ptp.template_pack_id = tp.id
-		WHERE ptp.project_id = ? AND ptp.active = true
-		AND tp.relationship_type_schemas IS NOT NULL
+		SELECT gs.relationship_type_schemas
+		FROM kb.project_schemas ps
+		JOIN kb.graph_schemas gs ON ps.schema_id = gs.id
+		WHERE ps.project_id = ? AND ps.active = true
+		AND gs.relationship_type_schemas IS NOT NULL
 	`
 
 	var results []struct {

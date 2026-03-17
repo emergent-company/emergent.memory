@@ -61,12 +61,12 @@ Table "kb"."projects" {
   "chat_prompt_template" text
 }
 
-Table "kb"."project_object_type_registry" {
+Table "kb"."project_object_schema_registry" {
   "id" uuid [pk, not null, default: `uuid_generate_v4()`]
   "project_id" uuid [not null]
   "type_name" text [not null]
   "source" text [not null]
-  "template_pack_id" uuid
+  "schema_id" uuid
   "schema_version" int4 [not null, default: 1]
   "json_schema" jsonb [not null]
   "ui_config" jsonb
@@ -83,7 +83,7 @@ Table "kb"."project_memberships" {
   "id" uuid [pk, not null, default: `uuid_generate_v4()`]
   "project_id" uuid [not null]
   "user_id" uuid [not null]
-  "role" text [not null]
+  "role" text [not null, note: 'project_admin | project_user | project_viewer']
   "created_at" timestamptz [not null, default: `now()`]
 
   Indexes {
@@ -312,13 +312,14 @@ Table "kb"."invites" {
   "organization_id" uuid [not null]
   "project_id" uuid
   "email" text [not null]
-  "role" text [not null]
+  "role" text [not null, note: 'org_admin | project_admin | project_user | project_viewer']
   "token" text [not null]
   "status" text [not null, default: 'pending']
   "expires_at" timestamptz
   "accepted_at" timestamptz
   "revoked_at" timestamptz
   "created_at" timestamptz [not null, default: `now()`]
+  "invited_by_user_id" uuid [note: 'audit trail: user who sent the invite; SET NULL on user delete']
 }
 
 Table "kb"."integrations" {
@@ -540,7 +541,7 @@ Table "kb"."audit_log" {
   "details" jsonb
 }
 
-Table "kb"."graph_template_packs" {
+Table "kb"."graph_schemas" {
   "id" uuid [pk, not null, default: `uuid_generate_v4()`]
   "name" text [not null]
   "version" text [not null]
@@ -566,10 +567,10 @@ Table "kb"."graph_template_packs" {
   "updated_at" timestamptz [not null, default: `now()`]
 }
 
-Table "kb"."project_template_packs" {
+Table "kb"."project_schemas" {
   "id" uuid [pk, not null, default: `uuid_generate_v4()`]
   "project_id" uuid [not null]
-  "template_pack_id" uuid [not null]
+  "schema_id" uuid [not null]
   "installed_at" timestamptz [not null, default: `now()`]
   "installed_by" uuid
   "active" bool [not null, default: true]
@@ -628,11 +629,11 @@ Ref "FK_38a73cbcc58fbed8e62a66d79b8":"kb"."projects"."id" < "kb"."project_member
 
 Ref "FK_7cb6c36ad5bf1bd4a413823acec":"core"."user_profiles"."id" < "kb"."project_memberships"."user_id" [delete: cascade]
 
-Ref "FK_b8a4633d03d7ce7bc67701f8efb":"kb"."projects"."id" < "kb"."project_object_type_registry"."project_id" [delete: cascade]
+Ref "FK_b8a4633d03d7ce7bc67701f8efb":"kb"."projects"."id" < "kb"."project_object_schema_registry"."project_id" [delete: cascade]
 
-Ref "FK_359c704937c9f1857fd80898ef2":"kb"."projects"."id" < "kb"."project_template_packs"."project_id" [delete: cascade]
+Ref "FK_359c704937c9f1857fd80898ef2":"kb"."projects"."id" < "kb"."project_schemas"."project_id" [delete: cascade]
 
-Ref "FK_440cc8aae6f630830193b703f54":"kb"."graph_template_packs"."id" < "kb"."project_template_packs"."template_pack_id"
+Ref "FK_440cc8aae6f630830193b703f54":"kb"."graph_schemas"."id" < "kb"."project_schemas"."schema_id"
 
 Ref "FK_7ab852bb0ada09a0fc3adb7e5de":"kb"."projects"."id" < "kb"."tags"."project_id" [delete: cascade]
 

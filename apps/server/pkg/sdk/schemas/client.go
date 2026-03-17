@@ -179,8 +179,8 @@ type SchemaConflict struct {
 type AssignPackResult struct {
 	DryRun           bool             `json:"dry_run"`
 	AssignmentID     string           `json:"assignment_id,omitempty"`
-	PackID           string           `json:"pack_id"`
-	PackName         string           `json:"pack_name"`
+	SchemaID         string           `json:"schema_id"`
+	SchemaName       string           `json:"schema_name"`
 	InstalledTypes   []string         `json:"installed_types"`
 	SkippedTypes     []string         `json:"skipped_types,omitempty"`
 	MergedTypes      []string         `json:"merged_types,omitempty"`

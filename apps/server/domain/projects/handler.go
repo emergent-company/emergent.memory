@@ -223,8 +223,9 @@ func (h *Handler) ListMembers(c echo.Context) error {
 	}
 
 	projectID := c.Param("id")
+	includeStats := c.QueryParam("stats") == "true"
 
-	members, err := h.svc.ListMembers(c.Request().Context(), projectID)
+	members, err := h.svc.ListMembers(c.Request().Context(), projectID, includeStats)
 	if err != nil {
 		return err
 	}

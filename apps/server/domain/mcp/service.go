@@ -307,12 +307,12 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
-					"pack_id": {
+					"schema_id": {
 						Type:        "string",
 						Description: "The UUID of the schema to retrieve",
 					},
 				},
-				Required: []string{"pack_id"},
+				Required: []string{"schema_id"},
 			},
 		},
 		{
@@ -435,12 +435,12 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
-					"pack_id": {
+					"schema_id": {
 						Type:        "string",
 						Description: "The UUID of the memory schema to delete",
 					},
 				},
-				Required: []string{"pack_id"},
+				Required: []string{"schema_id"},
 			},
 		},
 		{
@@ -2904,9 +2904,9 @@ func (s *Service) executeListSchemas(ctx context.Context, args map[string]any) (
 }
 
 func (s *Service) executeGetSchema(ctx context.Context, args map[string]any) (*ToolResult, error) {
-	packID, _ := args["pack_id"].(string)
+	packID, _ := args["schema_id"].(string)
 	if packID == "" {
-		return nil, fmt.Errorf("missing required parameter: pack_id")
+		return nil, fmt.Errorf("missing required parameter: schema_id")
 	}
 
 	type packRow struct {
@@ -3633,9 +3633,9 @@ func (s *Service) executeCreateSchema(ctx context.Context, args map[string]any) 
 }
 
 func (s *Service) executeDeleteSchema(ctx context.Context, args map[string]any) (*ToolResult, error) {
-	packID, _ := args["pack_id"].(string)
+	packID, _ := args["schema_id"].(string)
 	if packID == "" {
-		return nil, fmt.Errorf("missing required parameter: pack_id")
+		return nil, fmt.Errorf("missing required parameter: schema_id")
 	}
 
 	type packRow struct {
@@ -3681,9 +3681,9 @@ func (s *Service) executeDeleteSchema(ctx context.Context, args map[string]any) 
 	}
 
 	result := DeleteSchemaResult{
-		Success: true,
-		PackID:  packID,
-		Message: fmt.Sprintf("Schema \"%s\" deleted successfully", pack.Name),
+		Success:  true,
+		SchemaID: packID,
+		Message:  fmt.Sprintf("Schema \"%s\" deleted successfully", pack.Name),
 	}
 
 	return s.wrapResult(result)

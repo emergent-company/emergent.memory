@@ -223,6 +223,39 @@ func (r *Repository) FindByHash(ctx context.Context, tokenHash string) (*ApiToke
 	return &token, nil
 }
 
+// GetUserProjectRole returns the role of a user in a project (or "" if not a member).
+func (r *Repository) GetUserProjectRole(ctx context.Context, projectID, userID string) (string, error) {
+	var role string
+	err := r.db.NewRaw(`
+		SELECT role FROM kb.project_memberships
+		WHERE project_id = ? AND user_id = ?
+		LIMIT 1
+	`, projectID, userID).Scan(ctx, &role)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", apperror.ErrDatabase.WithInternal(err)
+	}
+	return role, nil
+}
+
+// RevokeByProjectAndUser revokes all active tokens for a user in a project.
+// Used when a member is removed from a project.
+func (r *Repository) RevokeByProjectAndUser(ctx context.Context, projectID, userID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*ApiToken)(nil)).
+		Set("revoked_at = NOW()").
+		Where("project_id = ?", projectID).
+		Where("user_id = ?", userID).
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
 // Revoke sets the revoked_at timestamp on a token
 func (r *Repository) Revoke(ctx context.Context, tokenID, projectID string) (bool, error) {
 	result, err := r.db.NewUpdate().

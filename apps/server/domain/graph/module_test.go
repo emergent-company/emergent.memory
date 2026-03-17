@@ -38,8 +38,8 @@ func TestSchemaProviderCaching(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("cache_hit_on_second_call", func(t *testing.T) {
-		adapter, ok := provider.(*templatePackSchemaProviderAdapter)
-		require.True(t, ok, "provider should be templatePackSchemaProviderAdapter")
+		adapter, ok := provider.(*schemaProviderAdapter)
+		require.True(t, ok, "provider should be schemaProviderAdapter")
 
 		testProjectID := "test-cache-hit-" + t.Name()
 
@@ -60,8 +60,8 @@ func TestSchemaProviderCaching(t *testing.T) {
 	})
 
 	t.Run("cache_expiry_after_ttl", func(t *testing.T) {
-		adapter, ok := provider.(*templatePackSchemaProviderAdapter)
-		require.True(t, ok, "provider should be templatePackSchemaProviderAdapter")
+		adapter, ok := provider.(*schemaProviderAdapter)
+		require.True(t, ok, "provider should be schemaProviderAdapter")
 
 		testProjectID := "test-cache-expiry-" + t.Name()
 
@@ -85,8 +85,8 @@ func TestSchemaProviderCaching(t *testing.T) {
 	})
 
 	t.Run("thread_safety_concurrent_access", func(t *testing.T) {
-		adapter, ok := provider.(*templatePackSchemaProviderAdapter)
-		require.True(t, ok, "provider should be templatePackSchemaProviderAdapter")
+		adapter, ok := provider.(*schemaProviderAdapter)
+		require.True(t, ok, "provider should be schemaProviderAdapter")
 
 		testProjectID := "test-thread-safety-" + t.Name()
 
@@ -117,8 +117,8 @@ func TestSchemaProviderCaching(t *testing.T) {
 	})
 
 	t.Run("cache_isolation_per_project", func(t *testing.T) {
-		adapter, ok := provider.(*templatePackSchemaProviderAdapter)
-		require.True(t, ok, "provider should be templatePackSchemaProviderAdapter")
+		adapter, ok := provider.(*schemaProviderAdapter)
+		require.True(t, ok, "provider should be schemaProviderAdapter")
 
 		projectA := "test-isolation-a-" + t.Name()
 		projectB := "test-isolation-b-" + t.Name()
@@ -145,8 +145,8 @@ func TestSchemaProviderCaching(t *testing.T) {
 	})
 
 	t.Run("cache_structure_correctness", func(t *testing.T) {
-		adapter, ok := provider.(*templatePackSchemaProviderAdapter)
-		require.True(t, ok, "provider should be templatePackSchemaProviderAdapter")
+		adapter, ok := provider.(*schemaProviderAdapter)
+		require.True(t, ok, "provider should be schemaProviderAdapter")
 
 		testProjectID := "test-structure-" + t.Name()
 
@@ -169,8 +169,8 @@ func TestSchemaProviderCaching(t *testing.T) {
 	})
 
 	t.Run("double_check_locking_pattern", func(t *testing.T) {
-		adapter, ok := provider.(*templatePackSchemaProviderAdapter)
-		require.True(t, ok, "provider should be templatePackSchemaProviderAdapter")
+		adapter, ok := provider.(*schemaProviderAdapter)
+		require.True(t, ok, "provider should be schemaProviderAdapter")
 
 		testProjectID := "test-locking-" + t.Name()
 
@@ -217,8 +217,8 @@ func TestSchemaProviderMetrics(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	provider := ProvideSchemaProvider(db, log)
 
-	adapter, ok := provider.(*templatePackSchemaProviderAdapter)
-	require.True(t, ok, "provider should be templatePackSchemaProviderAdapter")
+	adapter, ok := provider.(*schemaProviderAdapter)
+	require.True(t, ok, "provider should be schemaProviderAdapter")
 
 	ctx := context.Background()
 
@@ -238,8 +238,8 @@ func TestSchemaProviderMetrics(t *testing.T) {
 	})
 
 	t.Run("metrics_increment_correctly", func(t *testing.T) {
-		adapter, ok := provider.(*templatePackSchemaProviderAdapter)
-		require.True(t, ok, "provider should be templatePackSchemaProviderAdapter")
+		adapter, ok := provider.(*schemaProviderAdapter)
+		require.True(t, ok, "provider should be schemaProviderAdapter")
 
 		adapter.cacheMu.Lock()
 		for k := range adapter.schemaCache {

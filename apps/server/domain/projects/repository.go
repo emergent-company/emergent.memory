@@ -46,7 +46,7 @@ type projectWithStats struct {
 	TotalJobs         int    `bun:"total_jobs"`
 	RunningJobs       int    `bun:"running_jobs"`
 	QueuedJobs        int    `bun:"queued_jobs"`
-	TemplatePacks     []byte `bun:"template_packs"` // Raw JSON
+	InstalledSchemas  []byte `bun:"installed_schemas"` // Raw JSON
 }
 
 func (p *projectWithStats) populateStats() {
@@ -62,8 +62,8 @@ func (p *projectWithStats) populateStats() {
 		QueuedJobs:        p.QueuedJobs,
 		InstalledSchemas:  []InstalledSchema{},
 	}
-	if len(p.TemplatePacks) > 0 {
-		_ = json.Unmarshal(p.TemplatePacks, &p.Project.Stats.InstalledSchemas)
+	if len(p.InstalledSchemas) > 0 {
+		_ = json.Unmarshal(p.InstalledSchemas, &p.Project.Stats.InstalledSchemas)
 	}
 }
 
@@ -89,22 +89,22 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Project, er
 			ColumnExpr("(SELECT COUNT(*) FROM kb.object_extraction_jobs WHERE project_id = p.id AND status = 'running') AS running_jobs").
 			ColumnExpr("(SELECT COUNT(*) FROM kb.object_extraction_jobs WHERE project_id = p.id AND status = 'pending') AS queued_jobs").
 			ColumnExpr(`(SELECT COALESCE(json_agg(json_build_object(
-			   'name', tp.name,
-			   'version', tp.version,
+			   'name', gs.name,
+			   'version', gs.version,
 			   'objectTypes', CASE 
-			     WHEN tp.object_type_schemas IS NOT NULL AND jsonb_typeof(tp.object_type_schemas) = 'object' 
-			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(tp.object_type_schemas)), ARRAY[]::text[])
+			     WHEN gs.object_type_schemas IS NOT NULL AND jsonb_typeof(gs.object_type_schemas) = 'object' 
+			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(gs.object_type_schemas)), ARRAY[]::text[])
 			     ELSE ARRAY[]::text[]
 			   END,
 			   'relationshipTypes', CASE
-			     WHEN tp.relationship_type_schemas IS NOT NULL AND jsonb_typeof(tp.relationship_type_schemas) = 'object'
-			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(tp.relationship_type_schemas)), ARRAY[]::text[])
+			     WHEN gs.relationship_type_schemas IS NOT NULL AND jsonb_typeof(gs.relationship_type_schemas) = 'object'
+			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(gs.relationship_type_schemas)), ARRAY[]::text[])
 			     ELSE ARRAY[]::text[]
 			   END
 			 )), '[]'::json)
-			 FROM kb.project_template_packs ptp
-			 JOIN kb.graph_template_packs tp ON tp.id = ptp.template_pack_id
-			 WHERE ptp.project_id = p.id AND ptp.active = true) AS template_packs`)
+			 FROM kb.project_schemas ps
+			 JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+			 WHERE ps.project_id = p.id AND ps.active = true) AS installed_schemas`)
 	} else {
 		query = query.ColumnExpr("p.*")
 	}
@@ -158,22 +158,22 @@ func (r *Repository) GetByID(ctx context.Context, id string, includeStats bool) 
 			ColumnExpr("(SELECT COUNT(*) FROM kb.object_extraction_jobs WHERE project_id = p.id AND status = 'running') AS running_jobs").
 			ColumnExpr("(SELECT COUNT(*) FROM kb.object_extraction_jobs WHERE project_id = p.id AND status = 'pending') AS queued_jobs").
 			ColumnExpr(`(SELECT COALESCE(json_agg(json_build_object(
-			   'name', tp.name,
-			   'version', tp.version,
+			   'name', gs.name,
+			   'version', gs.version,
 			   'objectTypes', CASE 
-			     WHEN tp.object_type_schemas IS NOT NULL AND jsonb_typeof(tp.object_type_schemas) = 'object' 
-			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(tp.object_type_schemas)), ARRAY[]::text[])
+			     WHEN gs.object_type_schemas IS NOT NULL AND jsonb_typeof(gs.object_type_schemas) = 'object' 
+			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(gs.object_type_schemas)), ARRAY[]::text[])
 			     ELSE ARRAY[]::text[]
 			   END,
 			   'relationshipTypes', CASE
-			     WHEN tp.relationship_type_schemas IS NOT NULL AND jsonb_typeof(tp.relationship_type_schemas) = 'object'
-			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(tp.relationship_type_schemas)), ARRAY[]::text[])
+			     WHEN gs.relationship_type_schemas IS NOT NULL AND jsonb_typeof(gs.relationship_type_schemas) = 'object'
+			     THEN COALESCE(ARRAY(SELECT jsonb_object_keys(gs.relationship_type_schemas)), ARRAY[]::text[])
 			     ELSE ARRAY[]::text[]
 			   END
 			 )), '[]'::json)
-			 FROM kb.project_template_packs ptp
-			 JOIN kb.graph_template_packs tp ON tp.id = ptp.template_pack_id
-			 WHERE ptp.project_id = p.id AND ptp.active = true) AS template_packs`)
+			 FROM kb.project_schemas ps
+			 JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+			 WHERE ps.project_id = p.id AND ps.active = true) AS installed_schemas`)
 	} else {
 		query = query.ColumnExpr("p.*")
 	}
@@ -349,13 +349,12 @@ func (r *Repository) Delete(ctx context.Context, id string) (bool, error) {
 	return rowsAffected > 0, nil
 }
 
-// ListMembers returns all members of a project with their user profile info
-func (r *Repository) ListMembers(ctx context.Context, projectID string) ([]ProjectMemberDTO, error) {
+// ListMembers returns all members of a project with their user profile info.
+// When includeStats is true, each member includes lastActiveAt from their API tokens.
+func (r *Repository) ListMembers(ctx context.Context, projectID string, includeStats bool) ([]ProjectMemberDTO, error) {
 	var members []ProjectMemberDTO
 
-	// Note: user_emails table doesn't have is_primary column in base schema
-	// Using DISTINCT ON to get one email per user (prioritizing verified emails)
-	err := r.db.NewSelect().
+	q := r.db.NewSelect().
 		TableExpr("kb.project_memberships AS pm").
 		ColumnExpr("up.id").
 		ColumnExpr("COALESCE(ue.email, '') AS email").
@@ -367,15 +366,25 @@ func (r *Repository) ListMembers(ctx context.Context, projectID string) ([]Proje
 		ColumnExpr("pm.created_at AS joined_at").
 		Join("INNER JOIN core.user_profiles AS up ON up.id = pm.user_id").
 		Join(`LEFT JOIN LATERAL (
-			SELECT email FROM core.user_emails 
-			WHERE user_id = up.id 
-			ORDER BY verified DESC, created_at ASC 
+			SELECT email FROM core.user_emails
+			WHERE user_id = up.id
+			ORDER BY verified DESC, created_at ASC
 			LIMIT 1
 		) AS ue ON true`).
 		Where("pm.project_id = ?", projectID).
-		Order("pm.created_at ASC").
-		Scan(ctx, &members)
+		Order("pm.created_at ASC")
 
+	if includeStats {
+		q = q.ColumnExpr(`(
+			SELECT MAX(at.last_used_at)
+			FROM core.api_tokens at
+			WHERE at.user_id = pm.user_id
+			  AND at.project_id = pm.project_id
+			  AND at.revoked_at IS NULL
+		) AS last_active_at`)
+	}
+
+	err := q.Scan(ctx, &members)
 	if err != nil {
 		r.log.Error("failed to list project members", logger.Error(err), slog.String("projectID", projectID))
 		return nil, apperror.ErrDatabase.WithInternal(err)

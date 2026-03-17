@@ -23,11 +23,18 @@ var (
 	uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 )
 
+// TokenRevoker can revoke API tokens for a user scoped to a project.
+// Satisfied by apitoken.Repository via fx injection.
+type TokenRevoker interface {
+	RevokeByProjectAndUser(ctx context.Context, projectID, userID string) error
+}
+
 // Service handles business logic for projects
 type Service struct {
-	repo      *Repository
-	agentRepo *agents.Repository
-	log       *slog.Logger
+	repo         *Repository
+	agentRepo    *agents.Repository
+	tokenRevoker TokenRevoker // optional; nil is safe
+	log          *slog.Logger
 }
 
 // NewService creates a new project service
@@ -37,6 +44,12 @@ func NewService(repo *Repository, agentRepo *agents.Repository, log *slog.Logger
 		agentRepo: agentRepo,
 		log:       log.With(logger.Scope("projects.svc")),
 	}
+}
+
+// SetTokenRevoker wires in the token revoker (called from the projects module after both
+// projects and apitoken modules are initialized).
+func (s *Service) SetTokenRevoker(r TokenRevoker) {
+	s.tokenRevoker = r
 }
 
 // ServiceListParams defines parameters for listing projects
@@ -341,8 +354,9 @@ func (s *Service) DeleteAsync(ctx context.Context, id string, userID string) err
 	return nil
 }
 
-// ListMembers returns all members of a project
-func (s *Service) ListMembers(ctx context.Context, projectID string) ([]ProjectMemberDTO, error) {
+// ListMembers returns all members of a project.
+// When includeStats is true, each member includes lastActiveAt from their API tokens.
+func (s *Service) ListMembers(ctx context.Context, projectID string, includeStats bool) ([]ProjectMemberDTO, error) {
 	if !isValidUUID(projectID) {
 		return nil, apperror.New(400, "invalid-uuid", "projectId must be a valid UUID")
 	}
@@ -356,7 +370,7 @@ func (s *Service) ListMembers(ctx context.Context, projectID string) ([]ProjectM
 		return nil, apperror.ErrNotFound.WithMessage("Project not found")
 	}
 
-	return s.repo.ListMembers(ctx, projectID)
+	return s.repo.ListMembers(ctx, projectID, includeStats)
 }
 
 // RemoveMember removes a member from a project
@@ -404,6 +418,17 @@ func (s *Service) RemoveMember(ctx context.Context, projectID, userID string) er
 	}
 	if !removed {
 		return apperror.ErrNotFound.WithMessage("Member not found")
+	}
+
+	// Revoke all project-scoped tokens for the removed member
+	if s.tokenRevoker != nil {
+		if revokeErr := s.tokenRevoker.RevokeByProjectAndUser(ctx, projectID, userID); revokeErr != nil {
+			// Non-fatal: log and continue — membership is already removed
+			s.log.Warn("failed to revoke member tokens on removal",
+				slog.String("projectID", projectID),
+				slog.String("userID", userID),
+				slog.String("error", revokeErr.Error()))
+		}
 	}
 
 	s.log.Info("project member removed",

@@ -184,5 +184,10 @@ func main() {
 
 		// GitHub App integration (repository access, credential management)
 		githubapp.Module,
+
+		// Cross-domain wiring: give projects.Service access to revoke tokens on member removal
+		fx.Invoke(func(svc *projects.Service, tokenRepo *apitoken.Repository) {
+			svc.SetTokenRevoker(tokenRepo)
+		}),
 	).Run()
 }

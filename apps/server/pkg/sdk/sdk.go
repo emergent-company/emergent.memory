@@ -48,6 +48,7 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/health"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/integrations"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/invitations"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcp"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcpregistry"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/monitoring"
@@ -101,6 +102,7 @@ type Client struct {
 	Schemas          *schemas.Client
 	Skills           *skills.Client
 	Chunking         *chunking.Client
+	Invitations      *invitations.Client
 
 	// Service clients — non-context (no org/project needed)
 	Health     *health.Client
@@ -307,6 +309,7 @@ func initClients(c *Client) {
 	c.Schemas = schemas.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Skills = skills.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Chunking = chunking.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Invitations = invitations.NewClient(c.http, c.base, c.auth)
 
 	// Non-context clients
 	c.Health = health.NewClient(c.http, c.base)

@@ -99,6 +99,12 @@ func (h *Handler) Create(c echo.Context) error {
 
 	// TODO: Verify user has admin access to project
 
+	// Attach inviter identity so the email template can show who sent the invite
+	req.InviterID = user.ID
+	if user.Email != "" {
+		req.InviterName = user.Email
+	}
+
 	invite, err := h.svc.Create(c.Request().Context(), &req)
 	if err != nil {
 		return err
