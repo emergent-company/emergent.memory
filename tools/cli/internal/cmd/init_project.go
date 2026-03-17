@@ -110,7 +110,7 @@ func runInitProject(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Warning: previously configured project %s was not found on the server.\n", existingProjectID)
 			fmt.Println("Starting fresh setup...")
 			fmt.Println()
-			isRerun = false
+			// Fall through to fresh run below.
 		} else {
 			// 2.3  Ask to verify.
 			existingName := envMap["MEMORY_PROJECT_NAME"]
