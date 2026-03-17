@@ -52,6 +52,8 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/encryption"
+	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
+	"github.com/emergent-company/emergent.memory/pkg/whisper"
 )
 
 // TestServer wraps an Echo instance for testing
@@ -90,8 +92,15 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 		UserSvc: userSvc,
 	})
 
+	// Create shared services used by multiple route registrations
+	storageCfg := storage.NewConfig()
+	storageSvc, _ := storage.NewService(storageCfg, log)
+	kreuzbergClient := kreuzberg.NewClient(testDB.Config, log)
+	whisperClient := whisper.NewClient(testDB.Config, log)
+	embeddingsSvc := embeddings.NewNoopService(log)
+
 	// Register health routes (public)
-	healthHandler := health.NewHandler(testDB.Pool, testDB.Config)
+	healthHandler := health.NewHandler(testDB.Pool, testDB.Config, storageSvc, kreuzbergClient, whisperClient, embeddingsSvc)
 	e.GET("/health", healthHandler.Health)
 	e.GET("/healthz", healthHandler.Healthz)
 	e.GET("/ready", healthHandler.Ready)
@@ -144,8 +153,6 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register documents routes
 	docsRepo := documents.NewRepository(db, log)
 	docsSvc := documents.NewService(docsRepo, log)
-	storageCfg := storage.NewConfig()
-	storageSvc, _ := storage.NewService(storageCfg, log)
 	docsHandler := documents.NewHandler(docsSvc, storageSvc, log)
 	uploadHandler := documents.NewUploadHandler(docsSvc, storageSvc, nil, log)
 	documents.RegisterRoutes(e, docsHandler, uploadHandler, authMiddleware)
@@ -187,7 +194,6 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register graph routes
 	graphRepo := graph.NewRepository(db, log)
 	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
-	embeddingsSvc := embeddings.NewNoopService(log)
 	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, graph.ProvideInverseTypeProvider(db, log), embeddingsSvc, nil, nil)
 	graphHandler := graph.NewHandler(graphSvc)
 	graph.RegisterRoutes(e, graphHandler, authMiddleware)

@@ -90,7 +90,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	if cfg != nil && cfg.ServerURL != "" {
-		results = append(results, checkServerConnectivity(cfg.ServerURL))
+		results = append(results, checkServerConnectivity(cfg.ServerURL)...)
 		results = append(results, checkAuth(cfg, configPath))
 		results = append(results, checkAPI(cfg))
 		results = append(results, checkMCP(cfg))
@@ -613,7 +613,7 @@ func checkGoogleAPIKey(installDir string) checkResult {
 	}
 }
 
-func checkServerConnectivity(serverURL string) checkResult {
+func checkServerConnectivity(serverURL string) []checkResult {
 	fmt.Printf("Checking server connectivity (%s)... ", serverURL)
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
@@ -622,30 +622,102 @@ func checkServerConnectivity(serverURL string) checkResult {
 	resp, err := httpClient.Get(healthURL)
 	if err != nil {
 		fmt.Println("FAILED")
-		return checkResult{
+		return []checkResult{{
 			name:    "Server Connectivity",
 			status:  "fail",
 			message: fmt.Sprintf("Cannot reach server: %v", err),
-		}
+		}}
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Println("UNHEALTHY")
-		return checkResult{
-			name:    "Server Connectivity",
-			status:  "warn",
-			message: fmt.Sprintf("Health check returned %d: %s", resp.StatusCode, string(body)),
+	body, _ := io.ReadAll(resp.Body)
+
+	// Parse the structured health response to report individual component checks
+	var healthResp struct {
+		Status string `json:"status"`
+		Checks map[string]struct {
+			Status  string `json:"status"`
+			Message string `json:"message,omitempty"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(body, &healthResp); err != nil {
+		// Couldn't parse — fall back to simple status code check
+		if resp.StatusCode != http.StatusOK {
+			fmt.Println("UNHEALTHY")
+			return []checkResult{{
+				name:    "Server Connectivity",
+				status:  "warn",
+				message: fmt.Sprintf("Health check returned %d: %s", resp.StatusCode, string(body)),
+			}}
 		}
+		fmt.Println("OK")
+		return []checkResult{{
+			name:    "Server Connectivity",
+			status:  "pass",
+			message: "Server is reachable and healthy",
+		}}
 	}
 
-	fmt.Println("OK")
-	return checkResult{
-		name:    "Server Connectivity",
-		status:  "pass",
-		message: "Server is reachable and healthy",
+	// Build results: overall connectivity + per-component checks
+	var results []checkResult
+
+	switch healthResp.Status {
+	case "healthy":
+		fmt.Println("OK")
+		results = append(results, checkResult{
+			name:    "Server Connectivity",
+			status:  "pass",
+			message: "Server is reachable and healthy",
+		})
+	case "degraded":
+		fmt.Println("DEGRADED")
+		results = append(results, checkResult{
+			name:    "Server Connectivity",
+			status:  "warn",
+			message: "Server is reachable but some components are degraded",
+		})
+	default:
+		fmt.Println("UNHEALTHY")
+		results = append(results, checkResult{
+			name:    "Server Connectivity",
+			status:  "fail",
+			message: fmt.Sprintf("Server reports status: %s", healthResp.Status),
+		})
 	}
+
+	// Report individual component checks
+	componentOrder := []string{"database", "storage", "auth", "kreuzberg", "whisper", "embeddings"}
+	for _, name := range componentOrder {
+		chk, ok := healthResp.Checks[name]
+		if !ok {
+			continue
+		}
+
+		displayName := "  " + name
+		status := "pass"
+		msg := chk.Status
+		if chk.Message != "" {
+			msg = chk.Status + " — " + chk.Message
+		}
+
+		switch chk.Status {
+		case "unhealthy":
+			status = "fail"
+		case "healthy":
+			if chk.Message == "disabled" {
+				status = "warn"
+				msg = "disabled"
+			}
+		}
+
+		results = append(results, checkResult{
+			name:    displayName,
+			status:  status,
+			message: msg,
+		})
+	}
+
+	return results
 }
 
 func checkAuth(cfg *config.Config, configPath string) checkResult {

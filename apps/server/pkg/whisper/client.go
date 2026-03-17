@@ -29,16 +29,16 @@ var Module = fx.Module("whisper",
 
 // Client is an HTTP client for the Whisper audio transcription service
 type Client struct {
-	httpClient             *http.Client
-	baseURL                string
-	timeout                time.Duration
-	enabled                bool
-	language               string
-	maxFileSizeMB          int
+	httpClient              *http.Client
+	baseURL                 string
+	timeout                 time.Duration
+	enabled                 bool
+	language                string
+	maxFileSizeMB           int
 	largeFileThresholdBytes int64
-	audioBytesPerSecond    int
-	timeoutSafetyFactor    float64
-	log                    *slog.Logger
+	audioBytesPerSecond     int
+	timeoutSafetyFactor     float64
+	log                     *slog.Logger
 }
 
 // NewClient creates a new Whisper client
@@ -62,6 +62,33 @@ func NewClient(cfg *config.Config, log *slog.Logger) *Client {
 // IsEnabled returns true if the Whisper service is enabled
 func (c *Client) IsEnabled() bool {
 	return c.enabled
+}
+
+// HealthCheck checks connectivity to the Whisper service.
+// Returns nil if the service is disabled (not an error — just unconfigured).
+func (c *Client) HealthCheck(ctx context.Context) error {
+	if !c.enabled {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
+	if err != nil {
+		return fmt.Errorf("whisper health check: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("whisper health check: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("whisper health check returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // MaxFileSizeBytes returns the maximum allowed audio file size in bytes

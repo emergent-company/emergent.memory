@@ -5,28 +5,48 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/internal/version"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
+	"github.com/emergent-company/emergent.memory/pkg/whisper"
 )
 
 // Handler handles health check requests
 type Handler struct {
-	pool    *pgxpool.Pool
-	cfg     *config.Config
-	startAt time.Time
+	pool       *pgxpool.Pool
+	cfg        *config.Config
+	storage    *storage.Service
+	kreuzberg  *kreuzberg.Client
+	whisper    *whisper.Client
+	embeddings *embeddings.Service
+	startAt    time.Time
 }
 
 // NewHandler creates a new health handler
-func NewHandler(pool *pgxpool.Pool, cfg *config.Config) *Handler {
+func NewHandler(
+	pool *pgxpool.Pool,
+	cfg *config.Config,
+	storageSvc *storage.Service,
+	kreuzbergClient *kreuzberg.Client,
+	whisperClient *whisper.Client,
+	embeddingsSvc *embeddings.Service,
+) *Handler {
 	return &Handler{
-		pool:    pool,
-		cfg:     cfg,
-		startAt: time.Now(),
+		pool:       pool,
+		cfg:        cfg,
+		storage:    storageSvc,
+		kreuzberg:  kreuzbergClient,
+		whisper:    whisperClient,
+		embeddings: embeddingsSvc,
+		startAt:    time.Now(),
 	}
 }
 
@@ -54,29 +74,36 @@ type Check struct {
 
 // Health returns the overall service health
 // @Summary      Get service health
-// @Description  Returns detailed health status including database connectivity and system uptime
+// @Description  Returns detailed health status including database, storage, auth, and service connectivity
 // @Tags         health
 // @Accept       json
 // @Produce      json
-// @Success      200 {object} HealthResponse "Service is healthy"
+// @Success      200 {object} HealthResponse "Service is healthy or degraded"
 // @Success      503 {object} HealthResponse "Service is unhealthy"
 // @Router       /health [get]
 func (h *Handler) Health(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 	defer cancel()
 
-	// Check database connectivity
-	dbStatus := "healthy"
-	dbMessage := ""
-	if err := h.pool.Ping(ctx); err != nil {
-		dbStatus = "unhealthy"
-		dbMessage = err.Error()
-	}
+	checks := h.runChecks(ctx)
 
-	// Determine overall status
+	// Critical components: database, storage, auth — 503 if any are unhealthy
+	// Optional components: kreuzberg, whisper, embeddings — 200 even if degraded
+	criticalComponents := []string{"database", "storage", "auth"}
+	optionalComponents := []string{"kreuzberg", "whisper", "embeddings"}
+
 	overallStatus := "healthy"
-	if dbStatus == "unhealthy" {
-		overallStatus = "unhealthy"
+
+	for _, name := range optionalComponents {
+		if chk, ok := checks[name]; ok && chk.Status == "unhealthy" {
+			overallStatus = "degraded"
+		}
+	}
+	for _, name := range criticalComponents {
+		if chk, ok := checks[name]; ok && chk.Status == "unhealthy" {
+			overallStatus = "unhealthy"
+			break
+		}
 	}
 
 	var tracingInfo *TracingInfo
@@ -92,13 +119,8 @@ func (h *Handler) Health(c echo.Context) error {
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Uptime:    time.Since(h.startAt).String(),
 		Version:   version.Version,
-		Checks: map[string]Check{
-			"database": {
-				Status:  dbStatus,
-				Message: dbMessage,
-			},
-		},
-		Tracing: tracingInfo,
+		Checks:    checks,
+		Tracing:   tracingInfo,
 	}
 
 	statusCode := http.StatusOK
@@ -107,6 +129,134 @@ func (h *Handler) Health(c echo.Context) error {
 	}
 
 	return c.JSON(statusCode, response)
+}
+
+// runChecks executes all health checks concurrently and returns the results.
+func (h *Handler) runChecks(ctx context.Context) map[string]Check {
+	type result struct {
+		name  string
+		check Check
+	}
+
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		results = make(map[string]Check, 6)
+	)
+
+	emit := func(name string, chk Check) {
+		mu.Lock()
+		results[name] = chk
+		mu.Unlock()
+	}
+
+	// Database
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := h.pool.Ping(ctx); err != nil {
+			emit("database", Check{Status: "unhealthy", Message: err.Error()})
+		} else {
+			emit("database", Check{Status: "healthy"})
+		}
+	}()
+
+	// Storage (MinIO/S3)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if !h.storage.Enabled() {
+			emit("storage", Check{Status: "unhealthy", Message: "not configured"})
+			return
+		}
+		if err := h.storage.Ping(ctx); err != nil {
+			emit("storage", Check{Status: "unhealthy", Message: err.Error()})
+		} else {
+			emit("storage", Check{Status: "healthy"})
+		}
+	}()
+
+	// Auth (Zitadel OIDC discovery)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		issuer := h.cfg.Zitadel.GetIssuer()
+		if issuer == "" || h.cfg.Zitadel.Domain == "" {
+			emit("auth", Check{Status: "unhealthy", Message: "not configured"})
+			return
+		}
+
+		url := issuer + "/.well-known/openid-configuration"
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			emit("auth", Check{Status: "unhealthy", Message: err.Error()})
+			return
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			emit("auth", Check{Status: "unhealthy", Message: err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			emit("auth", Check{Status: "unhealthy", Message: "OIDC discovery returned " + resp.Status})
+		} else {
+			emit("auth", Check{Status: "healthy"})
+		}
+	}()
+
+	// Kreuzberg (document extraction)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if !h.kreuzberg.IsEnabled() {
+			emit("kreuzberg", Check{Status: "healthy", Message: "disabled"})
+			return
+		}
+		healthResp, _ := h.kreuzberg.HealthCheck(ctx)
+		if healthResp == nil || healthResp.Status != "healthy" {
+			msg := "unreachable"
+			if healthResp != nil {
+				if errDetail, ok := healthResp.Details["error"]; ok {
+					msg = errDetail.(string)
+				}
+			}
+			emit("kreuzberg", Check{Status: "unhealthy", Message: msg})
+		} else {
+			emit("kreuzberg", Check{Status: "healthy"})
+		}
+	}()
+
+	// Whisper (audio transcription)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if !h.whisper.IsEnabled() {
+			emit("whisper", Check{Status: "healthy", Message: "disabled"})
+			return
+		}
+		if err := h.whisper.HealthCheck(ctx); err != nil {
+			emit("whisper", Check{Status: "unhealthy", Message: err.Error()})
+		} else {
+			emit("whisper", Check{Status: "healthy"})
+		}
+	}()
+
+	// Embeddings (config-only, no live ping)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if h.embeddings.IsEnabled() {
+			emit("embeddings", Check{Status: "healthy", Message: "enabled"})
+		} else {
+			emit("embeddings", Check{Status: "healthy", Message: "disabled"})
+		}
+	}()
+
+	wg.Wait()
+	return results
 }
 
 // Healthz returns a simple health check (for k8s liveness probe)
@@ -186,7 +336,7 @@ func (h *Handler) Debug(c echo.Context) error {
 }
 
 // Diagnose returns detailed DB and server diagnostics
-// @Router       /api/diagnostics [get]
+// @Router /api/diagnostics [get]
 func (h *Handler) Diagnose(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
 	defer cancel()

@@ -177,6 +177,22 @@ func (s *Service) Enabled() bool {
 	return s.client != nil
 }
 
+// Ping checks connectivity to the storage backend by verifying the documents bucket exists.
+// Returns nil if storage is disabled (not an error — just unconfigured).
+func (s *Service) Ping(ctx context.Context) error {
+	if !s.Enabled() {
+		return nil
+	}
+
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(s.bucketDocuments),
+	})
+	if err != nil {
+		return fmt.Errorf("storage ping failed (bucket %q): %w", s.bucketDocuments, err)
+	}
+	return nil
+}
+
 // Upload uploads data to the specified key in the documents bucket
 func (s *Service) Upload(ctx context.Context, key string, data io.Reader, size int64, opts UploadOptions) (*UploadResult, error) {
 	if !s.Enabled() {
