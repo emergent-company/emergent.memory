@@ -739,6 +739,13 @@ func friendlyProviderError(err error) string {
 	case strings.Contains(msg, "no LLM provider"), strings.Contains(msg, "no_provider"):
 		return "No LLM provider is configured for this project. " +
 			"Run: memory provider configure google --api-key <key>"
+	case strings.Contains(msg, "credential resolution failed"),
+		strings.Contains(msg, "encryption not configured"),
+		strings.Contains(msg, "failed to decrypt"),
+		strings.Contains(msg, "EncryptionNonce"):
+		return "LLM provider credentials could not be decrypted. " +
+			"The server encryption key may have changed. " +
+			"Re-configure with: memory provider configure google --api-key <key>"
 	default:
 		return "Agent execution failed: " + msg
 	}
@@ -1035,9 +1042,20 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		}
 		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
 		if probeErr != nil {
-			return apperror.New(http.StatusServiceUnavailable, "no_provider",
-				"No LLM provider configured for this project. "+
-					"Please configure a Google AI or Vertex AI credential in your project settings.")
+			errMsg := probeErr.Error()
+			// Only return "no_provider" when there genuinely is no credential
+			// configured. For other errors (decryption failure, invalid creds,
+			// DB errors) surface the real error so it's not masked.
+			if strings.Contains(errMsg, "no LLM credentials configured") ||
+				strings.Contains(errMsg, "no_provider") ||
+				strings.Contains(errMsg, "provider config found for organization") {
+				return apperror.New(http.StatusServiceUnavailable, "no_provider",
+					"No LLM provider configured for this project. "+
+						"Please configure a Google AI or Vertex AI credential in your project settings.")
+			}
+			// Real credential error — surface it clearly.
+			return apperror.New(http.StatusServiceUnavailable, "provider_error",
+				friendlyProviderError(probeErr))
 		}
 		// Close the probe model if it implements io.Closer (best-effort).
 		if closer, ok := probeModel.(interface{ Close() error }); ok {
@@ -1196,9 +1214,16 @@ func (h *Handler) AskStream(c echo.Context) error {
 		}
 		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
 		if probeErr != nil {
-			return apperror.New(http.StatusServiceUnavailable, "no_provider",
-				"No LLM provider configured for this project. "+
-					"Please configure a Google AI or Vertex AI credential in your project settings.")
+			errMsg := probeErr.Error()
+			if strings.Contains(errMsg, "no LLM credentials configured") ||
+				strings.Contains(errMsg, "no_provider") ||
+				strings.Contains(errMsg, "provider config found for organization") {
+				return apperror.New(http.StatusServiceUnavailable, "no_provider",
+					"No LLM provider configured for this project. "+
+						"Please configure a Google AI or Vertex AI credential in your project settings.")
+			}
+			return apperror.New(http.StatusServiceUnavailable, "provider_error",
+				friendlyProviderError(probeErr))
 		}
 		if closer, ok := probeModel.(interface{ Close() error }); ok {
 			_ = closer.Close()

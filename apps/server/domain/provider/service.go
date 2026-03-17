@@ -212,10 +212,13 @@ func (s *CredentialService) EncryptCredential(plaintext []byte) (ciphertext, non
 // context without requiring the caller to specify a provider type.
 //
 // Tries providers in order: Vertex AI first, then Google AI.
-// Returns nil, nil when no credentials are available.
+// Returns nil, nil when no credentials are available (neither project nor org
+// context present). Returns an error when credentials were found but could not
+// be resolved (e.g. decryption failure, DB error).
 //
 // This method satisfies the adk.CredentialResolver interface.
 func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential, error) {
+	var lastErr error
 	for _, provider := range []ProviderType{ProviderVertexAI, ProviderGoogleAI} {
 		cred, err := s.Resolve(ctx, provider)
 		if err != nil {
@@ -223,11 +226,18 @@ func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential
 				slog.String("provider", string(provider)),
 				slog.String("error", err.Error()),
 			)
+			lastErr = err
 			continue
 		}
 		if cred != nil {
 			return cred, nil
 		}
+	}
+	// If every provider returned an error (credential found but resolution
+	// failed — e.g. decryption error, DB error), propagate the last error
+	// so the caller can surface a meaningful message instead of "no provider".
+	if lastErr != nil {
+		return nil, lastErr
 	}
 	return nil, nil
 }

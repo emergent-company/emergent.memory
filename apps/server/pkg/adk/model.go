@@ -87,9 +87,17 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 	if f.resolver != nil {
 		cred, err := f.resolver.ResolveAny(ctx)
 		if err != nil {
-			f.log.Warn("credential resolver returned error, falling back to env config",
-				slog.String("error", err.Error()),
-			)
+			// Only fall through to env-var config when env vars are actually
+			// configured. Otherwise the credential error (decryption failure,
+			// DB error, etc.) would be masked as "no LLM credentials configured".
+			hasEnvFallback := f.cfg.UseVertexAI() || f.cfg.GoogleAPIKey != ""
+			if hasEnvFallback {
+				f.log.Warn("credential resolver returned error, falling back to env config",
+					slog.String("error", err.Error()),
+				)
+			} else {
+				return nil, fmt.Errorf("LLM credential resolution failed: %w", err)
+			}
 		} else if cred != nil {
 			// Prefer the DB-stored model if available; fall back to caller's modelName,
 			// then to the static config model.
