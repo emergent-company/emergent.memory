@@ -62,8 +62,8 @@ type Model struct {
 	lastStatsUpdate time.Time
 
 	// Schemas (formerly template packs)
-	installedSchemas       []schemas.InstalledSchemaItem
-	compiledTypes          *schemas.CompiledTypesResponse
+	installedSchemas []schemas.InstalledSchemaItem
+	compiledTypes    *schemas.CompiledTypesResponse
 	lastSchemasFetch time.Time
 
 	// Query
@@ -1110,12 +1110,12 @@ func (m Model) renderSchemas() string {
 
 		if m.compiledTypes != nil {
 			for _, ot := range m.compiledTypes.ObjectTypes {
-				if ot.PackID == pack.SchemaID {
+				if ot.SchemaID == pack.SchemaID {
 					objectTypes = append(objectTypes, ot)
 				}
 			}
 			for _, rt := range m.compiledTypes.RelationshipTypes {
-				if rt.PackID == pack.SchemaID {
+				if rt.SchemaID == pack.SchemaID {
 					relationshipTypes = append(relationshipTypes, rt)
 				}
 			}

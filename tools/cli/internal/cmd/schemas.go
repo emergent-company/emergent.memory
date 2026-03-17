@@ -170,7 +170,7 @@ var schemasGetCmd = &cobra.Command{
 Prints ID, Name, Version, Description (if set), Author (if set), Draft status,
 and Created timestamp. Use --output json to receive the full schema record as
 JSON instead.`,
-	Args:  cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// get-schema is a global operation — no project context needed
 		c, err := getClient(cmd)
@@ -336,7 +336,7 @@ Two modes:
 		if schemaDryRunFlag {
 			// Dry-run output
 			fmt.Fprintf(out, "[dry-run] Schema %q — %d type(s) would install, %d conflict(s)\n",
-				result.PackName, len(result.InstalledTypes), len(result.Conflicts))
+				result.SchemaName, len(result.InstalledTypes), len(result.Conflicts))
 			if len(result.InstalledTypes) > 0 {
 				fmt.Fprintf(out, "\nTypes to install (%d):\n", len(result.InstalledTypes))
 				for _, t := range result.InstalledTypes {
@@ -377,8 +377,8 @@ Two modes:
 		// Normal (non dry-run) output
 		fmt.Fprintf(out, "Schema installed.\n")
 		fmt.Fprintf(out, "  Assignment ID:  %s\n", result.AssignmentID)
-		fmt.Fprintf(out, "  Schema ID:      %s\n", result.PackID)
-		fmt.Fprintf(out, "  Schema Name:    %s\n", result.PackName)
+		fmt.Fprintf(out, "  Schema ID:      %s\n", result.SchemaID)
+		fmt.Fprintf(out, "  Schema Name:    %s\n", result.SchemaName)
 		if len(result.InstalledTypes) > 0 {
 			fmt.Fprintf(out, "  Installed types (%d): %s\n", len(result.InstalledTypes), strings.Join(result.InstalledTypes, ", "))
 		}
@@ -403,7 +403,7 @@ var schemasUninstallCmd = &cobra.Command{
 
 Use 'memory schemas installed' to list assignment IDs. Prints
 "Schema assignment <id> removed." on success.`,
-	Args:  cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		tp, err := getSchemasClient(cmd)
 		if err != nil {
@@ -484,7 +484,7 @@ and Relationship Types (columns: Name, Label, Source → Target, Schema). Use
 				if len(desc) > 50 {
 					desc = desc[:49] + "…"
 				}
-				_ = table.Append(t.Name, t.Label, t.PackName, desc)
+				_ = table.Append(t.Name, t.Label, t.SchemaName, desc)
 			}
 			if err := table.Render(); err != nil {
 				return err
@@ -499,7 +499,7 @@ and Relationship Types (columns: Name, Label, Source → Target, Schema). Use
 			table.Header("Name", "Label", "Source → Target", "Schema")
 			for _, t := range types.RelationshipTypes {
 				srcDst := t.SourceType + " → " + t.TargetType
-				_ = table.Append(t.Name, t.Label, srcDst, t.PackName)
+				_ = table.Append(t.Name, t.Label, srcDst, t.SchemaName)
 			}
 			if err := table.Render(); err != nil {
 				return err
