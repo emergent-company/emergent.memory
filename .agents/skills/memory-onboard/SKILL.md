@@ -166,6 +166,53 @@ memory provider configure vertex-ai \
 
 This also syncs the model catalog and auto-selects models atomically. Proceed to Step 3 on success.
 
+### Step 2.6 — Set the project info document
+
+The **project info** is a Markdown description that agents and MCP clients read (via the `get_project_info` tool) to orient themselves before working with the project. It should capture the project's purpose, goals, audience, and high-level context. Setting it now ensures every subsequent agent interaction — extraction, querying, schema design — has the right context.
+
+#### Write the project info
+
+Based on what you learned in Step 1, compose a concise Markdown description (a few paragraphs is fine) and save it to a file in the CWD:
+
+```bash
+# Write the project info to a file (e.g. .memory/project-info.md)
+```
+
+The document should answer:
+- What does this project do?
+- Who is the intended audience (developers, end-users, data analysts, etc.)?
+- What are the main goals or capabilities?
+- What domain or industry does it serve?
+
+**Example:**
+
+```markdown
+# My Project
+
+A Go microservice that manages user authentication and authorization for the
+Acme platform. It exposes REST and gRPC APIs consumed by frontend apps and
+other backend services.
+
+**Audience:** Backend engineers working on the Acme platform.
+
+**Key capabilities:**
+- OAuth2 / OIDC login flows
+- Role-based access control (RBAC)
+- API key management
+- Audit logging
+```
+
+#### Apply the project info
+
+```bash
+NO_PROMPT=1 memory projects set-info --project <project-id> --file .memory/project-info.md
+```
+
+Confirm with the user:
+> "Set the project info document. Agents and MCP tools will now use this to understand the project's context."
+
+Commit `.memory/project-info.md` alongside the schema later — it serves as living documentation.
+
 ### Step 3 — Design the schema
 
 Based on your understanding from Step 1, design a schema JSON file and save it to:
@@ -290,8 +337,10 @@ memory graph relationships create --type depends_on --from <source-object-id> --
 
 Remind the user:
 - `.env.local` contains `MEMORY_PROJECT=<id>` — keep this out of git (add to `.gitignore`)
+- The project info document at `.memory/project-info.md` describes the project for agents — commit this to the repo and update it as the project evolves
 - The schema definition is saved at `.memory/templates/<pack-name>/pack.json` — commit this to the repo
 - To modify the schema, edit the JSON and run `memory schemas install --file pack.json --merge` to additively merge changes
+- To update the project info: edit `.memory/project-info.md` and run `memory projects set-info --file .memory/project-info.md`
 - The `memory-query` skill can be used to explore the populated graph
 - The `memory-template-packs` skill has full reference for managing schemas
 
