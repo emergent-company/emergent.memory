@@ -3,396 +3,445 @@ name: blueprint-creator
 description: Guide the user through creating a Blueprints directory — the declarative config format applied with `memory blueprints <source>`. Use when the user wants to create, scaffold, or understand the blueprint file format for template packs, agent definitions, and seed data.
 metadata:
   author: emergent
-  version: "1.0"
+  version: "2.0"
+  trigger: create blueprint, write a blueprint, scaffold blueprints, blueprint format, how do I use blueprints, seed data blueprint, blueprint dump
 ---
 
-Guide the user through creating a new Emergent Blueprint from scratch — a directory of YAML/JSON files and JSONL seed data that can be applied to any Memory project with `memory blueprints <source>`.
+A blueprint is a directory of YAML/JSON files and JSONL seed data that describes template packs, agent definitions, and initial graph objects/relationships for an Emergent project. Running `memory blueprints <source>` applies the directory to a live project — creating or updating resources via the Emergent API. This skill walks you through creating a blueprint from scratch.
 
-> **Already have a project graph to export?** Use `memory blueprints dump <output-dir>` to generate seed files from an existing project instead of writing them by hand, then layer in your `packs/` and `agents/` directories.
-
-## Rules
-
-- **Never run `memory browse`** — it launches a full interactive TUI that blocks on terminal input and will hang in an automated agent context.
-- **Always prefix `memory` commands with `NO_PROMPT=1`** (e.g. `NO_PROMPT=1 memory <cmd>`). Without it, the CLI may show interactive pickers when no project, agent, MCP server, skill, or agent-definition ID is provided. Do not add this to `.env.local` — it must only apply to agent-driven invocations.
-- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` is set.
+**Input**: Optional scope — a description of what the blueprint should contain (e.g. "a CRM pack, a sales agent, and 50 seed contacts"), or nothing to scaffold a minimal example.
 
 ---
 
 ## What is a Blueprint?
 
-A **blueprint** is a portable, reusable directory that declaratively defines:
+A blueprint is a plain directory with this structure:
 
-| Subdirectory | Contents | Required? |
-|---|---|---|
-| `packs/` | Template pack YAML files (object + relationship type schemas) | At least one of the three |
-| `agents/` | Agent definition YAML files | Optional |
-| `seed/` | Initial graph objects and relationships as JSONL | Optional |
-
-Applied with:
-```bash
-memory blueprints <source>               # local path or GitHub URL
-memory blueprints <source> --dry-run     # preview without mutating
-memory blueprints <source> --upgrade     # update existing resources
+```
+my-blueprint/
+  packs/                    ← one file per template pack (.yaml/.yml/.json)
+  agents/                   ← one file per agent definition (.yaml/.yml/.json)
+  seed/
+    objects/                ← per-type JSONL files with graph objects to create
+    relationships/          ← per-type JSONL files with graph relationships to create
 ```
 
----
+All four subdirectories are optional — you only need to include what you have. Files with unsupported extensions are silently skipped. Subdirectories inside `packs/` or `agents/` are also ignored — keep files flat.
 
-## Workflow
-
-### Step 1 — Understand the domain
-
-Before writing any files, clarify what the blueprint is for:
-
-- **What domain/product does this blueprint serve?** (e.g. AI news tracking, multi-agent tasks, legal corpus, media database)
-- **What are the key entities?** List nouns: things the user wants to store and query.
-- **What are the key relationships?** List verbs: how entities connect to each other.
-- **Will agents be included?** If so, what do they do? What tools do they need?
-- **Is there seed data?** Pre-defined objects (e.g. search queries, pool definitions, model records) that should be created on first apply.
-
-Explore any existing repository if one is present (`README.md`, `AGENTS.md`, source files). Form a hypothesis and confirm with the user before designing:
-
-> "I'm thinking the key types are: `Movie`, `Person`, `Genre` with relationships `ACTED_IN`, `DIRECTED`, `IN_GENRE`. Does that match what you have in mind?"
+Blueprints can be applied from:
+- A **local path**: `memory blueprints ./my-blueprint`
+- A **GitHub repo**: `memory blueprints https://github.com/org/repo`
+- A **GitHub repo at a specific ref**: `memory blueprints https://github.com/org/repo#v1.2.0`
 
 ---
 
-### Step 2 — Design the template pack
+## Steps
 
-Create `packs/<pack-name>.yaml`. Naming: lowercase-with-hyphens.
+### 1. Understand what the user wants to create
 
-#### Pack YAML structure
+Ask or infer:
+- What **template packs** are needed? (e.g. "CRM pack", "Research pack")
+  - For each pack: what object types? (e.g. `Contact`, `Deal`, `Company`)
+  - Any relationship types? (e.g. `Contact → works_at → Company`)
+- What **agent definitions** are needed?
+  - For each agent: name, purpose, model, tools, system prompt
+- Is there **seed data**?
+  - Pre-defined objects to load (e.g. a list of known companies, canonical tags)
+  - Relationships between those objects (e.g. which person works at which company)
+
+If the user hasn't specified, scaffold a minimal working example (one pack, one agent) and explain each field as you go.
+
+### 2. Create the directory structure
+
+```bash
+mkdir -p my-blueprint/packs
+mkdir -p my-blueprint/agents
+mkdir -p my-blueprint/seed/objects
+mkdir -p my-blueprint/seed/relationships
+```
+
+Only create `seed/` subdirectories if there is seed data to write — the apply command treats a missing `seed/` directory as "no seed data" (not an error).
+
+### 3. Write pack files
+
+**Location**: `packs/<name>.yaml` (or `.json`)
+
+**Required fields** — the CLI will reject the file if any of these are missing:
+- `name` — unique identifier for the pack (string)
+- `version` — semantic version string (e.g. `"1.0.0"`)
+- `objectTypes` — at least one entry
+
+**Full pack schema**:
 
 ```yaml
-name: my-pack                   # must match the filename (without .yaml)
+name: my-pack                   # required — unique pack name
+version: "1.0.0"                # required — semantic version
+description: Optional summary   # optional
+author: Your Name               # optional
+license: MIT                    # optional
+repositoryUrl: https://...      # optional
+documentationUrl: https://...   # optional
+
+objectTypes:                    # required — at least one entry
+  - name: Person                # object type identifier
+    label: Person               # human-readable label (optional)
+    description: A human individual  # optional
+    properties: {}              # optional — arbitrary shape, passed through to API
+
+  - name: Company
+    label: Company
+    description: An organisation
+
+relationshipTypes:              # optional
+  - name: works_at
+    label: Works At
+    description: Person works at a Company
+    sourceType: Person          # optional — source object type name
+    targetType: Company         # optional — target object type name
+
+uiConfigs: {}                   # optional — arbitrary shape, passed through to API
+extractionPrompts: {}           # optional — arbitrary shape, passed through to API
+```
+
+**Minimal valid example** (`packs/research.yaml`):
+
+```yaml
+name: research-pack
 version: "1.0.0"
-description: >
-  Short description of what this pack covers.
-author: Your Name / Org
-license: MIT
-
+description: Objects for tracking research sources and findings
 objectTypes:
-
-  - name: TypeName               # PascalCase
-    label: Human Label           # spaces allowed
-    description: >
-      What this type represents. Include when to create it.
-    properties:
-      title:
-        type: string
-        description: Primary title or name
-      summary:
-        type: string
-        description: 2-3 sentence summary
-      url:
-        type: string
-        description: Source URL
-      discovered_date:
-        type: string
-        description: Date this item was discovered (YYYY-MM-DD)
-
+  - name: Source
+    label: Source
+    description: A research source (paper, article, book)
+  - name: Finding
+    label: Finding
+    description: A key insight or result from a source
 relationshipTypes:
-
-  - name: relates_to             # snake_case verb
-    label: Relates To
-    description: >
-      Connects two objects that reference the same concept.
-
-  - name: implements             # optionally constrain source/target
-    label: Implements
-    description: >
-      Links an implementation to the artifact it implements.
-    sourceType: ToolRelease      # optional — omit to allow any type
-    targetType: ResearchPaper    # optional — omit to allow any type
+  - name: supports
+    label: Supports
+    sourceType: Source
+    targetType: Finding
 ```
 
-**Design guidelines:**
-- Start with **4–10 object types**. Fewer is better for a first version.
-- Every object type needs at least `title`/`name` and `description`/`summary` properties.
-- Use `type: string` for almost everything. Use `type: integer` / `type: number` for numeric KPIs or counts.
-- Relationship names are snake_case verbs: `relates_to`, `implements`, `funded_by`, `supersedes`.
-- Only add `sourceType`/`targetType` when the relationship is meaningfully constrained.
-- Pack `name` must be globally unique within the Memory instance.
+### 4. Write agent files
 
-#### Real-world examples to study
+**Location**: `agents/<name>.yaml` (or `.json`)
 
-| Blueprint | Pack highlights |
-|---|---|
-| `ai-news-memory-blueprint` | 8 types, 6 relationships — rich property sets with `discovered_date` on every type |
-| `workspace-memory-blueprint-v3` | 14 types, 19 relationships — two-layer design (domain + system meta-layer) |
-| `imdb-memory-blueprint` | 6 types, 11 relationships — constrained `sourceType`/`targetType` on every relationship |
-| `norwegian-law-memory-blueprint` | 7 types, 13 relationships — external dataset-driven |
+**Required fields** — only `name` is validated:
+- `name` — unique identifier for the agent
 
----
-
-### Step 3 — Design agent definitions (optional)
-
-If the blueprint includes agents, create one YAML file per agent in `agents/`.
-
-#### Agent YAML structure
+**Full agent schema**:
 
 ```yaml
-name: my-agent-name              # slug, used with `memory agents create --definition`
-description: >
-  What this agent does, what it produces, and when it should run.
+name: my-agent                  # required — unique agent name
+description: What this agent does  # optional
+systemPrompt: |                 # optional — the agent's system instructions
+  You are a helpful assistant.
 
-model:
-  name: gemini-2.5-flash         # model identifier
-  temperature: 0.3               # 0.0–1.0; lower = more deterministic
-  maxTokens: 8192
+model:                          # optional
+  name: gpt-4o                  # model identifier
+  temperature: 0.7              # optional — 0.0–2.0
+  maxTokens: 2048               # optional — integer
 
-flowType: agentic                # agentic | retrieval | chat
-maxSteps: 20                     # max tool-call iterations per run
-isDefault: false
-defaultTimeout: 300              # seconds
-visibility: project              # project | org | public
+tools:                          # optional — list of tool names
+  - search
+  - graph_query
 
-tools:
-  - brave_web_search             # MCP or built-in tools the agent may call
-  - query_entities
-  - create_entity
-  - create_relationship
+flowType: conversational        # optional
+isDefault: false                # optional — bool, defaults to false
+maxSteps: 10                    # optional — integer
+defaultTimeout: 30              # optional — integer (seconds)
+visibility: workspace           # optional
 
-config:                          # arbitrary metadata stored on the definition
-  category: research
-  objectType: MyTypeName
-  scheduledNote: "Intended daily schedule: 06:00 UTC"
+config:                         # optional — arbitrary key-value map
+  someKey: someValue
 
+workspaceConfig:                # optional — arbitrary key-value map
+  anotherKey: anotherValue
+```
+
+**Minimal valid example** (`agents/assistant.yaml`):
+
+```yaml
+name: research-assistant
+description: Answers questions about research sources and findings
 systemPrompt: |
-  You are a [role]. Your job is to [goal].
-
-  ## Key behaviour rules
-  - Rule 1
-  - Rule 2
-
-  ## Output format
-  [describe what the agent should produce]
+  You are a research assistant. Use available tools to find and
+  synthesise information from the knowledge graph.
+model:
+  name: gpt-4o
+  temperature: 0.5
+tools:
+  - search
+  - graph_query
+isDefault: true
 ```
 
-**Design guidelines:**
-- `name` must be unique within the project; use hyphens, no spaces.
-- `flowType: agentic` is correct for agents that call tools in a loop.
-- Set `maxSteps` generously (20–50) for research agents that loop over many searches.
-- Always instruct agents to **deduplicate** before creating objects (call `query_entities` first).
-- Keep `temperature` low (0.2–0.4) for agents that write structured data; higher (0.6–0.8) for synthesis/digest agents.
-- The `config` block is free-form — use it to store scheduling notes, category tags, or any metadata useful for the README.
+### 5. Write seed data files (optional)
 
-#### Tool reference (common built-in tools)
+Seed data pre-populates the graph with objects and relationships. The apply command creates new objects and — with `--upgrade` — updates existing ones.
 
-| Tool | Use case |
-|---|---|
-| `query_entities` | Search/list graph objects before creating (deduplication) |
-| `create_entity` | Write new objects to the graph |
-| `create_relationship` | Write edges between objects |
-| `brave_web_search` | Web research (requires Brave MCP server) |
-| `spawn_agents` | Spawn child agents (orchestrator pattern) |
+#### Seed object files
 
-#### Agent types
+**Location**: `seed/objects/<TypeName>.jsonl`
 
-| `config.type` | Purpose |
-|---|---|
-| `leaf` | Executes a single task; writes results to graph |
-| `pool_manager` | Owns a pool of leaf agents; quality gate |
-| `orchestrator` | Decomposes work packages; manages child agents |
-| `janitor` | Periodic system analysis; proposes improvements |
+One JSON object per line. Each line must have a `type` field. All other fields are optional.
 
----
+**Object record schema**:
 
-### Step 4 — Design seed data (optional)
+```jsonc
+{
+  "type": "Person",        // required — must match an installed object type
+  "key": "alice-smith",    // optional — stable identity key; enables upsert on re-apply
+  "status": "active",      // optional
+  "labels": ["vip"],       // optional — array of string labels
+  "properties": {          // optional — arbitrary key-value map
+    "name": "Alice Smith",
+    "email": "alice@example.com",
+    "role": "Engineer"
+  }
+}
+```
 
-Seed data pre-populates the graph on first apply. Create JSONL files under `seed/objects/` and `seed/relationships/`.
+**Key field behaviour**:
+- Objects **with** a `key`: idempotent — on re-apply, without `--upgrade` they are skipped if the key exists; with `--upgrade` they are upserted.
+- Objects **without** a `key`: always created (a new object is inserted on every apply).
 
-#### Object seed file (`seed/objects/<TypeName>.jsonl`)
-
-One JSON object per line. **Always add a `key`** to prevent duplicates on re-apply:
-
+**Example** (`seed/objects/Person.jsonl`):
 ```jsonl
-{"type":"SearchQuery","key":"rp-query-arxiv-today","labels":["search-query"],"properties":{"category":"research-papers","query":"arxiv AI machine learning papers [TODAY]"}}
-{"type":"SearchQuery","key":"rp-query-llm-safety","labels":["search-query"],"properties":{"category":"research-papers","query":"LLM safety alignment paper [TODAY]"}}
+{"type":"Person","key":"alice-smith","properties":{"name":"Alice Smith","role":"Engineer"}}
+{"type":"Person","key":"bob-jones","properties":{"name":"Bob Jones","role":"Manager"}}
 ```
 
-Key naming convention: `<type-prefix>-<slug>` (all lowercase, hyphens).
+**Split files**: if a type file exceeds 50 MB, name subsequent parts `<TypeName>.001.jsonl`, `<TypeName>.002.jsonl`, etc. The loader reads all matching files in order.
 
-#### Relationship seed file (`seed/relationships/<RelName>.jsonl`)
+#### Seed relationship files
 
-Prefer `srcKey`/`dstKey` over IDs — IDs are project-specific and break on re-apply:
+**Location**: `seed/relationships/<TypeName>.jsonl`
 
+One JSON object per line. Each line must have a `type` field and endpoint references. Prefer key-based references when both objects have keys.
+
+**Relationship record schema** (key-based — preferred):
+
+```jsonc
+{
+  "type": "works_at",      // required — must match an installed relationship type
+  "srcKey": "alice-smith", // source object key (use when source has a key)
+  "dstKey": "acme-corp",   // destination object key (use when destination has a key)
+  "weight": 1.0,           // optional — float
+  "properties": {}         // optional — arbitrary key-value map
+}
+```
+
+**Relationship record schema** (ID-based — fallback for keyless objects):
+
+```jsonc
+{
+  "type": "works_at",
+  "srcId": "eid-abc123",   // source entity ID (from a prior dump or object creation)
+  "dstId": "eid-def456",   // destination entity ID
+  "weight": 1.0,
+  "properties": {}
+}
+```
+
+**Validation rules**:
+- `type` must be non-empty.
+- Either (`srcKey` + `dstKey`) OR (`srcId` + `dstId`) must be provided — not a mix.
+- Relationships with unresolvable keys are recorded as errors and skipped; apply continues.
+- Duplicate relationships are silently ignored by the server (idempotent).
+
+**Example** (`seed/relationships/works_at.jsonl`):
 ```jsonl
-{"type":"member_of_pool","srcKey":"python-coder","dstKey":"pool-coding"}
-{"type":"managed_by","srcKey":"pool-coding","dstKey":"coding-manager"}
-{"type":"uses_model","srcKey":"python-coder","dstKey":"model-gpt-4o"}
+{"type":"works_at","srcKey":"alice-smith","dstKey":"acme-corp"}
+{"type":"works_at","srcKey":"bob-jones","dstKey":"acme-corp"}
 ```
 
-#### What to seed
+### 6. Validate and apply
 
-| Data | Seed it when... |
-|---|---|
-| Search queries / topics | Agent loops over them at runtime |
-| Pool objects | Multi-agent system with named pools |
-| AgentDefinitionRecord objects | System that tracks agent metadata in the graph |
-| Model objects | System that registers available LLMs in the graph |
-| KPI objects | System that tracks performance metrics |
-| Lookup tables / taxonomies | Static reference data (genres, categories, legal areas) |
-
-**Do not seed** objects that agents are expected to discover and create dynamically.
-
----
-
-### Step 5 — Write the README
-
-Every blueprint directory must have a `README.md`. Include:
-
-1. **What it does** — 2–3 sentence summary
-2. **What it installs** — tables listing types, agents, seed objects
-3. **Prerequisites** — required MCP servers, LLM providers, external accounts
-4. **Installation** — `memory blueprints` command(s)
-5. **Post-install setup** — schedule configuration, first run instructions
-6. **Directory layout** — tree showing all files
-7. **Customising** — how to extend (add types, change models, add agents)
-8. **Rollback** — how to remove (delete agents, uninstall pack)
-
----
-
-### Step 6 — Validate and apply
+Run a dry run to preview all actions without any API calls:
 
 ```bash
-# Dry-run against a real project (catches type errors, missing keys, bad YAML)
-memory blueprints ./my-blueprint --project <project-id> --dry-run
+memory blueprints ./my-blueprint --dry-run
+```
 
-# Apply
+Expected output:
+```
+[dry-run] would create pack "research-pack"
+[dry-run] would create agent "research-assistant"
+[dry-run] would create object Person "alice-smith"
+[dry-run] would create object Person "bob-jones"
+[dry-run] would create relationship works_at alice-smith → acme-corp
+Dry run complete: 2 packs/agents would be created; 2 objects, 1 relationship
+```
+
+**Apply to the default project**:
+```bash
+memory blueprints ./my-blueprint
+```
+
+**Apply to a specific project**:
+```bash
 memory blueprints ./my-blueprint --project <project-id>
-
-# Re-apply after edits (skip existing, only add new)
-memory blueprints ./my-blueprint --project <project-id>
-
-# Update existing resources
-memory blueprints ./my-blueprint --project <project-id> --upgrade
 ```
 
-Fix any errors reported by `--dry-run` before proceeding to a live apply.
+**Apply and update existing resources**:
+```bash
+memory blueprints ./my-blueprint --upgrade
+```
+
+With `--upgrade`:
+- Packs and agents that already exist are updated (not skipped).
+- Seed objects with a `key` that already exists are upserted (content-hash no-op if unchanged).
+- Keyless objects are always created regardless of `--upgrade`.
+
+Expected output:
+```
+created pack "research-pack"
+created agent "research-assistant"
+  seed: 2 objects created, 0 updated, 0 skipped, 0 failed; 1 relationships created, 0 failed
+Blueprints complete: 2 created, 0 updated, 0 skipped, 0 errors
+```
+
+Exit code is non-zero if any resource produced an error.
+
+### 7. Export an existing project as seed data (dump)
+
+To export a live project's graph as seed files that can be re-applied elsewhere:
+
+```bash
+memory blueprints dump ./exported
+```
+
+This creates:
+```
+exported/
+  seed/
+    objects/<TypeName>.jsonl
+    relationships/<TypeName>.jsonl
+```
+
+**Export only specific types**:
+```bash
+memory blueprints dump ./exported --types Person,Company,works_at
+```
+
+**Export targeting a specific project**:
+```bash
+memory blueprints dump ./exported --project <project-id>
+```
+
+The dump command:
+- Paginates through all objects and relationships (page size 250).
+- Groups output by type — one file per type.
+- Automatically splits files at 50 MB (producing `<Type>.001.jsonl`, `<Type>.002.jsonl`, …).
+- Prefers `key`-based references in relationship files when both endpoints have keys; falls back to raw entity IDs when keys are unavailable.
+- Prints progress: `objects: N fetched…` and a final summary line.
+
+The resulting seed files are directly re-applyable:
+```bash
+memory blueprints dump ./exported
+memory blueprints ./exported --project <other-project-id>
+```
+
+### 8. (Optional) Publish to GitHub
+
+Push the directory to GitHub to share as a reusable blueprint repo:
+
+```bash
+memory blueprints https://github.com/org/my-blueprint
+```
+
+For a **private repo**, provide a GitHub personal access token:
+```bash
+memory blueprints https://github.com/org/my-blueprint --token ghp_...
+# or
+export MEMORY_GITHUB_TOKEN=ghp_...
+memory blueprints https://github.com/org/my-blueprint
+```
+
+Pin to a specific version using a URL fragment (branch, tag, or commit SHA):
+```bash
+memory blueprints https://github.com/org/my-blueprint#v1.0.0
+```
 
 ---
 
-## Complete Directory Layout
+## Reference: Directory Layout
 
 ```
 my-blueprint/
-  README.md                          <- required
   packs/
-    <pack-name>.yaml                 <- one file per template pack
+    <pack-name>.yaml          # one file per template pack
   agents/
-    <agent-name>.yaml                <- one file per agent definition
+    <agent-name>.yaml         # one file per agent definition
   seed/
     objects/
-      <TypeName>.jsonl               <- one JSON object per line
+      <TypeName>.jsonl        # one file per object type
+      <TypeName>.001.jsonl    # split files for types > 50 MB
     relationships/
-      <RelName>.jsonl                <- one JSON object per line
-  tools/                             <- optional: Go/Python seeders for large datasets
-    seeder/
-      main.go
-  skills/                            <- optional: agent workflow skills
-    <skill-name>/
-      SKILL.md
+      <TypeName>.jsonl        # one file per relationship type
 ```
 
 ---
 
-## Blueprint Patterns
+## Reference: Validation Rules
 
-### Pattern 1 — Pack-only (schema distribution)
+| Resource | Field | Rule |
+|---|---|---|
+| Pack | `name` | Must be non-empty string |
+| Pack | `version` | Must be non-empty string |
+| Pack | `objectTypes` | Must contain at least one entry |
+| Agent | `name` | Must be non-empty string |
+| Seed object | `type` | Must be non-empty string |
+| Seed relationship | `type` | Must be non-empty string |
+| Seed relationship | endpoints | Either (`srcKey`+`dstKey`) or (`srcId`+`dstId`) required |
+| All | file extension | `packs/`+`agents/`: `.json`, `.yaml`, `.yml`; `seed/`: `.jsonl` only |
 
-Just `packs/`. No agents, no seed data. Use when you want to share a reusable schema without opinionated agents or data.
-
-```
-my-blueprint/
-  packs/
-    my-schema.yaml
-  README.md
-```
-
-### Pattern 2 — Pack + agents (automated intelligence)
-
-Add agents that populate the graph automatically. Common for news trackers, research pipelines, and monitoring systems. Seed the search queries or topic lists that agents loop over at runtime.
-
-```
-my-blueprint/
-  packs/
-    my-schema.yaml
-  agents/
-    researcher.yaml
-    digest.yaml
-  seed/
-    objects/
-      SearchQuery.jsonl    <- queries agents will iterate over
-  README.md
-```
-
-Reference: `ai-news-memory-blueprint`
-
-### Pattern 3 — Pack + agents + seed (full system)
-
-Full multi-agent orchestration system where the graph is the control plane. Seed pools, model records, KPIs, and agent definition records so agents can query system state at runtime.
-
-```
-my-blueprint/
-  packs/
-    multi-agent-pack.yaml
-  agents/
-    orchestrator.yaml
-    coding-manager.yaml
-    python-coder.yaml
-    reviewer.yaml
-    janitor.yaml
-  seed/
-    objects/
-      AgentPool.jsonl
-      AgentDefinitionRecord.jsonl
-      Model.jsonl
-      KPI.jsonl
-    relationships/
-      member_of_pool.jsonl
-      managed_by.jsonl
-      uses_model.jsonl
-      kpi_for_pool.jsonl
-  README.md
-```
-
-Reference: `workspace-memory-blueprint-v3`
-
-### Pattern 4 — Pack + custom seeder (large datasets)
-
-When seed data is too large for JSONL files (millions of records), write a standalone Go/Python seeder using the Memory SDK. Keep `packs/` for the schema and `cmd/seeder/` for ingestion.
-
-```
-my-blueprint/
-  packs/
-    my-schema.yaml
-  cmd/
-    seeder/
-      main.go
-  README.md
-```
-
-Reference: `imdb-memory-blueprint`, `norwegian-law-memory-blueprint`
+Files that fail validation are reported as warnings but do not stop processing of other files. The run exits non-zero if any errors occurred.
 
 ---
 
-## Checklist Before Publishing
+## Reference: CLI Flags
 
-- [ ] Every object type has at least `title`/`name` and `description`/`summary` properties
-- [ ] Every seed object has a `key` (unless intentionally keyless / always-insert)
-- [ ] Relationship seed files use `srcKey`/`dstKey`, not `srcId`/`dstId`
-- [ ] Pack `name` is unique and matches the filename (without `.yaml`)
-- [ ] Agent `name` values are unique within the blueprint
-- [ ] `--dry-run` passes against a real project with no errors
-- [ ] `README.md` documents prerequisites, installation, and customisation
-- [ ] Git repository is clean and committed before pushing to GitHub
+### `memory blueprints <source>` (apply)
+
+| Flag | Description |
+|---|---|
+| `--project <id>` | Target project ID or name. Overrides config/env. |
+| `--upgrade` | Update resources that already exist (by `name` for packs/agents; by `key` for seed objects). Default: skip. |
+| `--dry-run` | Preview only — no API calls, no mutations. |
+| `--token <tok>` | GitHub PAT for private repos. Falls back to `MEMORY_GITHUB_TOKEN`. |
+
+### `memory blueprints dump <output-dir>` (export)
+
+| Flag | Description |
+|---|---|
+| `--project <id>` | Source project ID or name. Overrides config/env. |
+| `--types <list>` | Comma-separated list of object/relationship types to export. Default: all types. |
 
 ---
 
-## Notes
+## Reference: Matching Logic
 
-- Pack names must be **globally unique** within the Memory instance. Prefix with a project or org name to avoid collisions (e.g. `acme-task-pack` not just `task-pack`).
-- Agents reference tools by name. If a tool requires an MCP server (e.g. `brave_web_search`), document this as a prerequisite in the README.
-- `memory blueprints dump` exports only graph objects and relationships — **not** pack definitions or agent definitions. You must author `packs/` and `agents/` manually.
-- Use `--upgrade` when iterating on agent prompts or pack properties after initial apply; without it, existing resources are silently skipped.
-- Blueprints can be applied from GitHub: `memory blueprints https://github.com/org/repo#v1.0.0` — tag releases for reproducibility.
-- The `skills/` subdirectory is a convention used in `workspace-memory-blueprint-v3`; skills are not applied by `memory blueprints` but can be loaded by agents at runtime.
+**Packs and agents** are matched by `name` field — not by filename. Renaming the `name` field in a file creates a new resource and leaves the old one untouched.
+
+**Seed objects** are matched by `key` field when present:
+- Without `--upgrade`: objects whose `key` already exists are **skipped**.
+- With `--upgrade`: objects whose `key` already exists are **upserted** (content-hash no-op if unchanged).
+- Keyless objects: **always created** on every apply.
+
+**Seed relationships** are always idempotent — the server ignores duplicates.
+
+---
+
+## Guardrails
+
+- **Never guess field names** — only use the field names documented here; unknown fields are silently ignored
+- **Never put multiple resources in one file** — each `packs/` or `agents/` file must describe exactly one resource
+- **Never nest subdirectories** inside `packs/` or `agents/` — nested files are silently ignored
+- **Seed files must be `.jsonl`** — one JSON object per line; files with other extensions in `seed/` are skipped
+- **Always dry-run first** in production environments — `--dry-run` is free and catches validation errors before any mutations occur
+- **Never hardcode tokens** in blueprint files — use `MEMORY_GITHUB_TOKEN` or `--token` at apply time
+- **Prefer `key` on seed objects** — keyless objects are always re-created on every apply, which leads to duplicates
+- **Use `srcKey`/`dstKey` in relationships** whenever both endpoints have keys — ID-based refs break when re-applying to a different project

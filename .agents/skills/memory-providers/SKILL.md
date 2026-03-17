@@ -3,20 +3,26 @@ name: memory-providers
 description: Manage LLM provider credentials and browse available models in Emergent. Use when the user wants to configure API keys, set up Vertex AI, check which models are available, or review LLM usage and costs.
 metadata:
   author: emergent
-  version: "2.0"
+  version: "3.0"
 ---
 
-Manage LLM provider credentials, model catalog, and usage reporting using `emergent provider`.
+Manage LLM provider credentials, model catalog, and usage reporting using `memory provider`.
+
+## Rules
+
+- **Never run `memory browse`** — it launches a full interactive TUI that blocks on terminal input and will hang in an automated agent context.
+- **Always prefix `memory` commands with `NO_PROMPT=1`** (e.g. `NO_PROMPT=1 memory <cmd>`). Without it, the CLI may show interactive pickers when no project, agent, MCP server, skill, or agent-definition ID is provided. Do not add this to `.env.local` — it must only apply to agent-driven invocations.
+- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` is set.
 
 ## Commands
 
 ### Configure a provider (org-level)
 ```bash
 # Google AI (API key)
-emergent provider configure google-ai --api-key "AIza..."
+memory provider configure google-ai --api-key "AIza..."
 
 # Vertex AI (service account)
-emergent provider configure vertex-ai \
+memory provider configure vertex-ai \
   --key-file /path/to/sa.json \
   --gcp-project "my-gcp-project" \
   --location "us-central1"
@@ -30,7 +36,7 @@ Optional flags:
 
 ### Configure a provider (project-level override)
 ```bash
-emergent provider configure-project vertex-ai \
+memory provider configure-project vertex-ai \
   --key-file /path/to/sa.json \
   --gcp-project "my-gcp-project" \
   --location "us-central1"
@@ -39,34 +45,34 @@ Stores a project-specific provider config that overrides the org-level config fo
 
 To remove the project override and fall back to org config:
 ```bash
-emergent provider configure-project <provider> --remove
+memory provider configure-project <provider> --remove
 ```
 
 ### List configured providers
 ```bash
-emergent provider list
+memory provider list
 ```
 Shows which providers are configured for the org and their model selections.
 
 ### Test a provider
 ```bash
-emergent provider test <provider>
+memory provider test <provider>
 # provider is one of: google-ai, vertex-ai
 ```
 Runs a live generate call to confirm credentials are valid and the model responds.
 
 ### List available models
 ```bash
-emergent provider models
-emergent provider models google-ai --type generative
+memory provider models
+memory provider models google-ai --type generative
 ```
 Shows the cached model catalog available from configured providers.
 
 ### View usage and estimated cost
 ```bash
-emergent provider usage
-emergent provider usage --project <id>
-emergent provider usage --since 2024-01-01
+memory provider usage
+memory provider usage --project <id>
+memory provider usage --since 2024-01-01
 ```
 Shows LLM token consumption and estimated cost breakdown by model and time period.
 

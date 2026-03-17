@@ -1,12 +1,12 @@
 ---
 name: memory-onboard
-description: Onboard a project into Memory — understand what the project is, choose or create a Memory project, design and install a template pack, then guide on creating objects and relationships. Use when setting up Memory for a new project or codebase for the first time.
+description: Onboard a project into Memory — understand what the project is, choose or create a Memory project, design and install a schema (template pack), then guide on creating objects and relationships. Use when setting up Memory for a new project or codebase for the first time.
 metadata:
   author: emergent
-  version: "1.7"
+  version: "2.0"
 ---
 
-Onboard the current project into Memory by understanding what it is, selecting or creating a Memory project, designing a matching knowledge graph schema (template pack), installing it, and guiding the user through populating the graph.
+Onboard the current project into Memory by understanding what it is, selecting or creating a Memory project, designing a matching knowledge graph schema, installing it, and guiding the user through populating the graph.
 
 ## Rules
 
@@ -23,9 +23,9 @@ Onboard the current project into Memory by understanding what it is, selecting o
 
 Key concepts:
 - **Project** — the top-level container. One project per codebase/product/domain.
-- **Template pack** — defines the *types* of objects and relationships that exist in a project. Must be designed before objects can be created.
+- **Schema (template pack)** — defines the *types* of objects and relationships that exist in a project. Must be designed before objects can be created.
 - **Object** — a typed node in the graph (e.g. a `Service`, `Requirement`, `Person`).
-- **Relationship** — a typed directed edge between two objects (e.g. `Service` → `depends_on` → `Service`).
+- **Relationship** — a typed directed edge between two objects (e.g. `Service` -> `depends_on` -> `Service`).
 - **Document** — raw text ingested into the project; objects are extracted from documents automatically.
 
 ---
@@ -166,9 +166,9 @@ memory provider configure vertex-ai \
 
 This also syncs the model catalog and auto-selects models atomically. Proceed to Step 3 on success.
 
-### Step 3 — Design the template pack
+### Step 3 — Design the schema
 
-Based on your understanding from Step 1, design a template pack JSON file and save it to:
+Based on your understanding from Step 1, design a schema JSON file and save it to:
 ```
 .memory/templates/<pack-name>/pack.json
 ```
@@ -178,7 +178,7 @@ Create the `.memory/templates/<pack-name>/` directory if it doesn't exist.
 **Pack naming convention:** use lowercase-with-hyphens, matching the project domain.  
 Examples: `go-microservice`, `react-app`, `data-pipeline`, `research-papers`
 
-**Template pack JSON structure:**
+**Schema JSON structure:**
 
 ```json
 {
@@ -213,7 +213,7 @@ Examples: `go-microservice`, `react-app`, `data-pipeline`, `research-papers`
 ```
 
 **Design guidelines:**
-- Start with 3–8 object types. More than 10 is usually too many for a first pass.
+- Start with 3-8 object types. More than 10 is usually too many for a first pass.
 - Every type needs at minimum: `name` (string) and `description` (string) in `properties`.
 - Both `object_type_schemas` and `relationship_type_schemas` are **arrays**, not maps — each entry has a `"name"` field.
 - Relationship names should be snake_case verbs: `depends_on`, `implements`, `owned_by`.
@@ -222,31 +222,31 @@ Examples: `go-microservice`, `react-app`, `data-pipeline`, `research-papers`
 - `ui_configs` icon names come from Lucide icons (e.g. `Box`, `Layers`, `User`, `FileText`, `GitBranch`, `Database`, `Globe`, `Tag`, `Shield`, `Zap`).
 
 **Present the pack design to the user** and confirm before proceeding:
-> "Here's the schema I designed. Object types: Service, Endpoint, Migration. Relationships: Service → depends_on → Service, Endpoint → defined_in → Service. Does this look right?"
+> "Here's the schema I designed. Object types: Service, Endpoint, Migration. Relationships: Service -> depends_on -> Service, Endpoint -> defined_in -> Service. Does this look right?"
 
-### Step 4 — Install the template pack
+### Step 4 — Install the schema
 
-Once the user confirms the design:
+Once the user confirms the design, create and install in one step:
 
 ```bash
-memory template-packs create --file .memory/templates/<pack-name>/pack.json
-# Note the returned pack ID, then install it:
-memory template-packs install <pack-id>
+memory schemas install --file .memory/templates/<pack-name>/pack.json
 ```
 
-Save the pack ID for future reference:
+This creates the schema from the JSON file and installs it into the project in a single operation.
+
+To preview what would be installed without making changes:
 ```bash
-echo "<pack-id>" > .memory/templates/<pack-name>/pack-id.txt
+memory schemas install --file .memory/templates/<pack-name>/pack.json --dry-run
 ```
 
 Verify the types are available:
 ```bash
-memory template-packs compiled-types
+memory schemas compiled-types
 ```
 
 ### Step 5 — Populate the graph
 
-The recommended approach is to ingest documents and let Emergent extract objects automatically using the `extraction_guidelines` in the pack.
+The recommended approach is to ingest documents and let Emergent extract objects automatically using the `extraction_guidelines` in the schema.
 
 #### Upload documents
 
@@ -290,10 +290,10 @@ memory graph relationships create --type depends_on --from <source-object-id> --
 
 Remind the user:
 - `.env.local` contains `MEMORY_PROJECT=<id>` — keep this out of git (add to `.gitignore`)
-- The template pack definition is saved at `.memory/templates/<pack-name>/pack.json` — commit this to the repo
-- To modify the schema, edit the JSON and create a new pack version (packs are immutable once created)
+- The schema definition is saved at `.memory/templates/<pack-name>/pack.json` — commit this to the repo
+- To modify the schema, edit the JSON and run `memory schemas install --file pack.json --merge` to additively merge changes
 - The `memory-query` skill can be used to explore the populated graph
-- The `memory-template-packs` skill has full reference for managing packs
+- The `memory-template-packs` skill has full reference for managing schemas
 
 ---
 
@@ -301,4 +301,4 @@ Remind the user:
 
 - If `.memory/templates/` already exists with a pack, confirm with the user whether to update or keep it
 - Keep `.memory/` committed to the repo — it documents the project's knowledge graph schema
-- Pack IDs are UUIDs; always save them in `.memory/templates/<pack-name>/pack-id.txt` after creation
+- Schema IDs are UUIDs; use `memory schemas installed` to find them after installation

@@ -3,10 +3,10 @@ name: memory-agents
 description: Manage Emergent runtime agents and agent definitions — create, trigger, monitor runs, respond to questions, and manage agent configurations. Use when the user wants to run, inspect, or configure AI agents in an Emergent project.
 metadata:
   author: emergent
-  version: "1.0"
+  version: "2.0"
 ---
 
-Manage runtime agents and agent definitions in an Emergent project using `emergent agents` and `emergent agent-definitions`.
+Manage runtime agents and agent definitions in an Emergent project using `memory agents` and `memory agent-definitions`.
 
 ## Rules
 
@@ -25,28 +25,28 @@ Manage runtime agents and agent definitions in an Emergent project using `emerge
 
 ### List definitions
 ```bash
-emergent agent-definitions list
-emergent agent-defs list --output json
+memory agent-definitions list
+memory agent-defs list --output json
 ```
 
 ### Get definition details
 ```bash
-emergent agent-definitions get <definition-id>
+memory agent-definitions get <definition-id>
 ```
 
 ### Create a definition
 ```bash
-emergent agent-definitions create --name "My Agent" --description "Does X"
+memory agent-definitions create --name "My Agent" --description "Does X"
 ```
 
 ### Update a definition
 ```bash
-emergent agent-definitions update <definition-id> --name "New Name"
+memory agent-definitions update <definition-id> --name "New Name"
 ```
 
 ### Delete a definition
 ```bash
-emergent agent-definitions delete <definition-id>
+memory agent-definitions delete <definition-id>
 ```
 
 ---
@@ -55,39 +55,39 @@ emergent agent-definitions delete <definition-id>
 
 ### List agents in a project
 ```bash
-emergent agents list
-emergent agents list --project-id <id> --output json
+memory agents list
+memory agents list --project <id> --output json
 ```
 
 ### Get agent details
 ```bash
-emergent agents get <agent-id>
+memory agents get <agent-id>
 ```
 
 ### Create an agent (instantiate a definition in a project)
 ```bash
-emergent agents create --name "My Agent" --definition-id <def-id>
+memory agents create --name "My Agent" --definition-id <def-id>
 ```
 
 ### Trigger an agent run
 ```bash
-emergent agents trigger <agent-id>
+memory agents trigger <agent-id>
 ```
 
 ### View recent runs
 ```bash
-emergent agents runs <agent-id>
-emergent agents runs <agent-id> --limit 20
+memory agents runs <agent-id>
+memory agents runs <agent-id> --limit 20
 ```
 
 ### Update an agent
 ```bash
-emergent agents update <agent-id> --name "New Name"
+memory agents update <agent-id> --name "New Name"
 ```
 
 ### Delete an agent
 ```bash
-emergent agents delete <agent-id>
+memory agents delete <agent-id>
 ```
 
 ---
@@ -98,18 +98,18 @@ Agents can pause and ask clarifying questions. Use these commands to list and re
 
 ### List questions for a specific run
 ```bash
-emergent agents questions list <run-id>
+memory agents questions list <run-id>
 ```
 
 ### List all pending questions for a project
 ```bash
-emergent agents questions list-project
-emergent agents questions list-project --project-id <id>
+memory agents questions list-project
+memory agents questions list-project --project <id>
 ```
 
 ### Respond to a question
 ```bash
-emergent agents questions respond <question-id> --answer "Yes, proceed"
+memory agents questions respond <question-id> --answer "Yes, proceed"
 ```
 
 ---
@@ -118,7 +118,7 @@ emergent agents questions respond <question-id> --answer "Yes, proceed"
 
 ### Manage hooks on an agent
 ```bash
-emergent agents hooks list <agent-id>
+memory agents hooks list <agent-id>
 ```
 
 ---
@@ -134,5 +134,5 @@ emergent agents hooks list <agent-id>
 ## Notes
 
 - `agent-definitions` has aliases: `agent-defs`, `defs`
-- `--project-id` global flag selects the project; falls back to config default
+- `--project` global flag selects the project; falls back to config default
 - Agent and definition IDs are UUIDs

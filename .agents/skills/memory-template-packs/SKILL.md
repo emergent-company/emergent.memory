@@ -1,43 +1,49 @@
 ---
 name: memory-template-packs
-description: Manage Emergent template packs — discover, install, and remove reusable sets of object and relationship types in a project. Use when the user wants to configure what types of knowledge objects a project can contain.
+description: Manage Emergent schemas (template packs) — discover, install, and remove reusable sets of object and relationship types in a project. Use when the user wants to configure what types of knowledge objects a project can contain.
 metadata:
   author: emergent
-  version: "1.1"
+  version: "2.0"
 ---
 
-Manage template packs using `emergent template-packs`. Template packs define reusable sets of object types and relationship types that can be installed into a project's knowledge graph schema.
+Manage schemas (template packs) using `memory schemas`. Schemas define reusable sets of object types and relationship types that can be installed into a project's knowledge graph schema.
 
-> **New to Emergent?** Load the `memory-onboard` skill first — it walks through designing and installing a template pack from scratch.
+> **New to Emergent?** Load the `memory-onboard` skill first — it walks through designing and installing a schema from scratch.
+
+## Rules
+
+- **Never run `memory browse`** — it launches a full interactive TUI that blocks on terminal input and will hang in an automated agent context.
+- **Always prefix `memory` commands with `NO_PROMPT=1`** (e.g. `NO_PROMPT=1 memory <cmd>`). Without it, the CLI may show interactive pickers when no project, agent, MCP server, skill, or agent-definition ID is provided. Do not add this to `.env.local` — it must only apply to agent-driven invocations.
+- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` is set.
 
 ## Concepts
 
-- **Template pack** — a versioned bundle of `objectTypeSchemas` and `relationshipTypeSchemas`. Immutable once created; new versions get new IDs.
-- **Installed pack** — a pack assigned to a specific project. Multiple packs can be installed; their types are merged into the project's compiled type registry.
-- **Compiled types** — the merged view of all object + relationship types from all installed packs in a project.
+- **Schema (template pack)** — a versioned bundle of `objectTypeSchemas` and `relationshipTypeSchemas`. Immutable once created; new versions get new IDs.
+- **Installed schema** — a schema assigned to a specific project. Multiple schemas can be installed; their types are merged into the project's compiled type registry.
+- **Compiled types** — the merged view of all object + relationship types from all installed schemas in a project.
 
 ---
 
-## Commands (when available)
+## Commands
 
-### List available template packs
+### List available schemas
 ```bash
-emergent template-packs list
-emergent template-packs list --output json
+memory schemas list
+memory schemas list --output json
 ```
 
-### Get pack details
+### Get schema details
 ```bash
-emergent template-packs get <pack-id>
+memory schemas get <schema-id>
 ```
 Shows object types, relationship types, version, description.
 
-### Create a new pack
+### Create a new schema
 ```bash
-emergent template-packs create --file pack.json
+memory schemas create --file pack.json
 ```
 
-Pack JSON structure:
+Schema JSON structure:
 ```json
 {
   "name": "my-pack",
@@ -62,47 +68,57 @@ Pack JSON structure:
 }
 ```
 
-### Validate a pack file before creating
+### List installed schemas in the current project
 ```bash
-emergent template-packs validate --file pack.json
+memory schemas installed
+memory schemas installed --output json
 ```
 
-### List installed packs in the current project
+### Install a schema into the current project
 ```bash
-emergent template-packs installed
-emergent template-packs installed --output json
+# Install an existing schema by ID:
+memory schemas install <schema-id>
+
+# Create from JSON file and install in one step:
+memory schemas install --file pack.json
+
+# Preview without making changes:
+memory schemas install --file pack.json --dry-run
+
+# Merge into existing registered types:
+memory schemas install --file pack.json --merge
 ```
 
-### Install a pack into the current project
+### Uninstall a schema from the current project
 ```bash
-emergent template-packs install <pack-id>
+memory schemas uninstall <assignment-id>
 ```
+Use `memory schemas installed` to find the assignment ID.
 
-### Uninstall a pack from the current project
+### Delete a schema from the registry
 ```bash
-emergent template-packs uninstall <pack-id>
+memory schemas delete <schema-id>
 ```
-Warns if objects exist using types from this pack.
 
 ### View compiled types (merged schema)
 ```bash
-emergent template-packs compiled-types
-emergent template-packs compiled-types --output json
+memory schemas compiled-types
+memory schemas compiled-types --output json
 ```
-Shows all object and relationship types available in the current project, with which pack each comes from.
+Shows all object and relationship types available in the current project, with which schema each comes from.
 
 ---
 
 ## Workflow
 
-1. **Set up a project schema**: `list` to find existing packs → `install <pack-id>` to add to project → `compiled-types` to verify
-2. **Create a custom pack**: write a JSON file → `validate` to check → `create --file pack.json` → `install` the new pack
+1. **Set up a project schema**: `list` to find existing schemas → `install <schema-id>` to add to project → `compiled-types` to verify
+2. **Create a custom schema**: write a JSON file → `install --file pack.json --dry-run` to preview → `install --file pack.json` to create and install in one step
 3. **Inspect project schema**: `compiled-types` to see all available types before creating objects
-4. **Remove a pack**: `uninstall <pack-id>` — review the warning about affected objects before confirming
+4. **Remove a schema**: `uninstall <assignment-id>` — use `installed` to find the assignment ID first
 
 ## Notes
 
-- Pack IDs are UUIDs; use `list --output json` to find by name
-- Packs are immutable — creating a pack with the same name but different content creates a new version with a new ID
-- `--project-id` global flag selects the project for `installed`, `install`, `uninstall`, and `compiled-types`
+- Schema IDs are UUIDs; use `list --output json` to find by name
+- Schemas are immutable — creating a schema with the same name but different content creates a new version with a new ID
+- `--project` global flag selects the project for `installed`, `install`, `uninstall`, and `compiled-types`
 - `list` and `create` are org-scoped (no project needed)

@@ -3,12 +3,12 @@ name: memory-query
 description: Query an Emergent project knowledge base using natural language or direct hybrid search. Use when the user wants to search, explore, or ask questions about content in an Emergent project.
 metadata:
   author: emergent
-  version: "1.0"
+  version: "2.0"
 ---
 
 > **New to Emergent?** Load the `memory-onboard` skill first to set up the project's knowledge graph schema before querying.
 
-Query an Emergent project knowledge base using the `emergent query` command.
+Query an Emergent project knowledge base using the `memory query` command.
 
 ## Rules
 
@@ -21,17 +21,17 @@ Query an Emergent project knowledge base using the `emergent query` command.
 **Agent mode (default)** — AI reasoning over the knowledge graph. Best for complex or multi-hop questions.
 
 ```bash
-emergent query "who directed fight club and what are their other movies?"
-emergent query --project-id <id> "list all requirements for the auth module"
-emergent query --show-tools "what are the key relationships between X and Y?"
+memory query "who directed fight club and what are their other movies?"
+memory query --project <id> "list all requirements for the auth module"
+memory query --show-tools "what are the key relationships between X and Y?"
 ```
 
 **Search mode** — Direct hybrid search (semantic + lexical), no AI reasoning. Best for finding specific content fast.
 
 ```bash
-emergent query --mode=search "fight club"
-emergent query --mode=search --result-types=graph --limit=20 "authentication"
-emergent query --mode=search --result-types=text "API rate limiting"
+memory query --mode=search "fight club"
+memory query --mode=search --result-types=graph --limit=20 "authentication"
+memory query --mode=search --result-types=text "API rate limiting"
 ```
 
 ## Key Flags
@@ -39,7 +39,7 @@ emergent query --mode=search --result-types=text "API rate limiting"
 | Flag | Default | Notes |
 |---|---|---|
 | `--mode` | `agent` | `agent` or `search` |
-| `--project-id` | from config | Override target project |
+| `--project` | from config | Override target project |
 | `--json` | false | Machine-readable output |
 | `--show-tools` | false | Show agent tool calls (agent mode only) |
 | `--limit` | 10 | Max results (search mode only) |
@@ -48,9 +48,9 @@ emergent query --mode=search --result-types=text "API rate limiting"
 
 ## Workflow
 
-1. If the user's question is broad or relational → use **agent mode** (default)
-2. If the user wants to find specific documents or objects quickly → use **search mode**
-3. If no `--project-id` is set, the CLI uses the default project from config; ask the user to confirm or specify one if the context is ambiguous
+1. If the user's question is broad or relational -> use **agent mode** (default)
+2. If the user wants to find specific documents or objects quickly -> use **search mode**
+3. If no `--project` is set, the CLI uses the default project from config; ask the user to confirm or specify one if the context is ambiguous
 4. Use `--output json` + `--json` for downstream processing or to pass results to another tool
 
 ## Output Format
@@ -59,5 +59,5 @@ Agent mode streams the response and prints a final answer. Search mode returns a
 
 Use `--json` to get structured output suitable for parsing:
 ```bash
-emergent query --mode=search --json "authentication" | jq '.[].title'
+memory query --mode=search --json "authentication" | jq '.[].title'
 ```

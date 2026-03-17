@@ -3,66 +3,77 @@ name: memory-mcp-servers
 description: Manage MCP (Model Context Protocol) servers in an Emergent project — register, inspect, sync tools, and delete servers. Use when the user wants to add, configure, or troubleshoot MCP servers connected to their Emergent project.
 metadata:
   author: emergent
-  version: "1.0"
+  version: "2.0"
 ---
 
-Manage MCP servers connected to an Emergent project using `emergent mcp-servers`.
+Manage MCP servers connected to an Emergent project using `memory agents mcp-servers`.
+
+## Rules
+
+- **Never run `memory browse`** — it launches a full interactive TUI that blocks on terminal input and will hang in an automated agent context.
+- **Always prefix `memory` commands with `NO_PROMPT=1`** (e.g. `NO_PROMPT=1 memory <cmd>`). Without it, the CLI may show interactive pickers when no project, agent, MCP server, skill, or agent-definition ID is provided. Do not add this to `.env.local` — it must only apply to agent-driven invocations.
+- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` is set.
 
 ## Commands
 
 ### List servers
 ```bash
-emergent mcp-servers list
-emergent mcp-servers list --output json
+memory agents mcp-servers list
+memory agents mcp-servers list --output json
 ```
 
 ### Get server details
 ```bash
-emergent mcp-servers get <server-id>
+memory agents mcp-servers get <server-id>
 ```
 
 ### Register a new server
 
 **SSE server:**
 ```bash
-emergent mcp-servers create --name "my-server" --type sse --url "http://localhost:8080/sse"
+memory agents mcp-servers create --name "my-server" --type sse --url "http://localhost:8080/sse"
 ```
 
 **HTTP server:**
 ```bash
-emergent mcp-servers create --name "my-server" --type http --url "http://localhost:8080/mcp"
+memory agents mcp-servers create --name "my-server" --type http --url "http://localhost:8080/mcp"
 ```
 
 **stdio server (spawned process):**
 ```bash
-emergent mcp-servers create --name "github" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github"
-emergent mcp-servers create --name "github" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github" --env "GITHUB_TOKEN=ghp_xxx"
+memory agents mcp-servers create --name "github" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github"
+memory agents mcp-servers create --name "github" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github" --env "GITHUB_TOKEN=ghp_xxx"
 ```
 
 **With env vars:**
 ```bash
-emergent mcp-servers create --name "my-server" --type http --url "http://..." --env "API_KEY=abc123" --env "ENV=prod"
+memory agents mcp-servers create --name "my-server" --type http --url "http://..." --env "API_KEY=abc123" --env "ENV=prod"
 ```
 
 ### Inspect (test connection + show capabilities)
 ```bash
-emergent mcp-servers inspect <server-id>
+memory agents mcp-servers inspect <server-id>
 ```
 Returns: connection status, latency, server info, list of tools/prompts/resources.
 
 ### Sync tools (refresh tool list from live server)
 ```bash
-emergent mcp-servers sync <server-id>
+memory agents mcp-servers sync <server-id>
 ```
 
 ### List tools for a server
 ```bash
-emergent mcp-servers tools <server-id>
+memory agents mcp-servers tools <server-id>
+```
+
+### Configure a tool
+```bash
+memory agents mcp-servers configure <tool-name> <key=value ...>
 ```
 
 ### Delete a server
 ```bash
-emergent mcp-servers delete <server-id>
+memory agents mcp-servers delete <server-id>
 ```
 
 ## Server Types
@@ -82,6 +93,6 @@ emergent mcp-servers delete <server-id>
 
 ## Notes
 
-- `--project-id` global flag selects the project; falls back to config default
+- `--project` global flag selects the project; falls back to config default
 - Server IDs are UUIDs — use `list` to find them by name
 - `--args` for stdio type is comma-separated: `"arg1,arg2,arg3"`
