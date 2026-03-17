@@ -526,6 +526,43 @@ func (h *Handler) Download(c echo.Context) error {
 	return c.Redirect(http.StatusTemporaryRedirect, signedURL)
 }
 
+// GetExtractionSummary handles GET /api/documents/:id/extraction-summary
+// @Summary      Get extraction summary
+// @Description  Returns the extraction summary for the most recently completed extraction job for a document
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Document ID"
+// @Success      200 {object} ExtractionSummary
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/documents/{id}/extraction-summary [get]
+// @Security     bearerAuth
+func (h *Handler) GetExtractionSummary(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	if user.ProjectID == "" {
+		return apperror.ErrBadRequest.WithMessage("x-project-id header required")
+	}
+
+	documentID := c.Param("id")
+	if documentID == "" {
+		return apperror.ErrBadRequest.WithMessage("document id required")
+	}
+
+	summary, err := h.svc.GetExtractionSummary(c.Request().Context(), user.ProjectID, documentID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, summary)
+}
+
 // Upload handles POST /api/documents/upload
 // @Summary      Upload document
 // @Description  Upload a file and create a document record (with automatic deduplication)

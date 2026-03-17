@@ -55,6 +55,14 @@ type Document struct {
 	EmbeddedChunks   int     `bun:"embedded_chunks,scanonly" json:"embeddedChunks"`
 	TotalChars       int     `bun:"total_chars,scanonly" json:"totalChars"`
 	ExtractionStatus *string `bun:"extraction_status,scanonly" json:"extractionStatus,omitempty"`
+
+	// Unified processing status (derived from conversion + extraction state)
+	ProcessingStatus *string `bun:"processing_status,scanonly" json:"processingStatus,omitempty"`
+
+	// Compact extraction summary (from most recent completed extraction job)
+	LastExtractionAt    *time.Time `bun:"last_extraction_at,scanonly" json:"lastExtractionAt,omitempty"`
+	ExtractionObjects   *int       `bun:"extraction_objects_created,scanonly" json:"objectsCreated,omitempty"`
+	ExtractionRelations *int       `bun:"extraction_relationships_created,scanonly" json:"relationshipsCreated,omitempty"`
 }
 
 // ListParams contains parameters for listing documents
@@ -245,4 +253,17 @@ type CancelConversionResponse struct {
 type SourceTypeWithCount struct {
 	SourceType string `bun:"source_type" json:"sourceType"`
 	Count      int    `bun:"count" json:"count"`
+}
+
+// ExtractionSummary is the response for GET /:id/extraction-summary
+type ExtractionSummary struct {
+	JobID                string         `json:"jobId"`
+	CompletedAt          time.Time      `json:"completedAt"`
+	ObjectsCreated       int            `json:"objectsCreated"`
+	RelationshipsCreated int            `json:"relationshipsCreated"`
+	ObjectsByType        map[string]int `json:"objectsByType"`
+	ChunksProcessed      int            `json:"chunksProcessed"`
+	TotalChunks          int            `json:"totalChunks"`
+	HasErrors            bool           `json:"hasErrors"`
+	ErrorSummary         *string        `json:"errorSummary"`
 }

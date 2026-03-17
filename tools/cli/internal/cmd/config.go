@@ -154,6 +154,9 @@ overriding environment variables.`,
 			_ = table.Append("Project ID", cfg.ProjectID)
 			_ = table.Append("Debug", fmt.Sprintf("%v", cfg.Debug))
 			_ = table.Append("Config File", configPath)
+			_ = table.Append("Auto-Update Enabled", fmt.Sprintf("%v", cfg.AutoUpdate.Enabled))
+			_ = table.Append("Auto-Update Mode", cfg.AutoUpdate.Mode)
+			_ = table.Append("Auto-Update Interval", cfg.AutoUpdate.CheckInterval)
 
 			return table.Render()
 		},
@@ -170,11 +173,14 @@ var standaloneEnvKeys = map[string]string{
 
 // Settable keys for config.yaml
 var configYAMLKeys = map[string]bool{
-	"server_url": true,
-	"api_key":    true,
-	"email":      true,
-	"org_id":     true,
-	"project_id": true,
+	"server_url":                 true,
+	"api_key":                    true,
+	"email":                      true,
+	"org_id":                     true,
+	"project_id":                 true,
+	"auto_update_enabled":        true,
+	"auto_update_mode":           true,
+	"auto_update_check_interval": true,
 }
 
 func newConfigSetCmd() *cobra.Command {
@@ -186,12 +192,15 @@ func newConfigSetCmd() *cobra.Command {
 		Long: `Set a configuration value by key.
 
 Supported keys:
-  server_url      Server URL (e.g., http://localhost:3002)
-  api_key         API key for authentication
-  email           Email for authentication
-  org_id          Organization ID
-  project_id      Project ID
-  google_api_key  Google API key (standalone installations only)
+  server_url                  Server URL (e.g., http://localhost:3002)
+  api_key                     API key for authentication
+  email                       Email for authentication
+  org_id                      Organization ID
+  project_id                  Project ID
+  auto_update_enabled         Enable/disable automatic update checks (true/false)
+  auto_update_mode            Update mode: notify (default) or auto
+  auto_update_check_interval  How often to check for updates (e.g., 24h, 12h)
+  google_api_key              Google API key (standalone installations only)
 
 For standalone installations, google_api_key is saved to .env.local.
 All other keys are saved to config.yaml.`,
@@ -263,6 +272,12 @@ All other keys are saved to config.yaml.`,
 				cfg.OrgID = value
 			case "project_id":
 				cfg.ProjectID = value
+			case "auto_update_enabled":
+				cfg.AutoUpdate.Enabled = value == "true" || value == "1" || value == "yes"
+			case "auto_update_mode":
+				cfg.AutoUpdate.Mode = value
+			case "auto_update_check_interval":
+				cfg.AutoUpdate.CheckInterval = value
 			}
 
 			if err := config.Save(cfg, configPath); err != nil {

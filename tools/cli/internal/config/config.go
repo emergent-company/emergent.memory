@@ -23,6 +23,7 @@ type Config struct {
 	UI           UIConfig         `mapstructure:"ui" yaml:"ui"`
 	Query        QueryConfig      `mapstructure:"query" yaml:"query"`
 	Completion   CompletionConfig `mapstructure:"completion" yaml:"completion"`
+	AutoUpdate   AutoUpdateConfig `mapstructure:"auto_update" yaml:"auto_update"`
 }
 
 type CacheConfig struct {
@@ -43,6 +44,12 @@ type QueryConfig struct {
 
 type CompletionConfig struct {
 	Timeout string `mapstructure:"timeout" yaml:"timeout"`
+}
+
+type AutoUpdateConfig struct {
+	Enabled       bool   `mapstructure:"enabled" yaml:"enabled"`
+	Mode          string `mapstructure:"mode" yaml:"mode"`                     // "notify" or "auto"
+	CheckInterval string `mapstructure:"check_interval" yaml:"check_interval"` // e.g. "24h"
 }
 
 func Load(path string) (*Config, error) {
@@ -99,6 +106,11 @@ func defaults() *Config {
 		Completion: CompletionConfig{
 			Timeout: "2s",
 		},
+		AutoUpdate: AutoUpdateConfig{
+			Enabled:       true,
+			Mode:          "notify",
+			CheckInterval: "24h",
+		},
 	}
 }
 
@@ -147,6 +159,9 @@ func LoadWithEnv(path string) (*Config, error) {
 	_ = v.BindEnv("query.default_limit")
 	_ = v.BindEnv("query.default_sort")
 	_ = v.BindEnv("completion.timeout")
+	_ = v.BindEnv("auto_update.enabled")
+	_ = v.BindEnv("auto_update.mode")
+	_ = v.BindEnv("auto_update.check_interval")
 
 	_, err := os.Stat(path)
 	if err == nil {
@@ -191,6 +206,9 @@ func LoadWithEnv(path string) (*Config, error) {
 	}
 	if cfg.Completion.Timeout == "" {
 		cfg.Completion = defaults().Completion
+	}
+	if cfg.AutoUpdate.CheckInterval == "" {
+		cfg.AutoUpdate = defaults().AutoUpdate
 	}
 
 	return cfg, nil

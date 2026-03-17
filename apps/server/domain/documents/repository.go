@@ -49,6 +49,10 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		ColumnExpr("(SELECT COUNT(*)::int FROM kb.chunks c WHERE c.document_id = d.id) AS chunks").
 		ColumnExpr("(SELECT COUNT(*)::int FROM kb.chunks c WHERE c.document_id = d.id AND c.embedding IS NOT NULL) AS embedded_chunks").
 		ColumnExpr("(SELECT ej.status FROM kb.object_extraction_jobs ej WHERE ej.document_id = d.id ORDER BY ej.created_at DESC LIMIT 1) AS extraction_status").
+		ColumnExpr(processingStatusSQL()).
+		ColumnExpr(lastExtractionAtSQL()).
+		ColumnExpr(extractionObjectsCreatedSQL()).
+		ColumnExpr(extractionRelationshipsCreatedSQL()).
 		Where("d.project_id = ?", params.ProjectID)
 
 	// Apply filters
@@ -128,10 +132,19 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 func (r *Repository) GetByID(ctx context.Context, projectID, documentID string) (*Document, error) {
 	var doc Document
 	err := r.db.NewSelect().
-		Model(&doc).
-		Where("id = ?", documentID).
-		Where("project_id = ?", projectID).
-		Scan(ctx)
+		TableExpr("kb.documents AS d").
+		ColumnExpr("d.*").
+		ColumnExpr("COALESCE(LENGTH(d.content), 0) AS total_chars").
+		ColumnExpr("(SELECT COUNT(*)::int FROM kb.chunks c WHERE c.document_id = d.id) AS chunks").
+		ColumnExpr("(SELECT COUNT(*)::int FROM kb.chunks c WHERE c.document_id = d.id AND c.embedding IS NOT NULL) AS embedded_chunks").
+		ColumnExpr("(SELECT ej.status FROM kb.object_extraction_jobs ej WHERE ej.document_id = d.id ORDER BY ej.created_at DESC LIMIT 1) AS extraction_status").
+		ColumnExpr(processingStatusSQL()).
+		ColumnExpr(lastExtractionAtSQL()).
+		ColumnExpr(extractionObjectsCreatedSQL()).
+		ColumnExpr(extractionRelationshipsCreatedSQL()).
+		Where("d.id = ?", documentID).
+		Where("d.project_id = ?", projectID).
+		Scan(ctx, &doc)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -935,4 +948,136 @@ func (r *Repository) UpdateContentAndStatus(ctx context.Context, documentID, con
 	}
 
 	return nil
+}
+
+// --- SQL helper functions for computed document fields ---
+
+// processingStatusSQL returns a SQL CASE expression that derives the unified processing status
+// from conversion_status, document_parsing_jobs, and object_extraction_jobs.
+// Precedence: converting > conversion_failed > extracting > extraction_failed > completed > ready_for_extraction
+func processingStatusSQL() string {
+	return `CASE
+		WHEN EXISTS (
+			SELECT 1 FROM kb.document_parsing_jobs dpj
+			WHERE dpj.document_id = d.id AND dpj.status IN ('pending', 'processing')
+		) THEN 'converting'
+		WHEN d.conversion_status = 'failed' THEN 'conversion_failed'
+		WHEN EXISTS (
+			SELECT 1 FROM kb.object_extraction_jobs oej
+			WHERE oej.document_id = d.id AND oej.status IN ('pending', 'processing')
+		) THEN 'extracting'
+		WHEN (
+			SELECT oej2.status FROM kb.object_extraction_jobs oej2
+			WHERE oej2.document_id = d.id ORDER BY oej2.created_at DESC LIMIT 1
+		) = 'failed' THEN 'extraction_failed'
+		WHEN (
+			SELECT oej3.status FROM kb.object_extraction_jobs oej3
+			WHERE oej3.document_id = d.id ORDER BY oej3.created_at DESC LIMIT 1
+		) = 'completed' THEN 'completed'
+		ELSE 'ready_for_extraction'
+	END AS processing_status`
+}
+
+// lastExtractionAtSQL returns the completion timestamp of the most recent completed extraction job
+func lastExtractionAtSQL() string {
+	return `(SELECT oej.completed_at FROM kb.object_extraction_jobs oej
+		WHERE oej.document_id = d.id AND oej.status = 'completed'
+		ORDER BY oej.completed_at DESC LIMIT 1) AS last_extraction_at`
+}
+
+// extractionObjectsCreatedSQL returns the objects_created count from the most recent completed extraction job
+func extractionObjectsCreatedSQL() string {
+	return `(SELECT oej.objects_created FROM kb.object_extraction_jobs oej
+		WHERE oej.document_id = d.id AND oej.status = 'completed'
+		ORDER BY oej.completed_at DESC LIMIT 1) AS extraction_objects_created`
+}
+
+// extractionRelationshipsCreatedSQL returns the relationships_created count from the most recent completed extraction job
+func extractionRelationshipsCreatedSQL() string {
+	return `(SELECT oej.relationships_created FROM kb.object_extraction_jobs oej
+		WHERE oej.document_id = d.id AND oej.status = 'completed'
+		ORDER BY oej.completed_at DESC LIMIT 1) AS extraction_relationships_created`
+}
+
+// GetExtractionSummary retrieves the extraction summary for the most recently completed extraction job
+func (r *Repository) GetExtractionSummary(ctx context.Context, projectID, documentID string) (*ExtractionSummary, error) {
+	// First, get the most recently completed extraction job for this document
+	var job struct {
+		ID                   string    `bun:"id"`
+		CompletedAt          time.Time `bun:"completed_at"`
+		ObjectsCreated       int       `bun:"objects_created"`
+		RelationshipsCreated int       `bun:"relationships_created"`
+		ProcessedItems       int       `bun:"processed_items"`
+		TotalItems           int       `bun:"total_items"`
+	}
+
+	err := r.db.NewSelect().
+		TableExpr("kb.object_extraction_jobs").
+		Column("id", "completed_at", "objects_created", "relationships_created", "processed_items", "total_items").
+		Where("document_id = ?", documentID).
+		Where("project_id = ?", projectID).
+		Where("status = 'completed'").
+		OrderExpr("completed_at DESC").
+		Limit(1).
+		Scan(ctx, &job)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get extraction summary job: %w", err)
+	}
+
+	// Get objects by type from graph_objects created by this job
+	type typeCount struct {
+		TypeLabel string `bun:"type_label"`
+		Count     int    `bun:"count"`
+	}
+	var typeCounts []typeCount
+	err = r.db.NewSelect().
+		TableExpr("kb.graph_objects").
+		ColumnExpr("type_label, COUNT(*)::int AS count").
+		Where("extraction_job_id = ?", job.ID).
+		GroupExpr("type_label").
+		OrderExpr("count DESC").
+		Scan(ctx, &typeCounts)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("get objects by type: %w", err)
+	}
+
+	objectsByType := make(map[string]int)
+	for _, tc := range typeCounts {
+		objectsByType[tc.TypeLabel] = tc.Count
+	}
+
+	// Check for errors in extraction logs
+	hasErrors := false
+	var errorSummary *string
+
+	errorCount, err := r.db.NewSelect().
+		TableExpr("kb.object_extraction_logs").
+		Where("extraction_job_id = ?", job.ID).
+		Where("status = 'failed'").
+		Count(ctx)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("count extraction errors: %w", err)
+	}
+
+	if errorCount > 0 {
+		hasErrors = true
+		msg := fmt.Sprintf("%d step(s) failed during extraction", errorCount)
+		errorSummary = &msg
+	}
+
+	return &ExtractionSummary{
+		JobID:                job.ID,
+		CompletedAt:          job.CompletedAt,
+		ObjectsCreated:       job.ObjectsCreated,
+		RelationshipsCreated: job.RelationshipsCreated,
+		ObjectsByType:        objectsByType,
+		ChunksProcessed:      job.ProcessedItems,
+		TotalChunks:          job.TotalItems,
+		HasErrors:            hasErrors,
+		ErrorSummary:         errorSummary,
+	}, nil
 }

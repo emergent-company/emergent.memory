@@ -419,3 +419,15 @@ func (s *Service) MarkConversionFailed(ctx context.Context, documentID, errorMsg
 func (s *Service) MarkConversionNotRequired(ctx context.Context, documentID string) error {
 	return s.repo.UpdateConversionStatus(ctx, documentID, "not_required", nil)
 }
+
+// GetExtractionSummary returns the extraction summary for the most recently completed extraction job
+func (s *Service) GetExtractionSummary(ctx context.Context, projectID, documentID string) (*ExtractionSummary, error) {
+	summary, err := s.repo.GetExtractionSummary(ctx, projectID, documentID)
+	if err != nil {
+		return nil, err
+	}
+	if summary == nil {
+		return nil, apperror.ErrNotFound.WithMessage("No completed extraction job found for this document")
+	}
+	return summary, nil
+}

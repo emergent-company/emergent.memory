@@ -110,6 +110,9 @@ func init() {
 
 type Release struct {
 	TagName     string  `json:"tag_name"`
+	Body        string  `json:"body"`
+	Draft       bool    `json:"draft"`
+	Prerelease  bool    `json:"prerelease"`
 	Assets      []Asset `json:"assets"`
 	ImagesReady bool
 }
@@ -161,7 +164,20 @@ func runUpgradeServer(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	return inst.Upgrade(release.TagName)
+	// Capture current version before upgrade for changelog
+	currentVersion := normalizeVersion(inst.GetInstalledVersion())
+
+	if err := inst.Upgrade(release.TagName); err != nil {
+		return err
+	}
+
+	// Show changelog between old and new version (best-effort, never blocks)
+	targetVersion := normalizeVersion(release.TagName)
+	if changelog := getUpgradeChangelog(currentVersion, targetVersion); changelog != "" {
+		fmt.Print(changelog)
+	}
+
+	return nil
 }
 
 func runUpgrade(cmd *cobra.Command, args []string) {
@@ -265,6 +281,12 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 
 	fmt.Println()
 	fmt.Printf("CLI upgraded to %s\n", displayLatest)
+
+	// Show changelog between old and new version (best-effort, never blocks)
+	if changelog := getUpgradeChangelog(currentVersion, latestVersion); changelog != "" {
+		fmt.Print(changelog)
+	}
+
 	fmt.Println()
 	fmt.Println("To upgrade the server: memory server upgrade")
 }

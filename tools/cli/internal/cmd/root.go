@@ -3,7 +3,10 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
+	"github.com/emergent-company/emergent.memory/tools/cli/internal/autoupdate"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/completion"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/joho/godotenv"
@@ -22,6 +25,54 @@ var (
 	projectID    string
 	projectToken string
 )
+
+// updateCheckCh carries the background version-check result to PersistentPostRunE.
+// It is buffered so the goroutine never blocks even if PostRunE is skipped.
+var updateCheckCh chan *autoupdate.CheckResult
+
+// skipUpdateCommands is the set of command names for which the update check
+// is suppressed (they handle upgrade flow themselves, or are internal).
+var skipUpdateCommands = map[string]bool{
+	"upgrade":    true,
+	"version":    true,
+	"completion": true,
+}
+
+// isSkipCommand returns true when cmd or any ancestor is in the skip list.
+func isSkipCommand(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if skipUpdateCommands[c.Name()] {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldSkipAutoUpdate returns true when auto-update logic should be bypassed
+// entirely for this invocation.
+func shouldSkipAutoUpdate(cmd *cobra.Command) bool {
+	// Master kill-switch env var (checked before any config).
+	if os.Getenv("MEMORY_NO_AUTO_UPDATE") != "" {
+		return true
+	}
+	// Dev builds never auto-update.
+	if Version == "dev" {
+		return true
+	}
+	// Package-manager installs manage their own upgrades.
+	if _, ok := isPackageManagerInstalled(); ok {
+		return true
+	}
+	// Excluded commands.
+	if isSkipCommand(cmd) {
+		return true
+	}
+	// Config-level opt-out.
+	if !viper.GetBool("auto_update.enabled") {
+		return true
+	}
+	return false
+}
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -71,8 +122,101 @@ For self-hosted deployments, use 'memory server' to install and manage your serv
 		}
 
 		printProjectIndicator(cmd, cfg)
+
+		// --- Background version check ---
+		// Reset the channel for each invocation (important for tests).
+		updateCheckCh = make(chan *autoupdate.CheckResult, 1)
+
+		if shouldSkipAutoUpdate(cmd) {
+			// Send a nil result so PostRunE doesn't hang on a 100ms timeout.
+			updateCheckCh <- nil
+			return nil
+		}
+
+		// Parse check interval from config (default 24h).
+		intervalStr := viper.GetString("auto_update.check_interval")
+		if intervalStr == "" {
+			intervalStr = "24h"
+		}
+		checkInterval, err := time.ParseDuration(intervalStr)
+		if err != nil {
+			checkInterval = 24 * time.Hour
+		}
+
+		cachePath, _ := autoupdate.DefaultCachePath()
+
+		go func() {
+			result := autoupdate.CheckForUpdate(Version, cachePath, checkInterval, nil)
+			updateCheckCh <- result
+		}()
+
 		return nil
 	},
+
+	PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
+		if updateCheckCh == nil {
+			return nil
+		}
+
+		// Wait up to 100ms for the background check.
+		var result *autoupdate.CheckResult
+		select {
+		case result = <-updateCheckCh:
+		case <-time.After(100 * time.Millisecond):
+			return nil
+		}
+
+		if result == nil || !result.Available {
+			return nil
+		}
+
+		// --- Notification ---
+		mode := viper.GetString("auto_update.mode")
+
+		currentNorm := autoupdate.NormalizeVersion(result.CurrentVersion)
+		latestNorm := result.LatestVersion
+
+		// Build a changelog teaser using SummarizeChanges from changelog.go.
+		teaser := buildUpdateTeaser(currentNorm, latestNorm)
+
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "  A new version of Memory CLI is available: %s → %s\n", currentNorm, latestNorm)
+		if teaser != "" {
+			fmt.Fprintf(os.Stderr, "  %s\n", teaser)
+		}
+
+		if mode == "auto" {
+			// Attempt silent auto-install.
+			fmt.Fprintf(os.Stderr, "  Auto-updating...\n")
+			release := &autoupdate.Release{
+				TagName: result.LatestVersion,
+				Body:    result.ReleaseBody,
+				HTMLURL: result.ReleaseURL,
+			}
+			if _, err := autoupdate.DownloadAndInstall(release); err != nil {
+				fmt.Fprintf(os.Stderr, "  Auto-update failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "  Run 'memory upgrade' to update manually.\n")
+			} else {
+				fmt.Fprintf(os.Stderr, "  Updated to %s\n", latestNorm)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "  Run 'memory upgrade' to update.\n")
+		}
+		fmt.Fprintln(os.Stderr)
+
+		return nil
+	},
+}
+
+// buildUpdateTeaser builds a short human-readable summary of what changed
+// between currentVersion and latestVersion.  It uses SummarizeChanges from
+// changelog.go (already in this package).  On any error it returns "".
+func buildUpdateTeaser(currentVersion, latestVersion string) string {
+	releases, err := fetchReleasesBetween(currentVersion, latestVersion)
+	if err != nil || len(releases) == 0 {
+		return ""
+	}
+	return SummarizeChanges(releases)
 }
 
 // NewRootCommand creates and returns the root command
@@ -154,7 +298,11 @@ func initConfig() {
 
 	// Environment variables
 	viper.SetEnvPrefix("MEMORY")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	viper.AutomaticEnv() // read in environment variables that match
+	_ = viper.BindEnv("auto_update.enabled", "MEMORY_AUTO_UPDATE_ENABLED")
+	_ = viper.BindEnv("auto_update.mode", "MEMORY_AUTO_UPDATE_MODE")
+	_ = viper.BindEnv("auto_update.check_interval", "MEMORY_AUTO_UPDATE_CHECK_INTERVAL")
 
 	// Set defaults for new config fields
 	viper.SetDefault("cache.ttl", "5m")
@@ -165,6 +313,9 @@ func initConfig() {
 	viper.SetDefault("query.default_limit", 50)
 	viper.SetDefault("query.default_sort", "updated_at:desc")
 	viper.SetDefault("completion.timeout", "2s")
+	viper.SetDefault("auto_update.enabled", true)
+	viper.SetDefault("auto_update.mode", "notify")
+	viper.SetDefault("auto_update.check_interval", "24h")
 
 	// If a config file is found, read it in
 	if err := viper.ReadInConfig(); err == nil {
