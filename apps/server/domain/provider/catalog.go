@@ -221,43 +221,22 @@ func normalizeModelName(name string) string {
 }
 
 // TestGenerate sends a single "say hello" generate call to verify credentials
-// work end-to-end. It picks the first available generative model for the
-// provider. Returns the model name used and the LLM's reply text.
+// work end-to-end. It uses the configured generative model from the resolved
+// credential when available, otherwise falls back to a cheap flash model from
+// the catalog. Returns the model name used and the LLM's reply text.
 func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider ProviderType, cred *ResolvedCredential) (model, reply string, err error) {
-	// Always use the live catalog — SyncModels must have been called before TestGenerate.
-	genType := ModelTypeGenerative
-	models, listErr := s.repo.ListSupportedModels(ctx, provider, &genType)
-	if listErr != nil || len(models) == 0 {
-		return "", "", fmt.Errorf("no models in catalog for provider %s (sync models before testing)", provider)
-	}
-
-	// Pick the best model: prefer any flash variant (fast, low-cost), then first available.
-	model = models[0].ModelName
-	for _, m := range models {
-		if m.ModelName == "gemini-3.1-flash-lite-preview" {
-			model = m.ModelName
-			break
+	// Use the configured generative model so the test validates exactly what
+	// the user will use in practice.
+	if cred.GenerativeModel != "" {
+		model = cred.GenerativeModel
+	} else {
+		// No model configured — fall back to catalog selection.
+		genType := ModelTypeGenerative
+		models, listErr := s.repo.ListSupportedModels(ctx, provider, &genType)
+		if listErr != nil || len(models) == 0 {
+			return "", "", fmt.Errorf("no models in catalog for provider %s (sync models before testing)", provider)
 		}
-	}
-	if model == models[0].ModelName {
-		for _, m := range models {
-			if m.ModelName == "gemini-2.5-flash" {
-				model = m.ModelName
-				break
-			}
-		}
-	}
-	if model == models[0].ModelName {
-		for _, m := range models {
-			name := m.ModelName
-			if strings.Contains(name, "flash") &&
-				!strings.Contains(name, "image") &&
-				!strings.Contains(name, "tts") &&
-				!strings.Contains(name, "audio") {
-				model = name
-				break
-			}
-		}
+		model = s.pickCheapTestModel(models)
 	}
 
 	clientCfg, err := buildClientConfig(provider, cred)
@@ -277,6 +256,32 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 
 	reply = resp.Text()
 	return model, reply, nil
+}
+
+// pickCheapTestModel selects a cheap, fast model from the catalog for testing
+// when no configured model is available. Prefers flash variants.
+func (s *ModelCatalogService) pickCheapTestModel(models []ProviderSupportedModel) string {
+	best := models[0].ModelName
+	for _, m := range models {
+		if m.ModelName == "gemini-3.1-flash-lite-preview" {
+			return m.ModelName
+		}
+	}
+	for _, m := range models {
+		if m.ModelName == "gemini-2.5-flash" {
+			return m.ModelName
+		}
+	}
+	for _, m := range models {
+		name := m.ModelName
+		if strings.Contains(name, "flash") &&
+			!strings.Contains(name, "image") &&
+			!strings.Contains(name, "tts") &&
+			!strings.Contains(name, "audio") {
+			return name
+		}
+	}
+	return best
 }
 
 // buildClientConfig constructs a genai.ClientConfig from resolved credentials.
