@@ -166,7 +166,16 @@ func resolveProjectContext(cmd *cobra.Command, flagValue string) (string, error)
 			// Can't reach server — return the ID optimistically.
 			return nameOrID, nil
 		}
+		// When using a project-scoped token, the server validates the
+		// project on every request. Skip the extra Projects.Get call
+		// which requires the projects:read scope that CLI tokens may lack.
+		if c.HasProjectToken() {
+			return nameOrID, nil
+		}
 		if _, err := c.SDK.Projects.Get(context.Background(), nameOrID, nil); err != nil {
+			if sdkerrors.IsForbidden(err) {
+				return "", fmt.Errorf("project token lacks 'projects:read' scope — re-run `memory init` to generate a new token with the required permissions")
+			}
 			return "", fmt.Errorf("project %s not found — it may have been deleted or belong to a different server.\nUpdate your config with: memory config set project_id <id>", nameOrID)
 		}
 		return nameOrID, nil

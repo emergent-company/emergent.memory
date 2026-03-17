@@ -718,9 +718,10 @@ func runSetProject(cmd *cobra.Command, args []string) error {
 		// Generate a new one
 		fmt.Println("No existing viewable token found. Generating a new one...")
 		tokenName := cliTokenName()
+		defaultScopes := []string{"data:read", "data:write", "schema:read", "projects:read"}
 		req := &apitokens.CreateTokenRequest{
 			Name:   tokenName,
-			Scopes: []string{"data:read", "data:write", "schema:read"},
+			Scopes: defaultScopes,
 		}
 		createResp, err := c.SDK.APITokens.Create(context.Background(), selectedProjectID, req)
 		if err != nil && sdkerrors.IsConflict(err) {
