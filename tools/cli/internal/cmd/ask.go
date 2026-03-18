@@ -223,7 +223,7 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 		case "error":
 			if errMsg, ok := event["error"].(string); ok {
 				streamErr = errMsg
-				if !askJSON {
+				if !askJSON && output != "json" {
 					fmt.Fprintf(os.Stderr, "\nError: %s\n", errMsg)
 				}
 			}
@@ -236,7 +236,7 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 		return fmt.Errorf("error reading response: %w", err)
 	}
 
-	if askJSON {
+	if askJSON || output == "json" {
 		output := map[string]interface{}{
 			"question":  question,
 			"response":  response.String(),

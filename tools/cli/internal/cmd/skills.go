@@ -119,7 +119,7 @@ skill list as JSON.`,
 
 		out := cmd.OutOrStdout()
 
-		if skillJSONFlag {
+		if skillJSONFlag || output == "json" {
 			return json.NewEncoder(out).Encode(skills)
 		}
 
@@ -228,7 +228,7 @@ JSON response instead.`,
 
 		out := cmd.OutOrStdout()
 
-		if skillJSONFlag {
+		if skillJSONFlag || output == "json" {
 			return json.NewEncoder(out).Encode(skill)
 		}
 
@@ -305,7 +305,7 @@ var skillCreateCmd = &cobra.Command{
 
 		out := cmd.OutOrStdout()
 
-		if skillJSONFlag {
+		if skillJSONFlag || output == "json" {
 			return json.NewEncoder(out).Encode(skill)
 		}
 
@@ -370,7 +370,7 @@ Use --json to receive the full updated skill as JSON instead.`,
 
 		out := cmd.OutOrStdout()
 
-		if skillJSONFlag {
+		if skillJSONFlag || output == "json" {
 			return json.NewEncoder(out).Encode(skill)
 		}
 
@@ -555,7 +555,7 @@ Import built-in skills including experimental ones:
 
 		out := cmd.OutOrStdout()
 
-		if skillJSONFlag {
+		if skillJSONFlag || output == "json" {
 			return json.NewEncoder(out).Encode(skill)
 		}
 

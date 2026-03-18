@@ -152,7 +152,7 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 		case "token":
 			if token, ok := event["token"].(string); ok {
 				response.WriteString(token)
-				if !queryJSON {
+				if !queryJSON && output != "json" {
 					fmt.Print(token)
 				}
 			}
@@ -168,7 +168,7 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 		case "error":
 			if errMsg, ok := event["error"].(string); ok {
 				streamErr = errMsg
-				if !queryJSON {
+				if !queryJSON && output != "json" {
 					fmt.Fprintf(os.Stderr, "\nError: %s\n", errMsg)
 				}
 			}
@@ -181,7 +181,7 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 		return fmt.Errorf("error reading response: %w", err)
 	}
 
-	if queryJSON {
+	if queryJSON || output == "json" {
 		output := map[string]interface{}{
 			"query":     query,
 			"projectId": projectID,
@@ -226,7 +226,7 @@ func runSearchQuery(ctx context.Context, c *client.Client, query, projectID stri
 		return fmt.Errorf("query failed: %w", err)
 	}
 
-	if queryJSON {
+	if queryJSON || output == "json" {
 		output := map[string]interface{}{
 			"query":     query,
 			"projectId": projectID,

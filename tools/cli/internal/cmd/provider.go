@@ -403,7 +403,7 @@ func runProviderUsage(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to get org usage by project: %w", err)
 		}
 
-		if usageJSONFlag {
+		if usageJSONFlag || output == "json" {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			return enc.Encode(result)
@@ -461,7 +461,7 @@ func runProviderUsage(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if usageJSONFlag {
+	if usageJSONFlag || output == "json" {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(summary)
@@ -572,7 +572,7 @@ func runProviderUsageTimeseries(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if timeseriesJSONFlag {
+	if timeseriesJSONFlag || output == "json" {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(result)
@@ -766,7 +766,7 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 	}
 
 	// JSON output
-	if listJSONFlag {
+	if listJSONFlag || output == "json" {
 		out := struct {
 			Org      []provider.ProviderConfig        `json:"org"`
 			Projects []provider.ProjectProviderConfig `json:"projects"`
