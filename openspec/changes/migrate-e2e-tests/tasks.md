@@ -17,16 +17,16 @@
 
 ## 2. Phase 2 — Auth & Access (apitoken, auth, useraccess, useractivity, invites, notifications)
 
-- [ ] 2.1 Write `tests/api/apitoken_test.go` (24 tests: create, list, revoke, scope enforcement)
-- [ ] 2.2 Write `tests/api/auth_test.go` (26 tests: bearer auth, scopes, middleware behavior)
-- [ ] 2.3 Write `tests/api/security_scopes_test.go` (25 tests: per-scope endpoint protection)
-- [ ] 2.4 Write `tests/api/useraccess_test.go` (7 tests)
-- [ ] 2.5 Write `tests/api/useractivity_test.go` (23 tests)
-- [ ] 2.6 Write `tests/api/invites_test.go` (9 tests)
-- [ ] 2.7 Write `tests/api/notifications_test.go` (23 tests)
-- [ ] 2.8 Run Phase 2 tests — all green
-- [ ] 2.9 Open PR to e2e repo — CI green — merge
-- [ ] 2.10 Delete corresponding files from main repo — PR — merge
+- [x] 2.1 Write `tests/api/apitoken_test.go` (24 tests: create, list, revoke, scope enforcement)
+- [x] 2.2 Write `tests/api/auth_test.go` (26 tests: bearer auth, scopes, middleware behavior)
+- [x] 2.3 Write `tests/api/security_scopes_test.go` (25 tests: per-scope endpoint protection)
+- [x] 2.4 Write `tests/api/useraccess_test.go` (7 tests)
+- [x] 2.5 Write `tests/api/useractivity_test.go` (23 tests)
+- [x] 2.6 Write `tests/api/invites_test.go` (9 tests)
+- [x] 2.7 Write `tests/api/notifications_test.go` (23 tests)
+- [x] 2.8 Run Phase 2 tests — all green
+- [x] 2.9 Open PR to e2e repo — CI green — merge
+- [x] 2.10 Delete corresponding files from main repo — PR — merge
 
 ## 3. Phase 3 — Documents & Chunks (documents, chunks, embedding_policies, extraction)
 
