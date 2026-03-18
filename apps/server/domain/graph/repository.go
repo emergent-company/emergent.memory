@@ -1650,19 +1650,24 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 		params.Limit = 100
 	}
 
-	// First get the embedding for the source object (accepts physical id or canonical_id)
-	var embedding []float32
+	// First get the embedding for the source object (accepts physical id or canonical_id).
+	// Cast to text so pgx/bun can scan it without a registered pgvector codec.
+	var embStr string
 	err := r.db.NewRaw(`
-		SELECT embedding_v2
+		SELECT embedding_v2::text
 		FROM kb.graph_objects
 		WHERE (id = ? OR canonical_id = ?) AND project_id = ?
 		AND supersedes_id IS NULL
 		LIMIT 1
-	`, params.ObjectID, params.ObjectID, params.ProjectID).Scan(ctx, &embedding)
+	`, params.ObjectID, params.ObjectID, params.ProjectID).Scan(ctx, &embStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, apperror.ErrNotFound
 		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	embedding, err := pgutils.ParseVector(embStr)
+	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -2158,18 +2163,23 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 // GetObjectEmbedding returns the embedding vector for an object.
 // Accepts either physical id or canonical_id, returns the HEAD version's embedding.
 func (r *Repository) GetObjectEmbedding(ctx context.Context, projectID, objectID uuid.UUID) ([]float32, error) {
-	var embedding []float32
+	// Cast to text so pgx/bun can scan it without a registered pgvector codec.
+	var embStr string
 	err := r.db.NewRaw(`
-		SELECT embedding_v2
+		SELECT embedding_v2::text
 		FROM kb.graph_objects
 		WHERE (id = ? OR canonical_id = ?) AND project_id = ?
 		AND supersedes_id IS NULL
 		LIMIT 1
-	`, objectID, objectID, projectID).Scan(ctx, &embedding)
+	`, objectID, objectID, projectID).Scan(ctx, &embStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, apperror.ErrNotFound
 		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	embedding, err := pgutils.ParseVector(embStr)
+	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 	return embedding, nil
