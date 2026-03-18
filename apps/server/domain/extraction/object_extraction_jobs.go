@@ -877,3 +877,16 @@ func (s *ObjectExtractionJobsService) GetJobLogSummary(ctx context.Context, jobI
 		OperationCounts: operationCounts,
 	}, nil
 }
+
+// TriggerForDocument creates a full extraction job for the given document.
+// This satisfies the documents.ExtractionJobCreator interface so the upload
+// handler can trigger extraction without importing this package.
+func (s *ObjectExtractionJobsService) TriggerForDocument(ctx context.Context, projectID, documentID string) error {
+	_, err := s.CreateJob(ctx, CreateObjectExtractionJobOptions{
+		ProjectID:  projectID,
+		DocumentID: &documentID,
+		JobType:    JobTypeFullExtraction,
+		SourceType: func() *string { v := "document"; return &v }(),
+	})
+	return err
+}

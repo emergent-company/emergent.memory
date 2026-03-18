@@ -67,9 +67,18 @@ func (h *AdminHandler) CreateJob(c echo.Context) error {
 		CreatedBy:        dto.SubjectID,
 	}
 
-	// When source_type is "document", also set DocumentID for the worker
-	if sourceType == "document" && dto.SourceID != nil {
-		opts.DocumentID = dto.SourceID
+	// When source_type is "document", set DocumentID for the worker.
+	// Prefer explicit source_id; fall back to source_metadata["document_id"].
+	if sourceType == "document" {
+		if dto.SourceID != nil {
+			opts.DocumentID = dto.SourceID
+		} else if dto.SourceMetadata != nil {
+			if raw, ok := dto.SourceMetadata["document_id"]; ok {
+				if docID, ok := raw.(string); ok && docID != "" {
+					opts.DocumentID = &docID
+				}
+			}
+		}
 	}
 
 	// Handle extraction config target_types -> enabled_types

@@ -50,6 +50,10 @@ func provideParsingJobCreator(svc *DocumentParsingJobsService) documents.Parsing
 	return &ParsingJobCreatorAdapter{svc: svc}
 }
 
+func provideExtractionJobCreator(svc *ObjectExtractionJobsService) documents.ExtractionJobCreator {
+	return svc
+}
+
 // embeddingEnqueuerAdapter adapts GraphEmbeddingJobsService to graph.EmbeddingEnqueuer.
 type embeddingEnqueuerAdapter struct {
 	svc *GraphEmbeddingJobsService
@@ -115,6 +119,7 @@ var Module = fx.Module("extraction",
 		provideAdminHandler,
 		provideEmbeddingControlHandler,
 		provideParsingJobCreator,
+		provideExtractionJobCreator,
 		provideEmbeddingEnqueuer,
 		provideRelEmbeddingEnqueuer,
 		provideEmbeddingSweepWorker,

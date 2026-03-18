@@ -32,15 +32,22 @@ const (
 
 // UploadHandler handles document upload HTTP requests
 type UploadHandler struct {
-	svc                *Service
-	storage            *storage.Service
-	parsingJobsService ParsingJobCreator
-	log                *slog.Logger
+	svc                    *Service
+	storage                *storage.Service
+	parsingJobsService     ParsingJobCreator
+	extractionJobsService  ExtractionJobCreator
+	log                    *slog.Logger
 }
 
 // ParsingJobCreator is an interface for creating document parsing jobs
 type ParsingJobCreator interface {
 	CreateJob(ctx context.Context, opts ParsingJobOptions) error
+}
+
+// ExtractionJobCreator is a narrow interface for triggering object extraction on a document.
+// Defined here (in the documents package) to avoid a circular import with the extraction package.
+type ExtractionJobCreator interface {
+	TriggerForDocument(ctx context.Context, projectID, documentID string) error
 }
 
 // ParsingJobOptions contains options for creating a document parsing job
@@ -56,12 +63,13 @@ type ParsingJobOptions struct {
 }
 
 // NewUploadHandler creates a new upload handler
-func NewUploadHandler(svc *Service, storageSvc *storage.Service, parsingJobsService ParsingJobCreator, log *slog.Logger) *UploadHandler {
+func NewUploadHandler(svc *Service, storageSvc *storage.Service, parsingJobsService ParsingJobCreator, extractionJobsService ExtractionJobCreator, log *slog.Logger) *UploadHandler {
 	return &UploadHandler{
-		svc:                svc,
-		storage:            storageSvc,
-		parsingJobsService: parsingJobsService,
-		log:                log.With(logger.Scope("upload")),
+		svc:                   svc,
+		storage:               storageSvc,
+		parsingJobsService:    parsingJobsService,
+		extractionJobsService: extractionJobsService,
+		log:                   log.With(logger.Scope("upload")),
 	}
 }
 
@@ -174,6 +182,12 @@ func (h *UploadHandler) Upload(c echo.Context) error {
 			StorageKey:     &uploadResult.Key,
 		}); err != nil {
 			h.log.Error("failed to create parsing job", slog.String("document_id", response.Document.ID), logger.Error(err))
+		}
+
+		if autoExtract && h.extractionJobsService != nil {
+			if err := h.extractionJobsService.TriggerForDocument(c.Request().Context(), user.ProjectID, response.Document.ID); err != nil {
+				h.log.Error("failed to create extraction job", slog.String("document_id", response.Document.ID), logger.Error(err))
+			}
 		}
 	}
 
@@ -377,6 +391,12 @@ func (h *UploadHandler) processFileUpload(ctx context.Context, user *auth.AuthUs
 			StorageKey:     &uploadResult.Key,
 		}); err != nil {
 			h.log.Error("failed to create parsing job", slog.String("document_id", response.Document.ID), logger.Error(err))
+		}
+
+		if autoExtract && h.extractionJobsService != nil {
+			if err := h.extractionJobsService.TriggerForDocument(ctx, user.ProjectID, response.Document.ID); err != nil {
+				h.log.Error("failed to create extraction job", slog.String("document_id", response.Document.ID), logger.Error(err))
+			}
 		}
 	}
 
