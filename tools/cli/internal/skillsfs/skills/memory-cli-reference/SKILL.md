@@ -1678,6 +1678,16 @@ Output is a table with columns: Entity ID, Type, Version, Status, and Created
 date. Use --type to filter by object type, --limit to control result count, and
 --output json to receive the full list as JSON.
 
+Use --filter to filter by property values and --filter-op to set the comparison
+operator. --filter can be repeated to combine multiple conditions (AND logic).
+
+Examples:
+  memory graph objects list --filter status=active
+  memory graph objects list --filter status=active --filter priority=high
+  memory graph objects list --filter "status=active,draft,archived" --filter-op in
+  memory graph objects list --filter score=90 --filter-op gte
+  memory graph objects list --filter embedding --filter-op exists
+
 ```
 memory graph objects list [flags]
 ```
@@ -1685,9 +1695,11 @@ memory graph objects list [flags]
 ### Options
 
 ```
-  -h, --help          help for list
-      --limit int     Maximum number of results (default 50)
-      --type string   Filter by object type
+      --filter stringArray   Filter by property value (key=value; repeatable for AND logic)
+      --filter-op string     Comparison operator: eq, neq, gt, gte, lt, lte, contains, in, exists (default "eq")
+  -h, --help                 help for list
+      --limit int            Maximum number of results (default 50)
+      --type string          Filter by object type
 ```
 
 ## memory graph objects update

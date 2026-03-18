@@ -81,11 +81,60 @@ var (
 	graphToFlag      string
 	graphRelTypeFlag string
 	graphBatchFile   string
+	graphFilterFlag   []string
+	graphFilterOpFlag string
 )
 
 // ─────────────────────────────────────────────
 // Helper: resolve project + set context on client
 // ─────────────────────────────────────────────
+
+// validFilterOps is the set of operators the server accepts for property filters.
+var validFilterOps = map[string]bool{
+	"eq": true, "neq": true, "gt": true, "gte": true,
+	"lt": true, "lte": true, "contains": true, "in": true, "exists": true,
+}
+
+// parsePropertyFilters converts repeatable --filter key=value pairs and a
+// --filter-op operator into a slice of sdkgraph.PropertyFilter.
+//
+//   - Splits on the first '=' only, so values like "a=b=c" work correctly.
+//   - "exists" operator: value portion is ignored (omitted from filter).
+//   - "in" operator: value is split on commas into a []string.
+//   - All other operators: value is passed as a plain string.
+func parsePropertyFilters(filters []string, op string) ([]sdkgraph.PropertyFilter, error) {
+	if len(filters) == 0 {
+		return nil, nil
+	}
+	if !validFilterOps[op] {
+		return nil, fmt.Errorf("unsupported --filter-op %q: valid operators are eq, neq, gt, gte, lt, lte, contains, in, exists", op)
+	}
+	out := make([]sdkgraph.PropertyFilter, 0, len(filters))
+	for _, f := range filters {
+		idx := strings.Index(f, "=")
+		if op != "exists" && idx < 0 {
+			return nil, fmt.Errorf("invalid --filter %q: expected key=value format", f)
+		}
+		var key, val string
+		if idx >= 0 {
+			key = f[:idx]
+			val = f[idx+1:]
+		} else {
+			key = f // "exists" operator with no value
+		}
+		pf := sdkgraph.PropertyFilter{Path: key, Op: op}
+		switch op {
+		case "exists":
+			// no value
+		case "in":
+			pf.Value = strings.Split(val, ",")
+		default:
+			pf.Value = val
+		}
+		out = append(out, pf)
+	}
+	return out, nil
+}
 
 func getGraphClient(cmd *cobra.Command) (*sdkgraph.Client, error) {
 	c, err := getClient(cmd)
@@ -113,7 +162,19 @@ var graphObjectsListCmd = &cobra.Command{
 
 Output is a table with columns: Entity ID, Type, Version, Status, and Created
 date. Use --type to filter by object type, --limit to control result count, and
---output json to receive the full list as JSON.`,
+--output json to receive the full list as JSON.
+
+Use --filter key=value to filter by object properties (repeatable). All filters
+are combined with AND. The --filter-op flag sets the comparison operator for
+every --filter in the same invocation (default: eq).
+
+  --filter-op operators: eq, neq, gt, gte, lt, lte, contains, in, exists
+
+Examples:
+  memory graph objects list --filter status=active
+  memory graph objects list --type Feature --filter status=active --filter inertia_tier=1
+  memory graph objects list --filter status=active,draft --filter-op in
+  memory graph objects list --filter status --filter-op exists`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)
 		if err != nil {
@@ -126,6 +187,13 @@ date. Use --type to filter by object type, --limit to control result count, and
 		}
 		if graphLimitFlag > 0 {
 			opts.Limit = graphLimitFlag
+		}
+		if len(graphFilterFlag) > 0 {
+			pf, err := parsePropertyFilters(graphFilterFlag, graphFilterOpFlag)
+			if err != nil {
+				return err
+			}
+			opts.PropertyFilters = pf
 		}
 
 		resp, err := g.ListObjects(context.Background(), opts)
@@ -824,6 +892,8 @@ func init() {
 	// Object subcommand flags
 	graphObjectsListCmd.Flags().StringVar(&graphTypeFlag, "type", "", "Filter by object type")
 	graphObjectsListCmd.Flags().IntVar(&graphLimitFlag, "limit", 50, "Maximum number of results")
+	graphObjectsListCmd.Flags().StringArrayVar(&graphFilterFlag, "filter", nil, "Property filter as key=value (repeatable); see --filter-op")
+	graphObjectsListCmd.Flags().StringVar(&graphFilterOpFlag, "filter-op", "eq", "Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists")
 
 	graphObjectsGetCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
 
