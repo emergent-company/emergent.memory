@@ -6,7 +6,7 @@ The Emergent MCP server provides AI assistants with **self-documenting, schema-a
 
 This implementation exposes three core MCP capabilities:
 
-1. **Tools** (18) - Execute operations on the knowledge graph (search, create, query)
+1. **Tools** (~50+, across multiple tool files) - Execute operations on the knowledge graph (search, create, query, manage agents, documents, providers, skills, and more)
 2. **Resources** (6) - Browse schema, templates, and project metadata
 3. **Prompts** (5) - Guided workflows for common tasks
 
@@ -18,8 +18,7 @@ This implementation exposes three core MCP capabilities:
 # Initialize session
 curl -X POST http://localhost:5300/api/mcp/rpc \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: your-key" \
-  -H "X-Project-ID: project-uuid" \
+  -H "Authorization: Bearer <your-api-token>" \
   -d '{
     "jsonrpc": "2.0",
     "id": 1,
@@ -34,8 +33,7 @@ curl -X POST http://localhost:5300/api/mcp/rpc \
 # List all resources
 curl -X POST http://localhost:5300/api/mcp/rpc \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: your-key" \
-  -H "X-Project-ID: project-uuid" \
+  -H "Authorization: Bearer <your-api-token>" \
   -d '{
     "jsonrpc": "2.0",
     "id": 2,
@@ -48,8 +46,7 @@ curl -X POST http://localhost:5300/api/mcp/rpc \
 ```bash
 # Connect via Server-Sent Events
 curl -N http://localhost:5300/mcp/sse \
-  -H "X-API-Key: your-key" \
-  -H "X-Project-ID: project-uuid"
+  -H "Authorization: Bearer <your-api-token>"
 ```
 
 **SSE Configuration:**
@@ -60,10 +57,14 @@ curl -N http://localhost:5300/mcp/sse \
 
 ## Authentication
 
-All requests require:
+All requests require a valid API token. Two header formats are accepted:
 
-- `X-API-Key` header with valid API token
-- `X-Project-ID` header with target project UUID
+| Header | Format | Notes |
+|---|---|---|
+| `Authorization` | `Bearer <api-token>` | **Recommended** — standard HTTP bearer auth |
+| `X-API-Key` | `<api-token>` | Also accepted for backwards compatibility |
+
+The project is resolved automatically from the token's scope. The legacy `X-Project-ID` header is no longer required.
 
 ## Protocol Methods
 
@@ -383,19 +384,27 @@ Prompts generate **formatted guidance** for common tasks. Each prompt accepts ar
 
 ## Tools (Operations)
 
-**29 tools** for graph operations (updated 2025-02-10).
+**~50+ tools** across multiple tool files (see source for authoritative list).
 
 ### Quick Reference by Category
 
-| Category                      | Tools                                                                                                                                                                                                                             | Count |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| **Advanced Search**           | `hybrid_search`, `semantic_search`, `find_similar`                                                                                                                                                                                | 3     |
-| **Entity Management**         | `create_entity`, `update_entity`, `delete_entity`, `restore_entity`, `query_entities`, `search_entities`                                                                                                                          | 6     |
-| **Relationship Management**   | `create_relationship`, `update_relationship`, `delete_relationship`, `list_relationships`, `get_entity_edges`                                                                                                                     | 5     |
-| **Graph Traversal**           | `traverse_graph`                                                                                                                                                                                                                  | 1     |
-| **Batch Operations**          | `batch_create_entities`, `batch_create_relationships`                                                                                                                                                                             | 2     |
-| **Metadata \u0026 Discovery** | `list_tags`, `schema_version`, `list_entity_types`                                                                                                                                                                                | 3     |
-| **Template Management**       | `list_template_packs`, `get_template_pack`, `get_available_templates`, `get_installed_templates`, `assign_template_pack`, `update_template_assignment`, `uninstall_template_pack`, `create_template_pack`, `delete_template_pack` | 9     |
+> **Note:** Tool counts below are approximate. For the authoritative list consult the source files in `apps/server/domain/mcp/`.
+
+| Category | Tools | Count |
+|---|---|---|
+| **Search** | `search-hybrid`, `search-semantic`, `search-similar`, `search-knowledge` | 4 |
+| **Entity Management** | `entity-create`, `entity-update`, `entity-delete`, `entity-restore`, `entity-query`, `entity-search`, `entity-edges-get`, `entity-type-list` | 8 |
+| **Relationship Management** | `relationship-create`, `relationship-update`, `relationship-delete`, `relationship-list` | 4 |
+| **Graph Traversal** | `graph-traverse` | 1 |
+| **Schema Management** | `schema-version`, `schema-list`, `schema-get`, `schema-create`, `schema-delete`, `schema-assign`, `schema-assignment-update`, `schema-uninstall`, `schema-list-available`, `schema-list-installed`, `schema-migration-preview`, `migration-archive-list`, `migration-archive-get` | 13 |
+| **Metadata** | `tag-list`, `project-get`, `project-create` | 3 |
+| **Documents** | `document-list`, `document-get`, `document-upload`, `document-delete` | 4 |
+| **Agents** | `agent-question-list`, `agent-question-list-project`, `agent-question-respond`, `agent-hook-list`, `agent-hook-create`, `agent-hook-delete`, `adk-session-list`, `adk-session-get` | 8 |
+| **Providers** | `provider-list-org`, `provider-configure-org`, `provider-configure-project`, `provider-models-list`, `provider-test`, `provider-usage-get` | 6 |
+| **Skills** | `skill-list`, `skill-get`, `skill-create`, `skill-update`, `skill-delete` | 5 |
+| **Tokens** | `token-list`, `token-create`, `token-get`, `token-revoke` | 4 |
+| **Embeddings** | `embedding-status`, `embedding-pause`, `embedding-resume`, `embedding-config-update` | 4 |
+| **Traces** | `trace-list`, `trace-get` | 2 |
 
 ---
 
@@ -403,11 +412,11 @@ Prompts generate **formatted guidance** for common tasks. Each prompt accepts ar
 
 #### Advanced Search \u0026 Discovery
 
-**`hybrid_search`** - Most powerful search option
+**`search-hybrid`** - Most powerful search option
 
 ```json
 {
-  "name": "hybrid_search",
+  "name": "search-hybrid",
   "arguments": {
     "query": "architecture decisions",
     "types": ["Decision"],
@@ -418,11 +427,11 @@ Prompts generate **formatted guidance** for common tasks. Each prompt accepts ar
 
 Combines full-text search, semantic similarity, and graph context for best results.
 
-**`semantic_search`** - Find conceptually similar entities
+**`search-semantic`** - Find conceptually similar entities
 
 ```json
 {
-  "name": "semantic_search",
+  "name": "search-semantic",
   "arguments": {
     "query": "strategic planning and resource allocation",
     "limit": 10
@@ -432,11 +441,11 @@ Combines full-text search, semantic similarity, and graph context for best resul
 
 Uses vector embeddings to find entities with similar meaning, even with different wording.
 
-**`find_similar`** - Find entities similar to a given entity
+**`search-similar`** - Find entities similar to a given entity
 
 ```json
 {
-  "name": "find_similar",
+  "name": "search-similar",
   "arguments": {
     "entity_id": "uuid-here",
     "types": ["Document"],
@@ -445,17 +454,17 @@ Uses vector embeddings to find entities with similar meaning, even with differen
 }
 ```
 
-Discovers similar entities based on semantic similarity to a reference entity.
+Discovers similar entities based on semantic similarity to a reference entity. Requires the entity to have an embedding (generated automatically when an LLM provider is configured). Returns an empty list if the entity has no embedding yet.
 
 ---
 
 #### Graph Traversal
 
-**`traverse_graph`** - Multi-hop graph exploration
+**`graph-traverse`** - Multi-hop graph exploration
 
 ```json
 {
-  "name": "traverse_graph",
+  "name": "graph-traverse",
   "arguments": {
     "start_entity_id": "uuid-here",
     "max_depth": 3,
@@ -471,11 +480,11 @@ Explore deep connections beyond immediate neighbors (up to 5 hops).
 
 #### Relationship Management (Complete CRUD)
 
-**`list_relationships`** - Query relationships
+**`relationship-list`** - Query relationships
 
 ```json
 {
-  "name": "list_relationships",
+  "name": "relationship-list",
   "arguments": {
     "type": "works_at",
     "limit": 50
@@ -483,11 +492,11 @@ Explore deep connections beyond immediate neighbors (up to 5 hops).
 }
 ```
 
-**`update_relationship`** - Modify existing relationships
+**`relationship-update`** - Modify existing relationships
 
 ```json
 {
-  "name": "update_relationship",
+  "name": "relationship-update",
   "arguments": {
     "relationship_id": "uuid-here",
     "properties": { "role": "Senior Engineer" },
@@ -496,11 +505,11 @@ Explore deep connections beyond immediate neighbors (up to 5 hops).
 }
 ```
 
-**`delete_relationship`** - Remove relationships
+**`relationship-delete`** - Remove relationships
 
 ```json
 {
-  "name": "delete_relationship",
+  "name": "relationship-delete",
   "arguments": {
     "relationship_id": "uuid-here"
   }
@@ -511,11 +520,11 @@ Explore deep connections beyond immediate neighbors (up to 5 hops).
 
 #### Entity Lifecycle
 
-**`restore_entity`** - Undo entity deletion
+**`entity-restore`** - Undo entity deletion
 
 ```json
 {
-  "name": "restore_entity",
+  "name": "entity-restore",
   "arguments": {
     "entity_id": "uuid-here"
   }
@@ -526,15 +535,18 @@ Explore deep connections beyond immediate neighbors (up to 5 hops).
 
 #### Batch Operations (High Performance)
 
-**`batch_create_entities`** - Create up to 100 entities in one request (100x faster!)
+**`entity-create`** (batch) - Create up to 100 entities in one request (100x faster!)
+
+Supply an optional `key` per entity for idempotent operations — if an entity with the same (type, key) already exists it is updated in-place rather than duplicated.
 
 ```json
 {
-  "name": "batch_create_entities",
+  "name": "entity-create",
   "arguments": {
     "entities": [
       {
         "type": "Person",
+        "key": "person-alice",
         "properties": { "name": "Alice" },
         "labels": ["employee"]
       },
@@ -548,11 +560,11 @@ Explore deep connections beyond immediate neighbors (up to 5 hops).
 }
 ```
 
-**`batch_create_relationships`** - Create up to 100 relationships in one request
+**`relationship-create`** (batch) - Create up to 100 relationships in one request
 
 ```json
 {
-  "name": "batch_create_relationships",
+  "name": "relationship-create",
   "arguments": {
     "relationships": [
       {
@@ -575,11 +587,11 @@ Explore deep connections beyond immediate neighbors (up to 5 hops).
 
 #### Metadata \u0026 Discovery
 
-**`list_tags`** - Get all unique tags used in project
+**`tag-list`** - Get all unique tags used in project
 
 ```json
 {
-  "name": "list_tags"
+  "name": "tag-list"
 }
 ```
 
@@ -587,14 +599,7 @@ Explore deep connections beyond immediate neighbors (up to 5 hops).
 
 ### Legacy Tools (Existing)
 
-See full tool documentation at [MCP_TOOLS.md](./MCP_TOOLS.md) for complete parameter details on:
-
-- `schema_version`, `list_entity_types`, `query_entities`, `search_entities`
-- `get_entity_edges`, `create_entity`, `update_entity`, `delete_entity`
-- `create_relationship`, `list_template_packs`, `get_template_pack`
-- `get_available_templates`, `get_installed_templates`, `assign_template_pack`
-- `update_template_assignment`, `uninstall_template_pack`
-- `create_template_pack`, `delete_template_pack`
+See the Quick Reference table above for the full list of current tool names. The legacy `verb_noun` snake_case names (e.g., `query_entities`, `create_entity`, `assign_template_pack`) are no longer used — all tools follow the `area[-noun]-action` hyphenated format.
 
 ## Error Handling
 
@@ -680,12 +685,11 @@ Instead of manually constructing tool calls:
 import requests
 
 class EmergentMCP:
-    def __init__(self, base_url, api_key, project_id):
+    def __init__(self, base_url, api_key):
         self.base_url = base_url
         self.headers = {
             "Content-Type": "application/json",
-            "X-API-Key": api_key,
-            "X-Project-ID": project_id
+            "Authorization": f"Bearer {api_key}",
         }
 
     def call_method(self, method, params=None):
@@ -719,7 +723,7 @@ class EmergentMCP:
     # Tools
     def search_entities(self, query, type_filter=None):
         return self.call_method("tools/call", {
-            "name": "search_entities",
+            "name": "entity-search",
             "arguments": {
                 "query": query,
                 "type_filter": type_filter
@@ -729,8 +733,7 @@ class EmergentMCP:
 # Usage
 client = EmergentMCP(
     base_url="http://localhost:5300",
-    api_key="your-key",
-    project_id="project-uuid"
+    api_key="your-api-token"
 )
 
 # Browse schema
@@ -754,8 +757,7 @@ interface MCPClient {
 class EmergentMCP implements MCPClient {
   constructor(
     private baseURL: string,
-    private apiKey: string,
-    private projectID: string
+    private apiKey: string
   ) {}
 
   async callMethod<T>(method: string, params?: any): Promise<T> {
@@ -763,8 +765,7 @@ class EmergentMCP implements MCPClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': this.apiKey,
-        'X-Project-ID': this.projectID,
+        'Authorization': `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
         jsonrpc: '2.0',
@@ -795,7 +796,7 @@ class EmergentMCP implements MCPClient {
   // Tools
   searchEntities(query: string, typeFilter?: string[]) {
     return this.callMethod('tools/call', {
-      name: 'search_entities',
+      name: 'entity-search',
       arguments: { query, type_filter: typeFilter },
     });
   }
@@ -804,8 +805,7 @@ class EmergentMCP implements MCPClient {
 // Usage
 const client = new EmergentMCP(
   'http://localhost:5300',
-  'your-key',
-  'project-uuid'
+  'your-api-token'
 );
 
 // Browse + Execute
@@ -828,7 +828,7 @@ const results = await client.searchEntities('strategic decisions');
 **"Resource not found" error:**
 
 - Verify URI format: `emergent://category/resource`
-- For project resources, ensure `X-Project-ID` header is set
+- For project resources, ensure a project-scoped API token is used
 - Check resource list: `resources/list`
 
 **"Invalid arguments" error:**
@@ -947,38 +947,29 @@ Test via HTTP:
 
 ## Changelog
 
+### 2026-03 (current)
+
+**Tool naming standardisation & expansion (~50+ tools)**
+
+All tool names were standardised to `area[-noun]-action` hyphenated kebab-case. Legacy `verb_noun` snake_case names are no longer used. Additional tool files were added covering agents, documents, embeddings, providers, skills, tokens, and traces.
+
+Selected renames: `hybrid_search` → `search-hybrid`, `semantic_search` → `search-semantic`, `find_similar` → `search-similar`, `traverse_graph` → `graph-traverse`, `list_relationships` → `relationship-list`, `restore_entity` → `entity-restore`, `list_tags` → `tag-list`.
+
+**Authentication simplified**
+
+- `Authorization: Bearer <token>` is now the recommended authentication method
+- `X-API-Key` header continues to be accepted for backwards compatibility
+- The `X-Project-ID` header is no longer required; project scope is derived from the token
+
 ### 2025-02-10
 
 **MCP Tools Expansion (18 → 29 tools)**
 
-- Added 11 new tools for enhanced AI agent capabilities
-- **Advanced Search** (3 tools): `hybrid_search`, `semantic_search`, `find_similar`
-- **Graph Traversal** (1 tool): `traverse_graph` (multi-hop exploration up to 5 levels)
-- **Relationship Management** (3 tools): `list_relationships`, `update_relationship`, `delete_relationship`
-- **Entity Lifecycle** (1 tool): `restore_entity` (undo soft-deletes)
-- **Batch Operations** (2 tools): `batch_create_entities`, `batch_create_relationships` (100x efficiency)
-- **Metadata** (1 tool): `list_tags`
-
-**Resources & Prompts**
-
+- Added 11 new tools for enhanced AI agent capabilities: `search-hybrid`, `search-semantic`, `search-similar`, `graph-traverse`, `relationship-list`, `relationship-update`, `relationship-delete`, `entity-restore`, `entity-create` (batch), `relationship-create` (batch), `tag-list`
 - Added 6 resources for self-documenting context
 - Added 5 prompts for guided workflows
-- **Updated all 5 prompts** to recommend new tools instead of legacy workflows:
-  - `explore_entity_type`: Now recommends `hybrid_search` instead of `query_entities`
-  - `create_from_template`: Now recommends `batch_create_entities` for multiple entities
-  - `analyze_relationships`: Now recommends `traverse_graph` instead of manual `get_entity_edges`
-  - `setup_research_project`: Now uses batch operations (100x faster setup)
-  - `find_related_entities`: Now uses `traverse_graph` for multi-hop exploration
 - Increased SSE timeout to 10 minutes
 - Optimized ping interval to 4 minutes
-- 95% reduction in reconnection churn
-
-**Impact:**
-
-- Search power: 10x improvement (semantic + hybrid search)
-- Batch efficiency: 100x faster for bulk operations
-- Graph exploration: Deep multi-hop traversal (was 1-hop only)
-- Relationship lifecycle: Complete CRUD (was create-only)
 
 ### 2024-12-XX
 

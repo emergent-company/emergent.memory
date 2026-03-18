@@ -40,10 +40,24 @@ GET /api/type-registry/projects/{projectId}
 
 === "CLI"
     ```bash
-    memory graph create \
+    memory graph objects create \
       --type Decision \
       --properties '{"title": "Use PostgreSQL", "status": "approved", "rationale": "Existing expertise"}' \
       --project my-project
+
+    # With a stable key for idempotent operations (skip if already exists):
+    memory graph objects create \
+      --type Decision \
+      --key "decision-use-postgresql" \
+      --properties '{"title": "Use PostgreSQL", "status": "approved"}' \
+      --project my-project
+
+    # --upsert creates-or-updates by key:
+    memory graph objects create \
+      --type Decision \
+      --key "decision-use-postgresql" \
+      --properties '{"title": "Use PostgreSQL", "status": "approved"}' \
+      --upsert --project my-project
     ```
 
 === "API"

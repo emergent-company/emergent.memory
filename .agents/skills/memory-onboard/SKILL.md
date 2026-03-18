@@ -12,7 +12,7 @@ Onboard the current project into Memory by understanding what it is, selecting o
 
 - **Never run `memory browse`** — it launches a full interactive TUI that blocks on terminal input and will hang in an automated agent context.
 - **Always prefix `memory` commands with `NO_PROMPT=1`** (e.g. `NO_PROMPT=1 memory <cmd>`). Without it, the CLI may show interactive pickers when no project, agent, MCP server, skill, or agent-definition ID is provided. Do not add this to `.env.local` — it must only apply to agent-driven invocations.
-- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` is set.
+- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` (or `MEMORY_PROJECT_ID`) is set.
 - **Use only `memory` CLI commands** throughout this workflow. Never use `curl`, raw HTTP requests, or direct API calls — the CLI handles authentication and project context automatically.
 
 ---
@@ -59,18 +59,20 @@ Before designing anything, establish which Memory project this repository will u
 
 #### 2a. Check if already configured
 
-Check whether `.env.local` already contains `MEMORY_PROJECT`:
+Check whether `.env.local` already contains a project configuration. Both `MEMORY_PROJECT` and `MEMORY_PROJECT_ID` are accepted by the CLI:
 
 ```bash
-cat .env.local 2>/dev/null | grep MEMORY_PROJECT
+cat .env.local 2>/dev/null | grep -E "MEMORY_PROJECT(=|_ID=)"
 ```
 
-- **If `MEMORY_PROJECT=<id>` is found:** show the user the project ID and name (`memory projects get <id>` if available, otherwise just the ID), then ask:
+- **If `MEMORY_PROJECT=<id>` or `MEMORY_PROJECT_ID=<id>` is found:** show the user the project ID and name (`memory projects get <id>` if available, otherwise just the ID), then ask:
   > "This repo is already connected to Memory project `<name>` (`<id>`). Continue with this project, or switch to a different one?"
   - If they confirm: proceed to Step 3.
   - If they want to switch: continue with Step 2b below.
 
-- **If not found:** continue with Step 2b.
+> **Note:** `memory init` writes `MEMORY_PROJECT_ID`, `MEMORY_PROJECT_NAME`, and `MEMORY_PROJECT_TOKEN` to `.env.local`. `memory projects set` writes `MEMORY_PROJECT`. Both variable names are recognised by the CLI.
+
+- **If neither is found:** continue with Step 2b.
 
 #### 2b. List existing projects
 
@@ -93,7 +95,9 @@ Note the returned project ID.
 
 #### 2d. Write project ID to .env.local
 
-Write (or update) `MEMORY_PROJECT` in `.env.local`:
+If `memory init` was already run (check for `MEMORY_PROJECT_ID` in `.env.local`), the project may already be configured — skip writing and confirm with the user.
+
+Otherwise, write (or update) `MEMORY_PROJECT` in `.env.local`:
 
 ```bash
 # If .env.local does not exist:
@@ -108,6 +112,8 @@ echo "MEMORY_PROJECT=<project-id>" >> .env.local
 
 Confirm with the user:
 > "Set `MEMORY_PROJECT=<project-id>` in `.env.local`. All subsequent `memory` CLI commands in this directory will now use this project."
+
+> **Note:** `memory init` automatically writes `MEMORY_PROJECT_ID`, `MEMORY_PROJECT_NAME`, and `MEMORY_PROJECT_TOKEN` to `.env.local` and adds `.env.local` to `.gitignore`. If `memory init` has already been run, these steps may already be complete.
 
 Also remind the user to add `.env.local` to `.gitignore` if it is not already there (it may contain project tokens or other credentials).
 
@@ -321,6 +327,12 @@ memory graph objects create --type Service --name "auth-service" --description "
 
 # Using raw JSON for additional properties:
 memory graph objects create --type Service --properties '{"name":"auth-service","description":"Handles authentication"}'
+
+# With a stable key for idempotent re-runs (skip if already exists):
+memory graph objects create --type Service --key "svc-auth" --name "auth-service"
+
+# With --upsert: create-or-update semantics (updates if key already exists):
+memory graph objects create --type Service --key "svc-auth" --name "auth-service" --upsert
 ```
 
 #### Create relationships manually (optional)

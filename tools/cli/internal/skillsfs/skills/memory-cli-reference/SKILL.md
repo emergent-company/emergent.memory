@@ -1579,7 +1579,13 @@ Create a graph object
 
 ### Synopsis
 
-Create a new graph object with the given type and optional properties
+Create a new graph object with the given type and optional properties.
+
+When --key is given, the object is keyed for idempotent operations:
+  - By default (skip): if an object with that key already exists, the command
+    exits successfully without modifying it.
+  - With --upsert: if an object with that key already exists, it is updated
+    (create-or-update semantics matching blueprint behavior).
 
 ```
 memory graph objects create [flags]
@@ -1590,9 +1596,11 @@ memory graph objects create [flags]
 ```
       --description string   Set properties.description
   -h, --help                 help for create
+      --key string           Stable key for idempotent operations
       --name string          Set properties.name
       --properties string    JSON properties object
       --type string          Object type (required)
+      --upsert               Update existing object if key already exists (requires --key)
 ```
 
 ## memory graph objects delete
