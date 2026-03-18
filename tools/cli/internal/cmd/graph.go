@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	sdkgraph "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
@@ -74,6 +75,8 @@ var (
 	graphNameFlag    string
 	graphDescFlag    string
 	graphPropsFlag   string
+	graphKeyFlag     string
+	graphUpsertFlag  bool
 	graphFromFlag    string
 	graphToFlag      string
 	graphRelTypeFlag string
@@ -229,10 +232,19 @@ Use --output json to receive the full object as JSON instead.`,
 var graphObjectsCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a graph object",
-	Long:  "Create a new graph object with the given type and optional properties",
+	Long: `Create a new graph object with the given type and optional properties.
+
+When --key is given, the object is keyed for idempotent operations:
+  - By default (skip): if an object with that key already exists, the command
+    exits successfully without modifying it.
+  - With --upsert: if an object with that key already exists, it is updated
+    (create-or-update semantics matching blueprint behavior).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if graphTypeFlag == "" {
 			return fmt.Errorf("--type is required")
+		}
+		if graphUpsertFlag && graphKeyFlag == "" {
+			return fmt.Errorf("--upsert requires --key")
 		}
 
 		g, err := getGraphClient(cmd)
@@ -244,6 +256,10 @@ var graphObjectsCreateCmd = &cobra.Command{
 			Type: graphTypeFlag,
 		}
 
+		if graphKeyFlag != "" {
+			req.Key = &graphKeyFlag
+		}
+
 		if graphPropsFlag != "" {
 			var props map[string]any
 			if err := json.Unmarshal([]byte(graphPropsFlag), &props); err != nil {
@@ -252,7 +268,6 @@ var graphObjectsCreateCmd = &cobra.Command{
 			req.Properties = props
 		}
 
-		// If --name provided, put it in properties["name"]
 		if graphNameFlag != "" {
 			if req.Properties == nil {
 				req.Properties = make(map[string]any)
@@ -266,12 +281,30 @@ var graphObjectsCreateCmd = &cobra.Command{
 			req.Properties["description"] = graphDescFlag
 		}
 
-		obj, err := g.CreateObject(context.Background(), req)
-		if err != nil {
-			return fmt.Errorf("failed to create object: %w", err)
+		out := cmd.OutOrStdout()
+
+		if graphUpsertFlag {
+			// --upsert: create-or-update by (type, key)
+			obj, err := g.UpsertObject(context.Background(), req)
+			if err != nil {
+				return fmt.Errorf("failed to upsert object: %w", err)
+			}
+			if graphOutputFlag == "json" {
+				return json.NewEncoder(out).Encode(obj)
+			}
+			fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, nameFromProps(obj.Properties))
+			return nil
 		}
 
-		out := cmd.OutOrStdout()
+		obj, err := g.CreateObject(context.Background(), req)
+		if err != nil {
+			// --key with no --upsert: treat a 409 conflict as "already exists, skip"
+			if graphKeyFlag != "" && sdkerrors.IsConflict(err) {
+				fmt.Fprintf(out, "Object with type %q and key %q already exists, skipping.\n", graphTypeFlag, graphKeyFlag)
+				return nil
+			}
+			return fmt.Errorf("failed to create object: %w", err)
+		}
 
 		if graphOutputFlag == "json" {
 			return json.NewEncoder(out).Encode(obj)
@@ -798,6 +831,8 @@ func init() {
 	graphObjectsCreateCmd.Flags().StringVar(&graphNameFlag, "name", "", "Set properties.name")
 	graphObjectsCreateCmd.Flags().StringVar(&graphDescFlag, "description", "", "Set properties.description")
 	graphObjectsCreateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object")
+	graphObjectsCreateCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Stable key for idempotent operations")
+	graphObjectsCreateCmd.Flags().BoolVar(&graphUpsertFlag, "upsert", false, "Update existing object if key already exists (requires --key)")
 
 	graphObjectsCreateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "Path to JSON file containing array of objects (required)")
 
