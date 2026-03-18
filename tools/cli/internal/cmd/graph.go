@@ -496,6 +496,82 @@ Use --output json to receive the full edges response as JSON.`,
 }
 
 // ─────────────────────────────────────────────
+// graph objects similar
+// ─────────────────────────────────────────────
+
+var (
+	graphSimilarLimitFlag    int
+	graphSimilarTypeFlag     string
+	graphSimilarMinScoreFlag float64
+)
+
+var graphObjectsSimilarCmd = &cobra.Command{
+	Use:   "similar <id>",
+	Short: "Find objects similar to a given object by embedding",
+	Long: `Find graph objects similar to the given object using cosine similarity on stored embeddings.
+
+Returns a ranked list with similarity scores. Use --limit to control result count,
+--type to filter by object type, and --min-score to exclude low-confidence results.
+Use --output json to receive the full response as JSON.
+
+Examples:
+  memory graph objects similar <entity-id>
+  memory graph objects similar <entity-id> --limit 20 --type Feature
+  memory graph objects similar <entity-id> --min-score 0.75 --output json`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		g, err := getGraphClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		opts := &sdkgraph.FindSimilarOptions{}
+		if graphSimilarLimitFlag > 0 {
+			opts.Limit = graphSimilarLimitFlag
+		}
+		if graphSimilarTypeFlag != "" {
+			opts.Type = graphSimilarTypeFlag
+		}
+		if graphSimilarMinScoreFlag > 0 {
+			v := float32(graphSimilarMinScoreFlag)
+			opts.MinScore = &v
+		}
+
+		results, err := g.FindSimilar(context.Background(), args[0], opts)
+		if err != nil {
+			return fmt.Errorf("failed to find similar objects: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+
+		if graphOutputFlag == "json" {
+			return json.NewEncoder(out).Encode(results)
+		}
+
+		if len(results) == 0 {
+			fmt.Fprintln(out, "No similar objects found.")
+			return nil
+		}
+
+		table := tablewriter.NewWriter(out)
+		table.Header("Score", "Type", "Entity ID", "Status", "Key")
+		for _, r := range results {
+			score := fmt.Sprintf("%.4f", 1-r.Distance)
+			key := ""
+			if r.Key != nil {
+				key = *r.Key
+			}
+			canonicalID := r.ID
+			if r.CanonicalID != nil {
+				canonicalID = *r.CanonicalID
+			}
+			_ = table.Append(score, r.Type, canonicalID, r.Status, key)
+		}
+		return table.Render()
+	},
+}
+
+// ─────────────────────────────────────────────
 // graph relationships list
 // ─────────────────────────────────────────────
 
@@ -922,6 +998,11 @@ func init() {
 	graphRelationshipsCreateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "Path to JSON file containing array of relationships (required)")
 
 	// Assemble objects subcommands
+	graphObjectsSimilarCmd.Flags().IntVar(&graphSimilarLimitFlag, "limit", 10, "Maximum number of similar objects to return")
+	graphObjectsSimilarCmd.Flags().StringVar(&graphSimilarTypeFlag, "type", "", "Filter results by object type")
+	graphObjectsSimilarCmd.Flags().Float64Var(&graphSimilarMinScoreFlag, "min-score", 0, "Minimum similarity score (0–1); 0 means no threshold")
+	graphObjectsSimilarCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
+
 	graphObjectsCmd.AddCommand(graphObjectsListCmd)
 	graphObjectsCmd.AddCommand(graphObjectsGetCmd)
 	graphObjectsCmd.AddCommand(graphObjectsCreateCmd)
@@ -929,6 +1010,7 @@ func init() {
 	graphObjectsCmd.AddCommand(graphObjectsUpdateCmd)
 	graphObjectsCmd.AddCommand(graphObjectsDeleteCmd)
 	graphObjectsCmd.AddCommand(graphObjectsEdgesCmd)
+	graphObjectsCmd.AddCommand(graphObjectsSimilarCmd)
 
 	// Assemble relationships subcommands
 	graphRelationshipsCmd.AddCommand(graphRelationshipsListCmd)

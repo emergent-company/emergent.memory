@@ -1643,6 +1643,32 @@ memory graph objects edges <id> [flags]
   -h, --help   help for edges
 ```
 
+## memory graph objects similar
+
+Find objects similar to a given object by embedding
+
+### Synopsis
+
+Find graph objects similar to the given object using cosine similarity on stored embeddings.
+
+Returns a ranked list with similarity scores. Use --limit to control result count,
+--type to filter by object type, and --min-score to exclude low-confidence results.
+Use --output json to receive the full response as JSON.
+
+```
+memory graph objects similar <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help               help for similar
+      --limit int          Maximum number of similar objects to return (default 10)
+      --min-score float    Minimum similarity score (0–1); 0 means no threshold
+      --output string      Output format: table or json (default "table")
+      --type string        Filter results by object type
+```
+
 ## memory graph objects get
 
 Get a graph object by ID
