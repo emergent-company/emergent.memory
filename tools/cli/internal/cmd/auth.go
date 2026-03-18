@@ -480,23 +480,92 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load credentials: %w", err)
 	}
 
-	fmt.Println("Authentication Status:")
+	separator := strings.Repeat("━", 50)
 	fmt.Println()
-	fmt.Println("  Mode:        OAuth")
+	fmt.Println("Memory Status")
+	fmt.Println(separator)
+	fmt.Println()
+	fmt.Printf("CLI Version:   %s\n", Version)
+	fmt.Println()
 
+	fmt.Println("Authentication:")
+	fmt.Println("  Mode:        OAuth")
 	if creds.UserEmail != "" {
 		fmt.Printf("  User:        %s\n", creds.UserEmail)
 	}
-
 	if creds.IssuerURL != "" {
 		fmt.Printf("  Issuer:      %s\n", creds.IssuerURL)
 	}
-
 	if creds.IsExpired() {
 		fmt.Println("  Status:      ⚠️  EXPIRED")
 		fmt.Println("\nYour session has expired. Run 'memory login' to re-authenticate.")
-	} else {
-		fmt.Println("  Status:      ✓ Authenticated")
+		return nil
+	}
+	fmt.Println("  Status:      ✓ Authenticated")
+	if !creds.ExpiresAt.IsZero() {
+		remaining := time.Until(creds.ExpiresAt)
+		h := int(remaining.Hours())
+		m := int(remaining.Minutes()) % 60
+		fmt.Printf("  Expires in:  %dh %dm\n", h, m)
+	}
+
+	// Resolve server URL from config (may be empty if not configured).
+	serverURL := ""
+	if cfg != nil && cfg.ServerURL != "" {
+		serverURL = cfg.ServerURL
+	}
+
+	if serverURL != "" {
+		fmt.Println()
+		fmt.Println("Server:")
+		fmt.Printf("  URL:         %s\n", serverURL)
+		health, healthErr := fetchHealth(serverURL)
+		if healthErr == nil {
+			fmt.Println("  Status:      ✓ Connected")
+			if health.Version != "" {
+				fmt.Printf("  Version:     %s\n", health.Version)
+			}
+		} else {
+			fmt.Printf("  Status:      ⚠ Cannot reach server (%v)\n", healthErr)
+		}
+
+		// Show active project and project list using the OAuth access token.
+		projects, projErr := fetchProjects(serverURL, creds.AccessToken)
+		if projErr == nil && len(projects) > 0 {
+			// Determine active project from config.
+			activeProjectID := ""
+			activeProjectName := ""
+			if cfg != nil {
+				activeProjectID = cfg.ProjectID
+				activeProjectName = cfg.ProjectName
+			}
+			if ep := os.Getenv("MEMORY_PROJECT"); ep != "" && activeProjectID == "" {
+				activeProjectName = ep
+			}
+
+			var activeProject *projectResponse
+			if activeProjectID != "" || activeProjectName != "" {
+				for i := range projects {
+					if projects[i].ID == activeProjectID ||
+						strings.EqualFold(projects[i].Name, activeProjectName) {
+						activeProject = &projects[i]
+						break
+					}
+				}
+			}
+
+			fmt.Println()
+			if activeProject != nil {
+				fmt.Println("Active Project:")
+				fmt.Printf("  Name:        %s\n", activeProject.Name)
+				fmt.Printf("  ID:          %s\n", activeProject.ID)
+			} else {
+				fmt.Printf("Projects:      %d\n", len(projects))
+				for _, p := range projects {
+					fmt.Printf("  • %s (%s)\n", p.Name, p.ID)
+				}
+			}
+		}
 	}
 
 	return nil
