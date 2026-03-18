@@ -39,6 +39,8 @@ var (
 	skillOrgFlag         string
 	skillGlobalFlag      bool
 	skillJSONFlag        bool
+	skillListLimit       int
+	skillListPage        int
 	skillNameFlag        string
 	skillDescFlag        string
 	skillContentFlag     string
@@ -119,15 +121,25 @@ skill list as JSON.`,
 
 		out := cmd.OutOrStdout()
 
+		total := len(skills)
+		skills = paginate(skills, skillListLimit, skillListPage)
+
 		if skillJSONFlag || output == "json" {
 			return json.NewEncoder(out).Encode(skills)
 		}
 
-		if len(skills) == 0 {
+		if total == 0 {
 			fmt.Fprintln(out, "No skills found.")
 			return nil
 		}
+		if len(skills) == 0 {
+			fmt.Fprintln(out, "No skills on this page.")
+			return nil
+		}
 
+		if h := paginationHeader(total, skillListLimit, skillListPage); h != "" {
+			fmt.Fprintln(out, h)
+		}
 		table := tablewriter.NewWriter(out)
 		table.Header("NAME", "DESCRIPTION", "SCOPE", "ID")
 		for _, s := range skills {
@@ -790,6 +802,9 @@ func init() {
 	skillImportCmd.Flags().BoolVar(&skillImportExperimentalFlag, "experimental", false, "Include experimental skills when importing from the built-in catalog (--builtin)")
 
 	// Assemble
+	skillListCmd.Flags().IntVar(&skillListLimit, "limit", 0, "Maximum number of skills to show (0 = all)")
+	skillListCmd.Flags().IntVar(&skillListPage, "page", 1, "Page number (1-based, used with --limit)")
+
 	skillsCmd.AddCommand(skillListCmd)
 	skillsCmd.AddCommand(skillGetCmd)
 	skillsCmd.AddCommand(skillCreateCmd)

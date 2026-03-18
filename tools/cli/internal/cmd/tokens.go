@@ -68,6 +68,8 @@ var (
 	tokenProjectID string
 	tokenName      string
 	tokenScopes    string
+	tokenListLimit int
+	tokenListPage  int
 )
 
 func runListTokens(cmd *cobra.Command, args []string) error {
@@ -88,15 +90,22 @@ func runListTokens(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 
+		total := len(result.Tokens)
+		tokens := paginate(result.Tokens, tokenListLimit, tokenListPage)
+
 		if compact {
-			for _, t := range result.Tokens {
+			for _, t := range tokens {
 				fmt.Printf("%-40s  %s\n", t.Name, t.ID)
 			}
 			return nil
 		}
 
-		fmt.Printf("Found %d account-level token(s):\n\n", len(result.Tokens))
-		for i, t := range result.Tokens {
+		if h := paginationHeader(total, tokenListLimit, tokenListPage); h != "" {
+			fmt.Printf("%s:\n\n", h)
+		} else {
+			fmt.Printf("Found %d account-level token(s):\n\n", total)
+		}
+		for i, t := range tokens {
 			fmt.Printf("%d. %s\n", i+1, t.Name)
 			fmt.Printf("   ID:      %s\n", t.ID)
 			fmt.Printf("   Prefix:  %s\n", t.Prefix)
@@ -132,15 +141,22 @@ func runListTokens(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	total := len(result.Tokens)
+	tokens := paginate(result.Tokens, tokenListLimit, tokenListPage)
+
 	if compact {
-		for _, t := range result.Tokens {
+		for _, t := range tokens {
 			fmt.Printf("%-40s  %s\n", t.Name, t.ID)
 		}
 		return nil
 	}
 
-	fmt.Printf("Found %d token(s):\n\n", len(result.Tokens))
-	for i, t := range result.Tokens {
+	if h := paginationHeader(total, tokenListLimit, tokenListPage); h != "" {
+		fmt.Printf("%s:\n\n", h)
+	} else {
+		fmt.Printf("Found %d token(s):\n\n", total)
+	}
+	for i, t := range tokens {
 		fmt.Printf("%d. %s\n", i+1, t.Name)
 		fmt.Printf("   ID:      %s\n", t.ID)
 		fmt.Printf("   Prefix:  %s\n", t.Prefix)
@@ -355,6 +371,10 @@ func runRevokeToken(cmd *cobra.Command, args []string) error {
 func init() {
 	// Persistent flag for all token subcommands (optional — omit for account-level tokens)
 	tokensCmd.PersistentFlags().StringVar(&tokenProjectID, "project", "", "Project name or ID (omit for account-level tokens)")
+
+	// List pagination flags
+	listTokensCmd.Flags().IntVar(&tokenListLimit, "limit", 0, "Maximum number of tokens to show (0 = all)")
+	listTokensCmd.Flags().IntVar(&tokenListPage, "page", 1, "Page number (1-based, used with --limit)")
 
 	// Create token flags
 	createTokenCmd.Flags().StringVar(&tokenName, "name", "", "Token name (required)")

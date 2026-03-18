@@ -384,6 +384,22 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	total := len(projectList)
+	if limitFlag > 0 || offsetFlag > 0 {
+		start := offsetFlag
+		if start > total {
+			start = total
+		}
+		end := total
+		if limitFlag > 0 {
+			end = start + limitFlag
+		}
+		if end > total {
+			end = total
+		}
+		projectList = projectList[start:end]
+	}
+
 	if output == "json" {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -397,7 +413,11 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("Found %d project(s):\n\n", len(projectList))
+	header := fmt.Sprintf("Found %d project(s)", total)
+	if limitFlag > 0 || offsetFlag > 0 {
+		header = fmt.Sprintf("Showing %d–%d of %d project(s)", offsetFlag+1, offsetFlag+len(projectList), total)
+	}
+	fmt.Printf("%s:\n\n", header)
 	for i, p := range projectList {
 		fmt.Printf("%d. %s (%s)\n", i+1, p.Name, p.ID)
 		if p.ProjectInfo != nil && *p.ProjectInfo != "" {

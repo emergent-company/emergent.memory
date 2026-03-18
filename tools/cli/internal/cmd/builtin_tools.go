@@ -11,6 +11,11 @@ import (
 	"golang.org/x/term"
 )
 
+var (
+	builtinListLimit int
+	builtinListPage  int
+)
+
 var builtinToolsCmd = &cobra.Command{
 	Use:   "builtin-tools",
 	Short: "Manage built-in tools",
@@ -81,9 +86,16 @@ func runListBuiltinTools(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list built-in tools: %w", err)
 	}
 
-	tools := result.Data
-	if len(tools) == 0 {
+	allTools := result.Data
+	if len(allTools) == 0 {
 		fmt.Println("No built-in tools found.")
+		return nil
+	}
+
+	total := len(allTools)
+	tools := paginate(allTools, builtinListLimit, builtinListPage)
+	if len(tools) == 0 {
+		fmt.Println("No tools on this page.")
 		return nil
 	}
 
@@ -93,7 +105,11 @@ func runListBuiltinTools(cmd *cobra.Command, args []string) error {
 		termWidth = w
 	}
 
-	fmt.Printf("Found %d built-in tool(s):\n\n", len(tools))
+	if h := paginationHeader(total, builtinListLimit, builtinListPage); h != "" {
+		fmt.Printf("%s:\n\n", h)
+	} else {
+		fmt.Printf("Found %d built-in tool(s):\n\n", total)
+	}
 
 	// Field label width (including trailing space) — all lines share the same indent.
 	const indent = "  "
@@ -233,6 +249,9 @@ func runConfigureBuiltinTool(cmd *cobra.Command, args []string) error {
 
 func init() {
 	builtinToolsCmd.AddCommand(listBuiltinToolsCmd)
+	listBuiltinToolsCmd.Flags().IntVar(&builtinListLimit, "limit", 0, "Maximum number of tools to show (0 = all)")
+	listBuiltinToolsCmd.Flags().IntVar(&builtinListPage, "page", 1, "Page number (1-based, used with --limit)")
+
 	builtinToolsCmd.AddCommand(toggleBuiltinToolCmd)
 	builtinToolsCmd.AddCommand(configureBuiltinToolCmd)
 

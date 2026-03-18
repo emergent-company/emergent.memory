@@ -84,6 +84,8 @@ var (
 	defIsDefault      string
 	defMaxSteps       int
 	defDefaultTimeout int
+	defListLimit      int
+	defListPage       int
 )
 
 func runListAgentDefs(cmd *cobra.Command, args []string) error {
@@ -108,15 +110,22 @@ func runListAgentDefs(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	total := len(result.Data)
+	data := paginate(result.Data, defListLimit, defListPage)
+
 	if compact {
-		for _, d := range result.Data {
+		for _, d := range data {
 			fmt.Printf("%-40s  %s\n", d.Name, d.ID)
 		}
 		return nil
 	}
 
-	fmt.Printf("Found %d agent definition(s):\n\n", len(result.Data))
-	for i, d := range result.Data {
+	if h := paginationHeader(total, defListLimit, defListPage); h != "" {
+		fmt.Printf("%s:\n\n", h)
+	} else {
+		fmt.Printf("Found %d agent definition(s):\n\n", total)
+	}
+	for i, d := range data {
 		fmt.Printf("%d. %s\n", i+1, d.Name)
 		fmt.Printf("   ID:         %s\n", d.ID)
 		fmt.Printf("   Flow Type:  %s\n", d.FlowType)
@@ -704,6 +713,10 @@ func runListOverrides(cmd *cobra.Command, args []string) error {
 }
 
 func init() {
+	// List pagination flags
+	listAgentDefsCmd.Flags().IntVar(&defListLimit, "limit", 0, "Maximum number of definitions to show (0 = all)")
+	listAgentDefsCmd.Flags().IntVar(&defListPage, "page", 1, "Page number (1-based, used with --limit)")
+
 	// Create definition flags
 	createAgentDefCmd.Flags().StringVar(&defName, "name", "", "Definition name (required)")
 	createAgentDefCmd.Flags().StringVar(&defDescription, "description", "", "Description")

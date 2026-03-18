@@ -132,6 +132,8 @@ var (
 	agentReactionObjTypes string
 	agentRunsLimit        int
 	getRunJSONOutput      bool
+	agentListLimit        int
+	agentListPage         int
 )
 
 // resolveAgentArgOrPick resolves an agent ID from args[0], or, when args is
@@ -202,15 +204,22 @@ func runListAgents(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	total := len(result.Data)
+	data := paginate(result.Data, agentListLimit, agentListPage)
+
 	if compact {
-		for _, a := range result.Data {
+		for _, a := range data {
 			fmt.Printf("%-40s  %s\n", a.Name, a.ID)
 		}
 		return nil
 	}
 
-	fmt.Printf("Found %d agent(s):\n\n", len(result.Data))
-	for i, a := range result.Data {
+	if h := paginationHeader(total, agentListLimit, agentListPage); h != "" {
+		fmt.Printf("%s:\n\n", h)
+	} else {
+		fmt.Printf("Found %d agent(s):\n\n", total)
+	}
+	for i, a := range data {
 		fmt.Printf("%d. %s\n", i+1, a.Name)
 		fmt.Printf("   ID:           %s\n", a.ID)
 		fmt.Printf("   Enabled:      %v\n", a.Enabled)
@@ -232,6 +241,7 @@ func runListAgents(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
+
 
 func runGetAgent(cmd *cobra.Command, args []string) error {
 	c, err := getClient(cmd)
@@ -974,6 +984,10 @@ func init() {
 	updateAgentCmd.Flags().StringVar(&agentTriggerType, "trigger-type", "", "New trigger type")
 	updateAgentCmd.Flags().StringVar(&agentExecutionMode, "execution-mode", "", "New execution mode")
 	updateAgentCmd.Flags().StringVar(&agentDescription, "description", "", "New description")
+
+	// List pagination flags
+	listAgentsCmd.Flags().IntVar(&agentListLimit, "limit", 0, "Maximum number of agents to show (0 = all)")
+	listAgentsCmd.Flags().IntVar(&agentListPage, "page", 1, "Page number (1-based, used with --limit)")
 
 	// Runs limit flag
 	runsAgentCmd.Flags().IntVar(&agentRunsLimit, "limit", 10, "Maximum number of runs to return")

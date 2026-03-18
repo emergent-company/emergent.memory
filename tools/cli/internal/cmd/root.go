@@ -26,6 +26,43 @@ var (
 	projectToken string
 )
 
+// paginate returns a sub-slice of items for the given 1-based page and limit.
+// When limit ≤ 0 the full slice is returned unchanged.
+func paginate[T any](items []T, limit, page int) []T {
+	if limit <= 0 {
+		return items
+	}
+	if page < 1 {
+		page = 1
+	}
+	start := (page - 1) * limit
+	if start >= len(items) {
+		return items[:0]
+	}
+	end := start + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[start:end]
+}
+
+// paginationHeader returns a human-readable "Showing X–Y of N" prefix string
+// when pagination is active, or an empty string when the full list is shown.
+func paginationHeader(total, limit, page int) string {
+	if limit <= 0 || total == 0 {
+		return ""
+	}
+	if page < 1 {
+		page = 1
+	}
+	start := (page-1)*limit + 1
+	end := start + limit - 1
+	if end > total {
+		end = total
+	}
+	return fmt.Sprintf("Showing %d–%d of %d (page %d, limit %d)", start, end, total, page, limit)
+}
+
 // updateCheckCh carries the background version-check result to PersistentPostRunE.
 // It is buffered so the goroutine never blocks even if PostRunE is skipped.
 var updateCheckCh chan *autoupdate.CheckResult
