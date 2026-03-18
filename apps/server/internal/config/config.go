@@ -59,6 +59,9 @@ type Config struct {
 	AgentWorkerPoolSize     int           `env:"AGENT_WORKER_POOL_SIZE" envDefault:"5"`
 	AgentWorkerPollInterval time.Duration `env:"AGENT_WORKER_POLL_INTERVAL" envDefault:"5s"`
 
+	// Agent safeguards configuration
+	AgentSafeguards AgentSafeguardsConfig
+
 	// Brave Search API configuration
 	BraveSearch BraveSearchConfig
 
@@ -396,6 +399,29 @@ type StandaloneConfig struct {
 
 	// ProjectName is the default project name
 	ProjectName string `env:"STANDALONE_PROJECT_NAME" envDefault:"Default Project"`
+}
+
+// AgentSafeguardsConfig holds configuration for agent queue explosion safeguards.
+type AgentSafeguardsConfig struct {
+	// MaxPendingJobs is the maximum number of pending/processing jobs allowed per agent.
+	// New runs are rejected when this limit is reached. Default: 10.
+	MaxPendingJobs int `env:"AGENT_MAX_PENDING_JOBS" envDefault:"10"`
+
+	// ConsecutiveFailureThreshold is the number of consecutive failures before auto-disabling an agent.
+	// The agent is set to enabled=false after this many failures in a row. Default: 5.
+	ConsecutiveFailureThreshold int `env:"AGENT_CONSECUTIVE_FAILURE_THRESHOLD" envDefault:"5"`
+
+	// MinCronIntervalMinutes is the minimum allowed interval in minutes for cron-scheduled agents.
+	// Cron expressions that fire more frequently than this are rejected. Default: 15.
+	MinCronIntervalMinutes int `env:"AGENT_MIN_CRON_INTERVAL_MINUTES" envDefault:"15"`
+
+	// BudgetEnforcementEnabled controls whether budget limits block agent execution.
+	// When false, budget checks still run but won't block runs. Default: true.
+	BudgetEnforcementEnabled bool `env:"BUDGET_ENFORCEMENT_ENABLED" envDefault:"true"`
+
+	// ExecutionEnabled is an emergency kill switch to disable all agent execution system-wide.
+	// When false, all Execute() calls return immediately with an error. Default: true.
+	ExecutionEnabled bool `env:"AGENT_EXECUTION_ENABLED" envDefault:"true"`
 }
 
 // IsEnabled returns true if standalone mode is active

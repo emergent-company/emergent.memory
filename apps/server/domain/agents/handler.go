@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,25 @@ type Handler struct {
 // NewHandler creates a new agents handler
 func NewHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter) *Handler {
 	return &Handler{repo: repo, executor: executor, rateLimiter: rateLimiter}
+}
+
+// mapExecutorError converts typed executor errors to appropriate HTTP responses.
+//   - BudgetExceededError → 402 Payment Required
+//   - QueueFullError      → 429 Too Many Requests
+//   - other              → 500 Internal Server Error
+func mapExecutorError(err error) *apperror.Error {
+	var budgetErr *BudgetExceededError
+	if errors.As(err, &budgetErr) {
+		return apperror.New(http.StatusPaymentRequired, "budget_exceeded",
+			"Project monthly budget has been exceeded. Please review your spending or increase your budget.")
+	}
+	var queueErr *QueueFullError
+	if errors.As(err, &queueErr) {
+		return apperror.New(http.StatusTooManyRequests, "queue_full",
+			fmt.Sprintf("Agent run queue is full (%d/%d pending jobs). Wait for existing runs to complete before triggering new ones.",
+				queueErr.PendingJobs, queueErr.MaxPendingJobs))
+	}
+	return apperror.NewInternal("failed to execute agent", err)
 }
 
 // ListAgents handles GET /api/admin/agents
@@ -231,6 +251,17 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 		triggerType = dto.TriggerType
 	}
 
+	// Validate cron interval when trigger type is schedule.
+	if triggerType == TriggerTypeSchedule && dto.CronSchedule != "" {
+		minMinutes := 15 // safe default
+		if h.executor != nil && h.executor.safeguards.MinCronIntervalMinutes > 0 {
+			minMinutes = h.executor.safeguards.MinCronIntervalMinutes
+		}
+		if err := validateCronInterval(dto.CronSchedule, minMinutes); err != nil {
+			return apperror.NewBadRequest(fmt.Sprintf("invalid cron schedule: %s", err.Error()))
+		}
+	}
+
 	executionMode := ExecutionModeExecute
 	if dto.ExecutionMode != "" {
 		executionMode = dto.ExecutionMode
@@ -338,6 +369,19 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 	}
 	if dto.Description != nil {
 		agent.Description = dto.Description
+	}
+
+	// Validate cron interval if cron schedule is being changed or trigger type is schedule.
+	if agent.TriggerType == TriggerTypeSchedule && agent.CronSchedule != "" {
+		if dto.CronSchedule != nil || dto.TriggerType != nil {
+			minMinutes := 15 // safe default
+			if h.executor != nil && h.executor.safeguards.MinCronIntervalMinutes > 0 {
+				minMinutes = h.executor.safeguards.MinCronIntervalMinutes
+			}
+			if err := validateCronInterval(agent.CronSchedule, minMinutes); err != nil {
+				return apperror.NewBadRequest(fmt.Sprintf("invalid cron schedule: %s", err.Error()))
+			}
+		}
 	}
 
 	if err := h.repo.Update(c.Request().Context(), agent); err != nil {
@@ -1027,7 +1071,7 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 		defer result.Cleanup()
 	}
 	if err != nil {
-		return apperror.NewInternal("failed to execute agent", err)
+		return mapExecutorError(err)
 	}
 
 	msg := "Agent triggered successfully"

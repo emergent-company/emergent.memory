@@ -77,9 +77,10 @@ func provideAgentExecutor(
 	sessionService session.Service,
 	providerRepo *provider.Repository,
 	apiTokenSvc *apitoken.Service,
+	usageSvc *provider.UsageService,
 	log *slog.Logger,
 ) *AgentExecutor {
-	return NewAgentExecutor(modelFactory, toolPool, repo, skillRepo, embeddingsSvc, provisioner, cfg, sessionService, providerRepo, apiTokenSvc, log)
+	return NewAgentExecutor(modelFactory, toolPool, repo, skillRepo, embeddingsSvc, provisioner, cfg, sessionService, providerRepo, apiTokenSvc, usageSvc, log)
 }
 
 // provideHandler creates a Handler with both repo and executor.

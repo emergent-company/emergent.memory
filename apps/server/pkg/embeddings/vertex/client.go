@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
 
@@ -355,8 +356,13 @@ func (c *Client) embedBatch(ctx context.Context, documents []string) ([][]float3
 
 // doRequest executes a single HTTP request
 func (c *Client) doRequest(ctx context.Context, url string, body []byte) (*predictResponse, error) {
-	// Get access token
-	token, err := c.tokenSrc.TokenSource.Token()
+	// Get access token with a deadline so a hung oauth2 endpoint doesn't
+	// block the job worker indefinitely. We use a separate child context with
+	// a generous-but-finite timeout rather than the job context directly, so
+	// that a short per-request deadline doesn't interfere with the overall job.
+	tokenCtx, tokenCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer tokenCancel()
+	token, err := fetchTokenWithContext(tokenCtx, c.tokenSrc.TokenSource)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get access token: %w", err)
 	}
@@ -418,4 +424,27 @@ type retryableError struct {
 
 func (e *retryableError) Error() string {
 	return fmt.Sprintf("retryable API error %d: %s", e.statusCode, e.body)
+}
+
+// fetchTokenWithContext fetches an oauth2 token while respecting the provided
+// context deadline. The standard golang.org/x/oauth2 TokenSource.Token() does
+// not accept a context, so a hanging oauth2 endpoint can block indefinitely.
+// This wrapper runs the blocking call in a goroutine and returns when either
+// the token arrives or the context is cancelled.
+func fetchTokenWithContext(ctx context.Context, ts interface{ Token() (*oauth2.Token, error) }) (*oauth2.Token, error) {
+	type result struct {
+		tok *oauth2.Token
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		tok, err := ts.Token()
+		ch <- result{tok, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.tok, r.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("token fetch cancelled: %w", ctx.Err())
+	}
 }

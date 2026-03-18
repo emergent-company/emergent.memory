@@ -68,6 +68,33 @@ type ModelLimitsLookup interface {
 	GetModelOutputLimit(ctx context.Context, modelName string) (int, error)
 }
 
+// BudgetExceededError is returned by Execute when a project's monthly spending
+// limit has been reached and BUDGET_ENFORCEMENT_ENABLED=true.
+type BudgetExceededError struct {
+	ProjectID string
+	Message   string
+}
+
+func (e *BudgetExceededError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return fmt.Sprintf("project %s has exceeded its monthly budget", e.ProjectID)
+}
+
+// QueueFullError is returned when an agent already has too many pending jobs in the queue.
+// This prevents queue explosion by rejecting new runs when the queue is at capacity.
+type QueueFullError struct {
+	AgentID        string
+	PendingJobs    int
+	MaxPendingJobs int
+}
+
+func (e *QueueFullError) Error() string {
+	return fmt.Sprintf("agent %s has %d pending jobs (max %d); run rejected to prevent queue explosion",
+		e.AgentID, e.PendingJobs, e.MaxPendingJobs)
+}
+
 // callerRunIDKey is the context key used to propagate the calling agent's run ID
 // through the execution pipeline so that tool calls (e.g. trigger_agent) can
 // identify which run is making the request.
@@ -147,6 +174,8 @@ type AgentExecutor struct {
 	sessionService session.Service
 	modelLimits    ModelLimitsLookup // nil if provider module is not registered
 	apiTokenSvc    *apitoken.Service // nil if not configured; used for ephemeral sandbox tokens
+	usageService   *provider.UsageService
+	safeguards     config.AgentSafeguardsConfig
 	log            *slog.Logger
 }
 
@@ -162,6 +191,7 @@ func NewAgentExecutor(
 	sessionService session.Service,
 	modelLimits ModelLimitsLookup,
 	apiTokenSvc *apitoken.Service,
+	usageService *provider.UsageService,
 	log *slog.Logger,
 ) *AgentExecutor {
 	wsEnabled := cfg.Sandbox.IsEnabled()
@@ -179,6 +209,8 @@ func NewAgentExecutor(
 		sessionService: sessionService,
 		modelLimits:    modelLimits,
 		apiTokenSvc:    apiTokenSvc,
+		usageService:   usageService,
+		safeguards:     cfg.AgentSafeguards,
 		log:            log.With(logger.Scope("agents.executor")),
 	}
 }
@@ -186,6 +218,36 @@ func NewAgentExecutor(
 // Execute runs an agent from scratch using the provided request.
 func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
+
+	// Emergency kill switch — blocks all agent execution when disabled.
+	if !ae.safeguards.ExecutionEnabled {
+		ae.log.Error("agent execution blocked by kill switch",
+			slog.String("project_id", req.ProjectID),
+			slog.String("agent_id", ae.resolveAgentID(req)),
+		)
+		return nil, fmt.Errorf("agent execution is disabled system-wide")
+	}
+
+	// Budget pre-flight check — hard stop when project has exceeded its monthly budget.
+	if ae.usageService != nil && req.ProjectID != "" {
+		exceeded, err := ae.usageService.CheckBudgetExceeded(ctx, req.ProjectID)
+		if err != nil {
+			// Fail-open: log warning but proceed so a broken budget query never halts agents.
+			ae.log.Warn("budget pre-flight check failed, proceeding",
+				slog.String("project_id", req.ProjectID),
+				slog.String("error", err.Error()),
+			)
+		} else if exceeded && ae.safeguards.BudgetEnforcementEnabled {
+			ae.log.Warn("agent execution blocked: project budget exceeded",
+				slog.String("project_id", req.ProjectID),
+				slog.String("agent_id", ae.resolveAgentID(req)),
+			)
+			return nil, &BudgetExceededError{
+				ProjectID: req.ProjectID,
+				Message:   fmt.Sprintf("project %s has exceeded its monthly spending budget", req.ProjectID),
+			}
+		}
+	}
 
 	// Validate depth
 	maxDepth := req.MaxDepth
@@ -1094,12 +1156,51 @@ func (ae *AgentExecutor) runPipeline(
 			if eventErr != nil {
 				steps := tracker.current()
 				errStr := eventErr.Error()
+
+				// RESOURCE_EXHAUSTED / spending cap: treat as permanent after 1 retry.
+				// On first occurrence, log and retry once (5s sleep). On second, disable
+				// the agent to prevent infinite billing loops.
+				isSpendingCapErr := strings.Contains(errStr, "RESOURCE_EXHAUSTED") ||
+					strings.Contains(errStr, "spending cap")
+				if isSpendingCapErr {
+					agentID := ae.resolveAgentID(req)
+					if transientErrCount == 0 {
+						transientErrCount++
+						ae.log.Warn("agent run received RESOURCE_EXHAUSTED, retrying once then disabling",
+							slog.String("run_id", run.ID),
+							slog.String("agent_id", agentID),
+							slog.String("error", errStr),
+						)
+						transientErr = true
+						time.Sleep(5 * time.Second)
+						break
+					}
+					// Second occurrence: disable the agent permanently.
+					ae.log.Error("agent run received RESOURCE_EXHAUSTED on retry, disabling agent",
+						slog.String("run_id", run.ID),
+						slog.String("agent_id", agentID),
+						slog.String("error", errStr),
+					)
+					if agentID != "" {
+						if disableErr := ae.repo.DisableAgent(ctx, agentID, "spending cap exceeded"); disableErr != nil {
+							ae.log.Error("failed to disable agent after RESOURCE_EXHAUSTED",
+								slog.String("agent_id", agentID),
+								slog.String("error", disableErr.Error()),
+							)
+						}
+					}
+					_ = ae.repo.FailRunWithSteps(ctx, run.ID, "spending cap exceeded, agent disabled", steps)
+					return &ExecuteResult{
+						RunID:  run.ID,
+						Status: RunStatusError,
+					}, fmt.Errorf("spending cap exceeded, agent disabled")
+				}
+
 				// Retry on transient Google AI API errors (503 UNAVAILABLE, 429 rate-limit)
 				// without injecting a new message — simply re-run from current content.
 				isTransient := strings.Contains(errStr, "503") ||
 					strings.Contains(errStr, "UNAVAILABLE") ||
-					strings.Contains(errStr, "429") ||
-					strings.Contains(errStr, "RESOURCE_EXHAUSTED")
+					strings.Contains(errStr, "429")
 				if isTransient && transientErrCount < maxTransientRetries {
 					transientErrCount++
 					// Fixed 5s delay — rate limit errors need a brief pause, not

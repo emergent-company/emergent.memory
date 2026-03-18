@@ -141,23 +141,24 @@ type AgentWebhookHook struct {
 type Agent struct {
 	bun.BaseModel `bun:"table:kb.agents,alias:a"`
 
-	ID             string             `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	ProjectID      string             `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	Name           string             `bun:"name,notnull" json:"name"`
-	StrategyType   string             `bun:"strategy_type,notnull" json:"strategyType"`
-	Prompt         *string            `bun:"prompt" json:"prompt"`
-	CronSchedule   string             `bun:"cron_schedule,notnull" json:"cronSchedule"`
-	Enabled        bool               `bun:"enabled,notnull,default:true" json:"enabled"`
-	TriggerType    AgentTriggerType   `bun:"trigger_type,notnull,default:'schedule'" json:"triggerType"`
-	ReactionConfig *ReactionConfig    `bun:"reaction_config,type:jsonb" json:"reactionConfig"`
-	ExecutionMode  AgentExecutionMode `bun:"execution_mode,notnull,default:'execute'" json:"executionMode"`
-	Capabilities   *AgentCapabilities `bun:"capabilities,type:jsonb" json:"capabilities"`
-	Config         map[string]any     `bun:"config,type:jsonb,default:'{}'" json:"config"`
-	Description    *string            `bun:"description" json:"description"`
-	LastRunAt      *time.Time         `bun:"last_run_at" json:"lastRunAt"`
-	LastRunStatus  *string            `bun:"last_run_status" json:"lastRunStatus"`
-	CreatedAt      time.Time          `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt      time.Time          `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	ID                  string             `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProjectID           string             `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	Name                string             `bun:"name,notnull" json:"name"`
+	StrategyType        string             `bun:"strategy_type,notnull" json:"strategyType"`
+	Prompt              *string            `bun:"prompt" json:"prompt"`
+	CronSchedule        string             `bun:"cron_schedule,notnull" json:"cronSchedule"`
+	Enabled             bool               `bun:"enabled,notnull,default:true" json:"enabled"`
+	TriggerType         AgentTriggerType   `bun:"trigger_type,notnull,default:'schedule'" json:"triggerType"`
+	ReactionConfig      *ReactionConfig    `bun:"reaction_config,type:jsonb" json:"reactionConfig"`
+	ExecutionMode       AgentExecutionMode `bun:"execution_mode,notnull,default:'execute'" json:"executionMode"`
+	Capabilities        *AgentCapabilities `bun:"capabilities,type:jsonb" json:"capabilities"`
+	Config              map[string]any     `bun:"config,type:jsonb,default:'{}'" json:"config"`
+	Description         *string            `bun:"description" json:"description"`
+	LastRunAt           *time.Time         `bun:"last_run_at" json:"lastRunAt"`
+	LastRunStatus       *string            `bun:"last_run_status" json:"lastRunStatus"`
+	ConsecutiveFailures int                `bun:"consecutive_failures,notnull,default:0" json:"consecutiveFailures"`
+	CreatedAt           time.Time          `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt           time.Time          `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }
 
 // AgentRun records each execution of an agent for observability
@@ -217,6 +218,7 @@ type CreateRunQueuedOptions struct {
 	ParentRunID     *string        // parent run to re-enqueue when this run completes
 	TriggerMessage  *string        // message injected as user message when worker picks up this run
 	TriggerMetadata map[string]any // structured metadata propagated from parent run
+	MaxPendingJobs  int            // if > 0, reject the enqueue when the agent already has this many pending jobs
 }
 
 // AgentProcessingLog tracks which graph objects have been processed by reaction agents

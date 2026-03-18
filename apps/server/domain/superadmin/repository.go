@@ -379,6 +379,7 @@ func (r *Repository) GetEmbeddingJobStats(ctx context.Context) (EmbeddingJobStat
 		Pending    int `bun:"pending"`
 		Completed  int `bun:"completed"`
 		Failed     int `bun:"failed"`
+		DeadLetter int `bun:"dead_letter"`
 		WithErrors int `bun:"with_errors"`
 	}
 	err := r.db.NewSelect().
@@ -387,6 +388,7 @@ func (r *Repository) GetEmbeddingJobStats(ctx context.Context) (EmbeddingJobStat
 		ColumnExpr("SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending").
 		ColumnExpr("SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed").
 		ColumnExpr("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed").
+		ColumnExpr("SUM(CASE WHEN status = 'dead_letter' THEN 1 ELSE 0 END) AS dead_letter").
 		ColumnExpr("SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS with_errors").
 		Scan(ctx, &graphStats)
 	if err != nil {
@@ -397,6 +399,7 @@ func (r *Repository) GetEmbeddingJobStats(ctx context.Context) (EmbeddingJobStat
 	stats.GraphPending = graphStats.Pending
 	stats.GraphCompleted = graphStats.Completed
 	stats.GraphFailed = graphStats.Failed
+	stats.GraphDeadLetter = graphStats.DeadLetter
 	stats.GraphWithErrors = graphStats.WithErrors
 
 	// Chunk stats
@@ -477,6 +480,23 @@ func (r *Repository) CleanupOrphanEmbeddingJobs(ctx context.Context) (int, error
 	n2, _ := res2.RowsAffected()
 
 	return int(n1 + n2), nil
+}
+
+// ResetDeadLetterEmbeddingJobs resets all dead_letter graph embedding jobs back to pending
+// so the worker will retry them. Returns the number of jobs reset.
+func (r *Repository) ResetDeadLetterEmbeddingJobs(ctx context.Context) (int, error) {
+	res, err := r.db.NewRaw(
+		`UPDATE kb.graph_embedding_jobs
+		 SET status = 'pending',
+		     scheduled_at = NOW(),
+		     updated_at = NOW()
+		 WHERE status = 'dead_letter'`,
+	).Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // ListExtractionJobs returns paginated extraction jobs with optional filters

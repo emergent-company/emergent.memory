@@ -1646,10 +1646,26 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 	var parentRunID *string
 	var triggerMessage *string
 	var triggerMetadata map[string]any
+	var maxPendingJobs int
 	if len(opts) > 0 {
 		parentRunID = opts[0].ParentRunID
 		triggerMessage = opts[0].TriggerMessage
 		triggerMetadata = opts[0].TriggerMetadata
+		maxPendingJobs = opts[0].MaxPendingJobs
+	}
+
+	// Queue depth check: reject new runs when the agent already has too many
+	// pending/processing jobs. Only enforced when MaxPendingJobs > 0.
+	if maxPendingJobs > 0 {
+		count, err := r.CountPendingJobsForAgent(ctx, agentID)
+		if err == nil && count >= maxPendingJobs {
+			return nil, &QueueFullError{
+				AgentID:        agentID,
+				PendingJobs:    count,
+				MaxPendingJobs: maxPendingJobs,
+			}
+		}
+		// Fail-open on count error: log is handled by callers; proceed with insert.
 	}
 	run := &AgentRun{
 		AgentID:         agentID,

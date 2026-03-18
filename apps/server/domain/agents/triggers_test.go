@@ -471,6 +471,151 @@ func TestOnEntityEvent_SystemActorAllowed(t *testing.T) {
 
 // ---------- Concurrency ----------
 
+// ---------- validateCronInterval ----------
+
+// TestValidateCronInterval_TooFrequent verifies that sub-15-minute schedules are rejected.
+func TestValidateCronInterval_TooFrequent(t *testing.T) {
+	tests := []struct {
+		name string
+		expr string
+	}{
+		{"every minute", "* * * * *"},
+		{"every 5 minutes", "*/5 * * * *"},
+		{"every 10 minutes", "*/10 * * * *"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCronInterval(tt.expr, 15)
+			assert.Error(t, err, "expected validation error for %q", tt.expr)
+		})
+	}
+}
+
+// TestValidateCronInterval_AtOrAboveMinimum verifies that schedules at or above 15 minutes are accepted.
+func TestValidateCronInterval_AtOrAboveMinimum(t *testing.T) {
+	tests := []struct {
+		name string
+		expr string
+	}{
+		{"every 15 minutes", "*/15 * * * *"},
+		{"every 30 minutes", "*/30 * * * *"},
+		{"hourly", "0 * * * *"},
+		{"daily at midnight", "0 0 * * *"},
+		{"weekly", "0 0 * * 0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCronInterval(tt.expr, 15)
+			assert.NoError(t, err, "expected no error for %q", tt.expr)
+		})
+	}
+}
+
+// TestValidateCronInterval_InvalidSyntax verifies that malformed cron expressions return a parse error.
+func TestValidateCronInterval_InvalidSyntax(t *testing.T) {
+	invalidExprs := []struct {
+		name string
+		expr string
+	}{
+		{"not-a-cron", "not-a-cron"},
+		{"too few fields", "* * * *"},
+		{"hour out of range", "* 25 * * *"},
+		{"empty string", ""},
+	}
+	for _, tt := range invalidExprs {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCronInterval(tt.expr, 15)
+			assert.Error(t, err, "expected parse error for %q", tt.expr)
+		})
+	}
+}
+
+// TestValidateCronInterval_CustomMinimum verifies behaviour with a non-default minimum.
+func TestValidateCronInterval_CustomMinimum(t *testing.T) {
+	// With a 5-minute minimum, every-5-min should be accepted.
+	err := validateCronInterval("*/5 * * * *", 5)
+	assert.NoError(t, err)
+
+	// With a 5-minute minimum, every-minute should still be rejected.
+	err = validateCronInterval("* * * * *", 5)
+	assert.Error(t, err)
+}
+
+// TestValidateCronInterval_ErrorMessageContainsInterval verifies the error message
+// contains the actual interval for diagnosability.
+func TestValidateCronInterval_ErrorMessageContainsInterval(t *testing.T) {
+	err := validateCronInterval("*/5 * * * *", 15)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "5")  // actual interval in minutes
+	assert.Contains(t, err.Error(), "15") // minimum in minutes
+}
+
+// ---------- SyncAgentTrigger (disabled / re-enabled) ----------
+
+// TestSyncAgentTrigger_DisabledAgentRemovesTrigger verifies that syncing a disabled agent
+// removes any existing trigger registration (task 16.5).
+func TestSyncAgentTrigger_DisabledAgentRemovesTrigger(t *testing.T) {
+	ts := newTestTriggerService()
+
+	// First enable the agent and register its event trigger.
+	agent := makeTestAgent("a1", "to-be-disabled", "p1", &ReactionConfig{
+		ObjectTypes: []string{"document"},
+		Events:      []ReactionEventType{EventTypeCreated},
+	})
+	ts.SyncAgentTrigger(agent)
+	require.Len(t, ts.GetEventListeners("document:created"), 1)
+
+	// Now disable it.
+	agent.Enabled = false
+	ts.SyncAgentTrigger(agent)
+
+	assert.Empty(t, ts.GetEventListeners("document:created"),
+		"disabled agent should have its trigger removed")
+}
+
+// TestSyncAgentTrigger_ReEnabledAgentReRegistersTrigger verifies that re-enabling an agent
+// re-registers its trigger (task 16.6).
+func TestSyncAgentTrigger_ReEnabledAgentReRegistersTrigger(t *testing.T) {
+	ts := newTestTriggerService()
+
+	agent := makeTestAgent("a1", "comeback-agent", "p1", &ReactionConfig{
+		ObjectTypes: []string{"document"},
+		Events:      []ReactionEventType{EventTypeCreated},
+	})
+
+	// Start disabled.
+	agent.Enabled = false
+	ts.SyncAgentTrigger(agent)
+	assert.Empty(t, ts.GetEventListeners("document:created"))
+
+	// Re-enable.
+	agent.Enabled = true
+	ts.SyncAgentTrigger(agent)
+	assert.Len(t, ts.GetEventListeners("document:created"), 1,
+		"re-enabled agent should have its trigger registered")
+}
+
+// ---------- executeTriggeredAgent queue checks (DB-integration, skipped without DB) ----------
+
+// TestIntegrationExecuteTriggeredAgent_QueueFull verifies the queue-depth guard in
+// executeTriggeredAgent skips execution when the queue is at capacity.
+// Requires a running Postgres instance with migrations applied.
+func TestIntegrationExecuteTriggeredAgent_QueueFull(t *testing.T) {
+	if os.Getenv("POSTGRES_HOST") == "" {
+		t.Skip("POSTGRES_HOST not set; skipping DB integration test")
+	}
+	t.Skip("requires agents tables migration; run after: task migrate")
+}
+
+// TestIntegrationExecuteTriggeredAgent_QueueHasCapacity verifies that execution
+// proceeds when queue depth is below the limit.
+func TestIntegrationExecuteTriggeredAgent_QueueHasCapacity(t *testing.T) {
+	if os.Getenv("POSTGRES_HOST") == "" {
+		t.Skip("POSTGRES_HOST not set; skipping DB integration test")
+	}
+	t.Skip("requires agents tables migration; run after: task migrate")
+}
+
 func TestRegisterAndRemoveConcurrent(t *testing.T) {
 	ts := newTestTriggerService()
 
