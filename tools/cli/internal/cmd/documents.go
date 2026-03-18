@@ -91,6 +91,17 @@ Created date. Use --limit to control how many records are returned. Use
 			return nil
 		}
 
+		if compact {
+			for _, doc := range result.Documents {
+				filename := ""
+				if doc.Filename != nil {
+					filename = *doc.Filename
+				}
+				fmt.Fprintf(out, "%-50s  %s\n", filename, doc.ID)
+			}
+			return nil
+		}
+
 		table := tablewriter.NewWriter(out)
 		table.Header("ID", "Filename", "MIME Type", "Size (bytes)", "Status", "Created")
 		for _, doc := range result.Documents {

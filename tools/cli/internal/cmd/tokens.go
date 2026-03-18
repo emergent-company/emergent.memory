@@ -88,6 +88,13 @@ func runListTokens(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 
+		if compact {
+			for _, t := range result.Tokens {
+				fmt.Printf("%-40s  %s\n", t.Name, t.ID)
+			}
+			return nil
+		}
+
 		fmt.Printf("Found %d account-level token(s):\n\n", len(result.Tokens))
 		for i, t := range result.Tokens {
 			fmt.Printf("%d. %s\n", i+1, t.Name)
@@ -122,6 +129,13 @@ func runListTokens(cmd *cobra.Command, args []string) error {
 
 	if len(result.Tokens) == 0 {
 		fmt.Println("No tokens found for this project.")
+		return nil
+	}
+
+	if compact {
+		for _, t := range result.Tokens {
+			fmt.Printf("%-40s  %s\n", t.Name, t.ID)
+		}
 		return nil
 	}
 

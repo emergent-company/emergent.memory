@@ -108,6 +108,13 @@ func runListAgentDefs(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	if compact {
+		for _, d := range result.Data {
+			fmt.Printf("%-40s  %s\n", d.Name, d.ID)
+		}
+		return nil
+	}
+
 	fmt.Printf("Found %d agent definition(s):\n\n", len(result.Data))
 	for i, d := range result.Data {
 		fmt.Printf("%d. %s\n", i+1, d.Name)
