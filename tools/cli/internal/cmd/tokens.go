@@ -64,12 +64,83 @@ var revokeTokenCmd = &cobra.Command{
 	RunE:  runRevokeToken,
 }
 
+var cleanupTokensCmd = &cobra.Command{
+	Use:   "cleanup",
+	Short: "Bulk-revoke account tokens by name prefix",
+	Long: `Revoke all account-level tokens whose names start with a given prefix.
+
+Useful for cleaning up stale tokens left by e2e tests or automated tooling.
+Prompts for confirmation before revoking unless --force is passed.
+
+Example:
+  memory tokens cleanup --name-prefix "e2e-"
+  memory tokens cleanup --name-prefix "cli-test-" --force`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if tokenNamePrefix == "" {
+			return fmt.Errorf("--name-prefix is required")
+		}
+
+		c, err := getAccountClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		result, err := c.SDK.APITokens.ListAccountTokens(context.Background())
+		if err != nil {
+			return fmt.Errorf("failed to list account tokens: %w", err)
+		}
+
+		var matches []struct{ id, name string }
+		for _, t := range result.Tokens {
+			if strings.HasPrefix(t.Name, tokenNamePrefix) && t.RevokedAt == nil {
+				matches = append(matches, struct{ id, name string }{t.ID, t.Name})
+			}
+		}
+
+		if len(matches) == 0 {
+			fmt.Printf("No active account tokens found with prefix %q.\n", tokenNamePrefix)
+			return nil
+		}
+
+		fmt.Printf("Found %d token(s) matching prefix %q:\n", len(matches), tokenNamePrefix)
+		for _, m := range matches {
+			fmt.Printf("  • %s (%s)\n", m.name, m.id)
+		}
+
+		if !tokenCleanupForce {
+			fmt.Printf("\nRevoke all %d token(s)? [y/N] ", len(matches))
+			var answer string
+			fmt.Scanln(&answer)
+			if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+				fmt.Println("Aborted.")
+				return nil
+			}
+		}
+
+		revoked, failed := 0, 0
+		for _, m := range matches {
+			if err := c.SDK.APITokens.RevokeAccountToken(context.Background(), m.id); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  ✗ failed to revoke %s (%s): %v\n", m.name, m.id, err)
+				failed++
+			} else {
+				fmt.Printf("  ✓ revoked %s\n", m.name)
+				revoked++
+			}
+		}
+
+		fmt.Printf("\nDone: %d revoked, %d failed.\n", revoked, failed)
+		return nil
+	},
+}
+
 var (
-	tokenProjectID string
-	tokenName      string
-	tokenScopes    string
-	tokenListLimit int
-	tokenListPage  int
+	tokenProjectID    string
+	tokenName         string
+	tokenScopes       string
+	tokenListLimit    int
+	tokenListPage     int
+	tokenNamePrefix   string
+	tokenCleanupForce bool
 )
 
 func runListTokens(cmd *cobra.Command, args []string) error {
@@ -90,8 +161,27 @@ func runListTokens(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 
-		total := len(result.Tokens)
-		tokens := paginate(result.Tokens, tokenListLimit, tokenListPage)
+		filtered := result.Tokens
+		if tokenNamePrefix != "" {
+			filtered = filtered[:0:0]
+			for _, t := range result.Tokens {
+				if strings.HasPrefix(t.Name, tokenNamePrefix) {
+					filtered = append(filtered, t)
+				}
+			}
+		}
+
+		if len(filtered) == 0 {
+			if tokenNamePrefix != "" {
+				fmt.Printf("No account-level tokens found with prefix %q.\n", tokenNamePrefix)
+			} else {
+				fmt.Println("No account-level tokens found.")
+			}
+			return nil
+		}
+
+		total := len(filtered)
+		tokens := paginate(filtered, tokenListLimit, tokenListPage)
 
 		if compact {
 			for _, t := range tokens {
@@ -375,16 +465,22 @@ func init() {
 	// List pagination flags
 	listTokensCmd.Flags().IntVar(&tokenListLimit, "limit", 0, "Maximum number of tokens to show (0 = all)")
 	listTokensCmd.Flags().IntVar(&tokenListPage, "page", 1, "Page number (1-based, used with --limit)")
+	listTokensCmd.Flags().StringVar(&tokenNamePrefix, "name-prefix", "", "Filter tokens by name prefix (account-level only)")
 
 	// Create token flags
 	createTokenCmd.Flags().StringVar(&tokenName, "name", "", "Token name (required)")
 	createTokenCmd.Flags().StringVar(&tokenScopes, "scopes", "", "Comma-separated scopes (default: data:read). Valid: schema:read, data:read, data:write, agents:read, agents:write, projects:read, projects:write")
 	_ = createTokenCmd.MarkFlagRequired("name")
 
+	// Cleanup flags
+	cleanupTokensCmd.Flags().StringVar(&tokenNamePrefix, "name-prefix", "", "Revoke tokens whose names start with this prefix (required)")
+	cleanupTokensCmd.Flags().BoolVar(&tokenCleanupForce, "force", false, "Skip confirmation prompt")
+
 	// Register subcommands
 	tokensCmd.AddCommand(listTokensCmd)
 	tokensCmd.AddCommand(createTokenCmd)
 	tokensCmd.AddCommand(getTokenCmd)
 	tokensCmd.AddCommand(revokeTokenCmd)
+	tokensCmd.AddCommand(cleanupTokensCmd)
 	rootCmd.AddCommand(tokensCmd)
 }

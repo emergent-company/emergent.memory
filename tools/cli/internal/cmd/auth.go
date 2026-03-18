@@ -1378,14 +1378,52 @@ func runMCPGuide(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Determine active key (prefer project token)
+	// Determine active key (prefer project token over account key).
 	activeKey := cfg.APIKey
 	if cfg.ProjectToken != "" {
 		activeKey = cfg.ProjectToken
 	}
 
+	separator := strings.Repeat("━", 50)
+
+	// If no API key, try OAuth credentials as a fallback to fetch projects,
+	// then output a template with a placeholder and instructions.
 	if activeKey == "" {
-		return fmt.Errorf("no API key configured. Set MEMORY_API_KEY or MEMORY_PROJECT_TOKEN")
+		homeDir, _ := os.UserHomeDir()
+		credsPath := filepath.Join(homeDir, ".memory", "credentials.json")
+		creds, credsErr := auth.Load(credsPath)
+		if credsErr != nil || creds.IsExpired() {
+			return fmt.Errorf(
+				"no API key configured and no valid OAuth session found.\n\n" +
+					"MCP configs require a stable API key (OAuth tokens expire).\n" +
+					"Create one with:\n" +
+					"  memory tokens create --name mcp-config\n" +
+					"Then set it with:\n" +
+					"  export MEMORY_API_KEY=<token>")
+		}
+
+		projects, projErr := fetchProjects(cfg.ServerURL, creds.AccessToken)
+		if projErr != nil || len(projects) == 0 {
+			projects = []projectResponse{{ID: "<your-project-id>", Name: "your-project"}}
+		}
+
+		fmt.Println()
+		fmt.Println(separator)
+		fmt.Println("MCP Configuration (copy to your AI agent config)")
+		fmt.Println(separator)
+		fmt.Println()
+		fmt.Println("Note: You are authenticated via OAuth. MCP configs need a stable API key")
+		fmt.Println("      because OAuth tokens expire. Create one and set MEMORY_API_KEY:")
+		fmt.Println()
+		fmt.Println("  memory tokens create --name mcp-config")
+		fmt.Println("  export MEMORY_API_KEY=<token>")
+		fmt.Println()
+
+		// Print template with placeholder
+		cfgCopy := *cfg
+		cfgCopy.APIKey = "<YOUR_API_KEY>"
+		printMCPConfig(&cfgCopy, &projects[0])
+		return nil
 	}
 
 	projects, err := fetchProjects(cfg.ServerURL, activeKey)
@@ -1393,7 +1431,6 @@ func runMCPGuide(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("could not fetch projects to generate MCP config: %w", err)
 	}
 
-	separator := strings.Repeat("━", 50)
 	fmt.Println()
 	fmt.Println(separator)
 	fmt.Println("MCP Configuration (copy to your AI agent config)")
