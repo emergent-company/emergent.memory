@@ -10,6 +10,7 @@ import (
 	"cloud.google.com/go/auth/credentials"
 	"google.golang.org/genai"
 
+	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -256,6 +257,72 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 
 	reply = resp.Text()
 	return model, reply, nil
+}
+
+// TestEmbed sends a single embed call to verify embedding credentials and model
+// work end-to-end. It uses the configured embedding model from the resolved
+// credential when available, otherwise falls back to a known default.
+// Returns the model name used.
+func (s *ModelCatalogService) TestEmbed(ctx context.Context, provider ProviderType, cred *ResolvedCredential) (model string, err error) {
+	// Use the configured embedding model or the default.
+	model = cred.EmbeddingModel
+	if model == "" {
+		embType := ModelTypeEmbedding
+		models, listErr := s.repo.ListSupportedModels(ctx, provider, &embType)
+		if listErr != nil || len(models) == 0 {
+			model = staticFallbackEmbeddingModel
+		} else {
+			model = models[0].ModelName
+		}
+	}
+
+	switch provider {
+	case ProviderVertexAI:
+		if cred.GCPProject == "" || cred.Location == "" {
+			return "", fmt.Errorf("GCP project and location required for Vertex AI embedding test")
+		}
+		opts := []vertex.ClientOption{}
+		if cred.ServiceAccountJSON != "" {
+			opts = append(opts, vertex.WithCredentialsJSON([]byte(cred.ServiceAccountJSON)))
+		}
+		client, clientErr := vertex.NewClient(ctx, vertex.Config{
+			ProjectID: cred.GCPProject,
+			Location:  cred.Location,
+			Model:     model,
+		}, opts...)
+		if clientErr != nil {
+			return "", fmt.Errorf("embedding model test failed: %w", clientErr)
+		}
+		vec, embedErr := client.EmbedQuery(ctx, "test")
+		if embedErr != nil {
+			return "", fmt.Errorf("embedding model test failed: %w", embedErr)
+		}
+		if len(vec) == 0 {
+			return "", fmt.Errorf("embedding model test failed: empty vector returned")
+		}
+
+	case ProviderGoogleAI:
+		clientCfg, cfgErr := buildClientConfig(provider, cred)
+		if cfgErr != nil {
+			return "", fmt.Errorf("embedding model test failed: %w", cfgErr)
+		}
+		client, clientErr := genai.NewClient(ctx, clientCfg)
+		if clientErr != nil {
+			return "", fmt.Errorf("embedding model test failed: %w", clientErr)
+		}
+		result, embedErr := client.Models.EmbedContent(ctx, model, genai.Text("test"), nil)
+		if embedErr != nil {
+			return "", fmt.Errorf("embedding model test failed: %w", embedErr)
+		}
+		if result == nil || len(result.Embeddings) == 0 || len(result.Embeddings[0].Values) == 0 {
+			return "", fmt.Errorf("embedding model test failed: empty vector returned")
+		}
+
+	default:
+		return "", fmt.Errorf("unsupported provider for embedding test: %s", provider)
+	}
+
+	return model, nil
 }
 
 // pickCheapTestModel selects a cheap, fast model from the catalog for testing

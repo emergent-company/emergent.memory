@@ -285,7 +285,10 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 	testCtx, testCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer testCancel()
 	if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
-		return nil, fmt.Errorf("credential test failed: %w", err)
+		return nil, fmt.Errorf("generative model test failed: %w", err)
+	}
+	if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
+		return nil, fmt.Errorf("embedding model test failed: %w", err)
 	}
 
 	// Auto-select models if not explicitly provided.
@@ -463,7 +466,10 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	testCtx, testCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer testCancel()
 	if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
-		return nil, fmt.Errorf("credential test failed: %w", err)
+		return nil, fmt.Errorf("generative model test failed: %w", err)
+	}
+	if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
+		return nil, fmt.Errorf("embedding model test failed: %w", err)
 	}
 
 	generativeModel := req.GenerativeModel
