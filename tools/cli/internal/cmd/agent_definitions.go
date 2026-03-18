@@ -78,6 +78,7 @@ var (
 	defSystemPrompt   string
 	defModelName      string
 	defTools          string
+	defSkills         string
 	defFlowType       string
 	defVisibility     string
 	defIsDefault      string
@@ -218,6 +219,9 @@ func runGetAgentDef(cmd *cobra.Command, args []string) error {
 	if len(d.Tools) > 0 {
 		fmt.Printf("  Tools:           %s\n", strings.Join(d.Tools, ", "))
 	}
+	if len(d.Skills) > 0 {
+		fmt.Printf("  Skills:          %s\n", strings.Join(d.Skills, ", "))
+	}
 	if d.MaxSteps != nil {
 		fmt.Printf("  Max Steps:       %d\n", *d.MaxSteps)
 	}
@@ -282,6 +286,12 @@ func runCreateAgentDef(cmd *cobra.Command, args []string) error {
 		createReq.Tools = strings.Split(defTools, ",")
 		for i := range createReq.Tools {
 			createReq.Tools[i] = strings.TrimSpace(createReq.Tools[i])
+		}
+	}
+	if defSkills != "" {
+		createReq.Skills = strings.Split(defSkills, ",")
+		for i := range createReq.Skills {
+			createReq.Skills[i] = strings.TrimSpace(createReq.Skills[i])
 		}
 	}
 	if defFlowType != "" {
@@ -360,6 +370,14 @@ func runUpdateAgentDef(cmd *cobra.Command, args []string) error {
 			tools[i] = strings.TrimSpace(tools[i])
 		}
 		updateReq.Tools = tools
+		hasUpdate = true
+	}
+	if cmd.Flags().Changed("skills") {
+		skillList := strings.Split(defSkills, ",")
+		for i := range skillList {
+			skillList[i] = strings.TrimSpace(skillList[i])
+		}
+		updateReq.Skills = skillList
 		hasUpdate = true
 	}
 	if cmd.Flags().Changed("flow-type") {
@@ -685,6 +703,7 @@ func init() {
 	createAgentDefCmd.Flags().StringVar(&defSystemPrompt, "system-prompt", "", "System prompt")
 	createAgentDefCmd.Flags().StringVar(&defModelName, "model", "", "Model name (e.g., gemini-2.0-flash)")
 	createAgentDefCmd.Flags().StringVar(&defTools, "tools", "", "Comma-separated tool names")
+	createAgentDefCmd.Flags().StringVar(&defSkills, "skills", "", "Comma-separated skill names (e.g. \"code-review,*\")")
 	createAgentDefCmd.Flags().StringVar(&defFlowType, "flow-type", "", "Flow type (single, multi, coordinator)")
 	createAgentDefCmd.Flags().StringVar(&defVisibility, "visibility", "", "Visibility (external, project, internal)")
 	createAgentDefCmd.Flags().StringVar(&defIsDefault, "is-default", "", "Set as default definition (true/false)")
@@ -698,6 +717,7 @@ func init() {
 	updateAgentDefCmd.Flags().StringVar(&defSystemPrompt, "system-prompt", "", "New system prompt")
 	updateAgentDefCmd.Flags().StringVar(&defModelName, "model", "", "New model name")
 	updateAgentDefCmd.Flags().StringVar(&defTools, "tools", "", "New comma-separated tool names")
+	updateAgentDefCmd.Flags().StringVar(&defSkills, "skills", "", "New comma-separated skill names")
 	updateAgentDefCmd.Flags().StringVar(&defFlowType, "flow-type", "", "New flow type")
 	updateAgentDefCmd.Flags().StringVar(&defVisibility, "visibility", "", "New visibility")
 	updateAgentDefCmd.Flags().StringVar(&defIsDefault, "is-default", "", "Set as default (true/false)")

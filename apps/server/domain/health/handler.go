@@ -180,6 +180,12 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		// In standalone mode the server authenticates via API key; Zitadel is
+		// not required, so report auth as healthy to avoid a spurious 503.
+		if h.cfg.Standalone.Enabled {
+			emit("auth", Check{Status: "healthy", Message: "standalone mode"})
+			return
+		}
 		issuer := h.cfg.Zitadel.GetIssuer()
 		if issuer == "" || h.cfg.Zitadel.Domain == "" {
 			emit("auth", Check{Status: "unhealthy", Message: "not configured"})

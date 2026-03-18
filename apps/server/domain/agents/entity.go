@@ -293,6 +293,7 @@ type AgentDefinition struct {
 	SystemPrompt   *string           `bun:"system_prompt" json:"systemPrompt,omitempty"`
 	Model          *ModelConfig      `bun:"model,type:jsonb,default:'{}'" json:"model,omitempty"`
 	Tools          []string          `bun:"tools,array" json:"tools"`
+	Skills         []string          `bun:"skills,array" json:"skills"`
 	FlowType       AgentFlowType     `bun:"flow_type,notnull,default:'single'" json:"flowType"`
 	IsDefault      bool              `bun:"is_default,notnull,default:false" json:"isDefault"`
 	MaxSteps       *int              `bun:"max_steps" json:"maxSteps,omitempty"`

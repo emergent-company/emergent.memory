@@ -30,10 +30,11 @@ type SkillToolDeps struct {
 	EmbeddingsSvc    *embeddings.Service
 	Logger           *slog.Logger
 	ProjectID        string
-	OrgID            string // org context for org-scoped skill resolution
-	TriggerMessage   string // agent run trigger message (used as query for semantic retrieval)
+	OrgID            string   // org context for org-scoped skill resolution
+	TriggerMessage   string   // agent run trigger message (used as query for semantic retrieval)
 	AgentName        string
 	AgentDescription string
+	Skills           []string // declared skill names from agent definition; ["*"] means all; nil/empty means all (legacy)
 }
 
 // BuildSkillTool creates the `skill` ADK tool for an agent run.
@@ -55,6 +56,12 @@ func BuildSkillTool(ctx context.Context, deps SkillToolDeps) (tool.Tool, error) 
 
 	if len(all) == 0 {
 		return nil, nil // nothing to expose
+	}
+
+	// Filter to declared skill names when an explicit list is provided (not wildcard).
+	all = filterByDeclaredSkills(deps, all)
+	if len(all) == 0 {
+		return nil, nil // declared skills not found
 	}
 
 	// Determine which skills to advertise in the tool description
@@ -144,6 +151,34 @@ func selectRelevantSkills(ctx context.Context, deps SkillToolDeps, all []*Skill)
 		return all
 	}
 	return relevant
+}
+
+// filterByDeclaredSkills narrows the skill set to the names declared in deps.Skills.
+// When deps.Skills is empty, nil, or contains only "*", all skills are returned unchanged.
+// Skills whose declared names are not found are logged as warnings.
+func filterByDeclaredSkills(deps SkillToolDeps, all []*Skill) []*Skill {
+	if len(deps.Skills) == 0 || (len(deps.Skills) == 1 && deps.Skills[0] == "*") {
+		return all
+	}
+
+	byName := make(map[string]*Skill, len(all))
+	for _, s := range all {
+		byName[s.Name] = s
+	}
+
+	filtered := make([]*Skill, 0, len(deps.Skills))
+	for _, name := range deps.Skills {
+		s, ok := byName[name]
+		if !ok {
+			deps.Logger.Warn("skills: declared skill not found for agent",
+				slog.String("skill_name", name),
+				slog.String("agent_name", deps.AgentName),
+			)
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	return filtered
 }
 
 // buildSkillListXML constructs the <available_skills> XML block that is injected

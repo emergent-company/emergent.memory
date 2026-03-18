@@ -1556,14 +1556,16 @@ func (ae *AgentExecutor) buildSkillTool(ctx context.Context, run *AgentRun, req 
 		return nil, nil
 	}
 
-	hasSkill := false
+	// Opt-in check: inject skill tool when skills field is non-empty, OR legacy "skill" in tools list.
+	hasSkillsField := len(req.AgentDefinition.Skills) > 0
+	hasSkillInTools := false
 	for _, t := range req.AgentDefinition.Tools {
 		if t == "skill" {
-			hasSkill = true
+			hasSkillInTools = true
 			break
 		}
 	}
-	if !hasSkill {
+	if !hasSkillsField && !hasSkillInTools {
 		return nil, nil
 	}
 
@@ -1582,6 +1584,12 @@ func (ae *AgentExecutor) buildSkillTool(ctx context.Context, run *AgentRun, req 
 		}
 	}
 
+	// Use the skills field when present; fall back to wildcard for legacy "skill" in tools.
+	skillNames := req.AgentDefinition.Skills
+	if len(skillNames) == 0 {
+		skillNames = []string{"*"}
+	}
+
 	deps := skills.SkillToolDeps{
 		Repo:             ae.skillRepo,
 		EmbeddingsSvc:    ae.embeddingsSvc,
@@ -1591,6 +1599,7 @@ func (ae *AgentExecutor) buildSkillTool(ctx context.Context, run *AgentRun, req 
 		TriggerMessage:   triggerMsg,
 		AgentName:        agentName,
 		AgentDescription: agentDesc,
+		Skills:           skillNames,
 	}
 
 	return skills.BuildSkillTool(ctx, deps)

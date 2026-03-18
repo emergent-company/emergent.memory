@@ -36,7 +36,7 @@ type GraphMemorySchema struct {
 	RelationshipTypeSchemas JSON       `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
 	UIConfigs               JSON       `bun:"ui_configs,type:jsonb,default:'{}'"`
 	ExtractionPrompts       JSON       `bun:"extraction_prompts,type:jsonb,default:'{}'"`
-	SQLViews                JSON       `bun:"sql_views,type:jsonb,default:'[]'"`
+	SQLViews                JSONArray  `bun:"sql_views,type:jsonb,default:'[]'"`
 	Signature               *string    `bun:"signature"`
 	Checksum                *string    `bun:"checksum"`
 	PublishedAt             time.Time  `bun:"published_at,default:now()"`

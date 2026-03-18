@@ -561,6 +561,7 @@ func agentFileToCreateRequest(ag AgentFile) *sdkagents.CreateAgentDefinitionRequ
 	req := &sdkagents.CreateAgentDefinitionRequest{
 		Name:           ag.Name,
 		Tools:          ag.Tools,
+		Skills:         ag.Skills,
 		FlowType:       ag.FlowType,
 		Visibility:     ag.Visibility,
 		IsDefault:      &ag.IsDefault,
@@ -591,6 +592,7 @@ func agentFileToUpdateRequest(ag AgentFile) *sdkagents.UpdateAgentDefinitionRequ
 	req := &sdkagents.UpdateAgentDefinitionRequest{
 		Name:           &ag.Name,
 		Tools:          ag.Tools,
+		Skills:         ag.Skills,
 		IsDefault:      &ag.IsDefault,
 		MaxSteps:       ag.MaxSteps,
 		DefaultTimeout: ag.DefaultTimeout,

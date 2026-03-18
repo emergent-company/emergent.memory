@@ -287,6 +287,7 @@ type CreateAgentDefinitionDTO struct {
 	SystemPrompt   *string           `json:"systemPrompt"`
 	Model          *ModelConfig      `json:"model"`
 	Tools          []string          `json:"tools"`
+	Skills         []string          `json:"skills"`
 	FlowType       AgentFlowType     `json:"flowType"`
 	IsDefault      *bool             `json:"isDefault"`
 	MaxSteps       *int              `json:"maxSteps"`
@@ -305,6 +306,7 @@ type UpdateAgentDefinitionDTO struct {
 	SystemPrompt   *string            `json:"systemPrompt"`
 	Model          *ModelConfig       `json:"model"`
 	Tools          []string           `json:"tools"`
+	Skills         []string           `json:"skills"`
 	FlowType       *AgentFlowType     `json:"flowType"`
 	IsDefault      *bool              `json:"isDefault"`
 	MaxSteps       *int               `json:"maxSteps"`

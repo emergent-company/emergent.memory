@@ -390,6 +390,13 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 		return enc.Encode(projectList)
 	}
 
+	if compact {
+		for _, p := range projectList {
+			fmt.Printf("%-40s  %s\n", p.Name, p.ID)
+		}
+		return nil
+	}
+
 	fmt.Printf("Found %d project(s):\n\n", len(projectList))
 	for i, p := range projectList {
 		fmt.Printf("%d. %s (%s)\n", i+1, p.Name, p.ID)

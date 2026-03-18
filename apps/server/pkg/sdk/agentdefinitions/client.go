@@ -59,6 +59,7 @@ type AgentDefinition struct {
 	SystemPrompt   *string        `json:"systemPrompt,omitempty"`
 	Model          *ModelConfig   `json:"model,omitempty"`
 	Tools          []string       `json:"tools"`
+	Skills         []string       `json:"skills,omitempty"`
 	FlowType       string         `json:"flowType"`
 	IsDefault      bool           `json:"isDefault"`
 	MaxSteps       *int           `json:"maxSteps,omitempty"`
@@ -116,6 +117,7 @@ type CreateAgentDefinitionRequest struct {
 	SystemPrompt   *string        `json:"systemPrompt,omitempty"`
 	Model          *ModelConfig   `json:"model,omitempty"`
 	Tools          []string       `json:"tools,omitempty"`
+	Skills         []string       `json:"skills,omitempty"`
 	FlowType       string         `json:"flowType,omitempty"`
 	IsDefault      *bool          `json:"isDefault,omitempty"`
 	MaxSteps       *int           `json:"maxSteps,omitempty"`
@@ -133,6 +135,7 @@ type UpdateAgentDefinitionRequest struct {
 	SystemPrompt   *string        `json:"systemPrompt,omitempty"`
 	Model          *ModelConfig   `json:"model,omitempty"`
 	Tools          []string       `json:"tools,omitempty"`
+	Skills         []string       `json:"skills,omitempty"`
 	FlowType       *string        `json:"flowType,omitempty"`
 	IsDefault      *bool          `json:"isDefault,omitempty"`
 	MaxSteps       *int           `json:"maxSteps,omitempty"`

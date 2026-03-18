@@ -1143,6 +1143,11 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		tools = []string{}
 	}
 
+	skillNames := dto.Skills
+	if skillNames == nil {
+		skillNames = []string{}
+	}
+
 	config := dto.Config
 	if config == nil {
 		config = map[string]any{}
@@ -1160,6 +1165,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		SystemPrompt:   dto.SystemPrompt,
 		Model:          dto.Model,
 		Tools:          tools,
+		Skills:         skillNames,
 		FlowType:       flowType,
 		IsDefault:      isDefault,
 		MaxSteps:       dto.MaxSteps,
@@ -1223,6 +1229,9 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.Tools != nil {
 		def.Tools = dto.Tools
+	}
+	if dto.Skills != nil {
+		def.Skills = dto.Skills
 	}
 	if dto.FlowType != nil {
 		def.FlowType = *dto.FlowType

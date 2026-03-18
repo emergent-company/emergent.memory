@@ -69,6 +69,7 @@ type AgentFile struct {
 	SystemPrompt    string         `json:"systemPrompt"    yaml:"systemPrompt"`
 	Model           *AgentModel    `json:"model"           yaml:"model"`
 	Tools           []string       `json:"tools"           yaml:"tools"`
+	Skills          []string       `json:"skills"          yaml:"skills"`
 	FlowType        string         `json:"flowType"        yaml:"flowType"`
 	IsDefault       bool           `json:"isDefault"       yaml:"isDefault"`
 	MaxSteps        *int           `json:"maxSteps"        yaml:"maxSteps"`

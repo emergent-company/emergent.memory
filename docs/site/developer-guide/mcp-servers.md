@@ -18,6 +18,8 @@ Memory exposes its own MCP server at two endpoints:
 
 ### Connecting Claude Desktop
 
+> **Tip:** Run `memory mcp-guide` in any project directory to generate the correct config snippet automatically for Claude Desktop or Cursor.
+
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json

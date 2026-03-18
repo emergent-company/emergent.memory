@@ -1,5 +1,7 @@
 # Agent Memory System — Design Document
 
+> **Superseded.** This document describes the original flat-memory design. The current design is at `docs/features/agent-notes/design.md`, which replaces the `Memory` type with a `Note` type that has dedicated embeddings and attaches to existing graph entities via `ANNOTATES` relationships.
+
 ## Overview
 
 Add cross-session memory to Emergent so AI agents (via MCP) can remember user preferences, learned patterns, coding conventions, and project-specific knowledge across conversations. This builds entirely on top of the existing graph infrastructure — no new database tables, no external services.

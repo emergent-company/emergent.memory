@@ -28,4 +28,8 @@ This guide covers topics for developers integrating with, extending, or operatin
 
     Complete reference for all 38 permission scopes, umbrella scope expansions, and which scopes are assignable to API tokens.
 
+-   **[CLI Reference](cli-reference.md)**
+
+    Reference for `memory init`, `memory ask`, `memory adk-sessions`, `memory mcp-guide`, and `memory install-memory-skills`.
+
 </div>
