@@ -273,7 +273,7 @@ func TestSimilarObjectResult_MarshalJSON(t *testing.T) {
 		ID:          objID,
 		CanonicalID: &canID,
 		Type:        "Person",
-		Status:      "active",
+		Status:      strPtr("active"),
 		Distance:    0.5,
 	}
 
@@ -300,3 +300,5 @@ func TestSimilarObjectResult_MarshalJSON(t *testing.T) {
 	assert.Equal(t, objID.String(), verStr, "version_id should equal id")
 	assert.Equal(t, canID.String(), entStr, "entity_id should equal canonical_id")
 }
+
+func strPtr(s string) *string { return &s }

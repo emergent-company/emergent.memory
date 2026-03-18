@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -300,13 +301,25 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 	embeddingDurationMs := time.Since(embeddingStartTime).Milliseconds()
 
 	if err != nil {
-		// Embedding failed
+		// Embedding failed — distinguish permanent (bad model/creds) from transient (network, quota)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
-			w.log.Error("failed to mark job as failed",
+		if isPermanentEmbeddingError(err) {
+			w.log.Warn("graph embedding permanently failed (non-retryable error)",
 				slog.String("job_id", job.ID),
-				slog.String("error", markErr.Error()))
+				slog.String("object_id", job.ObjectID),
+				slog.String("error", err.Error()))
+			if markErr := w.jobs.MarkPermanentlyFailed(ctx, job.ID, err); markErr != nil {
+				w.log.Error("failed to mark job as permanently failed",
+					slog.String("job_id", job.ID),
+					slog.String("error", markErr.Error()))
+			}
+		} else {
+			if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
+				w.log.Error("failed to mark job as failed",
+					slog.String("job_id", job.ID),
+					slog.String("error", markErr.Error()))
+			}
 		}
 		w.incrementFailure()
 		return fmt.Errorf("generate embedding: %w", err)
@@ -529,4 +542,27 @@ func (w *GraphEmbeddingWorker) SetConfig(cfg GraphEmbeddingConfig) {
 		slog.Int("concurrency", cfg.WorkerConcurrency),
 		slog.Int("interval_ms", cfg.WorkerIntervalMs),
 	)
+}
+
+// isPermanentEmbeddingError returns true for errors that will never succeed
+// on retry regardless of how many times we try. These include:
+//   - HTTP 400 Bad Request: invalid model name, malformed request
+//   - HTTP 401 Unauthorized: invalid API key / service account credentials
+//   - HTTP 403 Forbidden: credentials exist but lack required IAM permissions
+//   - HTTP 404 Not Found: model or endpoint does not exist in this project/region
+//
+// Transient errors (rate limits 429, server errors 5xx, network timeouts)
+// are NOT permanent and should continue retrying.
+func isPermanentEmbeddingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// API error codes surfaced by the vertex client as "API error NNN: ..."
+	for _, code := range []string{"API error 400", "API error 401", "API error 403", "API error 404"} {
+		if strings.Contains(msg, code) {
+			return true
+		}
+	}
+	return false
 }

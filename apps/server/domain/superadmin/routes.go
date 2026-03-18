@@ -35,6 +35,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.GET("/embedding-jobs", h.ListEmbeddingJobs)
 	g.POST("/embedding-jobs/delete", h.DeleteEmbeddingJobs)
 	g.POST("/embedding-jobs/cleanup-orphans", h.CleanupOrphanEmbeddingJobs)
+	g.POST("/embedding-jobs/reset-dead-letter", h.ResetDeadLetterEmbeddingJobs)
 
 	// Extraction jobs management
 	g.GET("/extraction-jobs", h.ListExtractionJobs)

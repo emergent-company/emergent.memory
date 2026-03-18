@@ -21,9 +21,8 @@ import (
 // - Atomic dequeue with FOR UPDATE SKIP LOCKED
 // - Exponential backoff for retries
 // - Stale job recovery
+// - Dead-letter queue after MaxAttempts failures
 // - Queue statistics
-//
-// Note: Jobs retry indefinitely until they succeed (no maxAttempts limit).
 type GraphEmbeddingJobsService struct {
 	db  bun.IDB
 	log *slog.Logger
@@ -36,6 +35,8 @@ type GraphEmbeddingConfig struct {
 	BaseRetryDelaySec int
 	// MaxRetryDelaySec is the maximum delay in seconds (default: 3600)
 	MaxRetryDelaySec int
+	// MaxAttempts is the maximum number of attempts before moving to dead_letter (default: 500, 0 = unlimited)
+	MaxAttempts int
 	// WorkerIntervalMs is the polling interval in milliseconds (default: 5000)
 	WorkerIntervalMs int
 	// WorkerBatchSize is the number of jobs to dequeue per poll (default: 50)
@@ -55,6 +56,7 @@ func DefaultGraphEmbeddingConfig() *GraphEmbeddingConfig {
 	return &GraphEmbeddingConfig{
 		BaseRetryDelaySec:     60,
 		MaxRetryDelaySec:      3600,
+		MaxAttempts:           500,
 		WorkerIntervalMs:      5000,
 		WorkerBatchSize:       200,
 		WorkerConcurrency:     200,
@@ -255,7 +257,8 @@ func (s *GraphEmbeddingJobsService) MarkCompleted(ctx context.Context, id string
 }
 
 // MarkFailed marks a job as failed and schedules retry with exponential backoff.
-// Unlike email jobs, graph embedding jobs retry indefinitely (no max attempts).
+// If MaxAttempts is configured (>0) and the job has reached the limit, it is
+// moved to dead_letter status instead so it no longer blocks the queue.
 func (s *GraphEmbeddingJobsService) MarkFailed(ctx context.Context, id string, jobErr error) error {
 	job := &GraphEmbeddingJob{}
 	err := s.db.NewSelect().
@@ -273,6 +276,25 @@ func (s *GraphEmbeddingJobsService) MarkFailed(ctx context.Context, id string, j
 	}
 
 	errorMessage := truncateError(jobErr.Error())
+
+	// Move to dead_letter once MaxAttempts is reached (0 = unlimited).
+	if s.cfg.MaxAttempts > 0 && job.AttemptCount >= s.cfg.MaxAttempts {
+		_, updateErr := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+			SET status = 'dead_letter',
+				last_error = ?,
+				updated_at = now()
+			WHERE id = ?`,
+			errorMessage, id).Exec(ctx)
+		if updateErr != nil {
+			return fmt.Errorf("move job to dead_letter: %w", updateErr)
+		}
+		s.log.Warn("graph embedding job moved to dead_letter after max attempts",
+			slog.String("job_id", id),
+			slog.Int("attempt_count", job.AttemptCount),
+			slog.Int("max_attempts", s.cfg.MaxAttempts),
+			slog.String("error", errorMessage))
+		return nil
+	}
 
 	// Calculate exponential backoff: base * attempt^2, capped at max
 	delaySeconds := int(math.Min(
@@ -401,8 +423,9 @@ func (s *GraphEmbeddingJobsService) Stats(ctx context.Context) (*GraphEmbeddingQ
 		COUNT(*) FILTER (WHERE status = 'pending') as pending,
 		COUNT(*) FILTER (WHERE status = 'processing') as processing,
 		COUNT(*) FILTER (WHERE status = 'completed') as completed,
-		COUNT(*) FILTER (WHERE status = 'failed') as failed
-	FROM kb.graph_embedding_jobs`).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed)
+		COUNT(*) FILTER (WHERE status = 'failed') as failed,
+		COUNT(*) FILTER (WHERE status = 'dead_letter') as dead_letter
+	FROM kb.graph_embedding_jobs`).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.DeadLetter)
 	if err != nil {
 		return nil, fmt.Errorf("get stats: %w", err)
 	}
@@ -416,6 +439,27 @@ type GraphEmbeddingQueueStats struct {
 	Processing int64 `json:"processing"`
 	Completed  int64 `json:"completed"`
 	Failed     int64 `json:"failed"`
+	DeadLetter int64 `json:"deadLetter"`
+}
+
+// ResetDeadLetterJobs requeues dead_letter jobs for immediate retry.
+// Used by operators after fixing the underlying credential/model issue.
+// Returns the number of jobs reset.
+func (s *GraphEmbeddingJobsService) ResetDeadLetterJobs(ctx context.Context) (int, error) {
+	result, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+		SET status = 'pending',
+			scheduled_at = now(),
+			updated_at = now()
+		WHERE status = 'dead_letter'`).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("reset dead_letter jobs: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("reset dead_letter graph embedding jobs for retry",
+			slog.Int64("count", n))
+	}
+	return int(n), nil
 }
 
 // truncateError truncates an error message to 1000 characters

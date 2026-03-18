@@ -1635,7 +1635,7 @@ type SimilarSearchResult struct {
 	BranchID    *uuid.UUID
 	Type        string
 	Key         *string
-	Status      string
+	Status      *string
 	Properties  map[string]any
 	Labels      []string
 	CreatedAt   time.Time

@@ -166,6 +166,7 @@ type EmbeddingJobStatsDTO struct {
 	GraphPending    int `json:"graphPending"`
 	GraphCompleted  int `json:"graphCompleted"`
 	GraphFailed     int `json:"graphFailed"`
+	GraphDeadLetter int `json:"graphDeadLetter"`
 	GraphWithErrors int `json:"graphWithErrors"`
 	ChunkTotal      int `json:"chunkTotal"`
 	ChunkPending    int `json:"chunkPending"`
@@ -199,6 +200,13 @@ type CleanupOrphansResponse struct {
 	Success      bool   `json:"success"`
 	DeletedCount int    `json:"deletedCount"`
 	Message      string `json:"message"`
+}
+
+// ResetDeadLetterResponse is the response for reset-dead-letter
+type ResetDeadLetterResponse struct {
+	Success    bool   `json:"success"`
+	ResetCount int    `json:"resetCount"`
+	Message    string `json:"message"`
 }
 
 // ExtractionJobDTO represents an extraction job

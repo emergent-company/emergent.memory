@@ -494,7 +494,7 @@ type SimilarObjectResult struct {
 	BranchID    *uuid.UUID     `json:"branch_id,omitempty"`
 	Type        string         `json:"type"`
 	Key         *string        `json:"key,omitempty"`
-	Status      string         `json:"status"`
+	Status      *string        `json:"status,omitempty"`
 	Properties  map[string]any `json:"properties,omitempty"`
 	Labels      []string       `json:"labels,omitempty"`
 	CreatedAt   *time.Time     `json:"created_at,omitempty"`

@@ -650,6 +650,33 @@ func (h *Handler) CleanupOrphanEmbeddingJobs(c echo.Context) error {
 	})
 }
 
+// ResetDeadLetterEmbeddingJobs handles POST /api/superadmin/embedding-jobs/reset-dead-letter
+// @Summary      Reset dead-letter embedding jobs (superadmin only)
+// @Description  Resets all graph embedding jobs in dead_letter status back to pending so the worker retries them. Use after fixing credentials or the embedding model config.
+// @Tags         superadmin
+// @Produce      json
+// @Success      200 {object} ResetDeadLetterResponse "Reset summary"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/embedding-jobs/reset-dead-letter [post]
+// @Security     bearerAuth
+func (h *Handler) ResetDeadLetterEmbeddingJobs(c echo.Context) error {
+	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+		return err
+	}
+
+	resetCount, err := h.repo.ResetDeadLetterEmbeddingJobs(c.Request().Context())
+	if err != nil {
+		return apperror.NewInternal("failed to reset dead-letter embedding jobs", err)
+	}
+
+	return c.JSON(http.StatusOK, ResetDeadLetterResponse{
+		Success:    true,
+		ResetCount: resetCount,
+		Message:    "Dead-letter embedding jobs reset to pending",
+	})
+}
+
 // ListExtractionJobs handles GET /api/superadmin/extraction-jobs
 // @Summary      List extraction job queue (superadmin only)
 // @Description  Returns paginated list of object extraction jobs with status, error details, and aggregate statistics. Supports filtering by status, job type, project, and error state.
