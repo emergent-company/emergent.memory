@@ -1022,6 +1022,7 @@ func init() {
 	// Assemble top-level graph command
 	graphCmd.AddCommand(graphObjectsCmd)
 	graphCmd.AddCommand(graphRelationshipsCmd)
+	graphCmd.AddCommand(graphBranchesCmd)
 
 	rootCmd.AddCommand(graphCmd)
 

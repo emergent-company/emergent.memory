@@ -227,6 +227,69 @@ func (c *Client) Update(ctx context.Context, id string, updateReq *UpdateBranchR
 	return &branch, nil
 }
 
+// MergeRequest is the request body for the merge endpoint.
+type MergeRequest struct {
+	SourceBranchID string `json:"sourceBranchId"`
+	Execute        bool   `json:"execute,omitempty"`
+}
+
+// MergeResponse is the response from the merge endpoint.
+type MergeResponse struct {
+	TargetBranchID   string `json:"targetBranchId"`
+	SourceBranchID   string `json:"sourceBranchId"`
+	DryRun           bool   `json:"dryRun"`
+	TotalObjects     int    `json:"total_objects"`
+	UnchangedCount   int    `json:"unchanged_count"`
+	AddedCount       int    `json:"added_count"`
+	FastForwardCount int    `json:"fast_forward_count"`
+	ConflictCount    int    `json:"conflict_count"`
+	Applied          bool   `json:"applied,omitempty"`
+	AppliedObjects   *int   `json:"applied_objects,omitempty"`
+	// Relationship counts
+	RelationshipsTotal            *int `json:"relationships_total,omitempty"`
+	RelationshipsUnchangedCount   *int `json:"relationships_unchanged_count,omitempty"`
+	RelationshipsAddedCount       *int `json:"relationships_added_count,omitempty"`
+	RelationshipsFastForwardCount *int `json:"relationships_fast_forward_count,omitempty"`
+	RelationshipsConflictCount    *int `json:"relationships_conflict_count,omitempty"`
+}
+
+// Merge posts a merge request to the target branch. If Execute is false this
+// is a dry-run that returns what would change without mutating state.
+func (c *Client) Merge(ctx context.Context, targetBranchID string, req *MergeRequest) (*MergeResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	mergeURL := c.base + "/api/graph/branches/" + url.PathEscape(targetBranchID) + "/merge"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", mergeURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result MergeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // Delete deletes a branch by ID. Returns nil on success (HTTP 204).
 func (c *Client) Delete(ctx context.Context, id string) error {
 	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/graph/branches/"+url.PathEscape(id), nil)

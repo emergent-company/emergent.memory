@@ -651,3 +651,126 @@ func (s *BranchesTestSuite) TestCreate_RejectsNonExistentParentBranch() {
 
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 }
+
+// =============================================================================
+// Test: Merge Branch - Authentication, Validation & Dry Run
+// =============================================================================
+
+func (s *BranchesTestSuite) TestMerge_RequiresAuth() {
+	branchID := "00000000-0000-0000-0000-000000000001"
+	resp := s.client.POST("/api/graph/branches/"+branchID+"/merge",
+		testutil.WithJSONBody(map[string]any{
+			"sourceBranchId": "00000000-0000-0000-0000-000000000002",
+		}),
+	)
+
+	s.Equal(http.StatusUnauthorized, resp.StatusCode)
+}
+
+func (s *BranchesTestSuite) TestMerge_InvalidTargetBranchID() {
+	resp := s.client.POST("/api/graph/branches/not-a-uuid/merge",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"sourceBranchId": "00000000-0000-0000-0000-000000000002",
+		}),
+	)
+
+	s.Equal(http.StatusBadRequest, resp.StatusCode)
+}
+
+func (s *BranchesTestSuite) TestMerge_MissingSourceBranchID() {
+	targetID := "00000000-0000-0000-0000-000000000001"
+	resp := s.client.POST("/api/graph/branches/"+targetID+"/merge",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{}),
+	)
+
+	s.Equal(http.StatusBadRequest, resp.StatusCode)
+}
+
+func (s *BranchesTestSuite) TestMerge_DryRun_EmptyBranches() {
+	// Create source and target branches
+	sourceName := s.uniqueName("merge-source")
+	targetName := s.uniqueName("merge-target")
+
+	sourceResp := s.client.POST("/api/graph/branches",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{"name": sourceName}),
+	)
+	s.Require().Equal(http.StatusCreated, sourceResp.StatusCode)
+
+	var source map[string]any
+	s.Require().NoError(sourceResp.JSON(&source))
+	sourceID := source["id"].(string)
+
+	targetResp := s.client.POST("/api/graph/branches",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{"name": targetName}),
+	)
+	s.Require().Equal(http.StatusCreated, targetResp.StatusCode)
+
+	var target map[string]any
+	s.Require().NoError(targetResp.JSON(&target))
+	targetID := target["id"].(string)
+
+	// Dry run merge — no objects on either branch so nothing to merge
+	mergeResp := s.client.POST("/api/graph/branches/"+targetID+"/merge",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"sourceBranchId": sourceID,
+		}),
+	)
+
+	s.Equal(http.StatusOK, mergeResp.StatusCode)
+
+	var result map[string]any
+	s.Require().NoError(mergeResp.JSON(&result))
+
+	// Verify response shape
+	s.Equal(targetID, result["targetBranchId"])
+	s.Equal(sourceID, result["sourceBranchId"])
+	s.Equal(true, result["dryRun"])
+	// No objects to merge
+	s.EqualValues(0, result["total_objects"])
+}
+
+func (s *BranchesTestSuite) TestMerge_DryRun_DoesNotMutate() {
+	// Create two branches and dry run — then verify nothing was applied
+	sourceName := s.uniqueName("dry-run-source")
+	targetName := s.uniqueName("dry-run-target")
+
+	sourceResp := s.client.POST("/api/graph/branches",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{"name": sourceName}),
+	)
+	s.Require().Equal(http.StatusCreated, sourceResp.StatusCode)
+	var source map[string]any
+	s.Require().NoError(sourceResp.JSON(&source))
+
+	targetResp := s.client.POST("/api/graph/branches",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{"name": targetName}),
+	)
+	s.Require().Equal(http.StatusCreated, targetResp.StatusCode)
+	var target map[string]any
+	s.Require().NoError(targetResp.JSON(&target))
+
+	// Dry run
+	mergeResp := s.client.POST("/api/graph/branches/"+target["id"].(string)+"/merge",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"sourceBranchId": source["id"].(string),
+			// execute omitted — defaults to false (dry run)
+		}),
+	)
+	s.Equal(http.StatusOK, mergeResp.StatusCode)
+
+	var result map[string]any
+	s.Require().NoError(mergeResp.JSON(&result))
+
+	// applied should be false or absent for a dry run
+	applied, hasApplied := result["applied"]
+	if hasApplied {
+		s.Equal(false, applied)
+	}
+}
