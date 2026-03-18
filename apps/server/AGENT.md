@@ -679,6 +679,34 @@ The agents module (`domain/agents/`) provides endpoints for managing reaction ag
 | POST   | `/api/admin/agents/:id/trigger`        | Trigger agent      |
 | POST   | `/api/admin/agents/:id/batch-trigger`  | Batch trigger      |
 
+**Agent Safeguards (queue explosion prevention):**
+
+The agents module includes safeguards to prevent runaway execution, infinite retry loops, and budget overruns. All limits are configurable via environment variables with safe defaults.
+
+| Env Var | Default | Description |
+| ------- | ------- | ----------- |
+| `AGENT_MAX_PENDING_JOBS` | `10` | Max pending jobs per agent before new runs are rejected (HTTP 429) |
+| `AGENT_CONSECUTIVE_FAILURE_THRESHOLD` | `5` | Auto-disable agent after N consecutive failures |
+| `AGENT_MIN_CRON_INTERVAL_MINUTES` | `15` | Minimum cron schedule interval; shorter schedules return HTTP 400 on create/update |
+| `BUDGET_ENFORCEMENT_ENABLED` | `true` | Block agent runs when project monthly budget is exceeded (HTTP 402) |
+| `AGENT_EXECUTION_ENABLED` | `true` | Emergency kill switch — set to `false` to halt all agent execution |
+
+**Error codes returned by the agents API:**
+
+| HTTP Status | Error Code | Cause |
+| ----------- | ---------- | ----- |
+| 400 | `bad_request` | Cron schedule interval below minimum (< 15 min by default) |
+| 402 | `budget_exceeded` | Project monthly budget has been reached |
+| 429 | `queue_full` | Agent already has `AGENT_MAX_PENDING_JOBS` pending jobs |
+
+**Auto-disable on consecutive failures:**
+
+When an agent fails `AGENT_CONSECUTIVE_FAILURE_THRESHOLD` times in a row (or encounters a `RESOURCE_EXHAUSTED` / spending cap error), it is automatically disabled and its cron trigger is removed. Re-enable via `PATCH /api/admin/agents/:id` with `{"enabled": true}`.
+
+**Cron duplicate prevention:**
+
+Before each cron-triggered execution, the system checks pending job depth. If the agent already has pending jobs at or above `AGENT_MAX_PENDING_JOBS`, the cron tick is skipped silently (logged at debug level). This prevents a slow-running agent from accumulating an unbounded backlog.
+
 ### Search Debug Mode
 
 The unified search endpoint supports a debug mode that returns timing metrics and match counts:

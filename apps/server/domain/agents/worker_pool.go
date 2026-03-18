@@ -156,6 +156,10 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		if err := p.repo.FailJob(ctx, job.ID, job.RunID, execErr.Error(), requeue, nextRunAt); err != nil {
 			log.Warn("failed to update job status after failure", slog.String("error", err.Error()))
 		}
+
+		// Track consecutive failures and auto-disable the agent if threshold exceeded.
+		p.handleFailure(ctx, log, agent)
+
 		// Still wake parent on failure so it can handle the error
 		p.reenqueueParent(ctx, log, run, agent.Name, "", "error")
 		return
@@ -180,6 +184,10 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		if err := p.repo.FailJob(ctx, job.ID, job.RunID, errMsg, false, time.Time{}); err != nil {
 			log.Warn("failed to mark job failed after run error", slog.String("error", err.Error()))
 		}
+
+		// Track consecutive failures and auto-disable the agent if threshold exceeded.
+		p.handleFailure(ctx, log, agent)
+
 		p.reenqueueParent(ctx, log, run, agent.Name, errMsg, "error")
 		return
 	}
@@ -204,6 +212,11 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		log.Warn("failed to mark job completed", slog.String("error", err.Error()))
 	} else {
 		log.Info("queued agent run completed successfully")
+	}
+
+	// Reset consecutive failure counter on success.
+	if resetErr := p.repo.ResetFailureCounter(ctx, agent.ID); resetErr != nil {
+		log.Warn("failed to reset failure counter", slog.String("agent_id", agent.ID), slog.String("error", resetErr.Error()))
 	}
 
 	// Re-enqueue parent run (if any) with child's result as trigger_message.
@@ -268,10 +281,35 @@ func (p *WorkerPool) reenqueueParent(ctx context.Context, log *slog.Logger, run 
 		triggerMsg += fmt.Sprintf("\n\n---\nChild trigger message:\n%s", childTrigger)
 	}
 
+	// Queue depth check — skip parent re-enqueue if the parent agent already has
+	// too many pending jobs (prevents runaway queue explosion).
+	maxPending := p.executor.safeguards.MaxPendingJobs
+	if maxPending <= 0 {
+		maxPending = 10 // safe fallback
+	}
+	pendingCount, countErr := p.repo.CountPendingJobsForAgent(ctx, parentRun.AgentID)
+	if countErr != nil {
+		log.Warn("failed to count pending jobs for parent agent, proceeding with re-enqueue",
+			slog.String("parent_agent_id", parentRun.AgentID),
+			slog.String("error", countErr.Error()),
+		)
+	} else if pendingCount >= maxPending {
+		log.Warn("skipping parent re-enqueue: queue full",
+			slog.String("parent_run_id", *run.ParentRunID),
+			slog.String("parent_agent_id", parentRun.AgentID),
+			slog.Int("pending_jobs", pendingCount),
+			slog.Int("max_pending", maxPending),
+			slog.String("child_agent", childAgentName),
+			slog.String("child_status", status),
+		)
+		return
+	}
+
 	_, err = p.repo.CreateRunQueued(ctx, parentRun.AgentID, 1, CreateRunQueuedOptions{
 		TriggerMessage:  &triggerMsg,
 		ParentRunID:     parentRun.ParentRunID, // propagate grandparent so the chain continues
 		TriggerMetadata: parentRun.TriggerMetadata,
+		MaxPendingJobs:  p.executor.safeguards.MaxPendingJobs,
 	})
 	if err != nil {
 		log.Warn("failed to re-enqueue parent run",
@@ -285,6 +323,45 @@ func (p *WorkerPool) reenqueueParent(ctx context.Context, log *slog.Logger, run 
 		slog.String("child_agent", childAgentName),
 		slog.String("child_status", status),
 	)
+}
+
+// handleFailure increments the consecutive failure counter for an agent and
+// auto-disables it when the threshold is reached.
+func (p *WorkerPool) handleFailure(ctx context.Context, log *slog.Logger, agent *Agent) {
+	if err := p.repo.IncrementFailureCounter(ctx, agent.ID); err != nil {
+		log.Warn("failed to increment failure counter",
+			slog.String("agent_id", agent.ID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+
+	// Reload agent to get the updated consecutive_failures count.
+	updated, err := p.repo.FindByID(ctx, agent.ID, nil)
+	if err != nil || updated == nil {
+		log.Warn("failed to reload agent after failure increment", slog.String("agent_id", agent.ID))
+		return
+	}
+
+	threshold := p.executor.safeguards.ConsecutiveFailureThreshold
+	if threshold <= 0 {
+		threshold = 5 // safe fallback
+	}
+	if updated.ConsecutiveFailures >= threshold {
+		reason := fmt.Sprintf("auto-disabled after %d consecutive failures", updated.ConsecutiveFailures)
+		log.Error("auto-disabling agent due to consecutive failures",
+			slog.String("agent_id", agent.ID),
+			slog.String("agent_name", agent.Name),
+			slog.Int("consecutive_failures", updated.ConsecutiveFailures),
+			slog.Int("threshold", threshold),
+		)
+		if disableErr := p.repo.DisableAgent(ctx, agent.ID, reason); disableErr != nil {
+			log.Error("failed to auto-disable agent",
+				slog.String("agent_id", agent.ID),
+				slog.String("error", disableErr.Error()),
+			)
+		}
+	}
 }
 
 // sleep pauses the worker for the poll interval or until context is cancelled.

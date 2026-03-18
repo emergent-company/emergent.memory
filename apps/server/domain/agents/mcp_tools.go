@@ -531,6 +531,7 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		// TriggerMessage so the worker uses it instead of the agent's prompt.
 		queuedOpts := CreateRunQueuedOptions{
 			TriggerMessage: &userMessage,
+			MaxPendingJobs: h.executor.safeguards.MaxPendingJobs,
 		}
 		if callerRunID := callerRunIDFromContext(ctx); callerRunID != "" {
 			queuedOpts.ParentRunID = &callerRunID

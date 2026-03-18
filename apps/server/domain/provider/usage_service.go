@@ -260,6 +260,37 @@ type budgetNotification struct {
 	Category   *string `bun:"category"`
 }
 
+// CheckBudgetExceeded returns true when the project's current-month spend has
+// reached or exceeded its configured budget_usd. If no budget is set (NULL or
+// zero), it returns false (no limit). If any query fails, it returns false so
+// that callers fail-open and do not block agent execution.
+func (s *UsageService) CheckBudgetExceeded(ctx context.Context, projectID string) (bool, error) {
+	// 1. Fetch the project's budget from kb.projects.
+	var result struct {
+		BudgetUSD *float64 `bun:"budget_usd"`
+	}
+	err := s.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("budget_usd").
+		Where("id = ?", projectID).
+		Scan(ctx, &result)
+	if err != nil {
+		return false, fmt.Errorf("CheckBudgetExceeded: fetch budget: %w", err)
+	}
+	// No budget configured — treat as unlimited.
+	if result.BudgetUSD == nil || *result.BudgetUSD <= 0 {
+		return false, nil
+	}
+
+	// 2. Get current-month spend.
+	spend, err := s.repo.GetProjectCurrentMonthSpend(ctx, projectID)
+	if err != nil {
+		return false, fmt.Errorf("CheckBudgetExceeded: fetch spend: %w", err)
+	}
+
+	return spend >= *result.BudgetUSD, nil
+}
+
 // shutdown closes the event channel and waits for the worker to drain.
 func (s *UsageService) shutdown(ctx context.Context) error {
 	close(s.ch)

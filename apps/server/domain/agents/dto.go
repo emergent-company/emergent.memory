@@ -4,23 +4,24 @@ import "time"
 
 // AgentDTO is the response DTO for an agent
 type AgentDTO struct {
-	ID             string             `json:"id"`
-	ProjectID      string             `json:"projectId"`
-	Name           string             `json:"name"`
-	StrategyType   string             `json:"strategyType"`
-	Prompt         *string            `json:"prompt"`
-	CronSchedule   string             `json:"cronSchedule"`
-	Enabled        bool               `json:"enabled"`
-	TriggerType    AgentTriggerType   `json:"triggerType"`
-	ReactionConfig *ReactionConfig    `json:"reactionConfig"`
-	ExecutionMode  AgentExecutionMode `json:"executionMode"`
-	Capabilities   *AgentCapabilities `json:"capabilities"`
-	Config         map[string]any     `json:"config"`
-	Description    *string            `json:"description"`
-	LastRunAt      *time.Time         `json:"lastRunAt"`
-	LastRunStatus  *string            `json:"lastRunStatus"`
-	CreatedAt      time.Time          `json:"createdAt"`
-	UpdatedAt      time.Time          `json:"updatedAt"`
+	ID                  string             `json:"id"`
+	ProjectID           string             `json:"projectId"`
+	Name                string             `json:"name"`
+	StrategyType        string             `json:"strategyType"`
+	Prompt              *string            `json:"prompt"`
+	CronSchedule        string             `json:"cronSchedule"`
+	Enabled             bool               `json:"enabled"`
+	TriggerType         AgentTriggerType   `json:"triggerType"`
+	ReactionConfig      *ReactionConfig    `json:"reactionConfig"`
+	ExecutionMode       AgentExecutionMode `json:"executionMode"`
+	Capabilities        *AgentCapabilities `json:"capabilities"`
+	Config              map[string]any     `json:"config"`
+	Description         *string            `json:"description"`
+	LastRunAt           *time.Time         `json:"lastRunAt"`
+	LastRunStatus       *string            `json:"lastRunStatus"`
+	ConsecutiveFailures int                `json:"consecutiveFailures"`
+	CreatedAt           time.Time          `json:"createdAt"`
+	UpdatedAt           time.Time          `json:"updatedAt"`
 }
 
 // AgentRunDTO is the response DTO for an agent run
@@ -148,23 +149,24 @@ type APIResponse[T any] struct {
 // ToDTO converts an Agent entity to AgentDTO
 func (a *Agent) ToDTO() *AgentDTO {
 	return &AgentDTO{
-		ID:             a.ID,
-		ProjectID:      a.ProjectID,
-		Name:           a.Name,
-		StrategyType:   a.StrategyType,
-		Prompt:         a.Prompt,
-		CronSchedule:   a.CronSchedule,
-		Enabled:        a.Enabled,
-		TriggerType:    a.TriggerType,
-		ReactionConfig: a.ReactionConfig,
-		ExecutionMode:  a.ExecutionMode,
-		Capabilities:   a.Capabilities,
-		Config:         a.Config,
-		Description:    a.Description,
-		LastRunAt:      a.LastRunAt,
-		LastRunStatus:  a.LastRunStatus,
-		CreatedAt:      a.CreatedAt,
-		UpdatedAt:      a.UpdatedAt,
+		ID:                  a.ID,
+		ProjectID:           a.ProjectID,
+		Name:                a.Name,
+		StrategyType:        a.StrategyType,
+		Prompt:              a.Prompt,
+		CronSchedule:        a.CronSchedule,
+		Enabled:             a.Enabled,
+		TriggerType:         a.TriggerType,
+		ReactionConfig:      a.ReactionConfig,
+		ExecutionMode:       a.ExecutionMode,
+		Capabilities:        a.Capabilities,
+		Config:              a.Config,
+		Description:         a.Description,
+		LastRunAt:           a.LastRunAt,
+		LastRunStatus:       a.LastRunStatus,
+		ConsecutiveFailures: a.ConsecutiveFailures,
+		CreatedAt:           a.CreatedAt,
+		UpdatedAt:           a.UpdatedAt,
 	}
 }
 

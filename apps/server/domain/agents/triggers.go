@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
+
+	"github.com/robfig/cron/v3"
 
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
@@ -182,6 +185,15 @@ func (ts *TriggerService) SyncAllTriggers(ctx context.Context) error {
 func (ts *TriggerService) registerCronTrigger(agent *Agent) error {
 	taskName := triggerTaskName(agent.ID)
 
+	// Validate minimum cron interval before registering.
+	minMinutes := ts.executor.safeguards.MinCronIntervalMinutes
+	if minMinutes <= 0 {
+		minMinutes = 15 // safe fallback
+	}
+	if err := validateCronInterval(agent.CronSchedule, minMinutes); err != nil {
+		return fmt.Errorf("cron validation failed for agent %q: %w", agent.Name, err)
+	}
+
 	// Capture for closure
 	agentID := agent.ID
 	projectID := agent.ProjectID
@@ -347,6 +359,28 @@ func (ts *TriggerService) HandleEvent(ctx context.Context, objectType string, ev
 // executeTriggeredAgent looks up the agent and its corresponding AgentDefinition,
 // then executes it via the AgentExecutor.
 func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID string, projectID string) error {
+	// Check pending job queue depth before executing.
+	// This prevents cron triggers from flooding the queue when the agent is backed up.
+	maxPendingJobs := ts.executor.safeguards.MaxPendingJobs
+	if maxPendingJobs <= 0 {
+		maxPendingJobs = 10 // safe fallback
+	}
+	count, err := ts.repo.CountPendingJobsForAgent(ctx, agentID)
+	if err != nil {
+		// Fail-open: log warning and proceed so a DB hiccup doesn't halt agents.
+		ts.log.Warn("could not check pending job count, proceeding with execution",
+			slog.String("agent_id", agentID),
+			slog.String("error", err.Error()),
+		)
+	} else if count >= maxPendingJobs {
+		ts.log.Warn("skipping cron trigger, queue full",
+			slog.String("agent_id", agentID),
+			slog.Int("pending_jobs", count),
+			slog.Int("max_pending_jobs", maxPendingJobs),
+		)
+		return nil
+	}
+
 	// Look up the runtime agent
 	agent, err := ts.repo.FindByID(ctx, agentID, &projectID)
 	if err != nil {
@@ -409,4 +443,26 @@ func (ts *TriggerService) GetEventListeners(key string) []*Agent {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
 	return ts.eventListeners[key]
+}
+
+// validateCronInterval parses the given cron expression and returns an error if
+// the interval between consecutive executions is shorter than minMinutes.
+// This prevents agents from being scheduled too frequently and causing queue explosions.
+func validateCronInterval(cronExpr string, minMinutes int) error {
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	schedule, err := parser.Parse(cronExpr)
+	if err != nil {
+		return fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
+	}
+
+	now := time.Now()
+	next1 := schedule.Next(now)
+	next2 := schedule.Next(next1)
+	interval := next2.Sub(next1)
+
+	minDuration := time.Duration(minMinutes) * time.Minute
+	if interval < minDuration {
+		return fmt.Errorf("cron interval %.0fm is below minimum %dm (expression: %q)", interval.Minutes(), minMinutes, cronExpr)
+	}
+	return nil
 }
