@@ -17,14 +17,23 @@ func NewRepository(db bun.IDB) *Repository {
 	return &Repository{db: db}
 }
 
-// IsSuperadmin checks if a user is an active superadmin
-func (r *Repository) IsSuperadmin(ctx context.Context, userID string) (bool, error) {
-	exists, err := r.db.NewSelect().
-		Model((*Superadmin)(nil)).
+// IsSuperadmin checks if a user is an active superadmin and returns their role
+func (r *Repository) IsSuperadmin(ctx context.Context, userID string) (bool, string, error) {
+	var sa Superadmin
+	err := r.db.NewSelect().
+		Model(&sa).
 		Where("user_id = ?", userID).
 		Where("revoked_at IS NULL").
-		Exists(ctx)
-	return exists, err
+		Scan(ctx)
+
+	if err == sql.ErrNoRows {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+
+	return true, sa.Role, nil
 }
 
 // ListUsers returns paginated users with optional search and org filter

@@ -11,6 +11,7 @@ type Superadmin struct {
 	bun.BaseModel `bun:"table:core.superadmins,alias:sa"`
 
 	UserID    string     `bun:"user_id,pk,type:uuid" json:"userId"`
+	Role      string     `bun:"role,notnull" json:"role"`
 	GrantedBy *string    `bun:"granted_by,type:uuid" json:"grantedBy,omitempty"`
 	GrantedAt time.Time  `bun:"granted_at,notnull,default:now()" json:"grantedAt"`
 	RevokedAt *time.Time `bun:"revoked_at" json:"revokedAt,omitempty"`

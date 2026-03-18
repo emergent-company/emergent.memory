@@ -149,3 +149,196 @@ func (s *SuperadminTestSuite) TestGetMe_IgnoresProjectIDHeader() {
 	s.NoError(err)
 	s.Nil(result)
 }
+
+// =============================================================================
+// Superadmin Role Tests
+// =============================================================================
+
+// SuperadminMeResponse matches the DTO from apps/server/domain/superadmin/dto.go
+type SuperadminMeResponse struct {
+	IsSuperadmin bool   `json:"isSuperadmin"`
+	Role         string `json:"role,omitempty"`
+}
+
+func (s *SuperadminTestSuite) TestGetMe_WithFullRole_ReturnsRoleInResponse() {
+	// Arrange - create a superadmin with full role
+	userID := s.GetUserID("e2e-test-user")
+	s.DB.Exec(`
+		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
+		VALUES ($1, 'superadmin_full', $1, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_full', revoked_at = NULL
+	`, userID)
+
+	// Act
+	resp := s.Client.GET("/api/superadmin/me",
+		testutil.WithAuth("e2e-test-user"),
+	)
+
+	// Assert
+	s.Equal(http.StatusOK, resp.StatusCode)
+
+	var result SuperadminMeResponse
+	err := json.Unmarshal(resp.Body, &result)
+	s.NoError(err)
+	s.True(result.IsSuperadmin, "User should be a superadmin")
+	s.Equal("superadmin_full", result.Role, "Role should be superadmin_full")
+}
+
+func (s *SuperadminTestSuite) TestGetMe_WithReadonlyRole_ReturnsRoleInResponse() {
+	// Arrange - create a superadmin with readonly role
+	userID := s.GetUserID("e2e-user-two")
+	s.DB.Exec(`
+		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
+		VALUES ($1, 'superadmin_readonly', $1, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_readonly', revoked_at = NULL
+	`, userID)
+
+	// Act
+	resp := s.Client.GET("/api/superadmin/me",
+		testutil.WithAuth("e2e-user-two"),
+	)
+
+	// Assert
+	s.Equal(http.StatusOK, resp.StatusCode)
+
+	var result SuperadminMeResponse
+	err := json.Unmarshal(resp.Body, &result)
+	s.NoError(err)
+	s.True(result.IsSuperadmin, "User should be a superadmin")
+	s.Equal("superadmin_readonly", result.Role, "Role should be superadmin_readonly")
+}
+
+func (s *SuperadminTestSuite) TestFullRole_CanAccessWriteEndpoints() {
+	// Arrange - create a superadmin with full role and a test user to delete
+	adminUserID := s.GetUserID("e2e-test-user")
+	targetUserID := s.GetUserID("e2e-user-three")
+
+	s.DB.Exec(`
+		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
+		VALUES ($1, 'superadmin_full', $1, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_full', revoked_at = NULL
+	`, adminUserID)
+
+	// Act - attempt to delete a user (write operation)
+	resp := s.Client.DELETE("/api/superadmin/users/"+targetUserID,
+		testutil.WithAuth("e2e-test-user"),
+	)
+
+	// Assert - should succeed
+	s.Equal(http.StatusOK, resp.StatusCode, "Full role should allow write operations")
+}
+
+func (s *SuperadminTestSuite) TestReadonlyRole_CannotAccessWriteEndpoints() {
+	// Arrange - create a superadmin with readonly role
+	adminUserID := s.GetUserID("e2e-user-two")
+	targetUserID := s.GetUserID("e2e-user-three")
+
+	s.DB.Exec(`
+		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
+		VALUES ($1, 'superadmin_readonly', $1, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_readonly', revoked_at = NULL
+	`, adminUserID)
+
+	// Act - attempt to delete a user (write operation)
+	resp := s.Client.DELETE("/api/superadmin/users/"+targetUserID,
+		testutil.WithAuth("e2e-user-two"),
+	)
+
+	// Assert - should be forbidden
+	s.Equal(http.StatusForbidden, resp.StatusCode, "Readonly role should not allow write operations")
+}
+
+func (s *SuperadminTestSuite) TestReadonlyRole_CanAccessReadEndpoints() {
+	// Arrange - create a superadmin with readonly role
+	userID := s.GetUserID("e2e-user-two")
+	s.DB.Exec(`
+		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
+		VALUES ($1, 'superadmin_readonly', $1, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_readonly', revoked_at = NULL
+	`, userID)
+
+	// Act - list users (read operation)
+	resp := s.Client.GET("/api/superadmin/users",
+		testutil.WithAuth("e2e-user-two"),
+	)
+
+	// Assert - should succeed
+	s.Equal(http.StatusOK, resp.StatusCode, "Readonly role should allow read operations")
+}
+
+func (s *SuperadminTestSuite) TestFullRole_CanAccessReadEndpoints() {
+	// Arrange - create a superadmin with full role
+	userID := s.GetUserID("e2e-test-user")
+	s.DB.Exec(`
+		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
+		VALUES ($1, 'superadmin_full', $1, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_full', revoked_at = NULL
+	`, userID)
+
+	// Act - list users (read operation)
+	resp := s.Client.GET("/api/superadmin/users",
+		testutil.WithAuth("e2e-test-user"),
+	)
+
+	// Assert - should succeed
+	s.Equal(http.StatusOK, resp.StatusCode, "Full role should allow read operations")
+}
+
+func (s *SuperadminTestSuite) TestReadonlyRole_MultipleWriteEndpointsDenied() {
+	// Arrange - create a superadmin with readonly role
+	userID := s.GetUserID("e2e-user-two")
+	s.DB.Exec(`
+		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
+		VALUES ($1, 'superadmin_readonly', $1, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_readonly', revoked_at = NULL
+	`, userID)
+
+	// Test multiple write endpoints
+	writeEndpoints := []struct {
+		method string
+		path   string
+	}{
+		{"DELETE", "/api/superadmin/users/" + userID},
+		{"DELETE", "/api/superadmin/organizations/" + s.OrgID},
+		{"DELETE", "/api/superadmin/projects/" + s.ProjectID},
+		{"POST", "/api/superadmin/embedding-jobs/delete"},
+		{"POST", "/api/superadmin/extraction-jobs/delete"},
+	}
+
+	for _, endpoint := range writeEndpoints {
+		// Act
+		var resp *testutil.HTTPResponse
+		if endpoint.method == "DELETE" {
+			resp = s.Client.DELETE(endpoint.path,
+				testutil.WithAuth("e2e-user-two"),
+			)
+		} else {
+			resp = s.Client.POST(endpoint.path, map[string]interface{}{"ids": []string{"test-id"}},
+				testutil.WithAuth("e2e-user-two"),
+			)
+		}
+
+		// Assert
+		s.Equal(http.StatusForbidden, resp.StatusCode,
+			"Readonly role should deny %s %s", endpoint.method, endpoint.path)
+	}
+}
+
+func (s *SuperadminTestSuite) TestRevokedSuperadmin_CannotAccessEndpoints() {
+	// Arrange - create and then revoke a superadmin
+	userID := s.GetUserID("e2e-test-user")
+	s.DB.Exec(`
+		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at, revoked_at, revoked_by)
+		VALUES ($1, 'superadmin_full', $1, NOW(), NOW(), $1)
+		ON CONFLICT (user_id) DO UPDATE 
+		SET role = 'superadmin_full', revoked_at = NOW(), revoked_by = $1
+	`, userID)
+
+	// Act - attempt to access read endpoint
+	resp := s.Client.GET("/api/superadmin/users",
+		testutil.WithAuth("e2e-test-user"),
+	)
+
+	// Assert - should be forbidden
+	s.Equal(http.StatusForbidden, resp.StatusCode, "Revoked superadmin should not have access")
+}

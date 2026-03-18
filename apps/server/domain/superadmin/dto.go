@@ -30,7 +30,8 @@ func NewPaginationMeta(page, limit, total int) PaginationMeta {
 
 // SuperadminMeResponse is the response for GET /api/superadmin/me
 type SuperadminMeResponse struct {
-	IsSuperadmin bool `json:"isSuperadmin"`
+	IsSuperadmin bool   `json:"isSuperadmin"`
+	Role         string `json:"role,omitempty"` // "superadmin_full" or "superadmin_readonly"
 }
 
 // UserOrgMembershipDTO represents a user's org membership
