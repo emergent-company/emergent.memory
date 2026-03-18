@@ -21,14 +21,56 @@ SET row_security = off;
 -- Name: core; Type: SCHEMA; Schema: -; Owner: -
 --
 
-CREATE SCHEMA IF NOT EXISTS core;
+CREATE SCHEMA core;
 
 
 --
 -- Name: kb; Type: SCHEMA; Schema: -; Owner: -
 --
 
-CREATE SCHEMA IF NOT EXISTS kb;
+CREATE SCHEMA kb;
+
+
+--
+-- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
+
+
+--
+-- Name: uuid-ossp; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION "uuid-ossp"; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UUIDs)';
+
+
+--
+-- Name: vector; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION vector; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION vector IS 'vector data type and ivfflat and hnsw access methods';
 
 
 --
@@ -232,7 +274,7 @@ SET default_table_access_method = heap;
 CREATE TABLE core.api_tokens (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     project_id uuid,
-    user_id uuid NOT NULL,
+    user_id uuid,
     name character varying(255) NOT NULL,
     token_hash character varying(64) NOT NULL,
     token_prefix character varying(12) NOT NULL,
@@ -240,7 +282,8 @@ CREATE TABLE core.api_tokens (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     last_used_at timestamp with time zone,
     revoked_at timestamp with time zone,
-    token_encrypted text
+    token_encrypted text,
+    expires_at timestamp with time zone
 );
 
 
@@ -281,7 +324,9 @@ CREATE TABLE core.superadmins (
     granted_at timestamp with time zone DEFAULT now() NOT NULL,
     revoked_at timestamp with time zone,
     revoked_by uuid,
-    notes text
+    notes text,
+    role character varying(50) DEFAULT 'superadmin_full'::character varying NOT NULL,
+    CONSTRAINT superadmins_role_check CHECK (((role)::text = ANY ((ARRAY['superadmin_full'::character varying, 'superadmin_readonly'::character varying])::text[])))
 );
 
 
@@ -415,7 +460,8 @@ CREATE TABLE kb.agent_definitions (
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     sandbox_config jsonb,
-    dispatch_mode text DEFAULT 'sync'::text NOT NULL
+    dispatch_mode text DEFAULT 'sync'::text NOT NULL,
+    skills text[] DEFAULT '{}'::text[] NOT NULL
 );
 
 
@@ -604,7 +650,7 @@ COMMENT ON COLUMN kb.agent_run_jobs.next_run_at IS 'Earliest time a worker may c
 CREATE TABLE kb.agent_run_messages (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     run_id uuid NOT NULL,
-    role character varying(20) NOT NULL,
+    role text NOT NULL,
     content jsonb DEFAULT '{}'::jsonb NOT NULL,
     step_number integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
@@ -1569,7 +1615,8 @@ CREATE TABLE kb.invites (
     expires_at timestamp with time zone,
     accepted_at timestamp with time zone,
     revoked_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    invited_by_user_id uuid
 );
 
 
@@ -1631,7 +1678,8 @@ CREATE TABLE kb.mcp_server_tools (
     input_schema jsonb DEFAULT '{}'::jsonb,
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    config jsonb
+    config jsonb,
+    config_keys text[] DEFAULT '{}'::text[]
 );
 
 
@@ -1686,7 +1734,8 @@ CREATE TABLE kb.mcp_servers (
     url text,
     headers jsonb DEFAULT '{}'::jsonb,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    description text
 );
 
 
@@ -2007,6 +2056,13 @@ CREATE TABLE kb.project_memberships (
 
 
 --
+-- Name: COLUMN project_memberships.role; Type: COMMENT; Schema: kb; Owner: -
+--
+
+COMMENT ON COLUMN kb.project_memberships.role IS 'Member role: project_admin | project_user | project_viewer';
+
+
+--
 -- Name: project_object_schema_registry; Type: TABLE; Schema: kb; Owner: -
 --
 
@@ -2066,6 +2122,21 @@ CREATE TABLE kb.project_schemas (
 
 
 --
+-- Name: project_settings; Type: TABLE; Schema: kb; Owner: -
+--
+
+CREATE TABLE kb.project_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_id uuid NOT NULL,
+    category text NOT NULL,
+    key text NOT NULL,
+    value jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: projects; Type: TABLE; Schema: kb; Owner: -
 --
 
@@ -2073,7 +2144,6 @@ CREATE TABLE kb.projects (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     organization_id uuid NOT NULL,
     name text NOT NULL,
-    kb_purpose text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     auto_extract_objects boolean DEFAULT false NOT NULL,
@@ -2083,7 +2153,10 @@ CREATE TABLE kb.projects (
     allow_parallel_extraction boolean DEFAULT false NOT NULL,
     extraction_config jsonb,
     deleted_at timestamp with time zone,
-    deleted_by uuid
+    deleted_by uuid,
+    budget_usd numeric(10,4),
+    budget_alert_threshold numeric(3,2) DEFAULT 0.80 NOT NULL,
+    project_info text
 );
 
 
@@ -2114,7 +2187,8 @@ CREATE TABLE kb.provider_supported_models (
     model_name character varying(255) NOT NULL,
     model_type character varying(50) NOT NULL,
     display_name character varying(255),
-    last_synced timestamp with time zone DEFAULT now() NOT NULL
+    last_synced timestamp with time zone DEFAULT now() NOT NULL,
+    max_output_tokens integer
 );
 
 
@@ -2290,6 +2364,8 @@ CREATE TABLE kb.skills (
     project_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid,
+    CONSTRAINT chk_skills_scope CHECK ((NOT ((project_id IS NOT NULL) AND (org_id IS NOT NULL)))),
     CONSTRAINT skills_name_check CHECK (((name ~ '^[a-z0-9]+(-[a-z0-9]+)*$'::text) AND ((char_length(name) >= 1) AND (char_length(name) <= 64))))
 );
 
@@ -2364,6 +2440,124 @@ CREATE TABLE kb.user_recent_items (
     CONSTRAINT user_recent_items_action_type_check CHECK (((action_type)::text = ANY (ARRAY[('viewed'::character varying)::text, ('edited'::character varying)::text]))),
     CONSTRAINT user_recent_items_resource_type_check CHECK (((resource_type)::text = ANY (ARRAY[('document'::character varying)::text, ('object'::character varying)::text])))
 );
+
+
+--
+-- Name: checkpoint_blobs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.checkpoint_blobs (
+    thread_id text NOT NULL,
+    checkpoint_ns text DEFAULT ''::text NOT NULL,
+    channel text NOT NULL,
+    version text NOT NULL,
+    type text NOT NULL,
+    blob bytea
+);
+
+
+--
+-- Name: checkpoint_migrations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.checkpoint_migrations (
+    v integer NOT NULL
+);
+
+
+--
+-- Name: checkpoint_writes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.checkpoint_writes (
+    thread_id text NOT NULL,
+    checkpoint_ns text DEFAULT ''::text NOT NULL,
+    checkpoint_id text NOT NULL,
+    task_id text NOT NULL,
+    idx integer NOT NULL,
+    channel text NOT NULL,
+    type text,
+    blob bytea NOT NULL
+);
+
+
+--
+-- Name: checkpoints; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.checkpoints (
+    thread_id text NOT NULL,
+    checkpoint_ns text DEFAULT ''::text NOT NULL,
+    checkpoint_id text NOT NULL,
+    parent_checkpoint_id text,
+    type text,
+    checkpoint jsonb NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL
+);
+
+
+--
+-- Name: goose_db_version; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.goose_db_version (
+    id integer NOT NULL,
+    version_id bigint NOT NULL,
+    is_applied boolean NOT NULL,
+    tstamp timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: goose_db_version_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.goose_db_version ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.goose_db_version_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: typeorm_migrations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.typeorm_migrations (
+    id integer NOT NULL,
+    "timestamp" bigint NOT NULL,
+    name character varying NOT NULL
+);
+
+
+--
+-- Name: typeorm_migrations_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.typeorm_migrations_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: typeorm_migrations_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.typeorm_migrations_id_seq OWNED BY public.typeorm_migrations.id;
+
+
+--
+-- Name: typeorm_migrations id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.typeorm_migrations ALTER COLUMN id SET DEFAULT nextval('public.typeorm_migrations_id_seq'::regclass);
 
 
 --
@@ -3047,6 +3241,22 @@ ALTER TABLE ONLY kb.project_schemas
 
 
 --
+-- Name: project_settings project_settings_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.project_settings
+    ADD CONSTRAINT project_settings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_settings project_settings_project_id_category_key_key; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.project_settings
+    ADD CONSTRAINT project_settings_project_id_category_key_key UNIQUE (project_id, category, key);
+
+
+--
 -- Name: provider_pricing provider_pricing_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
 --
 
@@ -3175,6 +3385,54 @@ ALTER TABLE ONLY kb.user_recent_items
 
 
 --
+-- Name: typeorm_migrations PK_bb2f075707dd300ba86d0208923; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.typeorm_migrations
+    ADD CONSTRAINT "PK_bb2f075707dd300ba86d0208923" PRIMARY KEY (id);
+
+
+--
+-- Name: checkpoint_blobs checkpoint_blobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.checkpoint_blobs
+    ADD CONSTRAINT checkpoint_blobs_pkey PRIMARY KEY (thread_id, checkpoint_ns, channel, version);
+
+
+--
+-- Name: checkpoint_migrations checkpoint_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.checkpoint_migrations
+    ADD CONSTRAINT checkpoint_migrations_pkey PRIMARY KEY (v);
+
+
+--
+-- Name: checkpoint_writes checkpoint_writes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.checkpoint_writes
+    ADD CONSTRAINT checkpoint_writes_pkey PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx);
+
+
+--
+-- Name: checkpoints checkpoints_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.checkpoints
+    ADD CONSTRAINT checkpoints_pkey PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id);
+
+
+--
+-- Name: goose_db_version goose_db_version_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.goose_db_version
+    ADD CONSTRAINT goose_db_version_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: IDX_2e88b95787b903d46ab3cc3eb9; Type: INDEX; Schema: core; Owner: -
 --
 
@@ -3200,6 +3458,13 @@ CREATE UNIQUE INDEX "IDX_6594597afde633cfeab9a806e4" ON core.user_emails USING b
 --
 
 CREATE UNIQUE INDEX api_tokens_user_name_unique ON core.api_tokens USING btree (user_id, name) WHERE (revoked_at IS NULL);
+
+
+--
+-- Name: idx_api_tokens_expires_at; Type: INDEX; Schema: core; Owner: -
+--
+
+CREATE INDEX idx_api_tokens_expires_at ON core.api_tokens USING btree (expires_at) WHERE (expires_at IS NOT NULL);
 
 
 --
@@ -4323,6 +4588,13 @@ CREATE INDEX idx_orgs_deleted_at ON kb.orgs USING btree (deleted_at) WHERE (dele
 
 
 --
+-- Name: idx_project_settings_project_category; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_project_settings_project_category ON kb.project_settings USING btree (project_id, category);
+
+
+--
 -- Name: idx_projects_deleted_at; Type: INDEX; Schema: kb; Owner: -
 --
 
@@ -4442,10 +4714,24 @@ CREATE UNIQUE INDEX idx_skills_name_global ON kb.skills USING btree (name) WHERE
 
 
 --
+-- Name: idx_skills_name_org; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_skills_name_org ON kb.skills USING btree (name, org_id) WHERE ((project_id IS NULL) AND (org_id IS NOT NULL));
+
+
+--
 -- Name: idx_skills_name_project; Type: INDEX; Schema: kb; Owner: -
 --
 
 CREATE UNIQUE INDEX idx_skills_name_project ON kb.skills USING btree (name, project_id) WHERE (project_id IS NOT NULL);
+
+
+--
+-- Name: idx_skills_org_id; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_skills_org_id ON kb.skills USING btree (org_id);
 
 
 --
@@ -5139,6 +5425,14 @@ ALTER TABLE ONLY kb.graph_schemas
 
 
 --
+-- Name: invites invites_invited_by_user_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.invites
+    ADD CONSTRAINT invites_invited_by_user_id_fkey FOREIGN KEY (invited_by_user_id) REFERENCES core.user_profiles(id) ON DELETE SET NULL;
+
+
+--
 -- Name: llm_usage_events llm_usage_events_org_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
 --
 
@@ -5267,6 +5561,14 @@ ALTER TABLE ONLY kb.project_schemas
 
 
 --
+-- Name: project_settings project_settings_project_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.project_settings
+    ADD CONSTRAINT project_settings_project_id_fkey FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
+
+
+--
 -- Name: projects projects_deleted_by_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
 --
 
@@ -5336,6 +5638,14 @@ ALTER TABLE ONLY kb.schema_studio_sessions
 
 ALTER TABLE ONLY kb.schema_studio_sessions
     ADD CONSTRAINT schema_studio_sessions_schema_id_fkey FOREIGN KEY (pack_id) REFERENCES kb.graph_schemas(id) ON DELETE CASCADE;
+
+
+--
+-- Name: skills skills_org_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.skills
+    ADD CONSTRAINT skills_org_id_fkey FOREIGN KEY (org_id) REFERENCES kb.orgs(id) ON DELETE CASCADE;
 
 
 --
@@ -6368,23 +6678,5 @@ CREATE POLICY user_recent_items_isolation ON kb.user_recent_items USING ((user_i
 --
 -- PostgreSQL database dump complete
 --
-
--- ============================================================
--- Migrations 54-57: applied here to keep schema.sql current.
--- Migration 54: add org_id to kb.skills
--- ============================================================
-ALTER TABLE kb.skills ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES kb.orgs(id) ON DELETE CASCADE;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_org ON kb.skills (name, org_id) WHERE project_id IS NULL AND org_id IS NOT NULL;
-ALTER TABLE kb.skills DROP CONSTRAINT IF EXISTS chk_skills_scope;
-ALTER TABLE kb.skills ADD CONSTRAINT chk_skills_scope CHECK (NOT (project_id IS NOT NULL AND org_id IS NOT NULL));
-CREATE INDEX IF NOT EXISTS idx_skills_org_id ON kb.skills (org_id);
-
--- Migration 55: add project_info to kb.projects, drop kb_purpose
-ALTER TABLE kb.projects ADD COLUMN IF NOT EXISTS project_info text;
-UPDATE kb.projects SET project_info = kb_purpose WHERE kb_purpose IS NOT NULL AND kb_purpose != '' AND project_info IS NULL;
-ALTER TABLE kb.projects DROP COLUMN IF EXISTS kb_purpose;
-
--- Migration 57: add max_output_tokens to kb.provider_supported_models
-ALTER TABLE kb.provider_supported_models ADD COLUMN IF NOT EXISTS max_output_tokens INT;
 
 

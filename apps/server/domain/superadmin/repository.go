@@ -40,8 +40,9 @@ func (r *Repository) IsSuperadmin(ctx context.Context, userID string) (bool, str
 func (r *Repository) ListUsers(ctx context.Context, page, limit int, search, orgID string) ([]UserProfile, int, error) {
 	offset := (page - 1) * limit
 
+	var users []UserProfile
 	q := r.db.NewSelect().
-		Model((*UserProfile)(nil)).
+		Model(&users).
 		Relation("Emails").
 		Where("up.deleted_at IS NULL").
 		Order("up.created_at DESC")
@@ -70,8 +71,7 @@ func (r *Repository) ListUsers(ctx context.Context, page, limit int, search, org
 	}
 
 	// Get paginated results
-	var users []UserProfile
-	err = q.Offset(offset).Limit(limit).Scan(ctx, &users)
+	err = q.Offset(offset).Limit(limit).Scan(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1002,4 +1002,27 @@ func (r *Repository) GetProject(ctx context.Context, projectID string) (*Project
 		return nil, nil
 	}
 	return &project, err
+}
+
+// CreateServiceUser inserts a synthetic user profile (no Zitadel account) and returns its ID.
+func (r *Repository) CreateServiceUser(ctx context.Context, zitadelUserID, displayName string) (string, error) {
+	var id string
+	err := r.db.NewRaw(
+		`INSERT INTO core.user_profiles (zitadel_user_id, display_name)
+		 VALUES (?, ?) RETURNING id`,
+		zitadelUserID, displayName,
+	).Scan(ctx, &id)
+	return id, err
+}
+
+// GrantSuperadminToUser inserts a superadmin_readonly grant for the given user.
+func (r *Repository) GrantSuperadminToUser(ctx context.Context, userID, grantedBy string, notes *string) error {
+	sa := &Superadmin{
+		UserID:    userID,
+		Role:      "superadmin_readonly",
+		GrantedBy: &grantedBy,
+		Notes:     notes,
+	}
+	_, err := r.db.NewInsert().Model(sa).Exec(ctx)
+	return err
 }

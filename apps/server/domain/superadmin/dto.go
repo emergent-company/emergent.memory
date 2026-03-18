@@ -34,6 +34,21 @@ type SuperadminMeResponse struct {
 	Role         string `json:"role,omitempty"` // "superadmin_full" or "superadmin_readonly"
 }
 
+// CreateServiceTokenRequest is the request body for POST /api/superadmin/service-tokens
+type CreateServiceTokenRequest struct {
+	Name  string  `json:"name"`
+	Notes *string `json:"notes,omitempty"`
+}
+
+// CreateServiceTokenResponse is the response for POST /api/superadmin/service-tokens
+// The token field is only returned once and cannot be retrieved again.
+type CreateServiceTokenResponse struct {
+	UserID  string `json:"userId"`
+	TokenID string `json:"tokenId"`
+	Token   string `json:"token"`
+	Name    string `json:"name"`
+}
+
 // UserOrgMembershipDTO represents a user's org membership
 type UserOrgMembershipDTO struct {
 	OrgID    string    `json:"orgId"`

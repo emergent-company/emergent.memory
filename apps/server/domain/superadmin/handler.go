@@ -1,23 +1,26 @@
 package superadmin
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // Handler handles HTTP requests for superadmin
 type Handler struct {
-	repo *Repository
+	repo     *Repository
+	tokenSvc *apitoken.Service
 }
 
 // NewHandler creates a new superadmin handler
-func NewHandler(repo *Repository) *Handler {
-	return &Handler{repo: repo}
+func NewHandler(repo *Repository, tokenSvc *apitoken.Service) *Handler {
+	return &Handler{repo: repo, tokenSvc: tokenSvc}
 }
 
 // getPaginationParams extracts pagination params from query string
@@ -1042,5 +1045,62 @@ func (h *Handler) CancelSyncJobs(c echo.Context) error {
 		Success:        true,
 		CancelledCount: cancelledCount,
 		Message:        "Sync jobs cancelled successfully",
+	})
+}
+
+// CreateServiceToken handles POST /api/superadmin/service-tokens
+// @Summary      Create a machine-to-machine service token (superadmin_full only)
+// @Description  Provisions a synthetic service account user with superadmin_readonly role and returns a persistent account-level API token. The token is only shown once.
+// @Tags         superadmin
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateServiceTokenRequest true "Service token name and optional notes"
+// @Success      201 {object} CreateServiceTokenResponse "Created service token (shown once)"
+// @Failure      400 {object} apperror.Error "Missing or invalid name"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin_full)"
+// @Router       /api/superadmin/service-tokens [post]
+// @Security     bearerAuth
+func (h *Handler) CreateServiceToken(c echo.Context) error {
+	grantedBy, err := h.requireSuperadminRole(c, "superadmin_full")
+	if err != nil {
+		return err
+	}
+
+	var req CreateServiceTokenRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest
+	}
+	if req.Name == "" {
+		return apperror.ErrBadRequest.WithMessage("name is required")
+	}
+
+	ctx := c.Request().Context()
+
+	// 1. Create a synthetic service account user (no Zitadel account)
+	zitadelID := fmt.Sprintf("svc_%s", req.Name)
+	displayName := fmt.Sprintf("Service Account: %s", req.Name)
+	userID, err := h.repo.CreateServiceUser(ctx, zitadelID, displayName)
+	if err != nil {
+		return apperror.NewInternal("failed to create service user", err)
+	}
+
+	// 2. Grant superadmin_readonly to the new user
+	if err := h.repo.GrantSuperadminToUser(ctx, userID, grantedBy, req.Notes); err != nil {
+		return apperror.NewInternal("failed to grant superadmin role", err)
+	}
+
+	// 3. Create a persistent account-level API token with readonly scopes
+	scopes := []string{"data:read", "schema:read", "agents:read", "projects:read"}
+	result, err := h.tokenSvc.CreateAccountToken(ctx, userID, req.Name, scopes)
+	if err != nil {
+		return apperror.NewInternal("failed to create API token", err)
+	}
+
+	return c.JSON(http.StatusCreated, CreateServiceTokenResponse{
+		UserID:  userID,
+		TokenID: result.ID,
+		Token:   result.Token,
+		Name:    req.Name,
 	})
 }

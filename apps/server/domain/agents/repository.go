@@ -549,6 +549,7 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 			Temperature: &temperature,
 		},
 		Tools:      canonicalTools,
+		Skills:     []string{},
 		FlowType:   FlowTypeSingle,
 		IsDefault:  true,
 		MaxSteps:   &maxSteps,
@@ -810,6 +811,7 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 			Temperature: &temperature,
 		},
 		Tools:      canonicalTools,
+		Skills:     []string{},
 		FlowType:   FlowTypeSingle,
 		IsDefault:  false,
 		MaxSteps:   &maxSteps,
@@ -1044,6 +1046,7 @@ func (r *Repository) EnsureCliAssistantAgentV2(ctx context.Context, projectID st
 			Temperature: &temperature,
 		},
 		Tools:         canonicalTools,
+		Skills:        []string{},
 		FlowType:      FlowTypeSingle,
 		IsDefault:     false,
 		MaxSteps:      &maxSteps,
@@ -1935,4 +1938,70 @@ func (r *Repository) GetFirstProjectIDByOrgID(ctx context.Context, orgID string)
 		return "", fmt.Errorf("GetFirstProjectIDByOrgID: %w", err)
 	}
 	return projectID, nil
+}
+
+// ============================================================================
+// Agent Safeguards Repository Methods
+// ============================================================================
+
+// CountPendingJobsForAgent returns the number of pending and processing jobs
+// for the given agent. Used to enforce per-agent queue depth limits.
+func (r *Repository) CountPendingJobsForAgent(ctx context.Context, agentID string) (int, error) {
+	var count int
+	err := r.db.NewSelect().
+		TableExpr("kb.agent_run_jobs AS arj").
+		ColumnExpr("COUNT(*)").
+		Join("JOIN kb.agent_runs AS ar ON ar.id = arj.run_id").
+		Where("ar.agent_id = ?", agentID).
+		Where("arj.status IN (?)", bun.In([]string{
+			string(JobStatusPending),
+			string(JobStatusProcessing),
+		})).
+		Scan(ctx, &count)
+	if err != nil {
+		return 0, fmt.Errorf("CountPendingJobsForAgent: %w", err)
+	}
+	return count, nil
+}
+
+// IncrementFailureCounter atomically increments the consecutive_failures counter
+// for the given agent.
+func (r *Repository) IncrementFailureCounter(ctx context.Context, agentID string) error {
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.agents").
+		Set("consecutive_failures = consecutive_failures + 1").
+		Where("id = ?", agentID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("IncrementFailureCounter: %w", err)
+	}
+	return nil
+}
+
+// ResetFailureCounter resets the consecutive_failures counter to 0 for the
+// given agent (called after a successful run).
+func (r *Repository) ResetFailureCounter(ctx context.Context, agentID string) error {
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.agents").
+		Set("consecutive_failures = 0").
+		Where("id = ?", agentID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("ResetFailureCounter: %w", err)
+	}
+	return nil
+}
+
+// DisableAgent sets enabled=false for the given agent. The reason is logged by
+// the caller; this method only performs the database update.
+func (r *Repository) DisableAgent(ctx context.Context, agentID string, reason string) error {
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.agents").
+		Set("enabled = false").
+		Where("id = ?", agentID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("DisableAgent(%s): %w", reason, err)
+	}
+	return nil
 }

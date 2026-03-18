@@ -297,7 +297,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register superadmin routes
 	superadminRepo := superadmin.NewRepository(db)
-	superadminHandler := superadmin.NewHandler(superadminRepo)
+	superadminHandler := superadmin.NewHandler(superadminRepo, apitokenSvc)
 	superadmin.RegisterRoutes(e, superadminHandler, authMiddleware)
 
 	// Register type registry routes

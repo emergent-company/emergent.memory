@@ -51,4 +51,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.GET("/sync-jobs/:id/logs", h.GetSyncJobLogs)
 	g.POST("/sync-jobs/delete", h.DeleteSyncJobs)
 	g.POST("/sync-jobs/cancel", h.CancelSyncJobs)
+
+	// Service tokens (machine-to-machine access)
+	g.POST("/service-tokens", h.CreateServiceToken)
 }
