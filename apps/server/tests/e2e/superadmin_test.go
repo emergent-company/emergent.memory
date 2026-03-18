@@ -161,13 +161,16 @@ type SuperadminMeResponse struct {
 }
 
 func (s *SuperadminTestSuite) TestGetMe_WithFullRole_ReturnsRoleInResponse() {
+	s.SkipIfExternalServer("requires direct database access")
+
 	// Arrange - create a superadmin with full role
-	userID := s.GetUserID("e2e-test-user")
-	s.DB.Exec(`
+	userID := testutil.AdminUser.ID
+	_, err := s.DB().NewRaw(`
 		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
-		VALUES ($1, 'superadmin_full', $1, NOW())
+		VALUES (?, 'superadmin_full', ?, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_full', revoked_at = NULL
-	`, userID)
+	`, userID, userID).Exec(s.Ctx)
+	s.Require().NoError(err)
 
 	// Act
 	resp := s.Client.GET("/api/superadmin/me",
@@ -178,46 +181,53 @@ func (s *SuperadminTestSuite) TestGetMe_WithFullRole_ReturnsRoleInResponse() {
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	var result SuperadminMeResponse
-	err := json.Unmarshal(resp.Body, &result)
+	err = json.Unmarshal(resp.Body, &result)
 	s.NoError(err)
 	s.True(result.IsSuperadmin, "User should be a superadmin")
 	s.Equal("superadmin_full", result.Role, "Role should be superadmin_full")
 }
 
 func (s *SuperadminTestSuite) TestGetMe_WithReadonlyRole_ReturnsRoleInResponse() {
-	// Arrange - create a superadmin with readonly role
-	userID := s.GetUserID("e2e-user-two")
-	s.DB.Exec(`
-		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
-		VALUES ($1, 'superadmin_readonly', $1, NOW())
-		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_readonly', revoked_at = NULL
-	`, userID)
+	s.SkipIfExternalServer("requires direct database access")
 
-	// Act
+	// Arrange - create a superadmin with readonly role
+	// Use WithScopeUser since we need a different user than AdminUser
+	userID := testutil.WithScopeUser.ID
+	_, err := s.DB().NewRaw(`
+		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
+		VALUES (?, 'superadmin_readonly', ?, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_readonly', revoked_at = NULL
+	`, userID, userID).Exec(s.Ctx)
+	s.Require().NoError(err)
+
+	// Act - use with-scope token which maps to WithScopeUser
 	resp := s.Client.GET("/api/superadmin/me",
-		testutil.WithAuth("e2e-user-two"),
+		testutil.WithAuth("with-scope"),
 	)
 
 	// Assert
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	var result SuperadminMeResponse
-	err := json.Unmarshal(resp.Body, &result)
+	err = json.Unmarshal(resp.Body, &result)
 	s.NoError(err)
 	s.True(result.IsSuperadmin, "User should be a superadmin")
 	s.Equal("superadmin_readonly", result.Role, "Role should be superadmin_readonly")
 }
 
 func (s *SuperadminTestSuite) TestFullRole_CanAccessWriteEndpoints() {
-	// Arrange - create a superadmin with full role and a test user to delete
-	adminUserID := s.GetUserID("e2e-test-user")
-	targetUserID := s.GetUserID("e2e-user-three")
+	s.SkipIfExternalServer("requires direct database access")
 
-	s.DB.Exec(`
+	// Arrange - create a superadmin with full role
+	adminUserID := testutil.AdminUser.ID
+	targetUserID := testutil.WithScopeUser.ID
+
+	_, err := s.DB().NewRaw(`
 		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
-		VALUES ($1, 'superadmin_full', $1, NOW())
+		VALUES (?, 'superadmin_full', ?, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_full', revoked_at = NULL
-	`, adminUserID)
+	`, adminUserID, adminUserID).Exec(s.Ctx)
+	s.Require().NoError(err)
 
 	// Act - attempt to delete a user (write operation)
 	resp := s.Client.DELETE("/api/superadmin/users/"+targetUserID,
@@ -229,19 +239,23 @@ func (s *SuperadminTestSuite) TestFullRole_CanAccessWriteEndpoints() {
 }
 
 func (s *SuperadminTestSuite) TestReadonlyRole_CannotAccessWriteEndpoints() {
-	// Arrange - create a superadmin with readonly role
-	adminUserID := s.GetUserID("e2e-user-two")
-	targetUserID := s.GetUserID("e2e-user-three")
+	s.SkipIfExternalServer("requires direct database access")
 
-	s.DB.Exec(`
+	// Arrange - create a superadmin with readonly role
+	adminUserID := testutil.AllScopesUser.ID
+	targetUserID := testutil.WithScopeUser.ID
+
+	_, err := s.DB().NewRaw(`
 		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
-		VALUES ($1, 'superadmin_readonly', $1, NOW())
+		VALUES (?, 'superadmin_readonly', ?, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_readonly', revoked_at = NULL
-	`, adminUserID)
+	`, adminUserID, adminUserID).Exec(s.Ctx)
+	s.Require().NoError(err)
 
 	// Act - attempt to delete a user (write operation)
+	// Use all-scopes token which maps to AllScopesUser
 	resp := s.Client.DELETE("/api/superadmin/users/"+targetUserID,
-		testutil.WithAuth("e2e-user-two"),
+		testutil.WithAuth("all-scopes"),
 	)
 
 	// Assert - should be forbidden
@@ -249,17 +263,21 @@ func (s *SuperadminTestSuite) TestReadonlyRole_CannotAccessWriteEndpoints() {
 }
 
 func (s *SuperadminTestSuite) TestReadonlyRole_CanAccessReadEndpoints() {
+	s.SkipIfExternalServer("requires direct database access")
+
 	// Arrange - create a superadmin with readonly role
-	userID := s.GetUserID("e2e-user-two")
-	s.DB.Exec(`
+	userID := testutil.GraphReadUser.ID
+	_, err := s.DB().NewRaw(`
 		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
-		VALUES ($1, 'superadmin_readonly', $1, NOW())
+		VALUES (?, 'superadmin_readonly', ?, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_readonly', revoked_at = NULL
-	`, userID)
+	`, userID, userID).Exec(s.Ctx)
+	s.Require().NoError(err)
 
 	// Act - list users (read operation)
+	// Use graph-read token which maps to GraphReadUser
 	resp := s.Client.GET("/api/superadmin/users",
-		testutil.WithAuth("e2e-user-two"),
+		testutil.WithAuth("graph-read"),
 	)
 
 	// Assert - should succeed
@@ -267,13 +285,16 @@ func (s *SuperadminTestSuite) TestReadonlyRole_CanAccessReadEndpoints() {
 }
 
 func (s *SuperadminTestSuite) TestFullRole_CanAccessReadEndpoints() {
+	s.SkipIfExternalServer("requires direct database access")
+
 	// Arrange - create a superadmin with full role
-	userID := s.GetUserID("e2e-test-user")
-	s.DB.Exec(`
+	userID := testutil.AdminUser.ID
+	_, err := s.DB().NewRaw(`
 		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
-		VALUES ($1, 'superadmin_full', $1, NOW())
+		VALUES (?, 'superadmin_full', ?, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_full', revoked_at = NULL
-	`, userID)
+	`, userID, userID).Exec(s.Ctx)
+	s.Require().NoError(err)
 
 	// Act - list users (read operation)
 	resp := s.Client.GET("/api/superadmin/users",
@@ -285,13 +306,16 @@ func (s *SuperadminTestSuite) TestFullRole_CanAccessReadEndpoints() {
 }
 
 func (s *SuperadminTestSuite) TestReadonlyRole_MultipleWriteEndpointsDenied() {
+	s.SkipIfExternalServer("requires direct database access")
+
 	// Arrange - create a superadmin with readonly role
-	userID := s.GetUserID("e2e-user-two")
-	s.DB.Exec(`
+	userID := testutil.ReadOnlyUser.ID
+	_, err := s.DB().NewRaw(`
 		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at)
-		VALUES ($1, 'superadmin_readonly', $1, NOW())
+		VALUES (?, 'superadmin_readonly', ?, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET role = 'superadmin_readonly', revoked_at = NULL
-	`, userID)
+	`, userID, userID).Exec(s.Ctx)
+	s.Require().NoError(err)
 
 	// Test multiple write endpoints
 	writeEndpoints := []struct {
@@ -310,11 +334,12 @@ func (s *SuperadminTestSuite) TestReadonlyRole_MultipleWriteEndpointsDenied() {
 		var resp *testutil.HTTPResponse
 		if endpoint.method == "DELETE" {
 			resp = s.Client.DELETE(endpoint.path,
-				testutil.WithAuth("e2e-user-two"),
+				testutil.WithAuth("read-only"),
 			)
 		} else {
-			resp = s.Client.POST(endpoint.path, map[string]interface{}{"ids": []string{"test-id"}},
-				testutil.WithAuth("e2e-user-two"),
+			resp = s.Client.POST(endpoint.path,
+				testutil.WithAuth("read-only"),
+				testutil.WithJSONBody(map[string]interface{}{"ids": []string{"test-id"}}),
 			)
 		}
 
@@ -325,18 +350,22 @@ func (s *SuperadminTestSuite) TestReadonlyRole_MultipleWriteEndpointsDenied() {
 }
 
 func (s *SuperadminTestSuite) TestRevokedSuperadmin_CannotAccessEndpoints() {
+	s.SkipIfExternalServer("requires direct database access")
+
 	// Arrange - create and then revoke a superadmin
-	userID := s.GetUserID("e2e-test-user")
-	s.DB.Exec(`
+	userID := testutil.NoScopeUser.ID
+	_, err := s.DB().NewRaw(`
 		INSERT INTO core.superadmins (user_id, role, granted_by, granted_at, revoked_at, revoked_by)
-		VALUES ($1, 'superadmin_full', $1, NOW(), NOW(), $1)
+		VALUES (?, 'superadmin_full', ?, NOW(), NOW(), ?)
 		ON CONFLICT (user_id) DO UPDATE 
-		SET role = 'superadmin_full', revoked_at = NOW(), revoked_by = $1
-	`, userID)
+		SET role = 'superadmin_full', revoked_at = NOW(), revoked_by = ?
+	`, userID, userID, userID, userID).Exec(s.Ctx)
+	s.Require().NoError(err)
 
 	// Act - attempt to access read endpoint
+	// Use no-scope token which maps to NoScopeUser
 	resp := s.Client.GET("/api/superadmin/users",
-		testutil.WithAuth("e2e-test-user"),
+		testutil.WithAuth("no-scope"),
 	)
 
 	// Assert - should be forbidden

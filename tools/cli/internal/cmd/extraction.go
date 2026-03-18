@@ -39,6 +39,10 @@ var (
 	extractionDocumentFlag string
 	extractionStatusFlag   string
 	extractionLimitFlag    int
+	extractionWatchFlag    bool
+	extractionTimeoutFlag  time.Duration
+	extractionIntervalFlag time.Duration
+	extractionQuietFlag    bool
 )
 
 // ─────────────────────────────────────────────
@@ -59,6 +63,134 @@ func getExtractionHTTPClient(cmd *cobra.Command) (string, string, *http.Client, 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 
 	return baseURL, apiKey, httpClient, nil
+}
+
+// watchExtractionJob polls an extraction job until it reaches a terminal state
+// (completed, failed, or cancelled) or the timeout is exceeded.
+func watchExtractionJob(cmd *cobra.Command, jobID string) error {
+	baseURL, apiKey, _, err := getExtractionHTTPClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Use a longer timeout for watch requests (account for network delays + server processing)
+	httpClient := &http.Client{Timeout: 60 * time.Second}
+
+	out := cmd.OutOrStdout()
+
+	// Show initial message (unless quiet or JSON mode)
+	if !extractionQuietFlag && extractionOutputFlag != "json" {
+		fmt.Fprintf(out, "Watching extraction job %s...\n", jobID)
+	}
+
+	// Set up timeout and interval
+	deadline := time.Now().Add(extractionTimeoutFlag)
+	interval := extractionIntervalFlag
+	if interval < time.Second {
+		interval = time.Second
+	}
+
+	start := time.Now()
+	var lastStatus string
+
+	for time.Now().Before(deadline) {
+		// GET job status
+		url := baseURL + "/api/admin/extraction-jobs/" + jobID
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("X-API-Key", apiKey)
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to get extraction job: %w", err)
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+		}
+
+		// Parse response
+		var result struct {
+			Success bool `json:"success"`
+			Data    struct {
+				ID              string    `json:"id"`
+				ProjectID       string    `json:"project_id"`
+				SourceID        string    `json:"source_id"`
+				SourceType      string    `json:"source_type"`
+				Status          string    `json:"status"`
+				ObjectsCreated  int       `json:"objects_created"`
+				Error           string    `json:"error,omitempty"`
+				CreatedAt       time.Time `json:"created_at"`
+				UpdatedAt       time.Time `json:"updated_at"`
+				CompletedAt     time.Time `json:"completed_at,omitempty"`
+				DiscoveredTypes []string  `json:"discovered_types,omitempty"`
+			} `json:"data"`
+		}
+
+		if err := json.Unmarshal(body, &result); err != nil {
+			return fmt.Errorf("failed to parse response: %w", err)
+		}
+
+		if !result.Success {
+			return fmt.Errorf("server returned error response")
+		}
+
+		data := result.Data
+		status := data.Status
+		elapsed := time.Since(start).Round(time.Second)
+
+		// Show progress (unless quiet or JSON mode, and only on status change)
+		if !extractionQuietFlag && extractionOutputFlag != "json" && status != lastStatus {
+			fmt.Fprintf(out, "Status: %s (%s)\n", status, elapsed)
+		}
+		lastStatus = status
+
+		// Check terminal states
+		switch strings.ToLower(status) {
+		case "completed", "complete", "done":
+			if extractionOutputFlag == "json" {
+				fmt.Fprintln(out, string(body))
+			} else {
+				fmt.Fprintf(out, "\nJob completed successfully\n")
+				fmt.Fprintf(out, "Objects Created: %d\n", data.ObjectsCreated)
+				if len(data.DiscoveredTypes) > 0 {
+					fmt.Fprintf(out, "Discovered Types: %s\n", strings.Join(data.DiscoveredTypes, ", "))
+				}
+				fmt.Fprintf(out, "Elapsed:         %s\n", elapsed)
+			}
+			return nil
+
+		case "failed", "error":
+			if extractionOutputFlag == "json" {
+				fmt.Fprintln(out, string(body))
+			} else {
+				fmt.Fprintf(out, "\nJob failed\n")
+				if data.Error != "" {
+					fmt.Fprintf(out, "Error: %s\n", data.Error)
+				}
+				fmt.Fprintf(out, "Elapsed: %s\n", elapsed)
+			}
+			return fmt.Errorf("extraction job failed")
+
+		case "cancelled":
+			if extractionOutputFlag == "json" {
+				fmt.Fprintln(out, string(body))
+			} else {
+				fmt.Fprintf(out, "\nJob was cancelled\n")
+				fmt.Fprintf(out, "Elapsed: %s\n", elapsed)
+			}
+			return fmt.Errorf("extraction job cancelled")
+		}
+
+		time.Sleep(interval)
+	}
+
+	return fmt.Errorf("watch timeout exceeded (%s)", extractionTimeoutFlag)
 }
 
 // ─────────────────────────────────────────────
@@ -158,6 +290,11 @@ Requires an API key with admin:read scope.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		jobID := args[0]
+
+		// If --watch is enabled, use the watch helper
+		if extractionWatchFlag {
+			return watchExtractionJob(cmd, jobID)
+		}
 
 		baseURL, apiKey, httpClient, err := getExtractionHTTPClient(cmd)
 		if err != nil {
@@ -589,6 +726,12 @@ func init() {
 	// jobs create flags
 	extractionJobsCreateCmd.Flags().StringVar(&extractionDocumentFlag, "document", "", "Document ID to extract from (required)")
 	_ = extractionJobsCreateCmd.MarkFlagRequired("document")
+
+	// jobs get flags
+	extractionJobsGetCmd.Flags().BoolVar(&extractionWatchFlag, "watch", false, "Poll until terminal state (completed/failed/cancelled)")
+	extractionJobsGetCmd.Flags().DurationVar(&extractionTimeoutFlag, "timeout", 10*time.Minute, "Maximum watch duration")
+	extractionJobsGetCmd.Flags().DurationVar(&extractionIntervalFlag, "interval", 3*time.Second, "Poll interval (minimum 1s)")
+	extractionJobsGetCmd.Flags().BoolVar(&extractionQuietFlag, "quiet", false, "Suppress progress updates")
 
 	// jobs list flags
 	extractionJobsListCmd.Flags().StringVar(&extractionStatusFlag, "status", "", "Filter by status (queued, running, completed, failed, cancelled)")
