@@ -22,7 +22,7 @@ import (
 )
 
 var askCmd = &cobra.Command{
-	Use:     "ask <question>",
+	Use:     "ask <question...>",
 	Short:   "Ask the Memory CLI assistant a question or request a task",
 	GroupID: "ai",
 	Long: `Ask the Memory CLI assistant a question or request a task.
@@ -38,12 +38,14 @@ The assistant fetches live documentation from the Memory docs site to answer
 questions about the CLI, SDK, REST API, agents, and knowledge graph features.
 It can also execute tasks on your behalf (list agents, query the graph, etc.).
 
+Words after "ask" are joined into the question — quotes are optional.
+
 Examples:
-  memory ask "what are native tools?"
-  memory ask "what agents do I have configured?"
-  memory ask "how do I create a schema?"
-  memory ask --project abc123 "list all agent runs from today"
-  memory ask "what commands are available for managing API tokens?"`,
+  memory ask what are native tools?
+  memory ask what agents do I have configured?
+  memory ask how do I create a schema?
+  memory ask --project abc123 list all agent runs from today
+  memory ask what commands are available for managing API tokens?`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runAsk,
 }
