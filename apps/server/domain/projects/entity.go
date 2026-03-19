@@ -116,14 +116,14 @@ type ProjectDTO struct {
 
 // ProjectMemberDTO is the response DTO for project member endpoints
 type ProjectMemberDTO struct {
-	ID          string     `json:"id"`
-	Email       string     `json:"email"`
-	DisplayName *string    `json:"displayName,omitempty"`
-	FirstName   *string    `json:"firstName,omitempty"`
-	LastName    *string    `json:"lastName,omitempty"`
-	AvatarURL   *string    `json:"avatarUrl,omitempty"`
-	Role        string     `json:"role"`
-	JoinedAt    time.Time  `json:"joinedAt"`
+	ID           string     `json:"id"`
+	Email        string     `json:"email"`
+	DisplayName  *string    `json:"displayName,omitempty"`
+	FirstName    *string    `json:"firstName,omitempty"`
+	LastName     *string    `json:"lastName,omitempty"`
+	AvatarURL    *string    `json:"avatarUrl,omitempty"`
+	Role         string     `json:"role"`
+	JoinedAt     time.Time  `json:"joinedAt"`
 	LastActiveAt *time.Time `json:"lastActiveAt,omitempty"`
 }
 

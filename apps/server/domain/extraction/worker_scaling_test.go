@@ -25,7 +25,7 @@ func TestWorkerScalingIntegration(t *testing.T) {
 			Zone: syshealth.HealthZoneCritical,
 		},
 	}
-	
+
 	// Create a scaler that will return MinConcurrency (1) when health is Critical
 	scaler := syshealth.NewConcurrencyScaler(monitor, "test-worker", true, 1, 10)
 
@@ -35,23 +35,23 @@ func TestWorkerScalingIntegration(t *testing.T) {
 			scaler: scaler,
 			log:    slog.Default(),
 		}
-		
-		// We don't call processBatch because it needs a DB, 
+
+		// We don't call processBatch because it needs a DB,
 		// but we can verify that the scaler works as expected for the worker's config
 		concurrency := w.cfg.WorkerConcurrency
 		if w.scaler != nil {
 			concurrency = w.scaler.GetConcurrency(w.cfg.WorkerConcurrency)
 		}
-		
+
 		assert.Equal(t, 1, concurrency, "Should use min concurrency from scaler in critical zone")
-		
+
 		// Change health to Safe
 		monitor.health.Zone = syshealth.HealthZoneSafe
 		// We can't easily bypass cooldown here without manual state manipulation if we don't have access to mu
 		// But NewConcurrencyScaler starts at maxConcurrency (10)
 		// Wait, NewConcurrencyScaler sets currentConcurrency = max
 		// So if we just started, it should be 10.
-		
+
 		scaler = syshealth.NewConcurrencyScaler(monitor, "test-worker", true, 1, 10)
 		assert.Equal(t, 10, scaler.GetConcurrency(10))
 	})
@@ -62,7 +62,7 @@ func TestWorkerScalingIntegration(t *testing.T) {
 			scaler: scaler,
 			log:    slog.Default(),
 		}
-		
+
 		monitor.health.Zone = syshealth.HealthZoneCritical
 		concurrency := w.scaler.GetConcurrency(w.cfg.WorkerConcurrency)
 		assert.Equal(t, 1, concurrency)
@@ -74,7 +74,7 @@ func TestWorkerScalingIntegration(t *testing.T) {
 			scaler:      scaler,
 			log:         slog.Default(),
 		}
-		
+
 		monitor.health.Zone = syshealth.HealthZoneCritical
 		concurrency := w.scaler.GetConcurrency(w.concurrency)
 		assert.Equal(t, 1, concurrency)
@@ -86,7 +86,7 @@ func TestWorkerScalingIntegration(t *testing.T) {
 			scaler: scaler,
 			log:    slog.Default(),
 		}
-		
+
 		monitor.health.Zone = syshealth.HealthZoneCritical
 		concurrency := w.scaler.GetConcurrency(w.config.Concurrency)
 		assert.Equal(t, 1, concurrency)
@@ -116,14 +116,14 @@ func TestWorkerScalingIntegration(t *testing.T) {
 		// Wait, I can't easily bypass cooldown on s if it's private or I don't have access.
 		// Actually, I can use a hack if I really wanted to, but let's check if SetConfig
 		// forced a bounds check.
-		
+
 		// If I change max to 5, it should drop to 5 immediately because of bounds check in UpdateConfig
 		w.SetConfig(GraphEmbeddingConfig{
 			MinConcurrency:        1,
 			MaxConcurrency:        5,
 			EnableAdaptiveScaling: true,
 		})
-		
+
 		assert.Equal(t, 5, s.GetConcurrency(0))
 	})
 }

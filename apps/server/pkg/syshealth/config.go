@@ -32,7 +32,8 @@ type Config struct {
 }
 
 // DefaultConfig returns a Config with sensible default values for production use.
-func DefaultConfig() *Config {	return &Config{
+func DefaultConfig() *Config {
+	return &Config{
 		CollectionInterval:    30 * time.Second,
 		IOWaitCriticalPercent: 40.0,
 		IOWaitWarningPercent:  30.0,

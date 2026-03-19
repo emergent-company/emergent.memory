@@ -25,7 +25,7 @@ type Scheduler struct {
 func NewScheduler(log *slog.Logger) *Scheduler {
 	// Create cron with seconds precision
 	c := cron.New(cron.WithSeconds())
-	
+
 	return &Scheduler{
 		cron:  c,
 		log:   log.With(logger.Scope("scheduler")),

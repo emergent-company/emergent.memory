@@ -22,11 +22,11 @@ const (
 
 // MetaEvent is the first event in a chat stream containing metadata.
 type MetaEvent struct {
-	Type           string    `json:"type"`
-	ConversationID string    `json:"conversationId"`
-	Citations      []any     `json:"citations"`
-	GraphObjects   []any     `json:"graphObjects,omitempty"`
-	GraphNeighbors any       `json:"graphNeighbors,omitempty"`
+	Type           string `json:"type"`
+	ConversationID string `json:"conversationId"`
+	Citations      []any  `json:"citations"`
+	GraphObjects   []any  `json:"graphObjects,omitempty"`
+	GraphNeighbors any    `json:"graphNeighbors,omitempty"`
 }
 
 // NewMetaEvent creates a new meta event.

@@ -139,17 +139,17 @@ type DocsResponse struct {
 
 // DocumentMetadata is stored in document.metadata for ClickUp-sourced docs
 type DocumentMetadata struct {
-	ClickUpDocID        string `json:"clickupDocId"`
-	ClickUpWorkspaceID  string `json:"clickupWorkspaceId"`
-	ClickUpSpaceID      string `json:"clickupSpaceId,omitempty"`
-	ClickUpSpaceName    string `json:"clickupSpaceName,omitempty"`
-	CreatorID           int    `json:"creatorId,omitempty"`
-	ClickUpCreatedAt    string `json:"clickupCreatedAt,omitempty"`
-	ClickUpUpdatedAt    string `json:"clickupUpdatedAt,omitempty"`
-	Avatar              string `json:"avatar,omitempty"`
-	Archived            bool   `json:"archived,omitempty"`
-	PageCount           int    `json:"pageCount,omitempty"`
-	Provider            string `json:"provider"` // Always "clickup"
+	ClickUpDocID       string `json:"clickupDocId"`
+	ClickUpWorkspaceID string `json:"clickupWorkspaceId"`
+	ClickUpSpaceID     string `json:"clickupSpaceId,omitempty"`
+	ClickUpSpaceName   string `json:"clickupSpaceName,omitempty"`
+	CreatorID          int    `json:"creatorId,omitempty"`
+	ClickUpCreatedAt   string `json:"clickupCreatedAt,omitempty"`
+	ClickUpUpdatedAt   string `json:"clickupUpdatedAt,omitempty"`
+	Avatar             string `json:"avatar,omitempty"`
+	Archived           bool   `json:"archived,omitempty"`
+	PageCount          int    `json:"pageCount,omitempty"`
+	Provider           string `json:"provider"` // Always "clickup"
 }
 
 // ConfigSchema is the JSON schema for provider configuration (used by UI)

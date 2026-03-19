@@ -32,11 +32,11 @@ const (
 
 // UploadHandler handles document upload HTTP requests
 type UploadHandler struct {
-	svc                    *Service
-	storage                *storage.Service
-	parsingJobsService     ParsingJobCreator
-	extractionJobsService  ExtractionJobCreator
-	log                    *slog.Logger
+	svc                   *Service
+	storage               *storage.Service
+	parsingJobsService    ParsingJobCreator
+	extractionJobsService ExtractionJobCreator
+	log                   *slog.Logger
 }
 
 // ParsingJobCreator is an interface for creating document parsing jobs

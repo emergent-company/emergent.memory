@@ -13,7 +13,7 @@ type ProjectWithRole struct {
 	Name              string                 `json:"name"`
 	OrgID             string                 `json:"orgId"`
 	Role              string                 `json:"role"`
-	ProjectInfo        *string                `json:"project_info,omitempty"`
+	ProjectInfo       *string                `json:"project_info,omitempty"`
 	AutoExtractConfig map[string]interface{} `json:"auto_extract_config,omitempty"`
 }
 
@@ -46,7 +46,7 @@ type projectRow struct {
 	ProjectName       string                 `bun:"project_name"`
 	OrgID             string                 `bun:"org_id"`
 	Role              string                 `bun:"role"`
-	ProjectInfo        *string                `bun:"project_info"`
+	ProjectInfo       *string                `bun:"project_info"`
 	AutoExtractConfig map[string]interface{} `bun:"auto_extract_config,type:jsonb"`
 }
 
