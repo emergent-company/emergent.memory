@@ -87,63 +87,6 @@ jobs:
           flags: server-go-unit
           fail_ci_if_error: false
 
-  test-e2e:
-    name: E2E Tests
-    runs-on: ubuntu-latest
-    needs: [build]
-
-    services:
-      postgres:
-        image: pgvector/pgvector:pg15
-        env:
-          POSTGRES_USER: emergent
-          POSTGRES_PASSWORD: emergent-dev-password
-          POSTGRES_DB: emergent
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: apps/server/go.sum
-
-      - name: Setup Node (for migrations)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install root deps
-        run: npm ci
-
-      - name: Run database migrations
-        env:
-          DATABASE_URL: postgresql://emergent:emergent-dev-password@localhost:5432/emergent
-        run: npx tsx scripts/run-migrations.ts
-
-      - name: Run E2E tests
-        working-directory: apps/server
-        env:
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: 5432
-          POSTGRES_USER: emergent
-          POSTGRES_PASSWORD: emergent-dev-password
-          POSTGRES_DB: emergent
-          ZITADEL_ISSUER_URL: https://auth.dev.emergent-company.ai
-          GOOGLE_CLOUD_PROJECT: emergent-dev
-          EMBEDDING_PROVIDER: none
-        run: go test ./tests/e2e/... -v -count=1 -timeout=10m
-
   docker:
     name: Docker Build
     runs-on: ubuntu-latest

@@ -30,70 +30,70 @@
 
 ## 3. Phase 3 — Documents & Chunks (documents, chunks, embedding_policies, extraction)
 
-- [ ] 3.1 Write `tests/api/documents_test.go` (42 tests: upload, list, get, delete)
-- [ ] 3.2 Write `tests/api/documents_upload_test.go` (8 tests: multipart upload mechanics)
-- [ ] 3.3 Write `tests/api/chunks_test.go` (23 tests: list, filter, pagination)
-- [ ] 3.4 Write `tests/api/embedding_policies_test.go` (23 tests: CRUD)
-- [ ] 3.5 Write `tests/api/extraction_test.go` (8 tests: admin extraction job endpoints)
-- [ ] 3.6 Run Phase 3 tests — all green
-- [ ] 3.7 Open PR to e2e repo — CI green — merge
-- [ ] 3.8 Delete corresponding files from main repo — PR — merge
+- [x] 3.1 Write `tests/api/documents_test.go` (42 tests: upload, list, get, delete)
+- [x] 3.2 Write `tests/api/documents_upload_test.go` (8 tests: multipart upload mechanics)
+- [x] 3.3 Write `tests/api/chunks_test.go` (23 tests: list, filter, pagination)
+- [x] 3.4 Write `tests/api/embedding_policies_test.go` (23 tests: CRUD)
+- [x] 3.5 Write `tests/api/extraction_test.go` (8 tests: admin extraction job endpoints)
+- [x] 3.6 Run Phase 3 tests — all green
+- [x] 3.7 Open PR to e2e repo — CI green — merge
+- [x] 3.8 Delete corresponding files from main repo — PR — merge
 
 ## 4. Phase 4 — Graph & Search (graph, branches, search)
 
-- [ ] 4.1 Write `tests/api/graph_test.go` (51 tests: object CRUD, relationships, traversal)
-- [ ] 4.2 Write `tests/api/graph_search_test.go` (17 tests: semantic + metadata search)
-- [ ] 4.3 Write `tests/api/graph_analytics_test.go` (9 tests)
-- [ ] 4.4 Write `tests/api/graph_subgraph_test.go` (11 tests)
-- [ ] 4.5 Write `tests/api/graph_similar_test.go` (6 tests)
-- [ ] 4.6 Write `tests/api/graph_property_validation_test.go` (9 tests)
-- [ ] 4.7 Write `tests/api/graph_query_endpoint_test.go` (4 tests)
-- [ ] 4.8 Write `tests/api/graph_field_projection_test.go` (2 tests)
-- [ ] 4.9 Write `tests/api/relationship_search_test.go` (17 tests)
-- [ ] 4.10 Write `tests/api/branches_test.go` (37 tests: branch CRUD, merge, diff)
-- [ ] 4.11 Write `tests/api/search_test.go` (25 tests: unified hybrid search)
-- [ ] 4.12 Run Phase 4 tests — all green
-- [ ] 4.13 Open PR to e2e repo — CI green — merge
-- [ ] 4.14 Delete corresponding files from main repo — PR — merge
+- [x] 4.1 Write `tests/api/graph_test.go` (51 tests: object CRUD, relationships, traversal)
+- [x] 4.2 Write `tests/api/graph_search_test.go` (17 tests: semantic + metadata search)
+- [x] 4.3 Write `tests/api/graph_analytics_test.go` (9 tests)
+- [x] 4.4 Write `tests/api/graph_subgraph_test.go` (11 tests)
+- [x] 4.5 Write `tests/api/graph_similar_test.go` (6 tests)
+- [x] 4.6 Write `tests/api/graph_property_validation_test.go` (9 tests)
+- [x] 4.7 Write `tests/api/graph_query_endpoint_test.go` (4 tests)
+- [x] 4.8 Write `tests/api/graph_field_projection_test.go` (2 tests)
+- [x] 4.9 Write `tests/api/relationship_search_test.go` (17 tests)
+- [x] 4.10 Write `tests/api/branches_test.go` (37 tests: branch CRUD, merge, diff)
+- [x] 4.11 Write `tests/api/search_test.go` (25 tests: unified hybrid search)
+- [x] 4.12 Run Phase 4 tests — all green
+- [x] 4.13 Open PR to e2e repo — CI green — merge
+- [x] 4.14 Delete corresponding files from main repo — PR — merge
 
 ## 5. Phase 5 — AI Capabilities (chat, mcp, agents, skills, schemas)
 
-- [ ] 5.1 Write `tests/api/chat_test.go` (35 tests: conversation CRUD, messages)
-- [ ] 5.2 Write `tests/api/chat_conversation_history_test.go` (5 tests)
-- [ ] 5.3 Write `tests/api/mcp_test.go` (24 tests: JSON-RPC protocol, initialization)
-- [ ] 5.4 Write `tests/api/mcp_sse_tools_test.go` (29 tests: SSE streaming tools)
-- [ ] 5.5 Write `tests/api/mcp_new_tools_test.go` (8 tests)
-- [ ] 5.6 Write `tests/api/mcp_schema_lifecycle_test.go` (6 tests)
-- [ ] 5.7 Write `tests/api/mcpregistry_test.go` (33 tests: registry CRUD, discovery)
-- [ ] 5.8 Write `tests/api/agents_test.go` (39 tests: agent CRUD, trigger, runs)
-- [ ] 5.9 Write `tests/api/agents_questions_test.go` (18 tests)
-- [ ] 5.10 Write `tests/api/agents_webhooks_test.go` (18 tests)
-- [ ] 5.11 Write `tests/api/agents_visibility_test.go` (6 tests)
-- [ ] 5.12 Write `tests/api/agent_graph_query_live_test.go` (2 tests)
-- [ ] 5.13 Write `tests/api/agent_chat_test.go` (2 tests)
-- [ ] 5.14 Write `tests/api/adk_sessions_test.go` (1 test)
-- [ ] 5.15 Write `tests/api/skills_test.go` (12 tests)
-- [ ] 5.16 Write `tests/api/schemas_test.go` (merged templatepacks + schemaregistry: ~46 tests)
-- [ ] 5.17 Run Phase 5 tests — all green
-- [ ] 5.18 Open PR to e2e repo — CI green — merge
-- [ ] 5.19 Delete corresponding files from main repo — PR — merge
+- [x] 5.1 Write `tests/api/chat_test.go` (35 tests: conversation CRUD, messages)
+- [x] 5.2 Write `tests/api/chat_conversation_history_test.go` (5 tests)
+- [x] 5.3 Write `tests/api/mcp_test.go` (24 tests: JSON-RPC protocol, initialization)
+- [x] 5.4 Write `tests/api/mcp_sse_tools_test.go` (29 tests: SSE streaming tools)
+- [x] 5.5 Write `tests/api/mcp_new_tools_test.go` (8 tests)
+- [x] 5.6 Write `tests/api/mcp_schema_lifecycle_test.go` (6 tests)
+- [x] 5.7 Write `tests/api/mcpregistry_test.go` (33 tests: registry CRUD, discovery)
+- [x] 5.8 Write `tests/api/agents_test.go` (39 tests: agent CRUD, trigger, runs)
+- [x] 5.9 Write `tests/api/agents_questions_test.go` (18 tests)
+- [x] 5.10 Write `tests/api/agents_webhooks_test.go` (18 tests)
+- [x] 5.11 Write `tests/api/agents_visibility_test.go` (6 tests)
+- [x] 5.12 Write `tests/api/agent_graph_query_live_test.go` (2 tests)
+- [x] 5.13 Write `tests/api/agent_chat_test.go` (2 tests)
+- [x] 5.14 Write `tests/api/adk_sessions_test.go` (1 test)
+- [x] 5.15 Write `tests/api/skills_test.go` (12 tests)
+- [x] 5.16 Write `tests/api/schemas_test.go` (merged templatepacks + schemaregistry: ~46 tests)
+- [x] 5.17 Run Phase 5 tests — all green
+- [x] 5.18 Open PR to e2e repo — CI green — merge
+- [x] 5.19 Delete corresponding files from main repo — PR — merge
 
 ## 6. Phase 6 — Admin & Isolation (superadmin, tenant_isolation, provider)
 
-- [ ] 6.1 Write `tests/api/superadmin_test.go` (18 tests)
-- [ ] 6.2 Write `tests/api/tenant_isolation_test.go` (13 tests: cross-tenant access prevention)
-- [ ] 6.3 Write `tests/api/provider_test.go` (14 tests: LLM credential management)
-- [ ] 6.4 Write `tests/api/tool_settings_test.go` (5 tests)
-- [ ] 6.5 Write `tests/api/events_test.go` (6 tests)
-- [ ] 6.6 Write `tests/api/userprofile_test.go` (17 tests)
-- [ ] 6.7 Run Phase 6 tests — all green
-- [ ] 6.8 Open PR to e2e repo — CI green — merge
-- [ ] 6.9 Delete corresponding files from main repo — PR — merge
+- [x] 6.1 Write `tests/api/superadmin_test.go` (18 tests)
+- [x] 6.2 Write `tests/api/tenant_isolation_test.go` (13 tests: cross-tenant access prevention)
+- [x] 6.3 Write `tests/api/provider_test.go` (14 tests: LLM credential management)
+- [x] 6.4 Write `tests/api/tool_settings_test.go` (5 tests)
+- [x] 6.5 Write `tests/api/events_test.go` (6 tests)
+- [x] 6.6 Write `tests/api/userprofile_test.go` (17 tests)
+- [x] 6.7 Run Phase 6 tests — all green
+- [x] 6.8 Open PR to e2e repo — CI green — merge
+- [x] 6.9 Delete corresponding files from main repo — PR — merge
 
 ## 7. Cleanup — remove testutil from main repo
 
-- [ ] 7.1 Delete `apps/server/internal/testutil/` from `emergent.memory`
-- [ ] 7.2 Remove `test-e2e` job from `emergent.memory/.github/workflows/server.yml`
-- [ ] 7.3 Remove `testutil` references from any remaining files in main repo (check with `grep -r testutil apps/server`)
+- [ ] 7.1 `apps/server/internal/testutil/` retained — still used by integration + SDK tests
+- [x] 7.2 Remove `test-e2e` job from `emergent.memory/.github/workflows/server.yml`
+- [x] 7.3 `testutil` references verified — only in integration/SDK tests (not e2e), no cleanup needed
 - [ ] 7.4 Verify main repo CI passes without e2e job
 - [ ] 7.5 Open cleanup PR to main repo — CI green — merge
