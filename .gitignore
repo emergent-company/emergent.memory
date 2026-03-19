@@ -61,6 +61,8 @@ coverage/
 **/coverage/
 lcov.info
 *.out
+*.coverprofile
+*.prof
 coverage_combined/
 apps/server/coverage_combined/
 
@@ -203,6 +205,3 @@ tools/cli/main
 **/*.pyc
 **/*.pyo
 
-# Go test/coverage output artifacts (generated, never commit)
-*.coverprofile
-*.prof
