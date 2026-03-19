@@ -22,15 +22,16 @@ These appear to be one-time migration scripts, debugging utilities, or developme
 
 ### Plan
 
-1. For each file, grep the codebase to confirm no other `.go` file imports its package or references its exported symbols.
-2. Delete all confirmed-unused files.
-3. Commit as a single `chore` commit: `chore: remove stray development scripts from repo root`
+1. List all `.go` files in the repo root that are not part of a recognized package (not `main.go`, not `*_test.go`). Target patterns: `patch*.go`, `fix_*.go`, `old_*.go`, `new_*.go`. Examples of files to delete: `patch.go`, `patch2.go`, `patch_imdb.go`, `old_bulk_insert.go`, `new_bulk_insert.go`, `fix_agent_id.go`. Files that should NOT be deleted: any `*_test.go` files or files that are part of a legitimate `main` package.
+2. Delete all matched files.
+3. Run `go build ./...` — this is the authoritative verification. The compiler will fail with an import error if any deleted file was actually referenced. Restore and document any file that causes a build failure.
+4. Commit as a single `chore` commit: `chore: remove stray development scripts from repo root`
 
 ### Success Criteria
 
-- No stray `patch_*.go`, `fix_*.go`, `old_*.go`, `new_*.go`, or `test_*.go` files remain at the repo root.
-- `go build ./...` passes after deletion.
-- No test failures introduced.
+- No stray one-off script files (matching the patterns above) remain at the repo root.
+- `go build ./...` passes after deletion (verifies no import references missed).
+- `task test` passes after deletion.
 
 ---
 
@@ -42,21 +43,23 @@ Generated coverage output files (e.g., `adk_cov.out`, `agents_coverage.out`, and
 
 ### Plan
 
-1. Find all coverage artifact files (`*.out`, `*.coverprofile`) committed to the repo.
-2. Delete them.
+1. Run `git ls-files | grep -E '\.(out|coverprofile|prof|test)$'` to get the full list of all committed build artifacts.
+2. Delete all found files.
 3. Add patterns to `.gitignore` to prevent re-committing:
    ```
    *.out
    *.coverprofile
+   *.prof
    coverage/
    ```
+   (`*.test` is a Go test binary pattern — add it only if binary test files are found tracked by git.)
 4. Commit: `chore: remove coverage artifacts and update .gitignore`
 
 ### Success Criteria
 
 - No `.out` or `.coverprofile` files tracked by git.
 - `.gitignore` updated to prevent recurrence.
-- `git status` is clean after running tests.
+- `git status` is clean after running `task test`.
 
 ---
 
@@ -73,16 +76,20 @@ Generated coverage output files (e.g., `adk_cov.out`, `agents_coverage.out`, and
 
 Add `apps/server/.golangci.yml` with a practical baseline that:
 - Enables core linters: `govet`, `staticcheck`, `errcheck`, `unused`, `gofmt`
-- Sets high thresholds for `cyclop` (cyclomatic complexity ≤ 30) and `funlen` (function length ≤ 200 lines) to avoid immediately flagging the existing large files while still catching egregious new additions
+- Sets high thresholds for `cyclop` (cyclomatic complexity ≤ 30) and `funlen` (function length ≤ 200 lines) to avoid immediately flagging existing large files while still catching egregious new additions
 - Excludes generated files and migration SQL files from linting
 - Documents the intent inline with comments
+
+**Threshold validation:** Before finalizing thresholds, run `golangci-lint run` against the existing codebase to measure current failure count. Adjust thresholds so the initial run produces zero failures. Document the chosen thresholds with inline comments in `.golangci.yml` explaining why they were set at those values (e.g., `# set high to avoid flagging pre-existing large files; reduce over time`). The linters that flag `panic()` and TODO comments (`godot`, `revive`) are not enabled in this baseline — those are deferred to a future change.
+
+**Module scope:** The config lives at `apps/server/.golangci.yml` and covers only the server Go module (the primary module). The CLI tool at `tools/cli/` is a separate module and is out of scope for this change.
 
 Commit: `chore: add golangci-lint baseline configuration`
 
 ### Success Criteria
 
 - `.golangci.yml` exists at `apps/server/.golangci.yml`
-- `task lint` passes with zero new failures on the existing codebase
+- `task lint` (or `golangci-lint run ./...`) passes with zero failures on the existing codebase
 - Configuration is commented to explain threshold choices
 
 ---
@@ -109,5 +116,6 @@ These three changes are independent and can be done in any order. Recommended se
 ## Testing
 
 - `go build ./...` must pass after each change
-- `task test` must pass after stray file deletion
+- `task test` (unit tests) must pass after stray file deletion
+- Integration and E2E tests are out of scope for this cleanup change — these require a running database and are impractical as a local gate for pure deletions
 - `task lint` must pass (zero failures) after adding `.golangci.yml`
