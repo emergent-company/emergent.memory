@@ -381,9 +381,9 @@ func TestProviderHelpers(t *testing.T) {
 		}
 
 		docs := []Doc{
-			{ID: "old", DateUpdated: "1704067200000"},   // Jan 1, 2024
-			{ID: "new1", DateUpdated: "1704153600000"},  // Jan 2, 2024
-			{ID: "new2", DateUpdated: "1704240000000"},  // Jan 3, 2024
+			{ID: "old", DateUpdated: "1704067200000"},  // Jan 1, 2024
+			{ID: "new1", DateUpdated: "1704153600000"}, // Jan 2, 2024
+			{ID: "new2", DateUpdated: "1704240000000"}, // Jan 3, 2024
 		}
 
 		// Filter to docs updated after Jan 1, 2024

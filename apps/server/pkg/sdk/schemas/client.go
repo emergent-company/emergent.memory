@@ -125,7 +125,7 @@ type CreatePackRequest struct {
 // InstalledSchemaItem represents a memory schema installed on a project.
 type InstalledSchemaItem struct {
 	ID             string                 `json:"id"` // assignment ID
-	SchemaID string                 `json:"schemaId"`
+	SchemaID       string                 `json:"schemaId"`
 	Name           string                 `json:"name"`
 	Version        string                 `json:"version"`
 	Description    *string                `json:"description,omitempty"`
@@ -136,18 +136,18 @@ type InstalledSchemaItem struct {
 
 // ProjectMemorySchema represents a project's assignment of a memory schema.
 type ProjectMemorySchema struct {
-	ID             string    `json:"id"`
-	ProjectID      string    `json:"projectId"`
-	SchemaID string    `json:"schemaId"`
-	Active         bool      `json:"active"`
-	InstalledAt    time.Time `json:"installedAt"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID          string    `json:"id"`
+	ProjectID   string    `json:"projectId"`
+	SchemaID    string    `json:"schemaId"`
+	Active      bool      `json:"active"`
+	InstalledAt time.Time `json:"installedAt"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // AssignPackRequest is the request to assign a memory schema to a project.
 type AssignPackRequest struct {
-	SchemaID string                 `json:"schema_id"`
+	SchemaID       string                 `json:"schema_id"`
 	Customizations map[string]interface{} `json:"customizations,omitempty"`
 	// DryRun requests a preview without making any database changes.
 	DryRun bool `json:"dry_run,omitempty"`

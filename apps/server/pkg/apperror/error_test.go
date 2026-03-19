@@ -54,10 +54,10 @@ func TestErrorError(t *testing.T) {
 
 func TestErrorUnwrap(t *testing.T) {
 	tests := []struct {
-		name     string
-		err      *Error
-		wantNil  bool
-		wantMsg  string
+		name    string
+		err     *Error
+		wantNil bool
+		wantMsg string
 	}{
 		{
 			name: "nil internal error",

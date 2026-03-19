@@ -74,9 +74,9 @@ func TestHTTPErrorHandler_EchoError(t *testing.T) {
 
 func TestHTTPErrorHandler_EchoError_AllStatusCodes(t *testing.T) {
 	tests := []struct {
-		name       string
-		status     int
-		wantCode   string
+		name     string
+		status   int
+		wantCode string
 	}{
 		{"unauthorized", http.StatusUnauthorized, "unauthorized"},
 		{"forbidden", http.StatusForbidden, "forbidden"},

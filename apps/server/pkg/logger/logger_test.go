@@ -60,13 +60,13 @@ func TestNewLogger_DefaultLevel(t *testing.T) {
 	// Unset LOG_LEVEL to test default
 	os.Unsetenv("LOG_LEVEL")
 	os.Unsetenv("GO_ENV")
-	
+
 	logger := NewLogger()
-	
+
 	if logger == nil {
 		t.Fatal("NewLogger() returned nil")
 	}
-	
+
 	// Default should be info level
 	if !logger.Enabled(nil, slog.LevelInfo) {
 		t.Error("NewLogger() should have info level enabled by default")
@@ -89,16 +89,16 @@ func TestNewLogger_DebugLevel(t *testing.T) {
 			os.Setenv("GO_ENV", origEnv)
 		}
 	}()
-	
+
 	os.Setenv("LOG_LEVEL", "debug")
 	os.Unsetenv("GO_ENV")
-	
+
 	logger := NewLogger()
-	
+
 	if logger == nil {
 		t.Fatal("NewLogger() returned nil")
 	}
-	
+
 	if !logger.Enabled(nil, slog.LevelDebug) {
 		t.Error("NewLogger() should have debug level enabled when LOG_LEVEL=debug")
 	}
@@ -113,17 +113,17 @@ func TestNewLogger_WarnLevel(t *testing.T) {
 			os.Setenv("LOG_LEVEL", origLevel)
 		}
 	}()
-	
+
 	// Test both "warn" and "warning" values
 	for _, level := range []string{"warn", "warning"} {
 		os.Setenv("LOG_LEVEL", level)
-		
+
 		logger := NewLogger()
-		
+
 		if logger == nil {
 			t.Fatal("NewLogger() returned nil")
 		}
-		
+
 		if !logger.Enabled(nil, slog.LevelWarn) {
 			t.Errorf("NewLogger() should have warn level enabled when LOG_LEVEL=%s", level)
 		}
@@ -142,15 +142,15 @@ func TestNewLogger_ErrorLevel(t *testing.T) {
 			os.Setenv("LOG_LEVEL", origLevel)
 		}
 	}()
-	
+
 	os.Setenv("LOG_LEVEL", "error")
-	
+
 	logger := NewLogger()
-	
+
 	if logger == nil {
 		t.Fatal("NewLogger() returned nil")
 	}
-	
+
 	if !logger.Enabled(nil, slog.LevelError) {
 		t.Error("NewLogger() should have error level enabled when LOG_LEVEL=error")
 	}
@@ -168,15 +168,15 @@ func TestNewLogger_InfoLevel(t *testing.T) {
 			os.Setenv("LOG_LEVEL", origLevel)
 		}
 	}()
-	
+
 	os.Setenv("LOG_LEVEL", "info")
-	
+
 	logger := NewLogger()
-	
+
 	if logger == nil {
 		t.Fatal("NewLogger() returned nil")
 	}
-	
+
 	if !logger.Enabled(nil, slog.LevelInfo) {
 		t.Error("NewLogger() should have info level enabled when LOG_LEVEL=info")
 	}
@@ -194,15 +194,15 @@ func TestNewLogger_CaseInsensitive(t *testing.T) {
 			os.Setenv("LOG_LEVEL", origLevel)
 		}
 	}()
-	
+
 	// Test case insensitivity
 	testCases := []string{"DEBUG", "Debug", "dEbUg"}
-	
+
 	for _, level := range testCases {
 		os.Setenv("LOG_LEVEL", level)
-		
+
 		logger := NewLogger()
-		
+
 		if !logger.Enabled(nil, slog.LevelDebug) {
 			t.Errorf("NewLogger() should handle case-insensitive LOG_LEVEL=%s", level)
 		}
@@ -218,15 +218,15 @@ func TestNewLogger_InvalidLevel(t *testing.T) {
 			os.Setenv("LOG_LEVEL", origLevel)
 		}
 	}()
-	
+
 	os.Setenv("LOG_LEVEL", "invalid")
-	
+
 	logger := NewLogger()
-	
+
 	if logger == nil {
 		t.Fatal("NewLogger() returned nil")
 	}
-	
+
 	// Invalid level should default to info
 	if !logger.Enabled(nil, slog.LevelInfo) {
 		t.Error("NewLogger() should default to info level for invalid LOG_LEVEL")
@@ -249,16 +249,16 @@ func TestNewLogger_ProductionJSON(t *testing.T) {
 			os.Setenv("GO_ENV", origEnv)
 		}
 	}()
-	
+
 	os.Unsetenv("LOG_LEVEL")
 	os.Setenv("GO_ENV", "production")
-	
+
 	logger := NewLogger()
-	
+
 	if logger == nil {
 		t.Fatal("NewLogger() returned nil")
 	}
-	
+
 	// Logger should work in production mode (uses JSON handler)
 	if !logger.Enabled(nil, slog.LevelInfo) {
 		t.Error("NewLogger() should have info level enabled in production")

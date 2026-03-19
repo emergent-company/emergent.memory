@@ -25,11 +25,11 @@ type Worker struct {
 	wg         sync.WaitGroup
 
 	// Metrics
-	processedCount   int64
-	successCount     int64
-	failureCount     int64
-	deadLetterCount  int64
-	metricsMu        sync.RWMutex
+	processedCount  int64
+	successCount    int64
+	failureCount    int64
+	deadLetterCount int64
+	metricsMu       sync.RWMutex
 }
 
 // NewWorker creates a new data source sync worker

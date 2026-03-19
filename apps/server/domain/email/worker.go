@@ -201,7 +201,7 @@ func (w *Worker) processJob(ctx context.Context, job *EmailJob) error {
 			templateContext[k] = v
 		}
 	}
-	
+
 	// Add common fields if not present
 	if _, ok := templateContext["title"]; !ok {
 		templateContext["title"] = job.Subject
@@ -299,7 +299,7 @@ func (w *Worker) generateFallbackHTML(job *EmailJob, ctx TemplateContext) string
 	if name, ok := ctx["recipientName"].(string); ok {
 		recipientName = name
 	}
-	
+
 	greeting := "Hello"
 	if recipientName != "" {
 		greeting = "Hello " + recipientName

@@ -16,7 +16,7 @@ import (
 
 var (
 	clientsMu sync.RWMutex
-	clients   = make(map[uint32]*sdk.Client)
+	clients          = make(map[uint32]*sdk.Client)
 	nextID    uint32 = 1
 )
 
@@ -26,7 +26,7 @@ var (
 
 var (
 	cancelsMu sync.Mutex
-	cancels   = make(map[uint64]func())
+	cancels          = make(map[uint64]func())
 	nextOpID  uint64 = 1
 )
 

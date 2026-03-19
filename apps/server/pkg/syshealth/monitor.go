@@ -30,10 +30,10 @@ type sysHealthMonitor struct {
 	consecFailures int
 
 	// Collection functions for mocking
-	getLoadAvg   func(context.Context) (*load.AvgStat, error)
-	getCPUTimes  func(context.Context, bool) ([]cpu.TimesStat, error)
-	getMemStats  func(context.Context) (*mem.VirtualMemoryStat, error)
-	getCPUCores  func() int
+	getLoadAvg  func(context.Context) (*load.AvgStat, error)
+	getCPUTimes func(context.Context, bool) ([]cpu.TimesStat, error)
+	getMemStats func(context.Context) (*mem.VirtualMemoryStat, error)
+	getCPUCores func() int
 }
 
 // NewMonitor creates a new system health monitor.

@@ -223,9 +223,9 @@ func TestIsValidUUID(t *testing.T) {
 func TestProject_ToDTO(t *testing.T) {
 	t.Run("basic project without optional fields", func(t *testing.T) {
 		project := &Project{
-			ID:               "project-123",
-			Name:             "Test Project",
-			OrganizationID:   "org-456",
+			ID:                 "project-123",
+			Name:               "Test Project",
+			OrganizationID:     "org-456",
 			AutoExtractObjects: false,
 		}
 
@@ -242,10 +242,10 @@ func TestProject_ToDTO(t *testing.T) {
 	t.Run("project with kb purpose", func(t *testing.T) {
 		purpose := "Testing knowledge base"
 		project := &Project{
-			ID:               "project-123",
-			Name:             "Test Project",
-			OrganizationID:   "org-456",
-			ProjectInfo:       &purpose,
+			ID:             "project-123",
+			Name:           "Test Project",
+			OrganizationID: "org-456",
+			ProjectInfo:    &purpose,
 		}
 
 		dto := project.ToDTO()
@@ -256,9 +256,9 @@ func TestProject_ToDTO(t *testing.T) {
 
 	t.Run("project with auto extract enabled", func(t *testing.T) {
 		project := &Project{
-			ID:               "project-123",
-			Name:             "Test Project",
-			OrganizationID:   "org-456",
+			ID:                 "project-123",
+			Name:               "Test Project",
+			OrganizationID:     "org-456",
 			AutoExtractObjects: true,
 		}
 
@@ -270,9 +270,9 @@ func TestProject_ToDTO(t *testing.T) {
 
 	t.Run("project with auto extract config", func(t *testing.T) {
 		project := &Project{
-			ID:               "project-123",
-			Name:             "Test Project",
-			OrganizationID:   "org-456",
+			ID:             "project-123",
+			Name:           "Test Project",
+			OrganizationID: "org-456",
 			AutoExtractConfig: map[string]any{
 				"enabled": true,
 				"types":   []string{"Person", "Organization"},
@@ -287,9 +287,9 @@ func TestProject_ToDTO(t *testing.T) {
 
 	t.Run("project with empty auto extract config", func(t *testing.T) {
 		project := &Project{
-			ID:               "project-123",
-			Name:             "Test Project",
-			OrganizationID:   "org-456",
+			ID:                "project-123",
+			Name:              "Test Project",
+			OrganizationID:    "org-456",
 			AutoExtractConfig: map[string]any{},
 		}
 
@@ -301,9 +301,9 @@ func TestProject_ToDTO(t *testing.T) {
 	t.Run("project with chat prompt template", func(t *testing.T) {
 		template := "You are a helpful assistant for {{project_name}}"
 		project := &Project{
-			ID:               "project-123",
-			Name:             "Test Project",
-			OrganizationID:   "org-456",
+			ID:                 "project-123",
+			Name:               "Test Project",
+			OrganizationID:     "org-456",
 			ChatPromptTemplate: &template,
 		}
 

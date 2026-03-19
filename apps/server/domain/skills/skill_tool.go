@@ -30,8 +30,8 @@ type SkillToolDeps struct {
 	EmbeddingsSvc    *embeddings.Service
 	Logger           *slog.Logger
 	ProjectID        string
-	OrgID            string   // org context for org-scoped skill resolution
-	TriggerMessage   string   // agent run trigger message (used as query for semantic retrieval)
+	OrgID            string // org context for org-scoped skill resolution
+	TriggerMessage   string // agent run trigger message (used as query for semantic retrieval)
 	AgentName        string
 	AgentDescription string
 	Skills           []string // declared skill names from agent definition; ["*"] means all; nil/empty means all (legacy)

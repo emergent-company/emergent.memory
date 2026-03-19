@@ -8,9 +8,9 @@ import (
 
 func TestParseScopes(t *testing.T) {
 	tests := []struct {
-		name   string
-		scope  string
-		want   []string
+		name  string
+		scope string
+		want  []string
 	}{
 		{
 			name:  "empty string",
@@ -51,10 +51,10 @@ func TestParseScopes(t *testing.T) {
 
 func TestTimeUnmarshalJSON(t *testing.T) {
 	tests := []struct {
-		name      string
-		jsonData  string
-		wantUnix  int64
-		wantErr   bool
+		name     string
+		jsonData string
+		wantUnix int64
+		wantErr  bool
 	}{
 		{
 			name:     "valid timestamp",
@@ -87,19 +87,19 @@ func TestTimeUnmarshalJSON(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var tm Time
 			err := tm.UnmarshalJSON([]byte(tt.jsonData))
-			
+
 			if tt.wantErr {
 				if err == nil {
 					t.Error("UnmarshalJSON() expected error, got nil")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("UnmarshalJSON() unexpected error: %v", err)
 				return
 			}
-			
+
 			if tm.Unix() != tt.wantUnix {
 				t.Errorf("UnmarshalJSON() Unix() = %d, want %d", tm.Unix(), tt.wantUnix)
 			}
@@ -110,9 +110,9 @@ func TestTimeUnmarshalJSON(t *testing.T) {
 func TestTimeAsTime(t *testing.T) {
 	expected := time.Date(2023, 11, 15, 10, 30, 0, 0, time.UTC)
 	tm := Time{Time: expected}
-	
+
 	got := tm.AsTime()
-	
+
 	if !got.Equal(expected) {
 		t.Errorf("AsTime() = %v, want %v", got, expected)
 	}
@@ -140,12 +140,12 @@ func TestIntrospectionResponseIsActive(t *testing.T) {
 
 func TestIntrospectionResponseSetActive(t *testing.T) {
 	r := &introspectionResponse{Active: false}
-	
+
 	r.SetActive(true)
 	if !r.Active {
 		t.Error("SetActive(true) didn't set Active to true")
 	}
-	
+
 	r.SetActive(false)
 	if r.Active {
 		t.Error("SetActive(false) didn't set Active to false")
@@ -410,7 +410,7 @@ func TestZitadelService_hashToken_Uniqueness(t *testing.T) {
 	tokens := []string{
 		"token1",
 		"token2",
-		"Token1", // different case
+		"Token1",  // different case
 		"token1 ", // trailing space
 		" token1", // leading space
 	}

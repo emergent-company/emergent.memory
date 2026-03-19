@@ -12,15 +12,15 @@ import (
 type Chunk struct {
 	bun.BaseModel `bun:"table:kb.chunks,alias:c"`
 
-	ID          uuid.UUID        `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	DocumentID  uuid.UUID        `bun:"document_id,type:uuid,notnull" json:"documentId"`
-	ChunkIndex  int              `bun:"chunk_index,notnull" json:"chunkIndex"`
-	Text        string           `bun:"text,notnull" json:"text"`
-	Embedding   []byte           `bun:"embedding,type:vector(768)" json:"-"` // pgvector stored as bytes
-	TSV         string           `bun:"tsv,type:tsvector" json:"-"`          // Full-text search vector
-	Metadata    *ChunkMetadata   `bun:"metadata,type:jsonb" json:"metadata,omitempty"`
-	CreatedAt   time.Time        `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt   time.Time        `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	ID         uuid.UUID      `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	DocumentID uuid.UUID      `bun:"document_id,type:uuid,notnull" json:"documentId"`
+	ChunkIndex int            `bun:"chunk_index,notnull" json:"chunkIndex"`
+	Text       string         `bun:"text,notnull" json:"text"`
+	Embedding  []byte         `bun:"embedding,type:vector(768)" json:"-"` // pgvector stored as bytes
+	TSV        string         `bun:"tsv,type:tsvector" json:"-"`          // Full-text search vector
+	Metadata   *ChunkMetadata `bun:"metadata,type:jsonb" json:"metadata,omitempty"`
+	CreatedAt  time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt  time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
 // ChunkMetadata contains metadata about how the chunk was created
@@ -37,7 +37,7 @@ type ChunkDTO struct {
 	DocumentID     string         `json:"documentId"`
 	DocumentTitle  string         `json:"documentTitle,omitempty"`
 	Index          int            `json:"index"`
-	Size           int            `json:"size"`          // Size in characters
+	Size           int            `json:"size"` // Size in characters
 	HasEmbedding   bool           `json:"hasEmbedding"`
 	Text           string         `json:"text"`
 	CreatedAt      string         `json:"createdAt,omitempty"`
@@ -116,16 +116,16 @@ type BulkDeletionSummary struct {
 
 // DocumentChunksDeletionResult is the result of deleting all chunks for a document
 type DocumentChunksDeletionResult struct {
-	DocumentID   string `json:"documentId"`
+	DocumentID    string `json:"documentId"`
 	ChunksDeleted int    `json:"chunksDeleted"`
-	Success      bool   `json:"success"`
-	Error        string `json:"error,omitempty"`
+	Success       bool   `json:"success"`
+	Error         string `json:"error,omitempty"`
 }
 
 // BulkDocumentChunksDeletionSummary is the response for bulk document chunks deletion
 type BulkDocumentChunksDeletionSummary struct {
-	TotalDocuments int                           `json:"totalDocuments"`
-	TotalChunks    int                           `json:"totalChunks"`
+	TotalDocuments int                             `json:"totalDocuments"`
+	TotalChunks    int                             `json:"totalChunks"`
 	Results        []*DocumentChunksDeletionResult `json:"results"`
 }
 
