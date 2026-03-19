@@ -22,10 +22,11 @@ These appear to be one-time migration scripts, debugging utilities, or developme
 
 ### Plan
 
-1. List all `.go` files in the repo root that are not part of a recognized package (not `main.go`, not `*_test.go`). Target patterns: `patch*.go`, `fix_*.go`, `old_*.go`, `new_*.go`. Examples of files to delete: `patch.go`, `patch2.go`, `patch_imdb.go`, `old_bulk_insert.go`, `new_bulk_insert.go`, `fix_agent_id.go`. Files that should NOT be deleted: any `*_test.go` files or files that are part of a legitimate `main` package.
-2. Delete all matched files.
-3. Run `go build ./...` — this is the authoritative verification. The compiler will fail with an import error if any deleted file was actually referenced. Restore and document any file that causes a build failure.
-4. Commit as a single `chore` commit: `chore: remove stray development scripts from repo root`
+1. Scope is the **immediate repo root directory only** (`/root/emergent.memory/*.go`). Run `ls *.go` to enumerate candidates. Read the `package` declaration of each file — files declaring `package main` with only a `main()` or `init()` function and no callers are targets; files clearly part of a structured package are not.
+2. Target patterns: `patch*.go`, `fix_*.go`, `old_*.go`, `new_*.go`. Do NOT delete `*_test.go` files.
+3. Delete all matched files.
+4. Run `go build ./...` from `apps/server/` — this is the authoritative verification. The compiler will fail if any deleted file's symbols were referenced elsewhere. If a file causes a build failure, restore it and note it by name in the commit message as "retained: <filename> (build dependency)".
+5. Commit: `chore: remove stray development scripts from repo root`
 
 ### Success Criteria
 
@@ -45,7 +46,7 @@ Generated coverage output files (e.g., `adk_cov.out`, `agents_coverage.out`, and
 
 1. Run `git ls-files | grep -E '\.(out|coverprofile|prof|test)$'` to get the full list of all committed build artifacts.
 2. Delete all found files.
-3. Add patterns to `.gitignore` to prevent re-committing:
+3. Add patterns to the **root `.gitignore`** (applies repo-wide) to prevent re-committing:
    ```
    *.out
    *.coverprofile
@@ -80,7 +81,13 @@ Add `apps/server/.golangci.yml` with a practical baseline that:
 - Excludes generated files and migration SQL files from linting
 - Documents the intent inline with comments
 
-**Threshold validation:** Before finalizing thresholds, run `golangci-lint run` against the existing codebase to measure current failure count. Adjust thresholds so the initial run produces zero failures. Document the chosen thresholds with inline comments in `.golangci.yml` explaining why they were set at those values (e.g., `# set high to avoid flagging pre-existing large files; reduce over time`). The linters that flag `panic()` and TODO comments (`godot`, `revive`) are not enabled in this baseline — those are deferred to a future change.
+**Threshold validation (ordered steps):**
+1. Write an initial `.golangci.yml` with the linters and suggested thresholds.
+2. Run `golangci-lint run ./...` from `apps/server/` to see current failures.
+3. Raise thresholds until zero failures. The goal is a clean baseline that matches current state, not a clean codebase — we are not fixing existing violations in this change.
+4. Document chosen thresholds with inline comments: e.g. `# funlen: 200 — set high to match existing large files; reduce gradually over time`.
+
+If a linter cannot be tuned to zero failures without effectively disabling it, remove it from this config and note it in the commit message as "deferred: <linter>". The linters that flag `panic()` and TODO comments (`godot`, `revive`) are explicitly excluded from this baseline — those are deferred.
 
 **Module scope:** The config lives at `apps/server/.golangci.yml` and covers only the server Go module (the primary module). The CLI tool at `tools/cli/` is a separate module and is out of scope for this change.
 
