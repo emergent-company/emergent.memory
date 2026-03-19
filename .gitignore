@@ -202,3 +202,7 @@ tools/cli/main
 **/__pycache__/
 **/*.pyc
 **/*.pyo
+
+# Go test/coverage output artifacts (generated, never commit)
+*.coverprofile
+*.prof
