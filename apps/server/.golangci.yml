@@ -45,17 +45,14 @@ issues:
     - path: "migrations/"
       linters: [all]
 
-    # Pre-existing errcheck violations across the codebase.
-    # These are deferred to a dedicated cleanup pass.
+    # Pre-existing violations deferred to a dedicated cleanup pass.
+    # TODO: remove these broad suppressions once the violations are resolved.
+    # Until then, these linters are enabled but not actively enforced — they
+    # exist in the config to make the intent visible and to catch new egregious
+    # additions that are not yet masked by the existing baseline.
     - linters: [errcheck]
       text: "."
-
-    # Pre-existing staticcheck violations across the codebase.
-    # These are deferred to a dedicated cleanup pass.
     - linters: [staticcheck]
       text: "."
-
-    # Pre-existing unused identifiers across the codebase.
-    # These are deferred to a dedicated cleanup pass.
     - linters: [unused]
       text: "."
