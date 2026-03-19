@@ -37,8 +37,8 @@ type TestDB struct {
 	cleanup func()
 
 	// Transaction support for per-test isolation
-	tx    bun.Tx
-	hasTx bool
+	tx     bun.Tx
+	hasTx  bool
 }
 
 // Close releases test database resources

@@ -54,7 +54,7 @@ func TestSubscribe_MultipleSubscribers(t *testing.T) {
 	svc := NewService(log)
 
 	projectID := "project-123"
-
+	
 	unsub1 := svc.Subscribe(projectID, func(event EntityEvent) {})
 	unsub2 := svc.Subscribe(projectID, func(event EntityEvent) {})
 	unsub3 := svc.Subscribe(projectID, func(event EntityEvent) {})
@@ -78,7 +78,7 @@ func TestSubscribe_MultipleProjects(t *testing.T) {
 
 	project1 := "project-1"
 	project2 := "project-2"
-
+	
 	svc.Subscribe(project1, func(event EntityEvent) {})
 	svc.Subscribe(project1, func(event EntityEvent) {})
 	svc.Subscribe(project2, func(event EntityEvent) {})
@@ -130,7 +130,7 @@ func TestEmit_NoSubscribers(t *testing.T) {
 		ProjectID: "no-subscribers",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
-
+	
 	// Should not panic
 	assert.NotPanics(t, func() {
 		svc.Emit(event)
@@ -171,7 +171,7 @@ func TestEmit_OnlyTargetProject(t *testing.T) {
 
 	project1 := "project-1"
 	project2 := "project-2"
-
+	
 	var project1Called, project2Called int32
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -430,7 +430,7 @@ func TestConcurrentSubscribeUnsubscribe(t *testing.T) {
 
 	projectID := "project-123"
 	var wg sync.WaitGroup
-
+	
 	// Spawn multiple goroutines that subscribe and unsubscribe
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
@@ -465,7 +465,7 @@ func TestConcurrentEmit(t *testing.T) {
 	// Emit 50 events concurrently
 	numEvents := 50
 	wg.Add(numEvents)
-
+	
 	for i := 0; i < numEvents; i++ {
 		go func(n int) {
 			event := EntityEvent{

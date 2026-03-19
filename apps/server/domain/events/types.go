@@ -44,16 +44,16 @@ type ActorContext struct {
 
 // EntityEvent is the payload sent via SSE
 type EntityEvent struct {
-	Type       EntityEventType `json:"type"`
-	Entity     EntityType      `json:"entity"`
-	ID         *string         `json:"id"` // nil for batch events
-	IDs        []string        `json:"ids,omitempty"`
-	ProjectID  string          `json:"projectId"`
-	Data       map[string]any  `json:"data,omitempty"`
-	Timestamp  string          `json:"timestamp"`
-	Actor      *ActorContext   `json:"actor,omitempty"`
-	Version    *int            `json:"version,omitempty"`    // for graph objects
-	ObjectType string          `json:"objectType,omitempty"` // for graph objects
+	Type       EntityEventType        `json:"type"`
+	Entity     EntityType             `json:"entity"`
+	ID         *string                `json:"id"`         // nil for batch events
+	IDs        []string               `json:"ids,omitempty"`
+	ProjectID  string                 `json:"projectId"`
+	Data       map[string]any         `json:"data,omitempty"`
+	Timestamp  string                 `json:"timestamp"`
+	Actor      *ActorContext          `json:"actor,omitempty"`
+	Version    *int                   `json:"version,omitempty"`    // for graph objects
+	ObjectType string                 `json:"objectType,omitempty"` // for graph objects
 }
 
 // SSEConnection represents an SSE connection

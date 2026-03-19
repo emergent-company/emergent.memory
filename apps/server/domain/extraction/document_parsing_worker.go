@@ -13,13 +13,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/emergent-company/emergent.memory/pkg/syshealth"
 	"github.com/emergent-company/emergent.memory/domain/chunking"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
-	"github.com/emergent-company/emergent.memory/pkg/syshealth"
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
 )

@@ -10,18 +10,18 @@ import (
 type Invite struct {
 	bun.BaseModel `bun:"table:kb.invites,alias:i"`
 
-	ID              string     `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
-	OrganizationID  string     `bun:"organization_id,type:uuid,notnull" json:"organizationId"`
-	ProjectID       *string    `bun:"project_id,type:uuid" json:"projectId,omitempty"`
-	Email           string     `bun:"email,notnull" json:"email"`
-	Role            string     `bun:"role,notnull" json:"role"`
-	Token           string     `bun:"token,notnull" json:"token"`
-	Status          string     `bun:"status,notnull,default:'pending'" json:"status"`
-	ExpiresAt       *time.Time `bun:"expires_at" json:"expiresAt,omitempty"`
-	AcceptedAt      *time.Time `bun:"accepted_at" json:"acceptedAt,omitempty"`
-	RevokedAt       *time.Time `bun:"revoked_at" json:"revokedAt,omitempty"`
-	CreatedAt       time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	InvitedByUserID *string    `bun:"invited_by_user_id,type:uuid" json:"invitedByUserId,omitempty"`
+	ID             string     `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	OrganizationID string     `bun:"organization_id,type:uuid,notnull" json:"organizationId"`
+	ProjectID      *string    `bun:"project_id,type:uuid" json:"projectId,omitempty"`
+	Email          string     `bun:"email,notnull" json:"email"`
+	Role           string     `bun:"role,notnull" json:"role"`
+	Token          string     `bun:"token,notnull" json:"token"`
+	Status         string     `bun:"status,notnull,default:'pending'" json:"status"`
+	ExpiresAt      *time.Time `bun:"expires_at" json:"expiresAt,omitempty"`
+	AcceptedAt     *time.Time `bun:"accepted_at" json:"acceptedAt,omitempty"`
+	RevokedAt        *time.Time `bun:"revoked_at" json:"revokedAt,omitempty"`
+	CreatedAt        time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	InvitedByUserID  *string    `bun:"invited_by_user_id,type:uuid" json:"invitedByUserId,omitempty"`
 }
 
 // PendingInvite represents a pending invitation for a user

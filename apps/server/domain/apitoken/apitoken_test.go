@@ -138,7 +138,7 @@ func TestApiToken_ToDTO(t *testing.T) {
 			token: &ApiToken{
 				ID:          "token-123",
 				ProjectID:   strPtr("proj-456"),
-				UserID:      strPtr("user-789"),
+				UserID:      "user-789",
 				Name:        "My API Token",
 				TokenHash:   "hash123",
 				TokenPrefix: "emt_abc12345",
@@ -176,7 +176,7 @@ func TestApiToken_ToDTO(t *testing.T) {
 			token: &ApiToken{
 				ID:          "token-acct",
 				ProjectID:   nil,
-				UserID:      strPtr("user-789"),
+				UserID:      "user-789",
 				Name:        "Account Token",
 				TokenHash:   "hashacct",
 				TokenPrefix: "emt_acct1234",
@@ -199,7 +199,7 @@ func TestApiToken_ToDTO(t *testing.T) {
 			token: &ApiToken{
 				ID:          "token-456",
 				ProjectID:   strPtr("proj-789"),
-				UserID:      strPtr("user-012"),
+				UserID:      "user-012",
 				Name:        "Used Token",
 				TokenHash:   "hash456",
 				TokenPrefix: "emt_def67890",
@@ -224,7 +224,7 @@ func TestApiToken_ToDTO(t *testing.T) {
 			token: &ApiToken{
 				ID:          "token-789",
 				ProjectID:   strPtr("proj-012"),
-				UserID:      strPtr("user-345"),
+				UserID:      "user-345",
 				Name:        "Revoked Token",
 				TokenHash:   "hash789",
 				TokenPrefix: "emt_ghi01234",
@@ -244,7 +244,7 @@ func TestApiToken_ToDTO(t *testing.T) {
 			token: &ApiToken{
 				ID:          "token-empty",
 				ProjectID:   strPtr("proj-empty"),
-				UserID:      strPtr("user-empty"),
+				UserID:      "user-empty",
 				Name:        "Empty Scopes",
 				TokenHash:   "hashempty",
 				TokenPrefix: "emt_jkl56789",
@@ -267,7 +267,7 @@ func TestApiToken_ToDTO(t *testing.T) {
 			token: &ApiToken{
 				ID:          "token-nil",
 				ProjectID:   strPtr("proj-nil"),
-				UserID:      strPtr("user-nil"),
+				UserID:      "user-nil",
 				Name:        "Nil Scopes",
 				TokenHash:   "hashnil",
 				TokenPrefix: "emt_mno01234",

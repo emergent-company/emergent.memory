@@ -167,7 +167,7 @@ func (s *Service) DecryptBytes(ctx context.Context, data []byte) (map[string]int
 // EncryptJSON encrypts any JSON-serializable value
 func (s *Service) EncryptJSON(ctx context.Context, value interface{}) (string, error) {
 	settings := make(map[string]interface{})
-
+	
 	// If value is already a map, use it directly
 	if m, ok := value.(map[string]interface{}); ok {
 		settings = m
@@ -175,7 +175,7 @@ func (s *Service) EncryptJSON(ctx context.Context, value interface{}) (string, e
 		// Otherwise, wrap it
 		settings["value"] = value
 	}
-
+	
 	return s.Encrypt(ctx, settings)
 }
 

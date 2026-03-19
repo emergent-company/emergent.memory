@@ -116,7 +116,7 @@ func (s *Service) GetJobStatus(ctx context.Context, jobID uuid.UUID) (*JobStatus
 		ErrorMessage:            job.ErrorMessage,
 		DiscoveredTypes:         job.DiscoveredTypes,
 		DiscoveredRelationships: job.DiscoveredRelationships,
-		SchemaID:                job.SchemaID,
+		SchemaID:          job.SchemaID,
 	}, nil
 }
 
@@ -137,7 +137,7 @@ func (s *Service) ListJobsForProject(ctx context.Context, projectID uuid.UUID) (
 			CompletedAt:             job.CompletedAt,
 			DiscoveredTypes:         job.DiscoveredTypes,
 			DiscoveredRelationships: job.DiscoveredRelationships,
-			SchemaID:                job.SchemaID,
+			SchemaID:          job.SchemaID,
 		}
 	}
 	return result, nil
@@ -250,7 +250,7 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 
 	return &FinalizeDiscoveryResponse{
 		SchemaID: schemaID,
-		Message:  message,
+		Message:        message,
 	}, nil
 }
 

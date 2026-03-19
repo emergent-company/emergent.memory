@@ -40,14 +40,14 @@ func DefaultWorkerConfig(name string) WorkerConfig {
 // - Stale job recovery on startup
 // - Metrics tracking
 type Worker struct {
-	config    WorkerConfig
-	log       *slog.Logger
-	process   func(ctx context.Context) error
-	stopCh    chan struct{}
-	stoppedCh chan struct{}
-	running   bool
-	mu        sync.Mutex
-	wg        sync.WaitGroup
+	config     WorkerConfig
+	log        *slog.Logger
+	process    func(ctx context.Context) error
+	stopCh     chan struct{}
+	stoppedCh  chan struct{}
+	running    bool
+	mu         sync.Mutex
+	wg         sync.WaitGroup
 
 	// Metrics
 	processedCount int64

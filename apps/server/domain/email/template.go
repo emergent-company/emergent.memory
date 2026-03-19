@@ -45,7 +45,7 @@ type TemplateContext map[string]interface{}
 // NewTemplateService creates a new template service
 func NewTemplateService(templateDir string, log *slog.Logger) *TemplateService {
 	isDev := os.Getenv("NODE_ENV") != "production" && os.Getenv("GO_ENV") != "production"
-
+	
 	ts := &TemplateService{
 		templateDir:   templateDir,
 		log:           log.With(logger.Scope("email.template")),
@@ -155,7 +155,7 @@ func (ts *TemplateService) loadTemplate(name string) (*raymond.Template, error) 
 	// Try different file extensions
 	var content []byte
 	var err error
-
+	
 	// Try .html.hbs first (pre-compiled MJML)
 	filePath := filepath.Join(ts.templateDir, name+".html.hbs")
 	if _, statErr := os.Stat(filePath); statErr == nil {
@@ -206,7 +206,7 @@ func (ts *TemplateService) loadLayout(name string) (*raymond.Template, error) {
 	var err error
 
 	layoutsDir := filepath.Join(ts.templateDir, "layouts")
-
+	
 	// Try .html.hbs first
 	filePath := filepath.Join(layoutsDir, name+".html.hbs")
 	if _, statErr := os.Stat(filePath); statErr == nil {
