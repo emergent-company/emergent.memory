@@ -2707,7 +2707,10 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 	}
 
 	for cid := range allCanonicalIDs {
-		if len(objectSummaries) >= hardLimit {
+		// When executing, never truncate — we must classify every object so
+		// applyMerge can act on all of them. Truncation is only for the
+		// response payload (dry-run preview).
+		if !req.Execute && len(objectSummaries) >= hardLimit {
 			truncated = true
 			break
 		}
@@ -2770,7 +2773,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 	}
 
 	for cid := range allRelCanonicalIDs {
-		if len(relSummaries) >= hardLimit {
+		if !req.Execute && len(relSummaries) >= hardLimit {
 			truncated = true
 			break
 		}
@@ -2824,6 +2827,21 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 	sortMergeObjectSummaries(objectSummaries)
 	sortMergeRelationshipSummaries(relSummaries)
 
+	// When executing, all summaries were built (no truncation during
+	// classification). Truncate the response payload now to avoid huge JSON.
+	responseObjectSummaries := objectSummaries
+	responseRelSummaries := relSummaries
+	if req.Execute {
+		if len(objectSummaries) > hardLimit {
+			responseObjectSummaries = objectSummaries[:hardLimit]
+			truncated = true
+		}
+		if len(relSummaries) > hardLimit {
+			responseRelSummaries = relSummaries[:hardLimit]
+			truncated = true
+		}
+	}
+
 	response := &BranchMergeResponse{
 		TargetBranchID:                targetBranchID, // nil = main graph
 		SourceBranchID:                req.SourceBranchID,
@@ -2833,7 +2851,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		AddedCount:                    addedCount,
 		FastForwardCount:              ffCount,
 		ConflictCount:                 conflictCount,
-		Objects:                       objectSummaries,
+		Objects:                       responseObjectSummaries,
 		Truncated:                     truncated,
 		HardLimit:                     &hardLimit,
 		RelationshipsTotal:            intPtr(len(allRelCanonicalIDs)),
@@ -2841,7 +2859,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		RelationshipsAddedCount:       &relAdded,
 		RelationshipsFastForwardCount: &relFF,
 		RelationshipsConflictCount:    &relConflict,
-		Relationships:                 relSummaries,
+		Relationships:                 responseRelSummaries,
 	}
 
 	// If execute is requested and no conflicts, apply merge transactionally.
