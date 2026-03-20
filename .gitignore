@@ -205,3 +205,6 @@ tools/cli/main
 **/*.pyc
 **/*.pyo
 
+# auto-added by commit skill — 2026-03-20
+session-dump-*.md
+

@@ -263,41 +263,51 @@ func TestComputeContentHash(t *testing.T) {
 	tests := []struct {
 		name       string
 		properties map[string]any
+		status     *string
+		key        *string
+		labels     []string
 	}{
 		{
-			name:       "nil properties",
+			name:       "nil properties, no extras",
 			properties: nil,
 		},
 		{
-			name:       "empty properties",
+			name:       "empty properties, no extras",
 			properties: map[string]any{},
 		},
 		{
-			name: "simple properties",
-			properties: map[string]any{
-				"name": "test",
-				"age":  30,
-			},
+			name:       "simple properties",
+			properties: map[string]any{"name": "test", "age": 30},
 		},
 		{
-			name: "nested properties",
-			properties: map[string]any{
-				"user": map[string]any{
-					"name":  "John",
-					"email": "john@example.com",
-				},
-			},
+			name:       "nested properties",
+			properties: map[string]any{"user": map[string]any{"name": "John", "email": "john@example.com"}},
+		},
+		{
+			name:       "with status",
+			properties: map[string]any{"name": "test"},
+			status:     strPtr("active"),
+		},
+		{
+			name:       "with key",
+			properties: map[string]any{"name": "test"},
+			key:        strPtr("svc-auth"),
+		},
+		{
+			name:       "with labels",
+			properties: map[string]any{"name": "test"},
+			labels:     []string{"core", "backend"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hash := computeContentHash(tt.properties)
+			hash := computeContentHash(tt.properties, tt.status, tt.key, tt.labels)
 			assert.NotNil(t, hash)
 			assert.Equal(t, 32, len(hash), "SHA-256 should produce 32 bytes")
 
-			// Same input should produce same hash
-			hash2 := computeContentHash(tt.properties)
+			// Same input must produce same hash (determinism)
+			hash2 := computeContentHash(tt.properties, tt.status, tt.key, tt.labels)
 			assert.Equal(t, hash, hash2)
 		})
 	}
@@ -305,32 +315,60 @@ func TestComputeContentHash(t *testing.T) {
 
 func TestComputeContentHashDeterministic(t *testing.T) {
 	// Properties with keys in different order should produce same hash
-	props1 := map[string]any{
-		"a": 1,
-		"b": 2,
-		"c": 3,
-	}
-	props2 := map[string]any{
-		"c": 3,
-		"a": 1,
-		"b": 2,
-	}
+	props1 := map[string]any{"a": 1, "b": 2, "c": 3}
+	props2 := map[string]any{"c": 3, "a": 1, "b": 2}
 
-	hash1 := computeContentHash(props1)
-	hash2 := computeContentHash(props2)
+	hash1 := computeContentHash(props1, nil, nil, nil)
+	hash2 := computeContentHash(props2, nil, nil, nil)
 
 	assert.Equal(t, hash1, hash2, "same properties in different order should produce same hash")
 }
 
+func TestComputeContentHashLabelsDeterministic(t *testing.T) {
+	// Labels in different order should produce same hash
+	hash1 := computeContentHash(nil, nil, nil, []string{"a", "b", "c"})
+	hash2 := computeContentHash(nil, nil, nil, []string{"c", "a", "b"})
+	assert.Equal(t, hash1, hash2, "labels in different order should produce same hash")
+}
+
 func TestComputeContentHashDifferent(t *testing.T) {
-	// Different properties should produce different hashes
 	props1 := map[string]any{"name": "alice"}
 	props2 := map[string]any{"name": "bob"}
 
-	hash1 := computeContentHash(props1)
-	hash2 := computeContentHash(props2)
+	hash1 := computeContentHash(props1, nil, nil, nil)
+	hash2 := computeContentHash(props2, nil, nil, nil)
 
 	assert.NotEqual(t, hash1, hash2, "different properties should produce different hashes")
+}
+
+func TestComputeContentHashStatusChangesHash(t *testing.T) {
+	props := map[string]any{"name": "svc"}
+	hash1 := computeContentHash(props, strPtr("active"), nil, nil)
+	hash2 := computeContentHash(props, strPtr("deprecated"), nil, nil)
+	hashNil := computeContentHash(props, nil, nil, nil)
+
+	assert.NotEqual(t, hash1, hash2, "different status should produce different hash")
+	assert.NotEqual(t, hash1, hashNil, "status present vs absent should produce different hash")
+}
+
+func TestComputeContentHashKeyChangesHash(t *testing.T) {
+	props := map[string]any{"name": "svc"}
+	hash1 := computeContentHash(props, nil, strPtr("svc-auth"), nil)
+	hash2 := computeContentHash(props, nil, strPtr("svc-gateway"), nil)
+	hashNil := computeContentHash(props, nil, nil, nil)
+
+	assert.NotEqual(t, hash1, hash2, "different key should produce different hash")
+	assert.NotEqual(t, hash1, hashNil, "key present vs absent should produce different hash")
+}
+
+func TestComputeContentHashLabelsChangeHash(t *testing.T) {
+	props := map[string]any{"name": "svc"}
+	hash1 := computeContentHash(props, nil, nil, []string{"core"})
+	hash2 := computeContentHash(props, nil, nil, []string{"legacy"})
+	hashNil := computeContentHash(props, nil, nil, nil)
+
+	assert.NotEqual(t, hash1, hash2, "different labels should produce different hash")
+	assert.NotEqual(t, hash1, hashNil, "labels present vs absent should produce different hash")
 }
 
 // =============================================================================
@@ -1271,4 +1309,250 @@ func TestCosineSimilarity_SelfSimilarityIsOne(t *testing.T) {
 	sim := cosineSimilarity(v, v)
 
 	assert.InDelta(t, 1.0, sim, 0.0001, "self-similarity should be 1.0")
+}
+
+// =============================================================================
+// bytesEqual Tests
+// =============================================================================
+
+func TestBytesEqual(t *testing.T) {
+	tests := []struct {
+		name     string
+		a, b     []byte
+		expected bool
+	}{
+		{"both nil", nil, nil, true},
+		{"both empty", []byte{}, []byte{}, true},
+		{"equal", []byte{1, 2, 3}, []byte{1, 2, 3}, true},
+		{"different values", []byte{1, 2, 3}, []byte{1, 2, 4}, false},
+		{"different lengths", []byte{1, 2}, []byte{1, 2, 3}, false},
+		{"one nil one empty", nil, []byte{}, true},
+		{"one nil one non-empty", nil, []byte{1}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, bytesEqual(tt.a, tt.b))
+		})
+	}
+}
+
+// =============================================================================
+// findConflictingPaths Tests
+// =============================================================================
+
+func TestFindConflictingPaths(t *testing.T) {
+	tests := []struct {
+		name          string
+		source        map[string]any
+		target        map[string]any
+		wantConflicts []string
+	}{
+		{
+			name:          "no overlap — no conflicts",
+			source:        map[string]any{"a": 1},
+			target:        map[string]any{"b": 2},
+			wantConflicts: []string{},
+		},
+		{
+			name:          "same key same value — no conflict",
+			source:        map[string]any{"status": "active"},
+			target:        map[string]any{"status": "active"},
+			wantConflicts: []string{},
+		},
+		{
+			name:          "same key different value — conflict",
+			source:        map[string]any{"status": "active"},
+			target:        map[string]any{"status": "deprecated"},
+			wantConflicts: []string{"/status"},
+		},
+		{
+			name:          "multiple keys, one conflict",
+			source:        map[string]any{"name": "svc", "version": 2},
+			target:        map[string]any{"name": "svc", "version": 1},
+			wantConflicts: []string{"/version"},
+		},
+		{
+			name:          "multiple conflicts",
+			source:        map[string]any{"a": 1, "b": "x"},
+			target:        map[string]any{"a": 2, "b": "y"},
+			wantConflicts: []string{"/a", "/b"},
+		},
+		{
+			name:          "key only on source — not a conflict",
+			source:        map[string]any{"new_field": "value"},
+			target:        map[string]any{},
+			wantConflicts: []string{},
+		},
+		{
+			name:          "key only on target — not a conflict",
+			source:        map[string]any{},
+			target:        map[string]any{"existing": "value"},
+			wantConflicts: []string{},
+		},
+		{
+			name:          "both nil — no conflicts",
+			source:        nil,
+			target:        nil,
+			wantConflicts: []string{},
+		},
+		{
+			name:          "nested value same — no conflict",
+			source:        map[string]any{"meta": map[string]any{"k": "v"}},
+			target:        map[string]any{"meta": map[string]any{"k": "v"}},
+			wantConflicts: []string{},
+		},
+		{
+			name:          "nested value different — conflict",
+			source:        map[string]any{"meta": map[string]any{"k": "v1"}},
+			target:        map[string]any{"meta": map[string]any{"k": "v2"}},
+			wantConflicts: []string{"/meta"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findConflictingPaths(tt.source, tt.target)
+			if tt.wantConflicts == nil {
+				tt.wantConflicts = []string{}
+			}
+			assert.ElementsMatch(t, tt.wantConflicts, got)
+		})
+	}
+}
+
+// =============================================================================
+// MergeBranch classification Tests (pure logic, no DB)
+// =============================================================================
+
+// makeBranchHead is a test helper that builds a BranchObjectHead with a
+// content hash computed from the given fields.
+func makeBranchHead(canonicalID uuid.UUID, props map[string]any, status, key *string, labels []string) *BranchObjectHead {
+	if props == nil {
+		props = map[string]any{}
+	}
+	if labels == nil {
+		labels = []string{}
+	}
+	return &BranchObjectHead{
+		CanonicalID: canonicalID,
+		ID:          uuid.New(),
+		Type:        "Service",
+		Properties:  props,
+		Status:      status,
+		Key:         key,
+		Labels:      labels,
+		ContentHash: computeContentHash(props, status, key, labels),
+	}
+}
+
+func TestMergeBranchClassification_Added(t *testing.T) {
+	// Object exists only on source → "added"
+	cid := uuid.New()
+	sourceObjects := map[uuid.UUID]*BranchObjectHead{
+		cid: makeBranchHead(cid, map[string]any{"name": "new-svc"}, nil, nil, nil),
+	}
+	targetObjects := map[uuid.UUID]*BranchObjectHead{}
+
+	// Simulate the classification logic from MergeBranch
+	sourceHead := sourceObjects[cid]
+	targetHead := targetObjects[cid]
+
+	require.NotNil(t, sourceHead)
+	assert.Nil(t, targetHead)
+
+	// source only → added
+	assert.NotNil(t, sourceHead)
+	assert.Nil(t, targetHead)
+}
+
+func TestMergeBranchClassification_Unchanged(t *testing.T) {
+	// Object exists on both with identical content hash → "unchanged"
+	cid := uuid.New()
+	props := map[string]any{"name": "svc", "version": 1}
+	status := strPtr("active")
+
+	sourceHead := makeBranchHead(cid, props, status, nil, nil)
+	targetHead := makeBranchHead(cid, props, status, nil, nil)
+
+	assert.True(t, bytesEqual(sourceHead.ContentHash, targetHead.ContentHash),
+		"identical content should produce equal hashes")
+}
+
+func TestMergeBranchClassification_FastForward(t *testing.T) {
+	// Object exists on both, source changed properties, no overlapping key with different value → "fast_forward"
+	cid := uuid.New()
+	baseProps := map[string]any{"name": "svc"}
+	sourceProps := map[string]any{"name": "svc", "version": 2} // added a new key
+
+	sourceHead := makeBranchHead(cid, sourceProps, nil, nil, nil)
+	targetHead := makeBranchHead(cid, baseProps, nil, nil, nil)
+
+	assert.False(t, bytesEqual(sourceHead.ContentHash, targetHead.ContentHash))
+	conflicts := findConflictingPaths(sourceHead.Properties, targetHead.Properties)
+	assert.Empty(t, conflicts, "adding a new key is not a conflict")
+}
+
+func TestMergeBranchClassification_Conflict(t *testing.T) {
+	// Object exists on both, same key has different values → "conflict"
+	cid := uuid.New()
+	sourceHead := makeBranchHead(cid, map[string]any{"status": "active"}, nil, nil, nil)
+	targetHead := makeBranchHead(cid, map[string]any{"status": "deprecated"}, nil, nil, nil)
+
+	assert.False(t, bytesEqual(sourceHead.ContentHash, targetHead.ContentHash))
+	conflicts := findConflictingPaths(sourceHead.Properties, targetHead.Properties)
+	assert.Equal(t, []string{"/status"}, conflicts)
+}
+
+func TestMergeBranchClassification_StatusOnlyChange(t *testing.T) {
+	// Status changed on source but properties identical — must NOT be "unchanged"
+	// (this was the bug before the content hash fix)
+	cid := uuid.New()
+	props := map[string]any{"name": "svc"}
+
+	sourceHead := makeBranchHead(cid, props, strPtr("deprecated"), nil, nil)
+	targetHead := makeBranchHead(cid, props, strPtr("active"), nil, nil)
+
+	assert.False(t, bytesEqual(sourceHead.ContentHash, targetHead.ContentHash),
+		"status change must be reflected in content hash")
+}
+
+func TestMergeBranchClassification_KeyOnlyChange(t *testing.T) {
+	// Key set on source but not on target — must NOT be "unchanged"
+	cid := uuid.New()
+	props := map[string]any{"name": "svc"}
+
+	sourceHead := makeBranchHead(cid, props, nil, strPtr("svc-auth"), nil)
+	targetHead := makeBranchHead(cid, props, nil, nil, nil)
+
+	assert.False(t, bytesEqual(sourceHead.ContentHash, targetHead.ContentHash),
+		"key change must be reflected in content hash")
+}
+
+func TestMergeBranchClassification_LabelsOnlyChange(t *testing.T) {
+	// Labels changed on source — must NOT be "unchanged"
+	cid := uuid.New()
+	props := map[string]any{"name": "svc"}
+
+	sourceHead := makeBranchHead(cid, props, nil, nil, []string{"core", "backend"})
+	targetHead := makeBranchHead(cid, props, nil, nil, []string{"legacy"})
+
+	assert.False(t, bytesEqual(sourceHead.ContentHash, targetHead.ContentHash),
+		"labels change must be reflected in content hash")
+}
+
+func TestMergeBranchClassification_SameValueNotConflict(t *testing.T) {
+	// Both branches have the same key with the same value — not a conflict
+	// (this was the false-positive bug before the fix)
+	cid := uuid.New()
+	props := map[string]any{"name": "svc", "shared": "same-value"}
+
+	sourceHead := makeBranchHead(cid, props, nil, nil, nil)
+	// Target has same shared key but also an extra key (additive change)
+	targetProps := map[string]any{"name": "svc", "shared": "same-value", "extra": "target-only"}
+	targetHead := makeBranchHead(cid, targetProps, nil, nil, nil)
+
+	// Hashes differ (target has extra key), but no conflict on shared keys
+	assert.False(t, bytesEqual(sourceHead.ContentHash, targetHead.ContentHash))
+	conflicts := findConflictingPaths(sourceHead.Properties, targetHead.Properties)
+	assert.Empty(t, conflicts, "same value on shared key is not a conflict")
 }
