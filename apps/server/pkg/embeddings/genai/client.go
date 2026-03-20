@@ -13,9 +13,9 @@ import (
 
 const (
 	// DefaultModel is the default embedding model
-	DefaultModel = "gemini-embedding-001"
+	DefaultModel = "gemini-embedding-2-preview"
 
-	// DefaultDimension is the embedding dimension (gemini-embedding-001 supports MRL, we use 768 to match DB column)
+	// DefaultDimension is the embedding dimension (gemini-embedding-2-preview supports MRL with recommended 768 dims)
 	DefaultDimension = 768
 
 	// DefaultMaxRetries is the default number of retries

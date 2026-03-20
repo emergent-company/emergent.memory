@@ -19,10 +19,13 @@ Usage:
 
 import argparse
 import json
+import re
 import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 
 DB_PATH = Path.home() / ".local/share/opencode/opencode.db"
 
@@ -384,6 +387,7 @@ def cmd_content_search(conn: sqlite3.Connection, project_id: str, args):
     cur = conn.cursor()
     keyword = getattr(args, 'content_search', '')
 
+    # Fetch all text parts for this project (no keyword filter in SQL — ANSI codes break LIKE)
     cur.execute("""
         SELECT DISTINCT
             s.id AS session_id,
@@ -396,24 +400,24 @@ def cmd_content_search(conn: sqlite3.Connection, project_id: str, args):
         JOIN part pt ON pt.message_id = m.id
         WHERE s.project_id = ?
           AND json_extract(pt.data, '$.type') = 'text'
-          AND json_extract(pt.data, '$.text') LIKE ?
         ORDER BY s.time_created DESC
-    """, [project_id, f"%{keyword}%"])
+    """, [project_id])
     rows = cur.fetchall()
 
-    # Deduplicate by session, collect snippets
+    # Deduplicate by session, collect snippets — strip ANSI before matching
     seen: dict = {}
     for r in rows:
+        text = _ANSI_RE.sub('', r['text'] or '')
+        idx = text.lower().find(keyword.lower())
+        if idx < 0:
+            continue
         sid = r['session_id']
         if sid not in seen:
             seen[sid] = {'title': r['title'], 'time': r['time_created'], 'snippets': []}
-        text = r['text'] or ''
-        idx = text.lower().find(keyword.lower())
-        if idx >= 0:
-            start = max(0, idx - 60)
-            end = min(len(text), idx + len(keyword) + 60)
-            snippet = ('…' if start > 0 else '') + text[start:end].replace('\n', ' ') + ('…' if end < len(text) else '')
-            seen[sid]['snippets'].append(f"[{r['role']}] {snippet}")
+        start = max(0, idx - 60)
+        end = min(len(text), idx + len(keyword) + 60)
+        snippet = ('…' if start > 0 else '') + text[start:end].replace('\n', ' ') + ('…' if end < len(text) else '')
+        seen[sid]['snippets'].append(f"[{r['role']}] {snippet}")
 
     if not seen:
         print(f"No sessions found containing '{keyword}'")

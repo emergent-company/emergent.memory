@@ -148,7 +148,7 @@ func (s *Service) EmbedDocuments(ctx context.Context, documents []string) ([][]f
 
 // EmbedQueryWithUsage generates an embedding with usage data (if supported by client)
 func (s *Service) EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error) {
-	client, err := s.resolveClient(ctx)
+	client, model, provider, err := s.resolveClientWithMeta(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -160,12 +160,12 @@ func (s *Service) EmbedQueryWithUsage(ctx context.Context, query string) (*verte
 	if err != nil {
 		return nil, err
 	}
-	return &vertex.EmbedResult{Embedding: embedding}, nil
+	return &vertex.EmbedResult{Embedding: embedding, Model: model, Provider: provider}, nil
 }
 
 // EmbedDocumentsWithUsage generates embeddings with usage data (if supported by client)
 func (s *Service) EmbedDocumentsWithUsage(ctx context.Context, documents []string) (*vertex.BatchEmbedResult, error) {
-	client, err := s.resolveClient(ctx)
+	client, model, provider, err := s.resolveClientWithMeta(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -177,15 +177,37 @@ func (s *Service) EmbedDocumentsWithUsage(ctx context.Context, documents []strin
 	if err != nil {
 		return nil, err
 	}
-	return &vertex.BatchEmbedResult{Embeddings: embeddings}, nil
+	return &vertex.BatchEmbedResult{Embeddings: embeddings, Model: model, Provider: provider}, nil
 }
 
 // resolveClient returns the appropriate embeddings Client for this request.
 // If a resolver is configured and returns DB credentials, a transient client is created.
 // Otherwise, falls back to the static startup client.
 func (s *Service) resolveClient(ctx context.Context) (Client, error) {
+	client, _, _, err := s.resolveClientWithMeta(ctx)
+	return client, err
+}
+
+// resolveClientWithMeta returns the appropriate embeddings Client for this request
+// along with the model name and provider string used for usage tracking.
+func (s *Service) resolveClientWithMeta(ctx context.Context) (Client, string, string, error) {
+	// Determine defaults from static config
+	staticModel := ""
+	staticProvider := ""
+	if s.cfg != nil {
+		staticModel = s.cfg.Embeddings.Model
+		if s.cfg.Embeddings.UseVertexAI() {
+			staticProvider = "vertex"
+		} else if s.cfg.Embeddings.GoogleAPIKey != "" {
+			staticProvider = "googleai"
+		}
+	}
+	if staticModel == "" {
+		staticModel = vertex.DefaultModel
+	}
+
 	if s.resolver == nil {
-		return s.client, nil
+		return s.client, staticModel, staticProvider, nil
 	}
 
 	cred, err := s.resolver.ResolveEmbedding(ctx)
@@ -193,11 +215,11 @@ func (s *Service) resolveClient(ctx context.Context) (Client, error) {
 		s.log.Warn("embedding resolver returned error, falling back to static client",
 			slog.String("error", err.Error()),
 		)
-		return s.client, nil
+		return s.client, staticModel, staticProvider, nil
 	}
 	if cred == nil {
 		// No DB credential — use static client
-		return s.client, nil
+		return s.client, staticModel, staticProvider, nil
 	}
 
 	// Build a transient client from the resolved credential
@@ -220,9 +242,9 @@ func (s *Service) resolveClient(ctx context.Context) (Client, error) {
 			Model:     model,
 		}, opts...)
 		if err != nil {
-			return nil, err
+			return nil, "", "", err
 		}
-		return client, nil
+		return client, model, "vertex", nil
 	}
 
 	if cred.IsGoogleAI && cred.APIKey != "" {
@@ -231,11 +253,11 @@ func (s *Service) resolveClient(ctx context.Context) (Client, error) {
 			Model:  model,
 		}, embgenai.WithLogger(s.log))
 		if err != nil {
-			return nil, err
+			return nil, "", "", err
 		}
-		return client, nil
+		return client, model, "googleai", nil
 	}
 
 	// Resolved credential doesn't have usable fields — fall back to static client
-	return s.client, nil
+	return s.client, staticModel, staticProvider, nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/projects"
+	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/storage"
@@ -182,6 +183,8 @@ func provideGraphEmbeddingWorker(
 	cfg *ExtractionConfig,
 	log *slog.Logger,
 	monitor syshealth.Monitor,
+	usageSvc *provider.UsageService,
+	appCfg *config.Config,
 ) *GraphEmbeddingWorker {
 	scaler := syshealth.NewConcurrencyScaler(
 		monitor,
@@ -190,7 +193,7 @@ func provideGraphEmbeddingWorker(
 		cfg.GraphEmbedding.MinConcurrency,
 		cfg.GraphEmbedding.MaxConcurrency,
 	)
-	return NewGraphEmbeddingWorker(jobs, embeds, db, cfg.GraphEmbedding, log, scaler)
+	return NewGraphEmbeddingWorker(jobs, embeds, db, cfg.GraphEmbedding, log, scaler, usageSvc, usageSvc, appCfg.AgentSafeguards.BudgetEnforcementEnabled)
 }
 
 // RegisterGraphEmbeddingWorkerLifecycle registers the worker with fx lifecycle
@@ -219,6 +222,8 @@ func provideChunkEmbeddingWorker(
 	cfg *ExtractionConfig,
 	log *slog.Logger,
 	monitor syshealth.Monitor,
+	usageSvc *provider.UsageService,
+	appCfg *config.Config,
 ) *ChunkEmbeddingWorker {
 	scaler := syshealth.NewConcurrencyScaler(
 		monitor,
@@ -227,7 +232,7 @@ func provideChunkEmbeddingWorker(
 		cfg.ChunkEmbedding.MinConcurrency,
 		cfg.ChunkEmbedding.MaxConcurrency,
 	)
-	return NewChunkEmbeddingWorker(jobs, embeds, db, cfg.ChunkEmbedding, log, scaler)
+	return NewChunkEmbeddingWorker(jobs, embeds, db, cfg.ChunkEmbedding, log, scaler, usageSvc, usageSvc, appCfg.AgentSafeguards.BudgetEnforcementEnabled)
 }
 
 // RegisterChunkEmbeddingWorkerLifecycle registers the chunk embedding worker with fx lifecycle
@@ -351,8 +356,10 @@ func provideEmbeddingSweepWorker(
 	db bun.IDB,
 	cfg *ExtractionConfig,
 	log *slog.Logger,
+	usageSvc *provider.UsageService,
+	appCfg *config.Config,
 ) *EmbeddingSweepWorker {
-	return NewEmbeddingSweepWorker(jobs, embeds, db, cfg.EmbeddingSweep, log)
+	return NewEmbeddingSweepWorker(jobs, embeds, db, cfg.EmbeddingSweep, log, usageSvc, usageSvc, appCfg.AgentSafeguards.BudgetEnforcementEnabled)
 }
 
 // RegisterEmbeddingSweepWorkerLifecycle registers the sweep worker with fx lifecycle
@@ -380,8 +387,10 @@ func provideGraphRelationshipEmbeddingWorker(
 	cfg *ExtractionConfig,
 	monitor syshealth.Monitor,
 	log *slog.Logger,
+	usageSvc *provider.UsageService,
+	appCfg *config.Config,
 ) *GraphRelationshipEmbeddingWorker {
-	return NewGraphRelationshipEmbeddingWorker(jobs, embeds, db, cfg.GraphEmbedding, monitor, log)
+	return NewGraphRelationshipEmbeddingWorker(jobs, embeds, db, cfg.GraphEmbedding, monitor, log, usageSvc, usageSvc, appCfg.AgentSafeguards.BudgetEnforcementEnabled)
 }
 
 // RegisterGraphRelationshipEmbeddingWorkerLifecycle registers the relationship embedding worker with fx lifecycle.

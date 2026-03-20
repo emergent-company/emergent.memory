@@ -37,6 +37,12 @@ type ChunkEmbeddingWorker struct {
 	mu        sync.Mutex
 	wg        sync.WaitGroup
 
+	// Usage tracking & budget enforcement
+	usage                    EmbeddingUsageRecorder
+	budget                   BudgetChecker
+	budgetEnforcementEnabled bool
+	orgCache                 *orgIDCache
+
 	// Metrics
 	processedCount int64
 	successCount   int64
@@ -52,14 +58,21 @@ func NewChunkEmbeddingWorker(
 	cfg *ChunkEmbeddingConfig,
 	log *slog.Logger,
 	scaler *syshealth.ConcurrencyScaler,
+	usage EmbeddingUsageRecorder,
+	budget BudgetChecker,
+	budgetEnforcementEnabled bool,
 ) *ChunkEmbeddingWorker {
 	return &ChunkEmbeddingWorker{
-		jobs:   jobs,
-		embeds: embeds,
-		db:     db,
-		cfg:    cfg,
-		log:    log.With(logger.Scope("chunk.embedding.worker")),
-		scaler: scaler,
+		jobs:                     jobs,
+		embeds:                   embeds,
+		db:                       db,
+		cfg:                      cfg,
+		log:                      log.With(logger.Scope("chunk.embedding.worker")),
+		scaler:                   scaler,
+		usage:                    usage,
+		budget:                   budget,
+		budgetEnforcementEnabled: budgetEnforcementEnabled,
+		orgCache:                 newOrgIDCache(db, log),
 	}
 }
 
@@ -265,6 +278,34 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 		span.SetAttributes(attribute.String("memory.project.id", chunk.ProjectID))
 	}
 
+	// Budget pre-flight check — skip embedding when project has exceeded its monthly budget.
+	if w.budget != nil && chunk.ProjectID != "" {
+		exceeded, err := w.budget.CheckBudgetExceeded(ctx, chunk.ProjectID)
+		if err != nil {
+			w.log.Warn("embedding budget check failed, proceeding",
+				slog.String("job_id", job.ID),
+				slog.String("project_id", chunk.ProjectID),
+				slog.String("error", err.Error()),
+			)
+		} else if exceeded && w.budgetEnforcementEnabled {
+			w.log.Warn("chunk embedding skipped: project budget exceeded, rescheduling",
+				slog.String("job_id", job.ID),
+				slog.String("project_id", chunk.ProjectID),
+			)
+			if _, reschedErr := w.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
+				SET status = 'pending',
+					last_error = 'budget_exceeded',
+					scheduled_at = now() + interval '5 minutes',
+					updated_at = now()
+				WHERE id = ?`, job.ID).Exec(ctx); reschedErr != nil {
+				w.log.Error("failed to reschedule budget-exceeded job",
+					slog.String("job_id", job.ID),
+					slog.String("error", reschedErr.Error()))
+			}
+			return &EmbeddingBudgetExceededError{ProjectID: chunk.ProjectID}
+		}
+	}
+
 	// Generate embedding
 	embeddingStartTime := time.Now()
 	result, err := w.embeds.EmbedQueryWithUsage(ctx, chunk.Text)
@@ -296,6 +337,10 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 		w.incrementFailure()
 		return err
 	}
+
+	// Record embedding usage for cost tracking
+	orgID := w.orgCache.resolve(ctx, chunk.ProjectID)
+	recordEmbeddingUsage(w.usage, chunk.ProjectID, orgID, result)
 
 	// Update the chunk with the embedding
 	// Note: embedding is vector(768), we need to use raw SQL for pgvector

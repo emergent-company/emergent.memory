@@ -13,12 +13,36 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// batchObjectItem is the JSON shape accepted by graph objects create-batch.
+// batchObjectItem is the JSON shape accepted by graph objects create-batch (flat-array format).
 type batchObjectItem struct {
 	Type        string         `json:"type"`
 	Name        string         `json:"name,omitempty"`
 	Description string         `json:"description,omitempty"`
 	Properties  map[string]any `json:"properties,omitempty"`
+}
+
+// subgraphObjectInput is the JSON shape for objects in the subgraph format.
+type subgraphObjectInput struct {
+	Ref         string         `json:"_ref"`
+	Type        string         `json:"type"`
+	Key         *string        `json:"key,omitempty"`
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Properties  map[string]any `json:"properties,omitempty"`
+}
+
+// subgraphRelationshipInput is the JSON shape for relationships in the subgraph format.
+type subgraphRelationshipInput struct {
+	Type       string         `json:"type"`
+	SrcRef     string         `json:"src_ref"`
+	DstRef     string         `json:"dst_ref"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+// subgraphInput is the top-level JSON shape for the subgraph format.
+type subgraphInput struct {
+	Objects       []subgraphObjectInput       `json:"objects"`
+	Relationships []subgraphRelationshipInput `json:"relationships"`
 }
 
 // batchRelationshipItem is the JSON shape accepted by graph relationships create-batch.
@@ -68,19 +92,19 @@ var graphRelationshipsCmd = &cobra.Command{
 // ─────────────────────────────────────────────
 
 var (
-	graphProjectFlag string
-	graphOutputFlag  string
-	graphLimitFlag   int
-	graphTypeFlag    string
-	graphNameFlag    string
-	graphDescFlag    string
-	graphPropsFlag   string
-	graphKeyFlag     string
-	graphUpsertFlag  bool
-	graphFromFlag    string
-	graphToFlag      string
-	graphRelTypeFlag string
-	graphBatchFile   string
+	graphProjectFlag  string
+	graphOutputFlag   string
+	graphLimitFlag    int
+	graphTypeFlag     string
+	graphNameFlag     string
+	graphDescFlag     string
+	graphPropsFlag    string
+	graphKeyFlag      string
+	graphUpsertFlag   bool
+	graphFromFlag     string
+	graphToFlag       string
+	graphRelTypeFlag  string
+	graphBatchFile    string
 	graphFilterFlag   []string
 	graphFilterOpFlag string
 )
@@ -243,7 +267,7 @@ var graphObjectsGetCmd = &cobra.Command{
 Prints Entity ID, Version ID, Type, Version number, Key (if set), Status (if
 set), Labels (if any), Created timestamp, and Properties as formatted JSON.
 Use --output json to receive the full object as JSON instead.`,
-	Args:  cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)
 		if err != nil {
@@ -463,7 +487,7 @@ var graphObjectsEdgesCmd = &cobra.Command{
 Prints two sections: Outgoing (format: [Type] → DstID (entity: EntityID)) and
 Incoming (format: [Type] ← SrcID (entity: EntityID)) with counts for each.
 Use --output json to receive the full edges response as JSON.`,
-	Args:  cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)
 		if err != nil {
@@ -647,7 +671,7 @@ var graphRelationshipsGetCmd = &cobra.Command{
 Prints Entity ID, Version ID, Type, From (source entity ID), To (destination
 entity ID), Version number, Created timestamp, and Properties as formatted
 JSON. Use --output json to receive the full relationship as JSON instead.`,
-	Args:  cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)
 		if err != nil {
@@ -764,23 +788,42 @@ var graphRelationshipsDeleteCmd = &cobra.Command{
 
 var graphObjectsCreateBatchCmd = &cobra.Command{
 	Use:   "create-batch",
-	Short: "Batch-create graph objects from a JSON file",
-	Long: `Create multiple graph objects in one API call.
+	Short: "Batch-create graph objects (and optionally relationships) from a JSON file",
+	Long: `Create multiple graph objects in one API call. Accepts two input formats:
 
-The input file must contain a JSON array of objects, each with:
-  type        (string, required)
-  name        (string, optional) — placed in properties.name
-  description (string, optional) — placed in properties.description
-  properties  (object, optional) — arbitrary additional properties
+FLAT ARRAY FORMAT (objects only):
+  A JSON array of objects, each with:
+    type        (string, required)
+    name        (string, optional) — placed in properties.name
+    description (string, optional) — placed in properties.description
+    properties  (object, optional) — arbitrary additional properties
 
-Example objects.json:
-  [
-    {"type": "Person", "name": "Alice"},
-    {"type": "Person", "name": "Bob", "description": "A developer"},
-    {"type": "Project", "name": "Acme", "properties": {"status": "active"}}
-  ]
+  Example:
+    [
+      {"type": "Person", "name": "Alice"},
+      {"type": "Project", "name": "Acme", "properties": {"status": "active"}}
+    ]
 
-Output (one line per object): <entity-id>  <type>  <name>`,
+  Output: one line per object: <entity-id>  <type>  <name>
+
+SUBGRAPH FORMAT (objects + relationships, preferred when wiring is needed):
+  A JSON object with "objects" and "relationships" arrays. Objects carry a
+  client-side "_ref" placeholder; relationships reference objects via
+  "src_ref"/"dst_ref" — no UUIDs required. Max 100 objects, 200 relationships.
+
+  Example:
+    {
+      "objects": [
+        {"_ref": "alice", "type": "Person", "key": "person-alice", "name": "Alice"},
+        {"_ref": "acme",  "type": "Project", "key": "proj-acme",  "name": "Acme"}
+      ],
+      "relationships": [
+        {"type": "member_of", "src_ref": "alice", "dst_ref": "acme"}
+      ]
+    }
+
+  Output (text): one line per object, then "Created N objects, M relationships"
+  Output (--output json): full response including ref_map (placeholder → UUID)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if graphBatchFile == "" {
 			return fmt.Errorf("--file is required")
@@ -791,12 +834,117 @@ Output (one line per object): <entity-id>  <type>  <name>`,
 			return fmt.Errorf("reading file: %w", err)
 		}
 
+		// Detect format by peeking at the first non-whitespace byte.
+		firstByte := byte(0)
+		for _, b := range data {
+			if b != ' ' && b != '\t' && b != '\n' && b != '\r' {
+				firstByte = b
+				break
+			}
+		}
+
+		g, err := getGraphClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		out := cmd.OutOrStdout()
+
+		if firstByte == '{' {
+			// ── Subgraph format ──────────────────────────────────────────────
+			var sg subgraphInput
+			if err := json.Unmarshal(data, &sg); err != nil {
+				return fmt.Errorf("parsing subgraph JSON: %w", err)
+			}
+			if len(sg.Objects) == 0 {
+				return fmt.Errorf("subgraph contains no objects")
+			}
+			if len(sg.Objects) > 100 {
+				return fmt.Errorf("subgraph exceeds limit: %d objects (max 100) — split into chunks", len(sg.Objects))
+			}
+			if len(sg.Relationships) > 200 {
+				return fmt.Errorf("subgraph exceeds limit: %d relationships (max 200) — split into chunks", len(sg.Relationships))
+			}
+
+			// Map input structs → SDK request structs.
+			objReqs := make([]sdkgraph.SubgraphObjectRequest, 0, len(sg.Objects))
+			for _, o := range sg.Objects {
+				props := make(map[string]any)
+				for k, v := range o.Properties {
+					props[k] = v
+				}
+				if o.Name != "" {
+					props["name"] = o.Name
+				}
+				if o.Description != "" {
+					props["description"] = o.Description
+				}
+				req := sdkgraph.SubgraphObjectRequest{
+					Ref:  o.Ref,
+					Type: o.Type,
+					Key:  o.Key,
+				}
+				if len(props) > 0 {
+					req.Properties = props
+				}
+				objReqs = append(objReqs, req)
+			}
+
+			relReqs := make([]sdkgraph.SubgraphRelationshipRequest, 0, len(sg.Relationships))
+			for _, r := range sg.Relationships {
+				relReqs = append(relReqs, sdkgraph.SubgraphRelationshipRequest{
+					Type:       r.Type,
+					SrcRef:     r.SrcRef,
+					DstRef:     r.DstRef,
+					Properties: r.Properties,
+				})
+			}
+
+			resp, err := g.CreateSubgraph(context.Background(), &sdkgraph.CreateSubgraphRequest{
+				Objects:       objReqs,
+				Relationships: relReqs,
+			})
+			if err != nil {
+				return fmt.Errorf("subgraph create failed: %w", err)
+			}
+
+			if graphOutputFlag == "json" {
+				return json.NewEncoder(out).Encode(resp)
+			}
+
+			for _, o := range resp.Objects {
+				fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, nameFromProps(o.Properties))
+			}
+			fmt.Fprintf(out, "Created %d objects, %d relationships\n", len(resp.Objects), len(resp.Relationships))
+			return nil
+		}
+
+		// ── Flat array format ────────────────────────────────────────────────
+		if firstByte != '[' {
+			return fmt.Errorf("unexpected JSON: expected array ([) or subgraph object ({), got %q", string(firstByte))
+		}
+
 		var items []batchObjectItem
 		if err := json.Unmarshal(data, &items); err != nil {
 			return fmt.Errorf("parsing JSON: %w", err)
 		}
 		if len(items) == 0 {
 			return fmt.Errorf("file contains no items")
+		}
+
+		// Heuristic: if items look like relationships (have "from"/"to" but no "type"),
+		// guide the user to the right command.
+		if len(items) > 0 {
+			var rawItems []map[string]json.RawMessage
+			if e := json.Unmarshal(data, &rawItems); e == nil && len(rawItems) > 0 {
+				first := rawItems[0]
+				_, hasFrom := first["from"]
+				_, hasTo := first["to"]
+				_, hasType := first["type"]
+				if hasFrom && hasTo && !hasType {
+					return fmt.Errorf("input looks like relationships — use 'memory graph relationships create-batch' instead")
+				}
+			}
 		}
 
 		reqs := make([]sdkgraph.CreateObjectRequest, 0, len(items))
@@ -820,19 +968,12 @@ Output (one line per object): <entity-id>  <type>  <name>`,
 			reqs = append(reqs, req)
 		}
 
-		g, err := getGraphClient(cmd)
-		if err != nil {
-			return err
-		}
-
 		resp, err := g.BulkCreateObjects(context.Background(), &sdkgraph.BulkCreateObjectsRequest{
 			Items: reqs,
 		})
 		if err != nil {
 			return fmt.Errorf("bulk create failed: %w", err)
 		}
-
-		out := cmd.OutOrStdout()
 
 		if graphOutputFlag == "json" {
 			return json.NewEncoder(out).Encode(resp)

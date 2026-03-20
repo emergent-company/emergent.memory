@@ -45,6 +45,12 @@ type GraphRelationshipEmbeddingWorker struct {
 	mu        sync.Mutex
 	wg        sync.WaitGroup
 
+	// Usage tracking & budget enforcement
+	usage                    EmbeddingUsageRecorder
+	budget                   BudgetChecker
+	budgetEnforcementEnabled bool
+	orgCache                 *orgIDCache
+
 	// Metrics
 	processedCount int64
 	successCount   int64
@@ -60,6 +66,9 @@ func NewGraphRelationshipEmbeddingWorker(
 	cfg *GraphEmbeddingConfig,
 	monitor syshealth.Monitor,
 	log *slog.Logger,
+	usage EmbeddingUsageRecorder,
+	budget BudgetChecker,
+	budgetEnforcementEnabled bool,
 ) *GraphRelationshipEmbeddingWorker {
 	scaler := syshealth.NewConcurrencyScaler(
 		monitor,
@@ -70,12 +79,16 @@ func NewGraphRelationshipEmbeddingWorker(
 	)
 
 	return &GraphRelationshipEmbeddingWorker{
-		jobs:   jobs,
-		embeds: embeds,
-		db:     db,
-		cfg:    cfg,
-		scaler: scaler,
-		log:    log.With(logger.Scope("graph.rel.embedding.worker")),
+		jobs:                     jobs,
+		embeds:                   embeds,
+		db:                       db,
+		cfg:                      cfg,
+		scaler:                   scaler,
+		log:                      log.With(logger.Scope("graph.rel.embedding.worker")),
+		usage:                    usage,
+		budget:                   budget,
+		budgetEnforcementEnabled: budgetEnforcementEnabled,
+		orgCache:                 newOrgIDCache(db, log),
 	}
 }
 
@@ -278,6 +291,34 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 		)
 	}
 
+	// Budget pre-flight check — skip embedding when project has exceeded its monthly budget.
+	if w.budget != nil && rel.ProjectID != "" {
+		exceeded, err := w.budget.CheckBudgetExceeded(ctx, rel.ProjectID)
+		if err != nil {
+			w.log.Warn("embedding budget check failed, proceeding",
+				slog.String("job_id", job.ID),
+				slog.String("project_id", rel.ProjectID),
+				slog.String("error", err.Error()),
+			)
+		} else if exceeded && w.budgetEnforcementEnabled {
+			w.log.Warn("relationship embedding skipped: project budget exceeded, rescheduling",
+				slog.String("job_id", job.ID),
+				slog.String("project_id", rel.ProjectID),
+			)
+			if _, reschedErr := w.db.NewRaw(`UPDATE kb.graph_relationship_embedding_jobs
+				SET status = 'pending',
+					last_error = 'budget_exceeded',
+					scheduled_at = now() + interval '5 minutes',
+					updated_at = now()
+				WHERE id = ?`, job.ID).Exec(ctx); reschedErr != nil {
+				w.log.Error("failed to reschedule budget-exceeded job",
+					slog.String("job_id", job.ID),
+					slog.String("error", reschedErr.Error()))
+			}
+			return &EmbeddingBudgetExceededError{ProjectID: rel.ProjectID}
+		}
+	}
+
 	embeddingStartTime := time.Now()
 	result, err := w.embeds.EmbedQueryWithUsage(ctx, text)
 	embeddingDurationMs := time.Since(embeddingStartTime).Milliseconds()
@@ -304,6 +345,10 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 		w.incrementFailure()
 		return jobErr
 	}
+
+	// Record embedding usage for cost tracking
+	orgID := w.orgCache.resolve(ctx, rel.ProjectID)
+	recordEmbeddingUsage(w.usage, rel.ProjectID, orgID, result)
 
 	// Store the embedding on the relationship row.
 	now := time.Now()

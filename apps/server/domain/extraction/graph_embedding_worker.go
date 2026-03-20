@@ -47,6 +47,12 @@ type GraphEmbeddingWorker struct {
 	mu        sync.Mutex
 	wg        sync.WaitGroup
 
+	// Usage tracking & budget enforcement
+	usage                    EmbeddingUsageRecorder
+	budget                   BudgetChecker
+	budgetEnforcementEnabled bool
+	orgCache                 *orgIDCache
+
 	// Metrics
 	processedCount int64
 	successCount   int64
@@ -62,14 +68,21 @@ func NewGraphEmbeddingWorker(
 	cfg *GraphEmbeddingConfig,
 	log *slog.Logger,
 	scaler *syshealth.ConcurrencyScaler,
+	usage EmbeddingUsageRecorder,
+	budget BudgetChecker,
+	budgetEnforcementEnabled bool,
 ) *GraphEmbeddingWorker {
 	return &GraphEmbeddingWorker{
-		jobs:   jobs,
-		embeds: embeds,
-		db:     db,
-		cfg:    cfg,
-		log:    log.With(logger.Scope("graph.embedding.worker")),
-		scaler: scaler,
+		jobs:                     jobs,
+		embeds:                   embeds,
+		db:                       db,
+		cfg:                      cfg,
+		log:                      log.With(logger.Scope("graph.embedding.worker")),
+		scaler:                   scaler,
+		usage:                    usage,
+		budget:                   budget,
+		budgetEnforcementEnabled: budgetEnforcementEnabled,
+		orgCache:                 newOrgIDCache(db, log),
 	}
 }
 
@@ -291,6 +304,36 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		ctx = auth.ContextWithProjectID(ctx, obj.ProjectID)
 	}
 
+	// Budget pre-flight check — skip embedding when project has exceeded its monthly budget.
+	if w.budget != nil && obj.ProjectID != "" {
+		exceeded, err := w.budget.CheckBudgetExceeded(ctx, obj.ProjectID)
+		if err != nil {
+			// Fail-open: log warning but proceed so a broken budget query never halts embeddings.
+			w.log.Warn("embedding budget check failed, proceeding",
+				slog.String("job_id", job.ID),
+				slog.String("project_id", obj.ProjectID),
+				slog.String("error", err.Error()),
+			)
+		} else if exceeded && w.budgetEnforcementEnabled {
+			w.log.Warn("graph embedding skipped: project budget exceeded, rescheduling",
+				slog.String("job_id", job.ID),
+				slog.String("project_id", obj.ProjectID),
+			)
+			// Reschedule with a 5-minute delay without incrementing attempt count
+			if _, reschedErr := w.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+				SET status = 'pending',
+					last_error = 'budget_exceeded',
+					scheduled_at = now() + interval '5 minutes',
+					updated_at = now()
+				WHERE id = ?`, job.ID).Exec(ctx); reschedErr != nil {
+				w.log.Error("failed to reschedule budget-exceeded job",
+					slog.String("job_id", job.ID),
+					slog.String("error", reschedErr.Error()))
+			}
+			return &EmbeddingBudgetExceededError{ProjectID: obj.ProjectID}
+		}
+	}
+
 	// Extract text for embedding
 	text := w.extractText(obj)
 	textLength := len(text)
@@ -338,6 +381,10 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		w.incrementFailure()
 		return err
 	}
+
+	// Record embedding usage for cost tracking
+	orgID := w.orgCache.resolve(ctx, obj.ProjectID)
+	recordEmbeddingUsage(w.usage, obj.ProjectID, orgID, result)
 
 	// Update the graph object with the embedding
 	// Note: embedding_v2 is vector(768), we need to use raw SQL for pgvector

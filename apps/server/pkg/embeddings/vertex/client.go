@@ -18,9 +18,9 @@ import (
 
 const (
 	// DefaultModel is the default embedding model
-	DefaultModel = "gemini-embedding-001"
+	DefaultModel = "gemini-embedding-2-preview"
 
-	// DefaultDimension is the embedding dimension (gemini-embedding-001 supports MRL, we use 768 to match DB column)
+	// DefaultDimension is the embedding dimension (gemini-embedding-2-preview supports MRL with recommended 768 dims)
 	DefaultDimension = 768
 
 	// DefaultMaxRetries is the default number of retries
@@ -192,12 +192,16 @@ type embeddingStats struct {
 type EmbedResult struct {
 	Embedding []float32
 	Usage     *Usage
+	Model     string // the model name that produced this embedding
+	Provider  string // "vertex" or "googleai"
 }
 
 // BatchEmbedResult contains batch embedding results with usage data
 type BatchEmbedResult struct {
 	Embeddings [][]float32
 	Usage      *Usage
+	Model      string // the model name that produced these embeddings
+	Provider   string // "vertex" or "googleai"
 }
 
 // Usage contains token usage information
@@ -227,6 +231,8 @@ func (c *Client) EmbedQueryWithUsage(ctx context.Context, query string) (*EmbedR
 	return &EmbedResult{
 		Embedding: result.Embeddings[0],
 		Usage:     result.Usage,
+		Model:     c.model,
+		Provider:  "vertex",
 	}, nil
 }
 
@@ -245,6 +251,8 @@ func (c *Client) EmbedDocumentsWithUsage(ctx context.Context, documents []string
 		return &BatchEmbedResult{
 			Embeddings: [][]float32{},
 			Usage:      &Usage{},
+			Model:      c.model,
+			Provider:   "vertex",
 		}, nil
 	}
 
@@ -274,6 +282,8 @@ func (c *Client) EmbedDocumentsWithUsage(ctx context.Context, documents []string
 			PromptTokens: totalTokens,
 			TotalTokens:  totalTokens,
 		},
+		Model:    c.model,
+		Provider: "vertex",
 	}, nil
 }
 

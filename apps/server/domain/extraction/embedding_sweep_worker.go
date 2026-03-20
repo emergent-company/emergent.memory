@@ -50,6 +50,12 @@ type EmbeddingSweepWorker struct {
 	cfg    *EmbeddingSweepConfig
 	log    *slog.Logger
 
+	// Usage tracking & budget enforcement
+	usage                    EmbeddingUsageRecorder
+	budget                   BudgetChecker
+	budgetEnforcementEnabled bool
+	orgCache                 *orgIDCache
+
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
 	running   bool
@@ -71,13 +77,20 @@ func NewEmbeddingSweepWorker(
 	db bun.IDB,
 	cfg *EmbeddingSweepConfig,
 	log *slog.Logger,
+	usage EmbeddingUsageRecorder,
+	budget BudgetChecker,
+	budgetEnforcementEnabled bool,
 ) *EmbeddingSweepWorker {
 	return &EmbeddingSweepWorker{
-		jobs:   jobs,
-		embeds: embeds,
-		db:     db,
-		cfg:    cfg,
-		log:    log.With(logger.Scope("embedding.sweep")),
+		jobs:                     jobs,
+		embeds:                   embeds,
+		db:                       db,
+		cfg:                      cfg,
+		log:                      log.With(logger.Scope("embedding.sweep")),
+		usage:                    usage,
+		budget:                   budget,
+		budgetEnforcementEnabled: budgetEnforcementEnabled,
+		orgCache:                 newOrgIDCache(db, log),
 	}
 }
 
@@ -250,6 +263,7 @@ func (w *EmbeddingSweepWorker) sweepObjects(ctx context.Context) int {
 type relationshipSweepRow struct {
 	ID            string  `bun:"id"`
 	Type          string  `bun:"type"`
+	ProjectID     string  `bun:"project_id"`
 	SrcProperties []byte  `bun:"src_properties"`
 	SrcKey        *string `bun:"src_key"`
 	SrcID         string  `bun:"src_id"`
@@ -263,7 +277,7 @@ type relationshipSweepRow struct {
 func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded int, errors int) {
 	var rows []relationshipSweepRow
 	err := w.db.NewRaw(`
-		SELECT r.id::text, r.type,
+		SELECT r.id::text, r.type, r.project_id::text AS project_id,
 		       src.properties AS src_properties, src.key AS src_key, src.id::text AS src_id,
 		       dst.properties AS dst_properties, dst.key AS dst_key, dst.id::text AS dst_id
 		FROM kb.graph_relationships r
@@ -301,6 +315,22 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 		dstName := displayNameFromRow(row.DstProperties, row.DstKey, row.DstID)
 		tripletText := buildTripletText(srcName, dstName, row.Type)
 
+		// Budget pre-flight check (fail-open: if check fails, proceed)
+		if w.budget != nil && row.ProjectID != "" {
+			exceeded, err := w.budget.CheckBudgetExceeded(ctx, row.ProjectID)
+			if err != nil {
+				w.log.Warn("sweep: budget check failed, proceeding (fail-open)",
+					slog.String("relationship_id", row.ID),
+					slog.String("project_id", row.ProjectID),
+					slog.String("error", err.Error()))
+			} else if exceeded && w.budgetEnforcementEnabled {
+				w.log.Info("sweep: skipping relationship embedding, project budget exceeded",
+					slog.String("relationship_id", row.ID),
+					slog.String("project_id", row.ProjectID))
+				continue
+			}
+		}
+
 		result, err := w.embeds.EmbedQueryWithUsage(ctx, tripletText)
 		if err != nil {
 			errors++
@@ -332,6 +362,12 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 		}
 
 		embedded++
+
+		// Record embedding usage
+		if w.usage != nil && row.ProjectID != "" {
+			orgID := w.orgCache.resolve(ctx, row.ProjectID)
+			recordEmbeddingUsage(w.usage, row.ProjectID, orgID, result)
+		}
 	}
 
 	w.addRelationshipsEmbedded(int64(embedded))

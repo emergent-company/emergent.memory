@@ -593,6 +593,38 @@ type BulkCreateRelationshipResult struct {
 	Error        *string            `json:"error,omitempty"`
 }
 
+// SubgraphObjectRequest is a single object in a subgraph creation request.
+// _ref is a client-side placeholder used by relationships in the same request.
+type SubgraphObjectRequest struct {
+	Ref        string         `json:"_ref"`
+	Type       string         `json:"type"`
+	Key        *string        `json:"key,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+// SubgraphRelationshipRequest is a single relationship in a subgraph creation request.
+// SrcRef and DstRef reference _ref values defined in the same request's Objects list.
+type SubgraphRelationshipRequest struct {
+	Type       string         `json:"type"`
+	SrcRef     string         `json:"src_ref"`
+	DstRef     string         `json:"dst_ref"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+// CreateSubgraphRequest is the request body for atomic subgraph creation.
+// Max 100 objects and 200 relationships per call.
+type CreateSubgraphRequest struct {
+	Objects       []SubgraphObjectRequest       `json:"objects"`
+	Relationships []SubgraphRelationshipRequest `json:"relationships,omitempty"`
+}
+
+// CreateSubgraphResponse is the response for atomic subgraph creation.
+type CreateSubgraphResponse struct {
+	Objects       []*GraphObject       `json:"objects"`
+	Relationships []*GraphRelationship `json:"relationships"`
+	RefMap        map[string]string    `json:"ref_map"`
+}
+
 // SearchWithNeighborsResponse is the response for search with neighbors.
 type SearchWithNeighborsResponse struct {
 	PrimaryResults []*SearchWithNeighborsResultItem `json:"primaryResults"`
@@ -1322,6 +1354,17 @@ func (c *Client) BulkUpdateStatus(ctx context.Context, req *BulkUpdateStatusRequ
 func (c *Client) BulkCreateObjects(ctx context.Context, req *BulkCreateObjectsRequest) (*BulkCreateObjectsResponse, error) {
 	var result BulkCreateObjectsResponse
 	if err := c.postJSON(ctx, c.base+"/api/graph/objects/bulk", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// CreateSubgraph atomically creates objects and relationships in a single request.
+// Objects may carry a _ref placeholder; relationships reference objects via src_ref/dst_ref.
+// Maximum 100 objects and 200 relationships per call.
+func (c *Client) CreateSubgraph(ctx context.Context, req *CreateSubgraphRequest) (*CreateSubgraphResponse, error) {
+	var result CreateSubgraphResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/subgraph", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

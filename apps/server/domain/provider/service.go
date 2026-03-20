@@ -47,8 +47,8 @@ const (
 // Static fallback model names used when SyncModels fails or when no model was
 // explicitly selected by the caller.
 const (
-	staticFallbackGenerativeModel = "gemini-2.5-flash"
-	staticFallbackEmbeddingModel  = "gemini-embedding-001"
+	staticFallbackGenerativeModel = "gemini-3.1-flash-lite-preview"
+	staticFallbackEmbeddingModel  = "gemini-embedding-2-preview"
 )
 
 // CredentialService resolves LLM credentials following the hierarchy:
@@ -605,17 +605,16 @@ func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req Ups
 
 // pickBestGenerativeModel selects the preferred generative model from the
 // catalog, falling back to the static default if none is available.
-// gemini-2.5-flash is preferred because it has reliable function-calling support;
-// gemini-3.1-flash-lite-preview is deprioritised due to MALFORMED_FUNCTION_CALL issues
-// when used with complex multi-tool agents (see issue #88).
+// gemini-3.1-flash-lite-preview is the preferred default; gemini-2.5-flash
+// is the secondary fallback for environments that haven't synced the new model yet.
 func (s *CredentialService) pickBestGenerativeModel(models []ProviderSupportedModel) string {
 	for _, m := range models {
-		if m.ModelName == "gemini-2.5-flash" {
+		if m.ModelName == "gemini-3.1-flash-lite-preview" {
 			return m.ModelName
 		}
 	}
 	for _, m := range models {
-		if m.ModelName == "gemini-3.1-flash-lite-preview" {
+		if m.ModelName == "gemini-2.5-flash" {
 			return m.ModelName
 		}
 	}
@@ -630,6 +629,11 @@ func (s *CredentialService) pickBestGenerativeModel(models []ProviderSupportedMo
 // pickBestEmbeddingModel selects the preferred embedding model from the
 // catalog, falling back to the static default if none is available.
 func (s *CredentialService) pickBestEmbeddingModel(models []ProviderSupportedModel) string {
+	for _, m := range models {
+		if m.ModelName == "gemini-embedding-2-preview" {
+			return m.ModelName
+		}
+	}
 	for _, m := range models {
 		if m.ModelName == "gemini-embedding-001" {
 			return m.ModelName
