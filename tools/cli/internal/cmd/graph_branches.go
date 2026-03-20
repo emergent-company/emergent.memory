@@ -369,12 +369,16 @@ Examples:
 			}
 		}
 
+		if result.Truncated && result.HardLimit != nil {
+			fmt.Fprintf(out, "\nWarning: result truncated at %d — use --output json and pass a higher limit to see all changes.\n", *result.HardLimit)
+		}
+
 		if result.ConflictCount > 0 {
 			fmt.Fprintf(out, "\n%d conflict(s) detected — use --output json for details.\n", result.ConflictCount)
 		}
 
 		if result.Applied && result.AppliedObjects != nil {
-			fmt.Fprintf(out, "\n%d object(s) applied to target branch.\n", *result.AppliedObjects)
+			fmt.Fprintf(out, "\n%d object(s) and relationship(s) applied to target branch.\n", *result.AppliedObjects)
 		}
 
 		return nil

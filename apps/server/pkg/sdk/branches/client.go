@@ -243,6 +243,8 @@ type MergeResponse struct {
 	AddedCount       int    `json:"added_count"`
 	FastForwardCount int    `json:"fast_forward_count"`
 	ConflictCount    int    `json:"conflict_count"`
+	Truncated        bool   `json:"truncated,omitempty"`
+	HardLimit        *int   `json:"hard_limit,omitempty"`
 	Applied          bool   `json:"applied,omitempty"`
 	AppliedObjects   *int   `json:"applied_objects,omitempty"`
 	// Relationship counts

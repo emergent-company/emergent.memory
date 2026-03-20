@@ -2733,18 +2733,13 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			summary.Status = "added"
 			addedCount++
 		} else if sourceHead != nil && targetHead != nil {
-			// Exists on both - compare content
+			// Exists on both - compare content hash (covers properties, status, key, labels)
 			if bytesEqual(sourceHead.ContentHash, targetHead.ContentHash) {
 				summary.Status = "unchanged"
 				unchangedCount++
 			} else {
-				// Properties differ - check for conflicts
-				sourcePaths := getPropertyPaths(sourceHead.Properties)
-				targetPaths := getPropertyPaths(targetHead.Properties)
-				conflicts := findConflictingPaths(sourcePaths, targetPaths)
-
-				summary.SourcePaths = sourcePaths
-				summary.TargetPaths = targetPaths
+				// Content differs — find which property keys have conflicting values
+				conflicts := findConflictingPaths(sourceHead.Properties, targetHead.Properties)
 
 				if len(conflicts) > 0 {
 					summary.Status = "conflict"
@@ -2807,12 +2802,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 				summary.Status = "unchanged"
 				relUnchanged++
 			} else {
-				sourcePaths := getPropertyPaths(sourceHead.Properties)
-				targetPaths := getPropertyPaths(targetHead.Properties)
-				conflicts := findConflictingPaths(sourcePaths, targetPaths)
-
-				summary.SourcePaths = sourcePaths
-				summary.TargetPaths = targetPaths
+				conflicts := findConflictingPaths(sourceHead.Properties, targetHead.Properties)
 
 				if len(conflicts) > 0 {
 					summary.Status = "conflict"
@@ -2852,20 +2842,201 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		Relationships:                 relSummaries,
 	}
 
-	// If execute is requested and no conflicts, apply merge
+	// If execute is requested and no conflicts, apply merge transactionally.
 	if req.Execute && conflictCount == 0 && relConflict == 0 {
-		// Note: Actual merge application would require:
-		// 1. Starting a transaction
-		// 2. Cloning added objects/relationships to target branch
-		// 3. Patching fast-forward objects/relationships
-		// 4. Recording merge provenance
-		// This is a complex operation that would need careful implementation
+		appliedCount, err := s.applyMerge(ctx, projectID, targetBranchID, objectSummaries, relSummaries, sourceObjects, targetObjects, sourceRels, targetRels)
+		if err != nil {
+			return nil, fmt.Errorf("apply merge: %w", err)
+		}
 		response.Applied = true
-		appliedCount := addedCount + ffCount + relAdded + relFF
 		response.AppliedObjects = &appliedCount
 	}
 
 	return response, nil
+}
+
+// applyMerge executes the merge inside a single database transaction.
+// It clones "added" objects/relationships onto the target branch and creates
+// new versions for "fast_forward" objects/relationships.
+// Returns the total number of objects+relationships written.
+func (s *Service) applyMerge(
+	ctx context.Context,
+	projectID uuid.UUID,
+	targetBranchID uuid.UUID,
+	objectSummaries []*BranchMergeObjectSummary,
+	relSummaries []*BranchMergeRelationshipSummary,
+	sourceObjects map[uuid.UUID]*BranchObjectHead,
+	targetObjects map[uuid.UUID]*BranchObjectHead,
+	sourceRels map[uuid.UUID]*BranchRelationshipHead,
+	targetRels map[uuid.UUID]*BranchRelationshipHead,
+) (int, error) {
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// canonicalIDMap maps source canonical IDs → target canonical IDs for
+	// objects that are "added" (new on source, don't exist on target yet).
+	// Used to remap relationship endpoints when both endpoints are new.
+	canonicalIDMap := make(map[uuid.UUID]uuid.UUID)
+
+	appliedCount := 0
+
+	// ── Objects ──────────────────────────────────────────────────────────────
+
+	for _, summary := range objectSummaries {
+		cid := summary.CanonicalID
+
+		switch summary.Status {
+		case "added":
+			src := sourceObjects[cid]
+			if src == nil {
+				continue
+			}
+			labels := src.Labels
+			if labels == nil {
+				labels = []string{}
+			}
+			props := src.Properties
+			if props == nil {
+				props = map[string]any{}
+			}
+			newCanonicalID := uuid.New()
+			clone := &GraphObject{
+				ID:          uuid.New(),
+				CanonicalID: newCanonicalID,
+				ProjectID:   projectID,
+				BranchID:    &targetBranchID,
+				Version:     1,
+				Type:        src.Type,
+				Key:         src.Key,
+				Status:      src.Status,
+				Labels:      labels,
+				Properties:  props,
+			}
+			clone.ContentHash = computeContentHash(clone.Properties, clone.Status, clone.Key, clone.Labels)
+			now := time.Now()
+			clone.CreatedAt = now
+			clone.UpdatedAt = now
+
+			if _, err := tx.NewInsert().Model(clone).Exec(ctx); err != nil {
+				return 0, fmt.Errorf("clone object %s: %w", cid, err)
+			}
+			canonicalIDMap[cid] = newCanonicalID
+			appliedCount++
+
+			// Enqueue embedding best-effort after commit (use new canonical ID)
+			defer s.enqueueEmbedding(ctx, newCanonicalID.String())
+
+		case "fast_forward":
+			src := sourceObjects[cid]
+			if src == nil {
+				continue
+			}
+			// Fetch the current HEAD on the target branch to use as prevHead
+			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, cid, &targetBranchID)
+			if err != nil {
+				return 0, fmt.Errorf("get target head for fast-forward %s: %w", cid, err)
+			}
+			labels := src.Labels
+			if labels == nil {
+				labels = []string{}
+			}
+			props := src.Properties
+			if props == nil {
+				props = map[string]any{}
+			}
+			newVersion := &GraphObject{
+				Type:       prevHead.Type,
+				Key:        src.Key,
+				Status:     src.Status,
+				Labels:     labels,
+				Properties: props,
+				ProjectID:  projectID,
+				BranchID:   &targetBranchID,
+			}
+			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
+				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
+			}
+			appliedCount++
+			defer s.enqueueEmbedding(ctx, cid.String())
+		}
+	}
+
+	// ── Relationships ─────────────────────────────────────────────────────────
+
+	for _, summary := range relSummaries {
+		cid := summary.CanonicalID
+
+		switch summary.Status {
+		case "added":
+			src := sourceRels[cid]
+			if src == nil {
+				continue
+			}
+			props := src.Properties
+			if props == nil {
+				props = map[string]any{}
+			}
+			// Remap src/dst canonical IDs if they were added in this merge
+			srcID := src.SrcID
+			if mapped, ok := canonicalIDMap[srcID]; ok {
+				srcID = mapped
+			}
+			dstID := src.DstID
+			if mapped, ok := canonicalIDMap[dstID]; ok {
+				dstID = mapped
+			}
+			rel := &GraphRelationship{
+				ID:          uuid.New(),
+				CanonicalID: uuid.New(),
+				ProjectID:   projectID,
+				BranchID:    &targetBranchID,
+				Version:     1,
+				Type:        src.Type,
+				SrcID:       srcID,
+				DstID:       dstID,
+				Properties:  props,
+			}
+			rel.ContentHash = computeContentHash(rel.Properties, nil, nil, nil)
+			rel.CreatedAt = time.Now()
+
+			if _, err := tx.NewInsert().Model(rel).On("CONFLICT DO NOTHING").Returning("").Exec(ctx); err != nil {
+				return 0, fmt.Errorf("clone relationship %s: %w", cid, err)
+			}
+			appliedCount++
+
+		case "fast_forward":
+			src := sourceRels[cid]
+			if src == nil {
+				continue
+			}
+			prevHead, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, cid)
+			if err != nil {
+				return 0, fmt.Errorf("get target rel head for fast-forward %s: %w", cid, err)
+			}
+			props := src.Properties
+			if props == nil {
+				props = map[string]any{}
+			}
+			newVersion := &GraphRelationship{
+				Properties: props,
+				BranchID:   &targetBranchID,
+				ProjectID:  projectID,
+			}
+			if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
+				return 0, fmt.Errorf("fast-forward relationship %s: %w", cid, err)
+			}
+			appliedCount++
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit merge: %w", err)
+	}
+
+	return appliedCount, nil
 }
 
 // Helper functions for branch merge
@@ -2882,32 +3053,25 @@ func bytesEqual(a, b []byte) bool {
 	return true
 }
 
-func getPropertyPaths(props map[string]any) []string {
-	if props == nil {
-		return []string{}
-	}
-	paths := make([]string, 0, len(props))
-	for k := range props {
-		paths = append(paths, "/"+k)
-	}
-	sort.Strings(paths)
-	return paths
-}
-
-func findConflictingPaths(sourcePaths, targetPaths []string) []string {
-	// For now, if both branches modified any property, consider it a potential conflict
-	// A more sophisticated implementation would compare the actual values
-	sourceSet := make(map[string]bool)
-	for _, p := range sourcePaths {
-		sourceSet[p] = true
-	}
-
+// findConflictingPaths returns the property keys that differ between source and
+// target. A key is a conflict only when both branches have it AND the values
+// differ (JSON-serialised comparison). Keys present on only one side are not
+// conflicts — they are additive changes that merge cleanly.
+func findConflictingPaths(sourceProps, targetProps map[string]any) []string {
 	conflicts := []string{}
-	for _, p := range targetPaths {
-		if sourceSet[p] {
-			conflicts = append(conflicts, p)
+	for k, sv := range sourceProps {
+		tv, exists := targetProps[k]
+		if !exists {
+			continue // only on source — not a conflict
+		}
+		// Compare by JSON representation for deep equality
+		sb, _ := json.Marshal(sv)
+		tb, _ := json.Marshal(tv)
+		if string(sb) != string(tb) {
+			conflicts = append(conflicts, "/"+k)
 		}
 	}
+	sort.Strings(conflicts)
 	return conflicts
 }
 

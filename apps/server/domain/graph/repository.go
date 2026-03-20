@@ -449,7 +449,7 @@ func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
 		obj.CanonicalID = obj.ID // First version: canonical_id == id
 	}
 	obj.Version = 1
-	obj.ContentHash = computeContentHash(obj.Properties)
+	obj.ContentHash = computeContentHash(obj.Properties, obj.Status, obj.Key, obj.Labels)
 	now := time.Now()
 	obj.CreatedAt = now
 	obj.UpdatedAt = now
@@ -498,7 +498,7 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 	newVersion.Version = prevHead.Version + 1
 	newVersion.ProjectID = prevHead.ProjectID
 	newVersion.BranchID = prevHead.BranchID
-	newVersion.ContentHash = computeContentHash(newVersion.Properties)
+	newVersion.ContentHash = computeContentHash(newVersion.Properties, newVersion.Status, newVersion.Key, newVersion.Labels)
 	now := time.Now()
 	newVersion.CreatedAt = now
 	newVersion.UpdatedAt = now
@@ -710,7 +710,7 @@ func (r *Repository) CreateInTx(ctx context.Context, tx bun.Tx, obj *GraphObject
 		obj.CanonicalID = obj.ID // First version: canonical_id == id
 	}
 	obj.Version = 1
-	obj.ContentHash = computeContentHash(obj.Properties)
+	obj.ContentHash = computeContentHash(obj.Properties, obj.Status, obj.Key, obj.Labels)
 	now := time.Now()
 	obj.CreatedAt = now
 	obj.UpdatedAt = now
@@ -776,25 +776,44 @@ func encodeCursor(createdAt time.Time, id uuid.UUID) string {
 	return string(data)
 }
 
-// computeContentHash creates a SHA-256 hash of the properties for deduplication.
-func computeContentHash(properties map[string]any) []byte {
+// computeContentHash creates a SHA-256 hash of an object's content for change detection.
+// It includes properties, status, key, and labels so that changes to any of these
+// fields are correctly detected during branch merge classification.
+func computeContentHash(properties map[string]any, status *string, key *string, labels []string) []byte {
 	if properties == nil {
 		properties = make(map[string]any)
 	}
 
-	// Sort keys for deterministic ordering
-	keys := make([]string, 0, len(properties))
+	// Sort property keys for deterministic ordering
+	propKeys := make([]string, 0, len(properties))
 	for k := range properties {
-		keys = append(keys, k)
+		propKeys = append(propKeys, k)
 	}
-	sort.Strings(keys)
+	sort.Strings(propKeys)
 
-	sorted := make(map[string]any)
-	for _, k := range keys {
-		sorted[k] = properties[k]
+	sortedProps := make(map[string]any)
+	for _, k := range propKeys {
+		sortedProps[k] = properties[k]
 	}
 
-	data, _ := json.Marshal(sorted)
+	// Sort labels for deterministic ordering
+	sortedLabels := make([]string, len(labels))
+	copy(sortedLabels, labels)
+	sort.Strings(sortedLabels)
+
+	hashInput := struct {
+		Properties map[string]any `json:"p"`
+		Status     *string        `json:"s,omitempty"`
+		Key        *string        `json:"k,omitempty"`
+		Labels     []string       `json:"l,omitempty"`
+	}{
+		Properties: sortedProps,
+		Status:     status,
+		Key:        key,
+		Labels:     sortedLabels,
+	}
+
+	data, _ := json.Marshal(hashInput)
 	hash := sha256.Sum256(data)
 	return hash[:]
 }
@@ -997,7 +1016,7 @@ func (r *Repository) CreateRelationship(ctx context.Context, tx bun.Tx, rel *Gra
 		rel.CanonicalID = rel.ID // First version: canonical_id == id
 	}
 	rel.Version = 1
-	rel.ContentHash = computeContentHash(rel.Properties)
+	rel.ContentHash = computeContentHash(rel.Properties, nil, nil, nil)
 	rel.CreatedAt = time.Now()
 
 	if rel.Properties == nil {
@@ -1033,7 +1052,7 @@ func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, p
 	newVersion.Type = prevHead.Type
 	newVersion.SrcID = prevHead.SrcID
 	newVersion.DstID = prevHead.DstID
-	newVersion.ContentHash = computeContentHash(newVersion.Properties)
+	newVersion.ContentHash = computeContentHash(newVersion.Properties, nil, nil, nil)
 	newVersion.CreatedAt = time.Now()
 
 	// Update previous HEAD first — set supersedes_id to point to the new version.
@@ -2227,20 +2246,26 @@ func (r *Repository) IsAncestorBranch(ctx context.Context, branchID, ancestorBra
 }
 
 // BranchObjectHead represents HEAD object version per canonical_id on a branch.
+// Carries all fields needed for merge classification and cloning.
 type BranchObjectHead struct {
 	CanonicalID uuid.UUID
 	ID          uuid.UUID
 	ContentHash []byte
+	Type        string
+	Key         *string
+	Status      *string
+	Labels      []string
 	Properties  map[string]any
 }
 
 // GetBranchObjectHeads returns HEAD versions of all objects on a branch.
+// Fetches all fields required for merge classification and cloning.
 func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID) (map[uuid.UUID]*BranchObjectHead, error) {
 	var objects []*GraphObject
 
 	q := r.db.NewSelect().
 		Model(&objects).
-		Column("id", "canonical_id", "content_hash", "properties").
+		Column("id", "canonical_id", "content_hash", "type", "key", "status", "labels", "properties").
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL")
@@ -2262,6 +2287,10 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 			CanonicalID: obj.CanonicalID,
 			ID:          obj.ID,
 			ContentHash: obj.ContentHash,
+			Type:        obj.Type,
+			Key:         obj.Key,
+			Status:      obj.Status,
+			Labels:      obj.Labels,
 			Properties:  obj.Properties,
 		}
 	}
@@ -2270,22 +2299,25 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 }
 
 // BranchRelationshipHead represents HEAD relationship version per canonical_id on a branch.
+// Carries all fields required for merge classification and cloning.
 type BranchRelationshipHead struct {
 	CanonicalID uuid.UUID
 	ID          uuid.UUID
 	ContentHash []byte
+	Type        string
 	Properties  map[string]any
 	SrcID       uuid.UUID
 	DstID       uuid.UUID
 }
 
 // GetBranchRelationshipHeads returns HEAD versions of all relationships on a branch.
+// Fetches all fields required for merge classification and cloning.
 func (r *Repository) GetBranchRelationshipHeads(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID) (map[uuid.UUID]*BranchRelationshipHead, error) {
 	var rels []*GraphRelationship
 
 	q := r.db.NewSelect().
 		Model(&rels).
-		Column("id", "canonical_id", "content_hash", "properties", "src_id", "dst_id").
+		Column("id", "canonical_id", "content_hash", "type", "properties", "src_id", "dst_id").
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL")
@@ -2307,6 +2339,7 @@ func (r *Repository) GetBranchRelationshipHeads(ctx context.Context, projectID u
 			CanonicalID: rel.CanonicalID,
 			ID:          rel.ID,
 			ContentHash: rel.ContentHash,
+			Type:        rel.Type,
 			Properties:  rel.Properties,
 			SrcID:       rel.SrcID,
 			DstID:       rel.DstID,
