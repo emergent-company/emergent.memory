@@ -1,6 +1,6 @@
 ---
 name: memory-onboard
-description: Onboard a project into Memory — understand what the project is, choose or create a Memory project, design and install a schema (template pack), then guide on creating objects and relationships. Use when setting up Memory for a new project or codebase for the first time.
+description: Onboard a project into Memory — understand what the project is, choose or create a Memory project, design and install a schema, then guide on creating objects and relationships. Use when setting up Memory for a new project or codebase for the first time.
 metadata:
   author: emergent
   version: "2.0"
@@ -23,7 +23,7 @@ Onboard the current project into Memory by understanding what it is, selecting o
 
 Key concepts:
 - **Project** — the top-level container. One project per codebase/product/domain.
-- **Schema (template pack)** — defines the *types* of objects and relationships that exist in a project. Must be designed before objects can be created.
+- **Schema** — defines the *types* of objects and relationships that exist in a project. Must be designed before objects can be created.
 - **Object** — a typed node in the graph (e.g. a `Service`, `Requirement`, `Person`).
 - **Relationship** — a typed directed edge between two objects (e.g. `Service` -> `depends_on` -> `Service`).
 - **Document** — raw text ingested into the project; objects are extracted from documents automatically.
@@ -59,18 +59,20 @@ Before designing anything, establish which Memory project this repository will u
 
 #### 2a. Check if already configured
 
-Check whether `.env.local` already contains `MEMORY_PROJECT`:
+Check `.env.local` for existing server and project configuration:
 
 ```bash
-cat .env.local 2>/dev/null | grep MEMORY_PROJECT
+cat .env.local 2>/dev/null | grep -E "MEMORY_(SERVER_URL|PROJECT)"
 ```
 
+- **If `MEMORY_SERVER_URL` is set:** the CLI already knows which server to talk to. Do NOT run `memory init` or `memory login` — the agent context handles authentication automatically.
 - **If `MEMORY_PROJECT=<id>` is found:** show the user the project ID and name (`memory projects get <id>` if available, otherwise just the ID), then ask:
   > "This repo is already connected to Memory project `<name>` (`<id>`). Continue with this project, or switch to a different one?"
   - If they confirm: proceed to Step 3.
   - If they want to switch: continue with Step 2b below.
-
 - **If not found:** continue with Step 2b.
+
+> **Important:** Never run `memory init` or `memory login` from within an agent — these are interactive commands designed for human CLI sessions. The agent context provides authentication automatically. If `.env.local` has `MEMORY_SERVER_URL` and `MEMORY_PROJECT`, everything needed is already configured.
 
 #### 2b. List existing projects
 
@@ -293,7 +295,7 @@ Remind the user:
 - The schema definition is saved at `.memory/templates/<pack-name>/pack.json` — commit this to the repo
 - To modify the schema, edit the JSON and run `memory schemas install --file pack.json --merge` to additively merge changes
 - The `memory-query` skill can be used to explore the populated graph
-- The `memory-template-packs` skill has full reference for managing schemas
+- The `memory-schemas` skill has full reference for managing schemas
 
 ---
 

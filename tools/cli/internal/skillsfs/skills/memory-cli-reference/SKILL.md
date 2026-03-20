@@ -1142,7 +1142,7 @@ Interactive TUI for browsing projects and documents
 Launch an interactive terminal UI (TUI) for browsing projects, documents, and extractions.
 
 The TUI provides:
-- Tab-based navigation (Projects, Documents, Worker Stats, Template Packs, Query, Extractions, Traces)
+- Tab-based navigation (Projects, Documents, Worker Stats, Schemas, Query, Extractions, Traces)
 - Natural language query (Ctrl+Q) to ask questions about your project
 - Vim-style keybindings (j/k for up/down, Enter to select)
 - Search functionality (press / to search)
@@ -3324,7 +3324,7 @@ project Name and ID, or a numbered list of all accessible projects.
 
 Additionally prints full Usage Statistics for the active project including:
 Documents, Graph Objects, Relationships, Type Registry (Types, Enabled,
-TypesWithObjects), Template Packs, and Processing Pipeline job queue depths.
+TypesWithObjects), Schemas, and Processing Pipeline job queue depths.
 
 ```
 memory status [flags]

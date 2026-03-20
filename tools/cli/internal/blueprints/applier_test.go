@@ -143,3 +143,108 @@ func TestBlueprintsApplier_AcceptsSDKClientTypes(t *testing.T) {
 		t.Fatal("expected non-nil blueprinter")
 	}
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PrintDiscoverySummary tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+func TestPrintDiscoverySummary_Full(t *testing.T) {
+	packs := []blueprints.PackFile{
+		{
+			Name:    "test-pack",
+			Version: "1.0.0",
+			ObjectTypes: []blueprints.ObjectTypeDef{
+				{Name: "Doc"}, {Name: "Note"}, {Name: "Tag"},
+			},
+			RelationshipTypes: []blueprints.RelationshipTypeDef{
+				{Name: "has_tag"}, {Name: "references"},
+			},
+		},
+	}
+	agents := []blueprints.AgentFile{{Name: "bot"}}
+	skills := []blueprints.SkillFile{{Name: "skill-a"}, {Name: "skill-b"}}
+	objects := []blueprints.SeedObjectRecord{{Type: "Doc", Key: "d1"}}
+	rels := []blueprints.SeedRelationshipRecord{{Type: "has_tag", SrcKey: "d1", DstKey: "t1"}}
+	project := &blueprints.ProjectFile{ProjectInfo: "Test project info"}
+
+	var buf bytes.Buffer
+	blueprints.PrintDiscoverySummary(&buf, project, packs, agents, skills, objects, rels)
+	out := buf.String()
+
+	if !strings.Contains(out, "Discovered:") {
+		t.Errorf("expected 'Discovered:' prefix, got:\n%s", out)
+	}
+	if !strings.Contains(out, "1 schema pack(s)") {
+		t.Errorf("expected '1 schema pack(s)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "3 object types") {
+		t.Errorf("expected '3 object types', got:\n%s", out)
+	}
+	if !strings.Contains(out, "2 relationship types") {
+		t.Errorf("expected '2 relationship types', got:\n%s", out)
+	}
+	if !strings.Contains(out, "1 agent(s)") {
+		t.Errorf("expected '1 agent(s)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "2 skill(s)") {
+		t.Errorf("expected '2 skill(s)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "project info") {
+		t.Errorf("expected 'project info', got:\n%s", out)
+	}
+}
+
+func TestPrintDiscoverySummary_Empty(t *testing.T) {
+	var buf bytes.Buffer
+	blueprints.PrintDiscoverySummary(&buf, nil, nil, nil, nil, nil, nil)
+	if buf.Len() != 0 {
+		t.Errorf("expected empty output for no resources, got:\n%s", buf.String())
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PrintInspect tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+func TestPrintInspect_ShowsPackContents(t *testing.T) {
+	packs := []blueprints.PackFile{
+		{
+			Name:        "code-structure",
+			Version:     "1.0.0",
+			Description: "A test schema pack for code structure",
+			ObjectTypes: []blueprints.ObjectTypeDef{
+				{Name: "App", Label: "Application", Properties: map[string]any{"name": "string", "port": "number"}},
+				{Name: "Module", Label: "Module"},
+			},
+			RelationshipTypes: []blueprints.RelationshipTypeDef{
+				{Name: "contains_module", Label: "Contains Module", SourceType: "App", TargetType: "Module"},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	blueprints.PrintInspect(&buf, nil, packs, nil, nil, nil, nil)
+	out := buf.String()
+
+	if !strings.Contains(out, `Pack "code-structure"`) {
+		t.Errorf("expected pack name in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Object types (2)") {
+		t.Errorf("expected 'Object types (2)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "Application (2 properties)") {
+		t.Errorf("expected 'Application (2 properties)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "Module") {
+		t.Errorf("expected 'Module' in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Relationship types (1)") {
+		t.Errorf("expected 'Relationship types (1)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "Contains Module (App -> Module)") {
+		t.Errorf("expected 'Contains Module (App -> Module)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "Totals:") {
+		t.Errorf("expected 'Totals:' line, got:\n%s", out)
+	}
+}

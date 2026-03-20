@@ -77,6 +77,9 @@ func runBlueprintsInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Print discovery summary so the user knows what was found.
+	blueprints.PrintDiscoverySummary(out, projectFile, packs, agents, skills, seedObjects, seedRels)
+
 	if projectFile == nil && len(packs) == 0 && len(agents) == 0 && len(skills) == 0 && len(seedObjects) == 0 && len(seedRels) == 0 && len(loadResults) == 0 {
 		fmt.Fprintln(out, "Nothing to apply — no blueprint files found.")
 		return nil
@@ -144,6 +147,8 @@ agent definitions, skills, and seed data to apply to a project.
 Subcommands:
 
   memory blueprints install <source>    Apply blueprints from a directory or GitHub URL
+  memory blueprints inspect <source>    List contents of a blueprint without installing
+  memory blueprints validate <source>   Validate a blueprint offline (no API calls)
   memory blueprints dump <output-dir>   Export project graph data as JSONL seed files
 
 Examples:
@@ -151,6 +156,7 @@ Examples:
   memory blueprints install ./my-config
   memory blueprints install https://github.com/acme/memory-blueprints
   memory blueprints install https://github.com/acme/memory-blueprints#v1.2.0 --upgrade
+  memory blueprints inspect https://github.com/acme/memory-blueprints
   memory blueprints install ./my-config --dry-run
   memory blueprints dump ./exported`,
 	// No Args constraint — subcommands handle their own args.
@@ -371,6 +377,74 @@ Examples:
 }
 
 // ─────────────────────────────────────────────
+// blueprintsInspectCmd — view blueprint contents
+// ─────────────────────────────────────────────
+
+var blueprintsInspectCmd = &cobra.Command{
+	Use:   "inspect <source>",
+	Short: "List the contents of a Blueprint directory or GitHub URL",
+	Long: `Inspect a Blueprint directory (or GitHub repository) and display a detailed
+listing of its contents without making any API calls or modifying the project.
+
+Shows all discovered packs (with object and relationship type listings), agents,
+skills, and seed data counts. Useful for reviewing what a blueprint contains
+before installing it.
+
+Examples:
+
+  memory blueprints inspect ./my-config
+  memory blueprints inspect https://github.com/acme/memory-blueprints
+  memory blueprints inspect https://github.com/acme/memory-blueprints#v1.2.0`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		source := args[0]
+		out := cmd.OutOrStdout()
+
+		// ── Resolve source directory ──────────────────────────────────
+		var dir string
+		var err error
+
+		if blueprints.IsGitHubURL(source) {
+			token := blueprintsTokenFlag
+			if token == "" {
+				token = os.Getenv("MEMORY_GITHUB_TOKEN")
+			}
+			var cleanup func()
+			dir, cleanup, err = blueprints.FetchGitHubRepo(source, token)
+			if err != nil {
+				return fmt.Errorf("fetch GitHub repo: %w", err)
+			}
+			defer cleanup()
+		} else {
+			dir = source
+		}
+
+		// ── Load files ────────────────────────────────────────────────
+		envVars := blueprints.LoadEnvFiles(dir)
+		projectFile, packs, agents, skills, seedObjects, seedRels, loadResults, err := blueprints.LoadDir(dir, envVars)
+		if err != nil {
+			return fmt.Errorf("load directory: %w", err)
+		}
+
+		// Print load errors first.
+		for _, r := range loadResults {
+			if r.Action == blueprints.BlueprintsActionError {
+				fmt.Fprintf(out, "  warning  %s %q: %v\n", r.ResourceType, r.Name, r.Error)
+			}
+		}
+
+		if projectFile == nil && len(packs) == 0 && len(agents) == 0 && len(skills) == 0 && len(seedObjects) == 0 && len(seedRels) == 0 {
+			fmt.Fprintln(out, "Nothing found — no blueprint files detected.")
+			return nil
+		}
+
+		fmt.Fprintln(out)
+		blueprints.PrintInspect(out, projectFile, packs, agents, skills, seedObjects, seedRels)
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
 // init — wire flags and register
 // ─────────────────────────────────────────────
 
@@ -394,8 +468,12 @@ func init() {
 	// validate subcommand flags
 	blueprintsValidateCmd.Flags().StringVar(&blueprintsTokenFlag, "token", "", "GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN")
 
+	// inspect subcommand flags
+	blueprintsInspectCmd.Flags().StringVar(&blueprintsTokenFlag, "token", "", "GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN")
+
 	blueprintsCmd.AddCommand(blueprintsInstallCmd)
 	blueprintsCmd.AddCommand(blueprintsDumpCmd)
 	blueprintsCmd.AddCommand(blueprintsValidateCmd)
+	blueprintsCmd.AddCommand(blueprintsInspectCmd)
 	rootCmd.AddCommand(blueprintsCmd)
 }

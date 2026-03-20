@@ -24,6 +24,9 @@ type Blueprinter struct {
 	dryRun    bool
 	upgrade   bool
 	out       io.Writer
+
+	// packsByName is populated at the start of Run so printResult can show type counts.
+	packsByName map[string]PackFile
 }
 
 // NewBlueprintsApplier creates a Blueprinter. out receives human-readable
@@ -56,6 +59,12 @@ func NewBlueprintsApplier(
 // Run applies the given project config, packs, agents, and skills, returning one BlueprintsResult per resource.
 func (b *Blueprinter) Run(ctx context.Context, project *ProjectFile, packs []PackFile, agents []AgentFile, skills []SkillFile) ([]BlueprintsResult, error) {
 	var results []BlueprintsResult
+
+	// Build name→pack lookup for richer output.
+	b.packsByName = make(map[string]PackFile, len(packs))
+	for _, p := range packs {
+		b.packsByName[p.Name] = p
+	}
 
 	if b.dryRun {
 		// Dry-run: print what would happen, make zero API calls.
@@ -435,14 +444,40 @@ func (b *Blueprinter) dryRunSkills(skills []SkillFile) []BlueprintsResult {
 // Output helpers
 // ──────────────────────────────────────────────
 
+// packDetail returns a parenthetical detail string like "(21 object types, 42 relationship types)"
+// for a pack result. Returns "" if the pack is not found in the map.
+func packDetail(name string, packsByName map[string]PackFile) string {
+	p, ok := packsByName[name]
+	if !ok {
+		return ""
+	}
+	nObj := len(p.ObjectTypes)
+	nRel := len(p.RelationshipTypes)
+	if nObj == 0 && nRel == 0 {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if nObj > 0 {
+		parts = append(parts, fmt.Sprintf("%d object types", nObj))
+	}
+	if nRel > 0 {
+		parts = append(parts, fmt.Sprintf("%d relationship types", nRel))
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
+}
+
 func (b *Blueprinter) printResult(r BlueprintsResult) {
+	detail := ""
+	if r.ResourceType == "pack" {
+		detail = packDetail(r.Name, b.packsByName)
+	}
 	switch r.Action {
 	case BlueprintsActionCreated:
-		fmt.Fprintf(b.out, "  created  %s %q\n", r.ResourceType, r.Name)
+		fmt.Fprintf(b.out, "  created  %s %q%s\n", r.ResourceType, r.Name, detail)
 	case BlueprintsActionUpdated:
-		fmt.Fprintf(b.out, "  updated  %s %q\n", r.ResourceType, r.Name)
+		fmt.Fprintf(b.out, "  updated  %s %q%s\n", r.ResourceType, r.Name, detail)
 	case BlueprintsActionSkipped:
-		fmt.Fprintf(b.out, "  skipped  %s %q (already exists; use --upgrade to update)\n", r.ResourceType, r.Name)
+		fmt.Fprintf(b.out, "  skipped  %s %q%s (already exists; use --upgrade to update)\n", r.ResourceType, r.Name, detail)
 	case BlueprintsActionError:
 		fmt.Fprintf(b.out, "  error    %s %q: %v\n", r.ResourceType, r.Name, r.Error)
 	}
@@ -469,6 +504,188 @@ func (b *Blueprinter) printSummary(results []BlueprintsResult, dry bool) {
 	}
 	fmt.Fprintf(b.out, "%s complete: %d created, %d updated, %d skipped, %d errors\n",
 		prefix, created, updated, skipped, errors)
+}
+
+// PrintDiscoverySummary prints a human-readable summary of what was found in
+// the loaded blueprint directory, before any apply operations.
+func PrintDiscoverySummary(
+	out io.Writer,
+	project *ProjectFile,
+	packs []PackFile,
+	agents []AgentFile,
+	skills []SkillFile,
+	seedObjects []SeedObjectRecord,
+	seedRels []SeedRelationshipRecord,
+) {
+	var parts []string
+	if project != nil && strings.TrimSpace(project.ProjectInfo) != "" {
+		parts = append(parts, "project info")
+	}
+	if len(packs) > 0 {
+		totalObj, totalRel := 0, 0
+		for _, p := range packs {
+			totalObj += len(p.ObjectTypes)
+			totalRel += len(p.RelationshipTypes)
+		}
+		s := fmt.Sprintf("%d schema pack(s)", len(packs))
+		if totalObj > 0 || totalRel > 0 {
+			detail := make([]string, 0, 2)
+			if totalObj > 0 {
+				detail = append(detail, fmt.Sprintf("%d object types", totalObj))
+			}
+			if totalRel > 0 {
+				detail = append(detail, fmt.Sprintf("%d relationship types", totalRel))
+			}
+			s += " (" + strings.Join(detail, ", ") + ")"
+		}
+		parts = append(parts, s)
+	}
+	if len(agents) > 0 {
+		parts = append(parts, fmt.Sprintf("%d agent(s)", len(agents)))
+	}
+	if len(skills) > 0 {
+		parts = append(parts, fmt.Sprintf("%d skill(s)", len(skills)))
+	}
+	if len(seedObjects) > 0 {
+		parts = append(parts, fmt.Sprintf("%d seed object(s)", len(seedObjects)))
+	}
+	if len(seedRels) > 0 {
+		parts = append(parts, fmt.Sprintf("%d seed relationship(s)", len(seedRels)))
+	}
+
+	if len(parts) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "Discovered: %s\n", strings.Join(parts, ", "))
+}
+
+// PrintInspect prints a detailed listing of the contents of a loaded blueprint.
+func PrintInspect(
+	out io.Writer,
+	project *ProjectFile,
+	packs []PackFile,
+	agents []AgentFile,
+	skills []SkillFile,
+	seedObjects []SeedObjectRecord,
+	seedRels []SeedRelationshipRecord,
+) {
+	if project != nil && strings.TrimSpace(project.ProjectInfo) != "" {
+		fmt.Fprintf(out, "Project Info:\n")
+		// Print first line of project info as preview.
+		info := strings.TrimSpace(project.ProjectInfo)
+		lines := strings.SplitN(info, "\n", 2)
+		fmt.Fprintf(out, "  %s\n", strings.TrimSpace(lines[0]))
+		fmt.Fprintln(out)
+	}
+
+	for _, p := range packs {
+		fmt.Fprintf(out, "Pack %q (v%s):\n", p.Name, p.Version)
+		if p.Description != "" {
+			desc := strings.TrimSpace(p.Description)
+			// Show first 120 chars of description.
+			if len(desc) > 120 {
+				desc = desc[:120] + "..."
+			}
+			fmt.Fprintf(out, "  %s\n", desc)
+		}
+
+		if len(p.ObjectTypes) > 0 {
+			fmt.Fprintf(out, "  Object types (%d):\n", len(p.ObjectTypes))
+			for _, ot := range p.ObjectTypes {
+				label := ot.Label
+				if label == "" {
+					label = ot.Name
+				}
+				nProps := len(ot.Properties)
+				if nProps > 0 {
+					fmt.Fprintf(out, "    - %s (%d properties)\n", label, nProps)
+				} else {
+					fmt.Fprintf(out, "    - %s\n", label)
+				}
+			}
+		}
+
+		if len(p.RelationshipTypes) > 0 {
+			fmt.Fprintf(out, "  Relationship types (%d):\n", len(p.RelationshipTypes))
+			for _, rt := range p.RelationshipTypes {
+				label := rt.Label
+				if label == "" {
+					label = rt.Name
+				}
+				src := rt.SourceType
+				if len(rt.SourceTypes) > 0 {
+					src = strings.Join(rt.SourceTypes, "|")
+				}
+				dst := rt.TargetType
+				if len(rt.TargetTypes) > 0 {
+					dst = strings.Join(rt.TargetTypes, "|")
+				}
+				if src != "" && dst != "" {
+					fmt.Fprintf(out, "    - %s (%s -> %s)\n", label, src, dst)
+				} else {
+					fmt.Fprintf(out, "    - %s\n", label)
+				}
+			}
+		}
+		fmt.Fprintln(out)
+	}
+
+	for _, ag := range agents {
+		desc := ""
+		if ag.Description != "" {
+			desc = " — " + ag.Description
+		}
+		fmt.Fprintf(out, "Agent %q%s\n", ag.Name, desc)
+	}
+	if len(agents) > 0 {
+		fmt.Fprintln(out)
+	}
+
+	for _, sk := range skills {
+		desc := ""
+		if sk.Description != "" {
+			desc = " — " + sk.Description
+		}
+		fmt.Fprintf(out, "Skill %q%s\n", sk.Name, desc)
+	}
+	if len(skills) > 0 {
+		fmt.Fprintln(out)
+	}
+
+	if len(seedObjects) > 0 || len(seedRels) > 0 {
+		fmt.Fprintf(out, "Seed data:\n")
+		if len(seedObjects) > 0 {
+			// Count by type.
+			typeCounts := make(map[string]int)
+			for _, o := range seedObjects {
+				typeCounts[o.Type]++
+			}
+			fmt.Fprintf(out, "  Objects (%d total):\n", len(seedObjects))
+			for t, c := range typeCounts {
+				fmt.Fprintf(out, "    - %s: %d\n", t, c)
+			}
+		}
+		if len(seedRels) > 0 {
+			typeCounts := make(map[string]int)
+			for _, r := range seedRels {
+				typeCounts[r.Type]++
+			}
+			fmt.Fprintf(out, "  Relationships (%d total):\n", len(seedRels))
+			for t, c := range typeCounts {
+				fmt.Fprintf(out, "    - %s: %d\n", t, c)
+			}
+		}
+		fmt.Fprintln(out)
+	}
+
+	// Print totals.
+	totalObj, totalRel := 0, 0
+	for _, p := range packs {
+		totalObj += len(p.ObjectTypes)
+		totalRel += len(p.RelationshipTypes)
+	}
+	fmt.Fprintf(out, "Totals: %d pack(s), %d object types, %d relationship types, %d agent(s), %d skill(s), %d seed object(s), %d seed relationship(s)\n",
+		len(packs), totalObj, totalRel, len(agents), len(skills), len(seedObjects), len(seedRels))
 }
 
 // ──────────────────────────────────────────────

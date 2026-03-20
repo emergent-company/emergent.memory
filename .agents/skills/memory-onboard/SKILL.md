@@ -1,6 +1,6 @@
 ---
 name: memory-onboard
-description: Onboard a project into Memory — understand what the project is, choose or create a Memory project, design and install a schema (template pack), then guide on creating objects and relationships. Use when setting up Memory for a new project or codebase for the first time.
+description: Onboard a project into Memory — understand what the project is, choose or create a Memory project, design and install a schema, then guide on creating objects and relationships. Use when setting up Memory for a new project or codebase for the first time.
 metadata:
   author: emergent
   version: "2.0"
@@ -23,7 +23,7 @@ Onboard the current project into Memory by understanding what it is, selecting o
 
 Key concepts:
 - **Project** — the top-level container. One project per codebase/product/domain.
-- **Schema (template pack)** — defines the *types* of objects and relationships that exist in a project. Must be designed before objects can be created.
+- **Schema** — defines the *types* of objects and relationships that exist in a project. Must be designed before objects can be created.
 - **Object** — a typed node in the graph (e.g. a `Service`, `Requirement`, `Person`).
 - **Relationship** — a typed directed edge between two objects (e.g. `Service` -> `depends_on` -> `Service`).
 - **Document** — raw text ingested into the project; objects are extracted from documents automatically.
@@ -59,20 +59,20 @@ Before designing anything, establish which Memory project this repository will u
 
 #### 2a. Check if already configured
 
-Check whether `.env.local` already contains a project configuration. Both `MEMORY_PROJECT` and `MEMORY_PROJECT_ID` are accepted by the CLI:
+Check `.env.local` for existing server and project configuration:
 
 ```bash
-cat .env.local 2>/dev/null | grep -E "MEMORY_PROJECT(=|_ID=)"
+cat .env.local 2>/dev/null | grep -E "MEMORY_(SERVER_URL|PROJECT)"
 ```
 
-- **If `MEMORY_PROJECT=<id>` or `MEMORY_PROJECT_ID=<id>` is found:** show the user the project ID and name (`memory projects get <id>` if available, otherwise just the ID), then ask:
+- **If `MEMORY_SERVER_URL` is set:** the CLI already knows which server to talk to. Do NOT run `memory init` or `memory login` — the agent context handles authentication automatically.
+- **If `MEMORY_PROJECT=<id>` (or `MEMORY_PROJECT_ID=<id>`) is set:** show the user the project ID and name (`memory projects get <id>` if available, otherwise just the ID), then ask:
   > "This repo is already connected to Memory project `<name>` (`<id>`). Continue with this project, or switch to a different one?"
   - If they confirm: proceed to Step 3.
   - If they want to switch: continue with Step 2b below.
+- **If neither project var is found:** continue with Step 2b.
 
-> **Note:** `memory init` writes `MEMORY_PROJECT_ID`, `MEMORY_PROJECT_NAME`, and `MEMORY_PROJECT_TOKEN` to `.env.local`. `memory projects set` writes `MEMORY_PROJECT`. Both variable names are recognised by the CLI.
-
-- **If neither is found:** continue with Step 2b.
+> **Important:** Never run `memory init` or `memory login` from within an agent — these are interactive commands designed for human CLI sessions. The agent context provides authentication automatically. If `.env.local` has `MEMORY_SERVER_URL` and `MEMORY_PROJECT`, everything needed is already configured.
 
 #### 2b. List existing projects
 
@@ -95,7 +95,7 @@ Note the returned project ID.
 
 #### 2d. Write project ID to .env.local
 
-If `memory init` was already run (check for `MEMORY_PROJECT_ID` in `.env.local`), the project may already be configured — skip writing and confirm with the user.
+If `MEMORY_PROJECT` or `MEMORY_PROJECT_ID` already exists in `.env.local`, the project is already configured — skip writing and confirm with the user.
 
 Otherwise, write (or update) `MEMORY_PROJECT` in `.env.local`:
 
@@ -112,8 +112,6 @@ echo "MEMORY_PROJECT=<project-id>" >> .env.local
 
 Confirm with the user:
 > "Set `MEMORY_PROJECT=<project-id>` in `.env.local`. All subsequent `memory` CLI commands in this directory will now use this project."
-
-> **Note:** `memory init` automatically writes `MEMORY_PROJECT_ID`, `MEMORY_PROJECT_NAME`, and `MEMORY_PROJECT_TOKEN` to `.env.local` and adds `.env.local` to `.gitignore`. If `memory init` has already been run, these steps may already be complete.
 
 Also remind the user to add `.env.local` to `.gitignore` if it is not already there (it may contain project tokens or other credentials).
 
@@ -354,7 +352,7 @@ Remind the user:
 - To modify the schema, edit the JSON and run `memory schemas install --file pack.json --merge` to additively merge changes
 - To update the project info: edit `.memory/project-info.md` and run `memory projects set-info --file .memory/project-info.md`
 - The `memory-query` skill can be used to explore the populated graph
-- The `memory-template-packs` skill has full reference for managing schemas
+- The `memory-schemas` skill has full reference for managing schemas
 
 ---
 

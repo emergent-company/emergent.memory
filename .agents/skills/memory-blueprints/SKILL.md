@@ -1,14 +1,14 @@
 ---
 name: memory-blueprints
-description: Apply and export Emergent Blueprints — declarative directories of template packs, agent definitions, and seed data applied with `memory blueprints`. Use when setting up a project from a blueprint, seeding graph data, or exporting an existing project's graph as re-applyable seed files.
+description: Apply and export Emergent Blueprints — declarative directories of schemas, agent definitions, and seed data applied with `memory blueprints`. Use when setting up a project from a blueprint, seeding graph data, or exporting an existing project's graph as re-applyable seed files.
 metadata:
   author: emergent
   version: "1.0"
 ---
 
-Manage Emergent Blueprints using `memory blueprints`. A blueprint is a directory of YAML/JSON files and JSONL seed data that declaratively describes a project's template packs, agent definitions, and initial graph objects/relationships.
+Manage Emergent Blueprints using `memory blueprints`. A blueprint is a directory of YAML/JSON files and JSONL seed data that declaratively describes a project's schemas, agent definitions, and initial graph objects/relationships.
 
-> **New to Emergent?** Load the `memory-onboard` skill first — it walks through designing and installing a template pack from scratch.
+> **New to Emergent?** Load the `memory-onboard` skill first — it walks through designing and installing a schema from scratch.
 
 ## Rules
 
@@ -64,7 +64,7 @@ Exports all graph objects and relationships as per-type JSONL seed files into `<
 ```
 my-blueprint/
   schemas/                        # preferred (packs/ also supported for backward compat)
-    <pack-name>.yaml          # one file per template pack (.yaml/.yml/.json)
+    <pack-name>.yaml          # one file per schema (.yaml/.yml/.json)
   agents/
     <agent-name>.yaml         # one file per agent definition (.yaml/.yml/.json)
   seed/
@@ -150,7 +150,7 @@ Optional fields: `weight` (float), `properties` (object).
 
 ## Workflow: apply seed data to a project
 
-1. Ensure the project has the required template packs installed (types must exist before seeding).
+1. Ensure the project has the required schemas installed (types must exist before seeding).
 2. Run dry-run to validate seed files and preview actions:
    ```bash
    memory blueprints ./my-blueprint --dry-run

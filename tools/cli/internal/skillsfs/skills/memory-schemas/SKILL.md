@@ -1,12 +1,12 @@
 ---
-name: memory-template-packs
-description: Manage Emergent schemas (template packs) — discover, install, and remove reusable sets of object and relationship types in a project. Use when the user wants to configure what types of knowledge objects a project can contain.
+name: memory-schemas
+description: Manage Emergent schemas — discover, install, and remove reusable sets of object and relationship types in a project. Use when the user wants to configure what types of knowledge objects a project can contain.
 metadata:
   author: emergent
   version: "2.0"
 ---
 
-Manage schemas (template packs) using `memory schemas`. Schemas define reusable sets of object types and relationship types that can be installed into a project's knowledge graph schema.
+Manage schemas using `memory schemas`. Schemas define reusable sets of object types and relationship types that can be installed into a project's knowledge graph schema.
 
 > **New to Emergent?** Load the `memory-onboard` skill first — it walks through designing and installing a schema from scratch.
 
@@ -18,7 +18,7 @@ Manage schemas (template packs) using `memory schemas`. Schemas define reusable 
 
 ## Concepts
 
-- **Schema (template pack)** — a versioned bundle of `objectTypeSchemas` and `relationshipTypeSchemas`. Immutable once created; new versions get new IDs.
+- **Schema** — a versioned bundle of `objectTypeSchemas` and `relationshipTypeSchemas`. Immutable once created; new versions get new IDs.
 - **Installed schema** — a schema assigned to a specific project. Multiple schemas can be installed; their types are merged into the project's compiled type registry.
 - **Compiled types** — the merged view of all object + relationship types from all installed schemas in a project.
 

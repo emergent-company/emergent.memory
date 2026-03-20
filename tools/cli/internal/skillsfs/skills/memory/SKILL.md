@@ -48,8 +48,8 @@ NO_PROMPT=1 memory ask "register an SSE MCP server named my-tools at http://loca
 # Check provider configuration
 NO_PROMPT=1 memory ask "is a provider configured and working?"
 
-# Install a template pack
-NO_PROMPT=1 memory ask "install the template pack with id <pack-id>" --project abc123
+# Install a schema
+NO_PROMPT=1 memory ask "install the schema with id <schema-id>" --project abc123
 ```
 
 ---

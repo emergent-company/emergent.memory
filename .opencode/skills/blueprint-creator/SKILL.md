@@ -1,13 +1,13 @@
 ---
 name: blueprint-creator
-description: Guide the user through creating a Blueprints directory — the declarative config format applied with `memory blueprints <source>`. Use when the user wants to create, scaffold, or understand the blueprint file format for template packs, agent definitions, and seed data.
+description: Guide the user through creating a Blueprints directory — the declarative config format applied with `memory blueprints <source>`. Use when the user wants to create, scaffold, or understand the blueprint file format for schemas, agent definitions, and seed data.
 metadata:
   author: emergent
   version: "2.0"
   trigger: create blueprint, write a blueprint, scaffold blueprints, blueprint format, how do I use blueprints, seed data blueprint, blueprint dump
 ---
 
-A blueprint is a directory of YAML/JSON files and JSONL seed data that describes template packs, agent definitions, and initial graph objects/relationships for an Emergent project. Running `memory blueprints <source>` applies the directory to a live project — creating or updating resources via the Emergent API. This skill walks you through creating a blueprint from scratch.
+A blueprint is a directory of YAML/JSON files and JSONL seed data that describes schemas, agent definitions, and initial graph objects/relationships for an Emergent project. Running `memory blueprints <source>` applies the directory to a live project — creating or updating resources via the Emergent API. This skill walks you through creating a blueprint from scratch.
 
 **Input**: Optional scope — a description of what the blueprint should contain (e.g. "a CRM pack, a sales agent, and 50 seed contacts"), or nothing to scaffold a minimal example.
 
@@ -19,7 +19,7 @@ A blueprint is a plain directory with this structure:
 
 ```
 my-blueprint/
-  schemas/                  ← one file per template pack (.yaml/.yml/.json) [preferred]
+  schemas/                  ← one file per schema (.yaml/.yml/.json) [preferred]
   packs/                    ← backward-compatible alias for schemas/
   agents/                   ← one file per agent definition (.yaml/.yml/.json)
   seed/
@@ -41,7 +41,7 @@ Blueprints can be applied from:
 ### 1. Understand what the user wants to create
 
 Ask or infer:
-- What **template packs** are needed? (e.g. "CRM pack", "Research pack")
+- What **schemas** are needed? (e.g. "CRM schema", "Research schema")
   - For each pack: what object types? (e.g. `Contact`, `Deal`, `Company`)
   - Any relationship types? (e.g. `Contact → works_at → Company`)
 - What **agent definitions** are needed?
@@ -373,7 +373,7 @@ memory blueprints https://github.com/org/my-blueprint#v1.0.0
 ```
 my-blueprint/
   schemas/                        # preferred (packs/ also supported for backward compat)
-    <pack-name>.yaml          # one file per template pack
+    <pack-name>.yaml          # one file per schema
   agents/
     <agent-name>.yaml         # one file per agent definition
   seed/
