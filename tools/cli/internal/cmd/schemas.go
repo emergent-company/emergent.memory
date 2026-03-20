@@ -101,7 +101,11 @@ to 60 characters). Use --output json to receive the full list as JSON.`,
 		}
 
 		if len(packs) == 0 {
-			fmt.Fprintln(out, "No schemas available.")
+			fmt.Fprintln(out, "No schemas available in the registry.")
+			fmt.Fprintln(out, "")
+			fmt.Fprintln(out, "Schemas are installed via blueprints, not the registry.")
+			fmt.Fprintln(out, "To see what's already installed on this project, run:")
+			fmt.Fprintln(out, "  memory schemas installed")
 			return nil
 		}
 

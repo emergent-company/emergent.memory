@@ -31,6 +31,44 @@ Write to (and look up from) the Memory knowledge graph — creating, updating, a
 
 ---
 
+## Relationship type naming
+
+> **Relationship type names must not embed the names of the objects on either side.**
+
+Use generic, verb-phrase names that describe the relationship itself — not the types involved.
+
+| ❌ Wrong (embeds object names) | ✅ Correct (generic) |
+|---|---|
+| `scenario_belongs_to_domain` | `belongs_to` |
+| `service_calls_service` | `calls` |
+| `module_contains_service` | `contains` |
+| `handler_handles_route` | `handles_route` |
+| `file_implements_query` | `implements` |
+
+The object types are already encoded in the schema (`sourceType` / `targetType`) — repeating them in the name is redundant and makes the graph harder to query.
+
+**Why this matters:** If you need the same logical relationship between multiple source types (e.g. both `Scenario` and `Module` belong to a `Domain`), use `sourceTypes: [Scenario, Module]` in the blueprint YAML — not separate entries with prefixed names. The validator accepts `sourceTypes` (plural array).
+
+```yaml
+# ✅ Correct — one entry, multiple source types
+relationshipTypes:
+  - name: belongs_to
+    label: Belongs To
+    sourceTypes: [Scenario, Module, Service]
+    targetType: Domain
+
+# ❌ Wrong — three entries with embedded type names
+relationshipTypes:
+  - name: scenario_belongs_to_domain
+    sourceType: Scenario
+    targetType: Domain
+  - name: module_belongs_to_domain
+    sourceType: Module
+    targetType: Domain
+```
+
+---
+
 ## Core principle: always batch
 
 > **When creating more than one object or relationship, always use `create-batch`. Never call single-create in a loop.**

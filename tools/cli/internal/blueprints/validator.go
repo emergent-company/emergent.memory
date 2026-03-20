@@ -186,31 +186,48 @@ func (r *ValidationReport) validatePacks(packs []PackFile) {
 		}
 
 		// Validate each relationship type.
-		dupRelNames := make(map[string]bool)
+		// Uniqueness key is (name, sourceType) — the same name may appear multiple times
+		// when sourceTypes differ (e.g. belongs_to with sourceType=Scenario and sourceType=Module).
+		// A plain duplicate (same name AND same sourceType) is still an error.
+		dupRelKeys := make(map[string]bool) // key: "name\x00sourceType"
 		for i, rt := range p.RelationshipTypes {
 			field := fmt.Sprintf("relationshipTypes[%d]", i)
 			if rt.Name == "" {
 				r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".name", "name is required")
+			}
+
+			// Resolve effective source types: prefer sourceTypes[] over sourceType.
+			srcTypes := rt.GetSourceTypes()
+			if len(srcTypes) == 0 {
+				r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".sourceType",
+					fmt.Sprintf("relationshipType %q: sourceType (or sourceTypes) is required", rt.Name))
 			} else {
-				if dupRelNames[rt.Name] {
-					r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".name",
-						fmt.Sprintf("duplicate relationshipType name %q", rt.Name))
+				for _, src := range srcTypes {
+					dupKey := rt.Name + "\x00" + src
+					if dupRelKeys[dupKey] {
+						r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".name",
+							fmt.Sprintf("duplicate relationshipType name %q with sourceType %q", rt.Name, src))
+					}
+					dupRelKeys[dupKey] = true
+					if len(objTypeNames) > 0 && !objTypeNames[src] {
+						r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".sourceType",
+							fmt.Sprintf("relationshipType %q: sourceType %q does not match any objectType in this pack", rt.Name, src))
+					}
 				}
-				dupRelNames[rt.Name] = true
 			}
-			if rt.SourceType == "" {
-				r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".sourceType",
-					fmt.Sprintf("relationshipType %q: sourceType is required", rt.Name))
-			} else if len(objTypeNames) > 0 && !objTypeNames[rt.SourceType] {
-				r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".sourceType",
-					fmt.Sprintf("relationshipType %q: sourceType %q does not match any objectType in this pack", rt.Name, rt.SourceType))
-			}
-			if rt.TargetType == "" {
+
+			// Resolve effective target types.
+			tgtTypes := rt.GetTargetTypes()
+			if len(tgtTypes) == 0 {
 				r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".targetType",
-					fmt.Sprintf("relationshipType %q: targetType is required", rt.Name))
-			} else if len(objTypeNames) > 0 && !objTypeNames[rt.TargetType] {
-				r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".targetType",
-					fmt.Sprintf("relationshipType %q: targetType %q does not match any objectType in this pack", rt.Name, rt.TargetType))
+					fmt.Sprintf("relationshipType %q: targetType (or targetTypes) is required", rt.Name))
+			} else {
+				for _, tgt := range tgtTypes {
+					if len(objTypeNames) > 0 && !objTypeNames[tgt] {
+						r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".targetType",
+							fmt.Sprintf("relationshipType %q: targetType %q does not match any objectType in this pack", rt.Name, tgt))
+					}
+				}
 			}
 		}
 	}
