@@ -104,13 +104,15 @@ When you are ready to promote changes from a source branch into a target branch,
 By default the merge is a **dry run** — it shows what would change without mutating state. Pass `"execute": true` to apply.
 
 ```http
-POST /api/graph/branches/{targetBranchId}/merge
+POST /api/graph/branches/main/merge
 Content-Type: application/json
 
 {
   "source_branch_id": "branch_abc123"
 }
 ```
+
+Use `main` as the path segment to merge into the main graph. Use a branch UUID to merge into another branch.
 
 Dry-run response shows each object classified as:
 
@@ -124,7 +126,7 @@ Dry-run response shows each object classified as:
 To execute after reviewing:
 
 ```http
-POST /api/graph/branches/{targetBranchId}/merge
+POST /api/graph/branches/main/merge
 Content-Type: application/json
 
 {

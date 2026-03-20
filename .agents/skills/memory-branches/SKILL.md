@@ -120,26 +120,25 @@ Before merging, always preview what will change. The dry run classifies each div
 
 ```bash
 # Dry run (default — no changes made):
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches merge <main-branch-id> \
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches merge main \
   --source "$BRANCH_ID"
 
 # Get full conflict details as JSON:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches merge <main-branch-id> \
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches merge main \
   --source "$BRANCH_ID" --output json
 ```
 
-> **Note on main branch ID:** The main branch is the default and has no special ID. To merge into main, you need the main branch UUID. List branches to find it:
+> **Merging into main:** Use the special keyword `main` as the target — the main graph has no branch ID and does not appear in `branches list`.
 > ```bash
-> NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches list
+> NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches merge main --source "$BRANCH_ID"
 > ```
-> The branch with no `Parent Branch ID` and the earliest creation date is typically main.
 
 ---
 
 ## Step 5 — Execute the merge
 
 ```bash
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches merge <main-branch-id> \
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches merge main \
   --source "$BRANCH_ID" --execute
 ```
 
@@ -208,17 +207,12 @@ NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create \
 # 4. Verify branch contents
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --branch "$BRANCH_ID"
 
-# 5. Find main branch ID
-MAIN_BRANCH_ID=$(NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches list --output json \
-  | python3 -c "import json,sys; branches=json.load(sys.stdin); \
-    print(next(b['id'] for b in branches if b.get('parent_branch_id') is None))")
-
-# 6. Preview merge
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches merge "$MAIN_BRANCH_ID" \
+# 5. Preview merge into main (use the keyword "main" — no ID needed)
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches merge main \
   --source "$BRANCH_ID"
 
-# 7. Execute merge
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches merge "$MAIN_BRANCH_ID" \
+# 6. Execute merge into main
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches merge main \
   --source "$BRANCH_ID" --execute
 
 # 8. Cleanup

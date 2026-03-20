@@ -733,7 +733,7 @@ type BranchMergeRequest struct {
 
 // BranchMergeResponse is the response for branch merge endpoint.
 type BranchMergeResponse struct {
-	TargetBranchID   uuid.UUID                   `json:"targetBranchId"`
+	TargetBranchID   *uuid.UUID                  `json:"target_branch_id,omitempty"` // nil = main graph
 	SourceBranchID   uuid.UUID                   `json:"source_branch_id"`
 	DryRun           bool                        `json:"dryRun"`
 	TotalObjects     int                         `json:"total_objects"`

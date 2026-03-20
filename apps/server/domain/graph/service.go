@@ -2650,21 +2650,23 @@ func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *T
 // =============================================================================
 
 // MergeBranch performs dry-run or actual merge of a source branch into target branch.
-func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBranchID uuid.UUID, req *BranchMergeRequest) (*BranchMergeResponse, error) {
-	// Validate target branch exists
-	_, err := s.repo.GetBranchByID(ctx, projectID, targetBranchID)
-	if err != nil {
-		return nil, apperror.ErrNotFound.WithMessage("target branch not found")
+func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBranchID *uuid.UUID, req *BranchMergeRequest) (*BranchMergeResponse, error) {
+	// Validate target branch exists (skip for main — it has no branch row)
+	if targetBranchID != nil {
+		_, err := s.repo.GetBranchByID(ctx, projectID, *targetBranchID)
+		if err != nil {
+			return nil, apperror.ErrNotFound.WithMessage("target branch not found")
+		}
 	}
 
 	// Validate source branch exists
-	_, err = s.repo.GetBranchByID(ctx, projectID, req.SourceBranchID)
+	_, err := s.repo.GetBranchByID(ctx, projectID, req.SourceBranchID)
 	if err != nil {
 		return nil, apperror.ErrNotFound.WithMessage("source branch not found")
 	}
 
-	// Get HEAD versions for both branches
-	targetObjects, err := s.repo.GetBranchObjectHeads(ctx, projectID, &targetBranchID)
+	// Get HEAD versions for both branches (nil targetBranchID = main graph)
+	targetObjects, err := s.repo.GetBranchObjectHeads(ctx, projectID, targetBranchID)
 	if err != nil {
 		return nil, err
 	}
@@ -2674,7 +2676,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		return nil, err
 	}
 
-	targetRels, err := s.repo.GetBranchRelationshipHeads(ctx, projectID, &targetBranchID)
+	targetRels, err := s.repo.GetBranchRelationshipHeads(ctx, projectID, targetBranchID)
 	if err != nil {
 		return nil, err
 	}
@@ -2823,7 +2825,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 	sortMergeRelationshipSummaries(relSummaries)
 
 	response := &BranchMergeResponse{
-		TargetBranchID:                targetBranchID,
+		TargetBranchID:                targetBranchID, // nil = main graph
 		SourceBranchID:                req.SourceBranchID,
 		DryRun:                        !req.Execute,
 		TotalObjects:                  len(allCanonicalIDs),
@@ -2844,7 +2846,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 
 	// If execute is requested and no conflicts, apply merge transactionally.
 	if req.Execute && conflictCount == 0 && relConflict == 0 {
-		appliedCount, err := s.applyMerge(ctx, projectID, targetBranchID, objectSummaries, relSummaries, sourceObjects, targetObjects, sourceRels, targetRels)
+		appliedCount, err := s.applyMerge(ctx, projectID, targetBranchID, objectSummaries, relSummaries, sourceObjects, targetObjects, sourceRels, targetRels) //nolint:staticcheck
 		if err != nil {
 			return nil, fmt.Errorf("apply merge: %w", err)
 		}
@@ -2862,7 +2864,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 func (s *Service) applyMerge(
 	ctx context.Context,
 	projectID uuid.UUID,
-	targetBranchID uuid.UUID,
+	targetBranchID *uuid.UUID,
 	objectSummaries []*BranchMergeObjectSummary,
 	relSummaries []*BranchMergeRelationshipSummary,
 	sourceObjects map[uuid.UUID]*BranchObjectHead,
@@ -2907,7 +2909,7 @@ func (s *Service) applyMerge(
 				ID:          uuid.New(),
 				CanonicalID: newCanonicalID,
 				ProjectID:   projectID,
-				BranchID:    &targetBranchID,
+				BranchID:    targetBranchID,
 				Version:     1,
 				Type:        src.Type,
 				Key:         src.Key,
@@ -2935,7 +2937,7 @@ func (s *Service) applyMerge(
 				continue
 			}
 			// Fetch the current HEAD on the target branch to use as prevHead
-			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, cid, &targetBranchID)
+			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, cid, targetBranchID)
 			if err != nil {
 				return 0, fmt.Errorf("get target head for fast-forward %s: %w", cid, err)
 			}
@@ -2954,7 +2956,7 @@ func (s *Service) applyMerge(
 				Labels:     labels,
 				Properties: props,
 				ProjectID:  projectID,
-				BranchID:   &targetBranchID,
+				BranchID:   targetBranchID,
 			}
 			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
 				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
@@ -2992,7 +2994,7 @@ func (s *Service) applyMerge(
 				ID:          uuid.New(),
 				CanonicalID: uuid.New(),
 				ProjectID:   projectID,
-				BranchID:    &targetBranchID,
+				BranchID:    targetBranchID,
 				Version:     1,
 				Type:        src.Type,
 				SrcID:       srcID,
@@ -3022,7 +3024,7 @@ func (s *Service) applyMerge(
 			}
 			newVersion := &GraphRelationship{
 				Properties: props,
-				BranchID:   &targetBranchID,
+				BranchID:   targetBranchID,
 				ProjectID:  projectID,
 			}
 			if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {

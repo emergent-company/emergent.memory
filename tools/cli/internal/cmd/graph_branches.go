@@ -357,13 +357,15 @@ Examples:
 // ─────────────────────────────────────────────
 
 var graphBranchesMergeCmd = &cobra.Command{
-	Use:   "merge <target-branch-id>",
-	Short: "Merge a source branch into a target branch",
+	Use:   "merge <target-branch-id|main>",
+	Short: "Merge a source branch into a target branch (or main)",
 	Long: `Merge changes from a source branch into a target branch.
 
 DIRECTION: source → target. The source branch is read; the target branch
-receives the changes. Both must be real branch IDs — use "memory graph
-branches list" to find them.
+receives the changes.
+
+TARGET: use a branch UUID from "memory graph branches list", or the special
+keyword "main" to merge into the main graph (branch_id IS NULL).
 
 By default this is a DRY RUN — no changes are made. Pass --execute only
 when you are ready to apply.
@@ -379,21 +381,19 @@ If any conflicts exist, --execute is blocked. Resolve conflicts manually
 
 The merge runs in a single database transaction — all-or-nothing.
 
-HOW TO FIND BRANCH IDs:
-  memory graph branches list --output json
-
 WORKFLOW:
   # 1. Dry run first — always
-  memory graph branches merge <target-id> --source <source-id>
+  memory graph branches merge main --source <source-id>
 
   # 2. Inspect conflicts in detail
-  memory graph branches merge <target-id> --source <source-id> --output json
+  memory graph branches merge main --source <source-id> --output json
 
   # 3. Execute when clean
-  memory graph branches merge <target-id> --source <source-id> --execute
+  memory graph branches merge main --source <source-id> --execute
 
 Examples:
-  memory graph branches merge <target-id> --source <source-id>
+  memory graph branches merge main --source <source-id>
+  memory graph branches merge main --source <source-id> --execute
   memory graph branches merge <target-id> --source <source-id> --execute
   memory graph branches merge <target-id> --source <source-id> --output json`,
 	Args: cobra.ExactArgs(1),
@@ -426,9 +426,13 @@ Examples:
 			mode = "APPLIED"
 		}
 
+		targetDisplay := "main"
+		if result.TargetBranchID != nil {
+			targetDisplay = *result.TargetBranchID
+		}
 		fmt.Fprintf(out, "Merge %s\n", mode)
 		fmt.Fprintf(out, "Source:  %s\n", result.SourceBranchID)
-		fmt.Fprintf(out, "Target:  %s\n", result.TargetBranchID)
+		fmt.Fprintf(out, "Target:  %s\n", targetDisplay)
 		fmt.Fprintf(out, "\nObjects (%d total):\n", result.TotalObjects)
 		fmt.Fprintf(out, "  added:        %d\n", result.AddedCount)
 		fmt.Fprintf(out, "  fast_forward: %d\n", result.FastForwardCount)

@@ -1659,9 +1659,15 @@ func (h *Handler) MergeBranch(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	targetBranchID, err := uuid.Parse(c.Param("targetBranchId"))
-	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid target branch id")
+	// Accept "main" (or "null") as a sentinel meaning the main graph (branch_id IS NULL).
+	var targetBranchID *uuid.UUID
+	targetParam := c.Param("targetBranchId")
+	if targetParam != "main" && targetParam != "null" {
+		parsed, err := uuid.Parse(targetParam)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid target branch id (use a UUID or 'main')")
+		}
+		targetBranchID = &parsed
 	}
 
 	var req BranchMergeRequest
@@ -1670,7 +1676,7 @@ func (h *Handler) MergeBranch(c echo.Context) error {
 	}
 
 	if req.SourceBranchID == uuid.Nil {
-		return apperror.ErrBadRequest.WithMessage("sourceBranchId is required")
+		return apperror.ErrBadRequest.WithMessage("source_branch_id is required")
 	}
 
 	result, err := h.svc.MergeBranch(c.Request().Context(), projectID, targetBranchID, &req)

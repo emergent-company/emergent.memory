@@ -238,18 +238,18 @@ type MergeRequest struct {
 
 // MergeResponse is the response from the merge endpoint.
 type MergeResponse struct {
-	TargetBranchID   string `json:"targetBranchId"`
-	SourceBranchID   string `json:"source_branch_id"`
-	DryRun           bool   `json:"dryRun"`
-	TotalObjects     int    `json:"total_objects"`
-	UnchangedCount   int    `json:"unchanged_count"`
-	AddedCount       int    `json:"added_count"`
-	FastForwardCount int    `json:"fast_forward_count"`
-	ConflictCount    int    `json:"conflict_count"`
-	Truncated        bool   `json:"truncated,omitempty"`
-	HardLimit        *int   `json:"hard_limit,omitempty"`
-	Applied          bool   `json:"applied,omitempty"`
-	AppliedObjects   *int   `json:"applied_objects,omitempty"`
+	TargetBranchID   *string `json:"target_branch_id,omitempty"` // nil = main graph
+	SourceBranchID   string  `json:"source_branch_id"`
+	DryRun           bool    `json:"dryRun"`
+	TotalObjects     int     `json:"total_objects"`
+	UnchangedCount   int     `json:"unchanged_count"`
+	AddedCount       int     `json:"added_count"`
+	FastForwardCount int     `json:"fast_forward_count"`
+	ConflictCount    int     `json:"conflict_count"`
+	Truncated        bool    `json:"truncated,omitempty"`
+	HardLimit        *int    `json:"hard_limit,omitempty"`
+	Applied          bool    `json:"applied,omitempty"`
+	AppliedObjects   *int    `json:"applied_objects,omitempty"`
 	// Relationship counts
 	RelationshipsTotal            *int `json:"relationships_total,omitempty"`
 	RelationshipsUnchangedCount   *int `json:"relationships_unchanged_count,omitempty"`
