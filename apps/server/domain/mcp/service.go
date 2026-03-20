@@ -2832,7 +2832,7 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 		TableExpr("kb.graph_schemas").
 		Column("id", "name", "version", "description", "author", "source", "object_type_schemas", "published_at", "deprecated_at").
 		Where("draft = false").
-		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)", projectID, orgID)
+		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, orgID)
 
 	if !includeDeprecated {
 		query = query.Where("deprecated_at IS NULL")
@@ -2846,7 +2846,7 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 		TableExpr("kb.graph_schemas").
 		ColumnExpr("COUNT(*)").
 		Where("draft = false").
-		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)", projectID, orgID)
+		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, orgID)
 
 	if !includeDeprecated {
 		countQuery = countQuery.Where("deprecated_at IS NULL")
@@ -2943,7 +2943,7 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 		TableExpr("kb.graph_schemas").
 		Column("*").
 		Where("id = ?", packID).
-		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)", projectID, orgID).
+		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, orgID).
 		Scan(ctx, &pack)
 
 	if err != nil {
@@ -3028,7 +3028,7 @@ func (s *Service) executeGetAvailableTemplates(ctx context.Context, projectID st
 			Column("id", "name", "version", "description", "author", "source", "object_type_schemas", "relationship_type_schemas", "published_at").
 			Where("deprecated_at IS NULL").
 			Where("draft = false").
-			Where("(project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)", projectID, orgID).
+			Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, orgID).
 			OrderExpr("published_at DESC").
 			Scan(ctx, &packs)
 		if err != nil {
@@ -3667,7 +3667,7 @@ func (s *Service) executeDeleteSchema(ctx context.Context, projectID string, arg
 		TableExpr("kb.graph_schemas").
 		Column("id", "name", "source").
 		Where("id = ?", packID).
-		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)", projectID, orgID).
+		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, orgID).
 		Scan(ctx, &pack)
 
 	if err != nil {
@@ -3692,7 +3692,7 @@ func (s *Service) executeDeleteSchema(ctx context.Context, projectID string, arg
 	}
 
 	_, err = s.db.NewRaw(`
-		DELETE FROM kb.graph_schemas WHERE id = ? AND (project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)
+		DELETE FROM kb.graph_schemas WHERE id = ? AND (project_id = ? OR (org_id = ? AND visibility = 'organization'))
 	`, packID, projectID, orgID).Exec(ctx)
 
 	if err != nil {

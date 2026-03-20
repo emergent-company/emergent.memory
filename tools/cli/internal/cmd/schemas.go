@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
+	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
@@ -50,7 +51,24 @@ func getSchemasClient(cmd *cobra.Command) (*sdkschemas.Client, error) {
 		return nil, err
 	}
 
-	c.SetContext("", projectID)
+	// Resolve orgID: prefer config, then auto-detect from server.
+	orgID := ""
+	configPath, _ := cmd.Flags().GetString("config")
+	if configPath == "" {
+		configPath = config.DiscoverPath("")
+	}
+	if cfg, err := config.LoadWithEnv(configPath); err == nil && cfg.OrgID != "" {
+		orgID = cfg.OrgID
+	}
+	if orgID == "" {
+		// Auto-detect from server (same pattern as resolveProviderOrgID).
+		orgs, err := c.SDK.Orgs.List(context.Background())
+		if err == nil && len(orgs) > 0 {
+			orgID = orgs[0].ID
+		}
+	}
+
+	c.SetContext(orgID, projectID)
 	return c.SDK.Schemas, nil
 }
 
