@@ -2415,16 +2415,16 @@
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="err">{</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="err">  &quot;name&quot;: &quot;q4-planning-review&quot;,</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="err">  &quot;projectId&quot;: &quot;proj_xyz789&quot;</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="err">  &quot;project_id&quot;: &quot;proj_xyz789&quot;</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="err">}</span>
 </code></pre></div>
 <p>Response:
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;branch_abc123&quot;</span><span class="p">,</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;q4-planning-review&quot;</span><span class="p">,</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">&quot;projectId&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;proj_xyz789&quot;</span><span class="p">,</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">&quot;parentBranchId&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">&quot;createdAt&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-03-08T10:00:00Z&quot;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">&quot;project_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;proj_xyz789&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">&quot;parent_branch_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">&quot;created_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-03-08T10:00:00Z&quot;</span>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="p">}</span>
 </code></pre></div></p>
 </div>
@@ -2432,46 +2432,90 @@
 </div>
 <h3 id="branch-from-an-existing-branch">Branch from an existing branch<a class="headerlink" href="#branch-from-an-existing-branch" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="err">POST /api/graph/branches</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="err">{</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="err">  &quot;name&quot;: &quot;sub-feature&quot;,</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="err">  &quot;projectId&quot;: &quot;proj_xyz789&quot;,</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="err">  &quot;parentBranchId&quot;: &quot;branch_abc123&quot;</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="err">}</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="err">{</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="err">  &quot;name&quot;: &quot;sub-feature&quot;,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="err">  &quot;project_id&quot;: &quot;proj_xyz789&quot;,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="err">  &quot;parent_branch_id&quot;: &quot;branch_abc123&quot;</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="err">}</span>
 </code></pre></div>
 <hr />
 <h2 id="working-on-a-branch">Working on a Branch<a class="headerlink" href="#working-on-a-branch" title="Permanent link">&para;</a></h2>
-<p>Pass the <code>branchId</code> in your graph API requests to read and write objects on that branch:</p>
+<p>Pass <code>branch_id</code> in the request body when creating objects or relationships on a branch:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="err">POST /api/graph/objects</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="err">X-Branch-ID: branch_abc123</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="err">Content-Type: application/json</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="err">{</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="err">  &quot;type&quot;: &quot;Decision&quot;,</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="err">  &quot;properties&quot;: { &quot;title&quot;: &quot;Adopt event sourcing&quot; }</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="err">}</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="err">  &quot;branch_id&quot;: &quot;branch_abc123&quot;,</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="err">  &quot;properties&quot;: { &quot;title&quot;: &quot;Adopt event sourcing&quot; }</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="err">}</span>
+</code></pre></div>
+<p>For list/get requests, pass <code>branch_id</code> as a query parameter:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="err">GET /api/graph/objects?branch_id=branch_abc123</span>
 </code></pre></div>
 <p>Objects created on a branch are isolated — they are not visible in the main graph until you merge.</p>
 <hr />
 <h2 id="listing-branches">Listing Branches<a class="headerlink" href="#listing-branches" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="err">GET /api/graph/branches</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">GET /api/graph/branches</span>
 </code></pre></div>
 <hr />
 <h2 id="getting-a-branch">Getting a Branch<a class="headerlink" href="#getting-a-branch" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">GET /api/graph/branches/{id}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">GET /api/graph/branches/{id}</span>
 </code></pre></div>
 <hr />
 <h2 id="merging-a-branch">Merging a Branch<a class="headerlink" href="#merging-a-branch" title="Permanent link">&para;</a></h2>
-<p>When you are ready to promote changes from a branch into the main graph (or into a parent branch), merge it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">POST /api/graph/branches/{targetBranchId}/merge</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="err">Content-Type: application/json</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="err">{</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="err">  &quot;sourceBranchId&quot;: &quot;branch_abc123&quot;</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="err">}</span>
+<p>When you are ready to promote changes from a source branch into a target branch, merge it.</p>
+<p><strong>Direction: source → target.</strong> The source branch is read; the target branch receives the changes.</p>
+<p>By default the merge is a <strong>dry run</strong> — it shows what would change without mutating state. Pass <code>"execute": true</code> to apply.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">POST /api/graph/branches/{targetBranchId}/merge</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="err">{</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="err">  &quot;source_branch_id&quot;: &quot;branch_abc123&quot;</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="err">}</span>
 </code></pre></div>
-<p>The merge applies all objects and relationships from the source branch onto the target. Conflicts are resolved by the merge strategy (last-write-wins by default).</p>
+<p>Dry-run response shows each object classified as:</p>
+<table>
+<thead>
+<tr>
+<th>Classification</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>added</code></td>
+<td>Exists on source only — will be created on target</td>
+</tr>
+<tr>
+<td><code>fast_forward</code></td>
+<td>Changed on source only — target will be updated</td>
+</tr>
+<tr>
+<td><code>conflict</code></td>
+<td>Changed on both branches — <strong>blocks execute until resolved</strong></td>
+</tr>
+<tr>
+<td><code>unchanged</code></td>
+<td>Identical on both branches — nothing to do</td>
+</tr>
+</tbody>
+</table>
+<p>To execute after reviewing:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="err">POST /api/graph/branches/{targetBranchId}/merge</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="err">{</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="err">  &quot;source_branch_id&quot;: &quot;branch_abc123&quot;,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="err">  &quot;execute&quot;: true</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="err">}</span>
+</code></pre></div>
+<p>The merge runs in a single database transaction — it is all-or-nothing. If any conflict exists, <code>execute</code> is rejected until conflicts are resolved manually.</p>
 <hr />
 <h2 id="deleting-a-branch">Deleting a Branch<a class="headerlink" href="#deleting-a-branch" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">DELETE /api/graph/branches/{id}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="err">DELETE /api/graph/branches/{id}</span>
 </code></pre></div>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
@@ -2479,17 +2523,22 @@
 </div>
 <hr />
 <h2 id="renaming-a-branch">Renaming a Branch<a class="headerlink" href="#renaming-a-branch" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="err">PATCH /api/graph/branches/{id}</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="err">{ &quot;name&quot;: &quot;new-name&quot; }</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="err">PATCH /api/graph/branches/{id}</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="err">{ &quot;name&quot;: &quot;new-name&quot; }</span>
 </code></pre></div>
 <hr />
 <h2 id="branch-hierarchy">Branch hierarchy<a class="headerlink" href="#branch-hierarchy" title="Permanent link">&para;</a></h2>
-<p>Branches form a tree: each branch has an optional <code>parentBranchId</code>. A null parent means the branch is off the main graph. The lineage is tracked in <code>kb.branch_lineage</code> and used during merge to compute the delta.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>main graph (no branch)
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>├── feature-a
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>│   └── feature-a-sub
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>└── feature-b
+<p>Branches can optionally record a <code>parent_branch_id</code> — which branch they were forked from. This is <strong>lineage metadata only</strong> and does not affect merge behavior. The merge compares object content hashes directly between source and target regardless of parentage.</p>
+<p>A null <code>parent_branch_id</code> means the branch was created off the main graph.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>main graph (no branch ID)
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>├── feature-a          (parent_branch_id: null)
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>│   └── feature-a-sub  (parent_branch_id: feature-a)
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>└── feature-b          (parent_branch_id: null)
 </code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The main graph itself is not a branch and has no ID. To merge a branch into the main graph, you need the main graph's branch record ID — use <code>GET /api/graph/branches</code> to list all branches and identify the one representing main (typically the one with no parent and the earliest creation date).</p>
+</div>
 
 
 
