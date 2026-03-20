@@ -260,7 +260,22 @@ Examples:
 				obj.CreatedAt.Format("2006-01-02"),
 			)
 		}
-		return table.Render()
+		if err := table.Render(); err != nil {
+			return err
+		}
+		if resp.Total > 0 {
+			shown := len(resp.Items)
+			if shown < resp.Total {
+				fmt.Fprintf(out, "Showing %d of %d total", shown, resp.Total)
+				if resp.NextCursor != nil && *resp.NextCursor != "" {
+					fmt.Fprintf(out, " — use --cursor %s for next page", *resp.NextCursor)
+				}
+				fmt.Fprintln(out)
+			} else {
+				fmt.Fprintf(out, "%d total\n", resp.Total)
+			}
+		}
+		return nil
 	},
 }
 
@@ -671,7 +686,22 @@ type, --from/--to to filter by endpoint, --limit to control result count, and
 				r.CreatedAt.Format("2006-01-02"),
 			)
 		}
-		return table.Render()
+		if err := table.Render(); err != nil {
+			return err
+		}
+		if resp.Total > 0 {
+			shown := len(resp.Items)
+			if shown < resp.Total {
+				fmt.Fprintf(out, "Showing %d of %d total", shown, resp.Total)
+				if resp.NextCursor != nil && *resp.NextCursor != "" {
+					fmt.Fprintf(out, " — use --cursor %s for next page", *resp.NextCursor)
+				}
+				fmt.Fprintln(out)
+			} else {
+				fmt.Fprintf(out, "%d total\n", resp.Total)
+			}
+		}
+		return nil
 	},
 }
 
