@@ -14,6 +14,8 @@ Write to (and look up from) the Memory knowledge graph — creating, updating, a
 - **Always prefix `memory` commands with `NO_PROMPT=1`** (e.g. `NO_PROMPT=1 memory <cmd>`). Without it, the CLI may show interactive pickers. Do not add this to `.env.local` — it must only apply to agent-driven invocations.
 - **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` is set.
 - **Use only `memory` CLI commands** — never `curl`, raw HTTP requests, or direct API calls.
+- **Always set `key` on every object you create** — see [Key discipline](#key-discipline) below. Objects without a `key` cannot be referenced by name in future sessions and require expensive UUID lookups.
+- **Trust this skill over `--help` output** — `--help` text may lag behind the installed binary. If this skill documents a flag or format, it works even if `--help` doesn't show it yet.
 
 ---
 
@@ -34,6 +36,36 @@ Write to (and look up from) the Memory knowledge graph — creating, updating, a
 > **When creating more than one object or relationship, always use `create-batch`. Never call single-create in a loop.**
 
 Each individual `memory graph objects create` call is a separate API round-trip. A `create-batch` call with 50 objects takes the same time as one with 1.
+
+---
+
+## Key discipline
+
+> **Always set `key` on every object you create.** This is the single most important habit for multi-session graph work.
+
+A `key` is a stable, human-readable slug you control — e.g. `svc-auth`, `file-src-main-go`, `ep-get-api-cases`. It lets you:
+
+- **Reference objects across sessions** using `src_key`/`dst_key` in relationships without UUID lookups
+- **Re-run scripts idempotently** — the server skips objects whose key already exists (or upserts if `--upsert` is set)
+- **Avoid expensive `objects list` fetches** just to recover a UUID you already knew at creation time
+
+**Key naming conventions:**
+
+| Object type | Key pattern | Example |
+|---|---|---|
+| Service / microservice | `svc-<slug>` | `svc-auth`, `svc-gateway` |
+| Source file | `file-<path-slug>` | `file-src-handlers-auth-go` |
+| Database | `db-<slug>` | `db-postgres`, `db-redis` |
+| API endpoint | `ep-<method>-<path-slug>` | `ep-get-api-v1-cases` |
+| External dependency | `dep-<slug>` | `dep-stripe`, `dep-sendgrid` |
+| Config variable | `cfg-<slug>` | `cfg-jwt-secret` |
+
+**Objects without a key are stranded** — in a future session you must do `objects list --output json` and grep for the UUID, which is slow and fragile. If you created objects without keys, update them now:
+
+```bash
+# Retroactively set a key on an existing object:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects update <id> --key "file-src-main-go"
+```
 
 ---
 
@@ -268,7 +300,7 @@ for method, path, func, domain, auth in ROUTES:
     objects.append({
         "_ref": ref,
         "type": "APIEndpoint",
-        "key": ref,
+        "key": ref,          # ALWAYS set key — enables cross-session references
         "name": f"{method} {path}",
         "properties": {
             "method": method, "path": path,
