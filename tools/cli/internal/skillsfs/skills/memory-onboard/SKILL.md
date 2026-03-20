@@ -1,6 +1,6 @@
 ---
 name: memory-onboard
-description: Onboard a project into Memory — understand what the project is, choose or create a Memory project, design and install a schema, then guide on creating objects and relationships. Use when setting up Memory for a new project or codebase for the first time.
+description: First-time setup only — connect a codebase to Memory, design a schema from scratch, and configure the project. Use once per project, not for ongoing graph population.
 metadata:
   author: emergent
   version: "2.0"
@@ -12,7 +12,7 @@ Onboard the current project into Memory by understanding what it is, selecting o
 
 - **Never run `memory browse`** — it launches a full interactive TUI that blocks on terminal input and will hang in an automated agent context.
 - **Always prefix `memory` commands with `NO_PROMPT=1`** (e.g. `NO_PROMPT=1 memory <cmd>`). Without it, the CLI may show interactive pickers when no project, agent, MCP server, skill, or agent-definition ID is provided. Do not add this to `.env.local` — it must only apply to agent-driven invocations.
-- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` is set.
+- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` (or `MEMORY_PROJECT_ID`) is set.
 - **Use only `memory` CLI commands** throughout this workflow. Never use `curl`, raw HTTP requests, or direct API calls — the CLI handles authentication and project context automatically.
 
 ---
@@ -66,11 +66,11 @@ cat .env.local 2>/dev/null | grep -E "MEMORY_(SERVER_URL|PROJECT)"
 ```
 
 - **If `MEMORY_SERVER_URL` is set:** the CLI already knows which server to talk to. Do NOT run `memory init` or `memory login` — the agent context handles authentication automatically.
-- **If `MEMORY_PROJECT=<id>` is found:** show the user the project ID and name (`memory projects get <id>` if available, otherwise just the ID), then ask:
+- **If `MEMORY_PROJECT=<id>` (or `MEMORY_PROJECT_ID=<id>`) is set:** show the user the project ID and name (`memory projects get <id>` if available, otherwise just the ID), then ask:
   > "This repo is already connected to Memory project `<name>` (`<id>`). Continue with this project, or switch to a different one?"
   - If they confirm: proceed to Step 3.
   - If they want to switch: continue with Step 2b below.
-- **If not found:** continue with Step 2b.
+- **If neither project var is found:** continue with Step 2b.
 
 > **Important:** Never run `memory init` or `memory login` from within an agent — these are interactive commands designed for human CLI sessions. The agent context provides authentication automatically. If `.env.local` has `MEMORY_SERVER_URL` and `MEMORY_PROJECT`, everything needed is already configured.
 
@@ -95,7 +95,9 @@ Note the returned project ID.
 
 #### 2d. Write project ID to .env.local
 
-Write (or update) `MEMORY_PROJECT` in `.env.local`:
+If `MEMORY_PROJECT` or `MEMORY_PROJECT_ID` already exists in `.env.local`, the project is already configured — skip writing and confirm with the user.
+
+Otherwise, write (or update) `MEMORY_PROJECT` in `.env.local`:
 
 ```bash
 # If .env.local does not exist:
@@ -167,6 +169,53 @@ memory provider configure vertex-ai \
 ```
 
 This also syncs the model catalog and auto-selects models atomically. Proceed to Step 3 on success.
+
+### Step 2.6 — Set the project info document
+
+The **project info** is a Markdown description that agents and MCP clients read (via the `get_project_info` tool) to orient themselves before working with the project. It should capture the project's purpose, goals, audience, and high-level context. Setting it now ensures every subsequent agent interaction — extraction, querying, schema design — has the right context.
+
+#### Write the project info
+
+Based on what you learned in Step 1, compose a concise Markdown description (a few paragraphs is fine) and save it to a file in the CWD:
+
+```bash
+# Write the project info to a file (e.g. .memory/project-info.md)
+```
+
+The document should answer:
+- What does this project do?
+- Who is the intended audience (developers, end-users, data analysts, etc.)?
+- What are the main goals or capabilities?
+- What domain or industry does it serve?
+
+**Example:**
+
+```markdown
+# My Project
+
+A Go microservice that manages user authentication and authorization for the
+Acme platform. It exposes REST and gRPC APIs consumed by frontend apps and
+other backend services.
+
+**Audience:** Backend engineers working on the Acme platform.
+
+**Key capabilities:**
+- OAuth2 / OIDC login flows
+- Role-based access control (RBAC)
+- API key management
+- Audit logging
+```
+
+#### Apply the project info
+
+```bash
+NO_PROMPT=1 memory projects set-info --project <project-id> --file .memory/project-info.md
+```
+
+Confirm with the user:
+> "Set the project info document. Agents and MCP tools will now use this to understand the project's context."
+
+Commit `.memory/project-info.md` alongside the schema later — it serves as living documentation.
 
 ### Step 3 — Design the schema
 
@@ -266,22 +315,79 @@ The `--auto-extract` flag triggers chunking, embedding, and automatic object ext
 memory query "what are the main components and how do they relate?"
 ```
 
-#### Create objects manually (optional)
+---
 
-If you need to add specific objects that aren't in any document:
+#### Creating objects and relationships manually
+
+> **Use the `memory-graph` skill for all graph writes.** It covers batch creation, ID capture, updates, lookups, and idempotent upserts with full worked examples. The summary below is a quick reference — load `memory-graph` for the complete workflow.
+
+> **Always batch. Never loop.** When creating more than one object or relationship, use `create-batch` — a single API call for any number of items. Never call `memory graph objects create` or `memory graph relationships create` in a loop or sequence. Each individual call is a separate round-trip; batching 20 objects takes the same time as batching 1.
+
+##### Batch-create objects (preferred)
+
+Write all objects to a JSON file, then create them in one call:
 
 ```bash
-# Using named flags (recommended):
-memory graph objects create --type Service --name "auth-service" --description "Handles authentication"
+# Write objects.json
+cat > /tmp/objects.json << 'EOF'
+[
+  {"type": "Service", "name": "auth-service", "description": "Handles authentication and JWT validation"},
+  {"type": "Service", "name": "api-gateway", "description": "Routes requests to downstream services"},
+  {"type": "Database", "name": "PostgreSQL", "description": "Primary relational store"},
+  {"type": "ExternalDependency", "name": "stripe", "description": "Payment processing API"}
+]
+EOF
 
-# Using raw JSON for additional properties:
-memory graph objects create --type Service --properties '{"name":"auth-service","description":"Handles authentication"}'
+# Create all objects in one call — output is one line per object: <id>  <type>  <name>
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json
 ```
 
-#### Create relationships manually (optional)
+Capture the IDs from the output immediately — you need them for relationships:
 
 ```bash
-memory graph relationships create --type depends_on --from <source-object-id> --to <target-object-id>
+# Parse IDs into shell variables for use in the relationships batch
+AUTH_ID=$(NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json | awk '/auth-service/ {print $1}')
+# Or capture the full output and parse with grep/awk
+```
+
+**Practical pattern:** write the batch file, run `create-batch`, capture stdout, parse IDs with `awk` or `grep`, then write the relationships file.
+
+##### Batch-create relationships (preferred)
+
+Once you have the object IDs, write all relationships to a JSON file and create them in one call:
+
+```bash
+cat > /tmp/relationships.json << 'EOF'
+[
+  {"type": "depends_on", "from": "<auth-service-id>", "to": "<postgres-id>"},
+  {"type": "depends_on", "from": "<api-gateway-id>", "to": "<auth-service-id>"},
+  {"type": "uses_dependency", "from": "<auth-service-id>", "to": "<stripe-id>"}
+]
+EOF
+
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create-batch --file /tmp/relationships.json
+```
+
+##### Single-object creation (fallback only)
+
+Use the single-create commands **only** when adding one isolated object after the initial population:
+
+```bash
+# Single object — only when truly adding just one:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+  --type Service --name "auth-service" --description "Handles authentication"
+
+# With a stable key for idempotent re-runs (skip if already exists):
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+  --type Service --key "svc-auth" --name "auth-service"
+
+# With --upsert: create-or-update semantics:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+  --type Service --key "svc-auth" --name "auth-service" --upsert
+
+# Single relationship — only when adding one:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create \
+  --type depends_on --from <source-id> --to <target-id>
 ```
 
 > **Important:** Always use `memory` CLI commands — never construct raw `curl` API calls. The CLI handles authentication and project context automatically.
@@ -292,8 +398,10 @@ memory graph relationships create --type depends_on --from <source-object-id> --
 
 Remind the user:
 - `.env.local` contains `MEMORY_PROJECT=<id>` — keep this out of git (add to `.gitignore`)
+- The project info document at `.memory/project-info.md` describes the project for agents — commit this to the repo and update it as the project evolves
 - The schema definition is saved at `.memory/templates/<pack-name>/pack.json` — commit this to the repo
 - To modify the schema, edit the JSON and run `memory schemas install --file pack.json --merge` to additively merge changes
+- To update the project info: edit `.memory/project-info.md` and run `memory projects set-info --file .memory/project-info.md`
 - The `memory-query` skill can be used to explore the populated graph
 - The `memory-schemas` skill has full reference for managing schemas
 

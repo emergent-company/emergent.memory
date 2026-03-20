@@ -1,6 +1,6 @@
 ---
 name: memory-blueprints
-description: Install, validate, and export Emergent Blueprints — declarative directories of schemas, agent definitions, skills, and seed data. Use when setting up a project from a blueprint, validating a blueprint before applying, seeding graph data, or exporting an existing project's graph as re-applyable seed files.
+description: Apply or export declarative Blueprint directories — YAML/JSON packs of schemas, agent definitions, skills, and JSONL seed files — using `memory blueprints`. Use when working with a blueprint repo or exporting a project's graph as seed files.
 metadata:
   author: emergent
   version: "1.1"

@@ -1,6 +1,6 @@
 ---
 name: memory-schemas
-description: Manage Emergent schemas — discover, install, and remove reusable sets of object and relationship types in a project. Use when the user wants to configure what types of knowledge objects a project can contain.
+description: Install, list, or remove schemas (object and relationship type definitions) in an existing project. Use after onboarding when managing or updating the type registry.
 metadata:
   author: emergent
   version: "2.0"

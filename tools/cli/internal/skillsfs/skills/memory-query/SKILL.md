@@ -1,12 +1,13 @@
 ---
 name: memory-query
-description: Query an Emergent project knowledge base using natural language or direct hybrid search. Use when the user wants to search, explore, or ask questions about content in an Emergent project.
+description: Read from the knowledge graph — natural language questions, semantic search, or hybrid search over objects and documents.
 metadata:
   author: emergent
   version: "2.0"
 ---
 
 > **New to Emergent?** Load the `memory-onboard` skill first to set up the project's knowledge graph schema before querying.
+> **Want to write to the graph?** Load the `memory-graph` skill to create, update, or delete objects and relationships.
 
 Query an Emergent project knowledge base using the `memory query` command.
 

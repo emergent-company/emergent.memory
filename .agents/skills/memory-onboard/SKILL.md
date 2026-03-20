@@ -1,6 +1,6 @@
 ---
 name: memory-onboard
-description: Onboard a project into Memory — understand what the project is, choose or create a Memory project, design and install a schema, then guide on creating objects and relationships. Use when setting up Memory for a new project or codebase for the first time.
+description: First-time setup only — connect a codebase to Memory, design a schema from scratch, and configure the project. Use once per project, not for ongoing graph population.
 metadata:
   author: emergent
   version: "2.0"
@@ -315,28 +315,79 @@ The `--auto-extract` flag triggers chunking, embedding, and automatic object ext
 memory query "what are the main components and how do they relate?"
 ```
 
-#### Create objects manually (optional)
+---
 
-If you need to add specific objects that aren't in any document:
+#### Creating objects and relationships manually
+
+> **Use the `memory-graph` skill for all graph writes.** It covers batch creation, ID capture, updates, lookups, and idempotent upserts with full worked examples. The summary below is a quick reference — load `memory-graph` for the complete workflow.
+
+> **Always batch. Never loop.** When creating more than one object or relationship, use `create-batch` — a single API call for any number of items. Never call `memory graph objects create` or `memory graph relationships create` in a loop or sequence. Each individual call is a separate round-trip; batching 20 objects takes the same time as batching 1.
+
+##### Batch-create objects (preferred)
+
+Write all objects to a JSON file, then create them in one call:
 
 ```bash
-# Using named flags (recommended):
-memory graph objects create --type Service --name "auth-service" --description "Handles authentication"
+# Write objects.json
+cat > /tmp/objects.json << 'EOF'
+[
+  {"type": "Service", "name": "auth-service", "description": "Handles authentication and JWT validation"},
+  {"type": "Service", "name": "api-gateway", "description": "Routes requests to downstream services"},
+  {"type": "Database", "name": "PostgreSQL", "description": "Primary relational store"},
+  {"type": "ExternalDependency", "name": "stripe", "description": "Payment processing API"}
+]
+EOF
 
-# Using raw JSON for additional properties:
-memory graph objects create --type Service --properties '{"name":"auth-service","description":"Handles authentication"}'
-
-# With a stable key for idempotent re-runs (skip if already exists):
-memory graph objects create --type Service --key "svc-auth" --name "auth-service"
-
-# With --upsert: create-or-update semantics (updates if key already exists):
-memory graph objects create --type Service --key "svc-auth" --name "auth-service" --upsert
+# Create all objects in one call — output is one line per object: <id>  <type>  <name>
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json
 ```
 
-#### Create relationships manually (optional)
+Capture the IDs from the output immediately — you need them for relationships:
 
 ```bash
-memory graph relationships create --type depends_on --from <source-object-id> --to <target-object-id>
+# Parse IDs into shell variables for use in the relationships batch
+AUTH_ID=$(NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json | awk '/auth-service/ {print $1}')
+# Or capture the full output and parse with grep/awk
+```
+
+**Practical pattern:** write the batch file, run `create-batch`, capture stdout, parse IDs with `awk` or `grep`, then write the relationships file.
+
+##### Batch-create relationships (preferred)
+
+Once you have the object IDs, write all relationships to a JSON file and create them in one call:
+
+```bash
+cat > /tmp/relationships.json << 'EOF'
+[
+  {"type": "depends_on", "from": "<auth-service-id>", "to": "<postgres-id>"},
+  {"type": "depends_on", "from": "<api-gateway-id>", "to": "<auth-service-id>"},
+  {"type": "uses_dependency", "from": "<auth-service-id>", "to": "<stripe-id>"}
+]
+EOF
+
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create-batch --file /tmp/relationships.json
+```
+
+##### Single-object creation (fallback only)
+
+Use the single-create commands **only** when adding one isolated object after the initial population:
+
+```bash
+# Single object — only when truly adding just one:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+  --type Service --name "auth-service" --description "Handles authentication"
+
+# With a stable key for idempotent re-runs (skip if already exists):
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+  --type Service --key "svc-auth" --name "auth-service"
+
+# With --upsert: create-or-update semantics:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+  --type Service --key "svc-auth" --name "auth-service" --upsert
+
+# Single relationship — only when adding one:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create \
+  --type depends_on --from <source-id> --to <target-id>
 ```
 
 > **Important:** Always use `memory` CLI commands — never construct raw `curl` API calls. The CLI handles authentication and project context automatically.

@@ -1,12 +1,12 @@
 ---
 name: memory-blueprints
-description: Apply and export Emergent Blueprints — declarative directories of schemas, agent definitions, and seed data applied with `memory blueprints`. Use when setting up a project from a blueprint, seeding graph data, or exporting an existing project's graph as re-applyable seed files.
+description: Apply or export declarative Blueprint directories — YAML/JSON packs of schemas, agent definitions, skills, and JSONL seed files — using `memory blueprints`. Use when working with a blueprint repo or exporting a project's graph as seed files.
 metadata:
   author: emergent
-  version: "1.0"
+  version: "1.1"
 ---
 
-Manage Emergent Blueprints using `memory blueprints`. A blueprint is a directory of YAML/JSON files and JSONL seed data that declaratively describes a project's schemas, agent definitions, and initial graph objects/relationships.
+Manage Emergent Blueprints using `memory blueprints`. A blueprint is a directory of YAML/JSON files and JSONL seed data that declaratively describes a project's schemas, agent definitions, skills, and initial graph objects/relationships.
 
 > **New to Emergent?** Load the `memory-onboard` skill first — it walks through designing and installing a schema from scratch.
 
@@ -18,22 +18,23 @@ Manage Emergent Blueprints using `memory blueprints`. A blueprint is a directory
 
 ## Concepts
 
-- **Blueprint** — a directory containing `schemas/` (or `packs/` for backward compatibility), `agents/`, and/or `seed/` subdirectories. Applied with `memory blueprints <source>`.
+- **Blueprint** — a directory containing `schemas/` (or `packs/` for backward compatibility), `agents/`, `skills/`, and/or `seed/` subdirectories. Installed with `memory blueprints install <source>`.
 - **Seed data** — pre-defined graph objects and relationships in per-type JSONL files under `seed/objects/` and `seed/relationships/`. Applied after packs and agents.
 - **Key** — a stable string identity on a seed object. Objects with a key are idempotent: skipped on re-apply (or upserted with `--upgrade`). Keyless objects are always inserted.
-- **Dump** — the `memory blueprints dump <output-dir>` subcommand exports a live project's graph as re-applyable seed files.
+- **Validate** — `memory blueprints validate <source>` checks a blueprint for structural errors and cross-reference problems without making any API calls.
+- **Dump** — `memory blueprints dump <output-dir>` exports a live project's graph as re-applyable seed files.
 
 ---
 
 ## Commands
 
-### Apply a blueprint
+### Install a blueprint
 
 ```bash
-memory blueprints <source>
-memory blueprints <source> --project <project-id>
-memory blueprints <source> --upgrade
-memory blueprints <source> --dry-run
+memory blueprints install <source>
+memory blueprints install <source> --project <project-id>
+memory blueprints install <source> --upgrade
+memory blueprints install <source> --dry-run
 ```
 
 `<source>` can be:
@@ -43,9 +44,26 @@ memory blueprints <source> --dry-run
 
 For private GitHub repos, supply a token:
 ```bash
-memory blueprints <source> --token ghp_...
+memory blueprints install <source> --token ghp_...
 # or set MEMORY_GITHUB_TOKEN in the environment
 ```
+
+### Validate a blueprint (no API calls required)
+
+```bash
+memory blueprints validate <source>
+memory blueprints validate https://github.com/org/repo
+memory blueprints validate https://github.com/org/repo#v1.2.0
+```
+
+Validates the blueprint directory (or GitHub repo) offline — no project, no auth needed. Reports errors and warnings for:
+- **Packs** — missing required fields, invalid relationship `sourceType`/`targetType` cross-references, duplicate names
+- **Agents** — invalid `flowType`, `visibility`, or `dispatchMode` values; missing `model.name`
+- **Skills** — missing `name`/`description`, empty content body
+- **Seed objects** — missing `type`, keyless objects (warning)
+- **Seed relationships** — missing endpoints, unresolvable `srcKey`/`dstKey` against seed objects
+
+Exits `0` when clean or warnings-only, `1` when any error is found. **Always validate before installing.**
 
 ### Export a project as seed files (dump)
 
@@ -118,7 +136,7 @@ Optional fields: `weight` (float), `properties` (object).
 
 ## Flags reference
 
-### `memory blueprints <source>`
+### `memory blueprints install <source>`
 
 | Flag | Description |
 |---|---|
@@ -126,6 +144,14 @@ Optional fields: `weight` (float), `properties` (object).
 | `--upgrade` | Update existing resources instead of skipping them |
 | `--dry-run` | Preview only — no API calls |
 | `--token <tok>` | GitHub PAT for private repos (also: `MEMORY_GITHUB_TOKEN`) |
+
+### `memory blueprints validate <source>`
+
+| Flag | Description |
+|---|---|
+| `--token <tok>` | GitHub PAT for private repos (also: `MEMORY_GITHUB_TOKEN`) |
+
+No `--project` required — validation is fully offline.
 
 ### `memory blueprints dump <output-dir>`
 
@@ -151,15 +177,19 @@ Optional fields: `weight` (float), `properties` (object).
 ## Workflow: apply seed data to a project
 
 1. Ensure the project has the required schemas installed (types must exist before seeding).
-2. Run dry-run to validate seed files and preview actions:
+2. Validate the blueprint offline first:
    ```bash
-   memory blueprints ./my-blueprint --dry-run
+   memory blueprints validate ./my-blueprint
    ```
-3. Apply:
+3. Run dry-run to preview actions:
    ```bash
-   memory blueprints ./my-blueprint
+   memory blueprints install ./my-blueprint --dry-run
    ```
-4. Re-apply is safe — keyed objects are skipped (or upserted with `--upgrade`).
+4. Apply:
+   ```bash
+   memory blueprints install ./my-blueprint
+   ```
+5. Re-apply is safe — keyed objects are skipped (or upserted with `--upgrade`).
 
 ## Workflow: clone a project's graph to another project
 
@@ -167,8 +197,11 @@ Optional fields: `weight` (float), `properties` (object).
 # Export from source project
 memory blueprints dump ./exported --project <source-project-id>
 
+# Validate the exported files
+memory blueprints validate ./exported
+
 # Apply to destination project
-memory blueprints ./exported --project <dest-project-id>
+memory blueprints install ./exported --project <dest-project-id>
 ```
 
 ---
@@ -178,5 +211,6 @@ memory blueprints ./exported --project <dest-project-id>
 - Always set a `key` on seed objects you intend to re-apply — keyless objects are inserted anew on every apply, creating duplicates.
 - Use `srcKey`/`dstKey` in relationship files whenever possible; `srcId`/`dstId` references break when re-applying to a different project.
 - The `dump` command prefers key-based references automatically.
-- Exit code is non-zero if any resource produced an error during apply.
+- `memory blueprints validate` exits `0` when clean or warnings-only, `1` when any error is found.
+- `memory blueprints install` exits non-zero if any resource produced an error during apply.
 - `memory blueprints dump` does **not** export packs or agent definitions — only graph objects and relationships.

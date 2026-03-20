@@ -1,6 +1,6 @@
 ---
 name: memory-providers
-description: Manage LLM provider credentials and browse available models in Emergent. Use when the user wants to configure API keys, set up Vertex AI, check which models are available, or review LLM usage and costs.
+description: Configure LLM provider credentials (Google AI, Vertex AI) and browse available models. Use when setting up or changing the AI provider for a Memory org.
 metadata:
   author: emergent
   version: "3.0"
