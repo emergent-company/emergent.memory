@@ -24,6 +24,7 @@ Write to (and look up from) the Memory knowledge graph — creating, updating, a
 | Skill | Use for |
 |---|---|
 | **memory-graph** (this) | Writing to the graph — creating, updating, deleting objects and relationships |
+| **memory-branches** | Branch workflow — creating branches, scoping writes, merging |
 | **memory-query** | Reading from the graph — natural language questions, search |
 | **memory-onboard** | First-time setup — project creation, schema design, initial population |
 | **memory-blueprints** | Declarative bulk seeding from a directory of JSONL files |
@@ -475,8 +476,36 @@ NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create \
 
 ---
 
+## Branching
+
+To scope writes to a branch, pass `--branch <branch-id>` to any write command. Without it, writes go to the main branch.
+
+```bash
+# Create an object on a branch:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+  --type Service --key "svc-auth" --name "auth-service" \
+  --status planned --branch "$BRANCH_ID"
+
+# List objects on a branch:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --branch "$BRANCH_ID"
+
+# Create a relationship on a branch:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create \
+  --type depends_on --from <src-id> --to <dst-id> --branch "$BRANCH_ID"
+```
+
+**Common mistakes:**
+- `MEMORY_BRANCH` env var — **not supported**. Always pass `--branch <id>` explicitly.
+- `X-Branch-ID` header — **not a header**. Branch is a body field (create) or query param (list).
+- `?branchId=` query param — **wrong**. The correct param is `?branch_id=` (snake_case).
+
+For the full branch lifecycle (create → write → preview merge → execute → delete), load the **memory-branches** skill.
+
+---
+
 ## See also
 
+- **memory-branches** — full branch workflow: create, scope writes, merge, delete
 - **memory-query** — verify what was inserted with natural language questions
 - **memory-schemas** — check or install object/relationship types before inserting
 - **memory-blueprints** — for large declarative seed operations from JSONL files

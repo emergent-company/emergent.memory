@@ -2150,11 +2150,13 @@ memory graph objects create [flags]
 ### Options
 
 ```
+      --branch string        Branch ID to create the object on (omit for main branch)
       --description string   Set properties.description
   -h, --help                 help for create
       --key string           Stable key for idempotent operations
       --name string          Set properties.name
       --properties string    JSON properties object
+      --status string        Object status (e.g. active, planned, deprecated)
       --type string          Object type (required)
       --upsert               Update existing object if key already exists (requires --key)
 ```
@@ -2253,11 +2255,13 @@ memory graph objects list [flags]
 ### Options
 
 ```
+      --branch string        Branch ID to scope results to (omit for main branch)
       --cursor string        Pagination cursor from a previous response (next_cursor field)
       --filter stringArray   Property filter as key=value (repeatable); see --filter-op
       --filter-op string     Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists (default "eq")
   -h, --help                 help for list
       --limit int            Maximum number of results (server default: 1000) (default 1000)
+      --status string        Filter by object status
       --type string          Filter by object type
 ```
 
@@ -2310,6 +2314,7 @@ memory graph objects update <id> [flags]
   -h, --help                help for update
       --key string          Set a stable key on the object (enables cross-session src_key/dst_key references)
       --properties string   JSON properties object to merge
+      --status string       Set object status (e.g. active, planned, deprecated)
 ```
 
 ## memory graph relationships
@@ -2370,6 +2375,7 @@ memory graph relationships create [flags]
 ### Options
 
 ```
+      --branch string       Branch ID to create the relationship on (omit for main branch)
       --from string         Source object ID (required)
   -h, --help                help for create
       --properties string   JSON properties object
@@ -2437,11 +2443,12 @@ memory graph relationships list [flags]
 ### Options
 
 ```
-      --from string   Filter by source object ID
-  -h, --help          help for list
-      --limit int     Maximum number of results (server default: 1000) (default 1000)
-      --to string     Filter by destination object ID
-      --type string   Filter by relationship type
+      --branch string   Branch ID to scope results to (omit for main branch)
+      --from string     Filter by source object ID
+  -h, --help            help for list
+      --limit int       Maximum number of results (server default: 1000) (default 1000)
+      --to string       Filter by destination object ID
+      --type string     Filter by relationship type
 ```
 
 ## memory init
@@ -3447,14 +3454,17 @@ memory schemas installed [flags]
 
 ## memory schemas list
 
-List available schemas
+List schemas installed on this project
 
 ### Synopsis
 
-List schemas available in the global registry for the current project to install.
+List schemas installed on the current project (default), or schemas available
+in the registry to install (--available).
 
-Output is a table with columns: ID, Name, Version, and Description (truncated
-to 60 characters). Use --output json to receive the full list as JSON.
+Schemas installed via 'memory blueprints install' appear here under 'installed'.
+Use 'memory schemas compiled-types' to see the full merged set of active types.
+
+Output is a table. Use --output json to receive the full list as JSON.
 
 ```
 memory schemas list [flags]
@@ -3463,7 +3473,8 @@ memory schemas list [flags]
 ### Options
 
 ```
-  -h, --help   help for list
+      --available   Show schemas available in the registry (not yet installed) instead of installed schemas
+  -h, --help        help for list
 ```
 
 ## memory schemas uninstall

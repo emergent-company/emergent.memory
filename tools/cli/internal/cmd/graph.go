@@ -106,6 +106,8 @@ var (
 	graphDescFlag     string
 	graphPropsFlag    string
 	graphKeyFlag      string
+	graphStatusFlag   string
+	graphBranchFlag   string
 	graphUpsertFlag   bool
 	graphFromFlag     string
 	graphToFlag       string
@@ -220,6 +222,12 @@ Examples:
 		}
 		if graphCursorFlag != "" {
 			opts.Cursor = graphCursorFlag
+		}
+		if graphBranchFlag != "" {
+			opts.BranchID = graphBranchFlag
+		}
+		if graphStatusFlag != "" {
+			opts.Status = graphStatusFlag
 		}
 		if len(graphFilterFlag) > 0 {
 			pf, err := parsePropertyFilters(graphFilterFlag, graphFilterOpFlag)
@@ -375,6 +383,12 @@ When --key is given, the object is keyed for idempotent operations:
 		if graphKeyFlag != "" {
 			req.Key = &graphKeyFlag
 		}
+		if graphStatusFlag != "" {
+			req.Status = &graphStatusFlag
+		}
+		if graphBranchFlag != "" {
+			req.BranchID = &graphBranchFlag
+		}
 
 		if graphPropsFlag != "" {
 			var props map[string]any
@@ -450,6 +464,9 @@ var graphObjectsUpdateCmd = &cobra.Command{
 
 		if graphKeyFlag != "" {
 			req.Key = &graphKeyFlag
+		}
+		if graphStatusFlag != "" {
+			req.Status = &graphStatusFlag
 		}
 
 		if graphPropsFlag != "" {
@@ -658,6 +675,9 @@ type, --from/--to to filter by endpoint, --limit to control result count, and
 		if graphCursorFlag != "" {
 			opts.Cursor = graphCursorFlag
 		}
+		if graphBranchFlag != "" {
+			opts.BranchID = graphBranchFlag
+		}
 
 		resp, err := g.ListRelationships(context.Background(), opts)
 		if err != nil {
@@ -778,6 +798,10 @@ var graphRelationshipsCreateCmd = &cobra.Command{
 			Type:  graphRelTypeFlag,
 			SrcID: graphFromFlag,
 			DstID: graphToFlag,
+		}
+
+		if graphBranchFlag != "" {
+			req.BranchID = &graphBranchFlag
 		}
 
 		if graphPropsFlag != "" {
@@ -1324,6 +1348,8 @@ func init() {
 	graphObjectsListCmd.Flags().StringVar(&graphCursorFlag, "cursor", "", "Pagination cursor from a previous response (next_cursor field)")
 	graphObjectsListCmd.Flags().StringArrayVar(&graphFilterFlag, "filter", nil, "Property filter as key=value (repeatable); see --filter-op")
 	graphObjectsListCmd.Flags().StringVar(&graphFilterOpFlag, "filter-op", "eq", "Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists")
+	graphObjectsListCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to scope results to (omit for main branch)")
+	graphObjectsListCmd.Flags().StringVar(&graphStatusFlag, "status", "", "Filter by object status")
 
 	graphObjectsGetCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
 
@@ -1332,23 +1358,28 @@ func init() {
 	graphObjectsCreateCmd.Flags().StringVar(&graphDescFlag, "description", "", "Set properties.description")
 	graphObjectsCreateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object")
 	graphObjectsCreateCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Stable key for idempotent operations")
+	graphObjectsCreateCmd.Flags().StringVar(&graphStatusFlag, "status", "", "Object status (e.g. active, planned, deprecated)")
+	graphObjectsCreateCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to create the object on (omit for main branch)")
 	graphObjectsCreateCmd.Flags().BoolVar(&graphUpsertFlag, "upsert", false, "Update existing object if key already exists (requires --key)")
 
 	graphObjectsCreateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "Path to JSON file containing array of objects (required)")
 
 	graphObjectsUpdateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object to merge")
 	graphObjectsUpdateCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Set a stable key on the object (enables cross-session src_key/dst_key references)")
+	graphObjectsUpdateCmd.Flags().StringVar(&graphStatusFlag, "status", "", "Set object status (e.g. active, planned, deprecated)")
 
 	// Relationship subcommand flags
 	graphRelationshipsListCmd.Flags().StringVar(&graphRelTypeFlag, "type", "", "Filter by relationship type")
 	graphRelationshipsListCmd.Flags().StringVar(&graphFromFlag, "from", "", "Filter by source object ID")
 	graphRelationshipsListCmd.Flags().StringVar(&graphToFlag, "to", "", "Filter by destination object ID")
 	graphRelationshipsListCmd.Flags().IntVar(&graphLimitFlag, "limit", 1000, "Maximum number of results (server default: 1000)")
+	graphRelationshipsListCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to scope results to (omit for main branch)")
 
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphRelTypeFlag, "type", "", "Relationship type (required)")
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphFromFlag, "from", "", "Source object ID (required)")
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphToFlag, "to", "", "Destination object ID (required)")
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object")
+	graphRelationshipsCreateCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to create the relationship on (omit for main branch)")
 
 	graphRelationshipsCreateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "Path to JSON file containing array of relationships (required)")
 
