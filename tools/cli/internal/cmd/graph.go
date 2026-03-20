@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -32,10 +33,14 @@ type subgraphObjectInput struct {
 }
 
 // subgraphRelationshipInput is the JSON shape for relationships in the subgraph format.
+// src_ref/dst_ref reference objects defined in the same file; src_id/dst_id reference
+// pre-existing objects by UUID. src_ref takes precedence over src_id; dst_ref over dst_id.
 type subgraphRelationshipInput struct {
 	Type       string         `json:"type"`
-	SrcRef     string         `json:"src_ref"`
-	DstRef     string         `json:"dst_ref"`
+	SrcRef     string         `json:"src_ref,omitempty"`
+	DstRef     string         `json:"dst_ref,omitempty"`
+	SrcID      string         `json:"src_id,omitempty"`
+	DstID      string         `json:"dst_id,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
@@ -783,6 +788,201 @@ var graphRelationshipsDeleteCmd = &cobra.Command{
 }
 
 // ─────────────────────────────────────────────
+// Subgraph helpers
+// ─────────────────────────────────────────────
+
+// toSubgraphSDKRequest converts a parsed subgraphInput into SDK request structs.
+func toSubgraphSDKRequest(sg subgraphInput) sdkgraph.CreateSubgraphRequest {
+	objReqs := make([]sdkgraph.SubgraphObjectRequest, 0, len(sg.Objects))
+	for _, o := range sg.Objects {
+		props := make(map[string]any)
+		for k, v := range o.Properties {
+			props[k] = v
+		}
+		if o.Name != "" {
+			props["name"] = o.Name
+		}
+		if o.Description != "" {
+			props["description"] = o.Description
+		}
+		req := sdkgraph.SubgraphObjectRequest{
+			Ref:  o.Ref,
+			Type: o.Type,
+			Key:  o.Key,
+		}
+		if len(props) > 0 {
+			req.Properties = props
+		}
+		objReqs = append(objReqs, req)
+	}
+
+	relReqs := make([]sdkgraph.SubgraphRelationshipRequest, 0, len(sg.Relationships))
+	for _, r := range sg.Relationships {
+		relReqs = append(relReqs, sdkgraph.SubgraphRelationshipRequest{
+			Type:       r.Type,
+			SrcRef:     r.SrcRef,
+			DstRef:     r.DstRef,
+			SrcID:      r.SrcID,
+			DstID:      r.DstID,
+			Properties: r.Properties,
+		})
+	}
+
+	return sdkgraph.CreateSubgraphRequest{Objects: objReqs, Relationships: relReqs}
+}
+
+// callSubgraph converts and sends a subgraphInput to the server.
+func callSubgraph(ctx context.Context, g *sdkgraph.Client, sg subgraphInput) (*sdkgraph.CreateSubgraphResponse, error) {
+	req := toSubgraphSDKRequest(sg)
+	resp, err := g.CreateSubgraph(ctx, &req)
+	if err != nil {
+		return nil, fmt.Errorf("subgraph create failed: %w", err)
+	}
+	return resp, nil
+}
+
+// printSubgraphResult writes the result of a subgraph call to out.
+func printSubgraphResult(out io.Writer, resp *sdkgraph.CreateSubgraphResponse, outputFlag string) error {
+	if outputFlag == "json" {
+		return json.NewEncoder(out).Encode(resp)
+	}
+	for _, o := range resp.Objects {
+		fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, nameFromProps(o.Properties))
+	}
+	fmt.Fprintf(out, "Created %d objects, %d relationships\n", len(resp.Objects), len(resp.Relationships))
+	return nil
+}
+
+// runSubgraphChunked splits a large subgraph into object-chunks of maxObj each,
+// assigns relationships to the chunk that owns their src_ref (or sends them in a
+// final pass for cross-chunk / src_id relationships). Warns on stderr for each chunk.
+func runSubgraphChunked(cmd *cobra.Command, g *sdkgraph.Client, sg subgraphInput, out io.Writer, maxObj, maxRel int) error {
+	ctx := context.Background()
+	errOut := cmd.ErrOrStderr()
+
+	// Build ref→chunkIndex map so we can assign relationships.
+	refChunk := make(map[string]int, len(sg.Objects))
+	chunks := make([]subgraphInput, 0)
+
+	for i := 0; i < len(sg.Objects); i += maxObj {
+		end := i + maxObj
+		if end > len(sg.Objects) {
+			end = len(sg.Objects)
+		}
+		chunk := subgraphInput{Objects: sg.Objects[i:end]}
+		chunkIdx := len(chunks)
+		for _, o := range chunk.Objects {
+			if o.Ref != "" {
+				refChunk[o.Ref] = chunkIdx
+			}
+		}
+		chunks = append(chunks, chunk)
+	}
+
+	// Assign relationships: a relationship belongs to a chunk if both src and dst
+	// resolve to the same chunk (via ref). Otherwise it goes to a cross-chunk pass.
+	crossChunk := subgraphInput{}
+	for _, rel := range sg.Relationships {
+		srcChunk, srcOk := refChunk[rel.SrcRef]
+		dstChunk, dstOk := refChunk[rel.DstRef]
+		if srcOk && dstOk && srcChunk == dstChunk {
+			chunks[srcChunk].Relationships = append(chunks[srcChunk].Relationships, rel)
+		} else {
+			// Cross-chunk or uses src_id/dst_id — defer to final pass.
+			crossChunk.Relationships = append(crossChunk.Relationships, rel)
+		}
+	}
+
+	// Execute each object chunk.
+	totalObjs, totalRels := 0, 0
+	allRespObjects := make([]sdkgraph.GraphObject, 0)
+	mergedRefMap := make(map[string]string)
+
+	for i, chunk := range chunks {
+		fmt.Fprintf(errOut, "  chunk %d/%d: %d objects, %d relationships\n",
+			i+1, len(chunks), len(chunk.Objects), len(chunk.Relationships))
+
+		resp, err := callSubgraph(ctx, g, chunk)
+		if err != nil {
+			return fmt.Errorf("chunk %d failed: %w", i+1, err)
+		}
+		totalObjs += len(resp.Objects)
+		totalRels += len(resp.Relationships)
+		for _, o := range resp.Objects {
+			fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, nameFromProps(o.Properties))
+			allRespObjects = append(allRespObjects, *o)
+		}
+		for k, v := range resp.RefMap {
+			mergedRefMap[k] = v
+		}
+	}
+
+	// Cross-chunk pass: resolve src_ref/dst_ref that span chunks using the merged ref_map,
+	// then send as relationships-only subgraph (objects array with a single placeholder).
+	if len(crossChunk.Relationships) > 0 {
+		fmt.Fprintf(errOut, "  cross-chunk pass: %d relationships\n", len(crossChunk.Relationships))
+
+		// Resolve any remaining src_ref/dst_ref to src_id/dst_id using the merged ref_map.
+		resolved := make([]subgraphRelationshipInput, 0, len(crossChunk.Relationships))
+		for _, rel := range crossChunk.Relationships {
+			r := rel
+			if r.SrcRef != "" {
+				if id, ok := mergedRefMap[r.SrcRef]; ok {
+					r.SrcID = id
+					r.SrcRef = ""
+				} else {
+					fmt.Fprintf(errOut, "  Warning: src_ref %q not resolved — skipping relationship %s→%s\n", r.SrcRef, r.SrcRef, r.DstRef)
+					continue
+				}
+			}
+			if r.DstRef != "" {
+				if id, ok := mergedRefMap[r.DstRef]; ok {
+					r.DstID = id
+					r.DstRef = ""
+				} else {
+					fmt.Fprintf(errOut, "  Warning: dst_ref %q not resolved — skipping relationship %s→%s\n", r.DstRef, r.SrcRef, r.DstRef)
+					continue
+				}
+			}
+			resolved = append(resolved, r)
+		}
+
+		// Send cross-chunk relationships in batches of maxRel.
+		for i := 0; i < len(resolved); i += maxRel {
+			end := i + maxRel
+			if end > len(resolved) {
+				end = len(resolved)
+			}
+			batch := resolved[i:end]
+
+			// Cross-chunk relationships all use src_id/dst_id (resolved above), so we
+			// send them via BulkCreateRelationships rather than the subgraph endpoint.
+			relItems := make([]sdkgraph.CreateRelationshipRequest, 0, len(batch))
+			for _, r := range batch {
+				relItems = append(relItems, sdkgraph.CreateRelationshipRequest{
+					Type:  r.Type,
+					SrcID: r.SrcID,
+					DstID: r.DstID,
+				})
+			}
+			relResp, err := g.BulkCreateRelationships(context.Background(), &sdkgraph.BulkCreateRelationshipsRequest{
+				Items: relItems,
+			})
+			if err != nil {
+				return fmt.Errorf("cross-chunk relationships failed: %w", err)
+			}
+			totalRels += relResp.Success
+			if relResp.Failed > 0 {
+				fmt.Fprintf(errOut, "  Warning: %d cross-chunk relationship(s) failed\n", relResp.Failed)
+			}
+		}
+	}
+
+	fmt.Fprintf(out, "Created %d objects, %d relationships (auto-chunked)\n", totalObjs, totalRels)
+	return nil
+}
+
+// ─────────────────────────────────────────────
 // graph objects create-batch
 // ─────────────────────────────────────────────
 
@@ -807,11 +1007,13 @@ FLAT ARRAY FORMAT (objects only):
   Output: one line per object: <entity-id>  <type>  <name>
 
 SUBGRAPH FORMAT (objects + relationships, preferred when wiring is needed):
-  A JSON object with "objects" and "relationships" arrays. Objects carry a
-  client-side "_ref" placeholder; relationships reference objects via
-  "src_ref"/"dst_ref" — no UUIDs required. Max 100 objects, 200 relationships.
+  A JSON object with "objects" and "relationships" arrays. Objects carry an
+  optional "_ref" placeholder; relationships reference objects via "src_ref"/"dst_ref"
+  for new objects in the same call, or "src_id"/"dst_id" for pre-existing UUIDs.
+  Both can be mixed freely. Max 500 objects, 500 relationships per call — larger
+  inputs are auto-chunked with a warning.
 
-  Example:
+  Example (new objects only):
     {
       "objects": [
         {"_ref": "alice", "type": "Person", "key": "person-alice", "name": "Alice"},
@@ -819,6 +1021,16 @@ SUBGRAPH FORMAT (objects + relationships, preferred when wiring is needed):
       ],
       "relationships": [
         {"type": "member_of", "src_ref": "alice", "dst_ref": "acme"}
+      ]
+    }
+
+  Example (mixed: new objects wired to existing UUIDs):
+    {
+      "objects": [
+        {"_ref": "svc", "type": "Service", "name": "auth-service"}
+      ],
+      "relationships": [
+        {"type": "calls_service", "src_id": "<existing-module-uuid>", "dst_ref": "svc"}
       ]
     }
 
@@ -859,63 +1071,22 @@ SUBGRAPH FORMAT (objects + relationships, preferred when wiring is needed):
 			if len(sg.Objects) == 0 {
 				return fmt.Errorf("subgraph contains no objects")
 			}
-			if len(sg.Objects) > 100 {
-				return fmt.Errorf("subgraph exceeds limit: %d objects (max 100) — split into chunks", len(sg.Objects))
-			}
-			if len(sg.Relationships) > 200 {
-				return fmt.Errorf("subgraph exceeds limit: %d relationships (max 200) — split into chunks", len(sg.Relationships))
+
+			const maxObjects = 500
+			const maxRelationships = 500
+
+			// Auto-chunk if over limits, with a warning.
+			if len(sg.Objects) > maxObjects || len(sg.Relationships) > maxRelationships {
+				fmt.Fprintf(out, "Warning: subgraph has %d objects and %d relationships — exceeds per-call limits (%d/%d). Auto-chunking by objects.\n",
+					len(sg.Objects), len(sg.Relationships), maxObjects, maxRelationships)
+				return runSubgraphChunked(cmd, g, sg, out, maxObjects, maxRelationships)
 			}
 
-			// Map input structs → SDK request structs.
-			objReqs := make([]sdkgraph.SubgraphObjectRequest, 0, len(sg.Objects))
-			for _, o := range sg.Objects {
-				props := make(map[string]any)
-				for k, v := range o.Properties {
-					props[k] = v
-				}
-				if o.Name != "" {
-					props["name"] = o.Name
-				}
-				if o.Description != "" {
-					props["description"] = o.Description
-				}
-				req := sdkgraph.SubgraphObjectRequest{
-					Ref:  o.Ref,
-					Type: o.Type,
-					Key:  o.Key,
-				}
-				if len(props) > 0 {
-					req.Properties = props
-				}
-				objReqs = append(objReqs, req)
-			}
-
-			relReqs := make([]sdkgraph.SubgraphRelationshipRequest, 0, len(sg.Relationships))
-			for _, r := range sg.Relationships {
-				relReqs = append(relReqs, sdkgraph.SubgraphRelationshipRequest{
-					Type:       r.Type,
-					SrcRef:     r.SrcRef,
-					DstRef:     r.DstRef,
-					Properties: r.Properties,
-				})
-			}
-
-			resp, err := g.CreateSubgraph(context.Background(), &sdkgraph.CreateSubgraphRequest{
-				Objects:       objReqs,
-				Relationships: relReqs,
-			})
+			resp, err := callSubgraph(context.Background(), g, sg)
 			if err != nil {
-				return fmt.Errorf("subgraph create failed: %w", err)
+				return err
 			}
-
-			if graphOutputFlag == "json" {
-				return json.NewEncoder(out).Encode(resp)
-			}
-
-			for _, o := range resp.Objects {
-				fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, nameFromProps(o.Properties))
-			}
-			fmt.Fprintf(out, "Created %d objects, %d relationships\n", len(resp.Objects), len(resp.Relationships))
+			printSubgraphResult(out, resp, graphOutputFlag)
 			return nil
 		}
 

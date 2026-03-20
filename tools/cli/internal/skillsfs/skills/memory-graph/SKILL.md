@@ -46,6 +46,8 @@ Each individual `memory graph objects create` call is a separate API round-trip.
 | **Subgraph** (preferred when relationships needed) | Objects + relationships in one atomic call | `{ "objects": [...], "relationships": [...] }` |
 | **Flat array** (objects only) | Objects with no relationships | `[{...}, ...]` |
 
+**Subgraph limits:** 500 objects and 500 relationships per call. Larger inputs are auto-chunked with a warning — you don't need to split manually.
+
 ---
 
 ## Workflow A — Subgraph format (preferred when wiring relationships)
@@ -79,9 +81,25 @@ EOF
 ```
 
 **Key fields:**
-- `_ref` — client-side placeholder (any unique string); used by `src_ref`/`dst_ref` in relationships
+- `_ref` — optional client-side placeholder; used by `src_ref`/`dst_ref` in relationships within the same call
 - `key` — optional stable identifier for idempotent re-runs (skip if already exists)
 - `name`, `description` — convenience shortcuts placed into `properties`
+
+**Mixing new objects with existing ones:** relationships can reference new objects via `src_ref`/`dst_ref` and pre-existing objects via `src_id`/`dst_id` — freely mixed in the same file:
+
+```json
+{
+  "objects": [
+    {"_ref": "svc", "type": "Service", "key": "svc-auth", "name": "auth-service"}
+  ],
+  "relationships": [
+    {"type": "calls_service", "src_id": "<existing-module-uuid>", "dst_ref": "svc"},
+    {"type": "depends_on",    "src_ref": "svc", "dst_id": "<existing-db-uuid>"}
+  ]
+}
+```
+
+This eliminates the two-pass workflow — no need to create objects first, capture IDs, then create relationships separately.
 
 ### Step 3 — Create the subgraph
 
@@ -109,58 +127,51 @@ NO_PROMPT=1 MEMORY_PROJECT=$MP memory query "what services exist and what do the
 
 ---
 
-## Chunking for large populations (>100 objects)
+## Large populations (>500 objects)
 
-The server limit is 100 objects and 200 relationships per subgraph call. For larger populations, use `key` on all objects and split into chunks. Cross-chunk relationships reference objects by their `key` via a lookup after the first chunk.
+The per-call limit is 500 objects and 500 relationships. If your file exceeds this, `create-batch` auto-chunks it and prints a warning — you don't need to split manually for most cases.
+
+For very large populations where you want explicit control, use `key` on all objects so re-runs are idempotent, and split the file yourself:
 
 ```python
 #!/usr/bin/env python3
-"""Split a large object+relationship list into subgraph chunks."""
-import json, subprocess, sys
+"""Split a large subgraph into 500-object chunks."""
+import json
 
-OBJECTS = [
-    {"_ref": f"obj-{i}", "type": "APIEndpoint", "key": f"ep-{i}", "name": f"endpoint-{i}"}
-    for i in range(250)
-]
-RELATIONSHIPS = [
-    {"type": "depends_on", "src_ref": f"obj-{i}", "dst_ref": f"obj-{i-1}"}
-    for i in range(1, 250)
-]
+with open("/tmp/subgraph.json") as f:
+    sg = json.load(f)
 
-CHUNK_SIZE = 90  # stay under 100-object limit
+objects = sg["objects"]
+relationships = sg.get("relationships", [])
+CHUNK_SIZE = 500
 
-def chunk_subgraph(objects, relationships, chunk_size):
-    """Split objects into chunks; assign relationships to the chunk that owns src_ref."""
-    chunks = []
-    for i in range(0, len(objects), chunk_size):
-        obj_chunk = objects[i:i+chunk_size]
-        refs_in_chunk = {o["_ref"] for o in obj_chunk}
-        # Only include relationships where both src and dst are in this chunk.
-        # Cross-chunk relationships must be created separately after all objects exist.
-        rel_chunk = [r for r in relationships
-                     if r["src_ref"] in refs_in_chunk and r["dst_ref"] in refs_in_chunk]
-        chunks.append({"objects": obj_chunk, "relationships": rel_chunk})
-    return chunks
+ref_to_chunk = {}
+chunks = []
+for i in range(0, len(objects), CHUNK_SIZE):
+    obj_chunk = objects[i:i+CHUNK_SIZE]
+    chunk_idx = len(chunks)
+    for o in obj_chunk:
+        if o.get("_ref"):
+            ref_to_chunk[o["_ref"]] = chunk_idx
+    chunks.append({"objects": obj_chunk, "relationships": []})
 
-chunks = chunk_subgraph(OBJECTS, RELATIONSHIPS, CHUNK_SIZE)
-print(f"{len(OBJECTS)} objects → {len(chunks)} chunks")
+# Assign relationships to the chunk that owns src_ref (cross-chunk rels go to last chunk)
+for rel in relationships:
+    idx = ref_to_chunk.get(rel.get("src_ref"), len(chunks) - 1)
+    chunks[idx]["relationships"].append(rel)
 
 for i, chunk in enumerate(chunks):
     path = f"/tmp/subgraph_chunk_{i+1}.json"
     with open(path, "w") as f:
         json.dump(chunk, f)
-    print(f"Chunk {i+1}: {len(chunk['objects'])} objects, {len(chunk['relationships'])} relationships → {path}")
+    print(f"Chunk {i+1}: {len(chunk['objects'])} objects, {len(chunk['relationships'])} rels → {path}")
 ```
-
-Then run each chunk:
 
 ```bash
 for f in /tmp/subgraph_chunk_*.json; do
   NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file "$f"
 done
 ```
-
-For cross-chunk relationships (where src and dst are in different chunks), create them after all objects exist using `memory graph relationships create-batch` with the UUIDs from the `ref_map` outputs.
 
 ---
 

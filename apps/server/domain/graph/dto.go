@@ -786,8 +786,9 @@ type BranchMergeRelationshipSummary struct {
 
 // SubgraphObjectRequest is a single object in a subgraph creation request.
 // It extends CreateGraphObjectRequest with a client-side placeholder reference (_ref).
+// _ref is optional when the object is not referenced by any relationship in the same call.
 type SubgraphObjectRequest struct {
-	Ref        string         `json:"_ref" validate:"required,max=128"`
+	Ref        string         `json:"_ref" validate:"omitempty,max=128"`
 	Type       string         `json:"type" validate:"required,max=64"`
 	Key        *string        `json:"key,omitempty" validate:"omitempty,max=128"`
 	Status     *string        `json:"status,omitempty" validate:"omitempty,max=64"`
@@ -797,19 +798,23 @@ type SubgraphObjectRequest struct {
 }
 
 // SubgraphRelationshipRequest is a single relationship in a subgraph creation request.
-// It uses _ref placeholders (src_ref, dst_ref) to reference objects defined in the same request.
+// Endpoints may be specified as _ref placeholders (src_ref/dst_ref) for objects defined
+// in the same request, or as real UUIDs (src_id/dst_id) for pre-existing objects.
+// src_ref takes precedence over src_id; dst_ref takes precedence over dst_id.
 type SubgraphRelationshipRequest struct {
 	Type       string         `json:"type" validate:"required,max=64"`
-	SrcRef     string         `json:"src_ref" validate:"required,max=128"`
-	DstRef     string         `json:"dst_ref" validate:"required,max=128"`
+	SrcRef     string         `json:"src_ref,omitempty" validate:"omitempty,max=128"`
+	DstRef     string         `json:"dst_ref,omitempty" validate:"omitempty,max=128"`
+	SrcID      *uuid.UUID     `json:"src_id,omitempty"`
+	DstID      *uuid.UUID     `json:"dst_id,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Weight     *float32       `json:"weight,omitempty"`
 }
 
 // CreateSubgraphRequest is the request body for atomic subgraph creation.
 type CreateSubgraphRequest struct {
-	Objects       []SubgraphObjectRequest       `json:"objects" validate:"required,min=1,max=100"`
-	Relationships []SubgraphRelationshipRequest `json:"relationships,omitempty" validate:"omitempty,max=200"`
+	Objects       []SubgraphObjectRequest       `json:"objects" validate:"required,min=1,max=500"`
+	Relationships []SubgraphRelationshipRequest `json:"relationships,omitempty" validate:"omitempty,max=500"`
 }
 
 // CreateSubgraphResponse is the response for atomic subgraph creation.

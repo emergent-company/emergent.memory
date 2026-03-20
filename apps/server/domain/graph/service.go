@@ -2971,11 +2971,11 @@ type ValidationMetrics struct {
 // Objects are referenced by client-side placeholder refs (_ref), which are resolved to server-assigned
 // IDs before relationship creation. If any step fails, the entire operation is rolled back.
 func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *CreateSubgraphRequest, actorID *uuid.UUID) (*CreateSubgraphResponse, error) {
-	// Validate: check for duplicate refs
+	// Validate: check for duplicate refs (only for objects that have a _ref)
 	refSet := make(map[string]bool, len(req.Objects))
 	for i, obj := range req.Objects {
 		if obj.Ref == "" {
-			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d]: _ref is required", i))
+			continue // _ref is optional; object will be created but not referenceable by relationships
 		}
 		if refSet[obj.Ref] {
 			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d]: duplicate _ref %q", i, obj.Ref))
@@ -2983,16 +2983,30 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		refSet[obj.Ref] = true
 	}
 
-	// Validate: check that all relationship refs point to defined objects
+	// Validate: check that all relationship endpoints are resolvable
 	for i, rel := range req.Relationships {
-		if !refSet[rel.SrcRef] {
-			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: src_ref %q not found in objects", i, rel.SrcRef))
+		// src: must have either src_ref (pointing to an object in this call) or src_id (existing UUID)
+		if rel.SrcRef != "" {
+			if !refSet[rel.SrcRef] {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: src_ref %q not found in objects", i, rel.SrcRef))
+			}
+		} else if rel.SrcID == nil {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: must specify either src_ref or src_id", i))
 		}
-		if !refSet[rel.DstRef] {
-			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: dst_ref %q not found in objects", i, rel.DstRef))
+		// dst: must have either dst_ref (pointing to an object in this call) or dst_id (existing UUID)
+		if rel.DstRef != "" {
+			if !refSet[rel.DstRef] {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: dst_ref %q not found in objects", i, rel.DstRef))
+			}
+		} else if rel.DstID == nil {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: must specify either dst_ref or dst_id", i))
 		}
-		if rel.SrcRef == rel.DstRef {
+		// self-loop check (only possible when both endpoints are refs)
+		if rel.SrcRef != "" && rel.DstRef != "" && rel.SrcRef == rel.DstRef {
 			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: self-loop not allowed (src_ref == dst_ref == %q)", i, rel.SrcRef))
+		}
+		if rel.SrcID != nil && rel.DstID != nil && *rel.SrcID == *rel.DstID {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: self-loop not allowed (src_id == dst_id == %q)", i, rel.SrcID))
 		}
 	}
 
@@ -3074,12 +3088,41 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: type is required and must not be empty", i))
 		}
 
-		srcObj := objByRef[relReq.SrcRef]
-		dstObj := objByRef[relReq.DstRef]
+		// Resolve src: prefer src_ref (new object in this call), fall back to src_id (existing object)
+		var srcObj *GraphObject
+		if relReq.SrcRef != "" {
+			srcObj = objByRef[relReq.SrcRef]
+		} else {
+			existing, err := s.repo.GetByID(ctx, projectID, *relReq.SrcID)
+			if err != nil {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: src_id %q not found: %s", i, relReq.SrcID, err.Error()))
+			}
+			srcObj = existing
+		}
+
+		// Resolve dst: prefer dst_ref (new object in this call), fall back to dst_id (existing object)
+		var dstObj *GraphObject
+		if relReq.DstRef != "" {
+			dstObj = objByRef[relReq.DstRef]
+		} else {
+			existing, err := s.repo.GetByID(ctx, projectID, *relReq.DstID)
+			if err != nil {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: dst_id %q not found: %s", i, relReq.DstID, err.Error()))
+			}
+			dstObj = existing
+		}
 
 		// Validate branch consistency: src and dst must be on the same branch
 		if !branchIDsEqual(srcObj.BranchID, dstObj.BranchID) {
-			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: branch mismatch between src_ref %q and dst_ref %q", i, relReq.SrcRef, relReq.DstRef))
+			srcLabel := relReq.SrcRef
+			if srcLabel == "" {
+				srcLabel = relReq.SrcID.String()
+			}
+			dstLabel := relReq.DstRef
+			if dstLabel == "" {
+				dstLabel = relReq.DstID.String()
+			}
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: branch mismatch between src %q and dst %q", i, srcLabel, dstLabel))
 		}
 
 		rel := &GraphRelationship{

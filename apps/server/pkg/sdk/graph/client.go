@@ -603,16 +603,20 @@ type SubgraphObjectRequest struct {
 }
 
 // SubgraphRelationshipRequest is a single relationship in a subgraph creation request.
-// SrcRef and DstRef reference _ref values defined in the same request's Objects list.
+// Endpoints may be specified as _ref placeholders (SrcRef/DstRef) for objects defined
+// in the same request, or as real UUIDs (SrcID/DstID) for pre-existing objects.
+// SrcRef takes precedence over SrcID; DstRef takes precedence over DstID.
 type SubgraphRelationshipRequest struct {
 	Type       string         `json:"type"`
-	SrcRef     string         `json:"src_ref"`
-	DstRef     string         `json:"dst_ref"`
+	SrcRef     string         `json:"src_ref,omitempty"`
+	DstRef     string         `json:"dst_ref,omitempty"`
+	SrcID      string         `json:"src_id,omitempty"`
+	DstID      string         `json:"dst_id,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
 // CreateSubgraphRequest is the request body for atomic subgraph creation.
-// Max 100 objects and 200 relationships per call.
+// Max 500 objects and 500 relationships per call.
 type CreateSubgraphRequest struct {
 	Objects       []SubgraphObjectRequest       `json:"objects"`
 	Relationships []SubgraphRelationshipRequest `json:"relationships,omitempty"`
