@@ -26,19 +26,24 @@ Manage schemas using `memory schemas`. Schemas define reusable sets of object ty
 
 ## Commands
 
-### List available schemas (registry)
+### List schemas on this project
 ```bash
 memory schemas list
 memory schemas list --output json
 ```
-> **Note:** `schemas list` shows schemas available to install from the global registry. On most self-hosted installs the registry is empty — schemas are installed via `memory blueprints`, not the registry. If you see "No schemas available in the registry", use `schemas installed` instead to see what's already on the project.
+Shows schemas currently installed on the project — this is the default and what you almost always want. Schemas installed via `memory blueprints install` appear here.
 
-### List installed schemas
+To see schemas available in the global registry (not yet installed):
+```bash
+memory schemas list --available
+```
+> **Note:** On most self-hosted installs the registry is empty. Schemas come from blueprints, not the registry.
+
+### List installed schemas (alias)
 ```bash
 memory schemas installed
-memory schemas installed --output json
 ```
-This is usually what you want — it shows the schemas currently active on the project.
+Same as `memory schemas list`. Use either.
 
 ### Get schema details
 ```bash
