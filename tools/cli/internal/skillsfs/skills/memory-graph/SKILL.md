@@ -324,16 +324,21 @@ Keys are stable identifiers you control — use slugs like `svc-auth`, `db-postg
 
 Find an object ID by type and name when you don't have it.
 
-**`list` output format** — JSON output is `{"objects": [...]}` where each object has an `entity_id` field (not `entityId`). There is **no `--offset` flag** — use the batch output file or `ref_map` to get IDs instead of re-fetching.
+**`list` output format** — JSON output is `{"items": [...], "total": N, "next_cursor": "..."}`. Each object has an `entity_id` field (not `entityId`). Default limit is 1000 — enough for most graphs in a single call. For larger result sets, use `--cursor` with the `next_cursor` value from the previous response.
 
 ```bash
-# List all objects of a type (table view):
+# List all objects of a type (table view, up to 1000):
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --type Service
 
 # Get ID for a specific name (JSON + python):
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --type Service --output json \
-  | python3 -c "import json,sys; objs=json.load(sys.stdin)['objects']; \
-    print(next(o['entity_id'] for o in objs if o['properties']['name']=='auth-service'))"
+  | python3 -c "import json,sys; d=json.load(sys.stdin); \
+    print(next(o['entity_id'] for o in d['items'] if o['properties'].get('name')=='auth-service'))"
+
+# Paginate beyond 1000 (rare — use next_cursor from previous response):
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --type APIEndpoint --limit 1000 --output json \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('next_cursor',''))"
+# Then: memory graph objects list --type APIEndpoint --cursor <next_cursor>
 
 # Get full details for a known ID:
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects get <id>

@@ -100,6 +100,7 @@ var (
 	graphProjectFlag  string
 	graphOutputFlag   string
 	graphLimitFlag    int
+	graphCursorFlag   string
 	graphTypeFlag     string
 	graphNameFlag     string
 	graphDescFlag     string
@@ -217,6 +218,9 @@ Examples:
 		if graphLimitFlag > 0 {
 			opts.Limit = graphLimitFlag
 		}
+		if graphCursorFlag != "" {
+			opts.Cursor = graphCursorFlag
+		}
 		if len(graphFilterFlag) > 0 {
 			pf, err := parsePropertyFilters(graphFilterFlag, graphFilterOpFlag)
 			if err != nil {
@@ -233,7 +237,7 @@ Examples:
 		out := cmd.OutOrStdout()
 
 		if graphOutputFlag == "json" {
-			return json.NewEncoder(out).Encode(resp.Items)
+			return json.NewEncoder(out).Encode(resp)
 		}
 
 		if len(resp.Items) == 0 {
@@ -632,6 +636,9 @@ type, --from/--to to filter by endpoint, --limit to control result count, and
 		if graphLimitFlag > 0 {
 			opts.Limit = graphLimitFlag
 		}
+		if graphCursorFlag != "" {
+			opts.Cursor = graphCursorFlag
+		}
 
 		resp, err := g.ListRelationships(context.Background(), opts)
 		if err != nil {
@@ -641,7 +648,7 @@ type, --from/--to to filter by endpoint, --limit to control result count, and
 		out := cmd.OutOrStdout()
 
 		if graphOutputFlag == "json" {
-			return json.NewEncoder(out).Encode(resp.Items)
+			return json.NewEncoder(out).Encode(resp)
 		}
 
 		if len(resp.Items) == 0 {
@@ -1279,7 +1286,8 @@ func init() {
 
 	// Object subcommand flags
 	graphObjectsListCmd.Flags().StringVar(&graphTypeFlag, "type", "", "Filter by object type")
-	graphObjectsListCmd.Flags().IntVar(&graphLimitFlag, "limit", 50, "Maximum number of results")
+	graphObjectsListCmd.Flags().IntVar(&graphLimitFlag, "limit", 1000, "Maximum number of results (server default: 1000)")
+	graphObjectsListCmd.Flags().StringVar(&graphCursorFlag, "cursor", "", "Pagination cursor from a previous response (next_cursor field)")
 	graphObjectsListCmd.Flags().StringArrayVar(&graphFilterFlag, "filter", nil, "Property filter as key=value (repeatable); see --filter-op")
 	graphObjectsListCmd.Flags().StringVar(&graphFilterOpFlag, "filter-op", "eq", "Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists")
 
@@ -1300,7 +1308,7 @@ func init() {
 	graphRelationshipsListCmd.Flags().StringVar(&graphRelTypeFlag, "type", "", "Filter by relationship type")
 	graphRelationshipsListCmd.Flags().StringVar(&graphFromFlag, "from", "", "Filter by source object ID")
 	graphRelationshipsListCmd.Flags().StringVar(&graphToFlag, "to", "", "Filter by destination object ID")
-	graphRelationshipsListCmd.Flags().IntVar(&graphLimitFlag, "limit", 50, "Maximum number of results")
+	graphRelationshipsListCmd.Flags().IntVar(&graphLimitFlag, "limit", 1000, "Maximum number of results (server default: 1000)")
 
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphRelTypeFlag, "type", "", "Relationship type (required)")
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphFromFlag, "from", "", "Source object ID (required)")

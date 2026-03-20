@@ -68,6 +68,9 @@ type Config struct {
 	// OpenTelemetry tracing configuration
 	Otel OtelConfig
 
+	// Graph knowledge base configuration
+	Graph GraphConfig
+
 	// AskV2 enables the code-generation variant of the CLI assistant agent.
 	// When true, POST /api/ask and /api/projects/:id/ask use EnsureCliAssistantAgentV2
 	// which generates Python SDK scripts instead of calling 57 individual MCP tools.
@@ -399,6 +402,25 @@ type StandaloneConfig struct {
 
 	// ProjectName is the default project name
 	ProjectName string `env:"STANDALONE_PROJECT_NAME" envDefault:"Default Project"`
+}
+
+// GraphConfig holds configuration for the knowledge graph domain.
+type GraphConfig struct {
+	// MaxBatchObjects is the maximum number of objects allowed in a single bulk-create or subgraph call.
+	// Default: 500.
+	MaxBatchObjects int `env:"GRAPH_MAX_BATCH_OBJECTS" envDefault:"500"`
+
+	// MaxBatchRelationships is the maximum number of relationships allowed in a single bulk-create or subgraph call.
+	// Default: 500.
+	MaxBatchRelationships int `env:"GRAPH_MAX_BATCH_RELATIONSHIPS" envDefault:"500"`
+
+	// MaxListLimit is the maximum number of items returned by list endpoints.
+	// Default: 1000.
+	MaxListLimit int `env:"GRAPH_MAX_LIST_LIMIT" envDefault:"1000"`
+
+	// DefaultListLimit is the default number of items returned by list endpoints when no limit is specified.
+	// Default: 100.
+	DefaultListLimit int `env:"GRAPH_DEFAULT_LIST_LIMIT" envDefault:"100"`
 }
 
 // AgentSafeguardsConfig holds configuration for agent queue explosion safeguards.

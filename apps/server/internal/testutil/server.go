@@ -192,10 +192,15 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	apitoken.RegisterRoutes(e, apitokenHandler, authMiddleware)
 
 	// Register graph routes
-	graphRepo := graph.NewRepository(db, log)
+	testGraphCfg := &config.Config{}
+	testGraphCfg.Graph.MaxBatchObjects = 500
+	testGraphCfg.Graph.MaxBatchRelationships = 500
+	testGraphCfg.Graph.MaxListLimit = 1000
+	testGraphCfg.Graph.DefaultListLimit = 100
+	graphRepo := graph.NewRepository(db, log, testGraphCfg)
 	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
 	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, graph.ProvideInverseTypeProvider(db, log), embeddingsSvc, nil, nil)
-	graphHandler := graph.NewHandler(graphSvc)
+	graphHandler := graph.NewHandler(graphSvc, testGraphCfg)
 	graph.RegisterRoutes(e, graphHandler, authMiddleware)
 
 	// Register embedding policies routes

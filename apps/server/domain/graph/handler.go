@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -16,16 +17,15 @@ import (
 // Handler handles HTTP requests for graph operations.
 type Handler struct {
 	svc *Service
+	cfg HandlerConfig
 }
 
-// defaultListLimit is the default number of results for paginated list endpoints.
-const defaultListLimit = 20
-
-// maxBatchObjects is the maximum number of objects allowed in a single batch operation
-const maxBatchObjects = 200
-
-// maxBatchRelationships is the maximum number of relationships allowed in a single batch operation
-const maxBatchRelationships = 200
+// HandlerConfig holds graph handler limits sourced from GraphConfig.
+type HandlerConfig struct {
+	DefaultListLimit      int
+	MaxBatchObjects       int
+	MaxBatchRelationships int
+}
 
 // splitCommaSeparated splits comma-separated query parameter values.
 // SDK clients typically send "labels=tag1,tag2" as a single comma-joined param,
@@ -44,8 +44,15 @@ func splitCommaSeparated(values []string) []string {
 }
 
 // NewHandler creates a new graph handler.
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, cfg *config.Config) *Handler {
+	return &Handler{
+		svc: svc,
+		cfg: HandlerConfig{
+			DefaultListLimit:      cfg.Graph.DefaultListLimit,
+			MaxBatchObjects:       cfg.Graph.MaxBatchObjects,
+			MaxBatchRelationships: cfg.Graph.MaxBatchRelationships,
+		},
+	}
 }
 
 // getProjectID extracts and parses the project ID from the auth user context.
@@ -123,7 +130,7 @@ func (h *Handler) ListObjects(c echo.Context) error {
 	params := ListParams{
 		ProjectID:      projectID,
 		IncludeDeleted: c.QueryParam("include_deleted") == "true",
-		Limit:          defaultListLimit,
+		Limit:          h.cfg.DefaultListLimit,
 	}
 
 	if limitStr := c.QueryParam("limit"); limitStr != "" {
@@ -808,7 +815,7 @@ func (h *Handler) ListRelationships(c echo.Context) error {
 	params := RelationshipListParams{
 		ProjectID:      projectID,
 		IncludeDeleted: c.QueryParam("include_deleted") == "true",
-		Limit:          defaultListLimit,
+		Limit:          h.cfg.DefaultListLimit,
 	}
 
 	if limitStr := c.QueryParam("limit"); limitStr != "" {
@@ -1140,7 +1147,7 @@ func (h *Handler) FTSSearch(c echo.Context) error {
 	req := &FTSSearchRequest{
 		Query:          c.QueryParam("q"),
 		IncludeDeleted: c.QueryParam("include_deleted") == "true",
-		Limit:          defaultListLimit,
+		Limit:          h.cfg.DefaultListLimit,
 	}
 
 	if req.Query == "" {
@@ -1806,8 +1813,8 @@ func (h *Handler) BulkCreateObjects(c echo.Context) error {
 	if len(req.Items) == 0 {
 		return apperror.ErrBadRequest.WithMessage("items is required and must not be empty")
 	}
-	if len(req.Items) > maxBatchObjects {
-		return apperror.ErrBadRequest.WithMessage("items must not exceed " + strconv.Itoa(maxBatchObjects))
+	if len(req.Items) > h.cfg.MaxBatchObjects {
+		return apperror.ErrBadRequest.WithMessage("items must not exceed " + strconv.Itoa(h.cfg.MaxBatchObjects))
 	}
 
 	actorID, _ := getUserID(c)
@@ -1851,8 +1858,8 @@ func (h *Handler) BulkCreateRelationships(c echo.Context) error {
 	if len(req.Items) == 0 {
 		return apperror.ErrBadRequest.WithMessage("items is required and must not be empty")
 	}
-	if len(req.Items) > maxBatchRelationships {
-		return apperror.ErrBadRequest.WithMessage("items must not exceed " + strconv.Itoa(maxBatchRelationships))
+	if len(req.Items) > h.cfg.MaxBatchRelationships {
+		return apperror.ErrBadRequest.WithMessage("items must not exceed " + strconv.Itoa(h.cfg.MaxBatchRelationships))
 	}
 
 	result, err := h.svc.BulkCreateRelationships(c.Request().Context(), projectID, &req)
@@ -1895,11 +1902,11 @@ func (h *Handler) CreateSubgraph(c echo.Context) error {
 	if len(req.Objects) == 0 {
 		return apperror.ErrBadRequest.WithMessage("objects is required and must not be empty")
 	}
-	if len(req.Objects) > maxBatchObjects {
-		return apperror.ErrBadRequest.WithMessage("objects must not exceed " + strconv.Itoa(maxBatchObjects))
+	if len(req.Objects) > h.cfg.MaxBatchObjects {
+		return apperror.ErrBadRequest.WithMessage("objects must not exceed " + strconv.Itoa(h.cfg.MaxBatchObjects))
 	}
-	if len(req.Relationships) > maxBatchRelationships {
-		return apperror.ErrBadRequest.WithMessage("relationships must not exceed " + strconv.Itoa(maxBatchRelationships))
+	if len(req.Relationships) > h.cfg.MaxBatchRelationships {
+		return apperror.ErrBadRequest.WithMessage("relationships must not exceed " + strconv.Itoa(h.cfg.MaxBatchRelationships))
 	}
 
 	actorID, _ := getUserID(c)

@@ -16,6 +16,7 @@ import (
 	"github.com/lib/pq"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -24,8 +25,9 @@ import (
 
 // Repository handles database operations for graph objects and relationships.
 type Repository struct {
-	db  bun.IDB
-	log *slog.Logger
+	db           bun.IDB
+	log          *slog.Logger
+	maxListLimit int
 }
 
 func (r *Repository) DB() bun.IDB {
@@ -33,10 +35,11 @@ func (r *Repository) DB() bun.IDB {
 }
 
 // NewRepository creates a new graph repository.
-func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
+func NewRepository(db bun.IDB, log *slog.Logger, cfg *config.Config) *Repository {
 	return &Repository{
-		db:  db,
-		log: log.With(logger.Scope("graph.repo")),
+		db:           db,
+		log:          log.With(logger.Scope("graph.repo")),
+		maxListLimit: cfg.Graph.MaxListLimit,
 	}
 }
 
@@ -216,8 +219,8 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 	if params.Limit <= 0 {
 		params.Limit = 50
 	}
-	if params.Limit > 200 {
-		params.Limit = 200
+	if params.Limit > r.maxListLimit {
+		params.Limit = r.maxListLimit
 	}
 	if params.Order == "" {
 		params.Order = "desc"
@@ -857,8 +860,8 @@ func (r *Repository) ListRelationships(ctx context.Context, params RelationshipL
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	if params.Limit > 200 {
-		params.Limit = 200
+	if params.Limit > r.maxListLimit {
+		params.Limit = r.maxListLimit
 	}
 	if params.Order == "" {
 		params.Order = "asc"
@@ -1298,8 +1301,8 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	if params.Limit > 200 {
-		params.Limit = 200
+	if params.Limit > r.maxListLimit {
+		params.Limit = r.maxListLimit
 	}
 
 	// Build WHERE conditions
@@ -1405,8 +1408,8 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	if params.Limit > 200 {
-		params.Limit = 200
+	if params.Limit > r.maxListLimit {
+		params.Limit = r.maxListLimit
 	}
 
 	// Format vector as PostgreSQL array string: '[0.1,0.2,...]'
