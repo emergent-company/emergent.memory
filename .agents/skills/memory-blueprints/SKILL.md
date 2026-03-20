@@ -18,7 +18,7 @@ Manage Emergent Blueprints using `memory blueprints`. A blueprint is a directory
 
 ## Concepts
 
-- **Blueprint** — a directory containing `packs/`, `agents/`, and/or `seed/` subdirectories. Applied with `memory blueprints <source>`.
+- **Blueprint** — a directory containing `schemas/` (or `packs/` for backward compatibility), `agents/`, and/or `seed/` subdirectories. Applied with `memory blueprints <source>`.
 - **Seed data** — pre-defined graph objects and relationships in per-type JSONL files under `seed/objects/` and `seed/relationships/`. Applied after packs and agents.
 - **Key** — a stable string identity on a seed object. Objects with a key are idempotent: skipped on re-apply (or upserted with `--upgrade`). Keyless objects are always inserted.
 - **Dump** — the `memory blueprints dump <output-dir>` subcommand exports a live project's graph as re-applyable seed files.
@@ -63,7 +63,7 @@ Exports all graph objects and relationships as per-type JSONL seed files into `<
 
 ```
 my-blueprint/
-  packs/
+  schemas/                        # preferred (packs/ also supported for backward compat)
     <pack-name>.yaml          # one file per template pack (.yaml/.yml/.json)
   agents/
     <agent-name>.yaml         # one file per agent definition (.yaml/.yml/.json)

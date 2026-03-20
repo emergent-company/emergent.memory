@@ -16,6 +16,7 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/orgs"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider"
+	"github.com/emergent-company/emergent.memory/tools/cli/internal/auth"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/skillsfs"
@@ -68,12 +69,106 @@ func runInitProject(cmd *cobra.Command, args []string) error {
 	fmt.Println("Welcome to Memory project setup!")
 	fmt.Println()
 
-	// Use account-level credentials (OAuth / account API key), not
-	// the project token. Init needs to list projects, create tokens, etc.
-	// which a limited project-scoped token may not have permissions for.
-	c, err := getAccountClient(cmd)
-	if err != nil {
+	// ------------------------------------------------------------------
+	// 1a. Resolve server URL and prompt for scope if --server was passed
+	//     and differs from the global config.
+	// ------------------------------------------------------------------
+	configPath, _ := cmd.Flags().GetString("config")
+	if configPath == "" {
+		configPath = config.DiscoverPath("")
+	}
+
+	globalCfg, _ := config.Load(configPath)
+	if globalCfg == nil {
+		globalCfg = &config.Config{}
+	}
+
+	// Determine the effective server URL for this run.
+	// Priority: --server flag > MEMORY_SERVER_URL env (loaded by root.go) > global config.
+	flagServer := serverURL // package-level var bound to --server in root.go
+	resolvedServerURL := globalCfg.ServerURL
+	localServerScope := false   // if true, write MEMORY_SERVER_URL to .env.local
+	var oauthAccessToken string // filled in if we do an inline login
+
+	if flagServer != "" && flagServer != globalCfg.ServerURL {
+		// --server was passed and it differs from the global config.
+		fmt.Printf("Server URL %s differs from your global config (%s).\n", flagServer, globalCfg.ServerURL)
+		fmt.Printf("Apply globally (update ~/.memory/config.yaml) or locally (write to .env.local)? [G/l] ")
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		answer := strings.TrimSpace(scanner.Text())
+		if answer == "l" || answer == "L" {
+			// Local scope: write to .env.local, don't touch global config.
+			localServerScope = true
+			resolvedServerURL = flagServer
+			fmt.Println("Using local scope — will write MEMORY_SERVER_URL to .env.local.")
+		} else {
+			// Global scope (default): update global config.
+			globalCfg.ServerURL = flagServer
+			resolvedServerURL = flagServer
+			if mkErr := os.MkdirAll(filepath.Dir(configPath), 0755); mkErr == nil {
+				if saveErr := config.Save(globalCfg, configPath); saveErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not update global config: %v\n", saveErr)
+				} else {
+					fmt.Printf("Updated global server URL to %s.\n", flagServer)
+				}
+			}
+		}
+		fmt.Println()
+	} else if flagServer != "" {
+		resolvedServerURL = flagServer
+	}
+
+	// ------------------------------------------------------------------
+	// 1b. Get authenticated client, inlining login if not authenticated.
+	// ------------------------------------------------------------------
+	//
+	// We can't simply call getAccountClient and check its error, because a
+	// stale MEMORY_API_KEY in .env.local (pointing at a different server)
+	// causes getAccountClient to succeed but every subsequent API call to
+	// return 401. Instead we build the client against resolvedServerURL and
+	// probe it with a real call, triggering login on any auth failure.
+	c, err := getAccountClientForServer(cmd, resolvedServerURL)
+	if err != nil && !IsAuthError(err) {
 		return err
+	}
+	if err != nil || c == nil {
+		// Not authenticated (or stale creds for this server) — inline login.
+		fmt.Println("You're not logged in. Let's authenticate first.")
+		fmt.Println()
+
+		if resolvedServerURL == "" {
+			return fmt.Errorf("no server URL configured. Run: memory config set-server <url>")
+		}
+
+		creds, loginErr := performLogin(resolvedServerURL)
+		if loginErr != nil {
+			return loginErr
+		}
+
+		// Save credentials to disk.
+		homeDir, hdErr := os.UserHomeDir()
+		if hdErr != nil {
+			return fmt.Errorf("failed to get home directory: %w", hdErr)
+		}
+		credsPath := filepath.Join(homeDir, ".memory", "credentials.json")
+		if saveErr := auth.Save(creds, credsPath); saveErr != nil {
+			return fmt.Errorf("failed to save credentials: %w", saveErr)
+		}
+
+		oauthAccessToken = creds.AccessToken
+
+		if creds.UserEmail != "" {
+			fmt.Printf("\n  Logged in as %s\n\n", creds.UserEmail)
+		} else {
+			fmt.Println("\n  Logged in successfully.\n")
+		}
+
+		// Build client using the fresh OAuth token directly.
+		c, err = getAccountClientForServer(cmd, resolvedServerURL)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Track what was done for the summary.
@@ -139,7 +234,7 @@ func runInitProject(cmd *cobra.Command, args []string) error {
 
 			// Persist if project changed.
 			if projectID != existingProjectID {
-				if err := initPersistProject(cmd, c, projectID, projectName); err != nil {
+				if err := initPersistProject(cmd, c, projectID, projectName, localServerScope, resolvedServerURL, oauthAccessToken); err != nil {
 					return err
 				}
 			}
@@ -187,7 +282,7 @@ func runInitProject(cmd *cobra.Command, args []string) error {
 	// ------------------------------------------------------------------
 	// 4. Token + .env.local persistence
 	// ------------------------------------------------------------------
-	if err := initPersistProject(cmd, c, projectID, projectName); err != nil {
+	if err := initPersistProject(cmd, c, projectID, projectName, localServerScope, resolvedServerURL, oauthAccessToken); err != nil {
 		return err
 	}
 
@@ -381,7 +476,7 @@ func cliTokenName() string {
 	return "cli-" + host
 }
 
-func initPersistProject(cmd *cobra.Command, c *client.Client, projectID, projectName string) error {
+func initPersistProject(cmd *cobra.Command, c *client.Client, projectID, projectName string, localServerScope bool, localServerURL string, oauthAccessToken string) error {
 	fmt.Println("Configuring project token...")
 
 	// 4.1  Try to reuse an existing token.
@@ -427,27 +522,41 @@ func initPersistProject(cmd *cobra.Command, c *client.Client, projectID, project
 	envMap["MEMORY_PROJECT_NAME"] = projectName
 	envMap["MEMORY_PROJECT_TOKEN"] = tokenValue
 
+	// When the user chose local scope for --server, write MEMORY_SERVER_URL.
+	if localServerScope && localServerURL != "" {
+		envMap["MEMORY_SERVER_URL"] = localServerURL
+	}
+
+	// When we performed an inline login, write MEMORY_API_KEY so subsequent
+	// CLI invocations in this directory authenticate without needing
+	// ~/.memory/credentials.json (useful in project-local contexts).
+	if localServerScope && oauthAccessToken != "" {
+		envMap["MEMORY_API_KEY"] = oauthAccessToken
+	}
+
 	if err := godotenv.Write(envMap, ".env.local"); err != nil {
 		return fmt.Errorf("failed to write .env.local: %w", err)
 	}
 	fmt.Println("Wrote project context to .env.local")
 
-	// 4.4  Update global config.
+	// 4.4  Update global config (only when not using local server scope).
 	configPath, _ := cmd.Flags().GetString("config")
 	if configPath == "" {
 		configPath = config.DiscoverPath("")
 	}
-	globalCfg, loadErr := config.Load(configPath)
-	if loadErr != nil && !os.IsNotExist(loadErr) {
-		fmt.Fprintf(os.Stderr, "Warning: could not load global config: %v\n", loadErr)
-	} else {
-		if globalCfg == nil {
-			globalCfg = &config.Config{}
-		}
-		globalCfg.ProjectID = projectID
-		if mkErr := os.MkdirAll(filepath.Dir(configPath), 0755); mkErr == nil {
-			if saveErr := config.Save(globalCfg, configPath); saveErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not update global config: %v\n", saveErr)
+	if !localServerScope {
+		globalCfg, loadErr := config.Load(configPath)
+		if loadErr != nil && !os.IsNotExist(loadErr) {
+			fmt.Fprintf(os.Stderr, "Warning: could not load global config: %v\n", loadErr)
+		} else {
+			if globalCfg == nil {
+				globalCfg = &config.Config{}
+			}
+			globalCfg.ProjectID = projectID
+			if mkErr := os.MkdirAll(filepath.Dir(configPath), 0755); mkErr == nil {
+				if saveErr := config.Save(globalCfg, configPath); saveErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not update global config: %v\n", saveErr)
+				}
 			}
 		}
 	}

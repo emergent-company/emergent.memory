@@ -277,7 +277,7 @@ KPI set (initial):
 
 ```
 blueprints/multi-agent/
-  packs/
+  schemas/                            ← preferred (packs/ also supported for backward compat)
     multi-agent-task-pack.yaml    ← full schema (object types + relationship types)
   agents/
     leaf-enricher.yaml

@@ -19,14 +19,15 @@ A blueprint is a plain directory with this structure:
 
 ```
 my-blueprint/
-  packs/                    ← one file per template pack (.yaml/.yml/.json)
+  schemas/                  ← one file per template pack (.yaml/.yml/.json) [preferred]
+  packs/                    ← backward-compatible alias for schemas/
   agents/                   ← one file per agent definition (.yaml/.yml/.json)
   seed/
     objects/                ← per-type JSONL files with graph objects to create
     relationships/          ← per-type JSONL files with graph relationships to create
 ```
 
-All four subdirectories are optional — you only need to include what you have. Files with unsupported extensions are silently skipped. Subdirectories inside `packs/` or `agents/` are also ignored — keep files flat.
+All subdirectories are optional — you only need to include what you have. Use `schemas/` for new blueprints; `packs/` is still supported for backward compatibility. Files with unsupported extensions are silently skipped. Subdirectories inside `schemas/` or `agents/` are also ignored — keep files flat.
 
 Blueprints can be applied from:
 - A **local path**: `memory blueprints ./my-blueprint`
@@ -54,17 +55,17 @@ If the user hasn't specified, scaffold a minimal working example (one pack, one 
 ### 2. Create the directory structure
 
 ```bash
-mkdir -p my-blueprint/packs
+mkdir -p my-blueprint/schemas
 mkdir -p my-blueprint/agents
 mkdir -p my-blueprint/seed/objects
 mkdir -p my-blueprint/seed/relationships
 ```
 
-Only create `seed/` subdirectories if there is seed data to write — the apply command treats a missing `seed/` directory as "no seed data" (not an error).
+Only create `seed/` subdirectories if there is seed data to write — the apply command treats a missing `seed/` directory as "no seed data" (not an error). Use `schemas/` (preferred) for the pack directory; `packs/` is accepted for backward compatibility.
 
 ### 3. Write pack files
 
-**Location**: `packs/<name>.yaml` (or `.json`)
+**Location**: `schemas/<name>.yaml` (or `.json`) — also accepted from `packs/`
 
 **Required fields** — the CLI will reject the file if any of these are missing:
 - `name` — unique identifier for the pack (string)
@@ -103,7 +104,7 @@ uiConfigs: {}                   # optional — arbitrary shape, passed through t
 extractionPrompts: {}           # optional — arbitrary shape, passed through to API
 ```
 
-**Minimal valid example** (`packs/research.yaml`):
+**Minimal valid example** (`schemas/research.yaml`):
 
 ```yaml
 name: research-pack
@@ -371,7 +372,7 @@ memory blueprints https://github.com/org/my-blueprint#v1.0.0
 
 ```
 my-blueprint/
-  packs/
+  schemas/                        # preferred (packs/ also supported for backward compat)
     <pack-name>.yaml          # one file per template pack
   agents/
     <agent-name>.yaml         # one file per agent definition
@@ -396,7 +397,7 @@ my-blueprint/
 | Seed object | `type` | Must be non-empty string |
 | Seed relationship | `type` | Must be non-empty string |
 | Seed relationship | endpoints | Either (`srcKey`+`dstKey`) or (`srcId`+`dstId`) required |
-| All | file extension | `packs/`+`agents/`: `.json`, `.yaml`, `.yml`; `seed/`: `.jsonl` only |
+| All | file extension | `schemas/`(`packs/`)+`agents/`: `.json`, `.yaml`, `.yml`; `seed/`: `.jsonl` only |
 
 Files that fail validation are reported as warnings but do not stop processing of other files. The run exits non-zero if any errors occurred.
 
@@ -438,8 +439,8 @@ Files that fail validation are reported as warnings but do not stop processing o
 ## Guardrails
 
 - **Never guess field names** — only use the field names documented here; unknown fields are silently ignored
-- **Never put multiple resources in one file** — each `packs/` or `agents/` file must describe exactly one resource
-- **Never nest subdirectories** inside `packs/` or `agents/` — nested files are silently ignored
+- **Never put multiple resources in one file** — each `schemas/` (or `packs/`) or `agents/` file must describe exactly one resource
+- **Never nest subdirectories** inside `schemas/` (or `packs/`) or `agents/` — nested files are silently ignored
 - **Seed files must be `.jsonl`** — one JSON object per line; files with other extensions in `seed/` are skipped
 - **Always dry-run first** in production environments — `--dry-run` is free and catches validation errors before any mutations occur
 - **Never hardcode tokens** in blueprint files — use `MEMORY_GITHUB_TOKEN` or `--token` at apply time

@@ -92,6 +92,7 @@ type MemorySchema struct {
 	ExtractionPrompts       json.RawMessage `json:"extractionPrompts,omitempty"`
 	Checksum                *string         `json:"checksum,omitempty"`
 	Draft                   bool            `json:"draft"`
+	Visibility              string          `json:"visibility,omitempty"`
 	PublishedAt             *time.Time      `json:"publishedAt,omitempty"`
 	DeprecatedAt            *time.Time      `json:"deprecatedAt,omitempty"`
 	CreatedAt               time.Time       `json:"createdAt"`
@@ -105,6 +106,7 @@ type MemorySchemaListItem struct {
 	Version     string  `json:"version"`
 	Description *string `json:"description,omitempty"`
 	Author      *string `json:"author,omitempty"`
+	Visibility  string  `json:"visibility,omitempty"`
 }
 
 // CreatePackRequest is the request to create a new memory schema.
@@ -120,6 +122,7 @@ type CreatePackRequest struct {
 	RelationshipTypeSchemas json.RawMessage `json:"relationship_type_schemas,omitempty"`
 	UIConfigs               json.RawMessage `json:"ui_configs,omitempty"`
 	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
+	Visibility              string          `json:"visibility,omitempty"`
 }
 
 // InstalledSchemaItem represents a memory schema installed on a project.

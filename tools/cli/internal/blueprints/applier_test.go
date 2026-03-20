@@ -43,7 +43,7 @@ import (
 
 func TestBlueprintsApplier_DryRun(t *testing.T) {
 	packs := []blueprints.PackFile{
-		{Name: "test-pack", Version: "1.0.0", SourceFile: "packs/test.yaml",
+		{Name: "test-pack", Version: "1.0.0", SourceFile: "schemas/test.yaml",
 			ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Doc"}}},
 	}
 	agents := []blueprints.AgentFile{
@@ -81,7 +81,7 @@ func TestBlueprintsApplier_DryRun(t *testing.T) {
 // still makes no API calls and includes "create or update" in the output.
 func TestBlueprintsApplier_DryRunWithUpgrade(t *testing.T) {
 	packs := []blueprints.PackFile{
-		{Name: "p", Version: "2.0.0", SourceFile: "packs/p.yaml",
+		{Name: "p", Version: "2.0.0", SourceFile: "schemas/p.yaml",
 			ObjectTypes: []blueprints.ObjectTypeDef{{Name: "X"}}},
 	}
 

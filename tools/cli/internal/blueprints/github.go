@@ -67,7 +67,7 @@ func FetchGitHubRepo(rawURL, token string) (localDir string, cleanup func(), err
 	}
 
 	// The archive contains a single top-level directory named <repo>-<ref>/.
-	// Strip it so callers find packs/ and agents/ directly at tmpDir.
+	// Strip it so callers find schemas/ and agents/ directly at tmpDir.
 	topLevel, err := findTopLevelDir(tmpDir)
 	if err != nil {
 		cleanupFn()

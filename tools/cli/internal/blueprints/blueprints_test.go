@@ -15,7 +15,7 @@ import (
 
 func TestLoadDir_ValidYAMLPack(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "packs/core.yaml", `
+	writeFile(t, dir, "schemas/core.yaml", `
 name: "core-pack"
 version: "1.0.0"
 objectTypes:
@@ -74,8 +74,8 @@ func TestLoadDir_ValidJSONAgent(t *testing.T) {
 
 func TestLoadDir_UnknownExtensionSkipped(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "packs/readme.txt", "this is not a pack file")
-	writeFile(t, dir, "packs/core.yaml", `
+	writeFile(t, dir, "schemas/readme.txt", "this is not a pack file")
+	writeFile(t, dir, "schemas/core.yaml", `
 name: real-pack
 version: "1.0.0"
 objectTypes:
@@ -94,7 +94,7 @@ objectTypes:
 func TestLoadDir_MissingRequiredField_PackSkippedWithError(t *testing.T) {
 	dir := t.TempDir()
 	// Pack missing required 'name' field
-	writeFile(t, dir, "packs/bad.yaml", `
+	writeFile(t, dir, "schemas/bad.yaml", `
 version: "1.0.0"
 objectTypes:
   - name: Doc
@@ -117,7 +117,7 @@ objectTypes:
 
 func TestLoadDir_MissingSubdirsNotError(t *testing.T) {
 	dir := t.TempDir()
-	// No packs/ or agents/ subdirectory at all
+	// No schemas/ or agents/ subdirectory at all
 
 	_, packs, agents, _, _, _, results, err := blueprints.LoadDir(dir, nil)
 	if err != nil {
@@ -128,12 +128,68 @@ func TestLoadDir_MissingSubdirsNotError(t *testing.T) {
 	}
 }
 
+func TestLoadDir_PacksBackwardCompat(t *testing.T) {
+	dir := t.TempDir()
+	// Use legacy packs/ directory — should still be loaded
+	writeFile(t, dir, "packs/legacy.yaml", `
+name: "legacy-pack"
+version: "1.0.0"
+objectTypes:
+  - name: "Note"
+`)
+
+	_, packs, _, _, _, _, results, err := blueprints.LoadDir(dir, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(packs) != 1 {
+		t.Fatalf("expected 1 pack from legacy packs/ dir, got %d", len(packs))
+	}
+	if packs[0].Name != "legacy-pack" {
+		t.Errorf("expected name 'legacy-pack', got %q", packs[0].Name)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 error results, got %d", len(results))
+	}
+}
+
+func TestLoadDir_SchemasDirPreferredOverPacks(t *testing.T) {
+	dir := t.TempDir()
+	// Both schemas/ and packs/ exist — schemas/ should win
+	writeFile(t, dir, "schemas/new.yaml", `
+name: "new-pack"
+version: "2.0.0"
+objectTypes:
+  - name: "Widget"
+`)
+	writeFile(t, dir, "packs/old.yaml", `
+name: "old-pack"
+version: "1.0.0"
+objectTypes:
+  - name: "Gadget"
+`)
+
+	_, packs, _, _, _, _, results, err := blueprints.LoadDir(dir, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(packs) != 1 {
+		t.Fatalf("expected 1 pack (from schemas/), got %d", len(packs))
+	}
+	if packs[0].Name != "new-pack" {
+		t.Errorf("expected schemas/ pack 'new-pack', got %q", packs[0].Name)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 error results, got %d", len(results))
+	}
+}
+
 func TestLoadDir_ParseError_RecordedAndContinues(t *testing.T) {
 	dir := t.TempDir()
 	// Invalid YAML
-	writeFile(t, dir, "packs/broken.yaml", `{ this is not valid yaml: [`)
+	writeFile(t, dir, "schemas/broken.yaml", `{ this is not valid yaml: [`)
 	// Valid pack after the broken one
-	writeFile(t, dir, "packs/good.yaml", `
+	writeFile(t, dir, "schemas/good.yaml", `
 name: good-pack
 version: "1.0.0"
 objectTypes:

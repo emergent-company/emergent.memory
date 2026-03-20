@@ -1000,7 +1000,30 @@ memory ask <question> [flags]
 
 ## memory blueprints
 
-Apply Blueprints (packs, agents, seed data) from a directory or GitHub URL
+Manage Blueprints (packs, agents, skills, seed data) — use a subcommand
+
+### Synopsis
+
+Top-level namespace for blueprint operations. Use one of the subcommands:
+
+  memory blueprints install   — apply a blueprint directory or GitHub URL to a project
+  memory blueprints validate  — validate a blueprint offline (no auth required)
+  memory blueprints dump      — export a project's graph as re-applyable seed files
+
+```
+memory blueprints [command]
+```
+
+### Options
+
+```
+  -h, --help             help for blueprints
+      --project string   Project ID or name (overrides config/env)
+```
+
+## memory blueprints install
+
+Apply Blueprints (packs, agents, skills, seed data) from a directory or GitHub URL
 
 ### Synopsis
 
@@ -1020,30 +1043,60 @@ SKILL.md file containing YAML frontmatter (name, description) and Markdown conte
 By default the command is additive-only: existing resources are skipped.
 Use --upgrade to update resources that already exist.
 
-Use the dump subcommand to export an existing project's data as seed files:
-
-  memory blueprints dump <output-dir>
-
 Examples:
 
-  memory blueprints ./my-config
-  memory blueprints https://github.com/acme/memory-blueprints
-  memory blueprints https://github.com/acme/memory-blueprints#v1.2.0 --upgrade
-  memory blueprints ./my-config --dry-run
-  memory blueprints dump ./exported
+  memory blueprints install ./my-config
+  memory blueprints install https://github.com/acme/memory-blueprints
+  memory blueprints install https://github.com/acme/memory-blueprints#v1.2.0 --upgrade
+  memory blueprints install ./my-config --dry-run
 
 ```
-memory blueprints <source> [flags]
+memory blueprints install <source> [flags]
 ```
 
 ### Options
 
 ```
       --dry-run          Preview actions without making any API calls
-  -h, --help             help for blueprints
+  -h, --help             help for install
       --project string   Project ID or name (overrides config/env)
       --token string     GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
       --upgrade          Update existing resources instead of skipping them
+```
+
+## memory blueprints validate
+
+Validate a blueprint directory or GitHub URL offline (no API calls required)
+
+### Synopsis
+
+Check a blueprint for structural errors and cross-reference problems without
+making any API calls. No project or authentication is required.
+
+Checks performed:
+  packs        — required fields, objectType/relationshipType cross-references, duplicate names
+  agents       — valid flowType/visibility/dispatchMode values, model.name present
+  skills       — name and description present, non-empty content body
+  seed objects — type field required, keyless objects warned
+  seed relationships — endpoints present, srcKey/dstKey resolvable against seed objects
+
+Exits 0 when clean or warnings-only, 1 when any error is found.
+
+Examples:
+
+  memory blueprints validate ./my-config
+  memory blueprints validate https://github.com/acme/memory-blueprints
+  memory blueprints validate https://github.com/acme/memory-blueprints#v1.2.0
+
+```
+memory blueprints validate <source> [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for validate
+      --token string     GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
 ```
 
 ## memory blueprints dump
@@ -1053,7 +1106,7 @@ Export project graph objects and relationships as JSONL seed files
 ### Synopsis
 
 Export the current project's graph objects and relationships as per-type JSONL
-seed files that can be re-applied with "memory blueprints <dir>".
+seed files that can be re-applied with "memory blueprints install <dir>".
 
 Output layout:
   <output-dir>/seed/objects/<Type>.jsonl

@@ -107,6 +107,38 @@ func getAccountClient(cmd *cobra.Command) (*client.Client, error) {
 	return client.NewAccountClient(cfg)
 }
 
+// getAccountClientForServer builds an account-level client guaranteed to
+// authenticate against targetServerURL. Any MEMORY_API_KEY loaded from the
+// environment is probed against targetServerURL first; if it fails (stale key
+// from a different server) it is discarded so OAuth credentials are used
+// instead. Returns an IsAuthError-compatible error when credentials are missing
+// or invalid for the target server.
+func getAccountClientForServer(cmd *cobra.Command, targetServerURL string) (*client.Client, error) {
+	configPath, _ := cmd.Flags().GetString("config")
+	if configPath == "" {
+		configPath = config.DiscoverPath("")
+	}
+
+	cfg, err := config.LoadWithEnv(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	cfg.ServerURL = targetServerURL
+	cfg.ProjectToken = "" // always account-level
+
+	// If an API key is present (e.g. loaded from .env.local), verify it actually
+	// works against targetServerURL. If the probe fails the key is stale or
+	// belongs to a different server — discard it so we fall through to OAuth.
+	if cfg.APIKey != "" {
+		if _, probeErr := fetchAuthMe(targetServerURL, cfg.APIKey); probeErr != nil {
+			cfg.APIKey = ""
+		}
+	}
+
+	return client.NewAccountClient(cfg)
+}
+
 // resolveProjectNameFromToken attempts a quick API call to get the project name
 // for the given project token. Returns empty string on any error.
 func resolveProjectNameFromToken(cfg *config.Config) string {
@@ -282,6 +314,8 @@ func promptResourcePicker(title string, items []PickerItem) (id, name string, er
 // a missing, invalid, or expired authentication token (HTTP 401). It handles
 // both *sdkerrors.Error values returned by the SDK and the raw error strings
 // produced by commands that make HTTP requests directly (ask, query).
+// It also handles credential-loading errors from loadOAuthCredentials (no
+// credentials.json on disk, or expired credentials that cannot be refreshed).
 func IsAuthError(err error) bool {
 	if err == nil {
 		return false
@@ -296,7 +330,11 @@ func IsAuthError(err error) bool {
 		strings.Contains(s, "missing_token") ||
 		strings.Contains(s, "invalid_token") ||
 		strings.Contains(s, "token_expired") ||
-		strings.Contains(s, "Missing authorization token")
+		strings.Contains(s, "Missing authorization token") ||
+		// loadOAuthCredentials: no credentials.json on disk
+		strings.Contains(s, "not authenticated") ||
+		// loadOAuthCredentials: credentials expired with no refresh token
+		strings.Contains(s, "credentials expired")
 }
 
 // PrintAuthError writes a friendly re-authentication prompt to stderr and

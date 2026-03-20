@@ -25,6 +25,9 @@ type GraphMemorySchema struct {
 	UIConfigs               json.RawMessage `bun:"ui_configs,type:jsonb" json:"uiConfigs,omitempty"`
 	ExtractionPrompts       json.RawMessage `bun:"extraction_prompts,type:jsonb" json:"extractionPrompts,omitempty"`
 	Checksum                *string         `bun:"checksum" json:"checksum,omitempty"`
+	ProjectID               *string         `bun:"project_id,type:uuid" json:"projectId,omitempty"`
+	OrgID                   *string         `bun:"org_id,type:uuid" json:"orgId,omitempty"`
+	Visibility              string          `bun:"visibility,notnull,default:'project'" json:"visibility"`
 	Draft                   bool            `bun:"draft,notnull,default:false" json:"draft"`
 	PublishedAt             *time.Time      `bun:"published_at" json:"publishedAt,omitempty"`
 	DeprecatedAt            *time.Time      `bun:"deprecated_at" json:"deprecatedAt,omitempty"`
@@ -82,6 +85,7 @@ type MemorySchemaListItem struct {
 	Version     string  `json:"version"`
 	Description *string `json:"description,omitempty"`
 	Author      *string `json:"author,omitempty"`
+	Visibility  string  `json:"visibility,omitempty"`
 }
 
 // InstalledSchemaItem represents an installed schema for a project
@@ -167,6 +171,8 @@ type CreatePackRequest struct {
 	RelationshipTypeSchemas json.RawMessage `json:"relationship_type_schemas,omitempty"`
 	UIConfigs               json.RawMessage `json:"ui_configs,omitempty"`
 	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
+	// Visibility controls schema scope: "project" (default) or "organization".
+	Visibility string `json:"visibility,omitempty"`
 }
 
 // UpdatePackRequest is the request to update an existing schema (partial update — only non-nil fields are applied)

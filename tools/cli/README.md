@@ -131,24 +131,26 @@ memory projects list
 memory projects create
 memory projects get <id>
 
-# Blueprints — apply a declarative config directory
-memory blueprints ./my-config                         # from local folder
-memory blueprints https://github.com/org/repo         # from GitHub
-memory blueprints ./my-config --dry-run               # preview only
-memory blueprints ./my-config --upgrade               # update existing resources
+# Blueprints — declarative project configuration
+memory blueprints validate ./my-config                         # validate before applying
+memory blueprints install ./my-config                          # from local folder
+memory blueprints install https://github.com/org/repo          # from GitHub
+memory blueprints install ./my-config --dry-run                # preview only
+memory blueprints install ./my-config --upgrade                # update existing resources
+memory blueprints dump ./exported                              # export project graph as seed files
 
-# Misc
-memory config show
-memory version
-memory help
 ```
 
 A blueprint directory layout:
 
 ```
 my-config/
-  packs/      # one YAML/JSON file per template pack
+  schemas/    # one YAML/JSON file per template pack (preferred; packs/ also accepted)
   agents/     # one YAML/JSON file per agent definition
+  skills/     # one subdirectory per skill (each with a SKILL.md)
+  seed/
+    objects/        # per-type JSONL files
+    relationships/  # per-type JSONL files
 ```
 
 ## Development

@@ -20,10 +20,11 @@ type ProjectFile struct {
 }
 
 // ──────────────────────────────────────────────
-// PackFile — packs/<name>.[json|yaml|yml]
+// PackFile — schemas/<name>.[json|yaml|yml]
 // ──────────────────────────────────────────────
 
-// PackFile is the top-level structure parsed from a file in the packs/ directory.
+// PackFile is the top-level structure parsed from a file in the schemas/ directory
+// (or packs/ for backward compatibility).
 type PackFile struct {
 	Name              string                `json:"name"             yaml:"name"`
 	Version           string                `json:"version"          yaml:"version"`
@@ -50,12 +51,40 @@ type ObjectTypeDef struct {
 }
 
 // RelationshipTypeDef represents a single relationship type definition inside a pack file.
+// It accepts both singular (sourceType/targetType) and plural (sourceTypes/targetTypes)
+// field names. Plural arrays take precedence when both are present.
 type RelationshipTypeDef struct {
-	Name        string `json:"name"        yaml:"name"`
-	Label       string `json:"label"       yaml:"label"`
-	Description string `json:"description" yaml:"description"`
-	SourceType  string `json:"sourceType"  yaml:"sourceType"`
-	TargetType  string `json:"targetType"  yaml:"targetType"`
+	Name        string   `json:"name"        yaml:"name"`
+	Label       string   `json:"label"       yaml:"label"`
+	Description string   `json:"description" yaml:"description"`
+	SourceType  string   `json:"sourceType"  yaml:"sourceType"`
+	TargetType  string   `json:"targetType"  yaml:"targetType"`
+	SourceTypes []string `json:"sourceTypes" yaml:"sourceTypes"`
+	TargetTypes []string `json:"targetTypes" yaml:"targetTypes"`
+}
+
+// GetSourceTypes returns the effective source types, preferring the plural
+// array field over the singular string.
+func (r RelationshipTypeDef) GetSourceTypes() []string {
+	if len(r.SourceTypes) > 0 {
+		return r.SourceTypes
+	}
+	if r.SourceType != "" {
+		return []string{r.SourceType}
+	}
+	return nil
+}
+
+// GetTargetTypes returns the effective target types, preferring the plural
+// array field over the singular string.
+func (r RelationshipTypeDef) GetTargetTypes() []string {
+	if len(r.TargetTypes) > 0 {
+		return r.TargetTypes
+	}
+	if r.TargetType != "" {
+		return []string{r.TargetType}
+	}
+	return nil
 }
 
 // ──────────────────────────────────────────────

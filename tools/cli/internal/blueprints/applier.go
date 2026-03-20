@@ -533,6 +533,17 @@ func (b *Blueprinter) fetchExistingSkills(ctx context.Context) (map[string]*sdks
 // Conversion helpers
 // ──────────────────────────────────────────────
 
+// relTypeAPI is the JSON shape sent to the server for relationship type schemas.
+// It always uses the plural sourceTypes/targetTypes arrays so the server-side
+// parser (which supports both conventions) receives the richest data.
+type relTypeAPI struct {
+	Name        string   `json:"name"`
+	Label       string   `json:"label,omitempty"`
+	Description string   `json:"description,omitempty"`
+	SourceTypes []string `json:"sourceTypes,omitempty"`
+	TargetTypes []string `json:"targetTypes,omitempty"`
+}
+
 // marshalPackSchemas converts the typed ObjectTypes / RelationshipTypes slices
 // to the raw JSON blobs expected by the API.
 func marshalPackSchemas(p PackFile) (objSchemas, relSchemas, uiCfgs, exPrompts json.RawMessage, err error) {
@@ -543,7 +554,17 @@ func marshalPackSchemas(p PackFile) (objSchemas, relSchemas, uiCfgs, exPrompts j
 		}
 	}
 	if len(p.RelationshipTypes) > 0 {
-		relSchemas, err = json.Marshal(p.RelationshipTypes)
+		apiRels := make([]relTypeAPI, len(p.RelationshipTypes))
+		for i, r := range p.RelationshipTypes {
+			apiRels[i] = relTypeAPI{
+				Name:        r.Name,
+				Label:       r.Label,
+				Description: r.Description,
+				SourceTypes: r.GetSourceTypes(),
+				TargetTypes: r.GetTargetTypes(),
+			}
+		}
+		relSchemas, err = json.Marshal(apiRels)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("marshal relationshipTypes: %w", err)
 		}

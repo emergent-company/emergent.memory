@@ -227,46 +227,18 @@ If this server is running in standalone mode, use an API key instead:
 	RunE: runLogin,
 }
 
-// runLogin runs the OAuth device flow: fetch code → prompt → open browser → poll → save.
-// It is also invoked by the hidden "register" alias.
-func runLogin(cmd *cobra.Command, args []string) error {
-	var configPath string
-	configPath, _ = cmd.Flags().GetString("config")
-	if configPath == "" {
-		configPath = config.DiscoverPath("")
-	}
-
-	cfg, err := config.Load(configPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-	if cfg == nil {
-		cfg = &config.Config{}
-	}
-
-	// Apply the --server flag override. The flag is registered on the root
-	// command so we traverse up to find it.
-	if flagServer, _ := cmd.Flags().GetString("server"); flagServer != "" {
-		cfg.ServerURL = flagServer
-	} else if serverURL != "" {
-		// serverURL is the package-level var bound to --server in root.go.
-		cfg.ServerURL = serverURL
-	}
-
-	if cfg.ServerURL == "" {
-		return fmt.Errorf("no server URL configured. Run: memory config set-server <url>")
-	}
-
-	clientID := "362800068257972227"
-
-	issuerURL, err := fetchIssuer(cfg.ServerURL)
+// performLogin runs the OAuth device flow against the given serverURL and
+// returns the resulting credentials. It does NOT save credentials to disk —
+// callers decide where (and whether) to persist them.
+func performLogin(targetServerURL string) (*auth.Credentials, error) {
+	issuerURL, err := fetchIssuer(targetServerURL)
 	if err != nil {
-		return fmt.Errorf("login is not available: %w", err)
+		return nil, fmt.Errorf("login is not available: %w", err)
 	}
 
 	oidcConfig, err := auth.DiscoverOIDC(issuerURL)
 	if err != nil {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"could not discover OAuth endpoints from %s\n\n"+
 				"This server may be running in standalone mode. Use an API key instead:\n"+
 				"  memory config set-api-key <key>",
@@ -274,9 +246,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		)
 	}
 
-	deviceResp, err := auth.RequestDeviceCode(oidcConfig, clientID, []string{"openid", "profile", "email", "offline_access"})
+	deviceResp, err := auth.RequestDeviceCode(oidcConfig, oidcClientID, []string{"openid", "profile", "email", "offline_access"})
 	if err != nil {
-		return fmt.Errorf("failed to request device code: %w", err)
+		return nil, fmt.Errorf("failed to request device code: %w", err)
 	}
 
 	// Display the user code prominently.
@@ -308,7 +280,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 	pollCh := make(chan pollResult, 1)
 	go func() {
-		resp, err := pollWithSpinner(oidcConfig, deviceResp, clientID)
+		resp, err := pollWithSpinner(oidcConfig, deviceResp, oidcClientID)
 		pollCh <- pollResult{resp, err}
 	}()
 
@@ -325,11 +297,11 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	fmt.Println() // end the spinner line
 	tokenResp, pollErr := result.resp, result.err
 	if pollErr != nil {
-		return fmt.Errorf("authorization failed: %w", pollErr)
+		return nil, fmt.Errorf("authorization failed: %w", pollErr)
 	}
 
 	// Confirm by calling /api/auth/me — also ensures the server-side profile exists.
-	userInfo, meErr := fetchAuthMe(cfg.ServerURL, tokenResp.AccessToken)
+	userInfo, meErr := fetchAuthMe(targetServerURL, tokenResp.AccessToken)
 	if meErr != nil {
 		// Non-fatal.
 		fmt.Fprintf(os.Stderr, "  Warning: could not confirm account details: %v\n", meErr)
@@ -346,6 +318,44 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		creds.UserEmail = userInfo.Email
 	}
 
+	return creds, nil
+}
+
+// runLogin runs the OAuth device flow: fetch code → prompt → open browser → poll → save.
+// It is also invoked by the hidden "register" alias.
+func runLogin(cmd *cobra.Command, args []string) error {
+	var configPath string
+	configPath, _ = cmd.Flags().GetString("config")
+	if configPath == "" {
+		configPath = config.DiscoverPath("")
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+
+	// Apply the --server flag override. The flag is registered on the root
+	// command so we traverse up to find it.
+	if flagServer, _ := cmd.Flags().GetString("server"); flagServer != "" {
+		cfg.ServerURL = flagServer
+	} else if serverURL != "" {
+		// serverURL is the package-level var bound to --server in root.go.
+		cfg.ServerURL = serverURL
+	}
+
+	if cfg.ServerURL == "" {
+		return fmt.Errorf("no server URL configured. Run: memory config set-server <url>")
+	}
+
+	creds, err := performLogin(cfg.ServerURL)
+	if err != nil {
+		return err
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)
@@ -356,8 +366,8 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println()
-	if userInfo != nil && userInfo.Email != "" {
-		fmt.Printf("  Logged in as %s\n", userInfo.Email)
+	if creds.UserEmail != "" {
+		fmt.Printf("  Logged in as %s\n", creds.UserEmail)
 	} else {
 		fmt.Println("  Logged in successfully.")
 	}
@@ -372,8 +382,8 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		fmt.Println("Authentication Status:")
 		fmt.Println()
 		fmt.Println("  Mode:        OAuth")
-		if userInfo != nil && userInfo.Email != "" {
-			fmt.Printf("  User:        %s\n", userInfo.Email)
+		if creds.UserEmail != "" {
+			fmt.Printf("  User:        %s\n", creds.UserEmail)
 		}
 		fmt.Println("  Status:      ✓ Authenticated")
 		fmt.Println()

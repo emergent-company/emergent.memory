@@ -11,10 +11,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LoadDir walks the packs/, agents/, skills/, seed/objects/, and
-// seed/relationships/ subdirectories inside dir and returns all successfully
-// parsed records. It also looks for a project.[yaml|yml|json] file at the
-// blueprint root to load project-level settings.
+// LoadDir walks the schemas/ (or packs/ for backward compatibility), agents/,
+// skills/, seed/objects/, and seed/relationships/ subdirectories inside dir and
+// returns all successfully parsed records. It also looks for a
+// project.[yaml|yml|json] file at the blueprint root to load project-level
+// settings.
 //
 // Skills follow the agentskills.io open standard: each skill is a subdirectory
 // containing a SKILL.md file with YAML frontmatter and Markdown content.
@@ -37,7 +38,7 @@ func LoadDir(dir string, envVars map[string]string) (
 	if projectResult != nil {
 		results = append(results, *projectResult)
 	}
-	packs, packResults := loadPacks(filepath.Join(dir, "packs"), envVars)
+	packs, packResults := loadPacks(resolveSchemasDir(dir), envVars)
 	agents, agentResults := loadAgents(filepath.Join(dir, "agents"), envVars)
 	skills, skillResults := loadSkills(filepath.Join(dir, "skills"), envVars)
 	objects, objResults := loadSeedObjects(filepath.Join(dir, "seed", "objects"), envVars)
@@ -48,6 +49,16 @@ func LoadDir(dir string, envVars map[string]string) (
 	results = append(results, objResults...)
 	results = append(results, relResults...)
 	return project, packs, agents, skills, objects, rels, results, nil
+}
+
+// resolveSchemasDir returns the directory to load schema pack files from.
+// It prefers schemas/ but falls back to packs/ for backward compatibility.
+func resolveSchemasDir(dir string) string {
+	schemasDir := filepath.Join(dir, "schemas")
+	if info, err := os.Stat(schemasDir); err == nil && info.IsDir() {
+		return schemasDir
+	}
+	return filepath.Join(dir, "packs")
 }
 
 // ──────────────────────────────────────────────

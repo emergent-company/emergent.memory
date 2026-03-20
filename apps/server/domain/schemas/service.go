@@ -26,9 +26,10 @@ func (s *Service) GetCompiledTypes(ctx context.Context, projectID string) (*Comp
 	return s.repo.GetCompiledTypesByProject(ctx, projectID)
 }
 
-// GetAvailablePacks returns schemas available for a project to install
-func (s *Service) GetAvailablePacks(ctx context.Context, projectID string) ([]MemorySchemaListItem, error) {
-	return s.repo.GetAvailablePacks(ctx, projectID)
+// GetAvailablePacks returns schemas available for a project to install.
+// Returns schemas owned by the project, plus org-visible schemas from the same org.
+func (s *Service) GetAvailablePacks(ctx context.Context, projectID, orgID string) ([]MemorySchemaListItem, error) {
+	return s.repo.GetAvailablePacks(ctx, projectID, orgID)
 }
 
 // GetInstalledPacks returns schemas installed for a project
@@ -53,22 +54,22 @@ func (s *Service) DeleteAssignment(ctx context.Context, projectID, assignmentID 
 	return s.repo.DeleteAssignment(ctx, projectID, assignmentID)
 }
 
-// CreatePack creates a new schema in the global registry
-func (s *Service) CreatePack(ctx context.Context, req *CreatePackRequest) (*GraphMemorySchema, error) {
-	return s.repo.CreatePack(ctx, req)
+// CreatePack creates a new schema scoped to the given project and org
+func (s *Service) CreatePack(ctx context.Context, projectID, orgID string, req *CreatePackRequest) (*GraphMemorySchema, error) {
+	return s.repo.CreatePack(ctx, projectID, orgID, req)
 }
 
-// GetPack returns a schema by ID
-func (s *Service) GetPack(ctx context.Context, packID string) (*GraphMemorySchema, error) {
-	return s.repo.GetPack(ctx, packID)
+// GetPack returns a schema by ID if the caller has access (same project or same org with org visibility)
+func (s *Service) GetPack(ctx context.Context, packID, projectID, orgID string) (*GraphMemorySchema, error) {
+	return s.repo.GetPack(ctx, packID, projectID, orgID)
 }
 
-// UpdatePack partially updates an existing schema
-func (s *Service) UpdatePack(ctx context.Context, packID string, req *UpdatePackRequest) (*GraphMemorySchema, error) {
-	return s.repo.UpdatePack(ctx, packID, req)
+// UpdatePack partially updates an existing schema the caller owns
+func (s *Service) UpdatePack(ctx context.Context, packID, projectID, orgID string, req *UpdatePackRequest) (*GraphMemorySchema, error) {
+	return s.repo.UpdatePack(ctx, packID, projectID, orgID, req)
 }
 
-// DeletePack deletes a schema from the global registry
-func (s *Service) DeletePack(ctx context.Context, packID string) error {
-	return s.repo.DeletePack(ctx, packID)
+// DeletePack deletes a schema the caller owns from the registry
+func (s *Service) DeletePack(ctx context.Context, packID, projectID, orgID string) error {
+	return s.repo.DeletePack(ctx, packID, projectID, orgID)
 }

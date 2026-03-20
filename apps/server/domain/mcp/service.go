@@ -982,9 +982,9 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	case "entity-edges-get":
 		return s.executeGetEntityEdges(ctx, projectID, args)
 	case "schema-list":
-		return s.executeListSchemas(ctx, args)
+		return s.executeListSchemas(ctx, projectID, args)
 	case "schema-get":
-		return s.executeGetSchema(ctx, args)
+		return s.executeGetSchema(ctx, projectID, args)
 	case "schema-list-available":
 		return s.executeGetAvailableTemplates(ctx, projectID)
 	case "schema-list-installed":
@@ -996,9 +996,9 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	case "schema-uninstall":
 		return s.executeUninstallSchema(ctx, projectID, args)
 	case "schema-create":
-		return s.executeCreateSchema(ctx, args)
+		return s.executeCreateSchema(ctx, projectID, args)
 	case "schema-delete":
-		return s.executeDeleteSchema(ctx, args)
+		return s.executeDeleteSchema(ctx, projectID, args)
 	case "entity-create":
 		return s.executeBatchCreateEntities(ctx, projectID, args)
 	case "relationship-create":
@@ -2786,9 +2786,11 @@ func intPtr(i int) *int {
 	return &i
 }
 
-func (s *Service) executeListSchemas(ctx context.Context, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeListSchemas(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	search, _ := args["search"].(string)
 	includeDeprecated, _ := args["include_deprecated"].(bool)
+
+	orgID := auth.OrgIDFromContext(ctx)
 
 	limit := 20
 	if l, ok := args["limit"].(float64); ok {
@@ -2829,7 +2831,8 @@ func (s *Service) executeListSchemas(ctx context.Context, args map[string]any) (
 	query := s.db.NewSelect().
 		TableExpr("kb.graph_schemas").
 		Column("id", "name", "version", "description", "author", "source", "object_type_schemas", "published_at", "deprecated_at").
-		Where("draft = false")
+		Where("draft = false").
+		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)", projectID, orgID)
 
 	if !includeDeprecated {
 		query = query.Where("deprecated_at IS NULL")
@@ -2842,7 +2845,8 @@ func (s *Service) executeListSchemas(ctx context.Context, args map[string]any) (
 	countQuery := s.db.NewSelect().
 		TableExpr("kb.graph_schemas").
 		ColumnExpr("COUNT(*)").
-		Where("draft = false")
+		Where("draft = false").
+		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)", projectID, orgID)
 
 	if !includeDeprecated {
 		countQuery = countQuery.Where("deprecated_at IS NULL")
@@ -2903,11 +2907,13 @@ func (s *Service) executeListSchemas(ctx context.Context, args map[string]any) (
 	return s.wrapResult(result)
 }
 
-func (s *Service) executeGetSchema(ctx context.Context, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeGetSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	packID, _ := args["schema_id"].(string)
 	if packID == "" {
 		return nil, fmt.Errorf("missing required parameter: schema_id")
 	}
+
+	orgID := auth.OrgIDFromContext(ctx)
 
 	type packRow struct {
 		ID                      string         `bun:"id"`
@@ -2937,6 +2943,7 @@ func (s *Service) executeGetSchema(ctx context.Context, args map[string]any) (*T
 		TableExpr("kb.graph_schemas").
 		Column("*").
 		Where("id = ?", packID).
+		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)", projectID, orgID).
 		Scan(ctx, &pack)
 
 	if err != nil {
@@ -2982,6 +2989,8 @@ func (s *Service) executeGetAvailableTemplates(ctx context.Context, projectID st
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
+	orgID := auth.OrgIDFromContext(ctx)
+
 	type packRow struct {
 		ID                      string         `bun:"id"`
 		Name                    string         `bun:"name"`
@@ -3019,6 +3028,7 @@ func (s *Service) executeGetAvailableTemplates(ctx context.Context, projectID st
 			Column("id", "name", "version", "description", "author", "source", "object_type_schemas", "relationship_type_schemas", "published_at").
 			Where("deprecated_at IS NULL").
 			Where("draft = false").
+			Where("(project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)", projectID, orgID).
 			OrderExpr("published_at DESC").
 			Scan(ctx, &packs)
 		if err != nil {
@@ -3541,7 +3551,7 @@ func (s *Service) executeUninstallSchema(ctx context.Context, projectID string, 
 	return s.wrapResult(result)
 }
 
-func (s *Service) executeCreateSchema(ctx context.Context, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeCreateSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	name, _ := args["name"].(string)
 	if name == "" {
 		return nil, fmt.Errorf("missing required parameter: name")
@@ -3562,6 +3572,12 @@ func (s *Service) executeCreateSchema(ctx context.Context, args map[string]any) 
 	relationshipTypeSchemas, _ := args["relationship_type_schemas"].(map[string]any)
 	uiConfigs, _ := args["ui_configs"].(map[string]any)
 	extractionPrompts, _ := args["extraction_prompts"].(map[string]any)
+
+	orgID := auth.OrgIDFromContext(ctx)
+	visibility, _ := args["visibility"].(string)
+	if visibility != "organization" {
+		visibility = "project"
+	}
 
 	if relationshipTypeSchemas == nil {
 		relationshipTypeSchemas = make(map[string]any)
@@ -3598,10 +3614,10 @@ func (s *Service) executeCreateSchema(ctx context.Context, args map[string]any) 
 	var newPack packRow
 	err := s.db.NewRaw(`
 		INSERT INTO kb.graph_schemas 
-		(name, version, description, author, source, object_type_schemas, relationship_type_schemas, ui_configs, extraction_prompts, checksum)
-		VALUES (?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?)
+		(name, version, description, author, source, object_type_schemas, relationship_type_schemas, ui_configs, extraction_prompts, checksum, project_id, org_id, visibility)
+		VALUES (?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id, published_at, created_at, updated_at
-	`, name, version, description, author, string(objectTypeSchemasJSON), string(relationshipTypeSchemasJSON), string(uiConfigsJSON), string(extractionPromptsJSON), checksum).Scan(ctx, &newPack)
+	`, name, version, description, author, string(objectTypeSchemasJSON), string(relationshipTypeSchemasJSON), string(uiConfigsJSON), string(extractionPromptsJSON), checksum, projectID, orgID, visibility).Scan(ctx, &newPack)
 
 	if err != nil {
 		return nil, fmt.Errorf("create schema: %w", err)
@@ -3632,11 +3648,13 @@ func (s *Service) executeCreateSchema(ctx context.Context, args map[string]any) 
 	return s.wrapResult(result)
 }
 
-func (s *Service) executeDeleteSchema(ctx context.Context, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeDeleteSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	packID, _ := args["schema_id"].(string)
 	if packID == "" {
 		return nil, fmt.Errorf("missing required parameter: schema_id")
 	}
+
+	orgID := auth.OrgIDFromContext(ctx)
 
 	type packRow struct {
 		ID     string `bun:"id"`
@@ -3649,6 +3667,7 @@ func (s *Service) executeDeleteSchema(ctx context.Context, args map[string]any) 
 		TableExpr("kb.graph_schemas").
 		Column("id", "name", "source").
 		Where("id = ?", packID).
+		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)", projectID, orgID).
 		Scan(ctx, &pack)
 
 	if err != nil {
@@ -3673,8 +3692,8 @@ func (s *Service) executeDeleteSchema(ctx context.Context, args map[string]any) 
 	}
 
 	_, err = s.db.NewRaw(`
-		DELETE FROM kb.graph_schemas WHERE id = ?
-	`, packID).Exec(ctx)
+		DELETE FROM kb.graph_schemas WHERE id = ? AND (project_id = ? OR (org_id = ? AND visibility = 'organization') OR project_id IS NULL)
+	`, packID, projectID, orgID).Exec(ctx)
 
 	if err != nil {
 		return nil, fmt.Errorf("delete schema: %w", err)
@@ -3806,7 +3825,7 @@ func (s *Service) ReadResource(ctx context.Context, projectID, uri string) (*Res
 	case uri == "memory://schema/relationships":
 		return s.readRelationshipsResource(ctx, projectID)
 	case uri == "memory://templates/catalog":
-		return s.readTemplatesCatalogResource(ctx)
+		return s.readTemplatesCatalogResource(ctx, projectID)
 	case strings.HasPrefix(uri, "memory://project/") && strings.Contains(uri, "/metadata"):
 		return s.readProjectMetadataResource(ctx, projectID)
 	case strings.HasPrefix(uri, "memory://project/") && strings.Contains(uri, "/recent-entities"):
@@ -3889,8 +3908,8 @@ func (s *Service) readRelationshipsResource(ctx context.Context, projectID strin
 	}, nil
 }
 
-func (s *Service) readTemplatesCatalogResource(ctx context.Context) (*ResourceReadResult, error) {
-	result, err := s.executeListSchemas(ctx, map[string]any{})
+func (s *Service) readTemplatesCatalogResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	result, err := s.executeListSchemas(ctx, projectID, map[string]any{})
 	if err != nil {
 		return nil, err
 	}
