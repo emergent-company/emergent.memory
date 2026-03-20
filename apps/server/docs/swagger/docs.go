@@ -11594,6 +11594,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/superadmin/embedding-jobs/reset-dead-letter": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Resets all graph embedding jobs in dead_letter status back to pending so the worker retries them. Use after fixing credentials or the embedding model config.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "superadmin"
+                ],
+                "summary": "Reset dead-letter embedding jobs (superadmin only)",
+                "responses": {
+                    "200": {
+                        "description": "Reset summary",
+                        "schema": {
+                            "$ref": "#/definitions/domain_superadmin.ResetDeadLetterResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden (not superadmin)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/superadmin/extraction-jobs": {
             "get": {
                 "security": [
@@ -12040,6 +12077,63 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Project not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/superadmin/service-tokens": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Provisions a synthetic service account user with superadmin_readonly role and returns a persistent account-level API token. The token is only shown once.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "superadmin"
+                ],
+                "summary": "Create a machine-to-machine service token (superadmin_full only)",
+                "parameters": [
+                    {
+                        "description": "Service token name and optional notes",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_superadmin.CreateServiceTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created service token (shown once)",
+                        "schema": {
+                            "$ref": "#/definitions/domain_superadmin.CreateServiceTokenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or invalid name",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden (not superadmin_full)",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -17255,6 +17349,9 @@ const docTemplate = `{
                 "config": {
                     "type": "object",
                     "additionalProperties": {}
+                },
+                "consecutiveFailures": {
+                    "type": "integer"
                 },
                 "createdAt": {
                     "type": "string"
@@ -23627,6 +23724,10 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "string"
+                },
+                "visibility": {
+                    "description": "Visibility controls schema scope: \"project\" (default) or \"organization\".",
+                    "type": "string"
                 }
             }
         },
@@ -23675,6 +23776,12 @@ const docTemplate = `{
                         "type": "integer"
                     }
                 },
+                "orgId": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
                 "publishedAt": {
                     "type": "string"
                 },
@@ -23700,6 +23807,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "version": {
+                    "type": "string"
+                },
+                "visibility": {
                     "type": "string"
                 }
             }
@@ -23751,6 +23861,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "version": {
+                    "type": "string"
+                },
+                "visibility": {
                     "type": "string"
                 }
             }
@@ -24415,6 +24528,34 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_superadmin.CreateServiceTokenRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_superadmin.CreateServiceTokenResponse": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "tokenId": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_superadmin.DeleteJobsRequest": {
             "type": "object",
             "required": [
@@ -24633,6 +24774,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "graphCompleted": {
+                    "type": "integer"
+                },
+                "graphDeadLetter": {
                     "type": "integer"
                 },
                 "graphFailed": {
@@ -24893,6 +25037,20 @@ const docTemplate = `{
                 },
                 "totalPages": {
                     "type": "integer"
+                }
+            }
+        },
+        "domain_superadmin.ResetDeadLetterResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "resetCount": {
+                    "type": "integer"
+                },
+                "success": {
+                    "type": "boolean"
                 }
             }
         },
@@ -25637,7 +25795,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.35.58",
+	Version:          "0.35.63",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

@@ -148,6 +148,8 @@ definitions:
       config:
         additionalProperties: {}
         type: object
+      consecutiveFailures:
+        type: integer
       createdAt:
         type: string
       cronSchedule:
@@ -4447,6 +4449,9 @@ definitions:
         type: array
       version:
         type: string
+      visibility:
+        description: 'Visibility controls schema scope: "project" (default) or "organization".'
+        type: string
     type: object
   domain_schemas.GraphMemorySchema:
     properties:
@@ -4478,6 +4483,10 @@ definitions:
         items:
           type: integer
         type: array
+      orgId:
+        type: string
+      projectId:
+        type: string
       publishedAt:
         type: string
       relationshipTypeSchemas:
@@ -4495,6 +4504,8 @@ definitions:
       updatedAt:
         type: string
       version:
+        type: string
+      visibility:
         type: string
     type: object
   domain_schemas.InstalledSchemaItem:
@@ -4529,6 +4540,8 @@ definitions:
       name:
         type: string
       version:
+        type: string
+      visibility:
         type: string
     type: object
   domain_schemas.ObjectTypeSchema:
@@ -4972,6 +4985,24 @@ definitions:
       success:
         type: boolean
     type: object
+  domain_superadmin.CreateServiceTokenRequest:
+    properties:
+      name:
+        type: string
+      notes:
+        type: string
+    type: object
+  domain_superadmin.CreateServiceTokenResponse:
+    properties:
+      name:
+        type: string
+      token:
+        type: string
+      tokenId:
+        type: string
+      userId:
+        type: string
+    type: object
   domain_superadmin.DeleteJobsRequest:
     properties:
       ids:
@@ -5117,6 +5148,8 @@ definitions:
       chunkWithErrors:
         type: integer
       graphCompleted:
+        type: integer
+      graphDeadLetter:
         type: integer
       graphFailed:
         type: integer
@@ -5287,6 +5320,15 @@ definitions:
         type: integer
       totalPages:
         type: integer
+    type: object
+  domain_superadmin.ResetDeadLetterResponse:
+    properties:
+      message:
+        type: string
+      resetCount:
+        type: integer
+      success:
+        type: boolean
     type: object
   domain_superadmin.RetryJobsRequest:
     properties:
@@ -5781,7 +5823,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.35.58
+  version: 0.35.63
 paths:
   /api/admin/agent-definitions/{id}/sandbox-config:
     get:
@@ -13359,6 +13401,31 @@ paths:
       summary: Bulk delete embedding jobs (superadmin only)
       tags:
       - superadmin
+  /api/superadmin/embedding-jobs/reset-dead-letter:
+    post:
+      description: Resets all graph embedding jobs in dead_letter status back to pending
+        so the worker retries them. Use after fixing credentials or the embedding
+        model config.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Reset summary
+          schema:
+            $ref: '#/definitions/domain_superadmin.ResetDeadLetterResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden (not superadmin)
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Reset dead-letter embedding jobs (superadmin only)
+      tags:
+      - superadmin
   /api/superadmin/extraction-jobs:
     get:
       description: Returns paginated list of object extraction jobs with status, error
@@ -13655,6 +13722,44 @@ paths:
       security:
       - bearerAuth: []
       summary: Soft-delete a project (superadmin only)
+      tags:
+      - superadmin
+  /api/superadmin/service-tokens:
+    post:
+      consumes:
+      - application/json
+      description: Provisions a synthetic service account user with superadmin_readonly
+        role and returns a persistent account-level API token. The token is only shown
+        once.
+      parameters:
+      - description: Service token name and optional notes
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_superadmin.CreateServiceTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created service token (shown once)
+          schema:
+            $ref: '#/definitions/domain_superadmin.CreateServiceTokenResponse'
+        "400":
+          description: Missing or invalid name
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden (not superadmin_full)
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create a machine-to-machine service token (superadmin_full only)
       tags:
       - superadmin
   /api/superadmin/sync-jobs:
