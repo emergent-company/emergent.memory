@@ -2940,14 +2940,18 @@ func (s *Service) applyMerge(
 			clone.CreatedAt = now
 			clone.UpdatedAt = now
 
-			if _, err := tx.NewInsert().Model(clone).Exec(ctx); err != nil {
+			res, err := tx.NewInsert().Model(clone).On("CONFLICT DO NOTHING").Returning("id").Exec(ctx)
+			if err != nil {
 				return 0, fmt.Errorf("clone object %s: %w", cid, err)
 			}
-			canonicalIDMap[cid] = newCanonicalID
-			appliedCount++
-
-			// Enqueue embedding best-effort after commit (use new canonical ID)
-			defer s.enqueueEmbedding(ctx, newCanonicalID.String())
+			// If the object already exists on the target (e.g. previously merged
+			// under a different canonical ID), the insert is silently skipped.
+			if n, _ := res.RowsAffected(); n > 0 {
+				canonicalIDMap[cid] = newCanonicalID
+				appliedCount++
+				// Enqueue embedding best-effort after commit (use new canonical ID)
+				defer s.enqueueEmbedding(ctx, newCanonicalID.String())
+			}
 
 		case "fast_forward":
 			src := sourceObjects[cid]
