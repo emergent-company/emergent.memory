@@ -1888,7 +1888,22 @@ Manage graph branches
 
 ### Synopsis
 
-Commands for creating, listing, updating, deleting, and merging graph branches
+Manage isolated workspaces (branches) for the knowledge graph.
+
+A branch is a copy of the graph where you can create, update, and delete
+objects and relationships without affecting the main graph. Changes stay
+isolated until you explicitly merge them.
+
+The main graph has no branch ID. All graph write commands (objects create,
+relationships create, etc.) accept --branch <id> to target a branch instead
+of the main graph. Without --branch, writes go to the main graph.
+
+Typical workflow:
+  1. Create a branch
+  2. Write objects/relationships with --branch <id>
+  3. Preview the merge (dry run)
+  4. Execute the merge into a target branch
+  5. Delete the branch
 
 ### Options
 
@@ -1902,11 +1917,24 @@ Create a new branch
 
 ### Synopsis
 
-Create a new graph branch.
+Create a new branch — an isolated workspace for the knowledge graph.
 
-Use --name to set the branch name (required).
-Use --project to associate the branch with a project.
-Use --parent to create the branch as a child of an existing branch.
+Objects and relationships written with --branch <id> are visible only on
+that branch until merged. The main graph is unaffected until you run
+"memory graph branches merge".
+
+--parent is optional metadata recording which branch this was forked from.
+It does not affect merge behavior — it is lineage information only.
+
+After creating a branch, capture its ID immediately:
+
+  BRANCH_ID=$(memory graph branches create --name "my-branch" --output json \
+    | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+
+Then use it on all graph writes:
+
+  memory graph objects create --type Service --key "svc-x" --branch "$BRANCH_ID"
+  memory graph relationships create --type depends_on --from <id> --to <id> --branch "$BRANCH_ID"
 
 Examples:
   memory graph branches create --name "scenario/what-if"
@@ -1920,9 +1948,10 @@ memory graph branches create [flags]
 ### Options
 
 ```
-  -h, --help            help for create
-      --name string     Branch name (required)
-      --parent string   Parent branch ID
+      --description string   Branch description (optional)
+  -h, --help                 help for create
+      --name string          Branch name (required)
+      --parent string        Parent branch ID
 ```
 
 ## memory graph branches delete
@@ -1931,7 +1960,10 @@ Delete a branch
 
 ### Synopsis
 
-Delete a branch by ID. This also removes all branch lineage records.
+Delete a branch and all objects that exist only on that branch.
+
+Objects that have already been merged into another branch are unaffected.
+This operation is irreversible.
 
 Examples:
   memory graph branches delete <branch-id>
@@ -1976,10 +2008,14 @@ List graph branches
 
 ### Synopsis
 
-List graph branches, optionally filtered by project.
+List all branches for the current project.
 
-Use --project to filter branches belonging to a specific project.
-Use --output json to receive the full list as JSON.
+The main graph is not a branch and does not appear in this list. Every
+branch shown here has an ID you can pass to --branch on graph write commands,
+or as the target/source of a merge.
+
+Use --output json to get full branch details including parent_branch_id and
+created_at, which is useful for scripting.
 
 Examples:
   memory graph branches list
@@ -1998,28 +2034,50 @@ memory graph branches list [flags]
 
 ## memory graph branches merge
 
-Merge a source branch into a target branch
+Merge a source branch into a target branch (or main)
 
 ### Synopsis
 
-Merge a source branch into a target branch.
+Merge changes from a source branch into a target branch.
 
-By default this is a dry run that shows what would change without mutating
-state. Pass --execute to apply the merge.
+DIRECTION: source → target. The source branch is read; the target branch
+receives the changes.
 
-The merge classifies each diverged object as:
-  added        — exists on source only, will be added to target
-  fast_forward — changed on source only, will be updated on target
-  conflict     — changed on both branches, requires manual resolution
-  unchanged    — identical on both branches, no action taken
+TARGET: use a branch UUID from "memory graph branches list", or the special
+keyword "main" to merge into the main graph (branch_id IS NULL).
+
+By default this is a DRY RUN — no changes are made. Pass --execute only
+when you are ready to apply.
+
+MERGE CLASSIFICATIONS:
+  added        — object exists on source only; will be created on target
+  fast_forward — object changed on source only; target will be updated
+  conflict     — object changed on BOTH branches; merge is BLOCKED
+  unchanged    — identical on both branches; nothing to do
+
+If any conflicts exist, --execute is blocked. Resolve conflicts manually
+(update the source or target so they agree) then re-run.
+
+The merge runs in a single database transaction — all-or-nothing.
+
+WORKFLOW:
+  # 1. Dry run first — always
+  memory graph branches merge main --source <source-id>
+
+  # 2. Inspect conflicts in detail
+  memory graph branches merge main --source <source-id> --output json
+
+  # 3. Execute when clean
+  memory graph branches merge main --source <source-id> --execute
 
 Examples:
-  memory graph branches merge <target-id> --source <source-id>
+  memory graph branches merge main --source <source-id>
+  memory graph branches merge main --source <source-id> --execute
   memory graph branches merge <target-id> --source <source-id> --execute
   memory graph branches merge <target-id> --source <source-id> --output json
 
 ```
-memory graph branches merge <target-branch-id> [flags]
+memory graph branches merge <target-branch-id|main> [flags]
 ```
 
 ### Options
@@ -2036,12 +2094,15 @@ Update a branch
 
 ### Synopsis
 
-Update a branch's name.
+Update a branch's name or description.
 
-Use --name to set the new branch name (required).
+Use --name to rename the branch. Use --description to set or update the
+description. At least one flag is required.
 
 Examples:
   memory graph branches update <branch-id> --name "new-name"
+  memory graph branches update <branch-id> --description "staging area for Q4 planning"
+  memory graph branches update <branch-id> --name "new-name" --description "updated purpose"
 
 ```
 memory graph branches update <id> [flags]
@@ -2050,8 +2111,9 @@ memory graph branches update <id> [flags]
 ### Options
 
 ```
-  -h, --help          help for update
-      --name string   New branch name (required)
+      --description string   New branch description
+  -h, --help                 help for update
+      --name string          New branch name
 ```
 
 ## memory graph objects
@@ -3282,9 +3344,14 @@ no agent ID is needed.
 
 Use --mode=search for direct hybrid search without AI reasoning.
 
+--branch is only supported in --mode=search. It scopes the search to a specific
+branch of the knowledge graph. Without --branch, the main graph is searched.
+To search a branch, first find its ID with "memory graph branches list".
+
 Examples:
   memory query "what are the main services and how do they relate?"
   memory query --mode=search "auth service"
+  memory query --mode=search --branch <branch-id> "planned services"
   memory query --project abc123 "list all requirements"
 
 ```
@@ -3294,6 +3361,7 @@ memory query <question> [flags]
 ### Options
 
 ```
+      --branch string            Branch ID to search (search mode only; omit to search the main graph)
       --debug                    Include debug information in output
       --fusion-strategy string   Fusion strategy: weighted, rrf, interleave, graph_first, text_first (search mode only) (default "weighted")
   -h, --help                     help for query
