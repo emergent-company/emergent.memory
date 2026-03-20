@@ -627,10 +627,16 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		newStatus = &st
 	}
 
+	// Handle key: use req.Key if provided, otherwise preserve current
+	newKey := current.Key
+	if req.Key != nil {
+		newKey = req.Key
+	}
+
 	actorType := "user"
 	newVersion := &GraphObject{
 		Type:       current.Type,
-		Key:        current.Key,
+		Key:        newKey,
 		Status:     newStatus,
 		Properties: newProps,
 		Labels:     newLabels,

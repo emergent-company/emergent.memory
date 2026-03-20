@@ -20,6 +20,7 @@ type CreateGraphObjectRequest struct {
 // PatchGraphObjectRequest is the request body for patching a graph object.
 // Patching creates a new version.
 type PatchGraphObjectRequest struct {
+	Key           *string        `json:"key,omitempty"`
 	Properties    map[string]any `json:"properties,omitempty"`
 	Labels        []string       `json:"labels,omitempty"`
 	ReplaceLabels bool           `json:"replaceLabels,omitempty"`

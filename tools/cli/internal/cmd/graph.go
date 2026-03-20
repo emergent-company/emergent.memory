@@ -433,6 +433,10 @@ var graphObjectsUpdateCmd = &cobra.Command{
 
 		req := &sdkgraph.UpdateObjectRequest{}
 
+		if graphKeyFlag != "" {
+			req.Key = &graphKeyFlag
+		}
+
 		if graphPropsFlag != "" {
 			var props map[string]any
 			if err := json.Unmarshal([]byte(graphPropsFlag), &props); err != nil {
@@ -1303,6 +1307,7 @@ func init() {
 	graphObjectsCreateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "Path to JSON file containing array of objects (required)")
 
 	graphObjectsUpdateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object to merge")
+	graphObjectsUpdateCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Set a stable key on the object (enables cross-session src_key/dst_key references)")
 
 	// Relationship subcommand flags
 	graphRelationshipsListCmd.Flags().StringVar(&graphRelTypeFlag, "type", "", "Filter by relationship type")
