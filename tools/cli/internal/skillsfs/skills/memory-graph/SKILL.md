@@ -80,23 +80,39 @@ EOF
 ### Step 3 — Create objects and capture IDs
 
 ```bash
-OUTPUT=$(NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json)
-echo "$OUTPUT"
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json \
+  | tee /tmp/batch_output.txt
 ```
 
 Output format is one line per object: `<entity-id>  <type>  <name>`
 
-Parse IDs immediately from the output:
+**Always tee to a file.** The IDs only appear in this stdout — do not try to re-fetch them via `objects list`. Parse from the saved file:
 
 ```bash
-AUTH_ID=$(echo "$OUTPUT"    | awk '/auth-service/ {print $1}')
-GATEWAY_ID=$(echo "$OUTPUT" | awk '/api-gateway/  {print $1}')
-WORKER_ID=$(echo "$OUTPUT"  | awk '/worker/       {print $1}')
-DB_ID=$(echo "$OUTPUT"      | awk '/PostgreSQL/   {print $1}')
-STRIPE_ID=$(echo "$OUTPUT"  | awk '/stripe/       {print $1}')
+AUTH_ID=$(awk '/auth-service/ {print $1}' /tmp/batch_output.txt)
+GATEWAY_ID=$(awk '/api-gateway/  {print $1}' /tmp/batch_output.txt)
+DB_ID=$(awk '/PostgreSQL/   {print $1}' /tmp/batch_output.txt)
+STRIPE_ID=$(awk '/stripe/       {print $1}' /tmp/batch_output.txt)
 
 # Verify
 echo "auth=$AUTH_ID gateway=$GATEWAY_ID db=$DB_ID"
+```
+
+**Batches > 200 items:** `create-batch` has a 200-item limit. Split the file before running:
+
+```bash
+python3 -c "
+import json
+with open('/tmp/objects.json') as f: data = json.load(f)
+for i, chunk in enumerate([data[i:i+200] for i in range(0, len(data), 200)]):
+    with open(f'/tmp/objects_batch_{i+1}.json', 'w') as f: json.dump(chunk, f)
+print(f'{len(data)} objects → {-(-len(data)//200)} batches')
+"
+
+for i in 1 2 3; do  # adjust count
+  NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch \
+    --file /tmp/objects_batch_$i.json | tee -a /tmp/batch_output.txt
+done
 ```
 
 ### Step 4 — Write the relationships batch file
@@ -161,17 +177,71 @@ Keys are stable identifiers you control — use slugs like `svc-auth`, `db-postg
 
 ---
 
+## Script-generated batches
+
+When populating from source files (routes, SQL queries, config vars), write a Python script that parses the source and writes the batch JSON, then run it:
+
+```python
+#!/usr/bin/env python3
+"""Parse server.go routes → /tmp/objects.json + /tmp/objects_batch_*.json"""
+import json, re
+
+ROUTES = [
+    # (method, path, handler_func, domain, auth_required)
+    ("GET",  "/api/v1/cases",     "listCases",   "cases",   True),
+    ("POST", "/api/v1/cases",     "createCase",  "cases",   True),
+    # ... parse from source file
+]
+
+objects = [
+    {
+        "type": "APIEndpoint",
+        "name": f"{method} {path}",
+        "properties": {
+            "method": method, "path": path,
+            "handler_func": func, "domain": domain,
+            "auth_required": auth
+        }
+    }
+    for method, path, func, domain, auth in ROUTES
+]
+
+# Write full list + split into 200-item batches
+with open("/tmp/objects.json", "w") as f:
+    json.dump(objects, f, indent=2)
+
+for i, chunk in enumerate([objects[j:j+200] for j in range(0, len(objects), 200)]):
+    with open(f"/tmp/objects_batch_{i+1}.json", "w") as f:
+        json.dump(chunk, f)
+
+print(f"{len(objects)} objects → {-(-len(objects)//200)} batches")
+```
+
+Run it, then batch-create and tee:
+```bash
+python3 /tmp/gen_objects.py
+for f in /tmp/objects_batch_*.json; do
+  NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file $f \
+    | tee -a /tmp/batch_output.txt
+done
+```
+
+---
+
 ## Lookups
 
-Find an object ID by type and name when you don't have it:
+Find an object ID by type and name when you don't have it.
+
+**`list` output format** — JSON output is `{"objects": [...]}` where each object has an `entity_id` field (not `entityId`). There is **no `--offset` flag** — use the batch output file to get IDs instead of re-fetching.
 
 ```bash
 # List all objects of a type (table view):
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --type Service
 
-# Get ID for a specific name (JSON + jq):
+# Get ID for a specific name (JSON + python):
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --type Service --output json \
-  | jq -r '.objects[] | select(.properties.name=="auth-service") | .entityId'
+  | python3 -c "import json,sys; objs=json.load(sys.stdin)['objects']; \
+    print(next(o['entity_id'] for o in objs if o['properties']['name']=='auth-service'))"
 
 # Get full details for a known ID:
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects get <id>
