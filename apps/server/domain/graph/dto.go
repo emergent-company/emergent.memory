@@ -726,7 +726,7 @@ type TraverseEdge struct {
 
 // BranchMergeRequest is the request for branch merge endpoint.
 type BranchMergeRequest struct {
-	SourceBranchID uuid.UUID `json:"sourceBranchId" validate:"required"`
+	SourceBranchID uuid.UUID `json:"source_branch_id" validate:"required"`
 	Execute        bool      `json:"execute,omitempty"`
 	Limit          *int      `json:"limit,omitempty"` // Override enumeration limit (testing)
 }
@@ -734,7 +734,7 @@ type BranchMergeRequest struct {
 // BranchMergeResponse is the response for branch merge endpoint.
 type BranchMergeResponse struct {
 	TargetBranchID   uuid.UUID                   `json:"targetBranchId"`
-	SourceBranchID   uuid.UUID                   `json:"sourceBranchId"`
+	SourceBranchID   uuid.UUID                   `json:"source_branch_id"`
 	DryRun           bool                        `json:"dryRun"`
 	TotalObjects     int                         `json:"total_objects"`
 	UnchangedCount   int                         `json:"unchanged_count"`

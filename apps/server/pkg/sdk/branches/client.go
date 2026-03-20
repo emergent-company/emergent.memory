@@ -229,14 +229,14 @@ func (c *Client) Update(ctx context.Context, id string, updateReq *UpdateBranchR
 
 // MergeRequest is the request body for the merge endpoint.
 type MergeRequest struct {
-	SourceBranchID string `json:"sourceBranchId"`
+	SourceBranchID string `json:"source_branch_id"`
 	Execute        bool   `json:"execute,omitempty"`
 }
 
 // MergeResponse is the response from the merge endpoint.
 type MergeResponse struct {
 	TargetBranchID   string `json:"targetBranchId"`
-	SourceBranchID   string `json:"sourceBranchId"`
+	SourceBranchID   string `json:"source_branch_id"`
 	DryRun           bool   `json:"dryRun"`
 	TotalObjects     int    `json:"total_objects"`
 	UnchangedCount   int    `json:"unchanged_count"`
