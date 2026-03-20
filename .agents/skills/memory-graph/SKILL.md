@@ -63,8 +63,13 @@ A `key` is a stable, human-readable slug you control — e.g. `svc-auth`, `file-
 **Objects without a key are stranded** — in a future session you must do `objects list --output json` and grep for the UUID, which is slow and fragile. If you created objects without keys, update them now:
 
 ```bash
-# Retroactively set a key on an existing object:
+# Retroactively set a key on an existing object (v0.35.69+):
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects update <id> --key "file-src-main-go"
+
+# Bulk retroactive keying from a list of id/key pairs:
+while IFS=$'\t' read -r id key; do
+  NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects update "$id" --key "$key"
+done < /tmp/id_key_pairs.tsv
 ```
 
 ---
@@ -325,11 +330,19 @@ NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/sub
 
 ## Updating objects
 
-`update` merges properties — it does not replace the whole object:
+`update` merges properties — it does not replace the whole object. Use `--key` to set or change the stable key:
 
 ```bash
+# Update properties:
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects update <id> \
   --properties '{"status": "deprecated", "replacement": "auth-service-v2"}'
+
+# Set a stable key (enables cross-session src_key/dst_key references):
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects update <id> --key "svc-auth"
+
+# Both at once:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects update <id> \
+  --key "svc-auth" --properties '{"status": "active"}'
 ```
 
 ---
