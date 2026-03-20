@@ -49,6 +49,7 @@ type Branch struct {
 	ID             string  `json:"id"`
 	ProjectID      *string `json:"project_id,omitempty"`
 	Name           string  `json:"name"`
+	Description    *string `json:"description,omitempty"`
 	ParentBranchID *string `json:"parent_branch_id,omitempty"`
 	CreatedAt      string  `json:"created_at"`
 }
@@ -57,12 +58,14 @@ type Branch struct {
 type CreateBranchRequest struct {
 	Name           string  `json:"name"`
 	ProjectID      *string `json:"project_id,omitempty"`
+	Description    *string `json:"description,omitempty"`
 	ParentBranchID *string `json:"parent_branch_id,omitempty"`
 }
 
 // UpdateBranchRequest represents a branch update request.
 type UpdateBranchRequest struct {
-	Name *string `json:"name,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
 }
 
 // ListOptions holds options for listing branches.

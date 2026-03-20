@@ -24,7 +24,7 @@ Think of it like git branches, but for your knowledge graph.
 
     {
       "name": "q4-planning-review",
-      "projectId": "proj_xyz789"
+      "project_id": "proj_xyz789"
     }
     ```
 
@@ -33,9 +33,9 @@ Think of it like git branches, but for your knowledge graph.
     {
       "id": "branch_abc123",
       "name": "q4-planning-review",
-      "projectId": "proj_xyz789",
-      "parentBranchId": null,
-      "createdAt": "2026-03-08T10:00:00Z"
+      "project_id": "proj_xyz789",
+      "parent_branch_id": null,
+      "created_at": "2026-03-08T10:00:00Z"
     }
     ```
 
@@ -43,10 +43,12 @@ Think of it like git branches, but for your knowledge graph.
 
 ```http
 POST /api/graph/branches
+Content-Type: application/json
+
 {
   "name": "sub-feature",
-  "projectId": "proj_xyz789",
-  "parentBranchId": "branch_abc123"
+  "project_id": "proj_xyz789",
+  "parent_branch_id": "branch_abc123"
 }
 ```
 
@@ -54,16 +56,23 @@ POST /api/graph/branches
 
 ## Working on a Branch
 
-Pass the `branchId` in your graph API requests to read and write objects on that branch:
+Pass `branch_id` in the request body when creating objects or relationships on a branch:
 
 ```http
 POST /api/graph/objects
-X-Branch-ID: branch_abc123
+Content-Type: application/json
 
 {
   "type": "Decision",
+  "branch_id": "branch_abc123",
   "properties": { "title": "Adopt event sourcing" }
 }
+```
+
+For list/get requests, pass `branch_id` as a query parameter:
+
+```http
+GET /api/graph/objects?branch_id=branch_abc123
 ```
 
 Objects created on a branch are isolated — they are not visible in the main graph until you merge.
@@ -88,18 +97,43 @@ GET /api/graph/branches/{id}
 
 ## Merging a Branch
 
-When you are ready to promote changes from a branch into the main graph (or into a parent branch), merge it:
+When you are ready to promote changes from a source branch into a target branch, merge it.
+
+**Direction: source → target.** The source branch is read; the target branch receives the changes.
+
+By default the merge is a **dry run** — it shows what would change without mutating state. Pass `"execute": true` to apply.
 
 ```http
 POST /api/graph/branches/{targetBranchId}/merge
 Content-Type: application/json
 
 {
-  "sourceBranchId": "branch_abc123"
+  "source_branch_id": "branch_abc123"
 }
 ```
 
-The merge applies all objects and relationships from the source branch onto the target. Conflicts are resolved by the merge strategy (last-write-wins by default).
+Dry-run response shows each object classified as:
+
+| Classification | Meaning |
+|---|---|
+| `added` | Exists on source only — will be created on target |
+| `fast_forward` | Changed on source only — target will be updated |
+| `conflict` | Changed on both branches — **blocks execute until resolved** |
+| `unchanged` | Identical on both branches — nothing to do |
+
+To execute after reviewing:
+
+```http
+POST /api/graph/branches/{targetBranchId}/merge
+Content-Type: application/json
+
+{
+  "source_branch_id": "branch_abc123",
+  "execute": true
+}
+```
+
+The merge runs in a single database transaction — it is all-or-nothing. If any conflict exists, `execute` is rejected until conflicts are resolved manually.
 
 ---
 
@@ -125,11 +159,16 @@ PATCH /api/graph/branches/{id}
 
 ## Branch hierarchy
 
-Branches form a tree: each branch has an optional `parentBranchId`. A null parent means the branch is off the main graph. The lineage is tracked in `kb.branch_lineage` and used during merge to compute the delta.
+Branches can optionally record a `parent_branch_id` — which branch they were forked from. This is **lineage metadata only** and does not affect merge behavior. The merge compares object content hashes directly between source and target regardless of parentage.
+
+A null `parent_branch_id` means the branch was created off the main graph.
 
 ```
-main graph (no branch)
-├── feature-a
-│   └── feature-a-sub
-└── feature-b
+main graph (no branch ID)
+├── feature-a          (parent_branch_id: null)
+│   └── feature-a-sub  (parent_branch_id: feature-a)
+└── feature-b          (parent_branch_id: null)
 ```
+
+!!! note
+    The main graph itself is not a branch and has no ID. To merge a branch into the main graph, you need the main graph's branch record ID — use `GET /api/graph/branches` to list all branches and identify the one representing main (typically the one with no parent and the earliest creation date).

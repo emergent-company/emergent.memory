@@ -87,14 +87,19 @@ func (s *Store) Create(ctx context.Context, branch *Branch) (*Branch, error) {
 }
 
 // Update updates a branch by ID
-func (s *Store) Update(ctx context.Context, id string, name string) (*Branch, error) {
+func (s *Store) Update(ctx context.Context, id string, name string, description *string) (*Branch, error) {
 	branch := new(Branch)
-	_, err := s.db.NewUpdate().
+	q := s.db.NewUpdate().
 		Model(branch).
 		Set("name = ?", name).
 		Where("id = ?", id).
-		Returning("*").
-		Exec(ctx)
+		Returning("*")
+
+	if description != nil {
+		q = q.Set("description = ?", *description)
+	}
+
+	_, err := q.Exec(ctx)
 	if err != nil {
 		return nil, err
 	}

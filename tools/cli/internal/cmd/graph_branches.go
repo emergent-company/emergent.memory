@@ -15,10 +15,11 @@ import (
 // ─────────────────────────────────────────────
 
 var (
-	branchNameFlag    string
-	branchParentFlag  string
-	branchSourceFlag  string
-	branchExecuteFlag bool
+	branchNameFlag        string
+	branchDescriptionFlag string
+	branchParentFlag      string
+	branchSourceFlag      string
+	branchExecuteFlag     bool
 )
 
 // ─────────────────────────────────────────────
@@ -49,7 +50,22 @@ func getBranchesClient(cmd *cobra.Command) (*sdkbranches.Client, string, error) 
 var graphBranchesCmd = &cobra.Command{
 	Use:   "branches",
 	Short: "Manage graph branches",
-	Long:  "Commands for creating, listing, updating, deleting, and merging graph branches",
+	Long: `Manage isolated workspaces (branches) for the knowledge graph.
+
+A branch is a copy of the graph where you can create, update, and delete
+objects and relationships without affecting the main graph. Changes stay
+isolated until you explicitly merge them.
+
+The main graph has no branch ID. All graph write commands (objects create,
+relationships create, etc.) accept --branch <id> to target a branch instead
+of the main graph. Without --branch, writes go to the main graph.
+
+Typical workflow:
+  1. Create a branch
+  2. Write objects/relationships with --branch <id>
+  3. Preview the merge (dry run)
+  4. Execute the merge into a target branch
+  5. Delete the branch`,
 }
 
 // ─────────────────────────────────────────────
@@ -59,10 +75,14 @@ var graphBranchesCmd = &cobra.Command{
 var graphBranchesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List graph branches",
-	Long: `List graph branches, optionally filtered by project.
+	Long: `List all branches for the current project.
 
-Use --project to filter branches belonging to a specific project.
-Use --output json to receive the full list as JSON.
+The main graph is not a branch and does not appear in this list. Every
+branch shown here has an ID you can pass to --branch on graph write commands,
+or as the target/source of a merge.
+
+Use --output json to get full branch details including parent_branch_id and
+created_at, which is useful for scripting.
 
 Examples:
   memory graph branches list
@@ -96,13 +116,17 @@ Examples:
 		}
 
 		table := tablewriter.NewWriter(out)
-		table.Header("ID", "Name", "Parent Branch ID", "Created")
+		table.Header("ID", "Name", "Description", "Parent Branch ID", "Created")
 		for _, br := range branches {
+			desc := ""
+			if br.Description != nil {
+				desc = *br.Description
+			}
 			parent := ""
 			if br.ParentBranchID != nil {
 				parent = *br.ParentBranchID
 			}
-			_ = table.Append(br.ID, br.Name, parent, br.CreatedAt)
+			_ = table.Append(br.ID, br.Name, desc, parent, br.CreatedAt)
 		}
 		return table.Render()
 	},
@@ -142,6 +166,9 @@ Examples:
 
 		fmt.Fprintf(out, "ID:       %s\n", branch.ID)
 		fmt.Fprintf(out, "Name:     %s\n", branch.Name)
+		if branch.Description != nil {
+			fmt.Fprintf(out, "Desc:     %s\n", *branch.Description)
+		}
 		if branch.ProjectID != nil {
 			fmt.Fprintf(out, "Project:  %s\n", *branch.ProjectID)
 		}
@@ -161,11 +188,24 @@ Examples:
 var graphBranchesCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new branch",
-	Long: `Create a new graph branch.
+	Long: `Create a new branch — an isolated workspace for the knowledge graph.
 
-Use --name to set the branch name (required).
-Use --project to associate the branch with a project.
-Use --parent to create the branch as a child of an existing branch.
+Objects and relationships written with --branch <id> are visible only on
+that branch until merged. The main graph is unaffected until you run
+"memory graph branches merge".
+
+--parent is optional metadata recording which branch this was forked from.
+It does not affect merge behavior — it is lineage information only.
+
+After creating a branch, capture its ID immediately:
+
+  BRANCH_ID=$(memory graph branches create --name "my-branch" --output json \
+    | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+
+Then use it on all graph writes:
+
+  memory graph objects create --type Service --key "svc-x" --branch "$BRANCH_ID"
+  memory graph relationships create --type depends_on --from <id> --to <id> --branch "$BRANCH_ID"
 
 Examples:
   memory graph branches create --name "scenario/what-if"
@@ -187,6 +227,9 @@ Examples:
 		if projectID != "" {
 			req.ProjectID = &projectID
 		}
+		if branchDescriptionFlag != "" {
+			req.Description = &branchDescriptionFlag
+		}
 		if branchParentFlag != "" {
 			req.ParentBranchID = &branchParentFlag
 		}
@@ -204,6 +247,9 @@ Examples:
 
 		fmt.Fprintf(out, "ID:       %s\n", branch.ID)
 		fmt.Fprintf(out, "Name:     %s\n", branch.Name)
+		if branch.Description != nil {
+			fmt.Fprintf(out, "Desc:     %s\n", *branch.Description)
+		}
 		if branch.ProjectID != nil {
 			fmt.Fprintf(out, "Project:  %s\n", *branch.ProjectID)
 		}
@@ -223,16 +269,19 @@ Examples:
 var graphBranchesUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
 	Short: "Update a branch",
-	Long: `Update a branch's name.
+	Long: `Update a branch's name or description.
 
-Use --name to set the new branch name (required).
+Use --name to rename the branch. Use --description to set or update the
+description. At least one flag is required.
 
 Examples:
-  memory graph branches update <branch-id> --name "new-name"`,
+  memory graph branches update <branch-id> --name "new-name"
+  memory graph branches update <branch-id> --description "staging area for Q4 planning"
+  memory graph branches update <branch-id> --name "new-name" --description "updated purpose"`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if branchNameFlag == "" {
-			return fmt.Errorf("--name is required")
+		if branchNameFlag == "" && branchDescriptionFlag == "" {
+			return fmt.Errorf("at least one of --name or --description is required")
 		}
 
 		b, _, err := getBranchesClient(cmd)
@@ -240,10 +289,15 @@ Examples:
 			return err
 		}
 
-		name := branchNameFlag
-		branch, err := b.Update(context.Background(), args[0], &sdkbranches.UpdateBranchRequest{
-			Name: &name,
-		})
+		updateReq := &sdkbranches.UpdateBranchRequest{}
+		if branchNameFlag != "" {
+			updateReq.Name = &branchNameFlag
+		}
+		if branchDescriptionFlag != "" {
+			updateReq.Description = &branchDescriptionFlag
+		}
+
+		branch, err := b.Update(context.Background(), args[0], updateReq)
 		if err != nil {
 			return fmt.Errorf("failed to update branch: %w", err)
 		}
@@ -256,6 +310,9 @@ Examples:
 
 		fmt.Fprintf(out, "ID:       %s\n", branch.ID)
 		fmt.Fprintf(out, "Name:     %s\n", branch.Name)
+		if branch.Description != nil {
+			fmt.Fprintf(out, "Desc:     %s\n", *branch.Description)
+		}
 		if branch.ProjectID != nil {
 			fmt.Fprintf(out, "Project:  %s\n", *branch.ProjectID)
 		}
@@ -272,7 +329,10 @@ Examples:
 var graphBranchesDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a branch",
-	Long: `Delete a branch by ID. This also removes all branch lineage records.
+	Long: `Delete a branch and all objects that exist only on that branch.
+
+Objects that have already been merged into another branch are unaffected.
+This operation is irreversible.
 
 Examples:
   memory graph branches delete <branch-id>`,
@@ -299,16 +359,38 @@ Examples:
 var graphBranchesMergeCmd = &cobra.Command{
 	Use:   "merge <target-branch-id>",
 	Short: "Merge a source branch into a target branch",
-	Long: `Merge a source branch into a target branch.
+	Long: `Merge changes from a source branch into a target branch.
 
-By default this is a dry run that shows what would change without mutating
-state. Pass --execute to apply the merge.
+DIRECTION: source → target. The source branch is read; the target branch
+receives the changes. Both must be real branch IDs — use "memory graph
+branches list" to find them.
 
-The merge classifies each diverged object as:
-  added        — exists on source only, will be added to target
-  fast_forward — changed on source only, will be updated on target
-  conflict     — changed on both branches, requires manual resolution
-  unchanged    — identical on both branches, no action taken
+By default this is a DRY RUN — no changes are made. Pass --execute only
+when you are ready to apply.
+
+MERGE CLASSIFICATIONS:
+  added        — object exists on source only; will be created on target
+  fast_forward — object changed on source only; target will be updated
+  conflict     — object changed on BOTH branches; merge is BLOCKED
+  unchanged    — identical on both branches; nothing to do
+
+If any conflicts exist, --execute is blocked. Resolve conflicts manually
+(update the source or target so they agree) then re-run.
+
+The merge runs in a single database transaction — all-or-nothing.
+
+HOW TO FIND BRANCH IDs:
+  memory graph branches list --output json
+
+WORKFLOW:
+  # 1. Dry run first — always
+  memory graph branches merge <target-id> --source <source-id>
+
+  # 2. Inspect conflicts in detail
+  memory graph branches merge <target-id> --source <source-id> --output json
+
+  # 3. Execute when clean
+  memory graph branches merge <target-id> --source <source-id> --execute
 
 Examples:
   memory graph branches merge <target-id> --source <source-id>
@@ -392,10 +474,12 @@ Examples:
 func init() {
 	// Flags for branches create
 	graphBranchesCreateCmd.Flags().StringVar(&branchNameFlag, "name", "", "Branch name (required)")
+	graphBranchesCreateCmd.Flags().StringVar(&branchDescriptionFlag, "description", "", "Branch description (optional)")
 	graphBranchesCreateCmd.Flags().StringVar(&branchParentFlag, "parent", "", "Parent branch ID")
 
 	// Flags for branches update
-	graphBranchesUpdateCmd.Flags().StringVar(&branchNameFlag, "name", "", "New branch name (required)")
+	graphBranchesUpdateCmd.Flags().StringVar(&branchNameFlag, "name", "", "New branch name")
+	graphBranchesUpdateCmd.Flags().StringVar(&branchDescriptionFlag, "description", "", "New branch description")
 
 	// Flags for branches merge
 	graphBranchesMergeCmd.Flags().StringVar(&branchSourceFlag, "source", "", "Source branch ID to merge from (required)")

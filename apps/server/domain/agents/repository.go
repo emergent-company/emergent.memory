@@ -628,6 +628,7 @@ Knowledge Base:
   memory embeddings status|pause|resume|config
   memory graph objects create|create-batch|list|get|update|delete|edges
   memory graph relationships create|create-batch|list|get|delete
+  memory graph branches create|list|get|update|delete|merge
   memory query "<question>"          (agent or --mode=search)
   memory schemas list|installed|install|uninstall|get|create|delete|compiled-types
   memory browse
@@ -661,6 +662,27 @@ Server (self-hosted):
 Other: memory traces list|get|search / memory upgrade / memory version
 
 Common flags: --server <url>, --project <id>, --project-token <tok>, --output table|json|yaml|csv, --compact, --debug, --no-color
+
+## Branching
+
+Branches are isolated workspaces for the knowledge graph. Objects/relationships written with
+--branch <id> are invisible to the main graph until merged.
+
+Key facts:
+- The main graph has NO branch ID. Omitting --branch writes to the main graph.
+- "memory graph branches list" shows all branch IDs for the project.
+- --branch is a flag on graph write commands (objects create/update, relationships create), NOT on branches subcommands.
+- --parent on "branches create" is optional lineage metadata only — it does NOT affect merge behavior.
+- Merge direction: source → target. Both must be branch IDs from "branches list".
+- "branches merge <target-id> --source <source-id>" is a dry run by default. Add --execute to apply.
+- Conflicts block --execute. Resolve by making source and target agree on the conflicting object, then re-run.
+- Merge is all-or-nothing (single transaction). If any write fails, the whole merge rolls back.
+
+Workflow:
+  BRANCH_ID=$(memory graph branches create --name "my-branch" --output json | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+  memory graph objects create --type Foo --key bar --branch "$BRANCH_ID"
+  memory graph branches merge <target-id> --source "$BRANCH_ID"          # dry run
+  memory graph branches merge <target-id> --source "$BRANCH_ID" --execute # apply
 
 ## Platform Facts
 

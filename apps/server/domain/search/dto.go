@@ -53,6 +53,7 @@ type UnifiedSearchRequest struct {
 	RelationshipOptions *UnifiedSearchRelationshipOptions `json:"relationshipOptions,omitempty"`
 	IncludeDebug        bool                              `json:"includeDebug,omitempty"`
 	MaxTokenBudget      int                               `json:"maxTokenBudget,omitempty"`
+	BranchID            *string                           `json:"branch_id,omitempty"` // nil = main graph
 }
 
 // =============================================================================

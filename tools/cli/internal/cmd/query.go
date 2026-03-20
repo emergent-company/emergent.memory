@@ -30,9 +30,14 @@ no agent ID is needed.
 
 Use --mode=search for direct hybrid search without AI reasoning.
 
+--branch is only supported in --mode=search. It scopes the search to a specific
+branch of the knowledge graph. Without --branch, the main graph is searched.
+To search a branch, first find its ID with "memory graph branches list".
+
 Examples:
   memory query "what are the main services and how do they relate?"
   memory query --mode=search "auth service"
+  memory query --mode=search --branch <branch-id> "planned services"
   memory query --project abc123 "list all requirements"`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runQuery,
@@ -40,6 +45,7 @@ Examples:
 
 var (
 	queryProjectID      string
+	queryBranchID       string
 	queryLimit          int
 	queryResultTypes    string
 	queryFusionStrategy string
@@ -56,6 +62,7 @@ func init() {
 
 	queryCmd.Flags().StringVar(&queryProjectID, "project", "", "Project ID to query (uses default project if not specified)")
 	queryCmd.Flags().StringVar(&queryMode, "mode", "agent", "Query mode: agent (default, AI reasoning) or search (direct hybrid search)")
+	queryCmd.Flags().StringVar(&queryBranchID, "branch", "", "Branch ID to search (search mode only; omit to search the main graph)")
 	queryCmd.Flags().BoolVar(&queryShowTools, "show-tools", false, "Show tool calls made by the agent (agent mode only)")
 	queryCmd.Flags().IntVar(&queryLimit, "limit", 10, "Maximum number of results to return (search mode only)")
 	queryCmd.Flags().StringVar(&queryResultTypes, "result-types", "both", "Types of results: graph, text, or both (search mode only)")
@@ -213,13 +220,17 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 
 func runSearchQuery(ctx context.Context, c *client.Client, query, projectID string) error {
 	start := time.Now()
-	response, err := c.SDK.Search.Search(ctx, &search.SearchRequest{
+	searchReq := &search.SearchRequest{
 		Query:          query,
 		Limit:          queryLimit,
 		ResultTypes:    queryResultTypes,
 		FusionStrategy: queryFusionStrategy,
 		IncludeDebug:   queryDebug,
-	})
+	}
+	if queryBranchID != "" {
+		searchReq.BranchID = &queryBranchID
+	}
+	response, err := c.SDK.Search.Search(ctx, searchReq)
 	elapsed := time.Since(start)
 
 	if err != nil {

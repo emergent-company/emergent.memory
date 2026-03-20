@@ -254,6 +254,12 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 		Vector: vector,
 		Limit:  req.Limit,
 	}
+	if req.BranchID != nil {
+		branchUUID, err := uuid.Parse(*req.BranchID)
+		if err == nil {
+			hybridReq.BranchID = &branchUUID
+		}
+	}
 
 	// Execute search (pass nil opts since unified search has its own debug handling)
 	searchResp, err := s.graphService.HybridSearch(ctx, projectID, hybridReq, nil)

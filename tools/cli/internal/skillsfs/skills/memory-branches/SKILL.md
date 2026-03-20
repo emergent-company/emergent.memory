@@ -41,13 +41,16 @@ create branch → write objects/relationships with --branch <id> → verify → 
 
 ```bash
 # Create a branch scoped to the current project:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches create --name "plan/add-auth-service"
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches create \
+  --name "plan/add-auth-service" \
+  --description "Staging area for auth service v2 design"
 ```
 
 Output:
 ```
 ID:       7602d370-64c2-451b-81a2-0b50ba74343a
 Name:     plan/add-auth-service
+Desc:     Staging area for auth service v2 design
 Project:  ea62f9f7-396a-4b1e-912b-3b5579a7cf0a
 Created:  2026-03-15T10:00:00Z
 ```
@@ -55,7 +58,9 @@ Created:  2026-03-15T10:00:00Z
 **Capture the branch ID immediately:**
 ```bash
 BRANCH_ID=$(NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches create \
-  --name "plan/add-auth-service" --output json | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+  --name "plan/add-auth-service" \
+  --description "Staging area for auth service v2 design" \
+  --output json | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
 echo "Branch: $BRANCH_ID"
 ```
 
@@ -225,7 +230,7 @@ NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches delete "$BRANCH_ID"
 ## Branch management commands
 
 ```bash
-# List all branches for the project:
+# List all branches for the project (shows ID, name, description, parent, created):
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches list
 
 # Get details for a specific branch:
@@ -234,8 +239,27 @@ NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches get <branch-id>
 # Rename a branch:
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches update <branch-id> --name "new-name"
 
+# Update description only:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches update <branch-id> --description "new purpose"
+
+# Rename and update description:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches update <branch-id> --name "new-name" --description "new purpose"
+
 # Delete a branch:
 NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph branches delete <branch-id>
+```
+
+## Querying a branch
+
+Use `memory query --mode=search --branch <id>` to search a specific branch.
+Without `--branch`, the main graph is searched. `--branch` is not supported in agent mode.
+
+```bash
+# Search the main graph:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory query --mode=search "planned services"
+
+# Search a specific branch:
+NO_PROMPT=1 MEMORY_PROJECT=$MP memory query --mode=search --branch "$BRANCH_ID" "planned services"
 ```
 
 ---

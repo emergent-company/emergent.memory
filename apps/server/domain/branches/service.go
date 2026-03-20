@@ -72,6 +72,7 @@ func (s *Service) Create(ctx context.Context, req *CreateBranchRequest) (*Branch
 	branch := &Branch{
 		ProjectID:      req.ProjectID,
 		Name:           name,
+		Description:    req.Description,
 		ParentBranchID: req.ParentBranchID,
 	}
 
@@ -97,29 +98,32 @@ func (s *Service) Update(ctx context.Context, id string, req *UpdateBranchReques
 		return nil, apperror.ErrNotFound.WithMessage("branch not found")
 	}
 
-	// Validate name if provided
-	if req.Name == nil {
-		return nil, apperror.ErrBadRequest.WithMessage("name is required")
+	// Validate that at least one field is being updated
+	if req.Name == nil && req.Description == nil {
+		return nil, apperror.ErrBadRequest.WithMessage("at least one of name or description is required")
 	}
 
-	name := strings.TrimSpace(*req.Name)
-	if name == "" {
-		return nil, apperror.ErrBadRequest.WithMessage("name cannot be empty")
-	}
-
-	// Check for duplicate name within the same project (if name changed)
-	if name != existing.Name {
-		duplicate, err := s.store.GetByNameAndProject(ctx, name, existing.ProjectID)
-		if err != nil {
-			return nil, apperror.ErrInternal.WithInternal(err)
+	// Use existing name if not changing it
+	name := existing.Name
+	if req.Name != nil {
+		name = strings.TrimSpace(*req.Name)
+		if name == "" {
+			return nil, apperror.ErrBadRequest.WithMessage("name cannot be empty")
 		}
-		if duplicate != nil && duplicate.ID != id {
-			return nil, apperror.ErrConflict.WithMessage("branch name already exists in this project")
+		// Check for duplicate name within the same project (if name changed)
+		if name != existing.Name {
+			duplicate, err := s.store.GetByNameAndProject(ctx, name, existing.ProjectID)
+			if err != nil {
+				return nil, apperror.ErrInternal.WithInternal(err)
+			}
+			if duplicate != nil && duplicate.ID != id {
+				return nil, apperror.ErrConflict.WithMessage("branch name already exists in this project")
+			}
 		}
 	}
 
 	// Update the branch
-	updated, err := s.store.Update(ctx, id, name)
+	updated, err := s.store.Update(ctx, id, name, req.Description)
 	if err != nil {
 		return nil, apperror.ErrInternal.WithInternal(err)
 	}
