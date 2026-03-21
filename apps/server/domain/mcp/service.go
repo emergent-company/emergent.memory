@@ -231,6 +231,11 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Description: "When true, each entity result includes its outgoing relationships (type, target_id, target_type, target_key). Eliminates the need for a separate traverse_graph call in simple cases.",
 						Default:     false,
 					},
+					"fields": {
+						Type:        "array",
+						Description: "Optional list of property field names to return (e.g. [\"name\",\"method\",\"path\"]). When omitted, all properties are returned. Use this to reduce token usage when you only need specific fields.",
+						Items:       &PropertySchema{Type: "string"},
+					},
 				},
 				Required: []string{},
 			},
@@ -1433,6 +1438,51 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		orderExpr = fmt.Sprintf("go.properties->>'name' %s NULLS LAST", sortOrder)
 	}
 
+	// Parse optional fields projection — only return requested property keys.
+	// Always include "name" so display is consistent.
+	var fieldProjection string
+	if rawFields, ok := args["fields"]; ok {
+		var fieldList []string
+		switch v := rawFields.(type) {
+		case []any:
+			for _, f := range v {
+				if s, ok := f.(string); ok && s != "" {
+					fieldList = append(fieldList, s)
+				}
+			}
+		case []string:
+			fieldList = v
+		}
+		if len(fieldList) > 0 {
+			// Ensure "name" is always present for display.
+			hasName := false
+			for _, f := range fieldList {
+				if f == "name" {
+					hasName = true
+					break
+				}
+			}
+			if !hasName {
+				fieldList = append([]string{"name"}, fieldList...)
+			}
+			// Build: jsonb_build_object('key1', go.properties->'key1', 'key2', go.properties->'key2', ...)
+			// Field names are safe — they come from the agent, not user input, but we still
+			// sanitize by allowing only alphanumeric + underscore + hyphen.
+			parts := make([]string, 0, len(fieldList)*2)
+			for _, f := range fieldList {
+				if isValidPropertyKey(f) {
+					parts = append(parts, fmt.Sprintf("'%s', go.properties->'%s'", f, f))
+				}
+			}
+			if len(parts) > 0 {
+				fieldProjection = "jsonb_build_object(" + strings.Join(parts, ", ") + ")"
+			}
+		}
+	}
+	if fieldProjection == "" {
+		fieldProjection = "go.properties"
+	}
+
 	type entityRow struct {
 		ID              uuid.UUID      `bun:"id"`
 		CanonicalID     uuid.UUID      `bun:"canonical_id"`
@@ -1461,7 +1511,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				go.canonical_id,
 				go.key,
 				COALESCE(go.properties->>'name', '') as name,
-				go.properties,
+				`+fieldProjection+` as properties,
 				go.created_at,
 				COALESCE(go.updated_at, go.created_at) as updated_at,
 				go.type as type_name,
@@ -1514,7 +1564,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Detect unrecognized parameters and surface them as a warning so callers
 	// know their extra keys (e.g. filter, status, entity_type) had no effect.
 	knownQueryEntitiesParams := map[string]struct{}{
-		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {},
+		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {},
 	}
 	var unknownParams []string
 	for k := range args {
@@ -2891,6 +2941,16 @@ func (s *Service) wrapResult(data any) (*ToolResult, error) {
 // Helper function for pointer to int
 func intPtr(i int) *int {
 	return &i
+}
+
+// isValidPropertyKey allows only safe characters in property field names used in SQL projection.
+func isValidPropertyKey(s string) bool {
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 func (s *Service) executeListSchemas(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {

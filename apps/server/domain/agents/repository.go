@@ -488,11 +488,17 @@ const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. 
 5. Keep responses concise and factual.
 6. Start with search-hybrid for most queries. Use entity-query to list by type. Use entity-edges-get to explore relationships.
 
-## Context budget
-The model has a 1M token input window, but large entity payloads are expensive and slow. A single entity with full properties is ~200-500 tokens. Thresholds:
-- ≤50 entities: return full objects freely.
-- 51–200 entities: return full objects but summarize in your answer (counts, patterns, key names) rather than listing everything.
-- >200 entities: return only id+name+key per entity (omit properties), then offer to fetch details for specific IDs using entity-query with ids=[...].
+## Context budget and field selection
+The model has a 1M token input window, but large entity payloads are expensive and slow. A single entity with full properties is ~200-500 tokens. Always use the minimum fields needed:
+- Before fetching entities, decide which property fields your answer actually requires. Pass fields=["name","field1","field2"] to entity-query to retrieve only those fields — never fetch the full object when you only need a subset.
+- For counting or listing names: fields=["name"] only.
+- For summarizing by a dimension (e.g. method, status, domain): fields=["name","<dimension_field>"].
+- For full detail on a specific entity: omit fields (returns everything) or use ids=[...] with no fields filter.
+
+Response size thresholds:
+- ≤50 entities: return full results freely.
+- 51–200 entities: summarize in your answer (counts, patterns, key names) rather than listing everything.
+- >200 entities: return only id+name, then offer to fetch details for specific IDs via entity-query ids=[...].
 
 ## Pagination strategy
 When a question requires a complete list ("how many", "list all", "which ones"):
