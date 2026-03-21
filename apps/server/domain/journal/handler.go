@@ -32,7 +32,8 @@ func NewHandler(svc *Service, branchStore *branches.Store) *Handler {
 // @Param        since   query string false "ISO-8601 timestamp or relative duration (e.g. 7d, 24h)"
 // @Param        limit   query int    false "Max results (default 100)"
 // @Param        page    query int    false "Page number (default 1)"
-// @Param        branch  query string false "Branch name or UUID (omit for main branch)"
+// @Param        branch           query string false "Branch name or UUID (omit for main branch)"
+// @Param        include_branches query bool   false "Include merged branches in feed (default false)"
 // @Success      200    {object} JournalResponse
 // @Failure      400    {object} apperror.Error "Bad request"
 // @Failure      401    {object} apperror.Error "Unauthorized"
@@ -77,6 +78,10 @@ func (h *Handler) ListJournal(c echo.Context) error {
 			return err
 		}
 		params.BranchID = branchID
+	}
+
+	if c.QueryParam("include_branches") == "true" {
+		params.IncludeBranches = true
 	}
 
 	resp, err := h.svc.List(c.Request().Context(), params)

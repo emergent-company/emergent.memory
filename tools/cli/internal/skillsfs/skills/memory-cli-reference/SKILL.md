@@ -2550,11 +2550,12 @@ memory journal list [flags]
 ### Options
 
 ```
-  -h, --help           help for list
-      --branch string  branch name or UUID to filter by (omit for main branch)
-      --limit int      maximum number of entries to return (default 100)
-      --output string  output format (table, json) (default "table")
-      --since string   show entries since this duration or ISO-8601 timestamp (default "7d")
+  -h, --help               help for list
+      --branch string      branch name or UUID to filter by (omit for main branch)
+      --include-branches   include main branch and all merged branches in results
+      --limit int          maximum number of entries to return (default 100)
+      --output string      output format (table, json) (default "table")
+      --since string       show entries since this duration or ISO-8601 timestamp (default "7d")
 ```
 
 ### Examples
@@ -2565,6 +2566,7 @@ memory journal list --since 24h                        # last 24 hours
 memory journal list --since 2026-01-15T10:00:00Z       # since ISO timestamp
 memory journal list --limit 50 --output json           # cap results, JSON output
 memory journal list --branch my-feature                # entries for a branch
+memory journal list --include-branches                 # main + all merged branches
 ```
 
 ## memory journal note

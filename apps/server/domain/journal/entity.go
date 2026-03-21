@@ -86,9 +86,13 @@ type ListParams struct {
 	// A non-nil pointer with a zero value is never produced; callers always
 	// set an explicit UUID when filtering by a named branch.
 	BranchID *uuid.UUID
-	Since    *time.Time
-	Limit    int
-	Page     int
+	// IncludeBranches, when true, returns entries from the main branch AND all
+	// merged branches in a single unified time-sorted feed.
+	// Takes precedence over BranchID when set.
+	IncludeBranches bool
+	Since           *time.Time
+	Limit           int
+	Page            int
 }
 
 // AddNoteRequest is the payload for adding a note.

@@ -55,10 +55,11 @@ type journalResponse struct {
 // ── Flags ─────────────────────────────────────────────────────────────────────
 
 var (
-	journalListSince  string
-	journalListLimit  int
-	journalListBranch string
-	journalNoteEntry  string
+	journalListSince           string
+	journalListLimit           int
+	journalListBranch          string
+	journalListIncludeBranches bool
+	journalNoteEntry           string
 )
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -354,6 +355,9 @@ func runJournalList(cmd *cobra.Command, _ []string) error {
 	if journalListBranch != "" {
 		params.Set("branch", journalListBranch)
 	}
+	if journalListIncludeBranches {
+		params.Set("include_branches", "true")
+	}
 
 	body, err := journalGet(cmd, projectID, params)
 	if err != nil {
@@ -468,6 +472,7 @@ func init() {
 	journalListCmd.Flags().StringVar(&journalListSince, "since", "7d", "Show entries from the last duration (e.g. 7d, 24h, 1h)")
 	journalListCmd.Flags().IntVar(&journalListLimit, "limit", 100, "Maximum number of entries to return")
 	journalListCmd.Flags().StringVar(&journalListBranch, "branch", "", "Branch name or UUID (omit for main branch)")
+	journalListCmd.Flags().BoolVar(&journalListIncludeBranches, "include-branches", false, "Include merged branches in the feed alongside the main branch")
 
 	journalNoteCmd.Flags().StringVar(&journalNoteEntry, "entry", "", "Journal entry ID to attach the note to")
 

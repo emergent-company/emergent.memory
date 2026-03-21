@@ -11,6 +11,7 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 )
@@ -23,8 +24,14 @@ var Module = fx.Module("graph",
 	fx.Provide(provideSchemaProvider),
 	fx.Provide(provideInverseTypeProvider),
 	fx.Provide(provideEmbeddingService),
+	fx.Provide(provideBranchStore),
 	fx.Invoke(RegisterRoutes),
 )
+
+// provideBranchStore bridges *branches.Store to the graph.branchStoreIface.
+func provideBranchStore(s *branches.Store) branchStoreIface {
+	return s
+}
 
 // provideEmbeddingService bridges *embeddings.Service to the graph.EmbeddingService interface.
 func provideEmbeddingService(svc *embeddings.Service) EmbeddingService {

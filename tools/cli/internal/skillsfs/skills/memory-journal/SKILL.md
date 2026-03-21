@@ -21,8 +21,9 @@ memory journal list --since 30m        # last 30 minutes
 memory journal list --since 2026-01-15T10:00:00Z  # since ISO-8601 timestamp
 memory journal list --limit 50         # cap results
 memory journal list --output json      # machine-readable
-memory journal list --branch my-feature       # entries from a specific branch
-memory journal list --branch <branch-uuid>    # entries from branch by UUID
+memory journal list --branch my-feature          # entries from a specific branch
+memory journal list --branch <branch-uuid>        # entries from branch by UUID
+memory journal list --include-branches            # main branch + all merged branches
 ```
 
 ### Add a note
@@ -70,16 +71,17 @@ memory journal note --entry <entry-id> "explanation"  # attach to a specific ent
 
 When operating via MCP, use these tools:
 
-- **`journal-list`** — list recent journal entries; accepts `since` (e.g. `"7d"`), `limit`, and optional `branch_id` (UUID) to filter by branch (omit for main branch)
+- **`journal-list`** — list recent journal entries; accepts `since` (e.g. `"7d"`), `limit`, optional `branch_id` (UUID) to filter by branch, and `include_branches` (bool) to include all merged branches alongside main
 - **`journal-add-note`** — add a note; accepts `body` (required) and optional `journal_id` to attach to an entry
 
 ## API
 
 ```
-GET  /api/graph/journal?since=7d&limit=100           # main branch entries
-GET  /api/graph/journal?branch=my-feature&since=7d   # entries for a named branch
-GET  /api/graph/journal?branch=<uuid>&since=7d        # entries for a branch by UUID
-POST /api/graph/journal/notes                         # add a note
+GET  /api/graph/journal?since=7d&limit=100                      # main branch entries
+GET  /api/graph/journal?branch=my-feature&since=7d              # entries for a named branch
+GET  /api/graph/journal?branch=<uuid>&since=7d                  # entries for a branch by UUID
+GET  /api/graph/journal?include_branches=true&since=7d          # main + all merged branches
+POST /api/graph/journal/notes                                    # add a note
 ```
 
 ## Workflow Tips

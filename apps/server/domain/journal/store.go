@@ -6,16 +6,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/domain/branches"
 )
 
 // Repository handles DB access for the journal domain.
 type Repository struct {
-	db bun.IDB
+	db          bun.IDB
+	branchStore *branches.Store
 }
 
 // NewRepository creates a new Repository.
-func NewRepository(db bun.IDB) *Repository {
-	return &Repository{db: db}
+func NewRepository(db bun.IDB, branchStore *branches.Store) *Repository {
+	return &Repository{db: db, branchStore: branchStore}
 }
 
 // Insert inserts a new journal entry.
@@ -51,7 +54,26 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*JournalEnt
 		Limit(limit).
 		Offset(offset)
 
-	if params.BranchID != nil {
+	if params.IncludeBranches {
+		// Include main branch (NULL) plus all merged branches.
+		mergedBranches, err := r.branchStore.ListMerged(ctx, strPtr(params.ProjectID.String()))
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(mergedBranches) == 0 {
+			q = q.Where("je.branch_id IS NULL")
+		} else {
+			ids := make([]uuid.UUID, len(mergedBranches))
+			for i, b := range mergedBranches {
+				id, parseErr := uuid.Parse(b.ID)
+				if parseErr != nil {
+					return nil, 0, parseErr
+				}
+				ids[i] = id
+			}
+			q = q.Where("(je.branch_id IS NULL OR je.branch_id IN (?))", bun.In(ids))
+		}
+	} else if params.BranchID != nil {
 		q = q.Where("je.branch_id = ?", params.BranchID)
 	} else {
 		q = q.Where("je.branch_id IS NULL")
@@ -98,7 +120,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*JournalEnt
 }
 
 // ListStandaloneNotes returns notes with no journal_id for a project, optionally filtered by branch.
-func (r *Repository) ListStandaloneNotes(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID, since *time.Time, limit int) ([]*JournalNote, error) {
+func (r *Repository) ListStandaloneNotes(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID, since *time.Time, limit int, includeBranches bool) ([]*JournalNote, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -109,11 +131,31 @@ func (r *Repository) ListStandaloneNotes(ctx context.Context, projectID uuid.UUI
 		Where("jn.journal_id IS NULL").
 		OrderExpr("jn.created_at DESC").
 		Limit(limit)
-	if branchID != nil {
+
+	if includeBranches {
+		mergedBranches, err := r.branchStore.ListMerged(ctx, strPtr(projectID.String()))
+		if err != nil {
+			return nil, err
+		}
+		if len(mergedBranches) == 0 {
+			q = q.Where("jn.branch_id IS NULL")
+		} else {
+			ids := make([]uuid.UUID, len(mergedBranches))
+			for i, b := range mergedBranches {
+				id, parseErr := uuid.Parse(b.ID)
+				if parseErr != nil {
+					return nil, parseErr
+				}
+				ids[i] = id
+			}
+			q = q.Where("(jn.branch_id IS NULL OR jn.branch_id IN (?))", bun.In(ids))
+		}
+	} else if branchID != nil {
 		q = q.Where("jn.branch_id = ?", branchID)
 	} else {
 		q = q.Where("jn.branch_id IS NULL")
 	}
+
 	if since != nil {
 		q = q.Where("jn.created_at >= ?", since)
 	}
@@ -121,3 +163,6 @@ func (r *Repository) ListStandaloneNotes(ctx context.Context, projectID uuid.UUI
 	err := q.Scan(ctx, &notes)
 	return notes, err
 }
+
+// strPtr returns a pointer to s.
+func strPtr(s string) *string { return &s }

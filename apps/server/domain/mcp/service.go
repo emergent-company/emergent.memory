@@ -863,6 +863,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					Type:        "string",
 					Description: "Optional branch UUID to filter entries by branch. Omit to view main branch entries only.",
 				},
+				"include_branches": {
+					Type:        "boolean",
+					Description: "When true, includes entries from the main branch and all merged branches in a unified time-sorted feed.",
+				},
 			},
 			Required: []string{},
 		},
@@ -5019,6 +5023,10 @@ func (s *Service) executeJournalList(ctx context.Context, projectID string, args
 		if id, err := uuid.Parse(branchIDStr); err == nil {
 			params.BranchID = &id
 		}
+	}
+
+	if includeBranches, _ := args["include_branches"].(bool); includeBranches {
+		params.IncludeBranches = true
 	}
 
 	resp, err := s.journalSvc.List(ctx, params)

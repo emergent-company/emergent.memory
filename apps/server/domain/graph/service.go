@@ -57,6 +57,11 @@ type RelationshipEmbeddingEnqueuer interface {
 	EnqueueRelationshipEmbedding(ctx context.Context, relationshipID string) error
 }
 
+// branchStoreIface is a minimal interface for branch store operations needed by the graph service.
+type branchStoreIface interface {
+	SetMergedAt(ctx context.Context, branchID string, mergedAt time.Time) error
+}
+
 // Service handles business logic for graph operations.
 type Service struct {
 	repo                 *Repository
@@ -67,6 +72,7 @@ type Service struct {
 	embeddingEnqueuer    EmbeddingEnqueuer
 	relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer
 	journal              *journal.Service
+	branchStore          branchStoreIface
 
 	// Metrics
 	metricsMu          sync.RWMutex
@@ -76,7 +82,7 @@ type Service struct {
 }
 
 // NewService creates a new graph service.
-func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer, journalSvc *journal.Service) *Service {
+func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer, journalSvc *journal.Service, branchStore branchStoreIface) *Service {
 	return &Service{
 		repo:                 repo,
 		log:                  log.With(logger.Scope("graph.svc")),
@@ -86,6 +92,7 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 		embeddingEnqueuer:    embeddingEnqueuer,
 		relEmbeddingEnqueuer: relEmbeddingEnqueuer,
 		journal:              journalSvc,
+		branchStore:          branchStore,
 	}
 }
 
@@ -3048,6 +3055,15 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 					"relationships_merged": relsMerged,
 				},
 			})
+		}
+
+		// Stamp the source branch as merged.
+		if s.branchStore != nil {
+			if err := s.branchStore.SetMergedAt(ctx, req.SourceBranchID.String(), time.Now().UTC()); err != nil {
+				s.log.Warn("failed to stamp branch merged_at",
+					slog.String("branch_id", req.SourceBranchID.String()),
+					slog.String("error", err.Error()))
+			}
 		}
 	}
 

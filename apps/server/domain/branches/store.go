@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/uptrace/bun"
 )
@@ -178,5 +179,30 @@ func (s *Store) DeleteBranchLineage(ctx context.Context, branchID string) error 
 		DELETE FROM kb.branch_lineage WHERE branch_id = ?
 	`, branchID).Exec(ctx)
 	// Ignore errors if table doesn't exist
+	return err
+}
+
+// ListMerged returns all branches that have been merged (merged_at IS NOT NULL),
+// optionally filtered by project_id.
+func (s *Store) ListMerged(ctx context.Context, projectID *string) ([]*Branch, error) {
+	var branches []*Branch
+	q := s.db.NewSelect().Model(&branches).Where("merged_at IS NOT NULL").Order("merged_at ASC")
+	if projectID != nil {
+		q = q.Where("project_id = ?", *projectID)
+	}
+	err := q.Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return branches, nil
+}
+
+// SetMergedAt stamps a branch as merged by setting merged_at.
+func (s *Store) SetMergedAt(ctx context.Context, branchID string, mergedAt time.Time) error {
+	_, err := s.db.NewUpdate().
+		Model((*Branch)(nil)).
+		Set("merged_at = ?", mergedAt).
+		Where("id = ?", branchID).
+		Exec(ctx)
 	return err
 }
