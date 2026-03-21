@@ -189,11 +189,17 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 	var response strings.Builder
 	var tools []string
 	var streamErr string
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB max token — SSE events can be large
+	reader := bufio.NewReader(resp.Body)
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err != io.EOF {
+				return fmt.Errorf("error reading response: %w", err)
+			}
+			break
+		}
+		line = strings.TrimRight(line, "\r\n")
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -234,10 +240,6 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 	}
 
 	elapsed := time.Since(start)
-
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error reading response: %w", err)
-	}
 
 	if askJSON || output == "json" {
 		output := map[string]interface{}{
