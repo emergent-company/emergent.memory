@@ -120,7 +120,7 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	}
 
 	start := time.Now()
-	httpClient := &http.Client{Timeout: 120 * time.Second}
+	httpClient := &http.Client{Timeout: 0} // no timeout — SSE streams until server closes; server enforces its own agent timeout
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)

@@ -173,7 +173,7 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 	}
 
 	start := time.Now()
-	httpClient := &http.Client{Timeout: 180 * time.Second}
+	httpClient := &http.Client{Timeout: 0} // no timeout — SSE streams until server closes; server enforces its own agent timeout
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
