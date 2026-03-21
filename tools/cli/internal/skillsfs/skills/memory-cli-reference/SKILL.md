@@ -2322,6 +2322,7 @@ memory graph objects list [flags]
       --filter stringArray   Property filter as key=value (repeatable); see --filter-op
       --filter-op string     Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists (default "eq")
   -h, --help                 help for list
+      --ids string           Fetch specific objects by ID (comma-separated: --ids id1,id2,id3)
       --limit int            Maximum number of results (server default: 1000) (default 1000)
       --status string        Filter by object status
       --type string          Filter by object type
@@ -2513,96 +2514,6 @@ memory graph relationships list [flags]
       --type string     Filter by relationship type
 ```
 
-## memory journal
-
-Query and annotate the project journal
-
-### Synopsis
-
-The project journal is an automatic, server-side activity log for the knowledge graph.
-Every mutation (object created/updated/deleted, relationships batched, branches merged)
-is logged automatically. You can also add manual markdown notes, standalone or attached
-to a specific entry.
-
-### Options
-
-```
-  -h, --help             help for journal
-      --output string    output format (table, json) (default "table")
-      --project string   Project ID (overrides config/env)
-```
-
-## memory journal list
-
-List recent journal entries
-
-### Synopsis
-
-List recent activity from the project journal, including automatic mutation events
-and manual notes. Defaults to the last 7 days.
-
-### Usage
-
-```
-memory journal list [flags]
-```
-
-### Options
-
-```
-  -h, --help               help for list
-      --branch string      branch name or UUID to filter by (omit for main branch)
-      --include-branches   include main branch and all merged branches in results
-      --limit int          maximum number of entries to return (default 100)
-      --output string      output format (table, json) (default "table")
-      --since string       show entries since this duration or ISO-8601 timestamp (default "7d")
-```
-
-### Examples
-
-```bash
-memory journal list                                    # last 7 days
-memory journal list --since 24h                        # last 24 hours
-memory journal list --since 2026-01-15T10:00:00Z       # since ISO timestamp
-memory journal list --limit 50 --output json           # cap results, JSON output
-memory journal list --branch my-feature                # entries for a branch
-memory journal list --include-branches                 # main + all merged branches
-```
-
-## memory journal note
-
-Add a note to the project journal
-
-### Synopsis
-
-Add a manual markdown note to the project journal. Notes can be standalone or
-attached to a specific journal entry via --entry.
-
-The note text can be passed as a positional argument, piped via stdin, or
-omitted to open $EDITOR.
-
-### Usage
-
-```
-memory journal note [text] [flags]
-```
-
-### Options
-
-```
-      --entry string   (optional) attach this note to a specific journal entry ID
-  -h, --help           help for note
-```
-
-### Examples
-
-```bash
-memory journal note "Skipped worker services — need schema clarification first."
-memory journal note                                        # opens $EDITOR
-echo "Some context" | memory journal note                  # pipe from stdin
-memory journal note --entry <entry-id> "explanation"       # attach to a specific entry
-```
-
 ## memory init
 
 Initialize a Memory project in the current directory
@@ -2651,6 +2562,10 @@ that teach AI agents how to use the Memory CLI and platform.
 By default the command skips skills that already exist. Use --force to
 overwrite existing skill directories.
 
+After installing, any "memory-" prefixed skill directories in the target that
+are no longer present in the catalog are considered stale. Use --prune to
+remove them automatically, or run interactively to be prompted for each one.
+
 ```
 memory install-memory-skills [flags]
 ```
@@ -2661,6 +2576,76 @@ memory install-memory-skills [flags]
       --dir string   target directory (default: .agents/skills relative to cwd)
       --force        overwrite existing skill directories
   -h, --help         help for install-memory-skills
+      --prune        remove stale memory-* skill directories not present in the catalog
+```
+
+## memory journal
+
+View and annotate the project journal
+
+### Options
+
+```
+  -h, --help   help for journal
+```
+
+## memory journal list
+
+List project journal entries
+
+### Synopsis
+
+List recent graph mutations and notes for the current project.
+
+Output is a log-style feed showing each event with timestamp, actor, event type,
+and relevant details. Notes are printed inline with entries or at the end (for
+standalone notes).
+
+Use --since to filter by age (e.g. 7d, 24h, 1h). Defaults to last 7 days.
+Use --limit to control the maximum number of entries returned.
+Use --output json for machine-readable output.
+
+```
+memory journal list [flags]
+```
+
+### Options
+
+```
+      --branch string      Branch name or UUID (omit for main branch)
+  -h, --help               help for list
+      --include-branches   Include merged branches in the feed alongside the main branch
+      --limit int          Maximum number of entries to return (default 100)
+      --since string       Show entries from the last duration (e.g. 7d, 24h, 1h) (default "7d")
+```
+
+## memory journal note
+
+Add a note to the project journal
+
+### Synopsis
+
+Add a markdown note to the project journal.
+
+The note body can be passed as an argument, piped via stdin, or entered
+interactively in your $EDITOR when no argument or stdin is provided.
+
+Use --entry <journal-entry-id> to attach the note to a specific journal entry.
+
+Examples:
+  memory journal note "Skipped worker services — need schema clarification first."
+  echo "Some context" | memory journal note
+  memory journal note --entry <entry-id> "Removed legacy auth service"
+
+```
+memory journal note [text] [flags]
+```
+
+### Options
+
+```
+      --entry string   Journal entry ID to attach the note to
+  -h, --help           help for note
 ```
 
 ## memory login
@@ -3460,6 +3445,7 @@ memory query <question> [flags]
       --mode string              Query mode: agent (default, AI reasoning) or search (direct hybrid search) (default "agent")
       --project string           Project ID to query (uses default project if not specified)
       --result-types string      Types of results: graph, text, or both (search mode only) (default "both")
+      --session string           Continue a previous query session (use the session ID printed after a query)
       --show-scores              Show relevance scores for each result (search mode only)
       --show-time                Show elapsed query time
       --show-tools               Show tool calls made by the agent (agent mode only)
