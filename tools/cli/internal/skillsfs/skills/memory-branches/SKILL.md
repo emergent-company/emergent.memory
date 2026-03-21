@@ -40,7 +40,7 @@ create branch → write objects/relationships with --branch <id> → verify → 
 
 ```bash
 # Create a branch scoped to the current project:
-MEMORY_PROJECT=$MP memory graph branches create \
+memory graph branches create \
   --name "plan/add-auth-service" \
   --description "Staging area for auth service v2 design"
 ```
@@ -56,7 +56,7 @@ Created:  2026-03-15T10:00:00Z
 
 **Capture the branch ID immediately:**
 ```bash
-BRANCH_ID=$(MEMORY_PROJECT=$MP memory graph branches create \
+BRANCH_ID=$(memory graph branches create \
   --name "plan/add-auth-service" \
   --description "Staging area for auth service v2 design" \
   --output json | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
@@ -71,13 +71,13 @@ Pass `--branch <id>` to every graph write command. Without it, writes go to the 
 
 ```bash
 # Create an object on the branch:
-MEMORY_PROJECT=$MP memory graph objects create \
+memory graph objects create \
   --type Service --key "svc-auth-v2" --name "auth-service-v2" \
   --status planned \
   --branch "$BRANCH_ID"
 
 # Create a relationship on the branch:
-MEMORY_PROJECT=$MP memory graph relationships create \
+memory graph relationships create \
   --type depends_on --from <src-entity-id> --to <dst-entity-id> \
   --branch "$BRANCH_ID"
 
@@ -92,16 +92,16 @@ MEMORY_PROJECT=$MP memory graph relationships create \
 
 ```bash
 # List objects on the branch:
-MEMORY_PROJECT=$MP memory graph objects list --branch "$BRANCH_ID"
+memory graph objects list --branch "$BRANCH_ID"
 
 # List objects of a specific type on the branch:
-MEMORY_PROJECT=$MP memory graph objects list --type Service --branch "$BRANCH_ID"
+memory graph objects list --type Service --branch "$BRANCH_ID"
 
 # List relationships on the branch:
-MEMORY_PROJECT=$MP memory graph relationships list --branch "$BRANCH_ID"
+memory graph relationships list --branch "$BRANCH_ID"
 
 # List all branches for the project:
-MEMORY_PROJECT=$MP memory graph branches list
+memory graph branches list
 ```
 
 ---
@@ -119,17 +119,17 @@ Before merging, always preview what will change. The dry run classifies each div
 
 ```bash
 # Dry run (default — no changes made):
-MEMORY_PROJECT=$MP memory graph branches merge main \
+memory graph branches merge main \
   --source "$BRANCH_ID"
 
 # Get full conflict details as JSON:
-MEMORY_PROJECT=$MP memory graph branches merge main \
+memory graph branches merge main \
   --source "$BRANCH_ID" --output json
 ```
 
 > **Merging into main:** Use the special keyword `main` as the target — the main graph has no branch ID and does not appear in `branches list`.
 > ```bash
-> MEMORY_PROJECT=$MP memory graph branches merge main --source "$BRANCH_ID"
+> memory graph branches merge main --source "$BRANCH_ID"
 > ```
 
 ---
@@ -137,7 +137,7 @@ MEMORY_PROJECT=$MP memory graph branches merge main \
 ## Step 5 — Execute the merge
 
 ```bash
-MEMORY_PROJECT=$MP memory graph branches merge main \
+memory graph branches merge main \
   --source "$BRANCH_ID" --execute
 ```
 
@@ -163,7 +163,7 @@ Objects (3 total):
 After a successful merge, delete the branch to keep the list clean:
 
 ```bash
-MEMORY_PROJECT=$MP memory graph branches delete "$BRANCH_ID"
+memory graph branches delete "$BRANCH_ID"
 ```
 
 ---
@@ -174,48 +174,48 @@ MEMORY_PROJECT=$MP memory graph branches delete "$BRANCH_ID"
 export MP=ea62f9f7-396a-4b1e-912b-3b5579a7cf0a
 
 # 1. Create branch
-BRANCH_ID=$(MEMORY_PROJECT=$MP memory graph branches create \
+BRANCH_ID=$(memory graph branches create \
   --name "plan/add-payment-service" --output json \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
 echo "Working on branch: $BRANCH_ID"
 
 # 2. Create objects on the branch
-MEMORY_PROJECT=$MP memory graph objects create \
+memory graph objects create \
   --type Service --key "svc-payments" --name "payments-service" \
   --status planned --branch "$BRANCH_ID"
 
-MEMORY_PROJECT=$MP memory graph objects create \
+memory graph objects create \
   --type ExternalDependency --key "dep-stripe" --name "Stripe" \
   --branch "$BRANCH_ID"
 
 # 3. Wire relationships on the branch
-PAYMENTS_ID=$(MEMORY_PROJECT=$MP memory graph objects list \
+PAYMENTS_ID=$(memory graph objects list \
   --type Service --branch "$BRANCH_ID" --output json \
   | python3 -c "import json,sys; d=json.load(sys.stdin); \
     print(next(o['entity_id'] for o in d['items'] if o.get('key')=='svc-payments'))")
 
-STRIPE_ID=$(MEMORY_PROJECT=$MP memory graph objects list \
+STRIPE_ID=$(memory graph objects list \
   --type ExternalDependency --branch "$BRANCH_ID" --output json \
   | python3 -c "import json,sys; d=json.load(sys.stdin); \
     print(next(o['entity_id'] for o in d['items'] if o.get('key')=='dep-stripe'))")
 
-MEMORY_PROJECT=$MP memory graph relationships create \
+memory graph relationships create \
   --type uses_dependency --from "$PAYMENTS_ID" --to "$STRIPE_ID" \
   --branch "$BRANCH_ID"
 
 # 4. Verify branch contents
-MEMORY_PROJECT=$MP memory graph objects list --branch "$BRANCH_ID"
+memory graph objects list --branch "$BRANCH_ID"
 
 # 5. Preview merge into main (use the keyword "main" — no ID needed)
-MEMORY_PROJECT=$MP memory graph branches merge main \
+memory graph branches merge main \
   --source "$BRANCH_ID"
 
 # 6. Execute merge into main
-MEMORY_PROJECT=$MP memory graph branches merge main \
+memory graph branches merge main \
   --source "$BRANCH_ID" --execute
 
 # 8. Cleanup
-MEMORY_PROJECT=$MP memory graph branches delete "$BRANCH_ID"
+memory graph branches delete "$BRANCH_ID"
 ```
 
 ---
@@ -224,22 +224,22 @@ MEMORY_PROJECT=$MP memory graph branches delete "$BRANCH_ID"
 
 ```bash
 # List all branches for the project (shows ID, name, description, parent, created):
-MEMORY_PROJECT=$MP memory graph branches list
+memory graph branches list
 
 # Get details for a specific branch:
-MEMORY_PROJECT=$MP memory graph branches get <branch-id>
+memory graph branches get <branch-id>
 
 # Rename a branch:
-MEMORY_PROJECT=$MP memory graph branches update <branch-id> --name "new-name"
+memory graph branches update <branch-id> --name "new-name"
 
 # Update description only:
-MEMORY_PROJECT=$MP memory graph branches update <branch-id> --description "new purpose"
+memory graph branches update <branch-id> --description "new purpose"
 
 # Rename and update description:
-MEMORY_PROJECT=$MP memory graph branches update <branch-id> --name "new-name" --description "new purpose"
+memory graph branches update <branch-id> --name "new-name" --description "new purpose"
 
 # Delete a branch:
-MEMORY_PROJECT=$MP memory graph branches delete <branch-id>
+memory graph branches delete <branch-id>
 ```
 
 ## Querying a branch
@@ -249,10 +249,10 @@ Without `--branch`, the main graph is searched. `--branch` is not supported in a
 
 ```bash
 # Search the main graph:
-MEMORY_PROJECT=$MP memory query --mode=search "planned services"
+memory query --mode=search "planned services"
 
 # Search a specific branch:
-MEMORY_PROJECT=$MP memory query --mode=search --branch "$BRANCH_ID" "planned services"
+memory query --mode=search --branch "$BRANCH_ID" "planned services"
 ```
 
 ---
