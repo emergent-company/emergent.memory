@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"path/filepath"
 	"strings"
 	"time"
@@ -202,8 +203,16 @@ func (c *Client) ExtractText(ctx context.Context, content []byte, filename, mime
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
-	// Kreuzberg expects the field name to be 'file' (singular)
-	part, err := writer.CreateFormFile("file", filename)
+	// Kreuzberg v4+ expects the field name to be 'files' (plural) and
+	// requires the correct Content-Type for each file part (not octet-stream).
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files"; filename="%s"`, filename))
+	ct := mimeType
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	h.Set("Content-Type", ct)
+	part, err := writer.CreatePart(h)
 	if err != nil {
 		return nil, fmt.Errorf("create form file: %w", err)
 	}
@@ -277,11 +286,15 @@ func (c *Client) ExtractText(ctx context.Context, content []byte, filename, mime
 		return nil, c.handleErrorResponse(resp.StatusCode, body, filename)
 	}
 
-	// Kreuzberg returns a single result object (not an array)
-	var result ExtractResult
-	if err := json.Unmarshal(body, &result); err != nil {
+	// Kreuzberg v4+ returns an array of results (one per file submitted)
+	var results []ExtractResult
+	if err := json.Unmarshal(body, &results); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("kreuzberg returned empty results for %s", filename)
+	}
+	result := results[0]
 
 	duration := time.Since(startTime)
 
