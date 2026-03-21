@@ -224,10 +224,9 @@ func resolveProjectContext(cmd *cobra.Command, flagValue string) (string, error)
 
 // isNonInteractive returns true when the CLI is running in a context where
 // interactive prompts must not be shown: a CI environment (CI env var set),
-// an explicit opt-out (NO_PROMPT env var), or when stdin is not a real
-// terminal (piped / redirected input).
+// or when stdin is not a real terminal (piped / redirected / agent-driven input).
 func isNonInteractive() bool {
-	if os.Getenv("CI") != "" || os.Getenv("NO_PROMPT") != "" {
+	if os.Getenv("CI") != "" {
 		return true
 	}
 	return !term.IsTerminal(int(os.Stdin.Fd()))

@@ -10,9 +10,7 @@ Write to (and look up from) the Memory knowledge graph — creating, updating, a
 
 ## Rules
 
-- **Never run `memory browse`** — it launches a full interactive TUI that blocks on terminal input and will hang in an automated agent context.
-- **Always prefix `memory` commands with `NO_PROMPT=1`** (e.g. `NO_PROMPT=1 memory <cmd>`). Without it, the CLI may show interactive pickers. Do not add this to `.env.local` — it must only apply to agent-driven invocations.
-- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` is set.
+- **Project context is auto-discovered** — the CLI walks up the directory tree to find `.env.local` containing `MEMORY_PROJECT` or `MEMORY_PROJECT_ID`. If `.env.local` is present anywhere above the current directory, `--project` is not needed. Only pass `--project <id>` explicitly when overriding or when no `.env.local` exists.
 - **Use only `memory` CLI commands** — never `curl`, raw HTTP requests, or direct API calls.
 - **Always set `key` on every object you create** — see [Key discipline](#key-discipline) below. Objects without a `key` cannot be referenced by name in future sessions and require expensive UUID lookups.
 - **Trust this skill over `--help` output** — `--help` text may lag behind the installed binary. If this skill documents a flag or format, it works even if `--help` doesn't show it yet.
@@ -103,11 +101,11 @@ A `key` is a stable, human-readable slug you control — e.g. `svc-auth`, `file-
 
 ```bash
 # Retroactively set a key on an existing object (v0.35.69+):
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects update <id> --key "file-src-main-go"
+MEMORY_PROJECT=$MP memory graph objects update <id> --key "file-src-main-go"
 
 # Bulk retroactive keying from a list of id/key pairs:
 while IFS=$'\t' read -r id key; do
-  NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects update "$id" --key "$key"
+  MEMORY_PROJECT=$MP memory graph objects update "$id" --key "$key"
 done < /tmp/id_key_pairs.tsv
 ```
 
@@ -133,7 +131,7 @@ Use this when you need to create objects **and** wire relationships between them
 ### Step 1 — Check available types
 
 ```bash
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory schemas compiled-types
+MEMORY_PROJECT=$MP memory schemas compiled-types
 ```
 
 ### Step 2 — Write the subgraph file
@@ -180,7 +178,7 @@ This eliminates the two-pass workflow — no need to create objects first, captu
 ### Step 3 — Create the subgraph
 
 ```bash
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/subgraph.json
+MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/subgraph.json
 ```
 
 Text output: one `<entity-id>  <type>  <name>` line per object, then `Created N objects, M relationships`.
@@ -188,7 +186,7 @@ Text output: one `<entity-id>  <type>  <name>` line per object, then `Created N 
 To capture the `ref_map` (placeholder → UUID) for chaining:
 
 ```bash
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch \
+MEMORY_PROJECT=$MP memory graph objects create-batch \
   --file /tmp/subgraph.json --output json | tee /tmp/subgraph_result.json
 
 # Extract a specific ID:
@@ -198,7 +196,7 @@ AUTH_ID=$(python3 -c "import json,sys; d=json.load(open('/tmp/subgraph_result.js
 ### Step 4 — Verify
 
 ```bash
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory query "what services exist and what do they depend on?"
+MEMORY_PROJECT=$MP memory query "what services exist and what do they depend on?"
 ```
 
 ---
@@ -245,7 +243,7 @@ for i, chunk in enumerate(chunks):
 
 ```bash
 for f in /tmp/subgraph_chunk_*.json; do
-  NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file "$f"
+  MEMORY_PROJECT=$MP memory graph objects create-batch --file "$f"
 done
 ```
 
@@ -258,7 +256,7 @@ Use this when creating objects with no relationships to wire.
 ### Step 1 — Check available types
 
 ```bash
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory schemas compiled-types
+MEMORY_PROJECT=$MP memory schemas compiled-types
 ```
 
 ### Step 2 — Write the objects batch file
@@ -277,7 +275,7 @@ EOF
 ### Step 3 — Create objects and capture IDs
 
 ```bash
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json \
+MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json \
   | tee /tmp/batch_output.txt
 ```
 
@@ -303,7 +301,7 @@ print(f'{len(data)} objects → {-(-len(data)//200)} batches')
 "
 
 for f in /tmp/objects_batch_*.json; do
-  NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file "$f" \
+  MEMORY_PROJECT=$MP memory graph objects create-batch --file "$f" \
     | tee -a /tmp/batch_output.txt
 done
 ```
@@ -318,7 +316,7 @@ cat > /tmp/relationships.json << EOF
 ]
 EOF
 
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create-batch --file /tmp/relationships.json
+MEMORY_PROJECT=$MP memory graph relationships create-batch --file /tmp/relationships.json
 ```
 
 ---
@@ -362,7 +360,7 @@ print(f"{len(objects)} objects written to /tmp/subgraph.json")
 
 ```bash
 python3 /tmp/gen_subgraph.py
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/subgraph.json
+MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/subgraph.json
 ```
 
 ---
@@ -373,14 +371,14 @@ NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/sub
 
 ```bash
 # Update properties:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects update <id> \
+MEMORY_PROJECT=$MP memory graph objects update <id> \
   --properties '{"status": "deprecated", "replacement": "auth-service-v2"}'
 
 # Set a stable key (enables cross-session src_key/dst_key references):
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects update <id> --key "svc-auth"
+MEMORY_PROJECT=$MP memory graph objects update <id> --key "svc-auth"
 
 # Both at once:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects update <id> \
+MEMORY_PROJECT=$MP memory graph objects update <id> \
   --key "svc-auth" --properties '{"status": "active"}'
 ```
 
@@ -392,11 +390,11 @@ Use `key` when a script may re-run and you want skip-or-update semantics. Works 
 
 ```bash
 # Single-create with key (skip if already exists):
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+MEMORY_PROJECT=$MP memory graph objects create \
   --type Service --key "svc-auth" --name "auth-service" --description "..."
 
 # Single-create with key + upsert (create-or-update):
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+MEMORY_PROJECT=$MP memory graph objects create \
   --type Service --key "svc-auth" --name "auth-service" --description "..." --upsert
 ```
 
@@ -412,38 +410,38 @@ Find an object ID by type and name when you don't have it.
 
 ```bash
 # List all objects of a type (table view, up to 1000):
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --type Service
+MEMORY_PROJECT=$MP memory graph objects list --type Service
 
 # Table output shows "Showing N of M total" when truncated — if you see this, paginate.
 
 # Get ID for a specific name (JSON + python):
 # JSON output shape: {"items": [...], "total": N, "next_cursor": "..."}
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --type Service --output json \
+MEMORY_PROJECT=$MP memory graph objects list --type Service --output json \
   | python3 -c "import json,sys; d=json.load(sys.stdin); \
     print(next(o['entity_id'] for o in d['items'] if o['properties'].get('name')=='auth-service'))"
 
 # Filter by a property value (--filter key=value, repeatable, default op: eq):
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --type APIEndpoint \
+MEMORY_PROJECT=$MP memory graph objects list --type APIEndpoint \
   --filter domain=cases --output json
 
 # Filter operators: eq (default), neq, gt, gte, lt, lte, contains, in, exists
 # --filter-op sets the operator for all --filter flags in the same call:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --type APIEndpoint \
+MEMORY_PROJECT=$MP memory graph objects list --type APIEndpoint \
   --filter method=GET --filter-op eq --output json
 
 # Paginate beyond 1000 (rare — use next_cursor from previous response):
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --type APIEndpoint --limit 1000 --output json \
+MEMORY_PROJECT=$MP memory graph objects list --type APIEndpoint --limit 1000 --output json \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('next_cursor') or '')"
 # Then: memory graph objects list --type APIEndpoint --cursor <next_cursor>
 
 # Get full details for a known ID:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects get <id>
+MEMORY_PROJECT=$MP memory graph objects get <id>
 
 # Show all edges (relationships) for an object:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects edges <id>
+MEMORY_PROJECT=$MP memory graph objects edges <id>
 
 # List relationships of a specific type:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships list --type depends_on
+MEMORY_PROJECT=$MP memory graph relationships list --type depends_on
 ```
 
 ---
@@ -454,10 +452,10 @@ Deletes are soft — objects are marked deleted but not purged:
 
 ```bash
 # Delete an object:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects delete <id>
+MEMORY_PROJECT=$MP memory graph objects delete <id>
 
 # Delete a relationship (get its ID from `relationships list` first):
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships delete <id>
+MEMORY_PROJECT=$MP memory graph relationships delete <id>
 ```
 
 ---
@@ -467,10 +465,10 @@ NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships delete <id>
 Use single-create **only** when adding one isolated object after the graph is already populated:
 
 ```bash
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+MEMORY_PROJECT=$MP memory graph objects create \
   --type Service --name "new-service" --description "..."
 
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create \
+MEMORY_PROJECT=$MP memory graph relationships create \
   --type depends_on --from <source-id> --to <target-id>
 ```
 
@@ -482,15 +480,15 @@ To scope writes to a branch, pass `--branch <branch-id>` to any write command. W
 
 ```bash
 # Create an object on a branch:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+MEMORY_PROJECT=$MP memory graph objects create \
   --type Service --key "svc-auth" --name "auth-service" \
   --status planned --branch "$BRANCH_ID"
 
 # List objects on a branch:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects list --branch "$BRANCH_ID"
+MEMORY_PROJECT=$MP memory graph objects list --branch "$BRANCH_ID"
 
 # Create a relationship on a branch:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create \
+MEMORY_PROJECT=$MP memory graph relationships create \
   --type depends_on --from <src-id> --to <dst-id> --branch "$BRANCH_ID"
 ```
 

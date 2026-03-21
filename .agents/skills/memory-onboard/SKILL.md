@@ -10,9 +10,7 @@ Onboard the current project into Memory by understanding what it is, selecting o
 
 ## Rules
 
-- **Never run `memory browse`** — it launches a full interactive TUI that blocks on terminal input and will hang in an automated agent context.
-- **Always prefix `memory` commands with `NO_PROMPT=1`** (e.g. `NO_PROMPT=1 memory <cmd>`). Without it, the CLI may show interactive pickers when no project, agent, MCP server, skill, or agent-definition ID is provided. Do not add this to `.env.local` — it must only apply to agent-driven invocations.
-- **Always supply a project** with `--project <id>` on project-scoped commands, or ensure `MEMORY_PROJECT` (or `MEMORY_PROJECT_ID`) is set.
+- **Project context is auto-discovered** — the CLI walks up the directory tree to find `.env.local` containing `MEMORY_PROJECT` or `MEMORY_PROJECT_ID`. If `.env.local` is present anywhere above the current directory, `--project` is not needed. Only pass `--project <id>` explicitly when overriding or when no `.env.local` exists.
 - **Use only `memory` CLI commands** throughout this workflow. Never use `curl`, raw HTTP requests, or direct API calls — the CLI handles authentication and project context automatically.
 
 ---
@@ -209,7 +207,7 @@ other backend services.
 #### Apply the project info
 
 ```bash
-NO_PROMPT=1 memory projects set-info --project <project-id> --file .memory/project-info.md
+memory projects set-info --project <project-id> --file .memory/project-info.md
 ```
 
 Confirm with the user:
@@ -339,14 +337,14 @@ cat > /tmp/objects.json << 'EOF'
 EOF
 
 # Create all objects in one call — output is one line per object: <id>  <type>  <name>
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json
+MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json
 ```
 
 Capture the IDs from the output immediately — you need them for relationships:
 
 ```bash
 # Parse IDs into shell variables for use in the relationships batch
-AUTH_ID=$(NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json | awk '/auth-service/ {print $1}')
+AUTH_ID=$(MEMORY_PROJECT=$MP memory graph objects create-batch --file /tmp/objects.json | awk '/auth-service/ {print $1}')
 # Or capture the full output and parse with grep/awk
 ```
 
@@ -365,7 +363,7 @@ cat > /tmp/relationships.json << 'EOF'
 ]
 EOF
 
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create-batch --file /tmp/relationships.json
+MEMORY_PROJECT=$MP memory graph relationships create-batch --file /tmp/relationships.json
 ```
 
 ##### Single-object creation (fallback only)
@@ -374,19 +372,19 @@ Use the single-create commands **only** when adding one isolated object after th
 
 ```bash
 # Single object — only when truly adding just one:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+MEMORY_PROJECT=$MP memory graph objects create \
   --type Service --name "auth-service" --description "Handles authentication"
 
 # With a stable key for idempotent re-runs (skip if already exists):
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+MEMORY_PROJECT=$MP memory graph objects create \
   --type Service --key "svc-auth" --name "auth-service"
 
 # With --upsert: create-or-update semantics:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph objects create \
+MEMORY_PROJECT=$MP memory graph objects create \
   --type Service --key "svc-auth" --name "auth-service" --upsert
 
 # Single relationship — only when adding one:
-NO_PROMPT=1 MEMORY_PROJECT=$MP memory graph relationships create \
+MEMORY_PROJECT=$MP memory graph relationships create \
   --type depends_on --from <source-id> --to <target-id>
 ```
 

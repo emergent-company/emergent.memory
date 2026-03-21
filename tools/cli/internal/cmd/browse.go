@@ -50,6 +50,10 @@ func deriveTempoURL(serverURL string) string {
 }
 
 func runBrowse(cmd *cobra.Command, args []string) error {
+	if isNonInteractive() {
+		return fmt.Errorf("memory browse requires an interactive terminal")
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
