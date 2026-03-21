@@ -322,17 +322,21 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 			s.log.Warn("failed to load schemas, skipping validation",
 				slog.String("project_id", projectID.String()),
 				slog.String("error", err.Error()))
-		} else if schema, ok := schemas.ObjectSchemas[req.Type]; ok {
-			start := time.Now()
-			validated, err := validateProperties(req.Properties, schema)
-			duration := time.Since(start)
+		} else if schemas.ObjectSchemas != nil {
+			if schema, ok := schemas.ObjectSchemas[req.Type]; ok {
+				start := time.Now()
+				validated, err := validateProperties(req.Properties, schema)
+				duration := time.Since(start)
 
-			if err != nil {
-				s.incrementValidationError(duration)
-				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+				if err != nil {
+					s.incrementValidationError(duration)
+					return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+				}
+				s.incrementValidationSuccess(duration)
+				validatedProps = validated
+			} else {
+				return nil, apperror.ErrBadRequest.WithMessage("object_type_not_allowed")
 			}
-			s.incrementValidationSuccess(duration)
-			validatedProps = validated
 		}
 	}
 
@@ -401,17 +405,21 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			s.log.Warn("failed to load schemas, skipping validation",
 				slog.String("project_id", projectID.String()),
 				slog.String("error", err.Error()))
-		} else if schema, ok := schemas.ObjectSchemas[req.Type]; ok {
-			start := time.Now()
-			validated, err := validateProperties(req.Properties, schema)
-			duration := time.Since(start)
+		} else if schemas.ObjectSchemas != nil {
+			if schema, ok := schemas.ObjectSchemas[req.Type]; ok {
+				start := time.Now()
+				validated, err := validateProperties(req.Properties, schema)
+				duration := time.Since(start)
 
-			if err != nil {
-				s.incrementValidationError(duration)
-				return nil, false, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+				if err != nil {
+					s.incrementValidationError(duration)
+					return nil, false, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+				}
+				s.incrementValidationSuccess(duration)
+				validatedProps = validated
+			} else {
+				return nil, false, apperror.ErrBadRequest.WithMessage("object_type_not_allowed")
 			}
-			s.incrementValidationSuccess(duration)
-			validatedProps = validated
 		}
 	}
 
@@ -634,11 +642,23 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		}
 	}
 
-	// Validate merged properties
+	// Validate patch delta properties against current schema.
+	// We only check the keys being added/changed by this patch — not the full merged set —
+	// so that objects created under an older schema version (with now-removed properties) can
+	// still be patched on unrelated fields. Required-field enforcement is intentionally skipped
+	// here; it applies at Create time, not on subsequent patches.
 	if schemas != nil {
 		if schema, ok := schemas.ObjectSchemas[current.Type]; ok {
 			start := time.Now()
-			validated, err := validateProperties(newProps, schema)
+			// Build a delta of only the keys actually being set (non-nil patch entries).
+			// Nil-valued entries mean "delete this property" and need no validation.
+			patchDelta := make(map[string]any)
+			for k, v := range req.Properties {
+				if v != nil {
+					patchDelta[k] = v
+				}
+			}
+			validatedDelta, err := validatePatchProperties(patchDelta, schema)
 			duration := time.Since(start)
 
 			if err != nil {
@@ -646,7 +666,10 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
 			}
 			s.incrementValidationSuccess(duration)
-			newProps = validated
+			// Merge coerced delta values back into newProps.
+			for k, v := range validatedDelta {
+				newProps[k] = v
+			}
 		}
 	}
 
@@ -1221,6 +1244,19 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 
 	// Attempt lock-free insert using ON CONFLICT DO NOTHING (protected by partial unique index).
 	// No advisory lock needed for the common "create new" path.
+
+	// Validate relationship type, endpoint types, and properties against schema.
+	if s.schemaProvider != nil {
+		schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if err != nil {
+			s.log.Warn("failed to load schemas for relationship validation, skipping",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", err.Error()))
+		} else if err := validateRelationship(req.Type, srcObj.Type, dstObj.Type, req.Properties, schemas); err != nil {
+			return nil, apperror.ErrBadRequest.WithMessage(err.Error())
+		}
+	}
+
 	rel := &GraphRelationship{
 		ProjectID:  projectID,
 		BranchID:   effectiveBranchID,
@@ -1539,6 +1575,36 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 	diff := computeChangeSummary(current.Properties, newProps)
 	if diff == nil && (req.Weight == nil || (current.Weight != nil && *req.Weight == *current.Weight)) {
 		return nil, apperror.ErrBadRequest.WithMessage("no_effective_change")
+	}
+
+	// Validate patch delta properties against schema (soft-fail on schema load error).
+	// Same delta-only approach as Patch: only validate properties being added/changed,
+	// not those already stored on the relationship from an older schema version.
+	if s.schemaProvider != nil {
+		schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if err != nil {
+			s.log.Warn("failed to load schemas for relationship patch validation, skipping",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", err.Error()))
+		} else if relSchema, ok := schemas.RelationshipSchemas[current.Type]; ok && (len(relSchema.Properties) > 0 || len(relSchema.Required) > 0) {
+			objSchema := agents.ObjectSchema{
+				Properties: relSchema.Properties,
+				Required:   relSchema.Required,
+			}
+			patchDelta := make(map[string]any)
+			for k, v := range req.Properties {
+				if v != nil {
+					patchDelta[k] = v
+				}
+			}
+			if validatedDelta, err := validatePatchProperties(patchDelta, objSchema); err != nil {
+				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+			} else {
+				for k, v := range validatedDelta {
+					newProps[k] = v
+				}
+			}
+		}
 	}
 
 	newVersion := &GraphRelationship{

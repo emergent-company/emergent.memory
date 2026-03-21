@@ -214,7 +214,7 @@ func validateProperties(
 	for key, value := range props {
 		propDef, hasDef := schema.Properties[key]
 		if !hasDef {
-			validated[key] = value
+			validationErrors = append(validationErrors, fmt.Sprintf("unknown property: %s", key))
 			continue
 		}
 
@@ -278,4 +278,144 @@ func validateProperties(
 	}
 
 	return validated, nil
+}
+
+// validatePatchProperties validates only the properties being set or added by a patch request
+// against the current schema. Unlike validateProperties it does NOT enforce required fields,
+// because the object already exists and may have been created under an older schema version
+// where those fields were not required (or didn't exist yet). Only keys present in patchProps
+// (i.e. the delta) are checked; keys already stored on the object that are not touched by the
+// patch are intentionally ignored.
+func validatePatchProperties(
+	patchProps map[string]any,
+	schema agents.ObjectSchema,
+) (map[string]any, error) {
+	if len(schema.Properties) == 0 {
+		return patchProps, nil
+	}
+
+	validated := make(map[string]any)
+	var validationErrors []string
+
+	for key, value := range patchProps {
+		// null means "delete this property" — always allowed
+		if value == nil {
+			validated[key] = nil
+			continue
+		}
+
+		propDef, hasDef := schema.Properties[key]
+		if !hasDef {
+			validationErrors = append(validationErrors, fmt.Sprintf("unknown property: %s", key))
+			continue
+		}
+
+		switch propDef.Type {
+		case "number":
+			coerced, err := coerceToNumber(value)
+			if err != nil {
+				validationErrors = append(validationErrors, fmt.Sprintf("%s: %v", key, err))
+			} else {
+				validated[key] = coerced
+			}
+
+		case "boolean":
+			coerced, err := coerceToBoolean(value)
+			if err != nil {
+				validationErrors = append(validationErrors, fmt.Sprintf("%s: %v", key, err))
+			} else {
+				validated[key] = coerced
+			}
+
+		case "date":
+			coerced, err := coerceToDate(value)
+			if err != nil {
+				validationErrors = append(validationErrors, fmt.Sprintf("%s: %v", key, err))
+			} else {
+				validated[key] = coerced
+			}
+
+		case "array":
+			if _, ok := value.([]any); !ok {
+				validationErrors = append(validationErrors, fmt.Sprintf("%s: expected array, got %T", key, value))
+			} else {
+				validated[key] = value
+			}
+
+		case "object":
+			if _, ok := value.(map[string]any); !ok {
+				validationErrors = append(validationErrors, fmt.Sprintf("%s: expected object, got %T", key, value))
+			} else {
+				validated[key] = value
+			}
+
+		default:
+			validated[key] = value
+		}
+	}
+
+	if len(validationErrors) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(validationErrors, "; "))
+	}
+
+	return validated, nil
+}
+
+// validateRelationship validates a relationship against the installed schema.
+// It checks: type is allowed, source/destination object types satisfy fromTypes/toTypes constraints,
+// and relationship properties are valid. Returns nil if the schema has no relationship schemas
+// (nil RelationshipSchemas map), meaning no schema is installed.
+func validateRelationship(
+	relType string,
+	srcObjType string,
+	dstObjType string,
+	props map[string]any,
+	schemas *ExtractionSchemas,
+) error {
+	if schemas == nil || schemas.RelationshipSchemas == nil {
+		return nil
+	}
+
+	relSchema, ok := schemas.RelationshipSchemas[relType]
+	if !ok {
+		return fmt.Errorf("relationship_type_not_allowed")
+	}
+
+	if len(relSchema.SourceTypes) > 0 {
+		allowed := false
+		for _, t := range relSchema.SourceTypes {
+			if t == srcObjType {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("relationship_source_type_not_allowed")
+		}
+	}
+
+	if len(relSchema.TargetTypes) > 0 {
+		allowed := false
+		for _, t := range relSchema.TargetTypes {
+			if t == dstObjType {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("relationship_target_type_not_allowed")
+		}
+	}
+
+	if len(relSchema.Properties) > 0 || len(relSchema.Required) > 0 {
+		objSchema := agents.ObjectSchema{
+			Properties: relSchema.Properties,
+			Required:   relSchema.Required,
+		}
+		if _, err := validateProperties(props, objSchema); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

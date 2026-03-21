@@ -83,11 +83,13 @@ type PropertyDef struct {
 
 // RelationshipSchema represents a relationship type schema.
 type RelationshipSchema struct {
-	Name                 string   `json:"name"`
-	Description          string   `json:"description,omitempty"`
-	SourceTypes          []string `json:"source_types,omitempty"`
-	TargetTypes          []string `json:"target_types,omitempty"`
-	ExtractionGuidelines string   `json:"extraction_guidelines,omitempty"`
+	Name                 string                 `json:"name"`
+	Description          string                 `json:"description,omitempty"`
+	SourceTypes          []string               `json:"source_types,omitempty"`
+	TargetTypes          []string               `json:"target_types,omitempty"`
+	ExtractionGuidelines string                 `json:"extraction_guidelines,omitempty"`
+	Properties           map[string]PropertyDef `json:"properties,omitempty"`
+	Required             []string               `json:"required,omitempty"`
 }
 
 // ExistingEntityContext provides context about an existing entity for identity resolution.

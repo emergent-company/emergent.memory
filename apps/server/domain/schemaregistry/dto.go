@@ -119,19 +119,28 @@ func (r *SchemaRegistryRowDTO) ToDTO() SchemaRegistryEntryDTO {
 //   - fromTypes / toTypes (alternative camelCase arrays)
 //   - source_types / target_types (snake_case arrays)
 //   - source / target (singular strings)
+//
+// RelationshipPropertyDef defines a single property in a relationship schema.
+type RelationshipPropertyDef struct {
+	Type        string `json:"type"`
+	Description string `json:"description,omitempty"`
+}
+
 type RelationshipSchema struct {
-	Label            string   `json:"label,omitempty"`
-	InverseLabel     string   `json:"inverseLabel,omitempty"`
-	InverseType      string   `json:"inverseType,omitempty"` // When set, auto-creates inverse relationship (e.g. PARENT_OF -> CHILD_OF)
-	Description      string   `json:"description,omitempty"`
-	FromTypes        []string `json:"fromTypes,omitempty"`
-	SourceTypes      []string `json:"sourceTypes,omitempty"`
-	ToTypes          []string `json:"toTypes,omitempty"`
-	TargetTypes      []string `json:"targetTypes,omitempty"`
-	SnakeSourceTypes []string `json:"source_types,omitempty"`
-	SnakeTargetTypes []string `json:"target_types,omitempty"`
-	Source           string   `json:"source,omitempty"`
-	Target           string   `json:"target,omitempty"`
+	Label            string                             `json:"label,omitempty"`
+	InverseLabel     string                             `json:"inverseLabel,omitempty"`
+	InverseType      string                             `json:"inverseType,omitempty"` // When set, auto-creates inverse relationship (e.g. PARENT_OF -> CHILD_OF)
+	Description      string                             `json:"description,omitempty"`
+	FromTypes        []string                           `json:"fromTypes,omitempty"`
+	SourceTypes      []string                           `json:"sourceTypes,omitempty"`
+	ToTypes          []string                           `json:"toTypes,omitempty"`
+	TargetTypes      []string                           `json:"targetTypes,omitempty"`
+	SnakeSourceTypes []string                           `json:"source_types,omitempty"`
+	SnakeTargetTypes []string                           `json:"target_types,omitempty"`
+	Source           string                             `json:"source,omitempty"`
+	Target           string                             `json:"target,omitempty"`
+	Properties       map[string]RelationshipPropertyDef `json:"properties,omitempty"`
+	Required         []string                           `json:"required,omitempty"`
 }
 
 // GetSourceTypes returns source types from any supported field name.

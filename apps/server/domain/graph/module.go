@@ -13,6 +13,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/domain/schemaregistry"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 )
 
@@ -196,11 +197,33 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 				continue
 			}
 
-			schema := agents.RelationshipSchema{Name: typeName}
-
-			if desc, ok := schemaMap["description"].(string); ok {
-				schema.Description = desc
+			// Re-marshal the raw map and unmarshal into schemaregistry.RelationshipSchema
+			// to leverage its multi-convention field parsing and helper methods.
+			schemaBytes, err := json.Marshal(schemaMap)
+			if err != nil {
+				continue
 			}
+			var rs schemaregistry.RelationshipSchema
+			if err := json.Unmarshal(schemaBytes, &rs); err != nil {
+				continue
+			}
+
+			schema := agents.RelationshipSchema{Name: typeName}
+			schema.Description = rs.Description
+			schema.SourceTypes = rs.GetSourceTypes()
+			schema.TargetTypes = rs.GetTargetTypes()
+
+			// Copy properties and required fields.
+			if len(rs.Properties) > 0 {
+				schema.Properties = make(map[string]agents.PropertyDef, len(rs.Properties))
+				for propName, propDef := range rs.Properties {
+					schema.Properties[propName] = agents.PropertyDef{
+						Type:        propDef.Type,
+						Description: propDef.Description,
+					}
+				}
+			}
+			schema.Required = rs.Required
 
 			relationshipSchemas[typeName] = schema
 		}

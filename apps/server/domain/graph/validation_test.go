@@ -196,7 +196,7 @@ func TestValidateProperties(t *testing.T) {
 		assert.Contains(t, err.Error(), "birth_date")
 	})
 
-	t.Run("unknown properties allowed", func(t *testing.T) {
+	t.Run("unknown properties rejected when schema has properties", func(t *testing.T) {
 		props := map[string]any{
 			"name":            "John Doe",
 			"age":             25,
@@ -204,10 +204,25 @@ func TestValidateProperties(t *testing.T) {
 			"another_unknown": 123,
 		}
 
-		result, err := validateProperties(props, schema)
+		_, err := validateProperties(props, schema)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown property")
+	})
+
+	t.Run("unknown properties allowed when schema has no properties", func(t *testing.T) {
+		emptySchema := agents.ObjectSchema{
+			Name:       "AnyObject",
+			Properties: map[string]agents.PropertyDef{},
+			Required:   []string{},
+		}
+		props := map[string]any{
+			"whatever": "goes",
+			"anything": 42,
+		}
+
+		result, err := validateProperties(props, emptySchema)
 		assert.NoError(t, err)
-		assert.Equal(t, "some value", result["unknown_prop"])
-		assert.Equal(t, 123, result["another_unknown"])
+		assert.Equal(t, props, result)
 	})
 
 	t.Run("multiple validation errors", func(t *testing.T) {
@@ -235,5 +250,116 @@ func TestValidateProperties(t *testing.T) {
 		result, err := validateProperties(map[string]any{}, emptySchema)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
+	})
+}
+
+func TestValidateRelationship(t *testing.T) {
+	schemas := &ExtractionSchemas{
+		RelationshipSchemas: map[string]agents.RelationshipSchema{
+			"WORKS_AT": {
+				Name:        "WORKS_AT",
+				SourceTypes: []string{"Person"},
+				TargetTypes: []string{"Company"},
+				Properties: map[string]agents.PropertyDef{
+					"since": {Type: "number", Description: "Year started"},
+				},
+				Required: []string{"since"},
+			},
+		},
+	}
+
+	t.Run("nil schemas passes through", func(t *testing.T) {
+		err := validateRelationship("ANY_TYPE", "Foo", "Bar", nil, nil)
+		assert.NoError(t, err)
+	})
+
+	t.Run("nil relationship schemas passes through", func(t *testing.T) {
+		err := validateRelationship("ANY_TYPE", "Foo", "Bar", nil, &ExtractionSchemas{})
+		assert.NoError(t, err)
+	})
+
+	t.Run("relationship type not in schema returns error", func(t *testing.T) {
+		err := validateRelationship("UNKNOWN_REL", "Person", "Company", map[string]any{"since": 2020}, schemas)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "relationship_type_not_allowed")
+	})
+
+	t.Run("fromTypes mismatch returns error", func(t *testing.T) {
+		err := validateRelationship("WORKS_AT", "Animal", "Company", map[string]any{"since": 2020}, schemas)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "relationship_source_type_not_allowed")
+	})
+
+	t.Run("toTypes mismatch returns error", func(t *testing.T) {
+		err := validateRelationship("WORKS_AT", "Person", "School", map[string]any{"since": 2020}, schemas)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "relationship_target_type_not_allowed")
+	})
+
+	t.Run("unknown property returns error", func(t *testing.T) {
+		err := validateRelationship("WORKS_AT", "Person", "Company", map[string]any{"since": 2020, "extra": "nope"}, schemas)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown property")
+	})
+
+	t.Run("missing required property returns error", func(t *testing.T) {
+		err := validateRelationship("WORKS_AT", "Person", "Company", map[string]any{}, schemas)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "since")
+	})
+
+	t.Run("valid relationship passes", func(t *testing.T) {
+		err := validateRelationship("WORKS_AT", "Person", "Company", map[string]any{"since": 2020}, schemas)
+		assert.NoError(t, err)
+	})
+}
+
+func TestValidatePatchProperties(t *testing.T) {
+	schema := agents.ObjectSchema{
+		Name: "Person",
+		Properties: map[string]agents.PropertyDef{
+			"name":  {Type: "string"},
+			"age":   {Type: "number"},
+			"since": {Type: "number"},
+		},
+		Required: []string{"name"},
+	}
+
+	t.Run("known property in delta passes", func(t *testing.T) {
+		out, err := validatePatchProperties(map[string]any{"name": "Alice"}, schema)
+		assert.NoError(t, err)
+		assert.Equal(t, "Alice", out["name"])
+	})
+
+	t.Run("unknown property in delta is rejected", func(t *testing.T) {
+		_, err := validatePatchProperties(map[string]any{"legacy_field": "old"}, schema)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown property: legacy_field")
+	})
+
+	t.Run("required field missing from delta does NOT cause error (delta-only check)", func(t *testing.T) {
+		// name is required in schema but is not in this patch — should pass because
+		// required is only enforced at Create time, not on subsequent patches.
+		_, err := validatePatchProperties(map[string]any{"age": 30}, schema)
+		assert.NoError(t, err)
+	})
+
+	t.Run("nil value (delete) always allowed even if property would be unknown", func(t *testing.T) {
+		// Deleting a key that isn't in the schema is allowed (it may have been written
+		// under an older schema version).
+		out, err := validatePatchProperties(map[string]any{"legacy_field": nil}, schema)
+		assert.NoError(t, err)
+		assert.Nil(t, out["legacy_field"])
+	})
+
+	t.Run("empty schema passes everything through", func(t *testing.T) {
+		_, err := validatePatchProperties(map[string]any{"anything": "value"}, agents.ObjectSchema{})
+		assert.NoError(t, err)
+	})
+
+	t.Run("type coercion works on patch delta", func(t *testing.T) {
+		out, err := validatePatchProperties(map[string]any{"age": "42"}, schema)
+		assert.NoError(t, err)
+		assert.Equal(t, float64(42), out["age"])
 	})
 }
