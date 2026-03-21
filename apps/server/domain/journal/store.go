@@ -51,6 +51,12 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*JournalEnt
 		Limit(limit).
 		Offset(offset)
 
+	if params.BranchID != nil {
+		q = q.Where("je.branch_id = ?", params.BranchID)
+	} else {
+		q = q.Where("je.branch_id IS NULL")
+	}
+
 	if params.Since != nil {
 		q = q.Where("je.created_at >= ?", params.Since)
 	}
@@ -91,8 +97,8 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*JournalEnt
 	return entries, count, nil
 }
 
-// ListStandaloneNotes returns notes with no journal_id for a project.
-func (r *Repository) ListStandaloneNotes(ctx context.Context, projectID uuid.UUID, since *time.Time, limit int) ([]*JournalNote, error) {
+// ListStandaloneNotes returns notes with no journal_id for a project, optionally filtered by branch.
+func (r *Repository) ListStandaloneNotes(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID, since *time.Time, limit int) ([]*JournalNote, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -103,6 +109,11 @@ func (r *Repository) ListStandaloneNotes(ctx context.Context, projectID uuid.UUI
 		Where("jn.journal_id IS NULL").
 		OrderExpr("jn.created_at DESC").
 		Limit(limit)
+	if branchID != nil {
+		q = q.Where("jn.branch_id = ?", branchID)
+	} else {
+		q = q.Where("jn.branch_id IS NULL")
+	}
 	if since != nil {
 		q = q.Where("jn.created_at >= ?", since)
 	}

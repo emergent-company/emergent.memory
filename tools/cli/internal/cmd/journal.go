@@ -55,9 +55,10 @@ type journalResponse struct {
 // ── Flags ─────────────────────────────────────────────────────────────────────
 
 var (
-	journalListSince string
-	journalListLimit int
-	journalNoteEntry string
+	journalListSince  string
+	journalListLimit  int
+	journalListBranch string
+	journalNoteEntry  string
 )
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -350,6 +351,9 @@ func runJournalList(cmd *cobra.Command, _ []string) error {
 		"since": {journalListSince},
 		"limit": {fmt.Sprintf("%d", journalListLimit)},
 	}
+	if journalListBranch != "" {
+		params.Set("branch", journalListBranch)
+	}
 
 	body, err := journalGet(cmd, projectID, params)
 	if err != nil {
@@ -463,6 +467,7 @@ func runJournalNote(cmd *cobra.Command, args []string) error {
 func init() {
 	journalListCmd.Flags().StringVar(&journalListSince, "since", "7d", "Show entries from the last duration (e.g. 7d, 24h, 1h)")
 	journalListCmd.Flags().IntVar(&journalListLimit, "limit", 100, "Maximum number of entries to return")
+	journalListCmd.Flags().StringVar(&journalListBranch, "branch", "", "Branch name or UUID (omit for main branch)")
 
 	journalNoteCmd.Flags().StringVar(&journalNoteEntry, "entry", "", "Journal entry ID to attach the note to")
 

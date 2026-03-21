@@ -16,7 +16,7 @@ type repoIface interface {
 	Insert(ctx context.Context, entry *JournalEntry) error
 	InsertNote(ctx context.Context, note *JournalNote) error
 	List(ctx context.Context, params ListParams) ([]*JournalEntry, int, error)
-	ListStandaloneNotes(ctx context.Context, projectID uuid.UUID, since *time.Time, limit int) ([]*JournalNote, error)
+	ListStandaloneNotes(ctx context.Context, projectID uuid.UUID, branchID *uuid.UUID, since *time.Time, limit int) ([]*JournalNote, error)
 }
 
 // Service handles journal business logic.
@@ -40,6 +40,7 @@ func (s *Service) Log(ctx context.Context, params LogParams) {
 		bgCtx := context.WithoutCancel(ctx)
 		entry := &JournalEntry{
 			ProjectID:  params.ProjectID,
+			BranchID:   params.BranchID,
 			EventType:  params.EventType,
 			EntityType: params.EntityType,
 			EntityID:   params.EntityID,
@@ -68,6 +69,7 @@ func (s *Service) AddNote(ctx context.Context, projectID uuid.UUID, req *AddNote
 	}
 	note := &JournalNote{
 		ProjectID: projectID,
+		BranchID:  req.BranchID,
 		JournalID: req.JournalID,
 		Body:      req.Body,
 		ActorType: actorType,
@@ -86,7 +88,7 @@ func (s *Service) List(ctx context.Context, params ListParams) (*JournalResponse
 	if err != nil {
 		return nil, err
 	}
-	notes, err := s.repo.ListStandaloneNotes(ctx, params.ProjectID, params.Since, params.Limit)
+	notes, err := s.repo.ListStandaloneNotes(ctx, params.ProjectID, params.BranchID, params.Since, params.Limit)
 	if err != nil {
 		return nil, err
 	}

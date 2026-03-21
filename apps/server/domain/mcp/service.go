@@ -859,6 +859,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					Type:        "integer",
 					Description: "Maximum number of entries to return. Default 100.",
 				},
+				"branch_id": {
+					Type:        "string",
+					Description: "Optional branch UUID to filter entries by branch. Omit to view main branch entries only.",
+				},
 			},
 			Required: []string{},
 		},
@@ -5008,6 +5012,12 @@ func (s *Service) executeJournalList(ctx context.Context, projectID string, args
 			params.Limit = int(v)
 		case int:
 			params.Limit = v
+		}
+	}
+
+	if branchIDStr, _ := args["branch_id"].(string); branchIDStr != "" {
+		if id, err := uuid.Parse(branchIDStr); err == nil {
+			params.BranchID = &id
 		}
 	}
 

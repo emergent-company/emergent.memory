@@ -39,7 +39,7 @@ func (m *mockRepo) List(_ context.Context, _ ListParams) ([]*JournalEntry, int, 
 	return m.listEntries, m.listTotal, m.err
 }
 
-func (m *mockRepo) ListStandaloneNotes(_ context.Context, _ uuid.UUID, _ *time.Time, _ int) ([]*JournalNote, error) {
+func (m *mockRepo) ListStandaloneNotes(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _ *time.Time, _ int) ([]*JournalNote, error) {
 	return m.listNotes, m.err
 }
 

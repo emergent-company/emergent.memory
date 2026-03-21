@@ -358,6 +358,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		entityType := entityTypeObject
 		s.journal.Log(ctx, journal.LogParams{
 			ProjectID:  projectID,
+			BranchID:   obj.BranchID,
 			EventType:  journal.EventTypeCreated,
 			EntityType: &entityType,
 			ObjectType: &objType,
@@ -739,6 +740,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		}
 		s.journal.Log(ctx, journal.LogParams{
 			ProjectID:  projectID,
+			BranchID:   newVersion.BranchID,
 			EventType:  journal.EventTypeUpdated,
 			EntityType: &entityType,
 			ObjectType: &objType,
@@ -796,6 +798,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		entityType := entityTypeObject
 		s.journal.Log(ctx, journal.LogParams{
 			ProjectID:  projectID,
+			BranchID:   current.BranchID,
 			EventType:  journal.EventTypeDeleted,
 			EntityType: &entityType,
 			ObjectType: &objType,
@@ -858,6 +861,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 		entityType := entityTypeObject
 		s.journal.Log(ctx, journal.LogParams{
 			ProjectID:  projectID,
+			BranchID:   restored.BranchID,
 			EventType:  journal.EventTypeRestored,
 			EntityType: &entityType,
 			ObjectType: &objType,
@@ -1245,6 +1249,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 			entityType := entityTypeRelationship
 			s.journal.Log(ctx, journal.LogParams{
 				ProjectID:  projectID,
+				BranchID:   effectiveBranchID,
 				EventType:  journal.EventTypeRelated,
 				EntityType: &entityType,
 				ActorType:  journal.ActorUser,
@@ -3035,6 +3040,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			}
 			s.journal.Log(ctx, journal.LogParams{
 				ProjectID: projectID,
+				BranchID:  targetBranchID,
 				EventType: journal.EventTypeMerge,
 				ActorType: journal.ActorUser,
 				Metadata: map[string]any{

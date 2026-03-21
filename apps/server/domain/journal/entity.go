@@ -38,6 +38,7 @@ type JournalEntry struct {
 
 	ID         uuid.UUID      `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
 	ProjectID  uuid.UUID      `bun:"project_id,type:uuid,notnull" json:"project_id"`
+	BranchID   *uuid.UUID     `bun:"branch_id,type:uuid" json:"branch_id,omitempty"`
 	EventType  string         `bun:"event_type,notnull" json:"event_type"`
 	EntityType *string        `bun:"entity_type" json:"entity_type,omitempty"`
 	EntityID   *uuid.UUID     `bun:"entity_id,type:uuid" json:"entity_id,omitempty"`
@@ -56,6 +57,7 @@ type JournalNote struct {
 
 	ID        uuid.UUID  `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
 	ProjectID uuid.UUID  `bun:"project_id,type:uuid,notnull" json:"project_id"`
+	BranchID  *uuid.UUID `bun:"branch_id,type:uuid" json:"branch_id,omitempty"`
 	JournalID *uuid.UUID `bun:"journal_id,type:uuid" json:"journal_id,omitempty"`
 	Body      string     `bun:"body,notnull" json:"body"`
 	ActorType string     `bun:"actor_type,notnull" json:"actor_type"`
@@ -66,6 +68,7 @@ type JournalNote struct {
 // LogParams are passed from callers (e.g. graph service) to log a mutation.
 type LogParams struct {
 	ProjectID  uuid.UUID
+	BranchID   *uuid.UUID
 	EventType  string
 	EntityType *string
 	EntityID   *uuid.UUID
@@ -78,14 +81,20 @@ type LogParams struct {
 // ListParams controls querying of journal entries.
 type ListParams struct {
 	ProjectID uuid.UUID
-	Since     *time.Time
-	Limit     int
-	Page      int
+	// BranchID filters to entries from a specific branch.
+	// nil = main branch only (branch_id IS NULL).
+	// A non-nil pointer with a zero value is never produced; callers always
+	// set an explicit UUID when filtering by a named branch.
+	BranchID *uuid.UUID
+	Since    *time.Time
+	Limit    int
+	Page     int
 }
 
 // AddNoteRequest is the payload for adding a note.
 type AddNoteRequest struct {
 	Body      string     `json:"body"`
+	BranchID  *uuid.UUID `json:"branch_id,omitempty"`
 	JournalID *uuid.UUID `json:"journal_id,omitempty"`
 	ActorType string     `json:"actor_type,omitempty"`
 	ActorID   *uuid.UUID `json:"actor_id,omitempty"`

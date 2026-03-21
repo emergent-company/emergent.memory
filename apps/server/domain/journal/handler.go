@@ -8,18 +8,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // Handler handles HTTP requests for the project journal.
 type Handler struct {
-	svc *Service
+	svc         *Service
+	branchStore *branches.Store
 }
 
 // NewHandler creates a new journal Handler.
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, branchStore *branches.Store) *Handler {
+	return &Handler{svc: svc, branchStore: branchStore}
 }
 
 // ListJournal handles GET /api/graph/journal
@@ -27,10 +29,12 @@ func NewHandler(svc *Service) *Handler {
 // @Description  Returns journal entries and standalone notes for the current project
 // @Tags         journal
 // @Produce      json
-// @Param        since  query string false "ISO-8601 timestamp or relative duration (e.g. 7d, 24h)"
-// @Param        limit  query int    false "Max results (default 100)"
-// @Param        page   query int    false "Page number (default 1)"
+// @Param        since   query string false "ISO-8601 timestamp or relative duration (e.g. 7d, 24h)"
+// @Param        limit   query int    false "Max results (default 100)"
+// @Param        page    query int    false "Page number (default 1)"
+// @Param        branch  query string false "Branch name or UUID (omit for main branch)"
 // @Success      200    {object} JournalResponse
+// @Failure      400    {object} apperror.Error "Bad request"
 // @Failure      401    {object} apperror.Error "Unauthorized"
 // @Failure      500    {object} apperror.Error "Internal server error"
 // @Router       /api/graph/journal [get]
@@ -65,6 +69,14 @@ func (h *Handler) ListJournal(c echo.Context) error {
 			return apperror.ErrBadRequest.WithMessage("invalid since parameter: use ISO-8601 or relative duration (e.g. 7d, 24h, 30m)")
 		}
 		params.Since = &t
+	}
+
+	if branchStr := c.QueryParam("branch"); branchStr != "" {
+		branchID, err := h.resolveBranchID(c, projectID.String(), branchStr)
+		if err != nil {
+			return err
+		}
+		params.BranchID = branchID
 	}
 
 	resp, err := h.svc.List(c.Request().Context(), params)
@@ -103,7 +115,7 @@ func (h *Handler) AddNote(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("body is required")
 	}
 
-	// Set actor from auth context if not specified
+	// Set actor from auth context if not specified.
 	if req.ActorType == "" {
 		user := auth.GetUser(c)
 		if user != nil {
@@ -125,8 +137,29 @@ func (h *Handler) AddNote(c echo.Context) error {
 	return c.JSON(http.StatusCreated, note)
 }
 
+// resolveBranchID resolves a branch name or UUID string to a *uuid.UUID.
+// Returns a 400 error if the branch is not found.
+func (h *Handler) resolveBranchID(c echo.Context, projectID string, branchStr string) (*uuid.UUID, error) {
+	// Try UUID first.
+	if id, err := uuid.Parse(branchStr); err == nil {
+		return &id, nil
+	}
+	// Look up by name.
+	b, err := h.branchStore.GetByNameAndProject(c.Request().Context(), branchStr, &projectID)
+	if err != nil {
+		return nil, err
+	}
+	if b == nil {
+		return nil, apperror.ErrBadRequest.WithMessage("branch not found: " + branchStr)
+	}
+	id, err := uuid.Parse(b.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
 // getProjectID extracts the project UUID from the auth context.
-// Mirrors the same helper in the graph handler.
 func getProjectID(c echo.Context) (uuid.UUID, error) {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -147,7 +180,6 @@ func getProjectID(c echo.Context) (uuid.UUID, error) {
 // parseSince parses a since string which may be an ISO-8601 timestamp or a
 // relative duration like "7d", "24h", "30m".
 func parseSince(s string) (time.Time, error) {
-	// Try relative duration first: <N><unit> where unit is d/h/m/s
 	if len(s) >= 2 {
 		unit := s[len(s)-1]
 		if unit == 'd' || unit == 'h' || unit == 'm' || unit == 's' {
