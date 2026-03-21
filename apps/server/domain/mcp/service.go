@@ -198,9 +198,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"limit": {
 						Type:        "number",
-						Description: "Maximum number of results (default: 10, max: 50)",
+						Description: "Maximum number of results (default: 10, max: 200)",
 						Minimum:     intPtr(1),
-						Maximum:     intPtr(50),
+						Maximum:     intPtr(200),
 						Default:     10,
 					},
 					"offset": {
@@ -1375,8 +1375,8 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	if limit < 1 {
 		limit = 1
 	}
-	if limit > 50 {
-		limit = 50
+	if limit > 200 {
+		limit = 200
 	}
 
 	offset := 0
