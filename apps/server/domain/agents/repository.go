@@ -454,13 +454,16 @@ func (r *Repository) FindDefinitionByName(ctx context.Context, projectID, name s
 	return def, nil
 }
 
-// FindEnabledByTriggerType returns all enabled agents matching the given trigger type.
+// FindEnabledByTriggerType returns all enabled agents matching the given trigger type,
+// excluding agents that belong to soft-deleted projects.
 func (r *Repository) FindEnabledByTriggerType(ctx context.Context, triggerType AgentTriggerType) ([]*Agent, error) {
 	var agents []*Agent
 	err := r.db.NewSelect().
 		Model(&agents).
-		Where("enabled = true").
-		Where("trigger_type = ?", triggerType).
+		Join("JOIN kb.projects AS p ON p.id = agent.project_id").
+		Where("agent.enabled = true").
+		Where("agent.trigger_type = ?", triggerType).
+		Where("p.deleted_at IS NULL").
 		Scan(ctx)
 	if err != nil {
 		return nil, err

@@ -64,7 +64,9 @@ func (c *Client) IsEnabled() bool {
 	return c.enabled
 }
 
-// HealthCheck checks connectivity to the Whisper service.
+// HealthCheck checks connectivity to the Whisper service by probing the /asr
+// endpoint with a HEAD request (the service has no dedicated /health route).
+// Any response from the server (including 4xx) means the service is reachable.
 // Returns nil if the service is disabled (not an error — just unconfigured).
 func (c *Client) HealthCheck(ctx context.Context) error {
 	if !c.enabled {
@@ -74,7 +76,10 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
+	// The whisper ASR service has no /health endpoint; probe /asr instead.
+	// A 405 Method Not Allowed or 422 Unprocessable Entity means the service
+	// is up and responding — only a connection error or 5xx means it's down.
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, c.baseURL+"/asr", nil)
 	if err != nil {
 		return fmt.Errorf("whisper health check: %w", err)
 	}
@@ -85,7 +90,7 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode >= 500 {
 		return fmt.Errorf("whisper health check returned %d", resp.StatusCode)
 	}
 	return nil
