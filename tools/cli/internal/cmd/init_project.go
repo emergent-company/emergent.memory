@@ -161,7 +161,7 @@ func runInitProject(cmd *cobra.Command, args []string) error {
 		if creds.UserEmail != "" {
 			fmt.Printf("\n  Logged in as %s\n\n", creds.UserEmail)
 		} else {
-			fmt.Println("\n  Logged in successfully.\n")
+			fmt.Print("\n  Logged in successfully.\n\n")
 		}
 
 		// Build client using the fresh OAuth token directly.
