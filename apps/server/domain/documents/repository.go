@@ -1030,15 +1030,15 @@ func (r *Repository) GetExtractionSummary(ctx context.Context, projectID, docume
 
 	// Get objects by type from graph_objects created by this job
 	type typeCount struct {
-		TypeLabel string `bun:"type_label"`
+		TypeLabel string `bun:"type"`
 		Count     int    `bun:"count"`
 	}
 	var typeCounts []typeCount
 	err = r.db.NewSelect().
 		TableExpr("kb.graph_objects").
-		ColumnExpr("type_label, COUNT(*)::int AS count").
+		ColumnExpr("type, COUNT(*)::int AS count").
 		Where("extraction_job_id = ?", job.ID).
-		GroupExpr("type_label").
+		GroupExpr("type").
 		OrderExpr("count DESC").
 		Scan(ctx, &typeCounts)
 	if err != nil && err != sql.ErrNoRows {

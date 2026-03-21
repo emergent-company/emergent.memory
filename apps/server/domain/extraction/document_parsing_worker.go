@@ -468,6 +468,20 @@ func (w *DocumentParsingWorker) markFailed(ctx context.Context, job *DocumentPar
 			logger.Error(markErr),
 		)
 	}
+
+	// If retries are exhausted the job moves to dead_letter — update the
+	// document's conversion_status to 'failed' so it does not remain stuck
+	// in 'pending' indefinitely.
+	if job.DocumentID != nil && job.RetryCount >= job.MaxRetries {
+		errMsg := err.Error()
+		if updateErr := w.documentsRepo.UpdateConversionStatus(ctx, *job.DocumentID, "failed", &errMsg); updateErr != nil {
+			w.log.Error("failed to update document conversion status to failed",
+				slog.String("job_id", job.ID),
+				slog.String("document_id", *job.DocumentID),
+				logger.Error(updateErr),
+			)
+		}
+	}
 }
 
 // JobsService returns the underlying jobs service for testing/management
