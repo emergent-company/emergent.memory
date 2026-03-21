@@ -15,7 +15,7 @@
         "license": {
             "name": "Proprietary"
         },
-        "version": "0.35.87"
+        "version": "0.35.88"
     },
     "host": "localhost:5300",
     "basePath": "/",
