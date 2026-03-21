@@ -2513,6 +2513,92 @@ memory graph relationships list [flags]
       --type string     Filter by relationship type
 ```
 
+## memory journal
+
+Query and annotate the project journal
+
+### Synopsis
+
+The project journal is an automatic, server-side activity log for the knowledge graph.
+Every mutation (object created/updated/deleted, relationships batched, branches merged)
+is logged automatically. You can also add manual markdown notes, standalone or attached
+to a specific entry.
+
+### Options
+
+```
+  -h, --help             help for journal
+      --output string    output format (table, json) (default "table")
+      --project string   Project ID (overrides config/env)
+```
+
+## memory journal list
+
+List recent journal entries
+
+### Synopsis
+
+List recent activity from the project journal, including automatic mutation events
+and manual notes. Defaults to the last 7 days.
+
+### Usage
+
+```
+memory journal list [flags]
+```
+
+### Options
+
+```
+  -h, --help           help for list
+      --limit int      maximum number of entries to return (default 100)
+      --output string  output format (table, json) (default "table")
+      --since string   show entries since this duration or ISO-8601 timestamp (default "7d")
+```
+
+### Examples
+
+```bash
+memory journal list                                    # last 7 days
+memory journal list --since 24h                        # last 24 hours
+memory journal list --since 2026-01-15T10:00:00Z       # since ISO timestamp
+memory journal list --limit 50 --output json           # cap results, JSON output
+```
+
+## memory journal note
+
+Add a note to the project journal
+
+### Synopsis
+
+Add a manual markdown note to the project journal. Notes can be standalone or
+attached to a specific journal entry via --entry.
+
+The note text can be passed as a positional argument, piped via stdin, or
+omitted to open $EDITOR.
+
+### Usage
+
+```
+memory journal note [text] [flags]
+```
+
+### Options
+
+```
+      --entry string   (optional) attach this note to a specific journal entry ID
+  -h, --help           help for note
+```
+
+### Examples
+
+```bash
+memory journal note "Skipped worker services — need schema clarification first."
+memory journal note                                        # opens $EDITOR
+echo "Some context" | memory journal note                  # pipe from stdin
+memory journal note --entry <entry-id> "explanation"       # attach to a specific entry
+```
+
 ## memory init
 
 Initialize a Memory project in the current directory

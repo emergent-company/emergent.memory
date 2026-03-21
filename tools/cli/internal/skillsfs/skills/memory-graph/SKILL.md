@@ -22,6 +22,8 @@ Write to (and look up from) the Memory knowledge graph — creating, updating, a
 
 Graph population often spans multiple sessions. Maintain two files in `.memory/` to preserve continuity across session breaks:
 
+> **Note:** `.memory/journal.md` is a local agent session file. It is separate from the **server-side project journal** — an automatic database log of all graph mutations (create, update, delete, batch, merge) queryable via `memory journal list`. Load the **memory-journal** skill for details on the server-side journal.
+
 ### `.memory/journal.md` — append-only log
 
 Append a new dated section at the **end** of this file after every session. Never rewrite existing entries.
