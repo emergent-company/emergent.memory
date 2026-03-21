@@ -88,10 +88,10 @@ func (r *Repository) LexicalSearch(ctx context.Context, params TextSearchParams)
 
 	query := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
-			   ts_rank(c.tsv, websearch_to_tsquery('simple', ?)) AS score
+			   ts_rank(c.tsv, websearch_to_tsquery('english', ?)) AS score
 		FROM kb.chunks c
 		JOIN kb.documents d ON d.id = c.document_id
-		WHERE c.tsv @@ websearch_to_tsquery('simple', ?)
+		WHERE c.tsv @@ websearch_to_tsquery('english', ?)
 		  AND d.project_id = ?
 		ORDER BY score DESC
 		LIMIT ?
@@ -233,10 +233,10 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	// Execute lexical search
 	lexicalQuery := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
-			   ts_rank(c.tsv, websearch_to_tsquery('simple', ?)) AS score
+			   ts_rank(c.tsv, websearch_to_tsquery('english', ?)) AS score
 		FROM kb.chunks c
 		JOIN kb.documents d ON d.id = c.document_id
-		WHERE c.tsv @@ websearch_to_tsquery('simple', ?)
+		WHERE c.tsv @@ websearch_to_tsquery('english', ?)
 		  AND d.project_id = ?
 		ORDER BY score DESC
 		LIMIT ?
@@ -319,6 +319,18 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	lexicalMean, lexicalStd := mathutil.CalcMeanStd(lexicalScores)
 	vectorMean, vectorStd := mathutil.CalcMeanStd(vectorScores)
 
+	// Dynamic weight adjustment: when one channel returns no results,
+	// shift its weight to the other channel so results aren't penalized.
+	effLexicalWeight := lexicalWeight
+	effVectorWeight := vectorWeight
+	if len(lexicalScores) == 0 && len(vectorScores) > 0 {
+		effVectorWeight = 1.0
+		effLexicalWeight = 0.0
+	} else if len(vectorScores) == 0 && len(lexicalScores) > 0 {
+		effLexicalWeight = 1.0
+		effVectorWeight = 0.0
+	}
+
 	// Normalize and fuse scores
 	var candidates []*hybridCandidate
 	for _, c := range lexicalResults {
@@ -336,7 +348,7 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		}
 
 		// Weighted combination
-		c.FusedScore = normalizedLexical*lexicalWeight + normalizedVector*vectorWeight
+		c.FusedScore = normalizedLexical*effLexicalWeight + normalizedVector*effVectorWeight
 		candidates = append(candidates, c)
 	}
 

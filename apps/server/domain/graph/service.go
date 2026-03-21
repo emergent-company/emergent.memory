@@ -1948,6 +1948,19 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 	lexicalMean, lexicalStd := mathutil.CalcMeanStd(lexicalScores)
 	vectorMean, vectorStd := mathutil.CalcMeanStd(vectorScores)
 
+	// Dynamic weight adjustment: when one channel returns no results,
+	// shift its weight to the other channel so vector-only results
+	// aren't penalized to ~50% of their true score.
+	effLexicalWeight := lexicalWeight
+	effVectorWeight := vectorWeight
+	if len(lexicalScores) == 0 && len(vectorScores) > 0 {
+		effVectorWeight = 1.0
+		effLexicalWeight = 0.0
+	} else if len(vectorScores) == 0 && len(lexicalScores) > 0 {
+		effLexicalWeight = 1.0
+		effVectorWeight = 0.0
+	}
+
 	// Fuse scores
 	type fusedResult struct {
 		id           uuid.UUID
@@ -1986,7 +1999,7 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 		}
 
 		// Weighted combination
-		fusedScore := lexicalWeight*normLexical + vectorWeight*normVector
+		fusedScore := effLexicalWeight*normLexical + effVectorWeight*normVector
 
 		fusedResults = append(fusedResults, fusedResult{
 			id:           id,

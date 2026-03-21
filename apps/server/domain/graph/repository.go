@@ -1328,7 +1328,7 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 	conditions := []string{
 		"project_id = ?",
 		"supersedes_id IS NULL", // HEAD versions only
-		"fts @@ websearch_to_tsquery('simple', ?)",
+		"fts @@ websearch_to_tsquery('english', ?)",
 	}
 	args := []any{params.ProjectID, params.Query}
 
@@ -1349,7 +1349,7 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 	// Build the query with ts_rank
 	query := `
 		SELECT ` + graphObjectColumns + `,
-			ts_rank(fts, websearch_to_tsquery('simple', ?)) AS rank
+			ts_rank(fts, websearch_to_tsquery('english', ?)) AS rank
 		FROM kb.graph_objects
 		` + whereClause + `
 		ORDER BY rank DESC
