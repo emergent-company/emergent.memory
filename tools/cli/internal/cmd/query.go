@@ -55,6 +55,7 @@ var (
 	queryShowTools      bool
 	queryShowScores     bool
 	queryShowTime       bool
+	querySessionID      string
 )
 
 func init() {
@@ -71,6 +72,7 @@ func init() {
 	queryCmd.Flags().BoolVar(&queryDebug, "debug", false, "Include debug information in output")
 	queryCmd.Flags().BoolVar(&queryShowScores, "show-scores", false, "Show relevance scores for each result (search mode only)")
 	queryCmd.Flags().BoolVar(&queryShowTime, "show-time", false, "Show elapsed query time")
+	queryCmd.Flags().StringVar(&querySessionID, "session", "", "Continue a previous query session (use the session ID printed after a query)")
 }
 
 func runQuery(cmd *cobra.Command, args []string) error {
@@ -101,6 +103,9 @@ func runQuery(cmd *cobra.Command, args []string) error {
 func runAgentQuery(ctx context.Context, c *client.Client, query, projectID string) error {
 	reqBody := map[string]interface{}{
 		"message": query,
+	}
+	if querySessionID != "" {
+		reqBody["conversation_id"] = querySessionID
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -136,6 +141,7 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	var response strings.Builder
 	var tools []string
 	var streamErr string
+	var sessionID string
 	reader := bufio.NewReader(resp.Body)
 
 	for {
@@ -163,6 +169,10 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 
 		eventType, _ := event["type"].(string)
 		switch eventType {
+		case "meta":
+			if id, ok := event["conversationId"].(string); ok && id != "" {
+				sessionID = id
+			}
 		case "token":
 			if token, ok := event["token"].(string); ok {
 				response.WriteString(token)
@@ -192,7 +202,7 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	elapsed := time.Since(start)
 
 	if queryJSON || output == "json" {
-		output := map[string]interface{}{
+		out := map[string]interface{}{
 			"query":     query,
 			"projectId": projectID,
 			"response":  response.String(),
@@ -200,11 +210,14 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 			"elapsedMs": elapsed.Milliseconds(),
 		}
 		if streamErr != "" {
-			output["error"] = streamErr
+			out["error"] = streamErr
+		}
+		if sessionID != "" {
+			out["session_id"] = sessionID
 		}
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(output)
+		return encoder.Encode(out)
 	}
 
 	fmt.Printf("\n\n")
@@ -213,6 +226,9 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	}
 	if queryShowTime {
 		fmt.Printf("Time: %v\n", elapsed.Round(time.Millisecond))
+	}
+	if sessionID != "" {
+		fmt.Printf("Session: %s  (use --session %s to continue)\n", sessionID, sessionID)
 	}
 
 	if streamErr != "" {

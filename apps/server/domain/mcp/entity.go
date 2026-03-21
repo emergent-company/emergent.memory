@@ -230,12 +230,13 @@ type InputSchema struct {
 
 // PropertySchema describes a single property in a JSON schema
 type PropertySchema struct {
-	Type        string   `json:"type"`
-	Description string   `json:"description,omitempty"`
-	Enum        []string `json:"enum,omitempty"`
-	Minimum     *int     `json:"minimum,omitempty"`
-	Maximum     *int     `json:"maximum,omitempty"`
-	Default     any      `json:"default,omitempty"`
+	Type        string          `json:"type"`
+	Description string          `json:"description,omitempty"`
+	Enum        []string        `json:"enum,omitempty"`
+	Minimum     *int            `json:"minimum,omitempty"`
+	Maximum     *int            `json:"maximum,omitempty"`
+	Default     any             `json:"default,omitempty"`
+	Items       *PropertySchema `json:"items,omitempty"` // for type: "array"
 }
 
 // ToolsCallParams represents the params for tools/call method

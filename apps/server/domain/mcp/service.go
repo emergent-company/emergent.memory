@@ -188,13 +188,18 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "entity-query",
-			Description: "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph.",
+			Description: "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"type_name": {
 						Type:        "string",
-						Description: "Entity type to query (e.g., \"Decision\", \"Project\", \"Document\")",
+						Description: "Entity type to query (e.g., \"Decision\", \"Project\", \"Document\"). Required unless ids is provided.",
+					},
+					"ids": {
+						Type:        "array",
+						Description: "Optional list of canonical entity IDs to fetch directly. When provided, type_name and pagination params are ignored.",
+						Items:       &PropertySchema{Type: "string"},
 					},
 					"limit": {
 						Type:        "number",
@@ -227,7 +232,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Default:     false,
 					},
 				},
-				Required: []string{"type_name"},
+				Required: []string{},
 			},
 		},
 		{
@@ -1364,8 +1369,27 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 
 	// Parse arguments
 	typeName, _ := args["type_name"].(string)
+
+	// ids[] fast-path: fetch specific entities by canonical ID, bypassing type/pagination.
+	if rawIDs, ok := args["ids"]; ok {
+		var idStrs []string
+		switch v := rawIDs.(type) {
+		case []any:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					idStrs = append(idStrs, s)
+				}
+			}
+		case []string:
+			idStrs = v
+		}
+		if len(idStrs) > 0 {
+			return s.executeQueryEntitiesByIDs(ctx, projectID, idStrs, args)
+		}
+	}
+
 	if typeName == "" {
-		return nil, fmt.Errorf("missing required parameter: type_name")
+		return nil, fmt.Errorf("missing required parameter: type_name (or provide ids[])")
 	}
 
 	limit := 10
@@ -1490,7 +1514,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Detect unrecognized parameters and surface them as a warning so callers
 	// know their extra keys (e.g. filter, status, entity_type) had no effect.
 	knownQueryEntitiesParams := map[string]struct{}{
-		"type_name": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {},
+		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {},
 	}
 	var unknownParams []string
 	for k := range args {
@@ -1606,6 +1630,89 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		Warning: queryEntitiesWarning,
 	}
 
+	return s.wrapResult(result)
+}
+
+// executeQueryEntitiesByIDs fetches specific entities by canonical ID list.
+func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID string, idStrs []string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	canonicalIDs := make([]uuid.UUID, 0, len(idStrs))
+	for _, s := range idStrs {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			continue // skip malformed IDs
+		}
+		canonicalIDs = append(canonicalIDs, id)
+	}
+	if len(canonicalIDs) == 0 {
+		return nil, fmt.Errorf("ids: no valid UUIDs provided")
+	}
+
+	type entityRow struct {
+		ID          uuid.UUID      `bun:"id"`
+		CanonicalID uuid.UUID      `bun:"canonical_id"`
+		Key         string         `bun:"key"`
+		Name        string         `bun:"name"`
+		TypeName    string         `bun:"type_name"`
+		Properties  map[string]any `bun:"properties,type:jsonb"`
+		CreatedAt   time.Time      `bun:"created_at"`
+		UpdatedAt   time.Time      `bun:"updated_at"`
+	}
+
+	var entities []entityRow
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
+			return err
+		}
+		return tx.NewRaw(`
+			SELECT
+				go.id,
+				go.canonical_id,
+				go.key,
+				COALESCE(go.properties->>'name', '') as name,
+				go.properties,
+				go.created_at,
+				COALESCE(go.updated_at, go.created_at) as updated_at,
+				go.type as type_name
+			FROM kb.graph_objects go
+			WHERE go.canonical_id = ANY(?)
+				AND go.deleted_at IS NULL
+				AND go.project_id = ?
+				AND go.supersedes_id IS NULL
+				AND go.branch_id IS NULL
+		`, bun.In(canonicalIDs), projectUUID).Scan(ctx, &entities)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query entities by ids: %w", err)
+	}
+
+	resultEntities := make([]Entity, len(entities))
+	for i, e := range entities {
+		resultEntities[i] = Entity{
+			ID:         e.CanonicalID.String(),
+			Key:        e.Key,
+			Name:       e.Name,
+			Type:       e.TypeName,
+			Properties: e.Properties,
+			CreatedAt:  e.CreatedAt,
+			UpdatedAt:  e.UpdatedAt,
+		}
+	}
+
+	result := QueryEntitiesResult{
+		ProjectID: projectID,
+		Entities:  resultEntities,
+		Pagination: &PaginationInfo{
+			Total:   len(resultEntities),
+			Limit:   len(resultEntities),
+			Offset:  0,
+			HasMore: false,
+		},
+	}
 	return s.wrapResult(result)
 }
 

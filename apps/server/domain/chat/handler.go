@@ -978,7 +978,8 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 
 // QueryStreamRequest is the request body for the stateless query endpoint.
 type QueryStreamRequest struct {
-	Message string `json:"message"`
+	Message        string `json:"message"`
+	ConversationID string `json:"conversation_id,omitempty"` // optional: continue a previous session
 }
 
 // QueryStream handles POST /api/projects/:projectId/query.
@@ -1074,19 +1075,29 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		return apperror.NewInternal("invalid graph-query-agent ID", err)
 	}
 
-	// Create a transient conversation for this query (not persisted to user history).
-	title := message
-	if len(title) > 50 {
-		title = title[:50] + "..."
+	// Reuse an existing conversation if the caller provided one, otherwise create a new one.
+	var conv *Conversation
+	if req.ConversationID != "" {
+		convUUID, parseErr := uuid.Parse(req.ConversationID)
+		if parseErr == nil {
+			conv, _ = h.svc.GetConversation(ctx, projectID, convUUID)
+		}
 	}
-	conv, err := h.svc.CreateConversation(ctx, projectID, user.ID, CreateConversationRequest{
-		Title:   title,
-		Message: message,
-	})
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return apperror.NewInternal("failed to create conversation", err)
+	if conv == nil {
+		title := message
+		if len(title) > 50 {
+			title = title[:50] + "..."
+		}
+		var createErr error
+		conv, createErr = h.svc.CreateConversation(ctx, projectID, user.ID, CreateConversationRequest{
+			Title:   title,
+			Message: message,
+		})
+		if createErr != nil {
+			span.RecordError(createErr)
+			span.SetStatus(codes.Error, createErr.Error())
+			return apperror.NewInternal("failed to create conversation", createErr)
+		}
 	}
 	conv.AgentDefinitionID = &agentDefUUID
 	span.SetAttributes(attribute.String("memory.query.conversation_id", conv.ID.String()))

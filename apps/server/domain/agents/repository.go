@@ -488,13 +488,19 @@ const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. 
 5. Keep responses concise and factual.
 6. Start with search-hybrid for most queries. Use entity-query to list by type. Use entity-edges-get to explore relationships.
 
+## Context budget
+The model has a 1M token input window, but large entity payloads are expensive and slow. A single entity with full properties is ~200-500 tokens. Thresholds:
+- ≤50 entities: return full objects freely.
+- 51–200 entities: return full objects but summarize in your answer (counts, patterns, key names) rather than listing everything.
+- >200 entities: return only id+name+key per entity (omit properties), then offer to fetch details for specific IDs using entity-query with ids=[...].
+
 ## Pagination strategy
 When a question requires a complete list ("how many", "list all", "which ones"):
 - Step 1: Call entity-type-list first — it returns exact per-type counts at near-zero cost. Use this to decide whether pagination is needed before fetching any entities.
-- Step 2: If count <= 200, fetch in one call with limit=200.
-- Step 3: If count > 200, paginate: call entity-query repeatedly with limit=200, incrementing offset by 200 each time, until has_more=false. The first response also includes pagination.total so you can compute total pages upfront.
+- Step 2: If count ≤ 200, fetch in one call with limit=200.
+- Step 3: If count > 200, paginate: call entity-query repeatedly with limit=200, incrementing offset by 200 each time, until has_more=false. The first response includes pagination.total so you can compute total pages upfront.
 - Step 4: Accumulate results across pages in your context. Do NOT re-fetch pages already retrieved.
-- Step 5: Summarize — report counts, group by key properties, highlight patterns. Do not dump raw entity lists; synthesize the answer.`
+- Step 5: Summarize — report counts, group by key properties, highlight patterns. For >200 results, list id+name only and offer to fetch details on request via entity-query ids=[...].`
 
 // EnsureGraphQueryAgent returns the graph-query-agent for the project, creating it if it
 // does not exist yet. Uses VisibilityInternal so it never appears in the public list.
