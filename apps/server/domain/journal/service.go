@@ -10,9 +10,18 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
+// repoIface is the repository interface used by Service.
+// *Repository satisfies this interface; it is also implemented by test mocks.
+type repoIface interface {
+	Insert(ctx context.Context, entry *JournalEntry) error
+	InsertNote(ctx context.Context, note *JournalNote) error
+	List(ctx context.Context, params ListParams) ([]*JournalEntry, int, error)
+	ListStandaloneNotes(ctx context.Context, projectID uuid.UUID, since *time.Time, limit int) ([]*JournalNote, error)
+}
+
 // Service handles journal business logic.
 type Service struct {
-	repo *Repository
+	repo repoIface
 	log  *slog.Logger
 }
 
