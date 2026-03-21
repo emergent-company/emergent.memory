@@ -191,6 +191,21 @@ func TestRequiresProject(t *testing.T) {
 			toolName: "schema-version",
 			expected: false,
 		},
+		{
+			name:     "search-knowledge does not require project via requiresProject",
+			toolName: "search-knowledge",
+			expected: false,
+		},
+		{
+			name:     "journal-list does not require project via requiresProject",
+			toolName: "journal-list",
+			expected: false,
+		},
+		{
+			name:     "journal-add-note does not require project via requiresProject",
+			toolName: "journal-add-note",
+			expected: false,
+		},
 		// Edge cases
 		{
 			name:     "unknown tool does not require project",
@@ -467,6 +482,9 @@ func TestGetToolDefinitions(t *testing.T) {
 		"web-search-brave",
 		"web-fetch",
 		"web-search-reddit",
+		"search-knowledge",
+		"journal-list",
+		"journal-add-note",
 	}
 
 	if len(tools) < len(expectedTools) {
