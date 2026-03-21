@@ -33,12 +33,32 @@ memory query --mode=search --result-types=graph --limit=20 "authentication"
 memory query --mode=search --result-types=text "API rate limiting"
 ```
 
+## Session Continuation
+
+After each agent query, a session ID is printed:
+
+```
+Session: abc123  (use --session abc123 to continue)
+```
+
+Pass it back to continue the conversation with full history:
+
+```bash
+memory query "what are the main services?"
+# Session: abc123  (use --session abc123 to continue)
+
+memory query --session abc123 "which of those handles auth?"
+```
+
+Sessions are scoped to the project. Only supported in `--mode=agent`.
+
 ## Key Flags
 
 | Flag | Default | Notes |
 |---|---|---|
 | `--mode` | `agent` | `agent` or `search` |
 | `--project` | from config | Override target project |
+| `--session` | — | Continue a previous query session (agent mode only) |
 | `--json` | false | Machine-readable output |
 | `--show-tools` | false | Show agent tool calls (agent mode only) |
 | `--limit` | 10 | Max results (search mode only) |
@@ -51,6 +71,7 @@ memory query --mode=search --result-types=text "API rate limiting"
 2. If the user wants to find specific documents or objects quickly -> use **search mode**
 3. If no `--project` is set, the CLI uses the default project from config; ask the user to confirm or specify one if the context is ambiguous
 4. Use `--output json` + `--json` for downstream processing or to pass results to another tool
+5. To follow up on a previous query, pass `--session <id>` to continue with full conversation history
 
 ## Output Format
 
