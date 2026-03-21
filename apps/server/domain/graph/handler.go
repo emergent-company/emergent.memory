@@ -1696,7 +1696,7 @@ func (h *Handler) MergeBranch(c echo.Context) error {
 // @Description  Returns graph objects sorted by most recent access time for analytics
 // @Tags         graph
 // @Produce      json
-// @Param        limit query int false "Max results (default: 50, max: 200)"
+// @Param        limit query int false "Max results (default: 50, max: 1000)"
 // @Param        min_access_count query int false "Minimum access count (not yet implemented, default: 1)"
 // @Param        X-Project-ID header string true "Project ID"
 // @Success      200 {object} MostAccessedResponse "Most accessed objects"
