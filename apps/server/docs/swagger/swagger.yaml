@@ -2279,6 +2279,22 @@ definitions:
       total:
         type: integer
     type: object
+  apps_server_domain_graph.MoveObjectRequest:
+    properties:
+      target_branch_id:
+        type: string
+    type: object
+  apps_server_domain_graph.MoveObjectResponse:
+    properties:
+      moved_relationships:
+        type: integer
+      object:
+        $ref: '#/definitions/apps_server_domain_graph.GraphObjectResponse'
+      source_branch_id:
+        type: string
+      target_branch_id:
+        type: string
+    type: object
   apps_server_domain_graph.PatchGraphObjectRequest:
     properties:
       key:
@@ -5911,7 +5927,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.35.88
+  version: 0.35.89
 paths:
   /api/admin/agent-definitions/{id}/sandbox-config:
     get:
@@ -9340,6 +9356,58 @@ paths:
       security:
       - bearerAuth: []
       summary: Get object version history
+      tags:
+      - graph
+  /api/graph/objects/{id}/move:
+    post:
+      consumes:
+      - application/json
+      description: Move a graph object (and its self-referencing relationships) from
+        its current branch to a target branch. Fails if the object has relationships
+        connecting to other objects on the source branch.
+      parameters:
+      - description: Object ID (version_id or entity_id)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Move request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/apps_server_domain_graph.MoveObjectRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/apps_server_domain_graph.MoveObjectResponse'
+        "400":
+          description: Invalid request or dangling relationships
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Object not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Type+key conflict on target branch
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Move graph object to another branch
       tags:
       - graph
   /api/graph/objects/{id}/restore:

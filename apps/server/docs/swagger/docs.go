@@ -5950,6 +5950,83 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/graph/objects/{id}/move": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Move a graph object (and its self-referencing relationships) from its current branch to a target branch. Fails if the object has relationships connecting to other objects on the source branch.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Move graph object to another branch",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Object ID (version_id or entity_id)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Move request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/apps_server_domain_graph.MoveObjectRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/apps_server_domain_graph.MoveObjectResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request or dangling relationships",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Object not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Type+key conflict on target branch",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/graph/objects/{id}/restore": {
             "post": {
                 "security": [
@@ -20622,6 +20699,31 @@ const docTemplate = `{
                 }
             }
         },
+        "apps_server_domain_graph.MoveObjectRequest": {
+            "type": "object",
+            "properties": {
+                "target_branch_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "apps_server_domain_graph.MoveObjectResponse": {
+            "type": "object",
+            "properties": {
+                "moved_relationships": {
+                    "type": "integer"
+                },
+                "object": {
+                    "$ref": "#/definitions/apps_server_domain_graph.GraphObjectResponse"
+                },
+                "source_branch_id": {
+                    "type": "string"
+                },
+                "target_branch_id": {
+                    "type": "string"
+                }
+            }
+        },
         "apps_server_domain_graph.PatchGraphObjectRequest": {
             "type": "object",
             "properties": {
@@ -26061,7 +26163,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.35.88",
+	Version:          "0.35.89",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
