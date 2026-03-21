@@ -28,6 +28,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	objects.PATCH("/:id", h.PatchObject)
 	objects.DELETE("/:id", h.DeleteObject)
 	objects.POST("/:id/restore", h.RestoreObject)
+	objects.POST("/:id/move", h.MoveObject)
 	objects.GET("/:id/history", h.GetObjectHistory)
 	objects.GET("/:id/edges", h.GetObjectEdges)
 

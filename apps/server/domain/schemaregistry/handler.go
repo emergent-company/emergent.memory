@@ -54,7 +54,7 @@ func (h *Handler) GetProjectTypes(c echo.Context) error {
 		Search:      c.QueryParam("search"),
 	}
 
-	// Default enabled_only to true if not specified (matches NestJS)
+	// Default enabled_only to true if not specified
 	if c.QueryParam("enabled_only") == "" {
 		query.EnabledOnly = true
 	}

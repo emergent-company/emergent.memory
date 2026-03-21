@@ -10,7 +10,7 @@ import (
 )
 
 // Worker processes email jobs from the queue.
-// It follows the same pattern as NestJS workers:
+// Worker pattern:
 // - Polling-based with configurable interval
 // - Graceful shutdown waiting for current batch
 // - Stale job recovery on startup

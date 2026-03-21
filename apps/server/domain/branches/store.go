@@ -132,7 +132,7 @@ func (s *Store) Delete(ctx context.Context, id string) (bool, error) {
 }
 
 // EnsureBranchLineage ensures lineage records exist for a branch
-// This copies the NestJS behavior for maintaining the branch_lineage table
+// and maintains the branch_lineage table
 func (s *Store) EnsureBranchLineage(ctx context.Context, branchID string, parentBranchID *string) error {
 	// Insert self lineage (depth=0)
 	_, err := s.db.NewRaw(`

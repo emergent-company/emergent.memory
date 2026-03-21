@@ -61,7 +61,7 @@ func openLogFile(filename string) (*os.File, error) {
 	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 }
 
-// customHandler implements slog.Handler with NestJS-compatible formatting
+// customHandler implements slog.Handler with structured log formatting
 // Format: 2026-01-16T21:47:08.511Z [LEVEL] [Scope] file.go:123 - message
 type customHandler struct {
 	level     slog.Level

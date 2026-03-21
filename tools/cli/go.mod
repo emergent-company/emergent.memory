@@ -3,6 +3,7 @@ module github.com/emergent-company/emergent.memory/tools/cli
 go 1.24.12
 
 require (
+	github.com/a-h/templ v0.3.1001
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10

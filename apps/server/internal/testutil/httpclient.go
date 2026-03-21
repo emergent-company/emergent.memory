@@ -16,7 +16,7 @@ import (
 // - An in-process test server (via httptest)
 // - An external server (via real HTTP)
 //
-// This allows the same tests to run against both Go and NestJS implementations.
+// This allows the same tests to run against different server implementations.
 type HTTPClient struct {
 	// For in-process testing
 	inProcessHandler http.Handler

@@ -98,7 +98,7 @@ func (s *UserProfileService) GetByZitadelUserID(ctx context.Context, zitadelUser
 
 // EnsureProfile ensures a user profile exists for the given subject ID.
 // Returns the profile, a boolean indicating whether a new profile was created, and any error.
-// This matches the NestJS upsertBase behavior
+// Matches legacy upsertBase behavior
 func (s *UserProfileService) EnsureProfile(ctx context.Context, subjectID string, info *UserProfileInfo) (*UserProfile, bool, error) {
 	// 1. Check for active (non-deleted) user profile
 	profile, err := s.GetByZitadelUserID(ctx, subjectID)

@@ -156,7 +156,7 @@ func (p *Project) ToDTO() ProjectDTO {
 		Stats:              p.Stats,
 	}
 
-	// Only include boolean fields if they are true (to match NestJS behavior)
+	// Only include boolean fields if they are true
 	if p.AutoExtractObjects {
 		val := p.AutoExtractObjects
 		dto.AutoExtractObjects = &val

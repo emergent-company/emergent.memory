@@ -28,7 +28,7 @@ type EmbeddingService interface {
 }
 
 // GraphEmbeddingWorker processes graph embedding jobs from the queue.
-// It follows the same pattern as NestJS workers:
+// Worker pattern:
 // - Polling-based with configurable interval
 // - Graceful shutdown waiting for current batch
 // - Stale job recovery on startup
@@ -442,7 +442,7 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 }
 
 // extractText extracts text from a graph object for embedding.
-// Follows the same heuristic as NestJS: join type, key, and all primitive leaf values.
+// Heuristic: join type, key, and all primitive leaf values.
 func (w *GraphEmbeddingWorker) extractText(obj *graphObjectRow) string {
 	tokens := []string{obj.Type}
 	if obj.Key != nil {

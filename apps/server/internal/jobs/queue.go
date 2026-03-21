@@ -1,6 +1,6 @@
 // Package jobs provides a PostgreSQL-backed job queue implementation.
 //
-// This follows the same pattern as the NestJS BaseJobQueueService:
+// Job queue pattern:
 // - Idempotent enqueue (won't create duplicate active jobs)
 // - Atomic dequeue with FOR UPDATE SKIP LOCKED
 // - Exponential backoff for retries

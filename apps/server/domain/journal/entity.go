@@ -17,6 +17,7 @@ const (
 	EventTypeBatch    = "batch"
 	EventTypeMerge    = "merge"
 	EventTypeNote     = "note"
+	EventTypeMoved    = "moved"
 )
 
 // Entity types stored in the journal.

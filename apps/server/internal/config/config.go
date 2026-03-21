@@ -22,7 +22,7 @@ type Config struct {
 	Debug         bool   `env:"DEBUG" envDefault:"false"`
 	LogLevel      string `env:"LOG_LEVEL" envDefault:"info"`
 
-	// Database settings (matches NestJS POSTGRES_* vars)
+	// Database settings
 	Database DatabaseConfig
 
 	// Zitadel authentication

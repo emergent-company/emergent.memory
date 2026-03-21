@@ -1,0 +1,147 @@
+package graphexplore
+
+import "fmt"
+
+// LeftPanel renders the full left sidebar with node + edge filter lists.
+templ LeftPanel(nodeTypes []ObjectType, edgeTypes []RelationshipType) {
+	<div id="left-panel" class="bg-gh-surface border-r border-gh-border flex flex-col overflow-hidden">
+		<!-- Node types — top half -->
+		<div id="panel-nodes" class="flex flex-col flex-1 min-h-0 overflow-hidden border-b border-gh-border">
+			<div class="flex items-center justify-between px-3 pt-2.5 pb-2 shrink-0 border-b border-gh-border">
+				<span class="text-[10px] uppercase tracking-widest text-gh-muted font-semibold">Node types</span>
+				<button
+					id="nodes-toggle-all"
+					class="text-[10px] text-gh-accent hover:underline bg-transparent border-none cursor-pointer p-0"
+				>Hide all</button>
+			</div>
+			<div
+				id="node-filter-list"
+				class="flex-1 overflow-y-auto py-1"
+				hx-get="/htmx/node-types"
+				hx-trigger="load, refreshFilters from:body"
+				hx-swap="innerHTML"
+			>
+				<div class="px-3 py-3 text-[11px] text-gh-muted">Loading types…</div>
+			</div>
+		</div>
+		<!-- Edge types — bottom half -->
+		<div id="panel-edges" class="flex flex-col flex-1 min-h-0 overflow-hidden">
+			<div class="flex items-center justify-between px-3 pt-2.5 pb-2 shrink-0 border-b border-gh-border">
+				<span class="text-[10px] uppercase tracking-widest text-gh-muted font-semibold">Relationships</span>
+				<button
+					id="edges-toggle-all"
+					class="text-[10px] text-gh-accent hover:underline bg-transparent border-none cursor-pointer p-0"
+				>Hide all</button>
+			</div>
+			<div
+				id="edge-filter-list"
+				class="flex-1 overflow-y-auto py-1"
+				hx-get="/htmx/edge-types"
+				hx-trigger="load, refreshFilters from:body"
+				hx-swap="innerHTML"
+			>
+			</div>
+		</div>
+	</div>
+}
+
+// NodeTypeList renders the list of node type filter items (HTMX partial).
+templ NodeTypeList(types []ObjectType) {
+	for _, t := range types {
+		@NodeTypeItem(t)
+	}
+}
+
+// NodeTypeItem renders a single node type row in the filter list.
+templ NodeTypeItem(t ObjectType) {
+	<div
+		class={ "group flex items-center gap-0 hover:bg-gh-surface2 transition-colors border-b border-gh-border/40",
+			templ.KV("opacity-50", t.Hidden) }
+		data-type={ t.Name }
+	>
+		<div
+			class="flex items-center gap-2 flex-1 min-w-0 px-2 py-2 cursor-pointer"
+			data-action="load"
+			if t.Description != "" {
+				title={ t.Description }
+			}
+		>
+			<span
+				class="w-6 h-6 rounded-full shrink-0 flex items-center justify-center shadow-sm text-white"
+				style={ fmt.Sprintf("background:%s;font-size:%s;font-weight:700;line-height:1", t.Color, iconFontSize(t.Icon)) }
+			>{ t.Icon }</span>
+			<span class="flex-1 text-[12px] text-gh-text truncate font-medium">{ displayType(t.Name) }</span>
+			<span
+				class={ "text-[10px] shrink-0",
+					templ.KV("text-gh-accent font-semibold", t.InGraph > 0),
+					templ.KV("text-gh-muted", t.InGraph == 0) }
+			>{ countLabel(t.InGraph, t.Count) }</span>
+		</div>
+		<button
+			data-action="toggle-vis"
+			data-type={ t.Name }
+			title={ visTitle(t.Hidden, t.Name) }
+			class="shrink-0 px-1.5 py-2 text-gh-muted hover:text-gh-text opacity-0 group-hover:opacity-100 transition-opacity"
+		>
+			if t.Hidden {
+				@EyeOffIcon()
+			} else {
+				@EyeOnIcon()
+			}
+		</button>
+	</div>
+}
+
+// EdgeTypeList renders the list of edge type filter items (HTMX partial).
+templ EdgeTypeList(types []RelationshipType) {
+	for _, t := range types {
+		@EdgeTypeItem(t)
+	}
+}
+
+// EdgeTypeItem renders a single edge type row in the filter list.
+templ EdgeTypeItem(t RelationshipType) {
+	<div
+		class={ "filter-item flex items-center gap-2 px-2 py-1.5 border-b border-gh-border/40 hover:bg-gh-surface2 transition-colors",
+			templ.KV("opacity-40", t.Hidden) }
+		data-type={ t.Name }
+		data-action="toggle-edge-vis"
+	>
+		<span class="w-4 h-4 shrink-0 flex items-center justify-center">
+			<svg width="14" height="8" viewBox="0 0 14 8">
+				<line x1="0" y1="4" x2="14" y2="4" stroke={ t.Color } stroke-width="2" stroke-linecap="round"></line>
+				<circle cx="2" cy="4" r="1.5" fill={ t.Color }></circle>
+				<circle cx="12" cy="4" r="1.5" fill={ t.Color }></circle>
+			</svg>
+		</span>
+		<span class="flex-1 text-[12px] text-gh-text truncate">{ displayType(t.Name) }</span>
+		<span class="text-[10px] text-gh-muted shrink-0">
+			if t.Count > 0 {
+				{ fmt.Sprintf("%d", t.Count) }
+			}
+		</span>
+		<span
+			class={ "w-3.5 h-3.5 rounded-sm shrink-0 flex items-center justify-center text-[9px] text-white",
+				templ.KV("bg-gh-accent border border-gh-accent", !t.Hidden),
+				templ.KV("bg-gh-surface2 border border-gh-border", t.Hidden) }
+		>
+			if !t.Hidden {
+				✓
+			}
+		</span>
+	</div>
+}
+
+// SVG icons for eye on/off
+templ EyeOnIcon() {
+	<svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+		<ellipse cx="8" cy="8" rx="7" ry="4.5" stroke="currentColor" stroke-width="1.4"></ellipse>
+		<circle cx="8" cy="8" r="2" fill="currentColor"></circle>
+	</svg>
+}
+
+templ EyeOffIcon() {
+	<svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+		<path d="M2 2l12 12M6.5 6.6A3 3 0 0 0 9.4 9.5M4.1 4.2C2.8 5.1 1.8 6.4 1 8c1.6 3.1 4.3 5 7 5 1.2 0 2.4-.4 3.5-1M7 3.1C7.3 3 7.7 3 8 3c2.7 0 5.4 1.9 7 5-0.5 1-1.2 1.9-2 2.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path>
+	</svg>
+}

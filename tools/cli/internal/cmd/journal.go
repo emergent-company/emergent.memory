@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/glamour"
 	"golang.org/x/term"
 
 	"github.com/spf13/cobra"
@@ -282,13 +283,35 @@ func printJournalEntry(e journalEntry) {
 	}
 }
 
+// renderMarkdown renders markdown text for terminal display using glamour.
+// Falls back to plain text if rendering fails or stdout is not a terminal.
+func renderMarkdown(body string) string {
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return body
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(100),
+	)
+	if err != nil {
+		return body
+	}
+	rendered, err := r.Render(body)
+	if err != nil {
+		return body
+	}
+	return rendered
+}
+
 // printAttachedNote prints a note attached to a journal entry.
 func printAttachedNote(n journalNote) {
 	ts := formatTimestamp(n.CreatedAt)
 	actor := actorLabel(n.ActorType)
 	body := strings.TrimSpace(n.Body)
-	fmt.Printf("  %-19s  %-8s  NOTE\n\n", ts, actor)
-	for _, line := range strings.Split(body, "\n") {
+	fmt.Printf("  %-19s  %-8s  NOTE\n", ts, actor)
+	rendered := renderMarkdown(body)
+	// Indent each line of the rendered output.
+	for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
 		fmt.Printf("  %s\n", line)
 	}
 	fmt.Println()
@@ -299,8 +322,10 @@ func printStandaloneNote(n journalNote) {
 	ts := formatTimestamp(n.CreatedAt)
 	actor := actorLabel(n.ActorType)
 	body := strings.TrimSpace(n.Body)
-	fmt.Printf("%-19s  %-8s  NOTE\n\n", ts, actor)
-	for _, line := range strings.Split(body, "\n") {
+	fmt.Printf("%-19s  %-8s  NOTE\n", ts, actor)
+	rendered := renderMarkdown(body)
+	// Indent each line of the rendered output.
+	for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
 		fmt.Printf("  %s\n", line)
 	}
 	fmt.Println()

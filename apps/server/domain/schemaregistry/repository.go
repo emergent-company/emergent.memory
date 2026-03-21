@@ -97,6 +97,157 @@ func (r *Repository) GetProjectTypes(ctx context.Context, projectID string, quer
 		result[i] = row.ToDTO()
 	}
 
+	// Also pull types from installed schema packs (blueprint-installed schemas
+	// write to kb.project_schemas but may not populate project_object_schema_registry).
+	// Merge in any types not already present in the registry result.
+	packTypes, packErr := r.getTypesFromInstalledPacks(ctx, projectID)
+	if packErr == nil && len(packTypes) > 0 {
+		existing := make(map[string]bool, len(result))
+		for _, r := range result {
+			existing[r.Type] = true
+		}
+
+		// Collect new type names to fetch counts in one query
+		var newTypes []string
+		for _, pt := range packTypes {
+			if !existing[pt.Type] {
+				newTypes = append(newTypes, pt.Type)
+			}
+		}
+
+		// Fetch object counts for new types in one query
+		objectCounts := make(map[string]int)
+		if len(newTypes) > 0 {
+			type countRow struct {
+				Type  string `bun:"type"`
+				Count int    `bun:"count"`
+			}
+			var counts []countRow
+			_, _ = r.db.NewRaw(`
+				SELECT type, COUNT(*) as count
+				FROM kb.graph_objects
+				WHERE project_id = ? AND type = ANY(?) AND deleted_at IS NULL
+				GROUP BY type
+			`, projectID, newTypes).Exec(ctx, &counts)
+			for _, c := range counts {
+				objectCounts[c.Type] = c.Count
+			}
+		}
+
+		for _, pt := range packTypes {
+			if !existing[pt.Type] {
+				pt.ObjectCount = objectCounts[pt.Type]
+				result = append(result, pt)
+			}
+		}
+
+		// Re-sort by type name
+		for i := 1; i < len(result); i++ {
+			for j := i; j > 0 && result[j].Type < result[j-1].Type; j-- {
+				result[j], result[j-1] = result[j-1], result[j]
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// getTypesFromInstalledPacks returns SchemaRegistryEntryDTOs derived from
+// schema packs installed on the project (via kb.project_schemas).
+// These are types that exist in the schema definition but may not have been
+// individually registered in kb.project_object_schema_registry.
+func (r *Repository) getTypesFromInstalledPacks(ctx context.Context, projectID string) ([]SchemaRegistryEntryDTO, error) {
+	type packRow struct {
+		SchemaID          string          `bun:"schema_id"`
+		SchemaName        string          `bun:"schema_name"`
+		ObjectTypeSchemas json.RawMessage `bun:"object_type_schemas"`
+		UIConfigs         json.RawMessage `bun:"ui_configs"`
+	}
+
+	var packs []packRow
+	_, err := r.db.NewRaw(`
+		SELECT ps.schema_id, gs.name as schema_name,
+		       gs.object_type_schemas, gs.ui_configs
+		FROM kb.project_schemas ps
+		JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+		WHERE ps.project_id = ? AND ps.active = true
+	`, projectID).Exec(ctx, &packs)
+	if err != nil {
+		return nil, err
+	}
+
+	// objectTypeSchema is the per-type definition stored in the pack JSON array
+	type objectTypeSchema struct {
+		Name        string                 `json:"name"`
+		Label       string                 `json:"label"`
+		Description string                 `json:"description"`
+		Properties  map[string]interface{} `json:"properties"`
+	}
+
+	var result []SchemaRegistryEntryDTO
+	now := time.Now()
+
+	for _, pack := range packs {
+		if len(pack.ObjectTypeSchemas) == 0 {
+			continue
+		}
+
+		// Parse ui_configs map: typeName → {color, icon, ...}
+		var uiConfigs map[string]map[string]interface{}
+		if len(pack.UIConfigs) > 0 {
+			_ = json.Unmarshal(pack.UIConfigs, &uiConfigs)
+		}
+
+		// Object type schemas may be a JSON array or a JSON object (map)
+		var objectTypes []objectTypeSchema
+		if err := json.Unmarshal(pack.ObjectTypeSchemas, &objectTypes); err != nil {
+			// Try as map
+			var objectMap map[string]objectTypeSchema
+			if err2 := json.Unmarshal(pack.ObjectTypeSchemas, &objectMap); err2 == nil {
+				for name, ot := range objectMap {
+					ot.Name = name
+					objectTypes = append(objectTypes, ot)
+				}
+			}
+		}
+
+		schemaID := pack.SchemaID
+		schemaName := pack.SchemaName
+
+		for _, ot := range objectTypes {
+			if ot.Name == "" {
+				continue
+			}
+
+			uiConfig := map[string]interface{}{}
+			if cfg, ok := uiConfigs[ot.Name]; ok {
+				uiConfig = cfg
+			}
+
+			// Build a minimal JSON schema from the type definition
+			jsonSchema, _ := json.Marshal(map[string]interface{}{
+				"type":        "object",
+				"description": ot.Description,
+				"properties":  ot.Properties,
+			})
+
+			desc := ot.Description
+			result = append(result, SchemaRegistryEntryDTO{
+				Type:          ot.Name,
+				Source:        "template",
+				SchemaID:      &schemaID,
+				SchemaName:    &schemaName,
+				SchemaVersion: 1,
+				JSONSchema:    json.RawMessage(jsonSchema),
+				UIConfig:      uiConfig,
+				Enabled:       true,
+				Description:   &desc,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			})
+		}
+	}
+
 	return result, nil
 }
 

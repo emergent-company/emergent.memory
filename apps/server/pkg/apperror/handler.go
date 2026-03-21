@@ -7,7 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// HTTPErrorHandler returns an Echo error handler that formats errors to match NestJS format.
+// HTTPErrorHandler returns an Echo error handler that formats errors in a standard JSON format.
 // This is the canonical error handler used by both production and test servers.
 func HTTPErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 	return func(err error, c echo.Context) {
@@ -67,7 +67,7 @@ func HTTPErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 			)
 		}
 
-		// Format response to match NestJS error format
+		// Format standard JSON error response
 		response := map[string]any{
 			"error": errorObj,
 		}

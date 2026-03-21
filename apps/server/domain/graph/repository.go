@@ -133,9 +133,9 @@ func (r *Repository) GetUnused(ctx context.Context, projectID uuid.UUID, limit i
 type ListParams struct {
 	ProjectID       uuid.UUID
 	BranchID        *uuid.UUID
-	Type            *string  // Single type (NestJS compat)
+	Type            *string  // Single type filter
 	Types           []string // Multiple types
-	Label           *string  // Single label (NestJS compat)
+	Label           *string  // Single label filter
 	Labels          []string // Multiple labels
 	Status          *string
 	Key             *string
@@ -248,14 +248,14 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 		subq = subq.Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.IDs), bun.In(params.IDs))
 	}
 
-	// Support both single type (NestJS compat) and multiple types
+	// Support both single type and multiple types
 	if params.Type != nil {
 		subq = subq.Where("type = ?", *params.Type)
 	} else if len(params.Types) > 0 {
 		subq = subq.Where("type IN (?)", bun.In(params.Types))
 	}
 
-	// Support both single label (NestJS compat) and multiple labels
+	// Support both single label and multiple labels
 	if params.Label != nil {
 		subq = subq.Where("? = ANY(labels)", *params.Label)
 	} else if len(params.Labels) > 0 {
@@ -333,14 +333,14 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 		q = q.Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.IDs), bun.In(params.IDs))
 	}
 
-	// Support both single type (NestJS compat) and multiple types
+	// Support both single type and multiple types
 	if params.Type != nil {
 		q = q.Where("type = ?", *params.Type)
 	} else if len(params.Types) > 0 {
 		q = q.Where("type IN (?)", bun.In(params.Types))
 	}
 
-	// Support both single label (NestJS compat) and multiple labels
+	// Support both single label and multiple labels
 	if params.Label != nil {
 		q = q.Where("? = ANY(labels)", *params.Label)
 	} else if len(params.Labels) > 0 {
@@ -2347,4 +2347,72 @@ func (r *Repository) GetBranchRelationshipHeads(ctx context.Context, projectID u
 	}
 
 	return result, nil
+}
+
+// =============================================================================
+// Move Object Repository Methods
+// =============================================================================
+
+// MoveObjectVersionChain updates branch_id on all versions of an object (by canonical_id)
+// within the given transaction.
+func (r *Repository) MoveObjectVersionChain(ctx context.Context, tx bun.Tx, projectID, canonicalID uuid.UUID, targetBranchID *uuid.UUID) (int, error) {
+	res, err := tx.NewUpdate().
+		Model((*GraphObject)(nil)).
+		Set("branch_id = ?", targetBranchID).
+		Set("updated_at = now()").
+		Where("project_id = ?", projectID).
+		Where("canonical_id = ?", canonicalID).
+		Exec(ctx)
+	if err != nil {
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// MoveRelationshipVersionChain updates branch_id on all versions of a relationship (by canonical_id)
+// within the given transaction.
+func (r *Repository) MoveRelationshipVersionChain(ctx context.Context, tx bun.Tx, projectID, canonicalID uuid.UUID, targetBranchID *uuid.UUID) (int, error) {
+	res, err := tx.NewUpdate().
+		Model((*GraphRelationship)(nil)).
+		Set("branch_id = ?", targetBranchID).
+		Where("project_id = ?", projectID).
+		Where("canonical_id = ?", canonicalID).
+		Exec(ctx)
+	if err != nil {
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// GetRelationshipsByEndpoint returns all HEAD (non-superseded, non-deleted) relationships
+// on a given branch where the specified canonical_id is either src_id or dst_id.
+func (r *Repository) GetRelationshipsByEndpoint(ctx context.Context, tx bun.Tx, projectID, canonicalID uuid.UUID, branchID *uuid.UUID) ([]*GraphRelationship, error) {
+	var rels []*GraphRelationship
+
+	q := tx.NewSelect().
+		Model(&rels).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL").
+		Where("(src_id = ? OR dst_id = ?)", canonicalID, canonicalID)
+
+	if branchID != nil {
+		q = q.Where("branch_id = ?", *branchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	err := q.Scan(ctx)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return rels, nil
+}
+
+// CheckObjectExistsOnBranch checks whether a HEAD object with the given type+key
+// already exists on the target branch. Returns the conflicting object or nil.
+func (r *Repository) CheckObjectExistsOnBranch(ctx context.Context, tx bun.Tx, projectID uuid.UUID, targetBranchID *uuid.UUID, objType string, key string) (*GraphObject, error) {
+	return r.FindHeadByTypeAndKey(ctx, tx, projectID, targetBranchID, objType, key)
 }

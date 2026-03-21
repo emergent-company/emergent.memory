@@ -10,7 +10,7 @@ import (
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g := e.Group("/api/users")
 	g.Use(authMiddleware.RequireAuth())
-	g.Use(authMiddleware.RequireAPITokenScopes("org:read")) // Same scope as NestJS
+	g.Use(authMiddleware.RequireAPITokenScopes("org:read"))
 
 	g.GET("/search", h.Search)
 }

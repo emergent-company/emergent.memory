@@ -1,0 +1,182 @@
+package graphexplore
+
+import "fmt"
+
+// PageLayout renders the full page shell with head, body, and all panels.
+templ PageLayout(projectID string) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark">
+	<head>
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+		<title>Memory — Graph Explorer</title>
+		<!-- DaisyUI v5 + Tailwind CSS v4 (browser) -->
+		<link href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19" rel="stylesheet" type="text/css"/>
+		<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.2"></script>
+		<!-- HTMX -->
+		<script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
+		<style type="text/tailwindcss">
+			@theme {
+				--color-gh-bg:      #0d1117;
+				--color-gh-surface: #161b22;
+				--color-gh-surface2:#1c2128;
+				--color-gh-border:  #30363d;
+				--color-gh-accent:  #58a6ff;
+				--color-gh-text:    #e6edf3;
+				--color-gh-muted:   #8b949e;
+			}
+		</style>
+		<!-- Import map: resolve bare specifiers to esm.sh -->
+		<script type="importmap">
+		{
+			"imports": {
+				"graphology":                        "https://esm.sh/graphology@0.26.0",
+				"graphology-layout":                 "https://esm.sh/graphology-layout@0.6.1",
+				"graphology-layout-forceatlas2":     "https://esm.sh/graphology-layout-forceatlas2@0.10.1",
+				"graphology-layout-noverlap":        "https://esm.sh/graphology-layout-noverlap@0.4.2",
+				"sigma":                             "https://esm.sh/sigma@3.0.2"
+			}
+		}
+		</script>
+		<style>
+			html, body { height: 100%; background: #0d1117; color: #e6edf3; overflow: hidden; }
+			#sigma-container { width: 100%; height: 100%; }
+			#canvas-wrap {
+				background: #0d1117;
+				background-image: radial-gradient(ellipse at 40% 40%, #141c2e 0%, #0d1117 65%);
+			}
+			#left-panel { width: 220px; flex-shrink: 0; height: 100%; }
+			#right-panel {
+				width: 0;
+				overflow: hidden;
+				transition: width .2s ease;
+				flex-shrink: 0;
+			}
+			#right-panel.open { width: 300px; }
+			.right-panel-inner { width: 300px; }
+			.filter-item { cursor: pointer; }
+			@keyframes spin { to { transform: rotate(360deg); } }
+			.spinner {
+				width: 32px; height: 32px;
+				border: 3px solid #30363d;
+				border-top-color: #58a6ff;
+				border-radius: 50%;
+				animation: spin .7s linear infinite;
+			}
+			#toast {
+				opacity: 0;
+				transition: opacity .25s;
+				pointer-events: none;
+			}
+			#toast.show { opacity: 1; }
+			::-webkit-scrollbar { width: 5px; }
+			::-webkit-scrollbar-track { background: transparent; }
+			::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+			.layout-opt.active-layout { color: #58a6ff; }
+		</style>
+	</head>
+	<body class="flex flex-col h-screen font-sans text-gh-text bg-gh-bg" style="font-size:13px">
+		@Header()
+		<div class="flex flex-1 overflow-hidden">
+			@LeftPanel([]ObjectType{}, []RelationshipType{})
+			@CanvasArea()
+			@RightPanel()
+		</div>
+		@projectIDScript(projectID)
+		<script type="module" src="/static/graph_explore.js"></script>
+	</body>
+	</html>
+}
+
+// projectIDScript injects the project ID as a JS global variable.
+templ projectIDScript(projectID string) {
+	@templ.Raw(fmt.Sprintf(`<script>window.__PROJECT_ID = %q;</script>`, projectID))
+}
+
+// Header renders the top bar with logo, search, and toolbar.
+templ Header() {
+	<header class="relative flex items-center px-3 h-[52px] bg-gh-surface border-b border-gh-border shrink-0 z-10">
+		<!-- Logo -->
+		<span class="font-bold text-sm tracking-tight whitespace-nowrap">
+			memory <span class="text-gh-accent">graph</span>
+		</span>
+		<!-- Search — absolutely centered -->
+		<div class="absolute left-1/2 -translate-x-1/2 flex w-full max-w-sm border border-gh-border rounded-lg overflow-hidden bg-gh-surface2">
+			<input
+				id="search-input"
+				type="text"
+				name="query"
+				placeholder="Search nodes by name, type, or key…"
+				autocomplete="off"
+				class="flex-1 bg-transparent border-none outline-none text-gh-text px-3 py-1.5 text-[13px] placeholder:text-gh-muted"
+			/>
+			<button
+				id="search-btn"
+				class="bg-gh-accent hover:bg-[#79baff] text-white text-[13px] font-medium px-4 border-none cursor-pointer whitespace-nowrap transition-colors"
+			>
+				Search
+			</button>
+		</div>
+		<!-- Right controls -->
+		<div class="flex items-center gap-1.5 ml-auto">
+			@LayoutDropdown()
+			<button id="btn-fit" class="btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case" title="Fit graph to screen">⤢ Fit</button>
+			<button id="btn-clear" class="btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case" title="Clear canvas">✕ Clear</button>
+		</div>
+	</header>
+}
+
+// LayoutDropdown renders the layout selector split button.
+templ LayoutDropdown() {
+	<div class="dropdown dropdown-end">
+		<div class="flex items-center">
+			<button
+				id="btn-layout"
+				class="btn btn-xs btn-ghost border border-gh-border border-r-0 rounded-r-none text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case"
+				title="Run layout"
+			>⟳ <span id="layout-label">ForceAtlas2</span></button>
+			<label
+				tabindex="0"
+				class="btn btn-xs btn-ghost border border-gh-border rounded-l-none text-gh-muted hover:border-gh-accent hover:text-gh-text px-1.5 cursor-pointer normal-case"
+			>
+				<svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor"><path d="M1 3l4 4 4-4"></path></svg>
+			</label>
+		</div>
+		<ul tabindex="0" class="dropdown-content menu menu-xs bg-gh-surface border border-gh-border rounded-lg shadow-xl p-1 mt-1 z-50 w-40 text-[12px]">
+			<li><a id="layout-opt-fa2" class="layout-opt rounded active-layout">ForceAtlas2</a></li>
+			<li><a id="layout-opt-circular" class="layout-opt rounded">Circular</a></li>
+			<li><a id="layout-opt-circlepack" class="layout-opt rounded">Circle Pack</a></li>
+			<li><a id="layout-opt-random" class="layout-opt rounded">Random</a></li>
+		</ul>
+	</div>
+}
+
+// CanvasArea renders the sigma canvas container with overlays.
+templ CanvasArea() {
+	<div id="canvas-wrap" class="flex-1 relative">
+		<div id="sigma-container"></div>
+		<!-- Empty state -->
+		<div id="empty-state" class="absolute inset-0 flex flex-col items-center justify-center gap-3 opacity-40 pointer-events-none">
+			<svg width="64" height="64" viewBox="0 0 80 80" fill="none">
+				<circle cx="20" cy="40" r="8" stroke="#8b949e" stroke-width="2"></circle>
+				<circle cx="60" cy="20" r="8" stroke="#8b949e" stroke-width="2"></circle>
+				<circle cx="60" cy="60" r="8" stroke="#8b949e" stroke-width="2"></circle>
+				<line x1="27" y1="37" x2="53" y2="23" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="4 3"></line>
+				<line x1="27" y1="43" x2="53" y2="57" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="4 3"></line>
+			</svg>
+			<p class="text-sm text-gh-muted text-center max-w-[240px] leading-relaxed">
+				Search for nodes to start exploring.<br/>Click any node to expand neighbors.
+			</p>
+		</div>
+		<!-- Loading overlay -->
+		<div id="loading" class="hidden absolute inset-0 bg-gh-bg/60 backdrop-blur-sm flex items-center justify-center z-20">
+			<div class="spinner"></div>
+		</div>
+		<!-- Stats bar -->
+		<div id="stats" class="absolute bottom-3 left-3 text-[11px] text-gh-muted bg-gh-surface/85 border border-gh-border rounded px-2.5 py-1 pointer-events-none">
+			0 nodes · 0 edges
+		</div>
+		<!-- Toast -->
+		<div id="toast" class="absolute top-3 left-1/2 -translate-x-1/2 bg-gh-surface2 border border-gh-border rounded-lg px-4 py-2 text-[12px] text-gh-muted whitespace-nowrap z-50"></div>
+	</div>
+}

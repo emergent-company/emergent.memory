@@ -1,8 +1,7 @@
 // Package encryption provides encryption and decryption for sensitive data
 // using PostgreSQL pgcrypto extension.
 //
-// This matches the NestJS EncryptionService implementation which uses
-// pgp_sym_encrypt/pgp_sym_decrypt functions.
+// Uses pgp_sym_encrypt/pgp_sym_decrypt functions for encryption.
 package encryption
 
 import (

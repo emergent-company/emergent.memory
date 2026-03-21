@@ -1,0 +1,118 @@
+package graphexplore
+
+import "fmt"
+
+// RightPanel renders the right detail panel shell (initially empty/closed).
+templ RightPanel() {
+	<div id="right-panel" class="bg-gh-surface border-l border-gh-border">
+		<div class="right-panel-inner flex flex-col h-full overflow-hidden">
+			<div class="flex items-center justify-between px-3.5 py-3 border-b border-gh-border shrink-0">
+				<span id="panel-title" class="font-semibold text-[13px]">Node details</span>
+				<button id="panel-close" class="btn btn-xs btn-ghost text-gh-muted hover:text-gh-text p-1">×</button>
+			</div>
+			<div
+				id="panel-body"
+				class="flex-1 overflow-y-auto p-3.5 space-y-3"
+			>
+			</div>
+			<div class="p-3 border-t border-gh-border space-y-1.5 shrink-0">
+				<button id="btn-expand" class="btn btn-sm btn-primary w-full normal-case font-medium">Expand neighbors</button>
+				<button id="btn-copy-id" class="btn btn-sm btn-ghost w-full border border-gh-border normal-case font-normal text-gh-text hover:border-gh-accent hover:text-gh-accent">Copy ID</button>
+				<button id="btn-focus" class="btn btn-sm btn-ghost w-full border border-gh-border normal-case font-normal text-gh-text hover:border-gh-accent hover:text-gh-accent">Focus subgraph</button>
+			</div>
+		</div>
+	</div>
+	<!-- Hidden input for HTMX to pass selected node ID -->
+	<input type="hidden" id="selected-node-id" name="nodeId" value=""/>
+}
+
+// NodeDetailContent renders the detail content for a selected node (HTMX partial).
+templ NodeDetailContent(detail NodeDetail) {
+	<div>
+		<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1">Type</div>
+		<span
+			class="badge font-semibold text-[11px] tracking-wide px-2 py-1"
+			style={ fmt.Sprintf("background:%s22;color:%s;border:1px solid %s44", detail.TypeColor, detail.TypeColor, detail.TypeColor) }
+		>{ detail.Type }</span>
+	</div>
+	if detail.Key != "" {
+		<div>
+			<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1">Key</div>
+			<div class="font-mono text-[11px] text-gh-text bg-gh-surface2 border border-gh-border rounded px-2 py-1.5 break-all">{ detail.Key }</div>
+		</div>
+	}
+	<div>
+		<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1">Entity ID</div>
+		<div class="font-mono text-[11px] text-gh-text bg-gh-surface2 border border-gh-border rounded px-2 py-1.5 break-all">{ detail.ID }</div>
+	</div>
+	if len(detail.Labels) > 0 {
+		<div>
+			<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1">Labels</div>
+			<div class="flex flex-wrap gap-1">
+				for _, l := range detail.Labels {
+					<span class="badge badge-sm bg-gh-surface2 border border-gh-border text-gh-muted">{ l }</span>
+				}
+			</div>
+		</div>
+	}
+	if len(detail.Properties) > 0 {
+		<div>
+			<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1.5">Properties</div>
+			<div class="space-y-0 rounded border border-gh-border overflow-hidden">
+				for _, p := range detail.Properties {
+					<div class={ "flex flex-col px-3 py-1.5 gap-0.5",
+						templ.KV("bg-gh-surface2", p.Index % 2 == 0),
+						templ.KV("bg-gh-surface", p.Index % 2 != 0) }>
+						<span class="text-[10px] text-gh-muted font-medium" title={ p.Key }>{ p.Key }</span>
+						<span class="text-[11px] text-gh-text break-all font-mono">{ p.Value }</span>
+					</div>
+				}
+			</div>
+		</div>
+	}
+	<!-- Relations section — loaded via separate HTMX call -->
+	<div
+		id="detail-relations-row"
+		hx-get={ fmt.Sprintf("/htmx/node-relations?nodeId=%s", detail.ID) }
+		hx-trigger="load"
+		hx-swap="innerHTML"
+	>
+		<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1.5">Relationships</div>
+		<div class="space-y-0 rounded border border-gh-border overflow-hidden">
+			<div class="px-3 py-3 text-[11px] text-gh-muted">Loading…</div>
+		</div>
+	</div>
+}
+
+// NodeRelationsContent renders the relationships section (HTMX partial).
+templ NodeRelationsContent(groups []RelationGroup) {
+	<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1.5">Relationships</div>
+	if len(groups) == 0 {
+		<div class="space-y-0 rounded border border-gh-border overflow-hidden">
+			<div class="px-3 py-3 text-[11px] text-gh-muted italic">No relationships</div>
+		</div>
+	} else {
+		<div class="space-y-0 rounded border border-gh-border overflow-hidden">
+			for _, g := range groups {
+				<div class="border-b border-gh-border/30">
+					<div class="px-3 py-1.5 text-[10px] font-semibold text-gh-accent bg-gh-surface2 uppercase tracking-wider sticky top-0">{ g.TypeLabel }</div>
+					for _, r := range g.Relations {
+						<div
+							class="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-gh-surface2 transition-colors"
+							style={ rowBg(r.Index) }
+							data-node-id={ r.OtherID }
+							data-action="navigate-node"
+						>
+							<span class="w-2.5 h-2.5 rounded-full shrink-0" style={ fmt.Sprintf("background:%s", r.OtherColor) }></span>
+							<span class="flex-1 text-[11px] text-gh-text truncate" title={ r.OtherName }>{ r.OtherName }</span>
+							<span class="text-[10px] text-gh-muted shrink-0 truncate max-w-[70px]">{ r.OtherType }</span>
+							if !r.InGraph {
+								<span class="text-[9px] text-gh-muted opacity-40 shrink-0">+</span>
+							}
+						</div>
+					}
+				</div>
+			}
+		</div>
+	}
+}

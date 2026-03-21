@@ -34,7 +34,7 @@ func DefaultWorkerConfig(name string) WorkerConfig {
 }
 
 // Worker is a background worker that processes jobs from a queue.
-// It follows the same pattern as NestJS workers:
+// Worker pattern:
 // - Polling-based with configurable interval
 // - Graceful shutdown waiting for current batch
 // - Stale job recovery on startup

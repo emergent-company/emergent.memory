@@ -2116,6 +2116,37 @@ memory graph branches update <id> [flags]
       --name string          New branch name
 ```
 
+## memory graph explore
+
+Explore the knowledge graph visually in the browser
+
+### Synopsis
+
+Start a local web server and open an interactive graph visualizer in your browser.
+
+The visualizer lets you search for nodes, click to expand neighbors, and follow
+paths through the knowledge graph. All API calls are proxied through the CLI
+process — no credentials are ever sent to the browser.
+
+Examples:
+  memory graph explore
+  memory graph explore --port 7734
+  memory graph explore --host 0.0.0.0 --port 7734
+  memory graph explore --project my-project
+
+```
+memory graph explore [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for explore
+      --host string      Host/IP to bind (use 0.0.0.0 to listen on all interfaces) (default "127.0.0.1")
+      --port int         Local port to listen on (default 7734)
+      --project string   Project ID (overrides config/env)
+```
+
 ## memory graph objects
 
 Manage graph objects
@@ -2326,6 +2357,37 @@ memory graph objects list [flags]
       --limit int            Maximum number of results (server default: 1000) (default 1000)
       --status string        Filter by object status
       --type string          Filter by object type
+```
+
+## memory graph objects move
+
+Move a graph object to a different branch
+
+### Synopsis
+
+Move a graph object from its current branch to a target branch.
+
+The object's full version chain and any self-referencing relationships are moved.
+If the object has relationships connecting to other objects that are not being
+moved, the operation fails — move related objects first or delete the relationships.
+
+Use --target-branch to specify the destination branch UUID. Use "main" or omit
+the flag to move to the main branch.
+
+Examples:
+  memory graph objects move <entity-id> --target-branch <branch-uuid>
+  memory graph objects move <entity-id> --target-branch main
+
+```
+memory graph objects move <id> [flags]
+```
+
+### Options
+
+```
+  -h, --help                   help for move
+      --output string          Output format: table or json (default "table")
+      --target-branch string   Target branch UUID (use 'main' or omit for main branch)
 ```
 
 ## memory graph objects similar

@@ -67,7 +67,7 @@ func (h *Handler) GetMe(c echo.Context) error {
 	}
 
 	if !isSuperadmin {
-		// Return null to indicate the user is not a superadmin (matches NestJS behavior)
+		// Return null to indicate the user is not a superadmin
 		return c.JSON(http.StatusOK, nil)
 	}
 

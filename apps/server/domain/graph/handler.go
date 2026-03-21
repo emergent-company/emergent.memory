@@ -143,14 +143,14 @@ func (h *Handler) ListObjects(c echo.Context) error {
 		params.Cursor = &cursor
 	}
 
-	// Support both "type" (NestJS single) and "types" (array/comma-separated)
+	// Support both "type" (single) and "types" (array/comma-separated)
 	if singleType := c.QueryParam("type"); singleType != "" {
 		params.Type = &singleType
 	} else if types := c.QueryParams()["types"]; len(types) > 0 {
 		params.Types = splitCommaSeparated(types)
 	}
 
-	// Support both "label" (NestJS single) and "labels" (array/comma-separated)
+	// Support both "label" (single) and "labels" (array/comma-separated)
 	if singleLabel := c.QueryParam("label"); singleLabel != "" {
 		params.Label = &singleLabel
 	} else if labels := c.QueryParams()["labels"]; len(labels) > 0 {
@@ -226,7 +226,7 @@ func (h *Handler) ListObjects(c echo.Context) error {
 		params.PropertyFilters = filters
 	}
 
-	// Handle branch_id (NestJS allows "null" string for main branch)
+	// Handle branch_id ("null" string is treated as main branch)
 	if branchIDStr := c.QueryParam("branch_id"); branchIDStr != "" {
 		if branchIDStr != "null" {
 			branchID, err := uuid.Parse(branchIDStr)
@@ -508,6 +508,52 @@ func (h *Handler) UpsertObject(c echo.Context) error {
 	if created {
 		return c.JSON(http.StatusCreated, result)
 	}
+	return c.JSON(http.StatusOK, result)
+}
+
+// MoveObject moves a graph object to a different branch.
+// @Summary      Move graph object to another branch
+// @Description  Move a graph object (and its self-referencing relationships) from its current branch to a target branch. Fails if the object has relationships connecting to other objects on the source branch.
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Object ID (version_id or entity_id)"
+// @Param        body body MoveObjectRequest true "Move request"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} MoveObjectResponse
+// @Failure      400 {object} apperror.Error "Invalid request or dangling relationships"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      409 {object} apperror.Error "Type+key conflict on target branch"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id}/move [post]
+// @Security     bearerAuth
+func (h *Handler) MoveObject(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid object id")
+	}
+
+	var req MoveObjectRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.MoveObject(c.Request().Context(), projectID, id, &req, actorID)
+	if err != nil {
+		return err
+	}
+
 	return c.JSON(http.StatusOK, result)
 }
 

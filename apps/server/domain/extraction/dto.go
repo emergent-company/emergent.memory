@@ -3,7 +3,7 @@ package extraction
 import "time"
 
 // ExtractionJobStatus represents the status of an extraction job (used in DTOs)
-// Maps to internal JobStatus but with NestJS-compatible values
+// Maps to internal JobStatus values
 type ExtractionJobStatusDTO string
 
 const (
