@@ -190,6 +190,7 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 	var tools []string
 	var streamErr string
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB max token — SSE events can be large
 
 	for scanner.Scan() {
 		line := scanner.Text()
