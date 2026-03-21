@@ -233,11 +233,25 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"fields": {
 						Type:        "array",
-						Description: "Optional list of property field names to return (e.g. [\"name\",\"method\",\"path\"]). When omitted, all properties are returned. Use this to reduce token usage when you only need specific fields.",
+						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, key, name, type, created_at, updated_at are always returned for free — do not include them here. When omitted, all properties are returned.",
 						Items:       &PropertySchema{Type: "string"},
 					},
 				},
 				Required: []string{},
+			},
+		},
+		{
+			Name:        "entity-history",
+			Description: "Get the version history of an entity by canonical ID. Returns a list of versions with their physical IDs, version numbers, and timestamps. Use entity-query with ids=[physical_id] to fetch the full properties of a specific historical version.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entity_id": {
+						Type:        "string",
+						Description: "The canonical UUID of the entity to get history for",
+					},
+				},
+				Required: []string{"entity_id"},
 			},
 		},
 		{
@@ -987,6 +1001,8 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeListEntityTypes(ctx, projectID)
 	case "entity-query":
 		return s.executeQueryEntities(ctx, projectID, args)
+	case "entity-history":
+		return s.executeEntityHistory(ctx, projectID, args)
 	case "entity-search":
 		return s.executeSearchEntities(ctx, projectID, args)
 	case "entity-edges-get":
@@ -1489,6 +1505,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		Key             string         `bun:"key"`
 		Name            string         `bun:"name"`
 		TypeName        string         `bun:"type_name"`
+		Version         int            `bun:"version"`
 		Properties      map[string]any `bun:"properties,type:jsonb"`
 		CreatedAt       time.Time      `bun:"created_at"`
 		UpdatedAt       time.Time      `bun:"updated_at"`
@@ -1511,6 +1528,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				go.canonical_id,
 				go.key,
 				COALESCE(go.properties->>'name', '') as name,
+				go.version,
 				`+fieldProjection+` as properties,
 				go.created_at,
 				COALESCE(go.updated_at, go.created_at) as updated_at,
@@ -1555,6 +1573,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
+			Version:    e.Version,
 			Properties: e.Properties,
 			CreatedAt:  e.CreatedAt,
 			UpdatedAt:  e.UpdatedAt,
@@ -1708,6 +1727,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 		Key         string         `bun:"key"`
 		Name        string         `bun:"name"`
 		TypeName    string         `bun:"type_name"`
+		Version     int            `bun:"version"`
 		Properties  map[string]any `bun:"properties,type:jsonb"`
 		CreatedAt   time.Time      `bun:"created_at"`
 		UpdatedAt   time.Time      `bun:"updated_at"`
@@ -1724,6 +1744,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 				go.canonical_id,
 				go.key,
 				COALESCE(go.properties->>'name', '') as name,
+				go.version,
 				go.properties,
 				go.created_at,
 				COALESCE(go.updated_at, go.created_at) as updated_at,
@@ -1747,6 +1768,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
+			Version:    e.Version,
 			Properties: e.Properties,
 			CreatedAt:  e.CreatedAt,
 			UpdatedAt:  e.UpdatedAt,
@@ -1762,6 +1784,76 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 			Offset:  0,
 			HasMore: false,
 		},
+	}
+	return s.wrapResult(result)
+}
+
+// executeEntityHistory returns the version history of an entity by canonical ID.
+func (s *Service) executeEntityHistory(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	entityIDStr, _ := args["entity_id"].(string)
+	if entityIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: entity_id")
+	}
+	canonicalID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid entity_id: %w", err)
+	}
+
+	type versionRow struct {
+		PhysicalID  uuid.UUID `bun:"id"`
+		CanonicalID uuid.UUID `bun:"canonical_id"`
+		Version     int       `bun:"version"`
+		CreatedAt   time.Time `bun:"created_at"`
+		UpdatedAt   time.Time `bun:"updated_at"`
+	}
+
+	var rows []versionRow
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
+			return err
+		}
+		return tx.NewRaw(`
+			SELECT
+				go.id,
+				go.canonical_id,
+				go.version,
+				go.created_at,
+				COALESCE(go.updated_at, go.created_at) as updated_at
+			FROM kb.graph_objects go
+			WHERE go.canonical_id = ?
+				AND go.deleted_at IS NULL
+				AND go.project_id = ?
+				AND go.branch_id IS NULL
+			ORDER BY go.version ASC
+		`, canonicalID, projectUUID).Scan(ctx, &rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query entity history: %w", err)
+	}
+
+	type versionEntry struct {
+		Version    int       `json:"version"`
+		PhysicalID string    `json:"physical_id"`
+		UpdatedAt  time.Time `json:"updated_at"`
+	}
+	versions := make([]versionEntry, len(rows))
+	for i, r := range rows {
+		versions[i] = versionEntry{
+			Version:    r.Version,
+			PhysicalID: r.PhysicalID.String(),
+			UpdatedAt:  r.UpdatedAt,
+		}
+	}
+
+	result := map[string]any{
+		"entity_id": entityIDStr,
+		"versions":  versions,
+		"count":     len(versions),
 	}
 	return s.wrapResult(result)
 }

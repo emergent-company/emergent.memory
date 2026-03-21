@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -310,11 +311,39 @@ func init() {
 	_ = rootCmd.RegisterFlagCompletionFunc("output", completion.OutputFormatCompletionFunc())
 }
 
+// loadEnvWalkUp searches for filename starting from dir, walking up the
+// directory tree until it finds the file or reaches the filesystem root.
+// Returns the path of the first file found, or "" if none found.
+func loadEnvWalkUp(filename string) string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		candidate := dir + string(os.PathSeparator) + filename
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached filesystem root
+			return ""
+		}
+		dir = parent
+	}
+}
+
 // initConfig reads in config file and ENV variables if set
 func initConfig() {
-	// Automatically load .env files if present (ignore errors as they are optional)
-	_ = godotenv.Load(".env.local")
-	_ = godotenv.Load(".env")
+	// Load .env files by walking up from the current directory so that
+	// running the CLI from a subdirectory still picks up the project's
+	// .env.local / .env at the repo root.
+	if p := loadEnvWalkUp(".env.local"); p != "" {
+		_ = godotenv.Load(p)
+	}
+	if p := loadEnvWalkUp(".env"); p != "" {
+		_ = godotenv.Load(p)
+	}
 
 	if cfgFile != "" {
 		// Use config file from the flag

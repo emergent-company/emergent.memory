@@ -115,7 +115,7 @@ var (
 	graphBatchFile    string
 	graphFilterFlag   []string
 	graphFilterOpFlag string
-	graphIDsFlag      []string
+	graphIDsFlag      string
 )
 
 // ─────────────────────────────────────────────
@@ -237,8 +237,8 @@ Examples:
 			}
 			opts.PropertyFilters = pf
 		}
-		if len(graphIDsFlag) > 0 {
-			opts.IDs = graphIDsFlag
+		if graphIDsFlag != "" {
+			opts.IDs = strings.Split(graphIDsFlag, ",")
 		}
 
 		resp, err := g.ListObjects(context.Background(), opts)
@@ -1354,7 +1354,7 @@ func init() {
 	graphObjectsListCmd.Flags().StringVar(&graphFilterOpFlag, "filter-op", "eq", "Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists")
 	graphObjectsListCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to scope results to (omit for main branch)")
 	graphObjectsListCmd.Flags().StringVar(&graphStatusFlag, "status", "", "Filter by object status")
-	graphObjectsListCmd.Flags().StringArrayVar(&graphIDsFlag, "ids", nil, "Fetch specific objects by ID (repeatable: --ids id1 --ids id2)")
+	graphObjectsListCmd.Flags().StringVar(&graphIDsFlag, "ids", "", "Fetch specific objects by ID (comma-separated: --ids id1,id2,id3)")
 
 	graphObjectsGetCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
 

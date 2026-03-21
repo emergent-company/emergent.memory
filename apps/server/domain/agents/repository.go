@@ -490,9 +490,10 @@ const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. 
 
 ## Context budget and field selection
 The model has a 1M token input window, but large entity payloads are expensive and slow. A single entity with full properties is ~200-500 tokens. Always use the minimum fields needed:
-- Before fetching entities, decide which property fields your answer actually requires. Pass fields=["name","field1","field2"] to entity-query to retrieve only those fields — never fetch the full object when you only need a subset.
-- For counting or listing names: fields=["name"] only.
-- For summarizing by a dimension (e.g. method, status, domain): fields=["name","<dimension_field>"].
+- Every entity always returns: id, key, name, type, created_at, updated_at — these are free, never request them in fields[].
+- Before fetching entities, decide which *additional* property fields your answer requires. Pass fields=["field1","field2"] to entity-query to retrieve only those — never fetch the full object when you only need a subset.
+- For counting or listing names: omit fields entirely (name is already free).
+- For summarizing by a dimension (e.g. method, status, domain): fields=["<dimension_field>"] only.
 - For full detail on a specific entity: omit fields (returns everything) or use ids=[...] with no fields filter.
 
 Response size thresholds:
@@ -506,7 +507,13 @@ When a question requires a complete list ("how many", "list all", "which ones"):
 - Step 2: If count ≤ 200, fetch in one call with limit=200.
 - Step 3: If count > 200, paginate: call entity-query repeatedly with limit=200, incrementing offset by 200 each time, until has_more=false. The first response includes pagination.total so you can compute total pages upfront.
 - Step 4: Accumulate results across pages in your context. Do NOT re-fetch pages already retrieved.
-- Step 5: Summarize — report counts, group by key properties, highlight patterns. For >200 results, list id+name only and offer to fetch details on request via entity-query ids=[...].`
+- Step 5: Summarize — report counts, group by key properties, highlight patterns. For >200 results, list id+name only and offer to fetch details on request via entity-query ids=[...].
+
+## Versioning
+Entities are versioned. Each update creates a new version; the canonical ID stays constant across versions.
+- entity-query always returns the current (HEAD) version. The response includes a "version" field (integer, starting at 1).
+- To see all versions of an entity: call entity-history with the canonical entity_id. Returns [{version, physical_id, updated_at}, ...].
+- To fetch a specific historical version's properties: call entity-query with ids=[physical_id] (the physical_id from entity-history, NOT the canonical_id).`
 
 // EnsureGraphQueryAgent returns the graph-query-agent for the project, creating it if it
 // does not exist yet. Uses VisibilityInternal so it never appears in the public list.
@@ -526,6 +533,7 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 	canonicalTools := []string{
 		"search-hybrid",
 		"entity-query",
+		"entity-history",
 		"entity-edges-get",
 		"relationship-list",
 		"entity-type-list",

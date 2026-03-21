@@ -286,6 +286,7 @@ type Entity struct {
 	Key        string         `json:"key"`
 	Name       string         `json:"name"`
 	Type       string         `json:"type"`
+	Version    int            `json:"version"`
 	Properties map[string]any `json:"properties"`
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at,omitempty"`
