@@ -252,7 +252,7 @@ func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObje
 		objects = objects[:params.Limit]
 	}
 
-	// Build response with NestJS-compatible field names
+	// Build paginated response
 	items := make([]*GraphObjectResponse, len(objects))
 	for i, obj := range objects {
 		items[i] = obj.ToResponse()
@@ -571,10 +571,20 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 // Patch updates a graph object by creating a new version.
 func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *PatchGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
-	// Get current HEAD
+	// Get current HEAD (initial lookup to resolve canonical ID)
 	current, err := s.repo.GetByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
+	}
+
+	// If a branch is specified, re-fetch the HEAD for that branch using the canonical ID.
+	// GetByID does not filter by branch, so it may return the wrong HEAD when an object
+	// exists on multiple branches.
+	if req.BranchID != nil {
+		current, err = s.repo.GetHeadByCanonicalID(ctx, s.repo.DB(), projectID, current.CanonicalID, req.BranchID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Check if already deleted
@@ -1062,7 +1072,7 @@ func vectorToString(v []float32) string {
 }
 
 // SearchRelationshipsResponse is the paginated response for relationship searches.
-// Uses NestJS-compatible field names: items, next_cursor, total (consistent with SearchGraphObjectsResponse)
+// Standard field names: items, next_cursor, total (consistent with SearchGraphObjectsResponse)
 type SearchRelationshipsResponse struct {
 	Items      []*GraphRelationshipResponse `json:"items"`
 	NextCursor *string                      `json:"next_cursor,omitempty"`
@@ -3563,5 +3573,158 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		Objects:       objResponses,
 		Relationships: relResponses,
 		RefMap:        refMap,
+	}, nil
+}
+
+// branchLabel returns a human-readable label for a branch ID pointer.
+func branchLabel(id *uuid.UUID) string {
+	if id == nil {
+		return "main"
+	}
+	return id.String()
+}
+
+// MoveObject moves a graph object (and its same-branch relationships) from its
+// current branch to a target branch. The operation:
+//  1. Validates the object exists and is not deleted
+//  2. Checks source != target
+//  3. Checks for type+key conflicts on the target branch
+//  4. Finds all relationships on the source branch touching this object
+//  5. Fails if any relationship connects to an object NOT being moved
+//  6. Moves the object version chain + relationship version chains in one transaction
+//  7. Re-queues embeddings and logs journal entry
+func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID, req *MoveObjectRequest, actorID *uuid.UUID) (*MoveObjectResponse, error) {
+	// 1. Fetch the object (resolve HEAD by any ID — version_id or entity_id)
+	current, err := s.repo.GetByID(ctx, projectID, objectID)
+	if err != nil {
+		return nil, err
+	}
+
+	if current.DeletedAt != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("cannot move a deleted object; restore it first")
+	}
+
+	sourceBranchID := current.BranchID
+	targetBranchID := req.TargetBranchID
+
+	// 2. Check source != target
+	if branchIDsEqual(sourceBranchID, targetBranchID) {
+		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("object is already on branch %s", branchLabel(sourceBranchID)))
+	}
+
+	// 3. Begin transaction with advisory lock
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
+		return nil, err
+	}
+
+	// Re-fetch HEAD after lock to prevent races
+	current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, sourceBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. Check for type+key conflict on target branch
+	if current.Key != nil && *current.Key != "" {
+		conflict, err := s.repo.CheckObjectExistsOnBranch(ctx, tx.Tx, projectID, targetBranchID, current.Type, *current.Key)
+		if err != nil {
+			return nil, err
+		}
+		if conflict != nil {
+			return nil, apperror.ErrConflict.WithMessage(fmt.Sprintf(
+				"object with type=%q key=%q already exists on branch %s (entity_id: %s)",
+				current.Type, *current.Key, branchLabel(targetBranchID), conflict.CanonicalID.String(),
+			))
+		}
+	}
+
+	// 5. Find all same-branch relationships touching this object
+	rels, err := s.repo.GetRelationshipsByEndpoint(ctx, tx.Tx, projectID, current.CanonicalID, sourceBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check that all relationship endpoints are this object (both sides same canonical).
+	// If a relationship connects to a different object, fail — user must move that object
+	// first, or delete the relationship.
+	for _, rel := range rels {
+		otherID := rel.DstID
+		if rel.DstID == current.CanonicalID {
+			otherID = rel.SrcID
+		}
+		if otherID != current.CanonicalID {
+			// The other endpoint is a different object still on the source branch.
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf(
+				"cannot move: relationship %s (type=%q) connects to object %s which is on branch %s; "+
+					"move or delete that object/relationship first",
+				rel.CanonicalID.String(), rel.Type, otherID.String(), branchLabel(sourceBranchID),
+			))
+		}
+	}
+
+	// 6. Move the object version chain
+	_, err = s.repo.MoveObjectVersionChain(ctx, tx.Tx, projectID, current.CanonicalID, targetBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Move associated relationship version chains (self-referencing relationships)
+	movedRels := 0
+	for _, rel := range rels {
+		n, err := s.repo.MoveRelationshipVersionChain(ctx, tx.Tx, projectID, rel.CanonicalID, targetBranchID)
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			movedRels++
+		}
+	}
+
+	// 7. Commit
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Re-queue embedding for the moved object
+	s.enqueueEmbedding(ctx, current.ID.String())
+	for _, rel := range rels {
+		s.enqueueRelationshipEmbedding(ctx, rel.ID.String())
+	}
+
+	// Journal entry
+	if s.journal != nil && current.Key != nil {
+		objType := current.Type
+		entityType := entityTypeObject
+		s.journal.Log(ctx, journal.LogParams{
+			ProjectID:  projectID,
+			BranchID:   targetBranchID,
+			EventType:  journal.EventTypeMoved,
+			EntityType: &entityType,
+			ObjectType: &objType,
+			ActorType:  journal.ActorUser,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"key":                 *current.Key,
+				"name":                nameFromProps(current.Properties),
+				"object_type":         current.Type,
+				"source_branch":       branchLabel(sourceBranchID),
+				"target_branch":       branchLabel(targetBranchID),
+				"moved_relationships": movedRels,
+			},
+		})
+	}
+
+	// Build response with updated branch_id
+	current.BranchID = targetBranchID
+	return &MoveObjectResponse{
+		Object:             current.ToResponse(),
+		MovedRelationships: movedRels,
+		SourceBranchID:     sourceBranchID,
+		TargetBranchID:     targetBranchID,
 	}, nil
 }

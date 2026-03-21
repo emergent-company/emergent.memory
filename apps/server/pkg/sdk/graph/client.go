@@ -203,6 +203,7 @@ type UpdateObjectRequest struct {
 	Labels        []string       `json:"labels,omitempty"`
 	ReplaceLabels *bool          `json:"replaceLabels,omitempty"`
 	Status        *string        `json:"status,omitempty"`
+	BranchID      *string        `json:"branch_id,omitempty"`
 }
 
 // ListObjectsOptions holds query parameters for listing/searching objects.
@@ -1619,6 +1620,29 @@ func (c *Client) ListRelationships(ctx context.Context, opts *ListRelationshipsO
 
 	var result SearchRelationshipsResponse
 	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// MoveObjectRequest is the request body for moving an object to a different branch.
+type MoveObjectRequest struct {
+	TargetBranchID *string `json:"target_branch_id"`
+}
+
+// MoveObjectResponse is the response for a move object operation.
+type MoveObjectResponse struct {
+	Object             *GraphObject `json:"object"`
+	MovedRelationships int          `json:"moved_relationships"`
+	SourceBranchID     *string      `json:"source_branch_id,omitempty"`
+	TargetBranchID     *string      `json:"target_branch_id,omitempty"`
+}
+
+// MoveObject moves a graph object to a different branch.
+// Pass nil for TargetBranchID to move to the main branch.
+func (c *Client) MoveObject(ctx context.Context, id string, req *MoveObjectRequest) (*MoveObjectResponse, error) {
+	var result MoveObjectResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id)+"/move", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

@@ -25,6 +25,7 @@ type PatchGraphObjectRequest struct {
 	Labels        []string       `json:"labels,omitempty"`
 	ReplaceLabels bool           `json:"replaceLabels,omitempty"`
 	Status        *string        `json:"status,omitempty"`
+	BranchID      *uuid.UUID     `json:"branch_id,omitempty"`
 }
 
 // GraphObjectResponse is the API response for a graph object.
@@ -158,10 +159,10 @@ type UnusedObjectsResponse struct {
 
 // SearchGraphObjectsRequest contains search/filter parameters.
 type SearchGraphObjectsRequest struct {
-	Type            *string          `query:"type"`   // NestJS uses single type, not array
-	Types           []string         `query:"types"`  // Go also supports array for flexibility
-	Label           *string          `query:"label"`  // NestJS uses single label, not array
-	Labels          []string         `query:"labels"` // Go also supports array for flexibility
+	Type            *string          `query:"type"`   // Single type filter (also supports multi-type via "types")
+	Types           []string         `query:"types"`  // Multiple type filters
+	Label           *string          `query:"label"`  // Single label filter (also supports multi-label via "labels")
+	Labels          []string         `query:"labels"` // Multiple label filters
 	Status          *string          `query:"status"`
 	Key             *string          `query:"key"`
 	BranchID        *uuid.UUID       `query:"branch_id"`
@@ -185,7 +186,7 @@ type PropertyFilter struct {
 }
 
 // SearchGraphObjectsResponse is the paginated search response.
-// Uses NestJS-compatible field names: items, next_cursor, total
+// Standard paginated response: items, next_cursor, total
 type SearchGraphObjectsResponse struct {
 	Items      []*GraphObjectResponse `json:"items"`
 	NextCursor *string                `json:"next_cursor,omitempty"`
@@ -823,4 +824,22 @@ type CreateSubgraphResponse struct {
 	Objects       []*GraphObjectResponse       `json:"objects"`
 	Relationships []*GraphRelationshipResponse `json:"relationships"`
 	RefMap        map[string]uuid.UUID         `json:"ref_map"`
+}
+
+// =============================================================================
+// Move Object DTOs
+// =============================================================================
+
+// MoveObjectRequest is the request body for moving an object to a different branch.
+// TargetBranchID is the destination branch UUID. Use nil (JSON null) to move to main.
+type MoveObjectRequest struct {
+	TargetBranchID *uuid.UUID `json:"target_branch_id"`
+}
+
+// MoveObjectResponse is the response for a move object operation.
+type MoveObjectResponse struct {
+	Object             *GraphObjectResponse `json:"object"`
+	MovedRelationships int                  `json:"moved_relationships"`
+	SourceBranchID     *uuid.UUID           `json:"source_branch_id,omitempty"`
+	TargetBranchID     *uuid.UUID           `json:"target_branch_id,omitempty"`
 }

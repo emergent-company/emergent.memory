@@ -472,6 +472,9 @@ var graphObjectsUpdateCmd = &cobra.Command{
 		if graphStatusFlag != "" {
 			req.Status = &graphStatusFlag
 		}
+		if graphBranchFlag != "" {
+			req.BranchID = &graphBranchFlag
+		}
 
 		if graphPropsFlag != "" {
 			var props map[string]any
@@ -641,6 +644,76 @@ Examples:
 			_ = table.Append(score, r.Type, canonicalID, r.Status, key)
 		}
 		return table.Render()
+	},
+}
+
+// ─────────────────────────────────────────────
+// graph objects move
+// ─────────────────────────────────────────────
+
+var graphMoveTargetBranchFlag string
+
+var graphObjectsMoveCmd = &cobra.Command{
+	Use:   "move <id>",
+	Short: "Move a graph object to a different branch",
+	Long: `Move a graph object from its current branch to a target branch.
+
+The object's full version chain and any self-referencing relationships are moved.
+If the object has relationships connecting to other objects that are not being
+moved, the operation fails — move related objects first or delete the relationships.
+
+Use --target-branch to specify the destination branch UUID. Use "main" or omit
+the flag to move to the main branch.
+
+Examples:
+  memory graph objects move <entity-id> --target-branch <branch-uuid>
+  memory graph objects move <entity-id> --target-branch main`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		g, err := getGraphClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		req := &sdkgraph.MoveObjectRequest{}
+		if graphMoveTargetBranchFlag != "" && graphMoveTargetBranchFlag != "main" {
+			req.TargetBranchID = &graphMoveTargetBranchFlag
+		}
+		// nil TargetBranchID means move to main branch
+
+		result, err := g.MoveObject(context.Background(), args[0], req)
+		if err != nil {
+			if apiErr, ok := err.(*sdkerrors.Error); ok {
+				return fmt.Errorf("move failed (%d): %s", apiErr.StatusCode, apiErr.Message)
+			}
+			return fmt.Errorf("failed to move object: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+		if graphOutputFlag == "json" {
+			return json.NewEncoder(out).Encode(result)
+		}
+
+		targetLabel := "main"
+		if result.TargetBranchID != nil {
+			targetLabel = *result.TargetBranchID
+		}
+		sourceLabel := "main"
+		if result.SourceBranchID != nil {
+			sourceLabel = *result.SourceBranchID
+		}
+		fmt.Fprintf(out, "Object moved: %s -> %s\n", sourceLabel, targetLabel)
+		if result.Object != nil {
+			fmt.Fprintf(out, "  Entity ID: %s\n", result.Object.EntityID)
+			fmt.Fprintf(out, "  Type: %s\n", result.Object.Type)
+			if result.Object.Key != nil {
+				fmt.Fprintf(out, "  Key: %s\n", *result.Object.Key)
+			}
+		}
+		if result.MovedRelationships > 0 {
+			fmt.Fprintf(out, "  Moved relationships: %d\n", result.MovedRelationships)
+		}
+		return nil
 	},
 }
 
@@ -1372,6 +1445,7 @@ func init() {
 	graphObjectsUpdateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object to merge")
 	graphObjectsUpdateCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Set a stable key on the object (enables cross-session src_key/dst_key references)")
 	graphObjectsUpdateCmd.Flags().StringVar(&graphStatusFlag, "status", "", "Set object status (e.g. active, planned, deprecated)")
+	graphObjectsUpdateCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to update the object on (omit for main branch)")
 
 	// Relationship subcommand flags
 	graphRelationshipsListCmd.Flags().StringVar(&graphRelTypeFlag, "type", "", "Filter by relationship type")
@@ -1394,6 +1468,9 @@ func init() {
 	graphObjectsSimilarCmd.Flags().Float64Var(&graphSimilarMinScoreFlag, "min-score", 0, "Minimum similarity score (0–1); 0 means no threshold")
 	graphObjectsSimilarCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
 
+	graphObjectsMoveCmd.Flags().StringVar(&graphMoveTargetBranchFlag, "target-branch", "", "Target branch UUID (use 'main' or omit for main branch)")
+	graphObjectsMoveCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
+
 	graphObjectsCmd.AddCommand(graphObjectsListCmd)
 	graphObjectsCmd.AddCommand(graphObjectsGetCmd)
 	graphObjectsCmd.AddCommand(graphObjectsCreateCmd)
@@ -1402,6 +1479,7 @@ func init() {
 	graphObjectsCmd.AddCommand(graphObjectsDeleteCmd)
 	graphObjectsCmd.AddCommand(graphObjectsEdgesCmd)
 	graphObjectsCmd.AddCommand(graphObjectsSimilarCmd)
+	graphObjectsCmd.AddCommand(graphObjectsMoveCmd)
 
 	// Assemble relationships subcommands
 	graphRelationshipsCmd.AddCommand(graphRelationshipsListCmd)
