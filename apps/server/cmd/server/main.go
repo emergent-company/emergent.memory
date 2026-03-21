@@ -47,6 +47,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/health"
 	"github.com/emergent-company/emergent.memory/domain/integrations"
 	"github.com/emergent-company/emergent.memory/domain/invites"
+	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/monitoring"
@@ -139,6 +140,7 @@ func main() {
 		embeddingpolicies.Module,
 		search.Module,
 		chat.Module,
+		journal.Module,
 		mcp.Module,
 		mcpregistry.Module,
 		monitoring.Module,

@@ -15,6 +15,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/mathutil"
@@ -65,6 +66,7 @@ type Service struct {
 	embeddings           EmbeddingService
 	embeddingEnqueuer    EmbeddingEnqueuer
 	relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer
+	journal              *journal.Service
 
 	// Metrics
 	metricsMu          sync.RWMutex
@@ -74,7 +76,7 @@ type Service struct {
 }
 
 // NewService creates a new graph service.
-func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer) *Service {
+func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer, journalSvc *journal.Service) *Service {
 	return &Service{
 		repo:                 repo,
 		log:                  log.With(logger.Scope("graph.svc")),
@@ -83,8 +85,26 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 		embeddings:           embeddings,
 		embeddingEnqueuer:    embeddingEnqueuer,
 		relEmbeddingEnqueuer: relEmbeddingEnqueuer,
+		journal:              journalSvc,
 	}
 }
+
+// nameFromProps extracts the "name" property from a properties map, or returns an empty string.
+func nameFromProps(props map[string]any) string {
+	if props == nil {
+		return ""
+	}
+	if v, ok := props["name"].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// entityTypeObject is the entity type constant for graph objects.
+const entityTypeObject = journal.EntityObject
+
+// entityTypeRelationship is the entity type constant for graph relationships.
+const entityTypeRelationship = journal.EntityRelationship
 
 // enqueueEmbedding enqueues a graph object for async embedding generation.
 // Logs and swallows errors — embedding is best-effort and must never block CRUD.
@@ -332,6 +352,24 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	}
 
 	s.enqueueEmbedding(ctx, obj.ID.String())
+
+	if s.journal != nil && obj.Key != nil {
+		objType := obj.Type
+		entityType := entityTypeObject
+		s.journal.Log(ctx, journal.LogParams{
+			ProjectID:  projectID,
+			EventType:  journal.EventTypeCreated,
+			EntityType: &entityType,
+			ObjectType: &objType,
+			ActorType:  journal.ActorUser,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"key":         *obj.Key,
+				"name":        nameFromProps(obj.Properties),
+				"object_type": obj.Type,
+			},
+		})
+	}
 
 	return obj.ToResponse(), nil
 }
@@ -690,6 +728,31 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 
 	s.enqueueEmbedding(ctx, newVersion.ID.String())
 
+	if s.journal != nil && newVersion.Key != nil {
+		objType := newVersion.Type
+		entityType := entityTypeObject
+		var fieldsChanged []string
+		if newVersion.ChangeSummary != nil {
+			for k := range newVersion.ChangeSummary {
+				fieldsChanged = append(fieldsChanged, k)
+			}
+		}
+		s.journal.Log(ctx, journal.LogParams{
+			ProjectID:  projectID,
+			EventType:  journal.EventTypeUpdated,
+			EntityType: &entityType,
+			ObjectType: &objType,
+			ActorType:  journal.ActorUser,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"key":            *newVersion.Key,
+				"name":           nameFromProps(newVersion.Properties),
+				"object_type":    newVersion.Type,
+				"fields_changed": fieldsChanged,
+			},
+		})
+	}
+
 	return newVersion.ToResponse(), nil
 }
 
@@ -724,7 +787,29 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		return err
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	if s.journal != nil && current.Key != nil {
+		objType := current.Type
+		entityType := entityTypeObject
+		s.journal.Log(ctx, journal.LogParams{
+			ProjectID:  projectID,
+			EventType:  journal.EventTypeDeleted,
+			EntityType: &entityType,
+			ObjectType: &objType,
+			ActorType:  journal.ActorUser,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"key":         *current.Key,
+				"name":        nameFromProps(current.Properties),
+				"object_type": current.Type,
+			},
+		})
+	}
+
+	return nil
 }
 
 // Restore restores a soft-deleted graph object.
@@ -766,6 +851,24 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 	restored, err := s.repo.GetHeadByCanonicalID(ctx, s.repo.DB(), projectID, current.CanonicalID, current.BranchID)
 	if err != nil {
 		return nil, err
+	}
+
+	if s.journal != nil && restored.Key != nil {
+		objType := restored.Type
+		entityType := entityTypeObject
+		s.journal.Log(ctx, journal.LogParams{
+			ProjectID:  projectID,
+			EventType:  journal.EventTypeRestored,
+			EntityType: &entityType,
+			ObjectType: &objType,
+			ActorType:  journal.ActorUser,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"key":         *restored.Key,
+				"name":        nameFromProps(restored.Properties),
+				"object_type": restored.Type,
+			},
+		})
 	}
 
 	return restored.ToResponse(), nil
@@ -1129,6 +1232,28 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		s.enqueueRelationshipEmbedding(ctx, rel.ID.String())
 		if inverseRelID != "" {
 			s.enqueueRelationshipEmbedding(ctx, inverseRelID)
+		}
+
+		if s.journal != nil {
+			var srcKey, dstKey string
+			if srcObj.Key != nil {
+				srcKey = *srcObj.Key
+			}
+			if dstObj.Key != nil {
+				dstKey = *dstObj.Key
+			}
+			entityType := entityTypeRelationship
+			s.journal.Log(ctx, journal.LogParams{
+				ProjectID:  projectID,
+				EventType:  journal.EventTypeRelated,
+				EntityType: &entityType,
+				ActorType:  journal.ActorUser,
+				Metadata: map[string]any{
+					"src_key":  srcKey,
+					"rel_type": req.Type,
+					"dst_key":  dstKey,
+				},
+			})
 		}
 
 		resp := rel.ToResponse()
@@ -2057,12 +2182,33 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 	wg.Wait()
 
 	successCount, failedCount := 0, 0
+	byType := make(map[string]int)
 	for _, r := range results {
 		if r.Success {
 			successCount++
+			if r.Object != nil {
+				byType[r.Object.Type]++
+			}
 		} else {
 			failedCount++
 		}
+	}
+
+	if s.journal != nil && successCount > 0 {
+		byTypeAny := make(map[string]any, len(byType))
+		for k, v := range byType {
+			byTypeAny[k] = v
+		}
+		s.journal.Log(ctx, journal.LogParams{
+			ProjectID: projectID,
+			EventType: journal.EventTypeBatch,
+			ActorType: journal.ActorUser,
+			ActorID:   actorID,
+			Metadata: map[string]any{
+				"created": successCount,
+				"by_type": byTypeAny,
+			},
+		})
 	}
 
 	return &BulkCreateObjectsResponse{
@@ -2131,6 +2277,17 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 		} else {
 			failedCount++
 		}
+	}
+
+	if s.journal != nil && successCount > 0 {
+		s.journal.Log(ctx, journal.LogParams{
+			ProjectID: projectID,
+			EventType: journal.EventTypeBatch,
+			ActorType: journal.ActorUser,
+			Metadata: map[string]any{
+				"created": successCount,
+			},
+		})
 	}
 
 	return &BulkCreateRelationshipsResponse{
@@ -2870,6 +3027,22 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		}
 		response.Applied = true
 		response.AppliedObjects = &appliedCount
+
+		if s.journal != nil {
+			relsMerged := 0
+			if response.RelationshipsTotal != nil {
+				relsMerged = *response.RelationshipsTotal - relUnchanged
+			}
+			s.journal.Log(ctx, journal.LogParams{
+				ProjectID: projectID,
+				EventType: journal.EventTypeMerge,
+				ActorType: journal.ActorUser,
+				Metadata: map[string]any{
+					"objects_merged":       appliedCount,
+					"relationships_merged": relsMerged,
+				},
+			})
+		}
 	}
 
 	return response, nil

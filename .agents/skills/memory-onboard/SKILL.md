@@ -172,24 +172,10 @@ This also syncs the model catalog and auto-selects models atomically. Proceed to
 
 The **project info** is a Markdown description that agents and MCP clients read (via the `get_project_info` tool) to orient themselves before working with the project. It should capture the project's purpose, goals, audience, and high-level context. Setting it now ensures every subsequent agent interaction — extraction, querying, schema design — has the right context.
 
-#### Write the project info
-
-Based on what you learned in Step 1, compose a concise Markdown description (a few paragraphs is fine) and save it to a file in the CWD:
+Based on what you learned in Step 1, compose a concise Markdown description and upload it directly to the server:
 
 ```bash
-# Write the project info to a file (e.g. .memory/project-info.md)
-```
-
-The document should answer:
-- What does this project do?
-- Who is the intended audience (developers, end-users, data analysts, etc.)?
-- What are the main goals or capabilities?
-- What domain or industry does it serve?
-
-**Example:**
-
-```markdown
-# My Project
+memory projects set-info --text "# My Project
 
 A Go microservice that manages user authentication and authorization for the
 Acme platform. It exposes REST and gRPC APIs consumed by frontend apps and
@@ -201,19 +187,19 @@ other backend services.
 - OAuth2 / OIDC login flows
 - Role-based access control (RBAC)
 - API key management
-- Audit logging
+- Audit logging"
 ```
 
-#### Apply the project info
+The document should answer:
+- What does this project do?
+- Who is the intended audience (developers, end-users, data analysts, etc.)?
+- What are the main goals or capabilities?
+- What domain or industry does it serve?
 
-```bash
-memory projects set-info --project <project-id> --file .memory/project-info.md
-```
+> **Note:** `set-info` uploads the content directly to the server — there is no local copy and no sync mechanism. Do not save a local `.memory/project-info.md` file. To update the info later, call `set-info` again with new content.
 
 Confirm with the user:
 > "Set the project info document. Agents and MCP tools will now use this to understand the project's context."
-
-Commit `.memory/project-info.md` alongside the schema later — it serves as living documentation.
 
 ### Step 3 — Design the schema
 
@@ -396,10 +382,10 @@ MEMORY_PROJECT=$MP memory graph relationships create \
 
 Remind the user:
 - `.env.local` contains `MEMORY_PROJECT=<id>` — keep this out of git (add to `.gitignore`)
-- The project info document at `.memory/project-info.md` describes the project for agents — commit this to the repo and update it as the project evolves
 - The schema definition is saved at `.memory/templates/<pack-name>/pack.json` — commit this to the repo
+- `.memory/journal.md` and `.memory/graph-state.md` are agent session journals — add `.memory/journal.md` and `.memory/graph-state.md` to `.gitignore` (or gitignore the whole `.memory/` dir except `templates/`)
 - To modify the schema, edit the JSON and run `memory schemas install --file pack.json --merge` to additively merge changes
-- To update the project info: edit `.memory/project-info.md` and run `memory projects set-info --file .memory/project-info.md`
+- To update the project info: call `memory projects set-info --text "..."` or `--file <path>` — content is uploaded to the server, no local copy is kept
 - The `memory-query` skill can be used to explore the populated graph
 - The `memory-schemas` skill has full reference for managing schemas
 
@@ -408,5 +394,5 @@ Remind the user:
 ## Notes
 
 - If `.memory/templates/` already exists with a pack, confirm with the user whether to update or keep it
-- Keep `.memory/` committed to the repo — it documents the project's knowledge graph schema
+- Only `.memory/templates/` should be committed — `.memory/journal.md`, `.memory/graph-state.md`, and `.env.local` are gitignored
 - Schema IDs are UUIDs; use `memory schemas installed` to find them after installation

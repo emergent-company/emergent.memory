@@ -14,6 +14,72 @@ Write to (and look up from) the Memory knowledge graph — creating, updating, a
 - **Use only `memory` CLI commands** — never `curl`, raw HTTP requests, or direct API calls.
 - **Always set `key` on every object you create** — see [Key discipline](#key-discipline) below. Objects without a `key` cannot be referenced by name in future sessions and require expensive UUID lookups.
 - **Trust this skill over `--help` output** — `--help` text may lag behind the installed binary. If this skill documents a flag or format, it works even if `--help` doesn't show it yet.
+- **Maintain the session journal** — see [Session journal](#session-journal) below. Always read it at the start and update it at the end of every session.
+
+---
+
+## Session journal
+
+Graph population often spans multiple sessions. Maintain two files in `.memory/` to preserve continuity across session breaks:
+
+### `.memory/journal.md` — append-only log
+
+Append a new dated section at the **end** of this file after every session. Never rewrite existing entries.
+
+```markdown
+## 2026-03-21
+
+### Created
+- `svc-auth` (Service) — authentication service, handles OAuth2/OIDC
+- `svc-payments` (Service) — Stripe integration
+- `ep-login` (APIEndpoint) — POST /auth/login
+
+### Relationships
+- svc-auth → calls → svc-payments
+- ep-login → belongs_to → svc-auth
+
+### Notes
+- Skipped worker services, need schema clarification first
+```
+
+### `.memory/graph-state.md` — living summary
+
+Rewrite this file at the end of every session with the current state of the graph. It is the fastest way for a new session to understand what exists without querying the server.
+
+```markdown
+# Graph state — last updated 2026-03-21
+
+## Object counts
+- Service: 2 (svc-auth, svc-payments)
+- APIEndpoint: 1 (ep-login)
+
+## Key objects
+| Key | Type | Notes |
+|---|---|---|
+| svc-auth | Service | Core auth service |
+| svc-payments | Service | Stripe integration |
+| ep-login | APIEndpoint | POST /auth/login |
+
+## Pending / TODO
+- Worker services not yet added
+- Database entities not modelled
+```
+
+### At the start of a session
+
+1. Check if `.memory/journal.md` exists — if so, read it to understand what has already been done
+2. Read `.memory/graph-state.md` for a quick current-state summary
+3. Proceed with the session, avoiding re-creating objects already logged
+
+### Gitignore
+
+Add to `.gitignore` (these are agent working files, not source artifacts):
+```
+.memory/journal.md
+.memory/graph-state.md
+```
+
+Only `.memory/templates/` (schema packs) should be committed.
 
 ---
 

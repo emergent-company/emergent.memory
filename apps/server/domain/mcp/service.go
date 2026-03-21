@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/domain/skills"
@@ -67,6 +69,9 @@ type Service struct {
 	// API token service (for token management tools)
 	apitokenSvc *apitoken.Service
 
+	// Journal service (for journal-list and journal-add-note tools)
+	journalSvc *journal.Service
+
 	// Embedding worker controller (for pause/resume/config tools)
 	// Typed as interface to avoid import cycle with extraction package.
 	embeddingCtl EmbeddingControlHandler
@@ -93,6 +98,7 @@ type ServiceParams struct {
 	ProviderCredSvc    *provider.CredentialService
 	ProviderCatalogSvc *provider.ModelCatalogService
 	ApitokenSvc        *apitoken.Service
+	JournalSvc         *journal.Service
 }
 
 // NewService creates a new MCP service
@@ -120,6 +126,7 @@ func NewService(p ServiceParams) *Service {
 		apitokenSvc:        p.ApitokenSvc,
 		tempoBaseURL:       tempoURL,
 		serverPort:         cfg.ServerPort,
+		journalSvc:         p.JournalSvc,
 	}
 }
 
@@ -837,6 +844,44 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 	tools = append(tools, traceToolDefinitions()...)
 	tools = append(tools, queryToolDefinitions()...)
 
+	// Journal tools
+	tools = append(tools, ToolDefinition{
+		Name:        "journal-list",
+		Description: "List recent project journal entries — graph mutations (create, update, delete, batch, merge) and notes. Use since to filter by age (e.g. '7d', '24h'). Returns entries with event type, actor, metadata, and attached notes.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertySchema{
+				"since": {
+					Type:        "string",
+					Description: "Show entries from the last N days/hours/minutes (e.g. '7d', '24h', '30m') or ISO-8601 timestamp. Defaults to last 7 days.",
+				},
+				"limit": {
+					Type:        "integer",
+					Description: "Maximum number of entries to return. Default 100.",
+				},
+			},
+			Required: []string{},
+		},
+	})
+	tools = append(tools, ToolDefinition{
+		Name:        "journal-add-note",
+		Description: "Add a markdown note to the project journal. Notes can be standalone or attached to a specific journal entry. Use to record observations, decisions, or context about graph changes.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertySchema{
+				"body": {
+					Type:        "string",
+					Description: "Markdown body of the note.",
+				},
+				"journal_id": {
+					Type:        "string",
+					Description: "Optional UUID of a journal entry to attach this note to.",
+				},
+			},
+			Required: []string{"body"},
+		},
+	})
+
 	return tools
 }
 
@@ -1217,6 +1262,12 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// Query Knowledge tool
 	case "search-knowledge":
 		return s.executeQueryKnowledge(ctx, projectID, args)
+
+	// Journal tools
+	case "journal-list":
+		return s.executeJournalList(ctx, projectID, args)
+	case "journal-add-note":
+		return s.executeJournalAddNote(ctx, projectID, args)
 
 	default:
 		return nil, fmt.Errorf("tool not found: %s", toolName)
@@ -4922,4 +4973,107 @@ func (s *Service) executeCreateProject(ctx context.Context, args map[string]any)
 	return &ToolResult{
 		Content: []ContentBlock{{Type: "text", Text: string(b)}},
 	}, nil
+}
+
+// executeJournalList lists recent journal entries for the project.
+func (s *Service) executeJournalList(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.journalSvc == nil {
+		return nil, fmt.Errorf("journal service not available")
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	params := journal.ListParams{
+		ProjectID: projectUUID,
+		Limit:     100,
+		Page:      1,
+	}
+
+	if sinceStr, _ := args["since"].(string); sinceStr != "" {
+		t, err := parseJournalSince(sinceStr)
+		if err == nil {
+			params.Since = &t
+		}
+	} else {
+		// Default: last 7 days
+		t := time.Now().UTC().Add(-7 * 24 * time.Hour)
+		params.Since = &t
+	}
+
+	if limitVal, ok := args["limit"]; ok {
+		switch v := limitVal.(type) {
+		case float64:
+			params.Limit = int(v)
+		case int:
+			params.Limit = v
+		}
+	}
+
+	resp, err := s.journalSvc.List(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("journal list: %w", err)
+	}
+
+	return s.wrapResult(resp)
+}
+
+// executeJournalAddNote adds a note to the project journal.
+func (s *Service) executeJournalAddNote(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.journalSvc == nil {
+		return nil, fmt.Errorf("journal service not available")
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	body, _ := args["body"].(string)
+	if body == "" {
+		return nil, fmt.Errorf("body is required")
+	}
+
+	req := &journal.AddNoteRequest{
+		Body:      body,
+		ActorType: journal.ActorAgent,
+	}
+
+	if journalIDStr, _ := args["journal_id"].(string); journalIDStr != "" {
+		id, err := uuid.Parse(journalIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid journal_id: %w", err)
+		}
+		req.JournalID = &id
+	}
+
+	note, err := s.journalSvc.AddNote(ctx, projectUUID, req)
+	if err != nil {
+		return nil, fmt.Errorf("add note: %w", err)
+	}
+
+	return s.wrapResult(note)
+}
+
+// parseJournalSince parses a since string: relative (e.g. "7d", "24h", "30m") or RFC3339.
+func parseJournalSince(s string) (time.Time, error) {
+	if len(s) >= 2 {
+		unit := s[len(s)-1]
+		if unit == 'd' || unit == 'h' || unit == 'm' || unit == 's' {
+			n, err := strconv.Atoi(s[:len(s)-1])
+			if err == nil {
+				switch unit {
+				case 'd':
+					return time.Now().UTC().Add(-time.Duration(n) * 24 * time.Hour), nil
+				case 'h':
+					return time.Now().UTC().Add(-time.Duration(n) * time.Hour), nil
+				case 'm':
+					return time.Now().UTC().Add(-time.Duration(n) * time.Minute), nil
+				case 's':
+					return time.Now().UTC().Add(-time.Duration(n) * time.Second), nil
+				}
+			}
+		}
+	}
+	return time.Parse(time.RFC3339, s)
 }

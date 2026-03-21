@@ -199,7 +199,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	testGraphCfg.Graph.DefaultListLimit = 100
 	graphRepo := graph.NewRepository(db, log, testGraphCfg)
 	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
-	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, graph.ProvideInverseTypeProvider(db, log), embeddingsSvc, nil, nil)
+	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, graph.ProvideInverseTypeProvider(db, log), embeddingsSvc, nil, nil, nil)
 	graphHandler := graph.NewHandler(graphSvc, testGraphCfg)
 	graph.RegisterRoutes(e, graphHandler, authMiddleware)
 
