@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -20,8 +21,9 @@ var installMemorySkillsCmd = &cobra.Command{
 Only skills with the "memory-" prefix are installed. This is the set of skills
 that teach AI agents how to use the Memory CLI and platform.
 
-By default the command skips skills that already exist. Use --force to
-overwrite existing skill directories.
+By default the command skips skills that are already up to date. Skills whose
+content has changed since they were last installed are reported as outdated —
+use --force to overwrite them with the latest version.
 
 After installing, any "memory-" prefixed skill directories in the target that
 are no longer present in the catalog are considered stale. Use --prune to
@@ -67,6 +69,7 @@ func runInstallMemorySkills(cmd *cobra.Command, args []string) error {
 
 	installed := 0
 	skipped := 0
+	outdated := 0
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -78,22 +81,32 @@ func runInstallMemorySkills(cmd *cobra.Command, args []string) error {
 
 		destDir := filepath.Join(targetDir, name)
 
+		sub, err := fs.Sub(catalog, name)
+		if err != nil {
+			return fmt.Errorf("accessing skill %s: %w", name, err)
+		}
+
 		// Check if already exists.
-		if _, err := os.Stat(destDir); err == nil {
+		if _, statErr := os.Stat(destDir); statErr == nil {
 			if !installMemorySkillsForce {
-				fmt.Fprintf(cmd.OutOrStdout(), "  skipping %s (already exists; use --force to overwrite)\n", name)
-				skipped++
+				changed, err := skillDirChanged(sub, destDir)
+				if err != nil {
+					// If we can't compare, treat as changed to be safe.
+					changed = true
+				}
+				if changed {
+					fmt.Fprintf(cmd.OutOrStdout(), "  outdated %s (use --force to update)\n", name)
+					outdated++
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "  up to date %s\n", name)
+					skipped++
+				}
 				continue
 			}
 			// Remove existing dir before copying fresh.
 			if err := os.RemoveAll(destDir); err != nil {
 				return fmt.Errorf("removing existing %s: %w", destDir, err)
 			}
-		}
-
-		sub, err := fs.Sub(catalog, name)
-		if err != nil {
-			return fmt.Errorf("accessing skill %s: %w", name, err)
 		}
 
 		if err := copyFSTree(sub, destDir); err != nil {
@@ -170,11 +183,43 @@ func runInstallMemorySkills(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(cmd.OutOrStdout(), "\n%d skill(s) installed", installed)
 	if skipped > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), ", %d skipped", skipped)
+		fmt.Fprintf(cmd.OutOrStdout(), ", %d up to date", skipped)
+	}
+	if outdated > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), ", %d outdated (run with --force to update)", outdated)
 	}
 	if pruned > 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), ", %d pruned", pruned)
 	}
 	fmt.Fprintln(cmd.OutOrStdout())
 	return nil
+}
+
+// skillDirChanged reports whether any file in the catalog FS differs from the
+// corresponding file on disk under destDir. Returns true if any file is missing
+// or has different content, false if everything matches exactly.
+func skillDirChanged(catalogSub fs.FS, destDir string) (bool, error) {
+	changed := false
+	err := fs.WalkDir(catalogSub, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		catalogData, err := fs.ReadFile(catalogSub, path)
+		if err != nil {
+			return err
+		}
+		diskPath := filepath.Join(destDir, filepath.FromSlash(path))
+		diskData, err := os.ReadFile(diskPath)
+		if err != nil {
+			// File missing on disk — definitely changed.
+			changed = true
+			return fs.SkipAll
+		}
+		if !bytes.Equal(catalogData, diskData) {
+			changed = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return changed, err
 }
