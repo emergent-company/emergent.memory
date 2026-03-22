@@ -14,9 +14,11 @@ import (
 
 var installMemorySkillsCmd = &cobra.Command{
 	Use:   "install-memory-skills",
-	Short: "Install Memory skills to .agents/skills/",
+	Short: "Install Memory skills to .agents/skills/ and known agent config dirs",
 	Long: `Install the built-in Memory skills from the embedded catalog into
-.agents/skills/ in the current directory (or the directory specified by --dir).
+.agents/skills/ in the current directory (or the directory specified by --dir),
+and into any other known agent skill directories that already exist on disk
+(e.g. ~/.opencode/skills, ~/.claude/skills, ~/.gemini/skills).
 
 Only skills with the "memory-" prefix are installed. This is the set of skills
 that teach AI agents how to use the Memory CLI and platform.
@@ -47,29 +49,81 @@ func init() {
 func runInstallMemorySkills(cmd *cobra.Command, args []string) error {
 	catalog := skillsfs.Catalog()
 
-	// Resolve target directory.
-	targetDir := installMemorySkillsDir
-	if targetDir == "" {
+	// Resolve primary target directory (.agents/skills or --dir).
+	primaryDir := installMemorySkillsDir
+	if primaryDir == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getting working directory: %w", err)
 		}
-		targetDir = filepath.Join(cwd, ".agents", "skills")
+		primaryDir = filepath.Join(cwd, ".agents", "skills")
 	}
 
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		return fmt.Errorf("creating target directory %s: %w", targetDir, err)
+	// Resolve to absolute path for display.
+	if abs, err := filepath.Abs(primaryDir); err == nil {
+		primaryDir = abs
 	}
 
-	// Enumerate top-level entries in the catalog; install only memory-* ones.
+	// Build list of target dirs: primary always included (created if needed),
+	// plus any other knownSkillDirs() that already exist on disk.
+	targetDirs := []string{primaryDir}
+	for _, d := range knownSkillDirs() {
+		if abs, err := filepath.Abs(d); err == nil {
+			d = abs
+		}
+		if d == primaryDir {
+			continue
+		}
+		if info, err := os.Stat(d); err == nil && info.IsDir() {
+			targetDirs = append(targetDirs, d)
+		}
+	}
+
+	// Enumerate catalog entries once.
 	entries, err := fs.ReadDir(catalog, ".")
 	if err != nil {
 		return fmt.Errorf("reading embedded skills catalog: %w", err)
 	}
 
-	installed := 0
-	skipped := 0
-	outdated := 0
+	// Build catalog name set for stale-detection.
+	catalogNames := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "memory-") {
+			catalogNames[entry.Name()] = struct{}{}
+		}
+	}
+
+	// Process each target directory.
+	for _, targetDir := range targetDirs {
+		if err := os.MkdirAll(targetDir, 0o755); err != nil {
+			return fmt.Errorf("creating target directory %s: %w", targetDir, err)
+		}
+
+		installed, skipped, outdated, pruned, err := installSkillsToDir(cmd, catalog, entries, catalogNames, targetDir)
+		if err != nil {
+			return err
+		}
+
+		// Summary line with absolute path.
+		fmt.Fprintf(cmd.OutOrStdout(), "\n%d skill(s) installed", installed)
+		if skipped > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), ", %d up to date", skipped)
+		}
+		if outdated > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), ", %d outdated (run with --force to update)", outdated)
+		}
+		if pruned > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), ", %d pruned", pruned)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), " → %s\n", targetDir)
+	}
+
+	return nil
+}
+
+// installSkillsToDir installs memory-* skills from catalog into targetDir and
+// returns counts of (installed, skipped/up-to-date, outdated, pruned).
+func installSkillsToDir(cmd *cobra.Command, catalog fs.FS, entries []fs.DirEntry, catalogNames map[string]struct{}, targetDir string) (installed, skipped, outdated, pruned int, err error) {
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -81,17 +135,17 @@ func runInstallMemorySkills(cmd *cobra.Command, args []string) error {
 
 		destDir := filepath.Join(targetDir, name)
 
-		sub, err := fs.Sub(catalog, name)
-		if err != nil {
-			return fmt.Errorf("accessing skill %s: %w", name, err)
+		sub, subErr := fs.Sub(catalog, name)
+		if subErr != nil {
+			err = fmt.Errorf("accessing skill %s: %w", name, subErr)
+			return
 		}
 
 		// Check if already exists.
 		if _, statErr := os.Stat(destDir); statErr == nil {
 			if !installMemorySkillsForce {
-				changed, err := skillDirChanged(sub, destDir)
-				if err != nil {
-					// If we can't compare, treat as changed to be safe.
+				changed, diffErr := skillDirChanged(sub, destDir)
+				if diffErr != nil {
 					changed = true
 				}
 				if changed {
@@ -104,32 +158,26 @@ func runInstallMemorySkills(cmd *cobra.Command, args []string) error {
 				continue
 			}
 			// Remove existing dir before copying fresh.
-			if err := os.RemoveAll(destDir); err != nil {
-				return fmt.Errorf("removing existing %s: %w", destDir, err)
+			if rmErr := os.RemoveAll(destDir); rmErr != nil {
+				err = fmt.Errorf("removing existing %s: %w", destDir, rmErr)
+				return
 			}
 		}
 
-		if err := copyFSTree(sub, destDir); err != nil {
-			return fmt.Errorf("installing skill %s: %w", name, err)
+		if cpErr := copyFSTree(sub, destDir); cpErr != nil {
+			err = fmt.Errorf("installing skill %s: %w", name, cpErr)
+			return
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "  installed %s\n", name)
 		installed++
 	}
 
-	// Build a set of catalog skill names for stale-detection.
-	catalogNames := make(map[string]struct{}, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "memory-") {
-			catalogNames[entry.Name()] = struct{}{}
-		}
-	}
-
-	// Detect stale memory-* directories in targetDir not present in the catalog.
-	pruned := 0
-	existing, err := os.ReadDir(targetDir)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("reading target directory %s: %w", targetDir, err)
+	// Detect and handle stale memory-* directories.
+	existing, rdErr := os.ReadDir(targetDir)
+	if rdErr != nil && !os.IsNotExist(rdErr) {
+		err = fmt.Errorf("reading target directory %s: %w", targetDir, rdErr)
+		return
 	}
 	for _, e := range existing {
 		if !e.IsDir() {
@@ -147,23 +195,25 @@ func runInstallMemorySkills(cmd *cobra.Command, args []string) error {
 		if installMemorySkillsPrune {
 			remove = true
 		} else if isInteractiveTerminal() {
-			ok, err := promptYesNo(fmt.Sprintf("  remove stale skill %s? [y/N] ", name))
-			if err != nil {
-				return fmt.Errorf("reading input: %w", err)
+			ok, promptErr := promptYesNo(fmt.Sprintf("  remove stale skill %s? [y/N] ", name))
+			if promptErr != nil {
+				err = fmt.Errorf("reading input: %w", promptErr)
+				return
 			}
 			remove = ok
 		}
 		if remove {
-			if err := os.RemoveAll(filepath.Join(targetDir, name)); err != nil {
-				return fmt.Errorf("removing stale skill %s: %w", name, err)
+			if rmErr := os.RemoveAll(filepath.Join(targetDir, name)); rmErr != nil {
+				err = fmt.Errorf("removing stale skill %s: %w", name, rmErr)
+				return
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "  pruned %s\n", name)
 			pruned++
 		}
 	}
 
+	// Print stale hint for non-interactive, non-prune runs.
 	if !installMemorySkillsPrune && !isInteractiveTerminal() {
-		// Count stale skills for the hint message.
 		stale := 0
 		for _, e := range existing {
 			if !e.IsDir() {
@@ -181,18 +231,7 @@ func runInstallMemorySkills(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "\n%d skill(s) installed", installed)
-	if skipped > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), ", %d up to date", skipped)
-	}
-	if outdated > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), ", %d outdated (run with --force to update)", outdated)
-	}
-	if pruned > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), ", %d pruned", pruned)
-	}
-	fmt.Fprintln(cmd.OutOrStdout())
-	return nil
+	return
 }
 
 // skillDirChanged reports whether any file in the catalog FS differs from the
