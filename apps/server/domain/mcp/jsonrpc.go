@@ -42,7 +42,7 @@ const (
 )
 
 // MCP Protocol constants
-var SupportedProtocolVersions = []string{"2025-06-18", "2025-11-25"}
+var SupportedProtocolVersions = []string{"2024-11-05", "2025-06-18", "2025-11-25"}
 
 const LatestProtocolVersion = "2025-11-25"
 

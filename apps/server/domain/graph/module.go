@@ -121,6 +121,7 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 		Relation("Schema").
 		Where("ps.project_id = ?", projectID).
 		Where("ps.active = true").
+		Where("ps.removed_at IS NULL").
 		Scan(ctx)
 
 	objectSchemas := make(map[string]agents.ObjectSchema)
@@ -383,6 +384,7 @@ func (p *inverseTypeProviderAdapter) getOrLoadInverseMap(ctx context.Context, pr
 		FROM kb.project_schemas ps
 		JOIN kb.graph_schemas gs ON ps.schema_id = gs.id
 		WHERE ps.project_id = ? AND ps.active = true
+		AND ps.removed_at IS NULL
 		AND gs.relationship_type_schemas IS NOT NULL
 	`
 
