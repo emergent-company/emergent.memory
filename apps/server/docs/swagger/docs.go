@@ -53,7 +53,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Workspace config",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-github_com_emergent-company_emergent_memory_domain_sandbox_AgentSandboxConfig"
+                            "$ref": "#/definitions/domain_agents.APIResponse-github_com_emergent-company_emergent_memory_domain_sandbox_AgentSandboxConfig"
                         }
                     },
                     "400": {
@@ -121,7 +121,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated workspace config",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-github_com_emergent-company_emergent_memory_domain_sandbox_AgentSandboxConfig"
+                            "$ref": "#/definitions/domain_agents.APIResponse-github_com_emergent-company_emergent_memory_domain_sandbox_AgentSandboxConfig"
                         }
                     },
                     "400": {
@@ -182,7 +182,7 @@ const docTemplate = `{
                     "200": {
                         "description": "List of agents",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-array_apps_server_domain_agents_AgentDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-array_domain_agents_AgentDTO"
                         }
                     },
                     "400": {
@@ -229,7 +229,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.CreateAgentDTO"
+                            "$ref": "#/definitions/domain_agents.CreateAgentDTO"
                         }
                     }
                 ],
@@ -237,7 +237,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created agent",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-apps_server_domain_agents_AgentDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentDTO"
                         }
                     },
                     "400": {
@@ -298,7 +298,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Agent details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-apps_server_domain_agents_AgentDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentDTO"
                         }
                     },
                     "400": {
@@ -363,7 +363,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Agent deleted successfully",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-any"
+                            "$ref": "#/definitions/domain_agents.APIResponse-any"
                         }
                     },
                     "400": {
@@ -423,7 +423,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.UpdateAgentDTO"
+                            "$ref": "#/definitions/domain_agents.UpdateAgentDTO"
                         }
                     },
                     {
@@ -437,7 +437,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated agent",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-apps_server_domain_agents_AgentDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentDTO"
                         }
                     },
                     "400": {
@@ -499,7 +499,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.BatchTriggerDTO"
+                            "$ref": "#/definitions/domain_agents.BatchTriggerDTO"
                         }
                     },
                     {
@@ -513,7 +513,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Batch trigger result (queued/skipped counts)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-apps_server_domain_agents_BatchTriggerResponseDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_BatchTriggerResponseDTO"
                         }
                     },
                     "400": {
@@ -589,7 +589,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Pending events",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-apps_server_domain_agents_PendingEventsResponseDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_PendingEventsResponseDTO"
                         }
                     },
                     "400": {
@@ -665,7 +665,7 @@ const docTemplate = `{
                     "200": {
                         "description": "List of agent runs",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-array_apps_server_domain_agents_AgentRunDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-array_domain_agents_AgentRunDTO"
                         }
                     },
                     "400": {
@@ -739,7 +739,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Run cancelled successfully",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-map_string_string"
+                            "$ref": "#/definitions/domain_agents.APIResponse-map_string_string"
                         }
                     },
                     "400": {
@@ -806,7 +806,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Agent triggered successfully",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.TriggerResponseDTO"
+                            "$ref": "#/definitions/domain_agents.TriggerResponseDTO"
                         }
                     },
                     "400": {
@@ -855,7 +855,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_mcpregistry.APIResponse-array_apps_server_domain_mcpregistry_MCPServerDTO"
+                            "$ref": "#/definitions/domain_mcpregistry.APIResponse-array_domain_mcpregistry_MCPServerDTO"
                         }
                     },
                     "401": {
@@ -896,7 +896,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_mcpregistry.CreateMCPServerDTO"
+                            "$ref": "#/definitions/domain_mcpregistry.CreateMCPServerDTO"
                         }
                     }
                 ],
@@ -904,7 +904,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_mcpregistry.APIResponse-apps_server_domain_mcpregistry_MCPServerDTO"
+                            "$ref": "#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDTO"
                         }
                     },
                     "400": {
@@ -956,7 +956,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_mcpregistry.APIResponse-apps_server_domain_mcpregistry_MCPServerDetailDTO"
+                            "$ref": "#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDetailDTO"
                         }
                     },
                     "401": {
@@ -1057,7 +1057,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_mcpregistry.UpdateMCPServerDTO"
+                            "$ref": "#/definitions/domain_mcpregistry.UpdateMCPServerDTO"
                         }
                     }
                 ],
@@ -1065,7 +1065,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_mcpregistry.APIResponse-apps_server_domain_mcpregistry_MCPServerDTO"
+                            "$ref": "#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDTO"
                         }
                     },
                     "400": {
@@ -1125,7 +1125,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_orgs.OrgToolSettingDTO"
+                                "$ref": "#/definitions/domain_orgs.OrgToolSettingDTO"
                             }
                         }
                     },
@@ -1189,7 +1189,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_orgs.UpsertOrgToolSettingRequest"
+                            "$ref": "#/definitions/domain_orgs.UpsertOrgToolSettingRequest"
                         }
                     }
                 ],
@@ -1197,7 +1197,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated tool setting",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_orgs.OrgToolSettingDTO"
+                            "$ref": "#/definitions/domain_orgs.OrgToolSettingDTO"
                         }
                     },
                     "400": {
@@ -1307,7 +1307,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandboximages.ListResponse-apps_server_domain_sandboximages_SandboxImageDTO"
+                            "$ref": "#/definitions/domain_sandboximages.ListResponse-domain_sandboximages_SandboxImageDTO"
                         }
                     },
                     "401": {
@@ -1343,7 +1343,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandboximages.CreateSandboxImageRequest"
+                            "$ref": "#/definitions/domain_sandboximages.CreateSandboxImageRequest"
                         }
                     }
                 ],
@@ -1351,7 +1351,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandboximages.APIResponse-apps_server_domain_sandboximages_SandboxImageDTO"
+                            "$ref": "#/definitions/domain_sandboximages.APIResponse-domain_sandboximages_SandboxImageDTO"
                         }
                     },
                     "400": {
@@ -1398,7 +1398,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandboximages.APIResponse-apps_server_domain_sandboximages_SandboxImageDTO"
+                            "$ref": "#/definitions/domain_sandboximages.APIResponse-domain_sandboximages_SandboxImageDTO"
                         }
                     },
                     "401": {
@@ -1469,7 +1469,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Issuer information",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_authinfo.IssuerResponse"
+                            "$ref": "#/definitions/domain_authinfo.IssuerResponse"
                         }
                     }
                 }
@@ -1494,7 +1494,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Token information",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_authinfo.TokenInfoResponse"
+                            "$ref": "#/definitions/domain_authinfo.TokenInfoResponse"
                         }
                     },
                     "401": {
@@ -1549,7 +1549,7 @@ const docTemplate = `{
                     "200": {
                         "description": "List of conversations",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chat.ListConversationsResult"
+                            "$ref": "#/definitions/domain_chat.ListConversationsResult"
                         }
                     },
                     "400": {
@@ -1603,7 +1603,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chat.CreateConversationRequest"
+                            "$ref": "#/definitions/domain_chat.CreateConversationRequest"
                         }
                     }
                 ],
@@ -1611,7 +1611,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Conversation created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chat.Conversation"
+                            "$ref": "#/definitions/domain_chat.Conversation"
                         }
                     },
                     "400": {
@@ -1667,7 +1667,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chat.StreamRequest"
+                            "$ref": "#/definitions/domain_chat.StreamRequest"
                         }
                     }
                 ],
@@ -1734,7 +1734,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Conversation with messages",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chat.ConversationWithMessages"
+                            "$ref": "#/definitions/domain_chat.ConversationWithMessages"
                         }
                     },
                     "400": {
@@ -1867,7 +1867,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chat.UpdateConversationRequest"
+                            "$ref": "#/definitions/domain_chat.UpdateConversationRequest"
                         }
                     }
                 ],
@@ -1875,7 +1875,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated conversation",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chat.Conversation"
+                            "$ref": "#/definitions/domain_chat.Conversation"
                         }
                     },
                     "400": {
@@ -1944,7 +1944,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chat.AddMessageRequest"
+                            "$ref": "#/definitions/domain_chat.AddMessageRequest"
                         }
                     }
                 ],
@@ -1952,7 +1952,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Message created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chat.Message"
+                            "$ref": "#/definitions/domain_chat.Message"
                         }
                     },
                     "400": {
@@ -2033,7 +2033,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_datasource.DataSourceIntegrationDTO"
+                                "$ref": "#/definitions/domain_datasource.DataSourceIntegrationDTO"
                             }
                         }
                     },
@@ -2081,7 +2081,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.CreateDataSourceIntegrationDTO"
+                            "$ref": "#/definitions/domain_datasource.CreateDataSourceIntegrationDTO"
                         }
                     },
                     {
@@ -2096,7 +2096,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created integration",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.DataSourceIntegrationDTO"
+                            "$ref": "#/definitions/domain_datasource.DataSourceIntegrationDTO"
                         }
                     },
                     "400": {
@@ -2144,7 +2144,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_datasource.ProviderDTO"
+                                "$ref": "#/definitions/domain_datasource.ProviderDTO"
                             }
                         }
                     },
@@ -2194,7 +2194,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Provider configuration schema",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.ProviderSchemaDTO"
+                            "$ref": "#/definitions/domain_datasource.ProviderSchemaDTO"
                         }
                     },
                     "400": {
@@ -2251,7 +2251,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_datasource.SourceTypeDTO"
+                                "$ref": "#/definitions/domain_datasource.SourceTypeDTO"
                             }
                         }
                     },
@@ -2301,7 +2301,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.TestConfigDTO"
+                            "$ref": "#/definitions/domain_datasource.TestConfigDTO"
                         }
                     }
                 ],
@@ -2309,7 +2309,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Test result",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.TestConnectionResponseDTO"
+                            "$ref": "#/definitions/domain_datasource.TestConnectionResponseDTO"
                         }
                     },
                     "400": {
@@ -2365,7 +2365,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Integration details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.DataSourceIntegrationDTO"
+                            "$ref": "#/definitions/domain_datasource.DataSourceIntegrationDTO"
                         }
                     },
                     "400": {
@@ -2488,7 +2488,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.UpdateDataSourceIntegrationDTO"
+                            "$ref": "#/definitions/domain_datasource.UpdateDataSourceIntegrationDTO"
                         }
                     },
                     {
@@ -2503,7 +2503,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated integration",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.DataSourceIntegrationDTO"
+                            "$ref": "#/definitions/domain_datasource.DataSourceIntegrationDTO"
                         }
                     },
                     "400": {
@@ -2564,7 +2564,7 @@ const docTemplate = `{
                         "name": "request",
                         "in": "body",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.TriggerSyncDTO"
+                            "$ref": "#/definitions/domain_datasource.TriggerSyncDTO"
                         }
                     },
                     {
@@ -2579,7 +2579,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Sync job created or already running",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.TriggerSyncResponseDTO"
+                            "$ref": "#/definitions/domain_datasource.TriggerSyncResponseDTO"
                         }
                     },
                     "400": {
@@ -2658,7 +2658,7 @@ const docTemplate = `{
                                 "items": {
                                     "type": "array",
                                     "items": {
-                                        "$ref": "#/definitions/apps_server_domain_datasource.SyncJobDTO"
+                                        "$ref": "#/definitions/domain_datasource.SyncJobDTO"
                                     }
                                 },
                                 "total": {
@@ -2732,7 +2732,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Latest sync job (null if no jobs exist)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.SyncJobDTO"
+                            "$ref": "#/definitions/domain_datasource.SyncJobDTO"
                         }
                     },
                     "400": {
@@ -2807,7 +2807,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Sync job details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.SyncJobDTO"
+                            "$ref": "#/definitions/domain_datasource.SyncJobDTO"
                         }
                     },
                     "400": {
@@ -2958,7 +2958,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Connection test result",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_datasource.TestConnectionResponseDTO"
+                            "$ref": "#/definitions/domain_datasource.TestConnectionResponseDTO"
                         }
                     },
                     "400": {
@@ -3062,7 +3062,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.ListResult"
+                            "$ref": "#/definitions/domain_documents.ListResult"
                         }
                     },
                     "400": {
@@ -3110,7 +3110,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.CreateDocumentRequest"
+                            "$ref": "#/definitions/domain_documents.CreateDocumentRequest"
                         }
                     }
                 ],
@@ -3118,13 +3118,13 @@ const docTemplate = `{
                     "200": {
                         "description": "Existing document returned (deduplicated)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.Document"
+                            "$ref": "#/definitions/domain_documents.Document"
                         }
                     },
                     "201": {
                         "description": "Document created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.Document"
+                            "$ref": "#/definitions/domain_documents.Document"
                         }
                     },
                     "400": {
@@ -3172,7 +3172,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.BulkDeleteRequest"
+                            "$ref": "#/definitions/domain_documents.BulkDeleteRequest"
                         }
                     }
                 ],
@@ -3180,7 +3180,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.DeleteResponse"
+                            "$ref": "#/definitions/domain_documents.DeleteResponse"
                         }
                     },
                     "400": {
@@ -3230,7 +3230,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.BulkDeletionImpactRequest"
+                            "$ref": "#/definitions/domain_documents.BulkDeletionImpactRequest"
                         }
                     }
                 ],
@@ -3238,7 +3238,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.BulkDeletionImpact"
+                            "$ref": "#/definitions/domain_documents.BulkDeletionImpact"
                         }
                     },
                     "400": {
@@ -3282,7 +3282,7 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "array",
                                 "items": {
-                                    "$ref": "#/definitions/apps_server_domain_documents.SourceTypeWithCount"
+                                    "$ref": "#/definitions/domain_documents.SourceTypeWithCount"
                                 }
                             }
                         }
@@ -3416,7 +3416,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.Document"
+                            "$ref": "#/definitions/domain_documents.Document"
                         }
                     },
                     "400": {
@@ -3476,7 +3476,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.DeleteResponse"
+                            "$ref": "#/definitions/domain_documents.DeleteResponse"
                         }
                     },
                     "400": {
@@ -3538,7 +3538,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.ContentResponse"
+                            "$ref": "#/definitions/domain_documents.ContentResponse"
                         }
                     },
                     "400": {
@@ -3600,7 +3600,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.DeletionImpact"
+                            "$ref": "#/definitions/domain_documents.DeletionImpact"
                         }
                     },
                     "400": {
@@ -3727,7 +3727,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_documents.ExtractionSummary"
+                            "$ref": "#/definitions/domain_documents.ExtractionSummary"
                         }
                     },
                     "400": {
@@ -3789,7 +3789,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Chunking result",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chunking.RecreateChunksResponse"
+                            "$ref": "#/definitions/domain_chunking.RecreateChunksResponse"
                         }
                     },
                     "400": {
@@ -3959,7 +3959,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Most accessed objects",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.MostAccessedResponse"
+                            "$ref": "#/definitions/domain_graph.MostAccessedResponse"
                         }
                     },
                     "400": {
@@ -4017,7 +4017,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Unused objects",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.UnusedObjectsResponse"
+                            "$ref": "#/definitions/domain_graph.UnusedObjectsResponse"
                         }
                     },
                     "400": {
@@ -4067,7 +4067,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_branches.BranchResponse"
+                                "$ref": "#/definitions/domain_branches.BranchResponse"
                             }
                         }
                     },
@@ -4115,7 +4115,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_branches.CreateBranchRequest"
+                            "$ref": "#/definitions/domain_branches.CreateBranchRequest"
                         }
                     }
                 ],
@@ -4123,7 +4123,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created branch",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_branches.BranchResponse"
+                            "$ref": "#/definitions/domain_branches.BranchResponse"
                         }
                     },
                     "400": {
@@ -4178,7 +4178,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Branch details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_branches.BranchResponse"
+                            "$ref": "#/definitions/domain_branches.BranchResponse"
                         }
                     },
                     "400": {
@@ -4294,7 +4294,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_branches.UpdateBranchRequest"
+                            "$ref": "#/definitions/domain_branches.UpdateBranchRequest"
                         }
                     }
                 ],
@@ -4302,7 +4302,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated branch",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_branches.BranchResponse"
+                            "$ref": "#/definitions/domain_branches.BranchResponse"
                         }
                     },
                     "400": {
@@ -4364,7 +4364,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.BranchMergeRequest"
+                            "$ref": "#/definitions/domain_graph.BranchMergeRequest"
                         }
                     },
                     {
@@ -4437,7 +4437,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_embeddingpolicies.Response"
+                                "$ref": "#/definitions/domain_embeddingpolicies.Response"
                             }
                         }
                     },
@@ -4479,7 +4479,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_embeddingpolicies.CreateRequest"
+                            "$ref": "#/definitions/domain_embeddingpolicies.CreateRequest"
                         }
                     }
                 ],
@@ -4487,7 +4487,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created policy",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_embeddingpolicies.Response"
+                            "$ref": "#/definitions/domain_embeddingpolicies.Response"
                         }
                     },
                     "400": {
@@ -4549,7 +4549,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Policy details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_embeddingpolicies.Response"
+                            "$ref": "#/definitions/domain_embeddingpolicies.Response"
                         }
                     },
                     "400": {
@@ -4667,7 +4667,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_embeddingpolicies.UpdateRequest"
+                            "$ref": "#/definitions/domain_embeddingpolicies.UpdateRequest"
                         }
                     }
                 ],
@@ -4675,7 +4675,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated policy",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_embeddingpolicies.Response"
+                            "$ref": "#/definitions/domain_embeddingpolicies.Response"
                         }
                     },
                     "400": {
@@ -4724,7 +4724,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphExpandRequest"
+                            "$ref": "#/definitions/domain_graph.GraphExpandRequest"
                         }
                     },
                     {
@@ -4809,7 +4809,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_journal.JournalResponse"
+                            "$ref": "#/definitions/domain_journal.JournalResponse"
                         }
                     },
                     "400": {
@@ -4858,7 +4858,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_journal.AddNoteRequest"
+                            "$ref": "#/definitions/domain_journal.AddNoteRequest"
                         }
                     }
                 ],
@@ -4866,7 +4866,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_journal.JournalNote"
+                            "$ref": "#/definitions/domain_journal.JournalNote"
                         }
                     },
                     "400": {
@@ -4915,7 +4915,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.CreateGraphObjectRequest"
+                            "$ref": "#/definitions/domain_graph.CreateGraphObjectRequest"
                         }
                     },
                     {
@@ -4930,7 +4930,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphObject"
+                            "$ref": "#/definitions/domain_graph.GraphObject"
                         }
                     },
                     "400": {
@@ -4973,7 +4973,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.BulkCreateObjectsRequest"
+                            "$ref": "#/definitions/domain_graph.BulkCreateObjectsRequest"
                         }
                     },
                     {
@@ -4988,7 +4988,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Create results",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.BulkCreateObjectsResponse"
+                            "$ref": "#/definitions/domain_graph.BulkCreateObjectsResponse"
                         }
                     },
                     "400": {
@@ -5031,7 +5031,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.BulkUpdateStatusRequest"
+                            "$ref": "#/definitions/domain_graph.BulkUpdateStatusRequest"
                         }
                     },
                     {
@@ -5520,7 +5520,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.CreateGraphObjectRequest"
+                            "$ref": "#/definitions/domain_graph.CreateGraphObjectRequest"
                         }
                     },
                     {
@@ -5535,13 +5535,13 @@ const docTemplate = `{
                     "200": {
                         "description": "Object was updated (existing)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphObjectResponse"
+                            "$ref": "#/definitions/domain_graph.GraphObjectResponse"
                         }
                     },
                     "201": {
                         "description": "Object was created (new)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphObjectResponse"
+                            "$ref": "#/definitions/domain_graph.GraphObjectResponse"
                         }
                     },
                     "400": {
@@ -5584,7 +5584,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.VectorSearchRequest"
+                            "$ref": "#/definitions/domain_graph.VectorSearchRequest"
                         }
                     },
                     {
@@ -5659,7 +5659,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphObject"
+                            "$ref": "#/definitions/domain_graph.GraphObject"
                         }
                     },
                     "400": {
@@ -5773,7 +5773,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.PatchGraphObjectRequest"
+                            "$ref": "#/definitions/domain_graph.PatchGraphObjectRequest"
                         }
                     },
                     {
@@ -5788,7 +5788,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphObject"
+                            "$ref": "#/definitions/domain_graph.GraphObject"
                         }
                     },
                     "400": {
@@ -5925,7 +5925,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_graph.GraphObject"
+                                "$ref": "#/definitions/domain_graph.GraphObject"
                             }
                         }
                     },
@@ -5982,7 +5982,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.MoveObjectRequest"
+                            "$ref": "#/definitions/domain_graph.MoveObjectRequest"
                         }
                     },
                     {
@@ -5997,7 +5997,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.MoveObjectResponse"
+                            "$ref": "#/definitions/domain_graph.MoveObjectResponse"
                         }
                     },
                     "400": {
@@ -6062,7 +6062,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphObject"
+                            "$ref": "#/definitions/domain_graph.GraphObject"
                         }
                     },
                     "400": {
@@ -6221,7 +6221,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.CreateGraphRelationshipRequest"
+                            "$ref": "#/definitions/domain_graph.CreateGraphRelationshipRequest"
                         }
                     },
                     {
@@ -6236,7 +6236,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphRelationship"
+                            "$ref": "#/definitions/domain_graph.GraphRelationship"
                         }
                     },
                     "400": {
@@ -6279,7 +6279,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.BulkCreateRelationshipsRequest"
+                            "$ref": "#/definitions/domain_graph.BulkCreateRelationshipsRequest"
                         }
                     },
                     {
@@ -6294,7 +6294,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Create results",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.BulkCreateRelationshipsResponse"
+                            "$ref": "#/definitions/domain_graph.BulkCreateRelationshipsResponse"
                         }
                     },
                     "400": {
@@ -6442,7 +6442,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphRelationship"
+                            "$ref": "#/definitions/domain_graph.GraphRelationship"
                         }
                     },
                     "400": {
@@ -6554,7 +6554,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.PatchGraphRelationshipRequest"
+                            "$ref": "#/definitions/domain_graph.PatchGraphRelationshipRequest"
                         }
                     },
                     {
@@ -6569,7 +6569,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphRelationship"
+                            "$ref": "#/definitions/domain_graph.GraphRelationship"
                         }
                     },
                     "400": {
@@ -6630,7 +6630,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_graph.GraphRelationship"
+                                "$ref": "#/definitions/domain_graph.GraphRelationship"
                             }
                         }
                     },
@@ -6690,7 +6690,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphRelationship"
+                            "$ref": "#/definitions/domain_graph.GraphRelationship"
                         }
                     },
                     "400": {
@@ -6739,7 +6739,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.HybridSearchRequest"
+                            "$ref": "#/definitions/domain_graph.HybridSearchRequest"
                         }
                     },
                     {
@@ -6810,7 +6810,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.SearchWithNeighborsRequest"
+                            "$ref": "#/definitions/domain_graph.SearchWithNeighborsRequest"
                         }
                     },
                     {
@@ -6869,7 +6869,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.CreateSubgraphRequest"
+                            "$ref": "#/definitions/domain_graph.CreateSubgraphRequest"
                         }
                     },
                     {
@@ -6884,7 +6884,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created subgraph",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.CreateSubgraphResponse"
+                            "$ref": "#/definitions/domain_graph.CreateSubgraphResponse"
                         }
                     },
                     "400": {
@@ -6927,7 +6927,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_graph.TraverseGraphRequest"
+                            "$ref": "#/definitions/domain_graph.TraverseGraphRequest"
                         }
                     },
                     {
@@ -7003,7 +7003,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_integrations.IntegrationDTO"
+                                "$ref": "#/definitions/domain_integrations.IntegrationDTO"
                             }
                         }
                     },
@@ -7045,7 +7045,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_integrations.CreateIntegrationDTO"
+                            "$ref": "#/definitions/domain_integrations.CreateIntegrationDTO"
                         }
                     },
                     {
@@ -7060,7 +7060,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created integration",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_integrations.IntegrationDTO"
+                            "$ref": "#/definitions/domain_integrations.IntegrationDTO"
                         }
                     },
                     "400": {
@@ -7099,7 +7099,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_integrations.AvailableIntegrationDTO"
+                                "$ref": "#/definitions/domain_integrations.AvailableIntegrationDTO"
                             }
                         }
                     },
@@ -7147,7 +7147,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Integration details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_integrations.IntegrationDTO"
+                            "$ref": "#/definitions/domain_integrations.IntegrationDTO"
                         }
                     },
                     "400": {
@@ -7201,7 +7201,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_integrations.UpdateIntegrationDTO"
+                            "$ref": "#/definitions/domain_integrations.UpdateIntegrationDTO"
                         }
                     },
                     {
@@ -7216,7 +7216,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated integration",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_integrations.IntegrationDTO"
+                            "$ref": "#/definitions/domain_integrations.IntegrationDTO"
                         }
                     },
                     "400": {
@@ -7329,7 +7329,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Public integration info",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_integrations.PublicIntegrationDTO"
+                            "$ref": "#/definitions/domain_integrations.PublicIntegrationDTO"
                         }
                     },
                     "400": {
@@ -7384,7 +7384,7 @@ const docTemplate = `{
                         "name": "config",
                         "in": "body",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_integrations.TriggerSyncConfigDTO"
+                            "$ref": "#/definitions/domain_integrations.TriggerSyncConfigDTO"
                         }
                     },
                     {
@@ -7399,7 +7399,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Sync job triggered",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_integrations.TriggerSyncResponseDTO"
+                            "$ref": "#/definitions/domain_integrations.TriggerSyncResponseDTO"
                         }
                     },
                     "400": {
@@ -7458,7 +7458,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Connection test result",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_integrations.TestConnectionResponseDTO"
+                            "$ref": "#/definitions/domain_integrations.TestConnectionResponseDTO"
                         }
                     },
                     "400": {
@@ -7507,7 +7507,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_invites.CreateInviteRequest"
+                            "$ref": "#/definitions/domain_invites.CreateInviteRequest"
                         }
                     }
                 ],
@@ -7515,7 +7515,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created invitation with token",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_invites.Invite"
+                            "$ref": "#/definitions/domain_invites.Invite"
                         }
                     },
                     "400": {
@@ -7558,7 +7558,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_invites.AcceptInviteRequest"
+                            "$ref": "#/definitions/domain_invites.AcceptInviteRequest"
                         }
                     }
                 ],
@@ -7614,7 +7614,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_invites.PendingInvite"
+                                "$ref": "#/definitions/domain_invites.PendingInvite"
                             }
                         }
                     },
@@ -7763,7 +7763,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_mcp.Request"
+                            "$ref": "#/definitions/domain_mcp.Request"
                         }
                     }
                 ],
@@ -7771,7 +7771,7 @@ const docTemplate = `{
                     "200": {
                         "description": "JSON-RPC 2.0 response (success or error)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_mcp.Response"
+                            "$ref": "#/definitions/domain_mcp.Response"
                         }
                     },
                     "401": {
@@ -7877,7 +7877,7 @@ const docTemplate = `{
                     "200": {
                         "description": "List of jobs",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_monitoring.ExtractionJobListResponseDTO"
+                            "$ref": "#/definitions/domain_monitoring.ExtractionJobListResponseDTO"
                         }
                     },
                     "400": {
@@ -7939,7 +7939,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Job details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_monitoring.ExtractionJobDetailDTO"
+                            "$ref": "#/definitions/domain_monitoring.ExtractionJobDetailDTO"
                         }
                     },
                     "400": {
@@ -8024,7 +8024,7 @@ const docTemplate = `{
                     "200": {
                         "description": "LLM call logs",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_monitoring.LLMCallListDTO"
+                            "$ref": "#/definitions/domain_monitoring.LLMCallListDTO"
                         }
                     },
                     "400": {
@@ -8121,7 +8121,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Process logs",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_monitoring.ProcessLogListDTO"
+                            "$ref": "#/definitions/domain_monitoring.ProcessLogListDTO"
                         }
                     },
                     "400": {
@@ -8203,7 +8203,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Filtered notification list",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_notifications.NotificationListResponse"
+                            "$ref": "#/definitions/domain_notifications.NotificationListResponse"
                         }
                     },
                     "401": {
@@ -8234,7 +8234,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Counts by notification tab",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_notifications.NotificationCountsResponse"
+                            "$ref": "#/definitions/domain_notifications.NotificationCountsResponse"
                         }
                     },
                     "401": {
@@ -8297,7 +8297,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Notification statistics",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_notifications.NotificationStats"
+                            "$ref": "#/definitions/domain_notifications.NotificationStats"
                         }
                     },
                     "401": {
@@ -8440,7 +8440,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_orgs.OrgDTO"
+                                "$ref": "#/definitions/domain_orgs.OrgDTO"
                             }
                         }
                     },
@@ -8482,7 +8482,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_orgs.CreateOrgRequest"
+                            "$ref": "#/definitions/domain_orgs.CreateOrgRequest"
                         }
                     }
                 ],
@@ -8490,7 +8490,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Organization created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_orgs.Org"
+                            "$ref": "#/definitions/domain_orgs.Org"
                         }
                     },
                     "400": {
@@ -8542,7 +8542,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Organization details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_orgs.Org"
+                            "$ref": "#/definitions/domain_orgs.Org"
                         }
                     },
                     "400": {
@@ -8647,7 +8647,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.ListSkillsResponse"
+                            "$ref": "#/definitions/domain_skills.ListSkillsResponse"
                         }
                     },
                     "400": {
@@ -8695,7 +8695,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.CreateSkillDTO"
+                            "$ref": "#/definitions/domain_skills.CreateSkillDTO"
                         }
                     }
                 ],
@@ -8703,7 +8703,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.SkillDTO"
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
                         }
                     },
                     "400": {
@@ -8820,7 +8820,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.UpdateSkillDTO"
+                            "$ref": "#/definitions/domain_skills.UpdateSkillDTO"
                         }
                     }
                 ],
@@ -8828,7 +8828,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.SkillDTO"
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
                         }
                     },
                     "400": {
@@ -8889,7 +8889,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_projects.ProjectDTO"
+                                "$ref": "#/definitions/domain_projects.ProjectDTO"
                             }
                         }
                     },
@@ -8931,7 +8931,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_projects.CreateProjectRequest"
+                            "$ref": "#/definitions/domain_projects.CreateProjectRequest"
                         }
                     }
                 ],
@@ -8939,7 +8939,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Project created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_projects.Project"
+                            "$ref": "#/definitions/domain_projects.Project"
                         }
                     },
                     "400": {
@@ -8991,7 +8991,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Project details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_projects.Project"
+                            "$ref": "#/definitions/domain_projects.Project"
                         }
                     },
                     "400": {
@@ -9110,7 +9110,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_projects.UpdateProjectRequest"
+                            "$ref": "#/definitions/domain_projects.UpdateProjectRequest"
                         }
                     }
                 ],
@@ -9118,7 +9118,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated project",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_projects.Project"
+                            "$ref": "#/definitions/domain_projects.Project"
                         }
                     },
                     "400": {
@@ -9178,7 +9178,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_projects.ProjectMemberDTO"
+                                "$ref": "#/definitions/domain_projects.ProjectMemberDTO"
                             }
                         }
                     },
@@ -9314,7 +9314,7 @@ const docTemplate = `{
                     "200": {
                         "description": "List of questions",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-array_apps_server_domain_agents_AgentQuestionDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-array_domain_agents_AgentQuestionDTO"
                         }
                     },
                     "400": {
@@ -9377,7 +9377,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.RespondToQuestionRequest"
+                            "$ref": "#/definitions/domain_agents.RespondToQuestionRequest"
                         }
                     }
                 ],
@@ -9385,7 +9385,7 @@ const docTemplate = `{
                     "202": {
                         "description": "Question answered, agent resuming",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-apps_server_domain_agents_AgentQuestionDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentQuestionDTO"
                         }
                     },
                     "400": {
@@ -9459,7 +9459,7 @@ const docTemplate = `{
                     "200": {
                         "description": "List of questions",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-array_apps_server_domain_agents_AgentQuestionDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-array_domain_agents_AgentQuestionDTO"
                         }
                     },
                     "400": {
@@ -9519,7 +9519,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_invites.SentInvite"
+                                "$ref": "#/definitions/domain_invites.SentInvite"
                             }
                         }
                     },
@@ -9566,7 +9566,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.ListSkillsResponse"
+                            "$ref": "#/definitions/domain_skills.ListSkillsResponse"
                         }
                     },
                     "400": {
@@ -9614,7 +9614,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.CreateSkillDTO"
+                            "$ref": "#/definitions/domain_skills.CreateSkillDTO"
                         }
                     }
                 ],
@@ -9622,7 +9622,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.SkillDTO"
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
                         }
                     },
                     "400": {
@@ -9739,7 +9739,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.UpdateSkillDTO"
+                            "$ref": "#/definitions/domain_skills.UpdateSkillDTO"
                         }
                     }
                 ],
@@ -9747,7 +9747,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.SkillDTO"
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
                         }
                     },
                     "400": {
@@ -9799,7 +9799,7 @@ const docTemplate = `{
                     "200": {
                         "description": "List of tokens",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_apitoken.ApiTokenListResponseDTO"
+                            "$ref": "#/definitions/domain_apitoken.ApiTokenListResponseDTO"
                         }
                     },
                     "400": {
@@ -9853,7 +9853,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_apitoken.CreateApiTokenRequest"
+                            "$ref": "#/definitions/domain_apitoken.CreateApiTokenRequest"
                         }
                     }
                 ],
@@ -9861,7 +9861,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Token created (includes full token value)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_apitoken.CreateApiTokenResponseDTO"
+                            "$ref": "#/definitions/domain_apitoken.CreateApiTokenResponseDTO"
                         }
                     },
                     "400": {
@@ -9920,7 +9920,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Token details (includes full token value if available)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_apitoken.GetApiTokenResponseDTO"
+                            "$ref": "#/definitions/domain_apitoken.GetApiTokenResponseDTO"
                         }
                     },
                     "400": {
@@ -10074,7 +10074,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_schemaregistry.SchemaRegistryEntryDTO"
+                                "$ref": "#/definitions/domain_schemaregistry.SchemaRegistryEntryDTO"
                             }
                         }
                     },
@@ -10130,7 +10130,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Type statistics",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemaregistry.SchemaRegistryStats"
+                            "$ref": "#/definitions/domain_schemaregistry.SchemaRegistryStats"
                         }
                     },
                     "400": {
@@ -10186,7 +10186,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemaregistry.CreateTypeRequest"
+                            "$ref": "#/definitions/domain_schemaregistry.CreateTypeRequest"
                         }
                     }
                 ],
@@ -10194,7 +10194,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created type",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemaregistry.ProjectObjectSchemaRegistry"
+                            "$ref": "#/definitions/domain_schemaregistry.ProjectObjectSchemaRegistry"
                         }
                     },
                     "400": {
@@ -10262,7 +10262,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Type definition",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemaregistry.SchemaRegistryEntryDTO"
+                            "$ref": "#/definitions/domain_schemaregistry.SchemaRegistryEntryDTO"
                         }
                     },
                     "400": {
@@ -10329,7 +10329,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemaregistry.UpdateTypeRequest"
+                            "$ref": "#/definitions/domain_schemaregistry.UpdateTypeRequest"
                         }
                     }
                 ],
@@ -10337,7 +10337,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated type",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemaregistry.ProjectObjectSchemaRegistry"
+                            "$ref": "#/definitions/domain_schemaregistry.ProjectObjectSchemaRegistry"
                         }
                     },
                     "400": {
@@ -10455,7 +10455,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemas.CreatePackRequest"
+                            "$ref": "#/definitions/domain_schemas.CreatePackRequest"
                         }
                     }
                 ],
@@ -10463,7 +10463,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created schema",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemas.GraphMemorySchema"
+                            "$ref": "#/definitions/domain_schemas.GraphMemorySchema"
                         }
                     },
                     "400": {
@@ -10519,7 +10519,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemas.AssignPackRequest"
+                            "$ref": "#/definitions/domain_schemas.AssignPackRequest"
                         }
                     }
                 ],
@@ -10527,13 +10527,13 @@ const docTemplate = `{
                     "200": {
                         "description": "Dry-run preview (when dry_run=true)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemas.AssignPackResult"
+                            "$ref": "#/definitions/domain_schemas.AssignPackResult"
                         }
                     },
                     "201": {
                         "description": "Created assignment",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemas.AssignPackResult"
+                            "$ref": "#/definitions/domain_schemas.AssignPackResult"
                         }
                     },
                     "400": {
@@ -10659,7 +10659,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemas.UpdateAssignmentRequest"
+                            "$ref": "#/definitions/domain_schemas.UpdateAssignmentRequest"
                         }
                     }
                 ],
@@ -10733,7 +10733,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_schemas.MemorySchemaListItem"
+                                "$ref": "#/definitions/domain_schemas.MemorySchemaListItem"
                             }
                         }
                     },
@@ -10789,7 +10789,65 @@ const docTemplate = `{
                     "200": {
                         "description": "Compiled type definitions",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemas.CompiledTypesResponse"
+                            "$ref": "#/definitions/domain_schemas.CompiledTypesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/history": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns all schema assignments for a project including removed (soft-deleted) ones",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Schema installation history",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Schema history",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_schemas.SchemaHistoryItem"
+                            }
                         }
                     },
                     "400": {
@@ -10846,7 +10904,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_schemas.InstalledSchemaItem"
+                                "$ref": "#/definitions/domain_schemas.InstalledSchemaItem"
                             }
                         }
                     },
@@ -10858,6 +10916,394 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/migrate": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Renames object/edge types and/or property keys across live graph objects and edges in a single transaction. Supports dry_run.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Migrate live graph data",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Migration request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.MigrateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Migration result (or dry-run preview)",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.MigrateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/migrate/commit": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Prunes migration_archive entries up to a given schema version, permanently discarding archived data that is no longer needed for rollback.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Commit migration archive",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Commit request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.CommitMigrationArchiveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Commit result",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.CommitMigrationArchiveResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/migrate/execute": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Executes a schema migration for all project objects, applying type/property renames and archiving removed properties.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Execute schema migration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Execute request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationExecuteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Migration result",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationExecuteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/migrate/preview": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Runs a dry-run migration against all project objects to assess risk before executing. Returns per-type risk breakdown and an overall risk level.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Preview schema migration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Preview request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationPreviewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Migration preview",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationPreviewResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/migrate/rollback": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Restores archived property data for objects that were migrated to a given schema version. Optionally re-installs old schema types.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Rollback schema migration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Rollback request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationRollbackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Rollback result",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationRollbackResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/migration-jobs/{jobId}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the current status and progress of an async schema migration job.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Get migration job status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Migration Job ID (UUID)",
+                        "name": "jobId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Migration job",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationJob"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -10902,7 +11348,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Template pack",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemas.GraphMemorySchema"
+                            "$ref": "#/definitions/domain_schemas.GraphMemorySchema"
                         }
                     },
                     "400": {
@@ -10962,7 +11408,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemas.UpdatePackRequest"
+                            "$ref": "#/definitions/domain_schemas.UpdatePackRequest"
                         }
                     }
                 ],
@@ -10970,7 +11416,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated schema",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_schemas.GraphMemorySchema"
+                            "$ref": "#/definitions/domain_schemas.GraphMemorySchema"
                         }
                     },
                     "400": {
@@ -11075,7 +11521,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.ListSkillsResponse"
+                            "$ref": "#/definitions/domain_skills.ListSkillsResponse"
                         }
                     },
                     "401": {
@@ -11110,7 +11556,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.CreateSkillDTO"
+                            "$ref": "#/definitions/domain_skills.CreateSkillDTO"
                         }
                     }
                 ],
@@ -11118,7 +11564,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.SkillDTO"
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
                         }
                     },
                     "400": {
@@ -11176,7 +11622,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.SkillDTO"
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
                         }
                     },
                     "400": {
@@ -11277,7 +11723,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.UpdateSkillDTO"
+                            "$ref": "#/definitions/domain_skills.UpdateSkillDTO"
                         }
                     }
                 ],
@@ -11285,7 +11731,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_skills.SkillDTO"
+                            "$ref": "#/definitions/domain_skills.SkillDTO"
                         }
                     },
                     "400": {
@@ -11363,7 +11809,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Document parsing job list with stats and pagination",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.ListDocumentParsingJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.ListDocumentParsingJobsResponse"
                         }
                     },
                     "401": {
@@ -11406,7 +11852,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.DeleteJobsRequest"
+                            "$ref": "#/definitions/domain_superadmin.DeleteJobsRequest"
                         }
                     }
                 ],
@@ -11414,7 +11860,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Deletion summary",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.DeleteJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.DeleteJobsResponse"
                         }
                     },
                     "400": {
@@ -11463,7 +11909,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.RetryJobsRequest"
+                            "$ref": "#/definitions/domain_superadmin.RetryJobsRequest"
                         }
                     }
                 ],
@@ -11471,7 +11917,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Retry summary",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.RetryJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.RetryJobsResponse"
                         }
                     },
                     "400": {
@@ -11555,7 +12001,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Email job list with pagination",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.ListEmailJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.ListEmailJobsResponse"
                         }
                     },
                     "401": {
@@ -11601,7 +12047,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Email job preview data",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.EmailJobPreviewResponse"
+                            "$ref": "#/definitions/domain_superadmin.EmailJobPreviewResponse"
                         }
                     },
                     "400": {
@@ -11691,7 +12137,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Embedding job list with stats and pagination",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.ListEmbeddingJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.ListEmbeddingJobsResponse"
                         }
                     },
                     "401": {
@@ -11728,7 +12174,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Cleanup summary",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.CleanupOrphansResponse"
+                            "$ref": "#/definitions/domain_superadmin.CleanupOrphansResponse"
                         }
                     },
                     "401": {
@@ -11771,7 +12217,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.DeleteJobsRequest"
+                            "$ref": "#/definitions/domain_superadmin.DeleteJobsRequest"
                         }
                     }
                 ],
@@ -11779,7 +12225,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Deletion summary",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.DeleteJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.DeleteJobsResponse"
                         }
                     },
                     "400": {
@@ -11822,7 +12268,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Reset summary",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.ResetDeadLetterResponse"
+                            "$ref": "#/definitions/domain_superadmin.ResetDeadLetterResponse"
                         }
                     },
                     "401": {
@@ -11900,7 +12346,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Extraction job list with stats and pagination",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.ListExtractionJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.ListExtractionJobsResponse"
                         }
                     },
                     "401": {
@@ -11943,7 +12389,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.CancelJobsRequest"
+                            "$ref": "#/definitions/domain_superadmin.CancelJobsRequest"
                         }
                     }
                 ],
@@ -11951,7 +12397,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Cancellation summary",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.CancelJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.CancelJobsResponse"
                         }
                     },
                     "400": {
@@ -12000,7 +12446,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.DeleteJobsRequest"
+                            "$ref": "#/definitions/domain_superadmin.DeleteJobsRequest"
                         }
                     }
                 ],
@@ -12008,7 +12454,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Deletion summary",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.DeleteJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.DeleteJobsResponse"
                         }
                     },
                     "400": {
@@ -12051,7 +12497,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Superadmin status and role (or null if not superadmin)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.SuperadminMeResponse"
+                            "$ref": "#/definitions/domain_superadmin.SuperadminMeResponse"
                         }
                     },
                     "401": {
@@ -12099,7 +12545,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Organization list with pagination",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.ListOrganizationsResponse"
+                            "$ref": "#/definitions/domain_superadmin.ListOrganizationsResponse"
                         }
                     },
                     "401": {
@@ -12145,7 +12591,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Organization deleted successfully",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.SuccessResponse"
+                            "$ref": "#/definitions/domain_superadmin.SuccessResponse"
                         }
                     },
                     "400": {
@@ -12217,7 +12663,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Project list with pagination",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.ListProjectsResponse"
+                            "$ref": "#/definitions/domain_superadmin.ListProjectsResponse"
                         }
                     },
                     "401": {
@@ -12263,7 +12709,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Project deleted successfully",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.SuccessResponse"
+                            "$ref": "#/definitions/domain_superadmin.SuccessResponse"
                         }
                     },
                     "400": {
@@ -12318,7 +12764,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.CreateServiceTokenRequest"
+                            "$ref": "#/definitions/domain_superadmin.CreateServiceTokenRequest"
                         }
                     }
                 ],
@@ -12326,7 +12772,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created service token (shown once)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.CreateServiceTokenResponse"
+                            "$ref": "#/definitions/domain_superadmin.CreateServiceTokenResponse"
                         }
                     },
                     "400": {
@@ -12404,7 +12850,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Sync job list with stats and pagination",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.ListSyncJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.ListSyncJobsResponse"
                         }
                     },
                     "401": {
@@ -12447,7 +12893,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.CancelJobsRequest"
+                            "$ref": "#/definitions/domain_superadmin.CancelJobsRequest"
                         }
                     }
                 ],
@@ -12455,7 +12901,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Cancellation summary",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.CancelJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.CancelJobsResponse"
                         }
                     },
                     "400": {
@@ -12504,7 +12950,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.DeleteJobsRequest"
+                            "$ref": "#/definitions/domain_superadmin.DeleteJobsRequest"
                         }
                     }
                 ],
@@ -12512,7 +12958,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Deletion summary",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.DeleteJobsResponse"
+                            "$ref": "#/definitions/domain_superadmin.DeleteJobsResponse"
                         }
                     },
                     "400": {
@@ -12564,7 +13010,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Sync job logs and metadata",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.SyncJobLogsResponse"
+                            "$ref": "#/definitions/domain_superadmin.SyncJobLogsResponse"
                         }
                     },
                     "400": {
@@ -12642,7 +13088,7 @@ const docTemplate = `{
                     "200": {
                         "description": "User list with pagination",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.ListUsersResponse"
+                            "$ref": "#/definitions/domain_superadmin.ListUsersResponse"
                         }
                     },
                     "401": {
@@ -12688,7 +13134,7 @@ const docTemplate = `{
                     "200": {
                         "description": "User deleted successfully",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_superadmin.SuccessResponse"
+                            "$ref": "#/definitions/domain_superadmin.SuccessResponse"
                         }
                     },
                     "400": {
@@ -12778,7 +13224,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Paginated task list",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_tasks.TaskListResponse"
+                            "$ref": "#/definitions/domain_tasks.TaskListResponse"
                         }
                     },
                     "400": {
@@ -12844,7 +13290,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Paginated task list",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_tasks.TaskListResponse"
+                            "$ref": "#/definitions/domain_tasks.TaskListResponse"
                         }
                     },
                     "401": {
@@ -12875,7 +13321,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Aggregated task counts by status",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_tasks.TaskCountsResponse"
+                            "$ref": "#/definitions/domain_tasks.TaskCountsResponse"
                         }
                     },
                     "401": {
@@ -12920,7 +13366,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Task counts by status",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_tasks.TaskCountsResponse"
+                            "$ref": "#/definitions/domain_tasks.TaskCountsResponse"
                         }
                     },
                     "400": {
@@ -12978,7 +13424,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Task details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_tasks.TaskResponse"
+                            "$ref": "#/definitions/domain_tasks.TaskResponse"
                         }
                     },
                     "400": {
@@ -13104,7 +13550,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_tasks.ResolveTaskRequest"
+                            "$ref": "#/definitions/domain_tasks.ResolveTaskRequest"
                         }
                     },
                     {
@@ -13170,7 +13616,7 @@ const docTemplate = `{
                     "200": {
                         "description": "List of tokens",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_apitoken.ApiTokenListResponseDTO"
+                            "$ref": "#/definitions/domain_apitoken.ApiTokenListResponseDTO"
                         }
                     },
                     "401": {
@@ -13211,7 +13657,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_apitoken.CreateAccountTokenRequest"
+                            "$ref": "#/definitions/domain_apitoken.CreateAccountTokenRequest"
                         }
                     }
                 ],
@@ -13219,7 +13665,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Token created (includes full token value)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_apitoken.CreateApiTokenResponseDTO"
+                            "$ref": "#/definitions/domain_apitoken.CreateApiTokenResponseDTO"
                         }
                     },
                     "400": {
@@ -13271,7 +13717,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Token details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_apitoken.GetApiTokenResponseDTO"
+                            "$ref": "#/definitions/domain_apitoken.GetApiTokenResponseDTO"
                         }
                     },
                     "400": {
@@ -13393,7 +13839,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Recent items",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_useractivity.RecentItemsResponse"
+                            "$ref": "#/definitions/domain_useractivity.RecentItemsResponse"
                         }
                     },
                     "401": {
@@ -13492,7 +13938,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Recent items",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_useractivity.RecentItemsResponse"
+                            "$ref": "#/definitions/domain_useractivity.RecentItemsResponse"
                         }
                     },
                     "400": {
@@ -13613,7 +14059,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_useractivity.RecordActivityRequest"
+                            "$ref": "#/definitions/domain_useractivity.RecordActivityRequest"
                         }
                     }
                 ],
@@ -13670,7 +14116,7 @@ const docTemplate = `{
                     "200": {
                         "description": "User profile",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_userprofile.ProfileDTO"
+                            "$ref": "#/definitions/domain_userprofile.ProfileDTO"
                         }
                     },
                     "401": {
@@ -13717,7 +14163,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_userprofile.UpdateProfileRequest"
+                            "$ref": "#/definitions/domain_userprofile.UpdateProfileRequest"
                         }
                     }
                 ],
@@ -13725,7 +14171,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Updated profile",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_userprofile.ProfileDTO"
+                            "$ref": "#/definitions/domain_userprofile.ProfileDTO"
                         }
                     },
                     "400": {
@@ -13777,7 +14223,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Search results",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_users.UserSearchResponse"
+                            "$ref": "#/definitions/domain_users.UserSearchResponse"
                         }
                     },
                     "400": {
@@ -13848,7 +14294,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_sandbox.WorkspaceResponse"
+                                "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
                             }
                         }
                     },
@@ -13890,7 +14336,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.CreateWorkspaceRequest"
+                            "$ref": "#/definitions/domain_sandbox.CreateWorkspaceRequest"
                         }
                     }
                 ],
@@ -13898,7 +14344,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created sandbox",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.WorkspaceResponse"
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
                         }
                     },
                     "400": {
@@ -13947,7 +14393,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.CreateFromSnapshotRequest"
+                            "$ref": "#/definitions/domain_sandbox.CreateFromSnapshotRequest"
                         }
                     }
                 ],
@@ -13955,7 +14401,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Sandbox created from snapshot",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.WorkspaceResponse"
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
                         }
                     },
                     "400": {
@@ -14000,7 +14446,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_sandbox.ProviderStatusResponse"
+                                "$ref": "#/definitions/domain_sandbox.ProviderStatusResponse"
                             }
                         }
                     },
@@ -14041,7 +14487,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Sandbox details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.WorkspaceResponse"
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
                         }
                     },
                     "400": {
@@ -14141,7 +14587,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.AttachSessionRequest"
+                            "$ref": "#/definitions/domain_sandbox.AttachSessionRequest"
                         }
                     }
                 ],
@@ -14149,7 +14595,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Sandbox with attached session",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.WorkspaceResponse"
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
                         }
                     },
                     "400": {
@@ -14205,7 +14651,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.BashRequest"
+                            "$ref": "#/definitions/domain_sandbox.BashRequest"
                         }
                     }
                 ],
@@ -14213,7 +14659,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Command output",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.BashResponse"
+                            "$ref": "#/definitions/domain_sandbox.BashResponse"
                         }
                     },
                     "400": {
@@ -14259,7 +14705,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Sandbox with session detached",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.WorkspaceResponse"
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
                         }
                     },
                     "400": {
@@ -14315,7 +14761,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.EditRequest"
+                            "$ref": "#/definitions/domain_sandbox.EditRequest"
                         }
                     }
                 ],
@@ -14323,7 +14769,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Edit result",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.EditResponse"
+                            "$ref": "#/definitions/domain_sandbox.EditResponse"
                         }
                     },
                     "400": {
@@ -14379,7 +14825,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.GitRequest"
+                            "$ref": "#/definitions/domain_sandbox.GitRequest"
                         }
                     }
                 ],
@@ -14387,7 +14833,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Git output",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.GitResponse"
+                            "$ref": "#/definitions/domain_sandbox.GitResponse"
                         }
                     },
                     "400": {
@@ -14437,7 +14883,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.GlobRequest"
+                            "$ref": "#/definitions/domain_sandbox.GlobRequest"
                         }
                     }
                 ],
@@ -14496,7 +14942,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.GrepRequest"
+                            "$ref": "#/definitions/domain_sandbox.GrepRequest"
                         }
                     }
                 ],
@@ -14504,7 +14950,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Search results",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.GrepResponse"
+                            "$ref": "#/definitions/domain_sandbox.GrepResponse"
                         }
                     },
                     "400": {
@@ -14554,7 +15000,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.ReadRequest"
+                            "$ref": "#/definitions/domain_sandbox.ReadRequest"
                         }
                     }
                 ],
@@ -14562,7 +15008,7 @@ const docTemplate = `{
                     "200": {
                         "description": "File content",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.ReadResponse"
+                            "$ref": "#/definitions/domain_sandbox.ReadResponse"
                         }
                     },
                     "400": {
@@ -14614,7 +15060,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Resumed sandbox",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.WorkspaceResponse"
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
                         }
                     },
                     "400": {
@@ -14666,7 +15112,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Snapshot created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.SnapshotResponse"
+                            "$ref": "#/definitions/domain_sandbox.SnapshotResponse"
                         }
                     },
                     "400": {
@@ -14724,7 +15170,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Stopped sandbox",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.WorkspaceResponse"
+                            "$ref": "#/definitions/domain_sandbox.WorkspaceResponse"
                         }
                     },
                     "400": {
@@ -14780,7 +15226,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.WriteRequest"
+                            "$ref": "#/definitions/domain_sandbox.WriteRequest"
                         }
                     }
                 ],
@@ -14838,7 +15284,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Session/run details with session status",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-apps_server_domain_agents_AgentRunDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentRunDTO"
                         }
                     },
                     "400": {
@@ -14889,7 +15335,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_sandbox.MCPServerStatus"
+                                "$ref": "#/definitions/domain_sandbox.MCPServerStatus"
                             }
                         }
                     },
@@ -14925,7 +15371,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.RegisterMCPServerRequest"
+                            "$ref": "#/definitions/domain_sandbox.RegisterMCPServerRequest"
                         }
                     }
                 ],
@@ -14933,7 +15379,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Registered MCP server",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.MCPServerStatus"
+                            "$ref": "#/definitions/domain_sandbox.MCPServerStatus"
                         }
                     },
                     "400": {
@@ -14985,7 +15431,7 @@ const docTemplate = `{
                     "200": {
                         "description": "MCP server status",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.MCPServerStatus"
+                            "$ref": "#/definitions/domain_sandbox.MCPServerStatus"
                         }
                     },
                     "400": {
@@ -15085,7 +15531,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.MCPCallRequest"
+                            "$ref": "#/definitions/domain_sandbox.MCPCallRequest"
                         }
                     }
                 ],
@@ -15093,7 +15539,7 @@ const docTemplate = `{
                     "200": {
                         "description": "MCP response",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.MCPCallResponse"
+                            "$ref": "#/definitions/domain_sandbox.MCPCallResponse"
                         }
                     },
                     "400": {
@@ -15145,7 +15591,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Restarted MCP server",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.MCPServerStatus"
+                            "$ref": "#/definitions/domain_sandbox.MCPServerStatus"
                         }
                     },
                     "400": {
@@ -15217,7 +15663,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Paginated backup list with next cursor",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_backups.ListResult"
+                            "$ref": "#/definitions/domain_backups.ListResult"
                         }
                     },
                     "401": {
@@ -15270,7 +15716,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Backup details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_backups.Backup"
+                            "$ref": "#/definitions/domain_backups.Backup"
                         }
                     },
                     "401": {
@@ -15430,7 +15876,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_backups.CreateBackupRequestDTO"
+                            "$ref": "#/definitions/domain_backups.CreateBackupRequestDTO"
                         }
                     }
                 ],
@@ -15438,7 +15884,7 @@ const docTemplate = `{
                     "202": {
                         "description": "Backup creation initiated (status: creating)",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_backups.Backup"
+                            "$ref": "#/definitions/domain_backups.Backup"
                         }
                     },
                     "400": {
@@ -15567,7 +16013,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Run details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_agents.APIResponse-apps_server_domain_agents_AgentRunDTO"
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_AgentRunDTO"
                         }
                     },
                     "401": {
@@ -15728,7 +16174,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chunks.ListChunksResponse"
+                            "$ref": "#/definitions/domain_chunks.ListChunksResponse"
                         }
                     },
                     "400": {
@@ -15770,7 +16216,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chunks.BulkDeleteRequest"
+                            "$ref": "#/definitions/domain_chunks.BulkDeleteRequest"
                         }
                     }
                 ],
@@ -15778,7 +16224,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chunks.BulkDeletionSummary"
+                            "$ref": "#/definitions/domain_chunks.BulkDeletionSummary"
                         }
                     },
                     "400": {
@@ -15828,7 +16274,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chunks.DocumentChunksDeletionResult"
+                            "$ref": "#/definitions/domain_chunks.DocumentChunksDeletionResult"
                         }
                     },
                     "400": {
@@ -15872,7 +16318,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chunks.BulkDeleteByDocumentsRequest"
+                            "$ref": "#/definitions/domain_chunks.BulkDeleteByDocumentsRequest"
                         }
                     }
                 ],
@@ -15880,7 +16326,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_chunks.BulkDocumentChunksDeletionSummary"
+                            "$ref": "#/definitions/domain_chunks.BulkDocumentChunksDeletionSummary"
                         }
                     },
                     "400": {
@@ -16088,7 +16534,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_discoveryjobs.JobListItem"
+                                "$ref": "#/definitions/domain_discoveryjobs.JobListItem"
                             }
                         }
                     },
@@ -16152,7 +16598,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_discoveryjobs.StartDiscoveryRequest"
+                            "$ref": "#/definitions/domain_discoveryjobs.StartDiscoveryRequest"
                         }
                     }
                 ],
@@ -16160,7 +16606,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Discovery job started",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_discoveryjobs.StartDiscoveryResponse"
+                            "$ref": "#/definitions/domain_discoveryjobs.StartDiscoveryResponse"
                         }
                     },
                     "400": {
@@ -16215,7 +16661,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Job status details",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_discoveryjobs.JobStatusResponse"
+                            "$ref": "#/definitions/domain_discoveryjobs.JobStatusResponse"
                         }
                     },
                     "400": {
@@ -16274,7 +16720,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Job cancelled",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_discoveryjobs.CancelJobResponse"
+                            "$ref": "#/definitions/domain_discoveryjobs.CancelJobResponse"
                         }
                     },
                     "400": {
@@ -16350,7 +16796,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_discoveryjobs.FinalizeDiscoveryRequest"
+                            "$ref": "#/definitions/domain_discoveryjobs.FinalizeDiscoveryRequest"
                         }
                     }
                 ],
@@ -16358,7 +16804,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Template pack created",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_discoveryjobs.FinalizeDiscoveryResponse"
+                            "$ref": "#/definitions/domain_discoveryjobs.FinalizeDiscoveryResponse"
                         }
                     },
                     "400": {
@@ -16460,13 +16906,13 @@ const docTemplate = `{
                     "200": {
                         "description": "Service is healthy or degraded",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_health.HealthResponse"
+                            "$ref": "#/definitions/domain_health.HealthResponse"
                         }
                     },
                     "503": {
                         "description": "Service is unhealthy",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_health.HealthResponse"
+                            "$ref": "#/definitions/domain_health.HealthResponse"
                         }
                     }
                 }
@@ -16531,7 +16977,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_provider.ProjectProviderConfigResponse"
+                                "$ref": "#/definitions/domain_provider.ProjectProviderConfigResponse"
                             }
                         }
                     },
@@ -16568,7 +17014,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_provider.ProviderConfigResponse"
+                                "$ref": "#/definitions/domain_provider.ProviderConfigResponse"
                             }
                         }
                     },
@@ -16610,7 +17056,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.ProviderConfigResponse"
+                            "$ref": "#/definitions/domain_provider.ProviderConfigResponse"
                         }
                     },
                     "401": {
@@ -16656,7 +17102,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.UpsertProviderConfigRequest"
+                            "$ref": "#/definitions/domain_provider.UpsertProviderConfigRequest"
                         }
                     }
                 ],
@@ -16664,7 +17110,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.ProviderConfigResponse"
+                            "$ref": "#/definitions/domain_provider.ProviderConfigResponse"
                         }
                     },
                     "400": {
@@ -16758,7 +17204,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.UsageSummaryResponse"
+                            "$ref": "#/definitions/domain_provider.UsageSummaryResponse"
                         }
                     },
                     "401": {
@@ -16804,7 +17250,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.OrgUsageByProjectResponse"
+                            "$ref": "#/definitions/domain_provider.OrgUsageByProjectResponse"
                         }
                     },
                     "401": {
@@ -16856,7 +17302,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.UsageTimeSeriesResponse"
+                            "$ref": "#/definitions/domain_provider.UsageTimeSeriesResponse"
                         }
                     },
                     "401": {
@@ -16897,7 +17343,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.ProviderConfigResponse"
+                            "$ref": "#/definitions/domain_provider.ProviderConfigResponse"
                         }
                     },
                     "401": {
@@ -16943,7 +17389,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.UpsertProviderConfigRequest"
+                            "$ref": "#/definitions/domain_provider.UpsertProviderConfigRequest"
                         }
                     }
                 ],
@@ -16951,7 +17397,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.ProviderConfigResponse"
+                            "$ref": "#/definitions/domain_provider.ProviderConfigResponse"
                         }
                     },
                     "400": {
@@ -17045,7 +17491,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.UsageSummaryResponse"
+                            "$ref": "#/definitions/domain_provider.UsageSummaryResponse"
                         }
                     },
                     "401": {
@@ -17097,7 +17543,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.UsageTimeSeriesResponse"
+                            "$ref": "#/definitions/domain_provider.UsageTimeSeriesResponse"
                         }
                     },
                     "401": {
@@ -17139,7 +17585,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_provider.ProviderSupportedModel"
+                                "$ref": "#/definitions/domain_provider.ProviderSupportedModel"
                             }
                         }
                     },
@@ -17180,7 +17626,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_provider.TestProviderResponse"
+                            "$ref": "#/definitions/domain_provider.TestProviderResponse"
                         }
                     },
                     "400": {
@@ -17249,7 +17695,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchRequest"
+                            "$ref": "#/definitions/domain_search.UnifiedSearchRequest"
                         }
                     },
                     {
@@ -17263,7 +17709,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchResponse"
+                            "$ref": "#/definitions/domain_search.UnifiedSearchResponse"
                         }
                     },
                     "400": {
@@ -17311,7 +17757,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/apps_server_domain_useraccess.OrgWithProjects"
+                                "$ref": "#/definitions/domain_useraccess.OrgWithProjects"
                             }
                         }
                     },
@@ -17332,7 +17778,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "apps_server_domain_agents.APIResponse-any": {
+        "domain_agents.APIResponse-any": {
             "type": "object",
             "properties": {
                 "data": {},
@@ -17347,98 +17793,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.APIResponse-apps_server_domain_agents_AgentDTO": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentDTO"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "apps_server_domain_agents.APIResponse-apps_server_domain_agents_AgentQuestionDTO": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentQuestionDTO"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "apps_server_domain_agents.APIResponse-apps_server_domain_agents_AgentRunDTO": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentRunDTO"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "apps_server_domain_agents.APIResponse-apps_server_domain_agents_BatchTriggerResponseDTO": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/apps_server_domain_agents.BatchTriggerResponseDTO"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "apps_server_domain_agents.APIResponse-apps_server_domain_agents_PendingEventsResponseDTO": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/apps_server_domain_agents.PendingEventsResponseDTO"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "apps_server_domain_agents.APIResponse-array_apps_server_domain_agents_AgentDTO": {
+        "domain_agents.APIResponse-array_domain_agents_AgentDTO": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_agents.AgentDTO"
+                        "$ref": "#/definitions/domain_agents.AgentDTO"
                     }
                 },
                 "error": {
@@ -17452,13 +17813,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.APIResponse-array_apps_server_domain_agents_AgentQuestionDTO": {
+        "domain_agents.APIResponse-array_domain_agents_AgentQuestionDTO": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_agents.AgentQuestionDTO"
+                        "$ref": "#/definitions/domain_agents.AgentQuestionDTO"
                     }
                 },
                 "error": {
@@ -17472,13 +17833,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.APIResponse-array_apps_server_domain_agents_AgentRunDTO": {
+        "domain_agents.APIResponse-array_domain_agents_AgentRunDTO": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_agents.AgentRunDTO"
+                        "$ref": "#/definitions/domain_agents.AgentRunDTO"
                     }
                 },
                 "error": {
@@ -17492,7 +17853,92 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.APIResponse-github_com_emergent-company_emergent_memory_domain_sandbox_AgentSandboxConfig": {
+        "domain_agents.APIResponse-domain_agents_AgentDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.AgentDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_agents.APIResponse-domain_agents_AgentQuestionDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.AgentQuestionDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_agents.APIResponse-domain_agents_AgentRunDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.AgentRunDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_agents.APIResponse-domain_agents_BatchTriggerResponseDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.BatchTriggerResponseDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_agents.APIResponse-domain_agents_PendingEventsResponseDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_agents.PendingEventsResponseDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_agents.APIResponse-github_com_emergent-company_emergent_memory_domain_sandbox_AgentSandboxConfig": {
             "type": "object",
             "properties": {
                 "data": {
@@ -17509,7 +17955,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.APIResponse-map_string_string": {
+        "domain_agents.APIResponse-map_string_string": {
             "type": "object",
             "properties": {
                 "data": {
@@ -17526,7 +17972,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.AgentCapabilities": {
+        "domain_agents.AgentCapabilities": {
             "type": "object",
             "properties": {
                 "allowedObjectTypes": {
@@ -17549,11 +17995,11 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.AgentDTO": {
+        "domain_agents.AgentDTO": {
             "type": "object",
             "properties": {
                 "capabilities": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentCapabilities"
+                    "$ref": "#/definitions/domain_agents.AgentCapabilities"
                 },
                 "config": {
                     "type": "object",
@@ -17575,7 +18021,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "executionMode": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentExecutionMode"
+                    "$ref": "#/definitions/domain_agents.AgentExecutionMode"
                 },
                 "id": {
                     "type": "string"
@@ -17596,20 +18042,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "reactionConfig": {
-                    "$ref": "#/definitions/apps_server_domain_agents.ReactionConfig"
+                    "$ref": "#/definitions/domain_agents.ReactionConfig"
                 },
                 "strategyType": {
                     "type": "string"
                 },
                 "triggerType": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentTriggerType"
+                    "$ref": "#/definitions/domain_agents.AgentTriggerType"
                 },
                 "updatedAt": {
                     "type": "string"
                 }
             }
         },
-        "apps_server_domain_agents.AgentExecutionMode": {
+        "domain_agents.AgentExecutionMode": {
             "type": "string",
             "enum": [
                 "suggest",
@@ -17622,7 +18068,7 @@ const docTemplate = `{
                 "ExecutionModeHybrid"
             ]
         },
-        "apps_server_domain_agents.AgentQuestionDTO": {
+        "domain_agents.AgentQuestionDTO": {
             "type": "object",
             "properties": {
                 "agentId": {
@@ -17640,7 +18086,7 @@ const docTemplate = `{
                 "options": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_agents.AgentQuestionOption"
+                        "$ref": "#/definitions/domain_agents.AgentQuestionOption"
                     }
                 },
                 "projectId": {
@@ -17662,14 +18108,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentQuestionStatus"
+                    "$ref": "#/definitions/domain_agents.AgentQuestionStatus"
                 },
                 "updatedAt": {
                     "type": "string"
                 }
             }
         },
-        "apps_server_domain_agents.AgentQuestionOption": {
+        "domain_agents.AgentQuestionOption": {
             "type": "object",
             "properties": {
                 "description": {
@@ -17683,7 +18129,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.AgentQuestionStatus": {
+        "domain_agents.AgentQuestionStatus": {
             "type": "string",
             "enum": [
                 "pending",
@@ -17698,7 +18144,7 @@ const docTemplate = `{
                 "QuestionStatusCancelled"
             ]
         },
-        "apps_server_domain_agents.AgentRunDTO": {
+        "domain_agents.AgentRunDTO": {
             "type": "object",
             "properties": {
                 "agentId": {
@@ -17733,7 +18179,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "sessionStatus": {
-                    "$ref": "#/definitions/apps_server_domain_agents.SessionStatus"
+                    "$ref": "#/definitions/domain_agents.SessionStatus"
                 },
                 "skipReason": {
                     "type": "string"
@@ -17742,7 +18188,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentRunStatus"
+                    "$ref": "#/definitions/domain_agents.AgentRunStatus"
                 },
                 "stepCount": {
                     "type": "integer"
@@ -17755,7 +18201,7 @@ const docTemplate = `{
                     "description": "Token usage aggregated from kb.llm_usage_events for this run.",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/apps_server_domain_agents.RunTokenUsage"
+                            "$ref": "#/definitions/domain_agents.RunTokenUsage"
                         }
                     ]
                 },
@@ -17765,7 +18211,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.AgentRunStatus": {
+        "domain_agents.AgentRunStatus": {
             "type": "string",
             "enum": [
                 "queued",
@@ -17798,7 +18244,7 @@ const docTemplate = `{
                 "RunStatusCancelled"
             ]
         },
-        "apps_server_domain_agents.AgentTriggerType": {
+        "domain_agents.AgentTriggerType": {
             "type": "string",
             "enum": [
                 "schedule",
@@ -17813,7 +18259,7 @@ const docTemplate = `{
                 "TriggerTypeWebhook"
             ]
         },
-        "apps_server_domain_agents.BatchTriggerDTO": {
+        "domain_agents.BatchTriggerDTO": {
             "type": "object",
             "required": [
                 "objectIds"
@@ -17829,7 +18275,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.BatchTriggerResponseDTO": {
+        "domain_agents.BatchTriggerResponseDTO": {
             "type": "object",
             "properties": {
                 "queued": {
@@ -17854,7 +18300,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.ConcurrencyStrategy": {
+        "domain_agents.ConcurrencyStrategy": {
             "type": "string",
             "enum": [
                 "skip",
@@ -17865,7 +18311,7 @@ const docTemplate = `{
                 "ConcurrencyParallel"
             ]
         },
-        "apps_server_domain_agents.CreateAgentDTO": {
+        "domain_agents.CreateAgentDTO": {
             "type": "object",
             "required": [
                 "cronSchedule",
@@ -17875,7 +18321,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "capabilities": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentCapabilities"
+                    "$ref": "#/definitions/domain_agents.AgentCapabilities"
                 },
                 "config": {
                     "type": "object",
@@ -17891,7 +18337,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "executionMode": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentExecutionMode"
+                    "$ref": "#/definitions/domain_agents.AgentExecutionMode"
                 },
                 "name": {
                     "type": "string"
@@ -17903,17 +18349,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "reactionConfig": {
-                    "$ref": "#/definitions/apps_server_domain_agents.ReactionConfig"
+                    "$ref": "#/definitions/domain_agents.ReactionConfig"
                 },
                 "strategyType": {
                     "type": "string"
                 },
                 "triggerType": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentTriggerType"
+                    "$ref": "#/definitions/domain_agents.AgentTriggerType"
                 }
             }
         },
-        "apps_server_domain_agents.PendingEventObjectDTO": {
+        "domain_agents.PendingEventObjectDTO": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -17936,13 +18382,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.PendingEventsResponseDTO": {
+        "domain_agents.PendingEventsResponseDTO": {
             "type": "object",
             "properties": {
                 "objects": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_agents.PendingEventObjectDTO"
+                        "$ref": "#/definitions/domain_agents.PendingEventObjectDTO"
                     }
                 },
                 "reactionConfig": {
@@ -17967,16 +18413,16 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.ReactionConfig": {
+        "domain_agents.ReactionConfig": {
             "type": "object",
             "properties": {
                 "concurrencyStrategy": {
-                    "$ref": "#/definitions/apps_server_domain_agents.ConcurrencyStrategy"
+                    "$ref": "#/definitions/domain_agents.ConcurrencyStrategy"
                 },
                 "events": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_agents.ReactionEventType"
+                        "$ref": "#/definitions/domain_agents.ReactionEventType"
                     }
                 },
                 "ignoreAgentTriggered": {
@@ -17993,7 +18439,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.ReactionEventType": {
+        "domain_agents.ReactionEventType": {
             "type": "string",
             "enum": [
                 "created",
@@ -18006,7 +18452,7 @@ const docTemplate = `{
                 "EventTypeDeleted"
             ]
         },
-        "apps_server_domain_agents.RespondToQuestionRequest": {
+        "domain_agents.RespondToQuestionRequest": {
             "type": "object",
             "required": [
                 "response"
@@ -18017,7 +18463,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.RunTokenUsage": {
+        "domain_agents.RunTokenUsage": {
             "type": "object",
             "properties": {
                 "estimatedCostUsd": {
@@ -18031,7 +18477,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.SessionStatus": {
+        "domain_agents.SessionStatus": {
             "type": "string",
             "enum": [
                 "provisioning",
@@ -18058,7 +18504,7 @@ const docTemplate = `{
                 "SessionStatusError"
             ]
         },
-        "apps_server_domain_agents.TriggerResponseDTO": {
+        "domain_agents.TriggerResponseDTO": {
             "type": "object",
             "properties": {
                 "error": {
@@ -18075,11 +18521,11 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_agents.UpdateAgentDTO": {
+        "domain_agents.UpdateAgentDTO": {
             "type": "object",
             "properties": {
                 "capabilities": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentCapabilities"
+                    "$ref": "#/definitions/domain_agents.AgentCapabilities"
                 },
                 "config": {
                     "type": "object",
@@ -18095,7 +18541,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "executionMode": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentExecutionMode"
+                    "$ref": "#/definitions/domain_agents.AgentExecutionMode"
                 },
                 "name": {
                     "type": "string"
@@ -18104,14 +18550,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "reactionConfig": {
-                    "$ref": "#/definitions/apps_server_domain_agents.ReactionConfig"
+                    "$ref": "#/definitions/domain_agents.ReactionConfig"
                 },
                 "triggerType": {
-                    "$ref": "#/definitions/apps_server_domain_agents.AgentTriggerType"
+                    "$ref": "#/definitions/domain_agents.AgentTriggerType"
                 }
             }
         },
-        "apps_server_domain_apitoken.ApiTokenDTO": {
+        "domain_apitoken.ApiTokenDTO": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -18146,13 +18592,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_apitoken.ApiTokenListResponseDTO": {
+        "domain_apitoken.ApiTokenListResponseDTO": {
             "type": "object",
             "properties": {
                 "tokens": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_apitoken.ApiTokenDTO"
+                        "$ref": "#/definitions/domain_apitoken.ApiTokenDTO"
                     }
                 },
                 "total": {
@@ -18160,7 +18606,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_apitoken.CreateAccountTokenRequest": {
+        "domain_apitoken.CreateAccountTokenRequest": {
             "type": "object",
             "required": [
                 "name",
@@ -18181,7 +18627,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_apitoken.CreateApiTokenRequest": {
+        "domain_apitoken.CreateApiTokenRequest": {
             "type": "object",
             "required": [
                 "name",
@@ -18202,7 +18648,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_apitoken.CreateApiTokenResponseDTO": {
+        "domain_apitoken.CreateApiTokenResponseDTO": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -18240,7 +18686,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_apitoken.GetApiTokenResponseDTO": {
+        "domain_apitoken.GetApiTokenResponseDTO": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -18278,7 +18724,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_authinfo.IssuerResponse": {
+        "domain_authinfo.IssuerResponse": {
             "type": "object",
             "properties": {
                 "issuer": {
@@ -18289,7 +18735,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_authinfo.TokenInfoResponse": {
+        "domain_authinfo.TokenInfoResponse": {
             "type": "object",
             "properties": {
                 "email": {
@@ -18324,7 +18770,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_backups.Backup": {
+        "domain_backups.Backup": {
             "type": "object",
             "properties": {
                 "backupType": {
@@ -18405,7 +18851,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_backups.CreateBackupRequestDTO": {
+        "domain_backups.CreateBackupRequestDTO": {
             "type": "object",
             "properties": {
                 "includeChat": {
@@ -18419,7 +18865,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_backups.Cursor": {
+        "domain_backups.Cursor": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -18430,24 +18876,24 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_backups.ListResult": {
+        "domain_backups.ListResult": {
             "type": "object",
             "properties": {
                 "backups": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_backups.Backup"
+                        "$ref": "#/definitions/domain_backups.Backup"
                     }
                 },
                 "nextCursor": {
-                    "$ref": "#/definitions/apps_server_domain_backups.Cursor"
+                    "$ref": "#/definitions/domain_backups.Cursor"
                 },
                 "total": {
                     "type": "integer"
                 }
             }
         },
-        "apps_server_domain_branches.BranchResponse": {
+        "domain_branches.BranchResponse": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -18470,7 +18916,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_branches.CreateBranchRequest": {
+        "domain_branches.CreateBranchRequest": {
             "type": "object",
             "properties": {
                 "description": {
@@ -18487,7 +18933,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_branches.UpdateBranchRequest": {
+        "domain_branches.UpdateBranchRequest": {
             "type": "object",
             "properties": {
                 "description": {
@@ -18498,7 +18944,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chat.AddMessageRequest": {
+        "domain_chat.AddMessageRequest": {
             "type": "object",
             "required": [
                 "content",
@@ -18525,7 +18971,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chat.Conversation": {
+        "domain_chat.Conversation": {
             "type": "object",
             "properties": {
                 "agentDefinitionId": {
@@ -18559,7 +19005,7 @@ const docTemplate = `{
                     "description": "Relations (for eager loading)",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_chat.Message"
+                        "$ref": "#/definitions/domain_chat.Message"
                     }
                 },
                 "objectId": {
@@ -18580,7 +19026,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chat.ConversationWithMessages": {
+        "domain_chat.ConversationWithMessages": {
             "type": "object",
             "properties": {
                 "agentDefinitionId": {
@@ -18613,7 +19059,7 @@ const docTemplate = `{
                 "messages": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_chat.Message"
+                        "$ref": "#/definitions/domain_chat.Message"
                     }
                 },
                 "objectId": {
@@ -18634,7 +19080,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chat.CreateConversationRequest": {
+        "domain_chat.CreateConversationRequest": {
             "type": "object",
             "required": [
                 "message",
@@ -18654,13 +19100,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chat.ListConversationsResult": {
+        "domain_chat.ListConversationsResult": {
             "type": "object",
             "properties": {
                 "conversations": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_chat.Conversation"
+                        "$ref": "#/definitions/domain_chat.Conversation"
                     }
                 },
                 "total": {
@@ -18668,7 +19114,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chat.Message": {
+        "domain_chat.Message": {
             "type": "object",
             "properties": {
                 "citations": {
@@ -18704,7 +19150,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chat.StreamRequest": {
+        "domain_chat.StreamRequest": {
             "type": "object",
             "required": [
                 "message"
@@ -18725,7 +19171,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chat.UpdateConversationRequest": {
+        "domain_chat.UpdateConversationRequest": {
             "type": "object",
             "properties": {
                 "draftText": {
@@ -18738,18 +19184,18 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chunking.RecreateChunksResponse": {
+        "domain_chunking.RecreateChunksResponse": {
             "type": "object",
             "properties": {
                 "status": {
                     "type": "string"
                 },
                 "summary": {
-                    "$ref": "#/definitions/apps_server_domain_chunking.RecreateChunksSummary"
+                    "$ref": "#/definitions/domain_chunking.RecreateChunksSummary"
                 }
             }
         },
-        "apps_server_domain_chunking.RecreateChunksSummary": {
+        "domain_chunking.RecreateChunksSummary": {
             "type": "object",
             "properties": {
                 "config": {
@@ -18767,7 +19213,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chunks.BulkDeleteByDocumentsRequest": {
+        "domain_chunks.BulkDeleteByDocumentsRequest": {
             "type": "object",
             "required": [
                 "documentIds"
@@ -18782,7 +19228,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chunks.BulkDeleteRequest": {
+        "domain_chunks.BulkDeleteRequest": {
             "type": "object",
             "required": [
                 "ids"
@@ -18797,13 +19243,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chunks.BulkDeletionSummary": {
+        "domain_chunks.BulkDeletionSummary": {
             "type": "object",
             "properties": {
                 "results": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_chunks.DeletionResult"
+                        "$ref": "#/definitions/domain_chunks.DeletionResult"
                     }
                 },
                 "totalDeleted": {
@@ -18817,13 +19263,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chunks.BulkDocumentChunksDeletionSummary": {
+        "domain_chunks.BulkDocumentChunksDeletionSummary": {
             "type": "object",
             "properties": {
                 "results": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_chunks.DocumentChunksDeletionResult"
+                        "$ref": "#/definitions/domain_chunks.DocumentChunksDeletionResult"
                     }
                 },
                 "totalChunks": {
@@ -18834,7 +19280,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chunks.ChunkDTO": {
+        "domain_chunks.ChunkDTO": {
             "type": "object",
             "properties": {
                 "chunkCount": {
@@ -18864,7 +19310,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "metadata": {
-                    "$ref": "#/definitions/apps_server_domain_chunks.ChunkMetadata"
+                    "$ref": "#/definitions/domain_chunks.ChunkMetadata"
                 },
                 "size": {
                     "description": "Size in characters",
@@ -18879,7 +19325,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chunks.ChunkMetadata": {
+        "domain_chunks.ChunkMetadata": {
             "type": "object",
             "properties": {
                 "boundaryType": {
@@ -18900,7 +19346,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chunks.DeletionResult": {
+        "domain_chunks.DeletionResult": {
             "type": "object",
             "properties": {
                 "error": {
@@ -18914,7 +19360,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chunks.DocumentChunksDeletionResult": {
+        "domain_chunks.DocumentChunksDeletionResult": {
             "type": "object",
             "properties": {
                 "chunksDeleted": {
@@ -18931,13 +19377,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_chunks.ListChunksResponse": {
+        "domain_chunks.ListChunksResponse": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_chunks.ChunkDTO"
+                        "$ref": "#/definitions/domain_chunks.ChunkDTO"
                     }
                 },
                 "totalCount": {
@@ -18945,7 +19391,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_datasource.CreateDataSourceIntegrationDTO": {
+        "domain_datasource.CreateDataSourceIntegrationDTO": {
             "type": "object",
             "properties": {
                 "config": {
@@ -18972,7 +19418,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_datasource.DataSourceIntegrationDTO": {
+        "domain_datasource.DataSourceIntegrationDTO": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -19022,7 +19468,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_datasource.ProviderDTO": {
+        "domain_datasource.ProviderDTO": {
             "type": "object",
             "properties": {
                 "available": {
@@ -19045,7 +19491,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_datasource.ProviderSchemaDTO": {
+        "domain_datasource.ProviderSchemaDTO": {
             "type": "object",
             "properties": {
                 "properties": {
@@ -19063,7 +19509,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_datasource.SourceTypeDTO": {
+        "domain_datasource.SourceTypeDTO": {
             "type": "object",
             "properties": {
                 "documentCount": {
@@ -19074,7 +19520,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_datasource.SyncJobDTO": {
+        "domain_datasource.SyncJobDTO": {
             "type": "object",
             "properties": {
                 "completedAt": {
@@ -19136,7 +19582,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_datasource.TestConfigDTO": {
+        "domain_datasource.TestConfigDTO": {
             "type": "object",
             "properties": {
                 "config": {
@@ -19148,7 +19594,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_datasource.TestConnectionResponseDTO": {
+        "domain_datasource.TestConnectionResponseDTO": {
             "type": "object",
             "properties": {
                 "message": {
@@ -19159,7 +19605,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_datasource.TriggerSyncDTO": {
+        "domain_datasource.TriggerSyncDTO": {
             "type": "object",
             "properties": {
                 "configurationId": {
@@ -19174,7 +19620,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_datasource.TriggerSyncResponseDTO": {
+        "domain_datasource.TriggerSyncResponseDTO": {
             "type": "object",
             "properties": {
                 "jobId": {
@@ -19188,7 +19634,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_datasource.UpdateDataSourceIntegrationDTO": {
+        "domain_datasource.UpdateDataSourceIntegrationDTO": {
             "type": "object",
             "properties": {
                 "config": {
@@ -19212,7 +19658,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_discoveryjobs.CancelJobResponse": {
+        "domain_discoveryjobs.CancelJobResponse": {
             "type": "object",
             "properties": {
                 "message": {
@@ -19220,7 +19666,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_discoveryjobs.FinalizeDiscoveryRequest": {
+        "domain_discoveryjobs.FinalizeDiscoveryRequest": {
             "type": "object",
             "required": [
                 "includedTypes",
@@ -19234,14 +19680,14 @@ const docTemplate = `{
                 "includedRelationships": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_discoveryjobs.IncludedRelationship"
+                        "$ref": "#/definitions/domain_discoveryjobs.IncludedRelationship"
                     }
                 },
                 "includedTypes": {
                     "type": "array",
                     "minItems": 1,
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_discoveryjobs.IncludedType"
+                        "$ref": "#/definitions/domain_discoveryjobs.IncludedType"
                     }
                 },
                 "mode": {
@@ -19256,7 +19702,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_discoveryjobs.FinalizeDiscoveryResponse": {
+        "domain_discoveryjobs.FinalizeDiscoveryResponse": {
             "type": "object",
             "properties": {
                 "message": {
@@ -19267,7 +19713,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_discoveryjobs.IncludedRelationship": {
+        "domain_discoveryjobs.IncludedRelationship": {
             "type": "object",
             "properties": {
                 "cardinality": {
@@ -19287,7 +19733,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_discoveryjobs.IncludedType": {
+        "domain_discoveryjobs.IncludedType": {
             "type": "object",
             "properties": {
                 "description": {
@@ -19315,11 +19761,11 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_discoveryjobs.JSONMap": {
+        "domain_discoveryjobs.JSONMap": {
             "type": "object",
             "additionalProperties": {}
         },
-        "apps_server_domain_discoveryjobs.JobListItem": {
+        "domain_discoveryjobs.JobListItem": {
             "type": "object",
             "properties": {
                 "completed_at": {
@@ -19340,7 +19786,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "progress": {
-                    "$ref": "#/definitions/apps_server_domain_discoveryjobs.JSONMap"
+                    "$ref": "#/definitions/domain_discoveryjobs.JSONMap"
                 },
                 "schema_id": {
                     "type": "string"
@@ -19350,7 +19796,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_discoveryjobs.JobStatusResponse": {
+        "domain_discoveryjobs.JobStatusResponse": {
             "type": "object",
             "properties": {
                 "completed_at": {
@@ -19374,7 +19820,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "progress": {
-                    "$ref": "#/definitions/apps_server_domain_discoveryjobs.JSONMap"
+                    "$ref": "#/definitions/domain_discoveryjobs.JSONMap"
                 },
                 "schema_id": {
                     "type": "string"
@@ -19387,7 +19833,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_discoveryjobs.StartDiscoveryRequest": {
+        "domain_discoveryjobs.StartDiscoveryRequest": {
             "type": "object",
             "required": [
                 "document_ids"
@@ -19420,7 +19866,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_discoveryjobs.StartDiscoveryResponse": {
+        "domain_discoveryjobs.StartDiscoveryResponse": {
             "type": "object",
             "properties": {
                 "job_id": {
@@ -19428,7 +19874,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_documents.BulkDeleteRequest": {
+        "domain_documents.BulkDeleteRequest": {
             "type": "object",
             "required": [
                 "ids"
@@ -19443,24 +19889,24 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_documents.BulkDeletionImpact": {
+        "domain_documents.BulkDeletionImpact": {
             "type": "object",
             "properties": {
                 "documents": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_documents.DeletionImpact"
+                        "$ref": "#/definitions/domain_documents.DeletionImpact"
                     }
                 },
                 "impact": {
-                    "$ref": "#/definitions/apps_server_domain_documents.ImpactSummary"
+                    "$ref": "#/definitions/domain_documents.ImpactSummary"
                 },
                 "totalDocuments": {
                     "type": "integer"
                 }
             }
         },
-        "apps_server_domain_documents.BulkDeletionImpactRequest": {
+        "domain_documents.BulkDeletionImpactRequest": {
             "type": "object",
             "required": [
                 "ids"
@@ -19475,7 +19921,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_documents.ContentResponse": {
+        "domain_documents.ContentResponse": {
             "type": "object",
             "properties": {
                 "content": {
@@ -19483,7 +19929,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_documents.CreateDocumentRequest": {
+        "domain_documents.CreateDocumentRequest": {
             "type": "object",
             "properties": {
                 "content": {
@@ -19495,7 +19941,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_documents.DeleteResponse": {
+        "domain_documents.DeleteResponse": {
             "type": "object",
             "properties": {
                 "deleted": {
@@ -19513,11 +19959,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "summary": {
-                    "$ref": "#/definitions/apps_server_domain_documents.DeleteSummary"
+                    "$ref": "#/definitions/domain_documents.DeleteSummary"
                 }
             }
         },
-        "apps_server_domain_documents.DeleteSummary": {
+        "domain_documents.DeleteSummary": {
             "type": "object",
             "properties": {
                 "chunks": {
@@ -19537,18 +19983,18 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_documents.DeletionImpact": {
+        "domain_documents.DeletionImpact": {
             "type": "object",
             "properties": {
                 "document": {
-                    "$ref": "#/definitions/apps_server_domain_documents.DocumentInfo"
+                    "$ref": "#/definitions/domain_documents.DocumentInfo"
                 },
                 "impact": {
-                    "$ref": "#/definitions/apps_server_domain_documents.ImpactSummary"
+                    "$ref": "#/definitions/domain_documents.ImpactSummary"
                 }
             }
         },
-        "apps_server_domain_documents.Document": {
+        "domain_documents.Document": {
             "type": "object",
             "properties": {
                 "chunks": {
@@ -19659,7 +20105,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_documents.DocumentInfo": {
+        "domain_documents.DocumentInfo": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -19673,7 +20119,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_documents.ExtractionSummary": {
+        "domain_documents.ExtractionSummary": {
             "type": "object",
             "properties": {
                 "chunksProcessed": {
@@ -19708,7 +20154,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_documents.ImpactSummary": {
+        "domain_documents.ImpactSummary": {
             "type": "object",
             "properties": {
                 "chunks": {
@@ -19728,13 +20174,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_documents.ListResult": {
+        "domain_documents.ListResult": {
             "type": "object",
             "properties": {
                 "documents": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_documents.Document"
+                        "$ref": "#/definitions/domain_documents.Document"
                     }
                 },
                 "next_cursor": {
@@ -19745,7 +20191,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_documents.SourceTypeWithCount": {
+        "domain_documents.SourceTypeWithCount": {
             "type": "object",
             "properties": {
                 "count": {
@@ -19756,7 +20202,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_embeddingpolicies.CreateRequest": {
+        "domain_embeddingpolicies.CreateRequest": {
             "type": "object",
             "required": [
                 "objectType",
@@ -19802,7 +20248,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_embeddingpolicies.Response": {
+        "domain_embeddingpolicies.Response": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -19852,7 +20298,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_embeddingpolicies.UpdateRequest": {
+        "domain_embeddingpolicies.UpdateRequest": {
             "type": "object",
             "properties": {
                 "enabled": {
@@ -19888,7 +20334,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.AnalyticsObjectItem": {
+        "domain_graph.AnalyticsObjectItem": {
             "type": "object",
             "properties": {
                 "access_count": {
@@ -19927,7 +20373,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.BranchMergeRequest": {
+        "domain_graph.BranchMergeRequest": {
             "type": "object",
             "required": [
                 "source_branch_id"
@@ -19945,7 +20391,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.BulkCreateObjectResult": {
+        "domain_graph.BulkCreateObjectResult": {
             "type": "object",
             "properties": {
                 "error": {
@@ -19955,14 +20401,14 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "object": {
-                    "$ref": "#/definitions/apps_server_domain_graph.GraphObjectResponse"
+                    "$ref": "#/definitions/domain_graph.GraphObjectResponse"
                 },
                 "success": {
                     "type": "boolean"
                 }
             }
         },
-        "apps_server_domain_graph.BulkCreateObjectsRequest": {
+        "domain_graph.BulkCreateObjectsRequest": {
             "type": "object",
             "required": [
                 "items"
@@ -19973,12 +20419,12 @@ const docTemplate = `{
                     "maxItems": 100,
                     "minItems": 1,
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_graph.CreateGraphObjectRequest"
+                        "$ref": "#/definitions/domain_graph.CreateGraphObjectRequest"
                     }
                 }
             }
         },
-        "apps_server_domain_graph.BulkCreateObjectsResponse": {
+        "domain_graph.BulkCreateObjectsResponse": {
             "type": "object",
             "properties": {
                 "failed": {
@@ -19987,7 +20433,7 @@ const docTemplate = `{
                 "results": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_graph.BulkCreateObjectResult"
+                        "$ref": "#/definitions/domain_graph.BulkCreateObjectResult"
                     }
                 },
                 "success": {
@@ -19995,7 +20441,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.BulkCreateRelationshipResult": {
+        "domain_graph.BulkCreateRelationshipResult": {
             "type": "object",
             "properties": {
                 "error": {
@@ -20005,14 +20451,14 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "relationship": {
-                    "$ref": "#/definitions/apps_server_domain_graph.GraphRelationshipResponse"
+                    "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
                 },
                 "success": {
                     "type": "boolean"
                 }
             }
         },
-        "apps_server_domain_graph.BulkCreateRelationshipsRequest": {
+        "domain_graph.BulkCreateRelationshipsRequest": {
             "type": "object",
             "required": [
                 "items"
@@ -20023,12 +20469,12 @@ const docTemplate = `{
                     "maxItems": 100,
                     "minItems": 1,
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_graph.CreateGraphRelationshipRequest"
+                        "$ref": "#/definitions/domain_graph.CreateGraphRelationshipRequest"
                     }
                 }
             }
         },
-        "apps_server_domain_graph.BulkCreateRelationshipsResponse": {
+        "domain_graph.BulkCreateRelationshipsResponse": {
             "type": "object",
             "properties": {
                 "failed": {
@@ -20037,7 +20483,7 @@ const docTemplate = `{
                 "results": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_graph.BulkCreateRelationshipResult"
+                        "$ref": "#/definitions/domain_graph.BulkCreateRelationshipResult"
                     }
                 },
                 "success": {
@@ -20045,7 +20491,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.BulkUpdateStatusRequest": {
+        "domain_graph.BulkUpdateStatusRequest": {
             "type": "object",
             "required": [
                 "ids",
@@ -20066,7 +20512,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.CreateGraphObjectRequest": {
+        "domain_graph.CreateGraphObjectRequest": {
             "type": "object",
             "required": [
                 "type"
@@ -20100,7 +20546,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.CreateGraphRelationshipRequest": {
+        "domain_graph.CreateGraphRelationshipRequest": {
             "type": "object",
             "required": [
                 "dst_id",
@@ -20130,7 +20576,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.CreateSubgraphRequest": {
+        "domain_graph.CreateSubgraphRequest": {
             "type": "object",
             "required": [
                 "objects"
@@ -20141,25 +20587,25 @@ const docTemplate = `{
                     "maxItems": 500,
                     "minItems": 1,
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_graph.SubgraphObjectRequest"
+                        "$ref": "#/definitions/domain_graph.SubgraphObjectRequest"
                     }
                 },
                 "relationships": {
                     "type": "array",
                     "maxItems": 500,
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_graph.SubgraphRelationshipRequest"
+                        "$ref": "#/definitions/domain_graph.SubgraphRelationshipRequest"
                     }
                 }
             }
         },
-        "apps_server_domain_graph.CreateSubgraphResponse": {
+        "domain_graph.CreateSubgraphResponse": {
             "type": "object",
             "properties": {
                 "objects": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_graph.GraphObjectResponse"
+                        "$ref": "#/definitions/domain_graph.GraphObjectResponse"
                     }
                 },
                 "ref_map": {
@@ -20171,12 +20617,12 @@ const docTemplate = `{
                 "relationships": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_graph.GraphRelationshipResponse"
+                        "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
                     }
                 }
             }
         },
-        "apps_server_domain_graph.EdgePhase": {
+        "domain_graph.EdgePhase": {
             "type": "object",
             "required": [
                 "direction",
@@ -20216,7 +20662,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.GraphExpandProjection": {
+        "domain_graph.GraphExpandProjection": {
             "type": "object",
             "properties": {
                 "exclude_object_properties": {
@@ -20233,7 +20679,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.GraphExpandRequest": {
+        "domain_graph.GraphExpandRequest": {
             "type": "object",
             "required": [
                 "root_ids"
@@ -20271,7 +20717,7 @@ const docTemplate = `{
                     }
                 },
                 "projection": {
-                    "$ref": "#/definitions/apps_server_domain_graph.GraphExpandProjection"
+                    "$ref": "#/definitions/domain_graph.GraphExpandProjection"
                 },
                 "query_context": {
                     "description": "Optional query for relevance-based edge ordering during expansion",
@@ -20292,7 +20738,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.GraphObject": {
+        "domain_graph.GraphObject": {
             "type": "object",
             "properties": {
                 "actor_id": {
@@ -20416,7 +20862,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.GraphObjectResponse": {
+        "domain_graph.GraphObjectResponse": {
             "type": "object",
             "properties": {
                 "branch_id": {
@@ -20502,7 +20948,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.GraphRelationship": {
+        "domain_graph.GraphRelationship": {
             "type": "object",
             "properties": {
                 "branch_id": {
@@ -20523,7 +20969,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "dst": {
-                    "$ref": "#/definitions/apps_server_domain_graph.GraphObject"
+                    "$ref": "#/definitions/domain_graph.GraphObject"
                 },
                 "dst_id": {
                     "type": "string"
@@ -20542,7 +20988,7 @@ const docTemplate = `{
                     "description": "Populated by joins — src_id/dst_id store canonical_id values",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphObject"
+                            "$ref": "#/definitions/domain_graph.GraphObject"
                         }
                     ]
                 },
@@ -20570,7 +21016,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.GraphRelationshipResponse": {
+        "domain_graph.GraphRelationshipResponse": {
             "type": "object",
             "properties": {
                 "branch_id": {
@@ -20599,7 +21045,7 @@ const docTemplate = `{
                     "description": "InverseRelationship is populated when an inverse relationship was auto-created\nbased on the template pack's inverseType declaration.",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/apps_server_domain_graph.GraphRelationshipResponse"
+                            "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
                         }
                     ]
                 },
@@ -20627,7 +21073,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.HybridSearchRequest": {
+        "domain_graph.HybridSearchRequest": {
             "type": "object",
             "required": [
                 "query"
@@ -20681,13 +21127,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.MostAccessedResponse": {
+        "domain_graph.MostAccessedResponse": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_graph.AnalyticsObjectItem"
+                        "$ref": "#/definitions/domain_graph.AnalyticsObjectItem"
                     }
                 },
                 "meta": {
@@ -20699,7 +21145,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.MoveObjectRequest": {
+        "domain_graph.MoveObjectRequest": {
             "type": "object",
             "properties": {
                 "target_branch_id": {
@@ -20707,14 +21153,14 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.MoveObjectResponse": {
+        "domain_graph.MoveObjectResponse": {
             "type": "object",
             "properties": {
                 "moved_relationships": {
                     "type": "integer"
                 },
                 "object": {
-                    "$ref": "#/definitions/apps_server_domain_graph.GraphObjectResponse"
+                    "$ref": "#/definitions/domain_graph.GraphObjectResponse"
                 },
                 "source_branch_id": {
                     "type": "string"
@@ -20724,9 +21170,12 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.PatchGraphObjectRequest": {
+        "domain_graph.PatchGraphObjectRequest": {
             "type": "object",
             "properties": {
+                "branch_id": {
+                    "type": "string"
+                },
                 "key": {
                     "type": "string"
                 },
@@ -20748,7 +21197,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.PatchGraphRelationshipRequest": {
+        "domain_graph.PatchGraphRelationshipRequest": {
             "type": "object",
             "properties": {
                 "properties": {
@@ -20760,7 +21209,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.Predicate": {
+        "domain_graph.Predicate": {
             "type": "object",
             "required": [
                 "operator",
@@ -20791,7 +21240,7 @@ const docTemplate = `{
                 "value": {}
             }
         },
-        "apps_server_domain_graph.SearchWithNeighborsRequest": {
+        "domain_graph.SearchWithNeighborsRequest": {
             "type": "object",
             "required": [
                 "query"
@@ -20829,7 +21278,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.SubgraphObjectRequest": {
+        "domain_graph.SubgraphObjectRequest": {
             "type": "object",
             "required": [
                 "type"
@@ -20867,7 +21316,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.SubgraphRelationshipRequest": {
+        "domain_graph.SubgraphRelationshipRequest": {
             "type": "object",
             "required": [
                 "type"
@@ -20900,7 +21349,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.TemporalFilter": {
+        "domain_graph.TemporalFilter": {
             "type": "object",
             "required": [
                 "asOf"
@@ -20916,7 +21365,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.TraverseGraphRequest": {
+        "domain_graph.TraverseGraphRequest": {
             "type": "object",
             "required": [
                 "root_ids"
@@ -20930,12 +21379,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "edgeFilter": {
-                    "$ref": "#/definitions/apps_server_domain_graph.Predicate"
+                    "$ref": "#/definitions/domain_graph.Predicate"
                 },
                 "edgePhases": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_graph.EdgePhase"
+                        "$ref": "#/definitions/domain_graph.EdgePhase"
                     }
                 },
                 "fieldStrategy": {
@@ -20968,7 +21417,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "nodeFilter": {
-                    "$ref": "#/definitions/apps_server_domain_graph.Predicate"
+                    "$ref": "#/definitions/domain_graph.Predicate"
                 },
                 "object_types": {
                     "type": "array",
@@ -21001,17 +21450,17 @@ const docTemplate = `{
                     }
                 },
                 "temporalFilter": {
-                    "$ref": "#/definitions/apps_server_domain_graph.TemporalFilter"
+                    "$ref": "#/definitions/domain_graph.TemporalFilter"
                 }
             }
         },
-        "apps_server_domain_graph.UnusedObjectsResponse": {
+        "domain_graph.UnusedObjectsResponse": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_graph.AnalyticsObjectItem"
+                        "$ref": "#/definitions/domain_graph.AnalyticsObjectItem"
                     }
                 },
                 "meta": {
@@ -21023,7 +21472,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_graph.VectorSearchRequest": {
+        "domain_graph.VectorSearchRequest": {
             "type": "object",
             "required": [
                 "vector"
@@ -21067,7 +21516,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_health.Check": {
+        "domain_health.Check": {
             "type": "object",
             "properties": {
                 "message": {
@@ -21078,13 +21527,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_health.HealthResponse": {
+        "domain_health.HealthResponse": {
             "type": "object",
             "properties": {
                 "checks": {
                     "type": "object",
                     "additionalProperties": {
-                        "$ref": "#/definitions/apps_server_domain_health.Check"
+                        "$ref": "#/definitions/domain_health.Check"
                     }
                 },
                 "status": {
@@ -21094,7 +21543,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "tracing": {
-                    "$ref": "#/definitions/apps_server_domain_health.TracingInfo"
+                    "$ref": "#/definitions/domain_health.TracingInfo"
                 },
                 "uptime": {
                     "type": "string"
@@ -21104,7 +21553,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_health.TracingInfo": {
+        "domain_health.TracingInfo": {
             "type": "object",
             "properties": {
                 "enabled": {
@@ -21115,11 +21564,11 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_integrations.AvailableIntegrationDTO": {
+        "domain_integrations.AvailableIntegrationDTO": {
             "type": "object",
             "properties": {
                 "capabilities": {
-                    "$ref": "#/definitions/apps_server_domain_integrations.IntegrationCapabilitiesDTO"
+                    "$ref": "#/definitions/domain_integrations.IntegrationCapabilitiesDTO"
                 },
                 "description": {
                     "type": "string"
@@ -21142,7 +21591,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_integrations.CreateIntegrationDTO": {
+        "domain_integrations.CreateIntegrationDTO": {
             "type": "object",
             "required": [
                 "display_name",
@@ -21173,7 +21622,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_integrations.IntegrationCapabilitiesDTO": {
+        "domain_integrations.IntegrationCapabilitiesDTO": {
             "type": "object",
             "properties": {
                 "requiresOAuth": {
@@ -21193,7 +21642,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_integrations.IntegrationDTO": {
+        "domain_integrations.IntegrationDTO": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -21241,7 +21690,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_integrations.PublicIntegrationDTO": {
+        "domain_integrations.PublicIntegrationDTO": {
             "type": "object",
             "properties": {
                 "description": {
@@ -21264,7 +21713,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_integrations.TestConnectionResponseDTO": {
+        "domain_integrations.TestConnectionResponseDTO": {
             "type": "object",
             "properties": {
                 "details": {
@@ -21279,7 +21728,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_integrations.TriggerSyncConfigDTO": {
+        "domain_integrations.TriggerSyncConfigDTO": {
             "type": "object",
             "properties": {
                 "batchSize": {
@@ -21305,7 +21754,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_integrations.TriggerSyncResponseDTO": {
+        "domain_integrations.TriggerSyncResponseDTO": {
             "type": "object",
             "properties": {
                 "job_id": {
@@ -21319,7 +21768,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_integrations.UpdateIntegrationDTO": {
+        "domain_integrations.UpdateIntegrationDTO": {
             "type": "object",
             "properties": {
                 "description": {
@@ -21340,7 +21789,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_invites.AcceptInviteRequest": {
+        "domain_invites.AcceptInviteRequest": {
             "type": "object",
             "properties": {
                 "token": {
@@ -21348,7 +21797,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_invites.CreateInviteRequest": {
+        "domain_invites.CreateInviteRequest": {
             "type": "object",
             "properties": {
                 "email": {
@@ -21377,7 +21826,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_invites.Invite": {
+        "domain_invites.Invite": {
             "type": "object",
             "properties": {
                 "acceptedAt": {
@@ -21418,7 +21867,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_invites.PendingInvite": {
+        "domain_invites.PendingInvite": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -21450,7 +21899,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_invites.SentInvite": {
+        "domain_invites.SentInvite": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -21473,7 +21922,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_journal.AddNoteRequest": {
+        "domain_journal.AddNoteRequest": {
             "type": "object",
             "properties": {
                 "actor_id": {
@@ -21493,7 +21942,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_journal.JournalEntry": {
+        "domain_journal.JournalEntry": {
             "type": "object",
             "properties": {
                 "actor_id": {
@@ -21527,7 +21976,7 @@ const docTemplate = `{
                 "notes": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_journal.JournalNote"
+                        "$ref": "#/definitions/domain_journal.JournalNote"
                     }
                 },
                 "object_type": {
@@ -21538,7 +21987,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_journal.JournalNote": {
+        "domain_journal.JournalNote": {
             "type": "object",
             "properties": {
                 "actor_id": {
@@ -21567,20 +22016,20 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_journal.JournalResponse": {
+        "domain_journal.JournalResponse": {
             "type": "object",
             "properties": {
                 "entries": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_journal.JournalEntry"
+                        "$ref": "#/definitions/domain_journal.JournalEntry"
                     }
                 },
                 "notes": {
                     "description": "standalone notes (journal_id IS NULL)",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_journal.JournalNote"
+                        "$ref": "#/definitions/domain_journal.JournalNote"
                     }
                 },
                 "total": {
@@ -21588,7 +22037,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_mcp.ErrorObject": {
+        "domain_mcp.ErrorObject": {
             "type": "object",
             "properties": {
                 "code": {
@@ -21600,7 +22049,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_mcp.Request": {
+        "domain_mcp.Request": {
             "type": "object",
             "properties": {
                 "id": {
@@ -21624,11 +22073,11 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_mcp.Response": {
+        "domain_mcp.Response": {
             "type": "object",
             "properties": {
                 "error": {
-                    "$ref": "#/definitions/apps_server_domain_mcp.ErrorObject"
+                    "$ref": "#/definitions/domain_mcp.ErrorObject"
                 },
                 "id": {
                     "type": "array",
@@ -21642,47 +22091,13 @@ const docTemplate = `{
                 "result": {}
             }
         },
-        "apps_server_domain_mcpregistry.APIResponse-apps_server_domain_mcpregistry_MCPServerDTO": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/apps_server_domain_mcpregistry.MCPServerDTO"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "apps_server_domain_mcpregistry.APIResponse-apps_server_domain_mcpregistry_MCPServerDetailDTO": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/apps_server_domain_mcpregistry.MCPServerDetailDTO"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "apps_server_domain_mcpregistry.APIResponse-array_apps_server_domain_mcpregistry_MCPServerDTO": {
+        "domain_mcpregistry.APIResponse-array_domain_mcpregistry_MCPServerDTO": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_mcpregistry.MCPServerDTO"
+                        "$ref": "#/definitions/domain_mcpregistry.MCPServerDTO"
                     }
                 },
                 "error": {
@@ -21696,7 +22111,41 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_mcpregistry.CreateMCPServerDTO": {
+        "domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_mcpregistry.MCPServerDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerDetailDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_mcpregistry.MCPServerDetailDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_mcpregistry.CreateMCPServerDTO": {
             "type": "object",
             "required": [
                 "name",
@@ -21737,7 +22186,7 @@ const docTemplate = `{
                     ],
                     "allOf": [
                         {
-                            "$ref": "#/definitions/apps_server_domain_mcpregistry.MCPServerType"
+                            "$ref": "#/definitions/domain_mcpregistry.MCPServerType"
                         }
                     ]
                 },
@@ -21746,7 +22195,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_mcpregistry.MCPServerDTO": {
+        "domain_mcpregistry.MCPServerDTO": {
             "type": "object",
             "properties": {
                 "args": {
@@ -21790,11 +22239,11 @@ const docTemplate = `{
                 "tools": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_mcpregistry.MCPServerToolDTO"
+                        "$ref": "#/definitions/domain_mcpregistry.MCPServerToolDTO"
                     }
                 },
                 "type": {
-                    "$ref": "#/definitions/apps_server_domain_mcpregistry.MCPServerType"
+                    "$ref": "#/definitions/domain_mcpregistry.MCPServerType"
                 },
                 "updatedAt": {
                     "type": "string"
@@ -21804,7 +22253,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_mcpregistry.MCPServerDetailDTO": {
+        "domain_mcpregistry.MCPServerDetailDTO": {
             "type": "object",
             "properties": {
                 "args": {
@@ -21848,11 +22297,11 @@ const docTemplate = `{
                 "tools": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_mcpregistry.MCPServerToolDTO"
+                        "$ref": "#/definitions/domain_mcpregistry.MCPServerToolDTO"
                     }
                 },
                 "type": {
-                    "$ref": "#/definitions/apps_server_domain_mcpregistry.MCPServerType"
+                    "$ref": "#/definitions/domain_mcpregistry.MCPServerType"
                 },
                 "updatedAt": {
                     "type": "string"
@@ -21862,7 +22311,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_mcpregistry.MCPServerToolDTO": {
+        "domain_mcpregistry.MCPServerToolDTO": {
             "type": "object",
             "properties": {
                 "config": {
@@ -21903,7 +22352,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_mcpregistry.MCPServerType": {
+        "domain_mcpregistry.MCPServerType": {
             "type": "string",
             "enum": [
                 "builtin",
@@ -21918,7 +22367,7 @@ const docTemplate = `{
                 "ServerTypeHTTP"
             ]
         },
-        "apps_server_domain_mcpregistry.UpdateMCPServerDTO": {
+        "domain_mcpregistry.UpdateMCPServerDTO": {
             "type": "object",
             "properties": {
                 "args": {
@@ -21952,7 +22401,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_monitoring.ExtractionJobDetailDTO": {
+        "domain_monitoring.ExtractionJobDetailDTO": {
             "type": "object",
             "properties": {
                 "completed_at": {
@@ -21970,17 +22419,17 @@ const docTemplate = `{
                 "llm_calls": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_monitoring.LLMCallLogDTO"
+                        "$ref": "#/definitions/domain_monitoring.LLMCallLogDTO"
                     }
                 },
                 "logs": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_monitoring.ProcessLogDTO"
+                        "$ref": "#/definitions/domain_monitoring.ProcessLogDTO"
                     }
                 },
                 "metrics": {
-                    "$ref": "#/definitions/apps_server_domain_monitoring.ExtractionJobMetricsDTO"
+                    "$ref": "#/definitions/domain_monitoring.ExtractionJobMetricsDTO"
                 },
                 "objects_created": {
                     "type": "integer"
@@ -22005,13 +22454,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_monitoring.ExtractionJobListResponseDTO": {
+        "domain_monitoring.ExtractionJobListResponseDTO": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_monitoring.ExtractionJobSummaryDTO"
+                        "$ref": "#/definitions/domain_monitoring.ExtractionJobSummaryDTO"
                     }
                 },
                 "limit": {
@@ -22025,7 +22474,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_monitoring.ExtractionJobMetricsDTO": {
+        "domain_monitoring.ExtractionJobMetricsDTO": {
             "type": "object",
             "properties": {
                 "avg_call_duration_ms": {
@@ -22045,7 +22494,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_monitoring.ExtractionJobSummaryDTO": {
+        "domain_monitoring.ExtractionJobSummaryDTO": {
             "type": "object",
             "properties": {
                 "completed_at": {
@@ -22089,18 +22538,18 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_monitoring.LLMCallListDTO": {
+        "domain_monitoring.LLMCallListDTO": {
             "type": "object",
             "properties": {
                 "llm_calls": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_monitoring.LLMCallLogDTO"
+                        "$ref": "#/definitions/domain_monitoring.LLMCallLogDTO"
                     }
                 }
             }
         },
-        "apps_server_domain_monitoring.LLMCallLogDTO": {
+        "domain_monitoring.LLMCallLogDTO": {
             "type": "object",
             "properties": {
                 "completed_at": {
@@ -22146,7 +22595,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_monitoring.ProcessLogDTO": {
+        "domain_monitoring.ProcessLogDTO": {
             "type": "object",
             "properties": {
                 "id": {
@@ -22170,18 +22619,18 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_monitoring.ProcessLogListDTO": {
+        "domain_monitoring.ProcessLogListDTO": {
             "type": "object",
             "properties": {
                 "logs": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_monitoring.ProcessLogDTO"
+                        "$ref": "#/definitions/domain_monitoring.ProcessLogDTO"
                     }
                 }
             }
         },
-        "apps_server_domain_notifications.Notification": {
+        "domain_notifications.Notification": {
             "type": "object",
             "properties": {
                 "actionLabel": {
@@ -22285,7 +22734,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_notifications.NotificationCounts": {
+        "domain_notifications.NotificationCounts": {
             "type": "object",
             "properties": {
                 "all": {
@@ -22305,26 +22754,26 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_notifications.NotificationCountsResponse": {
+        "domain_notifications.NotificationCountsResponse": {
             "type": "object",
             "properties": {
                 "data": {
-                    "$ref": "#/definitions/apps_server_domain_notifications.NotificationCounts"
+                    "$ref": "#/definitions/domain_notifications.NotificationCounts"
                 }
             }
         },
-        "apps_server_domain_notifications.NotificationListResponse": {
+        "domain_notifications.NotificationListResponse": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_notifications.Notification"
+                        "$ref": "#/definitions/domain_notifications.Notification"
                     }
                 }
             }
         },
-        "apps_server_domain_notifications.NotificationStats": {
+        "domain_notifications.NotificationStats": {
             "type": "object",
             "properties": {
                 "dismissed": {
@@ -22338,7 +22787,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_orgs.CreateOrgRequest": {
+        "domain_orgs.CreateOrgRequest": {
             "type": "object",
             "required": [
                 "name"
@@ -22351,7 +22800,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_orgs.Org": {
+        "domain_orgs.Org": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -22374,7 +22823,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_orgs.OrgDTO": {
+        "domain_orgs.OrgDTO": {
             "type": "object",
             "properties": {
                 "id": {
@@ -22385,7 +22834,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_orgs.OrgToolSettingDTO": {
+        "domain_orgs.OrgToolSettingDTO": {
             "type": "object",
             "properties": {
                 "config": {
@@ -22412,7 +22861,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_orgs.UpsertOrgToolSettingRequest": {
+        "domain_orgs.UpsertOrgToolSettingRequest": {
             "type": "object",
             "properties": {
                 "config": {
@@ -22424,7 +22873,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_projects.CreateProjectRequest": {
+        "domain_projects.CreateProjectRequest": {
             "type": "object",
             "required": [
                 "name",
@@ -22440,7 +22889,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_projects.InstalledSchema": {
+        "domain_projects.InstalledSchema": {
             "type": "object",
             "properties": {
                 "name": {
@@ -22463,7 +22912,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_projects.Project": {
+        "domain_projects.Project": {
             "type": "object",
             "properties": {
                 "allow_parallel_extraction": {
@@ -22520,7 +22969,7 @@ const docTemplate = `{
                     "description": "Populated only when requested",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/apps_server_domain_projects.ProjectStats"
+                            "$ref": "#/definitions/domain_projects.ProjectStats"
                         }
                     ]
                 },
@@ -22529,7 +22978,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_projects.ProjectDTO": {
+        "domain_projects.ProjectDTO": {
             "type": "object",
             "properties": {
                 "auto_extract_config": {
@@ -22555,11 +23004,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "stats": {
-                    "$ref": "#/definitions/apps_server_domain_projects.ProjectStats"
+                    "$ref": "#/definitions/domain_projects.ProjectStats"
                 }
             }
         },
-        "apps_server_domain_projects.ProjectMemberDTO": {
+        "domain_projects.ProjectMemberDTO": {
             "type": "object",
             "properties": {
                 "avatarUrl": {
@@ -22591,7 +23040,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_projects.ProjectStats": {
+        "domain_projects.ProjectStats": {
             "type": "object",
             "properties": {
                 "documentCount": {
@@ -22600,7 +23049,7 @@ const docTemplate = `{
                 "installedSchemas": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_projects.InstalledSchema"
+                        "$ref": "#/definitions/domain_projects.InstalledSchema"
                     }
                 },
                 "objectCount": {
@@ -22620,7 +23069,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_projects.UpdateProjectRequest": {
+        "domain_projects.UpdateProjectRequest": {
             "type": "object",
             "properties": {
                 "auto_extract_config": {
@@ -22648,7 +23097,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_provider.ModelType": {
+        "domain_provider.ModelType": {
             "type": "string",
             "enum": [
                 "embedding",
@@ -22659,13 +23108,13 @@ const docTemplate = `{
                 "ModelTypeGenerative"
             ]
         },
-        "apps_server_domain_provider.OrgUsageByProjectResponse": {
+        "domain_provider.OrgUsageByProjectResponse": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_provider.OrgUsageByProjectRow"
+                        "$ref": "#/definitions/domain_provider.OrgUsageByProjectRow"
                     }
                 },
                 "note": {
@@ -22673,7 +23122,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_provider.OrgUsageByProjectRow": {
+        "domain_provider.OrgUsageByProjectRow": {
             "type": "object",
             "properties": {
                 "estimatedCostUSD": {
@@ -22702,7 +23151,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_provider.ProjectProviderConfigResponse": {
+        "domain_provider.ProjectProviderConfigResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -22727,14 +23176,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider": {
-                    "$ref": "#/definitions/apps_server_domain_provider.ProviderType"
+                    "$ref": "#/definitions/domain_provider.ProviderType"
                 },
                 "updatedAt": {
                     "type": "string"
                 }
             }
         },
-        "apps_server_domain_provider.ProviderConfigResponse": {
+        "domain_provider.ProviderConfigResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -22756,14 +23205,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider": {
-                    "$ref": "#/definitions/apps_server_domain_provider.ProviderType"
+                    "$ref": "#/definitions/domain_provider.ProviderType"
                 },
                 "updatedAt": {
                     "type": "string"
                 }
             }
         },
-        "apps_server_domain_provider.ProviderSupportedModel": {
+        "domain_provider.ProviderSupportedModel": {
             "type": "object",
             "properties": {
                 "displayName": {
@@ -22782,14 +23231,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "modelType": {
-                    "$ref": "#/definitions/apps_server_domain_provider.ModelType"
+                    "$ref": "#/definitions/domain_provider.ModelType"
                 },
                 "provider": {
-                    "$ref": "#/definitions/apps_server_domain_provider.ProviderType"
+                    "$ref": "#/definitions/domain_provider.ProviderType"
                 }
             }
         },
-        "apps_server_domain_provider.ProviderType": {
+        "domain_provider.ProviderType": {
             "type": "string",
             "enum": [
                 "google",
@@ -22800,7 +23249,7 @@ const docTemplate = `{
                 "ProviderVertexAI"
             ]
         },
-        "apps_server_domain_provider.TestProviderResponse": {
+        "domain_provider.TestProviderResponse": {
             "type": "object",
             "properties": {
                 "latencyMs": {
@@ -22817,7 +23266,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_provider.UpsertProviderConfigRequest": {
+        "domain_provider.UpsertProviderConfigRequest": {
             "type": "object",
             "properties": {
                 "apiKey": {
@@ -22840,13 +23289,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_provider.UsageSummaryResponse": {
+        "domain_provider.UsageSummaryResponse": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_provider.UsageSummaryRow"
+                        "$ref": "#/definitions/domain_provider.UsageSummaryRow"
                     }
                 },
                 "note": {
@@ -22854,7 +23303,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_provider.UsageSummaryRow": {
+        "domain_provider.UsageSummaryRow": {
             "type": "object",
             "properties": {
                 "estimatedCostUSD": {
@@ -22864,7 +23313,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider": {
-                    "$ref": "#/definitions/apps_server_domain_provider.ProviderType"
+                    "$ref": "#/definitions/domain_provider.ProviderType"
                 },
                 "totalAudio": {
                     "type": "integer"
@@ -22883,13 +23332,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_provider.UsageTimeSeriesResponse": {
+        "domain_provider.UsageTimeSeriesResponse": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_provider.UsageTimeSeriesRow"
+                        "$ref": "#/definitions/domain_provider.UsageTimeSeriesRow"
                     }
                 },
                 "note": {
@@ -22897,7 +23346,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_provider.UsageTimeSeriesRow": {
+        "domain_provider.UsageTimeSeriesRow": {
             "type": "object",
             "properties": {
                 "estimatedCostUSD": {
@@ -22910,7 +23359,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider": {
-                    "$ref": "#/definitions/apps_server_domain_provider.ProviderType"
+                    "$ref": "#/definitions/domain_provider.ProviderType"
                 },
                 "totalAudio": {
                     "type": "integer"
@@ -22929,7 +23378,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.AttachSessionRequest": {
+        "domain_sandbox.AttachSessionRequest": {
             "type": "object",
             "required": [
                 "agent_session_id"
@@ -22940,7 +23389,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.BashRequest": {
+        "domain_sandbox.BashRequest": {
             "type": "object",
             "required": [
                 "command"
@@ -22957,7 +23406,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.BashResponse": {
+        "domain_sandbox.BashResponse": {
             "type": "object",
             "properties": {
                 "duration_ms": {
@@ -22977,7 +23426,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.ContainerType": {
+        "domain_sandbox.ContainerType": {
             "type": "string",
             "enum": [
                 "agent_sandbox",
@@ -22988,7 +23437,7 @@ const docTemplate = `{
                 "ContainerTypeMCPServer"
             ]
         },
-        "apps_server_domain_sandbox.CreateFromSnapshotRequest": {
+        "domain_sandbox.CreateFromSnapshotRequest": {
             "type": "object",
             "required": [
                 "snapshot_id"
@@ -23002,14 +23451,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "resource_limits": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.ResourceLimits"
+                    "$ref": "#/definitions/domain_sandbox.ResourceLimits"
                 },
                 "snapshot_id": {
                     "type": "string"
                 }
             }
         },
-        "apps_server_domain_sandbox.CreateWorkspaceRequest": {
+        "domain_sandbox.CreateWorkspaceRequest": {
             "type": "object",
             "required": [
                 "container_type"
@@ -23019,7 +23468,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "container_type": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.ContainerType"
+                    "$ref": "#/definitions/domain_sandbox.ContainerType"
                 },
                 "deployment_mode": {
                     "description": "\"managed\" or \"self-hosted\"",
@@ -23029,7 +23478,7 @@ const docTemplate = `{
                     "description": "MCP-specific fields",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.MCPConfig"
+                            "$ref": "#/definitions/domain_sandbox.MCPConfig"
                         }
                     ]
                 },
@@ -23041,14 +23490,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "resource_limits": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.ResourceLimits"
+                    "$ref": "#/definitions/domain_sandbox.ResourceLimits"
                 },
                 "warm_start": {
                     "type": "boolean"
                 }
             }
         },
-        "apps_server_domain_sandbox.DeploymentMode": {
+        "domain_sandbox.DeploymentMode": {
             "type": "string",
             "enum": [
                 "managed",
@@ -23059,7 +23508,7 @@ const docTemplate = `{
                 "DeploymentSelfHosted"
             ]
         },
-        "apps_server_domain_sandbox.EditRequest": {
+        "domain_sandbox.EditRequest": {
             "type": "object",
             "required": [
                 "file_path",
@@ -23080,7 +23529,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.EditResponse": {
+        "domain_sandbox.EditResponse": {
             "type": "object",
             "properties": {
                 "lines_changed": {
@@ -23094,7 +23543,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.GitRequest": {
+        "domain_sandbox.GitRequest": {
             "type": "object",
             "required": [
                 "action"
@@ -23121,7 +23570,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.GitResponse": {
+        "domain_sandbox.GitResponse": {
             "type": "object",
             "properties": {
                 "output": {
@@ -23129,7 +23578,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.GlobRequest": {
+        "domain_sandbox.GlobRequest": {
             "type": "object",
             "required": [
                 "pattern"
@@ -23143,7 +23592,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.GrepMatch": {
+        "domain_sandbox.GrepMatch": {
             "type": "object",
             "properties": {
                 "file_path": {
@@ -23157,7 +23606,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.GrepRequest": {
+        "domain_sandbox.GrepRequest": {
             "type": "object",
             "required": [
                 "pattern"
@@ -23175,18 +23624,18 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.GrepResponse": {
+        "domain_sandbox.GrepResponse": {
             "type": "object",
             "properties": {
                 "matches": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_sandbox.GrepMatch"
+                        "$ref": "#/definitions/domain_sandbox.GrepMatch"
                     }
                 }
             }
         },
-        "apps_server_domain_sandbox.JSONRPCError": {
+        "domain_sandbox.JSONRPCError": {
             "type": "object",
             "properties": {
                 "code": {
@@ -23198,7 +23647,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.Lifecycle": {
+        "domain_sandbox.Lifecycle": {
             "type": "string",
             "enum": [
                 "ephemeral",
@@ -23209,7 +23658,7 @@ const docTemplate = `{
                 "LifecyclePersistent"
             ]
         },
-        "apps_server_domain_sandbox.MCPCallRequest": {
+        "domain_sandbox.MCPCallRequest": {
             "type": "object",
             "required": [
                 "method"
@@ -23226,11 +23675,11 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.MCPCallResponse": {
+        "domain_sandbox.MCPCallResponse": {
             "type": "object",
             "properties": {
                 "error": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.JSONRPCError"
+                    "$ref": "#/definitions/domain_sandbox.JSONRPCError"
                 },
                 "result": {
                     "type": "array",
@@ -23240,7 +23689,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.MCPConfig": {
+        "domain_sandbox.MCPConfig": {
             "type": "object",
             "properties": {
                 "environment": {
@@ -23270,7 +23719,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.MCPServerStatus": {
+        "domain_sandbox.MCPServerStatus": {
             "type": "object",
             "properties": {
                 "bridge_connected": {
@@ -23292,10 +23741,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.ProviderType"
+                    "$ref": "#/definitions/domain_sandbox.ProviderType"
                 },
                 "resource_limits": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.ResourceLimits"
+                    "$ref": "#/definitions/domain_sandbox.ResourceLimits"
                 },
                 "restart_count": {
                     "type": "integer"
@@ -23304,7 +23753,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.Status"
+                    "$ref": "#/definitions/domain_sandbox.Status"
                 },
                 "stdio_bridge": {
                     "type": "boolean"
@@ -23323,7 +23772,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.ProviderCapabilities": {
+        "domain_sandbox.ProviderCapabilities": {
             "type": "object",
             "properties": {
                 "estimated_startup_ms": {
@@ -23333,7 +23782,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider_type": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.ProviderType"
+                    "$ref": "#/definitions/domain_sandbox.ProviderType"
                 },
                 "requires_kvm": {
                     "type": "boolean"
@@ -23349,14 +23798,14 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.ProviderStatusResponse": {
+        "domain_sandbox.ProviderStatusResponse": {
             "type": "object",
             "properties": {
                 "active_count": {
                     "type": "integer"
                 },
                 "capabilities": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.ProviderCapabilities"
+                    "$ref": "#/definitions/domain_sandbox.ProviderCapabilities"
                 },
                 "healthy": {
                     "type": "boolean"
@@ -23368,11 +23817,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "type": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.ProviderType"
+                    "$ref": "#/definitions/domain_sandbox.ProviderType"
                 }
             }
         },
-        "apps_server_domain_sandbox.ProviderType": {
+        "domain_sandbox.ProviderType": {
             "type": "string",
             "enum": [
                 "firecracker",
@@ -23385,7 +23834,7 @@ const docTemplate = `{
                 "ProviderGVisor"
             ]
         },
-        "apps_server_domain_sandbox.ReadRequest": {
+        "domain_sandbox.ReadRequest": {
             "type": "object",
             "required": [
                 "file_path"
@@ -23402,7 +23851,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.ReadResponse": {
+        "domain_sandbox.ReadResponse": {
             "type": "object",
             "properties": {
                 "content": {
@@ -23422,7 +23871,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.RegisterMCPServerRequest": {
+        "domain_sandbox.RegisterMCPServerRequest": {
             "type": "object",
             "required": [
                 "image",
@@ -23451,7 +23900,7 @@ const docTemplate = `{
                     "description": "Default: 0.5 CPU, 512MB memory, 1GB disk",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/apps_server_domain_sandbox.ResourceLimits"
+                            "$ref": "#/definitions/domain_sandbox.ResourceLimits"
                         }
                     ]
                 },
@@ -23471,7 +23920,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.ResourceLimits": {
+        "domain_sandbox.ResourceLimits": {
             "type": "object",
             "properties": {
                 "cpu": {
@@ -23488,7 +23937,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.SnapshotResponse": {
+        "domain_sandbox.SnapshotResponse": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -23505,7 +23954,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandbox.Status": {
+        "domain_sandbox.Status": {
             "type": "string",
             "enum": [
                 "creating",
@@ -23522,7 +23971,7 @@ const docTemplate = `{
                 "StatusError"
             ]
         },
-        "apps_server_domain_sandbox.WorkspaceResponse": {
+        "domain_sandbox.WorkspaceResponse": {
             "type": "object",
             "properties": {
                 "agent_session_id": {
@@ -23532,13 +23981,13 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "container_type": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.ContainerType"
+                    "$ref": "#/definitions/domain_sandbox.ContainerType"
                 },
                 "created_at": {
                     "type": "string"
                 },
                 "deployment_mode": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.DeploymentMode"
+                    "$ref": "#/definitions/domain_sandbox.DeploymentMode"
                 },
                 "expires_at": {
                     "type": "string"
@@ -23550,17 +23999,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "lifecycle": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.Lifecycle"
+                    "$ref": "#/definitions/domain_sandbox.Lifecycle"
                 },
                 "mcp_config": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.MCPConfig"
+                    "$ref": "#/definitions/domain_sandbox.MCPConfig"
                 },
                 "metadata": {
                     "type": "object",
                     "additionalProperties": {}
                 },
                 "provider": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.ProviderType"
+                    "$ref": "#/definitions/domain_sandbox.ProviderType"
                 },
                 "provider_workspace_id": {
                     "type": "string"
@@ -23569,17 +24018,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "resource_limits": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.ResourceLimits"
+                    "$ref": "#/definitions/domain_sandbox.ResourceLimits"
                 },
                 "snapshot_id": {
                     "type": "string"
                 },
                 "status": {
-                    "$ref": "#/definitions/apps_server_domain_sandbox.Status"
+                    "$ref": "#/definitions/domain_sandbox.Status"
                 }
             }
         },
-        "apps_server_domain_sandbox.WriteRequest": {
+        "domain_sandbox.WriteRequest": {
             "type": "object",
             "required": [
                 "file_path"
@@ -23593,15 +24042,15 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandboximages.APIResponse-apps_server_domain_sandboximages_SandboxImageDTO": {
+        "domain_sandboximages.APIResponse-domain_sandboximages_SandboxImageDTO": {
             "type": "object",
             "properties": {
                 "data": {
-                    "$ref": "#/definitions/apps_server_domain_sandboximages.SandboxImageDTO"
+                    "$ref": "#/definitions/domain_sandboximages.SandboxImageDTO"
                 }
             }
         },
-        "apps_server_domain_sandboximages.CreateSandboxImageRequest": {
+        "domain_sandboximages.CreateSandboxImageRequest": {
             "type": "object",
             "required": [
                 "name"
@@ -23619,18 +24068,18 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_sandboximages.ListResponse-apps_server_domain_sandboximages_SandboxImageDTO": {
+        "domain_sandboximages.ListResponse-domain_sandboximages_SandboxImageDTO": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_sandboximages.SandboxImageDTO"
+                        "$ref": "#/definitions/domain_sandboximages.SandboxImageDTO"
                     }
                 }
             }
         },
-        "apps_server_domain_sandboximages.SandboxImageDTO": {
+        "domain_sandboximages.SandboxImageDTO": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -23665,7 +24114,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemaregistry.CreateTypeRequest": {
+        "domain_schemaregistry.CreateTypeRequest": {
             "type": "object",
             "properties": {
                 "description": {
@@ -23698,7 +24147,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemaregistry.GraphMemorySchema": {
+        "domain_schemaregistry.GraphMemorySchema": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -23727,7 +24176,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemaregistry.ProjectObjectSchemaRegistry": {
+        "domain_schemaregistry.ProjectObjectSchemaRegistry": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -23764,7 +24213,7 @@ const docTemplate = `{
                     "description": "Relations - for joining",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/apps_server_domain_schemaregistry.GraphMemorySchema"
+                            "$ref": "#/definitions/domain_schemaregistry.GraphMemorySchema"
                         }
                     ]
                 },
@@ -23795,7 +24244,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemaregistry.RelationshipTypeInfo": {
+        "domain_schemaregistry.RelationshipTypeInfo": {
             "type": "object",
             "properties": {
                 "description": {
@@ -23830,7 +24279,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemaregistry.SchemaRegistryEntryDTO": {
+        "domain_schemaregistry.SchemaRegistryEntryDTO": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -23855,7 +24304,7 @@ const docTemplate = `{
                 "incoming_relationships": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_schemaregistry.RelationshipTypeInfo"
+                        "$ref": "#/definitions/domain_schemaregistry.RelationshipTypeInfo"
                     }
                 },
                 "json_schema": {
@@ -23870,7 +24319,7 @@ const docTemplate = `{
                 "outgoing_relationships": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_schemaregistry.RelationshipTypeInfo"
+                        "$ref": "#/definitions/domain_schemaregistry.RelationshipTypeInfo"
                     }
                 },
                 "schema_id": {
@@ -23898,7 +24347,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemaregistry.SchemaRegistryStats": {
+        "domain_schemaregistry.SchemaRegistryStats": {
             "type": "object",
             "properties": {
                 "custom_types": {
@@ -23924,7 +24373,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemaregistry.UpdateTypeRequest": {
+        "domain_schemaregistry.UpdateTypeRequest": {
             "type": "object",
             "properties": {
                 "description": {
@@ -23953,15 +24402,23 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemas.AssignPackRequest": {
+        "domain_schemas.AssignPackRequest": {
             "type": "object",
             "properties": {
+                "auto_uninstall": {
+                    "description": "AutoUninstall, when true, uninstalls the from_version schema after a\nsuccessful auto-migration.",
+                    "type": "boolean"
+                },
                 "customizations": {
                     "type": "object",
                     "additionalProperties": true
                 },
                 "dry_run": {
                     "description": "DryRun, when true, computes and returns the full conflict/merge preview\nwithout making any database changes. The response uses HTTP 200.",
+                    "type": "boolean"
+                },
+                "force": {
+                    "description": "Force, when true, allows migration to proceed even when the risk level is\ndangerous. Has no effect if the schema has no migration hints.",
                     "type": "boolean"
                 },
                 "merge": {
@@ -23973,7 +24430,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemas.AssignPackResult": {
+        "domain_schemas.AssignPackResult": {
             "type": "object",
             "properties": {
                 "already_installed": {
@@ -23988,7 +24445,7 @@ const docTemplate = `{
                     "description": "Conflicts contains full diff detail for each conflicting type.",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_schemas.SchemaConflict"
+                        "$ref": "#/definitions/domain_schemas.SchemaConflict"
                     }
                 },
                 "dry_run": {
@@ -24009,6 +24466,26 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "migration_block_reason": {
+                    "description": "MigrationBlockReason describes why migration was not enqueued (if blocked).",
+                    "type": "string"
+                },
+                "migration_job_id": {
+                    "description": "MigrationJobID is set when an async migration job was enqueued.",
+                    "type": "string"
+                },
+                "migration_preview": {
+                    "description": "MigrationPreview is populated when dry_run=true and the schema has migration hints.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationPreviewResponse"
+                        }
+                    ]
+                },
+                "migration_status": {
+                    "description": "MigrationStatus describes the auto-migration state:\n\"pending\", \"skipped\", \"blocked\", \"chain_unresolvable\"",
+                    "type": "string"
+                },
                 "schema_id": {
                     "type": "string"
                 },
@@ -24024,24 +24501,49 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemas.CompiledTypesResponse": {
+        "domain_schemas.CommitMigrationArchiveRequest": {
+            "type": "object",
+            "properties": {
+                "through_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.CommitMigrationArchiveResponse": {
+            "type": "object",
+            "properties": {
+                "entries_pruned": {
+                    "type": "integer"
+                },
+                "objects_updated": {
+                    "type": "integer"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "through_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.CompiledTypesResponse": {
             "type": "object",
             "properties": {
                 "objectTypes": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_schemas.ObjectTypeSchema"
+                        "$ref": "#/definitions/domain_schemas.ObjectTypeSchema"
                     }
                 },
                 "relationshipTypes": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_schemas.RelationshipTypeSchema"
+                        "$ref": "#/definitions/domain_schemas.RelationshipTypeSchema"
                     }
                 }
             }
         },
-        "apps_server_domain_schemas.CreatePackRequest": {
+        "domain_schemas.CreatePackRequest": {
             "type": "object",
             "properties": {
                 "author": {
@@ -24053,7 +24555,14 @@ const docTemplate = `{
                 "documentation_url": {
                     "type": "string"
                 },
+                "extractionPrompts": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "extraction_prompts": {
+                    "description": "ExtractionPrompts accepts both snake_case and camelCase keys.",
                     "type": "array",
                     "items": {
                         "type": "integer"
@@ -24062,16 +24571,38 @@ const docTemplate = `{
                 "license": {
                     "type": "string"
                 },
+                "migrations": {
+                    "description": "Migrations is the optional upgrade-path block for this schema version.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationHints"
+                        }
+                    ]
+                },
                 "name": {
                     "type": "string"
                 },
+                "objectTypeSchemas": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "object_type_schemas": {
+                    "description": "ObjectTypeSchemas accepts both snake_case and camelCase keys.\nUse GetObjectTypeSchemas() to retrieve the resolved value.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "relationshipTypeSchemas": {
                     "type": "array",
                     "items": {
                         "type": "integer"
                     }
                 },
                 "relationship_type_schemas": {
+                    "description": "RelationshipTypeSchemas accepts both snake_case and camelCase keys.\nUse GetRelationshipTypeSchemas() to retrieve the resolved value.",
                     "type": "array",
                     "items": {
                         "type": "integer"
@@ -24080,7 +24611,14 @@ const docTemplate = `{
                 "repository_url": {
                     "type": "string"
                 },
+                "uiConfigs": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "ui_configs": {
+                    "description": "UIConfigs accepts both snake_case and camelCase keys.",
                     "type": "array",
                     "items": {
                         "type": "integer"
@@ -24095,7 +24633,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemas.GraphMemorySchema": {
+        "domain_schemas.GraphMemorySchema": {
             "type": "object",
             "properties": {
                 "author": {
@@ -24130,6 +24668,9 @@ const docTemplate = `{
                 },
                 "license": {
                     "type": "string"
+                },
+                "migrations": {
+                    "$ref": "#/definitions/domain_schemas.SchemaMigrationHints"
                 },
                 "name": {
                     "type": "string"
@@ -24178,7 +24719,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemas.InstalledSchemaItem": {
+        "domain_schemas.InstalledSchemaItem": {
             "type": "object",
             "properties": {
                 "active": {
@@ -24209,7 +24750,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemas.MemorySchemaListItem": {
+        "domain_schemas.MemorySchemaListItem": {
             "type": "object",
             "properties": {
                 "author": {
@@ -24232,7 +24773,81 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemas.ObjectTypeSchema": {
+        "domain_schemas.MigrateRequest": {
+            "type": "object",
+            "properties": {
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "property_renames": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.PropertyRename"
+                    }
+                },
+                "type_renames": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.TypeRename"
+                    }
+                }
+            }
+        },
+        "domain_schemas.MigrateResponse": {
+            "type": "object",
+            "properties": {
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "property_rename_results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.PropertyRenameResult"
+                    }
+                },
+                "type_rename_results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.TypeRenameResult"
+                    }
+                }
+            }
+        },
+        "domain_schemas.MigrationHop": {
+            "type": "object",
+            "properties": {
+                "from_schema_id": {
+                    "type": "string"
+                },
+                "hints": {
+                    "$ref": "#/definitions/domain_schemas.SchemaMigrationHints"
+                },
+                "to_schema_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.MigrationTypeResult": {
+            "type": "object",
+            "properties": {
+                "block_reason": {
+                    "type": "string"
+                },
+                "can_proceed": {
+                    "type": "boolean"
+                },
+                "object_count": {
+                    "type": "integer"
+                },
+                "risk_level": {
+                    "type": "string"
+                },
+                "type_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.ObjectTypeSchema": {
             "type": "object",
             "properties": {
                 "description": {
@@ -24255,10 +24870,16 @@ const docTemplate = `{
                 },
                 "schemaName": {
                     "type": "string"
+                },
+                "schemaVersion": {
+                    "type": "string"
+                },
+                "shadowed": {
+                    "type": "boolean"
                 }
             }
         },
-        "apps_server_domain_schemas.PropertyConflict": {
+        "domain_schemas.PropertyConflict": {
             "type": "object",
             "properties": {
                 "existing_def": {
@@ -24282,7 +24903,38 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemas.RelationshipTypeSchema": {
+        "domain_schemas.PropertyRename": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                },
+                "type_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.PropertyRenameResult": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string"
+                },
+                "objects_affected": {
+                    "type": "integer"
+                },
+                "to": {
+                    "type": "string"
+                },
+                "type_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.RelationshipTypeSchema": {
             "type": "object",
             "properties": {
                 "description": {
@@ -24300,6 +24952,12 @@ const docTemplate = `{
                 "schemaName": {
                     "type": "string"
                 },
+                "schemaVersion": {
+                    "type": "string"
+                },
+                "shadowed": {
+                    "type": "boolean"
+                },
                 "sourceType": {
                     "type": "string"
                 },
@@ -24308,7 +24966,18 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemas.SchemaConflict": {
+        "domain_schemas.RemovedProperty": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "type_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.SchemaConflict": {
             "type": "object",
             "properties": {
                 "added_properties": {
@@ -24320,7 +24989,7 @@ const docTemplate = `{
                 "conflicting_properties": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_schemas.PropertyConflict"
+                        "$ref": "#/definitions/domain_schemas.PropertyConflict"
                     }
                 },
                 "existing_schema": {
@@ -24346,7 +25015,263 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemas.UpdateAssignmentRequest": {
+        "domain_schemas.SchemaHistoryItem": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "description": "assignment ID",
+                    "type": "string"
+                },
+                "installedAt": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "removedAt": {
+                    "type": "string"
+                },
+                "schemaId": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.SchemaMigrationExecuteRequest": {
+            "type": "object",
+            "properties": {
+                "force": {
+                    "type": "boolean"
+                },
+                "from_schema_id": {
+                    "type": "string"
+                },
+                "hints": {
+                    "$ref": "#/definitions/domain_schemas.SchemaMigrationHints"
+                },
+                "max_objects": {
+                    "type": "integer"
+                },
+                "to_schema_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.SchemaMigrationExecuteResponse": {
+            "type": "object",
+            "properties": {
+                "from_schema_id": {
+                    "type": "string"
+                },
+                "objects_failed": {
+                    "type": "integer"
+                },
+                "objects_migrated": {
+                    "type": "integer"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "risk_level": {
+                    "type": "string"
+                },
+                "to_schema_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.SchemaMigrationHints": {
+            "type": "object",
+            "properties": {
+                "from_version": {
+                    "description": "FromVersion is the schema version this migration applies from (required when block is present).",
+                    "type": "string"
+                },
+                "property_renames": {
+                    "description": "PropertyRenames lists property renames within types.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.PropertyRename"
+                    }
+                },
+                "removed_properties": {
+                    "description": "RemovedProperties lists properties that are intentionally dropped.\nTheir data will still be archived but no warning is emitted.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.RemovedProperty"
+                    }
+                },
+                "type_renames": {
+                    "description": "TypeRenames lists object/relationship type renames to apply.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.TypeRename"
+                    }
+                }
+            }
+        },
+        "domain_schemas.SchemaMigrationJob": {
+            "type": "object",
+            "properties": {
+                "auto_uninstall": {
+                    "description": "runtime-only flag",
+                    "type": "boolean"
+                },
+                "chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.MigrationHop"
+                    }
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "from_schema_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "objects_failed": {
+                    "type": "integer"
+                },
+                "objects_migrated": {
+                    "type": "integer"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "risk_level": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "to_schema_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.SchemaMigrationPreviewRequest": {
+            "type": "object",
+            "properties": {
+                "from_schema_id": {
+                    "type": "string"
+                },
+                "hints": {
+                    "$ref": "#/definitions/domain_schemas.SchemaMigrationHints"
+                },
+                "to_schema_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.SchemaMigrationPreviewResponse": {
+            "type": "object",
+            "properties": {
+                "block_reason": {
+                    "type": "string"
+                },
+                "can_proceed": {
+                    "type": "boolean"
+                },
+                "from_schema_id": {
+                    "type": "string"
+                },
+                "overall_risk_level": {
+                    "type": "string"
+                },
+                "per_type_results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.MigrationTypeResult"
+                    }
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "suggested_hints_yaml": {
+                    "type": "string"
+                },
+                "to_schema_id": {
+                    "type": "string"
+                },
+                "total_objects": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_schemas.SchemaMigrationRollbackRequest": {
+            "type": "object",
+            "properties": {
+                "restore_type_registry": {
+                    "type": "boolean"
+                },
+                "to_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.SchemaMigrationRollbackResponse": {
+            "type": "object",
+            "properties": {
+                "objects_failed": {
+                    "type": "integer"
+                },
+                "objects_restored": {
+                    "type": "integer"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "to_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.TypeRename": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.TypeRenameResult": {
+            "type": "object",
+            "properties": {
+                "edges_affected": {
+                    "type": "integer"
+                },
+                "from": {
+                    "type": "string"
+                },
+                "objects_affected": {
+                    "type": "integer"
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.UpdateAssignmentRequest": {
             "type": "object",
             "properties": {
                 "active": {
@@ -24354,7 +25279,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_schemas.UpdatePackRequest": {
+        "domain_schemas.UpdatePackRequest": {
             "type": "object",
             "properties": {
                 "author": {
@@ -24374,6 +25299,14 @@ const docTemplate = `{
                 },
                 "license": {
                     "type": "string"
+                },
+                "migrations": {
+                    "description": "Migrations is the optional upgrade-path block for this schema version.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_schemas.SchemaMigrationHints"
+                        }
+                    ]
                 },
                 "name": {
                     "type": "string"
@@ -24404,7 +25337,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_search.PreFusionCounts": {
+        "domain_search.PreFusionCounts": {
             "type": "object",
             "properties": {
                 "graph": {
@@ -24418,7 +25351,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_search.ScoreStats": {
+        "domain_search.ScoreStats": {
             "type": "object",
             "properties": {
                 "max": {
@@ -24432,20 +25365,20 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_search.UnifiedSearchDebug": {
+        "domain_search.UnifiedSearchDebug": {
             "type": "object",
             "properties": {
                 "fusion_details": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchFusionDetails"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchFusionDetails"
                 },
                 "graphSearch": {},
                 "score_distribution": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchScoreDistribution"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchScoreDistribution"
                 },
                 "textSearch": {}
             }
         },
-        "apps_server_domain_search.UnifiedSearchExecutionTime": {
+        "domain_search.UnifiedSearchExecutionTime": {
             "type": "object",
             "properties": {
                 "fusionMs": {
@@ -24468,24 +25401,24 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_search.UnifiedSearchFusionDetails": {
+        "domain_search.UnifiedSearchFusionDetails": {
             "type": "object",
             "properties": {
                 "post_fusion_count": {
                     "type": "integer"
                 },
                 "pre_fusion_counts": {
-                    "$ref": "#/definitions/apps_server_domain_search.PreFusionCounts"
+                    "$ref": "#/definitions/domain_search.PreFusionCounts"
                 },
                 "strategy": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchFusionStrategy"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchFusionStrategy"
                 },
                 "weights": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchWeights"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchWeights"
                 }
             }
         },
-        "apps_server_domain_search.UnifiedSearchFusionStrategy": {
+        "domain_search.UnifiedSearchFusionStrategy": {
             "type": "string",
             "enum": [
                 "weighted",
@@ -24502,7 +25435,7 @@ const docTemplate = `{
                 "FusionStrategyTextFirst"
             ]
         },
-        "apps_server_domain_search.UnifiedSearchItemType": {
+        "domain_search.UnifiedSearchItemType": {
             "type": "string",
             "enum": [
                 "graph",
@@ -24515,14 +25448,14 @@ const docTemplate = `{
                 "ItemTypeRelationship"
             ]
         },
-        "apps_server_domain_search.UnifiedSearchMetadata": {
+        "domain_search.UnifiedSearchMetadata": {
             "type": "object",
             "properties": {
                 "executionTime": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchExecutionTime"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchExecutionTime"
                 },
                 "fusionStrategy": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchFusionStrategy"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchFusionStrategy"
                 },
                 "graphResultCount": {
                     "type": "integer"
@@ -24538,7 +25471,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_search.UnifiedSearchRelationship": {
+        "domain_search.UnifiedSearchRelationship": {
             "type": "object",
             "properties": {
                 "direction": {
@@ -24563,7 +25496,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_search.UnifiedSearchRelationshipOptions": {
+        "domain_search.UnifiedSearchRelationshipOptions": {
             "type": "object",
             "properties": {
                 "direction": {
@@ -24581,7 +25514,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_search.UnifiedSearchRequest": {
+        "domain_search.UnifiedSearchRequest": {
             "type": "object",
             "required": [
                 "query"
@@ -24592,7 +25525,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "fusionStrategy": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchFusionStrategy"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchFusionStrategy"
                 },
                 "includeDebug": {
                     "type": "boolean"
@@ -24608,34 +25541,34 @@ const docTemplate = `{
                     "maxLength": 800
                 },
                 "relationshipOptions": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchRelationshipOptions"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchRelationshipOptions"
                 },
                 "resultTypes": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchResultType"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchResultType"
                 },
                 "weights": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchWeights"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchWeights"
                 }
             }
         },
-        "apps_server_domain_search.UnifiedSearchResponse": {
+        "domain_search.UnifiedSearchResponse": {
             "type": "object",
             "properties": {
                 "debug": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchDebug"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchDebug"
                 },
                 "metadata": {
-                    "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchMetadata"
+                    "$ref": "#/definitions/domain_search.UnifiedSearchMetadata"
                 },
                 "results": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchResultItem"
+                        "$ref": "#/definitions/domain_search.UnifiedSearchResultItem"
                     }
                 }
             }
         },
-        "apps_server_domain_search.UnifiedSearchResultItem": {
+        "domain_search.UnifiedSearchResultItem": {
             "type": "object",
             "properties": {
                 "canonical_id": {
@@ -24681,7 +25614,7 @@ const docTemplate = `{
                 "relationships": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchRelationship"
+                        "$ref": "#/definitions/domain_search.UnifiedSearchRelationship"
                     }
                 },
                 "score": {
@@ -24713,13 +25646,13 @@ const docTemplate = `{
                     "description": "Common fields",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/apps_server_domain_search.UnifiedSearchItemType"
+                            "$ref": "#/definitions/domain_search.UnifiedSearchItemType"
                         }
                     ]
                 }
             }
         },
-        "apps_server_domain_search.UnifiedSearchResultType": {
+        "domain_search.UnifiedSearchResultType": {
             "type": "string",
             "enum": [
                 "graph",
@@ -24732,21 +25665,21 @@ const docTemplate = `{
                 "ResultTypeBoth"
             ]
         },
-        "apps_server_domain_search.UnifiedSearchScoreDistribution": {
+        "domain_search.UnifiedSearchScoreDistribution": {
             "type": "object",
             "properties": {
                 "graph": {
-                    "$ref": "#/definitions/apps_server_domain_search.ScoreStats"
+                    "$ref": "#/definitions/domain_search.ScoreStats"
                 },
                 "relationship": {
-                    "$ref": "#/definitions/apps_server_domain_search.ScoreStats"
+                    "$ref": "#/definitions/domain_search.ScoreStats"
                 },
                 "text": {
-                    "$ref": "#/definitions/apps_server_domain_search.ScoreStats"
+                    "$ref": "#/definitions/domain_search.ScoreStats"
                 }
             }
         },
-        "apps_server_domain_search.UnifiedSearchWeights": {
+        "domain_search.UnifiedSearchWeights": {
             "type": "object",
             "properties": {
                 "graphWeight": {
@@ -24760,7 +25693,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_skills.CreateSkillDTO": {
+        "domain_skills.CreateSkillDTO": {
             "type": "object",
             "required": [
                 "name"
@@ -24773,25 +25706,25 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "metadata": {
-                    "$ref": "#/definitions/apps_server_domain_skills.SkillMetadata"
+                    "$ref": "#/definitions/domain_skills.SkillMetadata"
                 },
                 "name": {
                     "type": "string"
                 }
             }
         },
-        "apps_server_domain_skills.ListSkillsResponse": {
+        "domain_skills.ListSkillsResponse": {
             "type": "object",
             "properties": {
                 "skills": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_skills.SkillDTO"
+                        "$ref": "#/definitions/domain_skills.SkillDTO"
                     }
                 }
             }
         },
-        "apps_server_domain_skills.SkillDTO": {
+        "domain_skills.SkillDTO": {
             "type": "object",
             "properties": {
                 "content": {
@@ -24810,7 +25743,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "metadata": {
-                    "$ref": "#/definitions/apps_server_domain_skills.SkillMetadata"
+                    "$ref": "#/definitions/domain_skills.SkillMetadata"
                 },
                 "name": {
                     "type": "string"
@@ -24830,7 +25763,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_skills.SkillMetadata": {
+        "domain_skills.SkillMetadata": {
             "type": "object",
             "properties": {
                 "location": {
@@ -24839,7 +25772,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_skills.UpdateSkillDTO": {
+        "domain_skills.UpdateSkillDTO": {
             "type": "object",
             "properties": {
                 "content": {
@@ -24849,11 +25782,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "metadata": {
-                    "$ref": "#/definitions/apps_server_domain_skills.SkillMetadata"
+                    "$ref": "#/definitions/domain_skills.SkillMetadata"
                 }
             }
         },
-        "apps_server_domain_superadmin.CancelJobsRequest": {
+        "domain_superadmin.CancelJobsRequest": {
             "type": "object",
             "required": [
                 "ids"
@@ -24868,7 +25801,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.CancelJobsResponse": {
+        "domain_superadmin.CancelJobsResponse": {
             "type": "object",
             "properties": {
                 "cancelledCount": {
@@ -24882,7 +25815,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.CleanupOrphansResponse": {
+        "domain_superadmin.CleanupOrphansResponse": {
             "type": "object",
             "properties": {
                 "deletedCount": {
@@ -24896,7 +25829,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.CreateServiceTokenRequest": {
+        "domain_superadmin.CreateServiceTokenRequest": {
             "type": "object",
             "properties": {
                 "name": {
@@ -24907,7 +25840,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.CreateServiceTokenResponse": {
+        "domain_superadmin.CreateServiceTokenResponse": {
             "type": "object",
             "properties": {
                 "name": {
@@ -24924,7 +25857,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.DeleteJobsRequest": {
+        "domain_superadmin.DeleteJobsRequest": {
             "type": "object",
             "required": [
                 "ids"
@@ -24943,7 +25876,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.DeleteJobsResponse": {
+        "domain_superadmin.DeleteJobsResponse": {
             "type": "object",
             "properties": {
                 "deletedCount": {
@@ -24957,7 +25890,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.DocumentParsingJobDTO": {
+        "domain_superadmin.DocumentParsingJobDTO": {
             "type": "object",
             "properties": {
                 "completedAt": {
@@ -25029,7 +25962,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.DocumentParsingJobStatsDTO": {
+        "domain_superadmin.DocumentParsingJobStatsDTO": {
             "type": "object",
             "properties": {
                 "completed": {
@@ -25058,7 +25991,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.EmailJobPreviewResponse": {
+        "domain_superadmin.EmailJobPreviewResponse": {
             "type": "object",
             "properties": {
                 "html": {
@@ -25075,7 +26008,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.EmbeddingJobDTO": {
+        "domain_superadmin.EmbeddingJobDTO": {
             "type": "object",
             "properties": {
                 "attemptCount": {
@@ -25123,7 +26056,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.EmbeddingJobStatsDTO": {
+        "domain_superadmin.EmbeddingJobStatsDTO": {
             "type": "object",
             "properties": {
                 "chunkCompleted": {
@@ -25161,7 +26094,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.ExtractionJobDTO": {
+        "domain_superadmin.ExtractionJobDTO": {
             "type": "object",
             "properties": {
                 "chunkId": {
@@ -25229,7 +26162,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.ExtractionJobStatsDTO": {
+        "domain_superadmin.ExtractionJobStatsDTO": {
             "type": "object",
             "properties": {
                 "cancelled": {
@@ -25261,131 +26194,131 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.ListDocumentParsingJobsResponse": {
+        "domain_superadmin.ListDocumentParsingJobsResponse": {
             "type": "object",
             "properties": {
                 "jobs": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_superadmin.DocumentParsingJobDTO"
+                        "$ref": "#/definitions/domain_superadmin.DocumentParsingJobDTO"
                     }
                 },
                 "meta": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.PaginationMeta"
+                    "$ref": "#/definitions/domain_superadmin.PaginationMeta"
                 },
                 "stats": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.DocumentParsingJobStatsDTO"
+                    "$ref": "#/definitions/domain_superadmin.DocumentParsingJobStatsDTO"
                 }
             }
         },
-        "apps_server_domain_superadmin.ListEmailJobsResponse": {
+        "domain_superadmin.ListEmailJobsResponse": {
             "type": "object",
             "properties": {
                 "emailJobs": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_superadmin.SuperadminEmailJobDTO"
+                        "$ref": "#/definitions/domain_superadmin.SuperadminEmailJobDTO"
                     }
                 },
                 "meta": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.PaginationMeta"
+                    "$ref": "#/definitions/domain_superadmin.PaginationMeta"
                 }
             }
         },
-        "apps_server_domain_superadmin.ListEmbeddingJobsResponse": {
+        "domain_superadmin.ListEmbeddingJobsResponse": {
             "type": "object",
             "properties": {
                 "jobs": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_superadmin.EmbeddingJobDTO"
+                        "$ref": "#/definitions/domain_superadmin.EmbeddingJobDTO"
                     }
                 },
                 "meta": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.PaginationMeta"
+                    "$ref": "#/definitions/domain_superadmin.PaginationMeta"
                 },
                 "stats": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.EmbeddingJobStatsDTO"
+                    "$ref": "#/definitions/domain_superadmin.EmbeddingJobStatsDTO"
                 }
             }
         },
-        "apps_server_domain_superadmin.ListExtractionJobsResponse": {
+        "domain_superadmin.ListExtractionJobsResponse": {
             "type": "object",
             "properties": {
                 "jobs": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_superadmin.ExtractionJobDTO"
+                        "$ref": "#/definitions/domain_superadmin.ExtractionJobDTO"
                     }
                 },
                 "meta": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.PaginationMeta"
+                    "$ref": "#/definitions/domain_superadmin.PaginationMeta"
                 },
                 "stats": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.ExtractionJobStatsDTO"
+                    "$ref": "#/definitions/domain_superadmin.ExtractionJobStatsDTO"
                 }
             }
         },
-        "apps_server_domain_superadmin.ListOrganizationsResponse": {
+        "domain_superadmin.ListOrganizationsResponse": {
             "type": "object",
             "properties": {
                 "meta": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.PaginationMeta"
+                    "$ref": "#/definitions/domain_superadmin.PaginationMeta"
                 },
                 "organizations": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_superadmin.SuperadminOrgDTO"
+                        "$ref": "#/definitions/domain_superadmin.SuperadminOrgDTO"
                     }
                 }
             }
         },
-        "apps_server_domain_superadmin.ListProjectsResponse": {
+        "domain_superadmin.ListProjectsResponse": {
             "type": "object",
             "properties": {
                 "meta": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.PaginationMeta"
+                    "$ref": "#/definitions/domain_superadmin.PaginationMeta"
                 },
                 "projects": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_superadmin.SuperadminProjectDTO"
+                        "$ref": "#/definitions/domain_superadmin.SuperadminProjectDTO"
                     }
                 }
             }
         },
-        "apps_server_domain_superadmin.ListSyncJobsResponse": {
+        "domain_superadmin.ListSyncJobsResponse": {
             "type": "object",
             "properties": {
                 "jobs": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_superadmin.SyncJobDTO"
+                        "$ref": "#/definitions/domain_superadmin.SyncJobDTO"
                     }
                 },
                 "meta": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.PaginationMeta"
+                    "$ref": "#/definitions/domain_superadmin.PaginationMeta"
                 },
                 "stats": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.SyncJobStatsDTO"
+                    "$ref": "#/definitions/domain_superadmin.SyncJobStatsDTO"
                 }
             }
         },
-        "apps_server_domain_superadmin.ListUsersResponse": {
+        "domain_superadmin.ListUsersResponse": {
             "type": "object",
             "properties": {
                 "meta": {
-                    "$ref": "#/definitions/apps_server_domain_superadmin.PaginationMeta"
+                    "$ref": "#/definitions/domain_superadmin.PaginationMeta"
                 },
                 "users": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_superadmin.SuperadminUserDTO"
+                        "$ref": "#/definitions/domain_superadmin.SuperadminUserDTO"
                     }
                 }
             }
         },
-        "apps_server_domain_superadmin.PaginationMeta": {
+        "domain_superadmin.PaginationMeta": {
             "type": "object",
             "properties": {
                 "hasNext": {
@@ -25408,7 +26341,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.ResetDeadLetterResponse": {
+        "domain_superadmin.ResetDeadLetterResponse": {
             "type": "object",
             "properties": {
                 "message": {
@@ -25422,7 +26355,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.RetryJobsRequest": {
+        "domain_superadmin.RetryJobsRequest": {
             "type": "object",
             "required": [
                 "ids"
@@ -25437,7 +26370,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.RetryJobsResponse": {
+        "domain_superadmin.RetryJobsResponse": {
             "type": "object",
             "properties": {
                 "message": {
@@ -25451,7 +26384,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.SuccessResponse": {
+        "domain_superadmin.SuccessResponse": {
             "type": "object",
             "properties": {
                 "message": {
@@ -25462,7 +26395,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.SuperadminEmailJobDTO": {
+        "domain_superadmin.SuperadminEmailJobDTO": {
             "type": "object",
             "properties": {
                 "attempts": {
@@ -25512,7 +26445,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.SuperadminMeResponse": {
+        "domain_superadmin.SuperadminMeResponse": {
             "type": "object",
             "properties": {
                 "isSuperadmin": {
@@ -25524,7 +26457,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.SuperadminOrgDTO": {
+        "domain_superadmin.SuperadminOrgDTO": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -25547,7 +26480,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.SuperadminProjectDTO": {
+        "domain_superadmin.SuperadminProjectDTO": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -25573,7 +26506,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.SuperadminUserDTO": {
+        "domain_superadmin.SuperadminUserDTO": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -25597,7 +26530,7 @@ const docTemplate = `{
                 "organizations": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_superadmin.UserOrgMembershipDTO"
+                        "$ref": "#/definitions/domain_superadmin.UserOrgMembershipDTO"
                     }
                 },
                 "primaryEmail": {
@@ -25608,7 +26541,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.SyncJobDTO": {
+        "domain_superadmin.SyncJobDTO": {
             "type": "object",
             "properties": {
                 "completedAt": {
@@ -25670,7 +26603,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.SyncJobLogsResponse": {
+        "domain_superadmin.SyncJobLogsResponse": {
             "type": "object",
             "properties": {
                 "completedAt": {
@@ -25694,7 +26627,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.SyncJobStatsDTO": {
+        "domain_superadmin.SyncJobStatsDTO": {
             "type": "object",
             "properties": {
                 "cancelled": {
@@ -25723,7 +26656,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_superadmin.UserOrgMembershipDTO": {
+        "domain_superadmin.UserOrgMembershipDTO": {
             "type": "object",
             "properties": {
                 "joinedAt": {
@@ -25740,7 +26673,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_tasks.ResolveTaskRequest": {
+        "domain_tasks.ResolveTaskRequest": {
             "type": "object",
             "properties": {
                 "resolution": {
@@ -25752,7 +26685,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_tasks.Task": {
+        "domain_tasks.Task": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -25802,7 +26735,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_tasks.TaskCountsResponse": {
+        "domain_tasks.TaskCountsResponse": {
             "type": "object",
             "properties": {
                 "accepted": {
@@ -25819,13 +26752,13 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_tasks.TaskListResponse": {
+        "domain_tasks.TaskListResponse": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_tasks.Task"
+                        "$ref": "#/definitions/domain_tasks.Task"
                     }
                 },
                 "total": {
@@ -25833,15 +26766,15 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_tasks.TaskResponse": {
+        "domain_tasks.TaskResponse": {
             "type": "object",
             "properties": {
                 "data": {
-                    "$ref": "#/definitions/apps_server_domain_tasks.Task"
+                    "$ref": "#/definitions/domain_tasks.Task"
                 }
             }
         },
-        "apps_server_domain_useraccess.OrgWithProjects": {
+        "domain_useraccess.OrgWithProjects": {
             "type": "object",
             "properties": {
                 "id": {
@@ -25853,7 +26786,7 @@ const docTemplate = `{
                 "projects": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_useraccess.ProjectWithRole"
+                        "$ref": "#/definitions/domain_useraccess.ProjectWithRole"
                     }
                 },
                 "role": {
@@ -25861,7 +26794,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_useraccess.ProjectWithRole": {
+        "domain_useraccess.ProjectWithRole": {
             "type": "object",
             "properties": {
                 "auto_extract_config": {
@@ -25885,7 +26818,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_useractivity.RecentItemResponse": {
+        "domain_useractivity.RecentItemResponse": {
             "type": "object",
             "properties": {
                 "accessedAt": {
@@ -25914,18 +26847,18 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_useractivity.RecentItemsResponse": {
+        "domain_useractivity.RecentItemsResponse": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_useractivity.RecentItemResponse"
+                        "$ref": "#/definitions/domain_useractivity.RecentItemResponse"
                     }
                 }
             }
         },
-        "apps_server_domain_useractivity.RecordActivityRequest": {
+        "domain_useractivity.RecordActivityRequest": {
             "type": "object",
             "required": [
                 "actionType",
@@ -25950,7 +26883,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_userprofile.ProfileDTO": {
+        "domain_userprofile.ProfileDTO": {
             "type": "object",
             "properties": {
                 "avatarObjectKey": {
@@ -25982,7 +26915,7 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_userprofile.UpdateProfileRequest": {
+        "domain_userprofile.UpdateProfileRequest": {
             "type": "object",
             "properties": {
                 "displayName": {
@@ -25999,18 +26932,18 @@ const docTemplate = `{
                 }
             }
         },
-        "apps_server_domain_users.UserSearchResponse": {
+        "domain_users.UserSearchResponse": {
             "type": "object",
             "properties": {
                 "users": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/apps_server_domain_users.UserSearchResult"
+                        "$ref": "#/definitions/domain_users.UserSearchResult"
                     }
                 }
             }
         },
-        "apps_server_domain_users.UserSearchResult": {
+        "domain_users.UserSearchResult": {
             "type": "object",
             "properties": {
                 "avatarObjectKey": {
@@ -26163,7 +27096,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.35.89",
+	Version:          "0.35.95",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
