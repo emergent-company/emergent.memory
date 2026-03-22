@@ -14,11 +14,9 @@ import (
 
 var installMemorySkillsCmd = &cobra.Command{
 	Use:   "install-memory-skills",
-	Short: "Install Memory skills to .agents/skills/ and known agent config dirs",
+	Short: "Install Memory skills to .agents/skills/",
 	Long: `Install the built-in Memory skills from the embedded catalog into
-.agents/skills/ in the current directory (or the directory specified by --dir),
-and into any other known agent skill directories that already exist on disk
-(e.g. ~/.opencode/skills, ~/.claude/skills, ~/.gemini/skills).
+.agents/skills/ in the current directory (or the directory specified by --dir).
 
 Only skills with the "memory-" prefix are installed. This is the set of skills
 that teach AI agents how to use the Memory CLI and platform.
@@ -27,6 +25,9 @@ By default the command skips skills that are already up to date. Skills whose
 content has changed since they were last installed are reported as outdated —
 use --force to overwrite them with the latest version.
 
+Use --global to also install into all known global agent skill directories that
+already exist on disk (e.g. ~/.opencode/skills, ~/.claude/skills, ~/.gemini/skills).
+
 After installing, any "memory-" prefixed skill directories in the target that
 are no longer present in the catalog are considered stale. Use --prune to
 remove them automatically, or run interactively to be prompted for each one.`,
@@ -34,15 +35,17 @@ remove them automatically, or run interactively to be prompted for each one.`,
 }
 
 var (
-	installMemorySkillsForce bool
-	installMemorySkillsDir   string
-	installMemorySkillsPrune bool
+	installMemorySkillsForce  bool
+	installMemorySkillsDir    string
+	installMemorySkillsPrune  bool
+	installMemorySkillsGlobal bool
 )
 
 func init() {
 	installMemorySkillsCmd.Flags().BoolVar(&installMemorySkillsForce, "force", false, "overwrite existing skill directories")
 	installMemorySkillsCmd.Flags().StringVar(&installMemorySkillsDir, "dir", "", "target directory (default: .agents/skills relative to cwd)")
 	installMemorySkillsCmd.Flags().BoolVar(&installMemorySkillsPrune, "prune", false, "remove stale memory-* skill directories not present in the catalog")
+	installMemorySkillsCmd.Flags().BoolVar(&installMemorySkillsGlobal, "global", false, "also install into known global agent skill dirs (e.g. ~/.opencode/skills, ~/.claude/skills)")
 	rootCmd.AddCommand(installMemorySkillsCmd)
 }
 
@@ -64,18 +67,20 @@ func runInstallMemorySkills(cmd *cobra.Command, args []string) error {
 		primaryDir = abs
 	}
 
-	// Build list of target dirs: primary always included (created if needed),
-	// plus any other knownSkillDirs() that already exist on disk.
+	// Build list of target dirs: primary always included (created if needed).
+	// With --global, also add any knownSkillDirs() that already exist on disk.
 	targetDirs := []string{primaryDir}
-	for _, d := range knownSkillDirs() {
-		if abs, err := filepath.Abs(d); err == nil {
-			d = abs
-		}
-		if d == primaryDir {
-			continue
-		}
-		if info, err := os.Stat(d); err == nil && info.IsDir() {
-			targetDirs = append(targetDirs, d)
+	if installMemorySkillsGlobal {
+		for _, d := range knownSkillDirs() {
+			if abs, err := filepath.Abs(d); err == nil {
+				d = abs
+			}
+			if d == primaryDir {
+				continue
+			}
+			if info, err := os.Stat(d); err == nil && info.IsDir() {
+				targetDirs = append(targetDirs, d)
+			}
 		}
 	}
 
