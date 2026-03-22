@@ -56,23 +56,82 @@ type CompiledTypesResponse struct {
 
 // ObjectTypeSchema represents an object type definition from a memory schema.
 type ObjectTypeSchema struct {
-	Name        string          `json:"name"`
-	Label       string          `json:"label,omitempty"`
-	Description string          `json:"description,omitempty"`
-	Properties  json.RawMessage `json:"properties,omitempty"`
-	SchemaID    string          `json:"schemaId,omitempty"`
-	SchemaName  string          `json:"schemaName,omitempty"`
+	Name          string          `json:"name"`
+	Label         string          `json:"label,omitempty"`
+	Description   string          `json:"description,omitempty"`
+	Properties    json.RawMessage `json:"properties,omitempty"`
+	SchemaID      string          `json:"schemaId,omitempty"`
+	SchemaName    string          `json:"schemaName,omitempty"`
+	SchemaVersion string          `json:"schemaVersion,omitempty"`
+	Shadowed      bool            `json:"shadowed,omitempty"`
 }
 
 // RelationshipTypeSchema represents a relationship type definition from a memory schema.
 type RelationshipTypeSchema struct {
-	Name        string `json:"name"`
-	Label       string `json:"label,omitempty"`
-	Description string `json:"description,omitempty"`
-	SourceType  string `json:"sourceType,omitempty"`
-	TargetType  string `json:"targetType,omitempty"`
-	SchemaID    string `json:"schemaId,omitempty"`
-	SchemaName  string `json:"schemaName,omitempty"`
+	Name          string `json:"name"`
+	Label         string `json:"label,omitempty"`
+	Description   string `json:"description,omitempty"`
+	SourceType    string `json:"sourceType,omitempty"`
+	TargetType    string `json:"targetType,omitempty"`
+	SchemaID      string `json:"schemaId,omitempty"`
+	SchemaName    string `json:"schemaName,omitempty"`
+	SchemaVersion string `json:"schemaVersion,omitempty"`
+	Shadowed      bool   `json:"shadowed,omitempty"`
+}
+
+// SchemaHistoryItem represents one assignment record including soft-deleted ones.
+type SchemaHistoryItem struct {
+	ID          string     `json:"id"`
+	SchemaID    string     `json:"schemaId"`
+	Name        string     `json:"name"`
+	SchemaName  string     `json:"schemaName"`
+	Version     string     `json:"version"`
+	Active      bool       `json:"active"`
+	InstalledAt time.Time  `json:"installedAt"`
+	RemovedAt   *time.Time `json:"removedAt,omitempty"`
+}
+
+// TypeRename describes a single object or edge type rename.
+type TypeRename struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// PropertyRename describes a property key rename scoped to a type.
+type PropertyRename struct {
+	TypeName string `json:"type_name"`
+	From     string `json:"from"`
+	To       string `json:"to"`
+}
+
+// MigrateRequest is the body for POST /api/schemas/projects/:projectId/migrate.
+type MigrateRequest struct {
+	TypeRenames     []TypeRename     `json:"type_renames,omitempty"`
+	PropertyRenames []PropertyRename `json:"property_renames,omitempty"`
+	DryRun          bool             `json:"dry_run,omitempty"`
+}
+
+// TypeRenameResult reports counts for one type rename operation.
+type TypeRenameResult struct {
+	From            string `json:"from"`
+	To              string `json:"to"`
+	ObjectsAffected int    `json:"objects_affected"`
+	EdgesAffected   int    `json:"edges_affected"`
+}
+
+// PropertyRenameResult reports counts for one property rename operation.
+type PropertyRenameResult struct {
+	TypeName        string `json:"type_name"`
+	From            string `json:"from"`
+	To              string `json:"to"`
+	ObjectsAffected int    `json:"objects_affected"`
+}
+
+// MigrateResponse is the result from the migrate endpoint.
+type MigrateResponse struct {
+	DryRun                bool                   `json:"dry_run"`
+	TypeRenameResults     []TypeRenameResult     `json:"type_rename_results,omitempty"`
+	PropertyRenameResults []PropertyRenameResult `json:"property_rename_results,omitempty"`
 }
 
 // MemorySchema is the full memory schema representation returned from create/get endpoints.
@@ -110,19 +169,90 @@ type MemorySchemaListItem struct {
 }
 
 // CreatePackRequest is the request to create a new memory schema.
+// Both snake_case and camelCase field names are accepted when unmarshalling
+// from a user-supplied JSON file, so that files written with either convention
+// work without manual conversion.
 type CreatePackRequest struct {
-	Name                    string          `json:"name"`
-	Version                 string          `json:"version"`
-	Description             *string         `json:"description,omitempty"`
-	Author                  *string         `json:"author,omitempty"`
-	License                 *string         `json:"license,omitempty"`
-	RepositoryURL           *string         `json:"repository_url,omitempty"`
-	DocumentationURL        *string         `json:"documentation_url,omitempty"`
-	ObjectTypeSchemas       json.RawMessage `json:"object_type_schemas"`
-	RelationshipTypeSchemas json.RawMessage `json:"relationship_type_schemas,omitempty"`
-	UIConfigs               json.RawMessage `json:"ui_configs,omitempty"`
-	ExtractionPrompts       json.RawMessage `json:"extraction_prompts,omitempty"`
-	Visibility              string          `json:"visibility,omitempty"`
+	Name             string  `json:"name"`
+	Version          string  `json:"version"`
+	Description      *string `json:"description,omitempty"`
+	Author           *string `json:"author,omitempty"`
+	License          *string `json:"license,omitempty"`
+	RepositoryURL    *string `json:"repository_url,omitempty"`
+	DocumentationURL *string `json:"documentation_url,omitempty"`
+	Visibility       string  `json:"visibility,omitempty"`
+
+	// ObjectTypeSchemas accepts both snake_case and camelCase keys in input files.
+	ObjectTypeSchemasSnake json.RawMessage `json:"object_type_schemas"`
+	ObjectTypeSchemasCamel json.RawMessage `json:"objectTypeSchemas"`
+
+	// RelationshipTypeSchemas accepts both snake_case and camelCase keys.
+	RelationshipTypeSchemasSnake json.RawMessage `json:"relationship_type_schemas,omitempty"`
+	RelationshipTypeSchemasCamel json.RawMessage `json:"relationshipTypeSchemas,omitempty"`
+
+	// UIConfigs accepts both snake_case and camelCase keys.
+	UIConfigsSnake json.RawMessage `json:"ui_configs,omitempty"`
+	UIConfigsCamel json.RawMessage `json:"uiConfigs,omitempty"`
+
+	// ExtractionPrompts accepts both snake_case and camelCase keys.
+	ExtractionPromptsSnake json.RawMessage `json:"extraction_prompts,omitempty"`
+	ExtractionPromptsCamel json.RawMessage `json:"extractionPrompts,omitempty"`
+
+	// Migrations carries optional schema migration hints (snake_case or YAML).
+	Migrations *SchemaMigrationHints `json:"migrations,omitempty" yaml:"migrations,omitempty"`
+}
+
+// MarshalJSON serialises the request for transmission to the server,
+// normalising both naming variants into the canonical snake_case fields
+// that the server API expects.
+func (r CreatePackRequest) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Name                    string                `json:"name"`
+		Version                 string                `json:"version"`
+		Description             *string               `json:"description,omitempty"`
+		Author                  *string               `json:"author,omitempty"`
+		License                 *string               `json:"license,omitempty"`
+		RepositoryURL           *string               `json:"repository_url,omitempty"`
+		DocumentationURL        *string               `json:"documentation_url,omitempty"`
+		Visibility              string                `json:"visibility,omitempty"`
+		ObjectTypeSchemas       json.RawMessage       `json:"object_type_schemas"`
+		RelationshipTypeSchemas json.RawMessage       `json:"relationship_type_schemas,omitempty"`
+		UIConfigs               json.RawMessage       `json:"ui_configs,omitempty"`
+		ExtractionPrompts       json.RawMessage       `json:"extraction_prompts,omitempty"`
+		Migrations              *SchemaMigrationHints `json:"migrations,omitempty"`
+	}
+	w := wire{
+		Name:             r.Name,
+		Version:          r.Version,
+		Description:      r.Description,
+		Author:           r.Author,
+		License:          r.License,
+		RepositoryURL:    r.RepositoryURL,
+		DocumentationURL: r.DocumentationURL,
+		Visibility:       r.Visibility,
+		Migrations:       r.Migrations,
+	}
+	if len(r.ObjectTypeSchemasSnake) > 0 {
+		w.ObjectTypeSchemas = r.ObjectTypeSchemasSnake
+	} else {
+		w.ObjectTypeSchemas = r.ObjectTypeSchemasCamel
+	}
+	if len(r.RelationshipTypeSchemasSnake) > 0 {
+		w.RelationshipTypeSchemas = r.RelationshipTypeSchemasSnake
+	} else {
+		w.RelationshipTypeSchemas = r.RelationshipTypeSchemasCamel
+	}
+	if len(r.UIConfigsSnake) > 0 {
+		w.UIConfigs = r.UIConfigsSnake
+	} else {
+		w.UIConfigs = r.UIConfigsCamel
+	}
+	if len(r.ExtractionPromptsSnake) > 0 {
+		w.ExtractionPrompts = r.ExtractionPromptsSnake
+	} else {
+		w.ExtractionPrompts = r.ExtractionPromptsCamel
+	}
+	return json.Marshal(w)
 }
 
 // InstalledSchemaItem represents a memory schema installed on a project.
@@ -156,6 +286,10 @@ type AssignPackRequest struct {
 	DryRun bool `json:"dry_run,omitempty"`
 	// Merge requests additive schema merging for conflicting type names.
 	Merge bool `json:"merge,omitempty"`
+	// Force bypasses the dangerous-risk block when auto-migration is triggered.
+	Force bool `json:"force,omitempty"`
+	// AutoUninstall uninstalls the from-version schema after a successful chain migration.
+	AutoUninstall bool `json:"auto_uninstall,omitempty"`
 }
 
 // PropertyConflict describes a single property-level conflict during a schema merge.
@@ -189,6 +323,10 @@ type AssignPackResult struct {
 	MergedTypes      []string         `json:"merged_types,omitempty"`
 	Conflicts        []SchemaConflict `json:"conflicts,omitempty"`
 	AlreadyInstalled bool             `json:"already_installed,omitempty"`
+	// Migration fields — populated when the schema has a migrations block
+	MigrationJobID       *string `json:"migration_job_id,omitempty"`
+	MigrationStatus      string  `json:"migration_status,omitempty"`
+	MigrationBlockReason string  `json:"migration_block_reason,omitempty"`
 }
 
 // UpdateAssignmentRequest is the request to update a pack assignment.
@@ -437,6 +575,179 @@ func (c *Client) DeletePack(ctx context.Context, packID string) error {
 func (c *Client) UpdatePack(ctx context.Context, packID string, req *UpdatePackRequest) (*MemorySchema, error) {
 	var result MemorySchema
 	if err := c.putJSON(ctx, c.packPath()+"/"+url.PathEscape(packID), req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetPackHistory returns all schema assignment records for the current project,
+// including soft-deleted (uninstalled) ones.
+// GET /api/schemas/projects/:projectId/history
+func (c *Client) GetPackHistory(ctx context.Context) ([]SchemaHistoryItem, error) {
+	var result []SchemaHistoryItem
+	if err := c.getJSON(ctx, c.projectPath()+"/history", &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// MigratePack renames object/edge types and/or property keys across live graph data
+// in the current project. When req.DryRun is true, returns a preview without changes.
+// POST /api/schemas/projects/:projectId/migrate
+func (c *Client) MigratePack(ctx context.Context, req *MigrateRequest) (*MigrateResponse, error) {
+	var result MigrateResponse
+	if err := c.postJSON(ctx, c.projectPath()+"/migrate", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// System A migration types (schema-version–aware, async)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// SchemaMigrationHints describes how to migrate from a previous schema version.
+type SchemaMigrationHints struct {
+	FromVersion       string            `json:"from_version" yaml:"from_version"`
+	TypeRenames       map[string]string `json:"type_renames,omitempty" yaml:"type_renames,omitempty"`
+	PropertyRenames   map[string]string `json:"property_renames,omitempty" yaml:"property_renames,omitempty"`
+	RemovedProperties []RemovedProperty `json:"removed_properties,omitempty" yaml:"removed_properties,omitempty"`
+}
+
+// RemovedProperty identifies a property intentionally removed in this schema version.
+type RemovedProperty struct {
+	TypeName string `json:"type_name" yaml:"type_name"`
+	Name     string `json:"name" yaml:"name"`
+}
+
+// SchemaMigrationPreviewRequest is sent to POST .../migrate/preview.
+type SchemaMigrationPreviewRequest struct {
+	FromSchemaID string `json:"from_schema_id"`
+	ToSchemaID   string `json:"to_schema_id"`
+}
+
+// TypeMigrationRisk holds per-type risk in a migration preview.
+type TypeMigrationRisk struct {
+	TypeName      string `json:"type_name"`
+	RiskLevel     string `json:"risk_level"`
+	ObjectCount   int    `json:"object_count"`
+	BlockReason   string `json:"block_reason,omitempty"`
+	DroppedFields int    `json:"dropped_fields,omitempty"`
+}
+
+// SchemaMigrationPreviewResponse is returned from POST .../migrate/preview.
+type SchemaMigrationPreviewResponse struct {
+	ProjectID        string              `json:"project_id"`
+	FromSchemaID     string              `json:"from_schema_id"`
+	ToSchemaID       string              `json:"to_schema_id"`
+	TotalObjects     int                 `json:"total_objects"`
+	OverallRiskLevel string              `json:"overall_risk_level"`
+	TypeBreakdown    []TypeMigrationRisk `json:"type_breakdown,omitempty"`
+}
+
+// SchemaMigrationExecuteRequest is sent to POST .../migrate/execute.
+type SchemaMigrationExecuteRequest struct {
+	FromSchemaID string `json:"from_schema_id"`
+	ToSchemaID   string `json:"to_schema_id"`
+	Force        bool   `json:"force,omitempty"`
+	MaxObjects   int    `json:"max_objects,omitempty"`
+}
+
+// SchemaMigrationExecuteResponse is returned from POST .../migrate/execute.
+type SchemaMigrationExecuteResponse struct {
+	ProjectID       string `json:"project_id"`
+	FromSchemaID    string `json:"from_schema_id"`
+	ToSchemaID      string `json:"to_schema_id"`
+	ObjectsMigrated int    `json:"objects_migrated"`
+	ObjectsFailed   int    `json:"objects_failed"`
+}
+
+// SchemaMigrationRollbackRequest is sent to POST .../migrate/rollback.
+type SchemaMigrationRollbackRequest struct {
+	ToVersion           string `json:"to_version"`
+	RestoreTypeRegistry bool   `json:"restore_type_registry,omitempty"`
+}
+
+// SchemaMigrationRollbackResponse is returned from POST .../migrate/rollback.
+type SchemaMigrationRollbackResponse struct {
+	ProjectID       string `json:"project_id"`
+	ToVersion       string `json:"to_version"`
+	ObjectsRestored int    `json:"objects_restored"`
+}
+
+// CommitMigrationArchiveRequest is sent to POST .../migrate/commit.
+type CommitMigrationArchiveRequest struct {
+	ThroughVersion string `json:"through_version"`
+}
+
+// CommitMigrationArchiveResponse is returned from POST .../migrate/commit.
+type CommitMigrationArchiveResponse struct {
+	ProjectID      string `json:"project_id"`
+	ThroughVersion string `json:"through_version"`
+	ObjectsUpdated int    `json:"objects_updated"`
+}
+
+// SchemaMigrationJob is returned from GET .../migration-jobs/:jobId.
+type SchemaMigrationJob struct {
+	ID              string  `json:"id"`
+	ProjectID       string  `json:"project_id"`
+	FromSchemaID    string  `json:"from_schema_id"`
+	ToSchemaID      string  `json:"to_schema_id"`
+	Status          string  `json:"status"`
+	RiskLevel       string  `json:"risk_level,omitempty"`
+	ObjectsMigrated int     `json:"objects_migrated"`
+	ObjectsFailed   int     `json:"objects_failed"`
+	Error           *string `json:"error,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	StartedAt       *string `json:"started_at,omitempty"`
+	CompletedAt     *string `json:"completed_at,omitempty"`
+}
+
+// PreviewMigration previews a schema migration without making changes.
+// POST /api/schemas/projects/:projectId/migrate/preview
+func (c *Client) PreviewMigration(ctx context.Context, req *SchemaMigrationPreviewRequest) (*SchemaMigrationPreviewResponse, error) {
+	var result SchemaMigrationPreviewResponse
+	if err := c.postJSON(ctx, c.projectPath()+"/migrate/preview", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ExecuteMigration executes a schema migration.
+// POST /api/schemas/projects/:projectId/migrate/execute
+func (c *Client) ExecuteMigration(ctx context.Context, req *SchemaMigrationExecuteRequest) (*SchemaMigrationExecuteResponse, error) {
+	var result SchemaMigrationExecuteResponse
+	if err := c.postJSON(ctx, c.projectPath()+"/migrate/execute", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// RollbackMigration rolls back a schema migration.
+// POST /api/schemas/projects/:projectId/migrate/rollback
+func (c *Client) RollbackMigration(ctx context.Context, req *SchemaMigrationRollbackRequest) (*SchemaMigrationRollbackResponse, error) {
+	var result SchemaMigrationRollbackResponse
+	if err := c.postJSON(ctx, c.projectPath()+"/migrate/rollback", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// CommitMigrationArchive commits (prunes) migration archive data.
+// POST /api/schemas/projects/:projectId/migrate/commit
+func (c *Client) CommitMigrationArchive(ctx context.Context, req *CommitMigrationArchiveRequest) (*CommitMigrationArchiveResponse, error) {
+	var result CommitMigrationArchiveResponse
+	if err := c.postJSON(ctx, c.projectPath()+"/migrate/commit", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetMigrationJobStatus returns the status of an async migration job.
+// GET /api/schemas/projects/:projectId/migration-jobs/:jobId
+func (c *Client) GetMigrationJobStatus(ctx context.Context, jobID string) (*SchemaMigrationJob, error) {
+	var result SchemaMigrationJob
+	if err := c.getJSON(ctx, c.projectPath()+"/migration-jobs/"+url.PathEscape(jobID), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

@@ -286,7 +286,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register schemas routes
 	schemasRepo := schemas.NewRepository(db, log)
-	schemasSvc := schemas.NewService(schemasRepo, log)
+	schemasSvc := schemas.NewService(schemasRepo, graphSvc, log)
 	schemasHandler := schemas.NewHandler(schemasSvc)
 	schemas.RegisterRoutes(e, schemasHandler, authMiddleware)
 

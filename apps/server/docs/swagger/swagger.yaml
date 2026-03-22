@@ -5927,7 +5927,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.35.89
+  version: 0.35.92
 paths:
   /api/admin/agent-definitions/{id}/sandbox-config:
     get:

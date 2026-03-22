@@ -3794,3 +3794,8 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 		TargetBranchID:     targetBranchID,
 	}, nil
 }
+
+// GetRepository exposes the underlying Repository for use by cross-domain orchestrators.
+func (s *Service) GetRepository() *Repository {
+	return s.repo
+}

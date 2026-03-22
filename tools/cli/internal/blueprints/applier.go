@@ -200,12 +200,12 @@ func (b *Blueprinter) createPack(ctx context.Context, p PackFile) BlueprintsResu
 	}
 
 	req := &sdkschemas.CreatePackRequest{
-		Name:                    p.Name,
-		Version:                 p.Version,
-		ObjectTypeSchemas:       objSchemas,
-		RelationshipTypeSchemas: relSchemas,
-		UIConfigs:               uiCfgs,
-		ExtractionPrompts:       exPrompts,
+		Name:                         p.Name,
+		Version:                      p.Version,
+		ObjectTypeSchemasSnake:       objSchemas,
+		RelationshipTypeSchemasSnake: relSchemas,
+		UIConfigsSnake:               uiCfgs,
+		ExtractionPromptsSnake:       exPrompts,
 	}
 	if p.Description != "" {
 		req.Description = &p.Description

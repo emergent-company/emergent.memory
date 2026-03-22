@@ -371,6 +371,21 @@ func (w *DocumentParsingWorker) extractWithKreuzberg(ctx context.Context, storag
 		return "", fmt.Errorf("kreuzberg extraction: %w", err)
 	}
 
+	// Append extracted tables as markdown so structured data is not lost.
+	// Kreuzberg returns tables separately from the content field; without this,
+	// table-heavy PDFs (e.g. financial reports) lose almost all their content.
+	if len(result.Tables) > 0 {
+		var sb strings.Builder
+		sb.WriteString(result.Content)
+		for _, t := range result.Tables {
+			if t.Markdown != "" {
+				sb.WriteString("\n\n")
+				sb.WriteString(t.Markdown)
+			}
+		}
+		return sb.String(), nil
+	}
+
 	return result.Content, nil
 }
 

@@ -125,6 +125,17 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		return
 	}
 
+	// Skip disabled agents — fail the job without executing so workers don't
+	// waste cycles on stale queue entries left over from a now-disabled agent.
+	if !agent.Enabled {
+		log.Info("skipping job for disabled agent; failing without retry",
+			slog.String("agent", agent.Name),
+			slog.String("agent_id", agent.ID),
+		)
+		_ = p.repo.FailJob(ctx, job.ID, job.RunID, "agent is disabled", false, time.Time{})
+		return
+	}
+
 	// Look up definition (optional)
 	agentDef, _ := p.repo.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
 

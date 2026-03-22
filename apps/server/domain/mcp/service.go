@@ -22,6 +22,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -72,6 +73,9 @@ type Service struct {
 	// Journal service (for journal-list and journal-add-note tools)
 	journalSvc *journal.Service
 
+	// Schemas service (for schema migration tools)
+	schemasSvc *schemas.Service
+
 	// Embedding worker controller (for pause/resume/config tools)
 	// Typed as interface to avoid import cycle with extraction package.
 	embeddingCtl EmbeddingControlHandler
@@ -99,6 +103,7 @@ type ServiceParams struct {
 	ProviderCatalogSvc *provider.ModelCatalogService
 	ApitokenSvc        *apitoken.Service
 	JournalSvc         *journal.Service
+	SchemasSvc         *schemas.Service
 }
 
 // NewService creates a new MCP service
@@ -127,6 +132,7 @@ func NewService(p ServiceParams) *Service {
 		tempoBaseURL:       tempoURL,
 		serverPort:         cfg.ServerPort,
 		journalSvc:         p.JournalSvc,
+		schemasSvc:         p.SchemasSvc,
 	}
 }
 
@@ -475,6 +481,27 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
+			Name:        "schema-history",
+			Description: "List the full installation history for schemas in this project, including schemas that have been uninstalled. Useful for auditing which schemas were used over time.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+			},
+		},
+		{
+			Name:        "schema-compiled-types",
+			Description: "Return the compiled (merged) set of object and relationship types currently active in this project, across all installed schemas. Optionally includes shadow detection metadata.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"verbose": {
+						Type:        "boolean",
+						Description: "When true, includes schemaId, schemaName, schemaVersion, and shadowed flag for each type",
+					},
+				},
+			},
+		},
+		{
 			Name:        "entity-create",
 			Description: "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed schema. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create outgoing relationships atomically in the same call, avoiding a separate create_relationship call.",
 			InputSchema: InputSchema{
@@ -810,6 +837,98 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Required: []string{"object_id"},
 			},
 		},
+		// New System A migration tools — delegate to schemas.Service
+		{
+			Name:        "schema-migrate-preview",
+			Description: "Preview a schema migration from one installed schema version to another. Runs a dry-run against all project objects, returning per-type risk breakdown (safe/cautious/risky/dangerous) and an overall risk level. NO CHANGES ARE MADE. Use before execute to understand impact.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"from_schema_id": {
+						Type:        "string",
+						Description: "UUID of the currently installed schema to migrate from",
+					},
+					"to_schema_id": {
+						Type:        "string",
+						Description: "UUID of the target schema to migrate to",
+					},
+				},
+				Required: []string{"from_schema_id", "to_schema_id"},
+			},
+		},
+		{
+			Name:        "schema-migrate-execute",
+			Description: "Execute a schema migration for all project objects, applying type/property renames and archiving removed properties. Returns counts of migrated and failed objects.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"from_schema_id": {
+						Type:        "string",
+						Description: "UUID of the schema to migrate from",
+					},
+					"to_schema_id": {
+						Type:        "string",
+						Description: "UUID of the schema to migrate to",
+					},
+					"force": {
+						Type:        "boolean",
+						Description: "Force migration even if risk level is dangerous (default: false)",
+					},
+					"max_objects": {
+						Type:        "number",
+						Description: "Maximum number of objects to migrate in this batch (0 = no limit)",
+						Minimum:     intPtr(0),
+					},
+				},
+				Required: []string{"from_schema_id", "to_schema_id"},
+			},
+		},
+		{
+			Name:        "schema-migrate-rollback",
+			Description: "Rollback a schema migration by restoring archived property data for objects migrated to a given schema version. Optionally re-installs old schema types in a single transaction.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"to_version": {
+						Type:        "string",
+						Description: "Schema version to roll back to (e.g., '1.2.0')",
+					},
+					"restore_type_registry": {
+						Type:        "boolean",
+						Description: "If true, re-installs old schema types and removes new type additions (default: false)",
+					},
+				},
+				Required: []string{"to_version"},
+			},
+		},
+		{
+			Name:        "schema-migrate-commit",
+			Description: "Permanently discard migration archive data up to a given schema version. This prunes migration_archive entries from all project objects for versions <= through_version. Irreversible — only do this after confirming rollback is no longer needed.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"through_version": {
+						Type:        "string",
+						Description: "Archive entries for versions <= this value will be deleted (e.g., '1.2.0')",
+					},
+				},
+				Required: []string{"through_version"},
+			},
+		},
+		{
+			Name:        "schema-migration-job-status",
+			Description: "Get the current status and progress of an async schema migration job. Returns status (pending/running/completed/failed), objects migrated/failed counts, and any error message.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"job_id": {
+						Type:        "string",
+						Description: "UUID of the migration job to check",
+					},
+				},
+				Required: []string{"job_id"},
+			},
+		},
 	}
 
 	// Always expose Brave Search — execution falls back to env key, then project/org
@@ -1078,6 +1197,10 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeCreateSchema(ctx, projectID, args)
 	case "schema-delete":
 		return s.executeDeleteSchema(ctx, projectID, args)
+	case "schema-history":
+		return s.executeSchemaHistory(ctx, projectID)
+	case "schema-compiled-types":
+		return s.executeSchemaCompiledTypes(ctx, projectID, args)
 	case "entity-create":
 		return s.executeBatchCreateEntities(ctx, projectID, args)
 	case "relationship-create":
@@ -1110,6 +1233,16 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeListMigrationArchives(ctx, projectID, args)
 	case "migration-archive-get":
 		return s.executeGetMigrationArchive(ctx, projectID, args)
+	case "schema-migrate-preview":
+		return s.executeSchemaMigratePreview(ctx, projectID, args)
+	case "schema-migrate-execute":
+		return s.executeSchemaMigrateExecute(ctx, projectID, args)
+	case "schema-migrate-rollback":
+		return s.executeSchemaMigrateRollback(ctx, projectID, args)
+	case "schema-migrate-commit":
+		return s.executeSchemaMigrateCommit(ctx, projectID, args)
+	case "schema-migration-job-status":
+		return s.executeSchemaMigrationJobStatus(ctx, projectID, args)
 
 	// Web tools
 	case "web-search-brave":
@@ -3479,7 +3612,7 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 				ptp.customizations
 			FROM kb.project_schemas ptp
 			JOIN kb.graph_schemas tp ON ptp.schema_id = tp.id
-			WHERE ptp.project_id = ?
+			WHERE ptp.project_id = ? AND ptp.removed_at IS NULL
 			ORDER BY ptp.installed_at DESC
 		`, projectUUID).Scan(ctx, &installed)
 		if err != nil {
@@ -5073,6 +5206,211 @@ func (s *Service) executeJournalAddNote(ctx context.Context, projectID string, a
 	return s.wrapResult(note)
 }
 
+// executeSchemaHistory returns all schema assignments for a project including removed ones.
+func (s *Service) executeSchemaHistory(ctx context.Context, projectID string) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	type historyRow struct {
+		ID          string     `bun:"id"`
+		SchemaID    string     `bun:"schema_id"`
+		Name        string     `bun:"name"`
+		Version     string     `bun:"version"`
+		Active      bool       `bun:"active"`
+		InstalledAt time.Time  `bun:"installed_at"`
+		RemovedAt   *time.Time `bun:"removed_at"`
+	}
+
+	var rows []historyRow
+	err = s.db.NewRaw(`
+		SELECT
+			ptp.id,
+			ptp.schema_id,
+			gs.name,
+			gs.version,
+			ptp.active,
+			ptp.installed_at,
+			ptp.removed_at
+		FROM kb.project_schemas ptp
+		JOIN kb.graph_schemas gs ON ptp.schema_id = gs.id
+		WHERE ptp.project_id = ?
+		ORDER BY ptp.installed_at DESC
+	`, projectUUID).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("schema history: %w", err)
+	}
+
+	type historyItem struct {
+		ID          string  `json:"id"`
+		SchemaID    string  `json:"schema_id"`
+		Name        string  `json:"name"`
+		Version     string  `json:"version"`
+		Active      bool    `json:"active"`
+		InstalledAt string  `json:"installed_at"`
+		RemovedAt   *string `json:"removed_at,omitempty"`
+		Status      string  `json:"status"`
+	}
+
+	items := make([]historyItem, len(rows))
+	for i, r := range rows {
+		item := historyItem{
+			ID:          r.ID,
+			SchemaID:    r.SchemaID,
+			Name:        r.Name,
+			Version:     r.Version,
+			Active:      r.Active,
+			InstalledAt: r.InstalledAt.Format(time.RFC3339),
+			Status:      "installed",
+		}
+		if r.RemovedAt != nil {
+			s := r.RemovedAt.Format(time.RFC3339)
+			item.RemovedAt = &s
+			item.Status = "uninstalled"
+		}
+		items[i] = item
+	}
+
+	result := map[string]any{
+		"project_id": projectID,
+		"history":    items,
+		"total":      len(items),
+	}
+	return s.wrapResult(result)
+}
+
+// executeSchemaCompiledTypes returns the merged set of active object/relationship types for a project.
+func (s *Service) executeSchemaCompiledTypes(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	verbose, _ := args["verbose"].(bool)
+
+	type objectTypeRow struct {
+		TypeName      string         `bun:"type_name"`
+		TypeSchema    map[string]any `bun:"type_schema,type:jsonb"`
+		SchemaID      string         `bun:"schema_id"`
+		SchemaName    string         `bun:"schema_name"`
+		SchemaVersion string         `bun:"schema_version"`
+	}
+
+	type relTypeRow struct {
+		TypeName      string `bun:"type_name"`
+		SchemaID      string `bun:"schema_id"`
+		SchemaName    string `bun:"schema_name"`
+		SchemaVersion string `bun:"schema_version"`
+	}
+
+	var objRows []objectTypeRow
+	var relRows []relTypeRow
+
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
+			return err
+		}
+
+		if err := tx.NewRaw(`
+			SELECT
+				por.type_name,
+				por.type_schema,
+				por.schema_id,
+				gs.name  AS schema_name,
+				gs.version AS schema_version
+			FROM kb.project_object_schema_registry por
+			JOIN kb.project_schemas ps ON por.schema_id = ps.schema_id AND ps.project_id = por.project_id
+			JOIN kb.graph_schemas gs ON por.schema_id = gs.id
+			WHERE por.project_id = ? AND ps.removed_at IS NULL
+			ORDER BY por.type_name
+		`, projectUUID).Scan(ctx, &objRows); err != nil {
+			return err
+		}
+
+		return tx.NewRaw(`
+			SELECT
+				per.type_name,
+				per.schema_id,
+				gs.name    AS schema_name,
+				gs.version AS schema_version
+			FROM kb.project_edge_schema_registry per
+			JOIN kb.project_schemas ps ON per.schema_id = ps.schema_id AND ps.project_id = per.project_id
+			JOIN kb.graph_schemas gs ON per.schema_id = gs.id
+			WHERE per.project_id = ? AND ps.removed_at IS NULL
+			ORDER BY per.type_name
+		`, projectUUID).Scan(ctx, &relRows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("compiled types: %w", err)
+	}
+
+	// Detect shadowed object types (same name from multiple schemas)
+	typeSchemaCount := make(map[string]int)
+	for _, r := range objRows {
+		typeSchemaCount[r.TypeName]++
+	}
+
+	type objectTypeOut struct {
+		Name          string         `json:"name"`
+		Description   string         `json:"description,omitempty"`
+		Properties    map[string]any `json:"properties,omitempty"`
+		SchemaID      string         `json:"schema_id,omitempty"`
+		SchemaName    string         `json:"schema_name,omitempty"`
+		SchemaVersion string         `json:"schema_version,omitempty"`
+		Shadowed      bool           `json:"shadowed,omitempty"`
+	}
+
+	type relTypeOut struct {
+		Name          string `json:"name"`
+		SchemaID      string `json:"schema_id,omitempty"`
+		SchemaName    string `json:"schema_name,omitempty"`
+		SchemaVersion string `json:"schema_version,omitempty"`
+	}
+
+	objectTypes := make([]objectTypeOut, 0, len(objRows))
+	seenObj := make(map[string]bool)
+	for _, r := range objRows {
+		shadowed := typeSchemaCount[r.TypeName] > 1 && seenObj[r.TypeName]
+		seenObj[r.TypeName] = true
+
+		out := objectTypeOut{Name: r.TypeName}
+		if desc, ok := r.TypeSchema["description"].(string); ok {
+			out.Description = desc
+		}
+		if props, ok := r.TypeSchema["properties"].(map[string]any); ok {
+			out.Properties = props
+		}
+		if verbose {
+			out.SchemaID = r.SchemaID
+			out.SchemaName = r.SchemaName
+			out.SchemaVersion = r.SchemaVersion
+			out.Shadowed = shadowed
+		}
+		objectTypes = append(objectTypes, out)
+	}
+
+	relTypes := make([]relTypeOut, 0, len(relRows))
+	for _, r := range relRows {
+		out := relTypeOut{Name: r.TypeName}
+		if verbose {
+			out.SchemaID = r.SchemaID
+			out.SchemaName = r.SchemaName
+			out.SchemaVersion = r.SchemaVersion
+		}
+		relTypes = append(relTypes, out)
+	}
+
+	result := map[string]any{
+		"project_id":         projectID,
+		"object_types":       objectTypes,
+		"relationship_types": relTypes,
+		"total_object_types": len(objectTypes),
+		"total_rel_types":    len(relTypes),
+	}
+	return s.wrapResult(result)
+}
+
 // parseJournalSince parses a since string: relative (e.g. "7d", "24h", "30m") or RFC3339.
 func parseJournalSince(s string) (time.Time, error) {
 	if len(s) >= 2 {
@@ -5094,4 +5432,126 @@ func parseJournalSince(s string) (time.Time, error) {
 		}
 	}
 	return time.Parse(time.RFC3339, s)
+}
+
+// executeSchemaMigratePreview delegates to schemas.Service.PreviewSchemaMigration.
+func (s *Service) executeSchemaMigratePreview(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.schemasSvc == nil {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "schemas service not available"}}}, nil
+	}
+
+	fromSchemaID, _ := args["from_schema_id"].(string)
+	toSchemaID, _ := args["to_schema_id"].(string)
+	if fromSchemaID == "" || toSchemaID == "" {
+		return nil, fmt.Errorf("from_schema_id and to_schema_id are required")
+	}
+
+	result, err := s.schemasSvc.PreviewSchemaMigration(ctx, projectID, &schemas.SchemaMigrationPreviewRequest{
+		FromSchemaID: fromSchemaID,
+		ToSchemaID:   toSchemaID,
+	})
+	if err != nil {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("preview failed: %v", err)}}}, err
+	}
+
+	out, _ := json.Marshal(result)
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+}
+
+// executeSchemaMigrateExecute delegates to schemas.Service.ExecuteSchemaMigration.
+func (s *Service) executeSchemaMigrateExecute(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.schemasSvc == nil {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "schemas service not available"}}}, nil
+	}
+
+	fromSchemaID, _ := args["from_schema_id"].(string)
+	toSchemaID, _ := args["to_schema_id"].(string)
+	if fromSchemaID == "" || toSchemaID == "" {
+		return nil, fmt.Errorf("from_schema_id and to_schema_id are required")
+	}
+
+	force, _ := args["force"].(bool)
+	maxObjects := 0
+	if mo, ok := args["max_objects"].(float64); ok {
+		maxObjects = int(mo)
+	}
+
+	result, err := s.schemasSvc.ExecuteSchemaMigration(ctx, projectID, &schemas.SchemaMigrationExecuteRequest{
+		FromSchemaID: fromSchemaID,
+		ToSchemaID:   toSchemaID,
+		Force:        force,
+		MaxObjects:   maxObjects,
+	})
+	if err != nil {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("execute failed: %v", err)}}}, err
+	}
+
+	out, _ := json.Marshal(result)
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+}
+
+// executeSchemaMigrateRollback delegates to schemas.Service.RollbackSchemaMigration.
+func (s *Service) executeSchemaMigrateRollback(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.schemasSvc == nil {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "schemas service not available"}}}, nil
+	}
+
+	toVersion, _ := args["to_version"].(string)
+	if toVersion == "" {
+		return nil, fmt.Errorf("to_version is required")
+	}
+	restoreTypeRegistry, _ := args["restore_type_registry"].(bool)
+
+	result, err := s.schemasSvc.RollbackSchemaMigration(ctx, projectID, &schemas.SchemaMigrationRollbackRequest{
+		ToVersion:           toVersion,
+		RestoreTypeRegistry: restoreTypeRegistry,
+	})
+	if err != nil {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("rollback failed: %v", err)}}}, err
+	}
+
+	out, _ := json.Marshal(result)
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+}
+
+// executeSchemaMigrateCommit delegates to schemas.Service.CommitMigrationArchive.
+func (s *Service) executeSchemaMigrateCommit(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.schemasSvc == nil {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "schemas service not available"}}}, nil
+	}
+
+	throughVersion, _ := args["through_version"].(string)
+	if throughVersion == "" {
+		return nil, fmt.Errorf("through_version is required")
+	}
+
+	result, err := s.schemasSvc.CommitMigrationArchive(ctx, projectID, &schemas.CommitMigrationArchiveRequest{
+		ThroughVersion: throughVersion,
+	})
+	if err != nil {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("commit failed: %v", err)}}}, err
+	}
+
+	out, _ := json.Marshal(result)
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+}
+
+// executeSchemaMigrationJobStatus delegates to schemas.Service.GetMigrationJobStatus.
+func (s *Service) executeSchemaMigrationJobStatus(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.schemasSvc == nil {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "schemas service not available"}}}, nil
+	}
+
+	jobID, _ := args["job_id"].(string)
+	if jobID == "" {
+		return nil, fmt.Errorf("job_id is required")
+	}
+
+	job, err := s.schemasSvc.GetMigrationJobStatus(ctx, projectID, jobID)
+	if err != nil {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("job status failed: %v", err)}}}, err
+	}
+
+	out, _ := json.Marshal(job)
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
 }

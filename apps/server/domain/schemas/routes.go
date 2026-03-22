@@ -39,4 +39,17 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Delete an assignment
 	projects.DELETE("/assignments/:assignmentId", h.DeleteAssignment)
+
+	// Get schema installation history (including soft-deleted)
+	projects.GET("/history", h.GetSchemaHistory)
+
+	// Migrate live graph data (type/property renames) — System B, unchanged
+	projects.POST("/migrate", h.MigrateTypes)
+
+	// Schema migration — System A (async, chain-aware)
+	projects.POST("/migrate/preview", h.PreviewMigration)
+	projects.POST("/migrate/execute", h.ExecuteMigration)
+	projects.POST("/migrate/rollback", h.RollbackMigration)
+	projects.POST("/migrate/commit", h.CommitMigrationArchive)
+	projects.GET("/migration-jobs/:jobId", h.GetMigrationJobStatus)
 }

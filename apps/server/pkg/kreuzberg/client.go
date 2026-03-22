@@ -81,10 +81,12 @@ type ExtractMetadata struct {
 	Producer         string `json:"producer,omitempty"`
 }
 
-// ExtractedTable represents a table extracted from a document
+// ExtractedTable represents a table extracted from a document.
+// Kreuzberg 4.x returns tables with cells, markdown rendering, and page number.
 type ExtractedTable struct {
-	Page int        `json:"page,omitempty"`
-	Data [][]string `json:"data"`
+	Cells      [][]string `json:"cells"`
+	Markdown   string     `json:"markdown"`
+	PageNumber int        `json:"page_number"`
 }
 
 // ExtractedImage represents an image extracted from a document

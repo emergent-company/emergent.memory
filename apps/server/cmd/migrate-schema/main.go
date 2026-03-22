@@ -1,3 +1,13 @@
+// Deprecated: This standalone binary is superseded by the `memory schemas migrate`
+// CLI subcommands (preview, execute, rollback, commit, job) and the corresponding
+// REST API endpoints added in the schema-migration-hints change.
+// Use `memory schemas migrate --help` instead.
+//
+// This file is excluded from normal builds via the ignore build tag below.
+// To build it explicitly: go build -tags manual_migrate_schema ./apps/server/cmd/migrate-schema/
+
+//go:build ignore
+
 package main
 
 import (

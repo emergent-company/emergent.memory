@@ -9,5 +9,7 @@ var Module = fx.Module("schemas",
 	fx.Provide(NewRepository),
 	fx.Provide(NewService),
 	fx.Provide(NewHandler),
+	fx.Provide(NewSchemaMigrationJobWorker),
 	fx.Invoke(RegisterRoutes),
+	fx.Invoke(RegisterSchemaMigrationWorkerLifecycle),
 )

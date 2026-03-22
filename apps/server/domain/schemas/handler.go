@@ -281,7 +281,7 @@ func (h *Handler) CreatePack(c echo.Context) error {
 	if req.Version == "" {
 		return apperror.ErrBadRequest.WithMessage("version is required")
 	}
-	if len(req.ObjectTypeSchemas) == 0 {
+	if len(req.GetObjectTypeSchemas()) == 0 {
 		return apperror.ErrBadRequest.WithMessage("object_type_schemas is required")
 	}
 
@@ -410,4 +410,285 @@ func (h *Handler) DeletePack(c echo.Context) error {
 	}
 
 	return c.NoContent(http.StatusNoContent)
+}
+
+// GetSchemaHistory handles GET /api/schemas/projects/:projectId/history
+// @Summary      Schema installation history
+// @Description  Returns all schema assignments for a project including removed (soft-deleted) ones
+// @Tags         schemas
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {array} SchemaHistoryItem "Schema history"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schemas/projects/{projectId}/history [get]
+// @Security     bearerAuth
+func (h *Handler) GetSchemaHistory(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	history, err := h.svc.GetSchemaHistory(c.Request().Context(), projectID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, history)
+}
+
+// MigrateTypes handles POST /api/schemas/projects/:projectId/migrate
+// @Summary      Migrate live graph data
+// @Description  Renames object/edge types and/or property keys across live graph objects and edges in a single transaction. Supports dry_run.
+// @Tags         schemas
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body MigrateRequest true "Migration request"
+// @Success      200 {object} MigrateResponse "Migration result (or dry-run preview)"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schemas/projects/{projectId}/migrate [post]
+// @Security     bearerAuth
+func (h *Handler) MigrateTypes(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req MigrateRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.TypeRenames) == 0 && len(req.PropertyRenames) == 0 {
+		return apperror.ErrBadRequest.WithMessage("at least one type_rename or property_rename is required")
+	}
+
+	result, err := h.svc.MigrateTypes(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// PreviewMigration handles POST /api/schemas/projects/:projectId/migrate/preview
+// @Summary      Preview schema migration
+// @Description  Runs a dry-run migration against all project objects to assess risk before executing. Returns per-type risk breakdown and an overall risk level.
+// @Tags         schemas
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body SchemaMigrationPreviewRequest true "Preview request"
+// @Success      200 {object} SchemaMigrationPreviewResponse "Migration preview"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schemas/projects/{projectId}/migrate/preview [post]
+// @Security     bearerAuth
+func (h *Handler) PreviewMigration(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req SchemaMigrationPreviewRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.FromSchemaID == "" || req.ToSchemaID == "" {
+		return apperror.ErrBadRequest.WithMessage("from_schema_id and to_schema_id are required")
+	}
+
+	result, err := h.svc.PreviewSchemaMigration(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// ExecuteMigration handles POST /api/schemas/projects/:projectId/migrate/execute
+// @Summary      Execute schema migration
+// @Description  Executes a schema migration for all project objects, applying type/property renames and archiving removed properties.
+// @Tags         schemas
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body SchemaMigrationExecuteRequest true "Execute request"
+// @Success      200 {object} SchemaMigrationExecuteResponse "Migration result"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schemas/projects/{projectId}/migrate/execute [post]
+// @Security     bearerAuth
+func (h *Handler) ExecuteMigration(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req SchemaMigrationExecuteRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.FromSchemaID == "" || req.ToSchemaID == "" {
+		return apperror.ErrBadRequest.WithMessage("from_schema_id and to_schema_id are required")
+	}
+
+	result, err := h.svc.ExecuteSchemaMigration(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// RollbackMigration handles POST /api/schemas/projects/:projectId/migrate/rollback
+// @Summary      Rollback schema migration
+// @Description  Restores archived property data for objects that were migrated to a given schema version. Optionally re-installs old schema types.
+// @Tags         schemas
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body SchemaMigrationRollbackRequest true "Rollback request"
+// @Success      200 {object} SchemaMigrationRollbackResponse "Rollback result"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schemas/projects/{projectId}/migrate/rollback [post]
+// @Security     bearerAuth
+func (h *Handler) RollbackMigration(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req SchemaMigrationRollbackRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.ToVersion == "" {
+		return apperror.ErrBadRequest.WithMessage("to_version is required")
+	}
+
+	result, err := h.svc.RollbackSchemaMigration(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// CommitMigrationArchive handles POST /api/schemas/projects/:projectId/migrate/commit
+// @Summary      Commit migration archive
+// @Description  Prunes migration_archive entries up to a given schema version, permanently discarding archived data that is no longer needed for rollback.
+// @Tags         schemas
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body CommitMigrationArchiveRequest true "Commit request"
+// @Success      200 {object} CommitMigrationArchiveResponse "Commit result"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schemas/projects/{projectId}/migrate/commit [post]
+// @Security     bearerAuth
+func (h *Handler) CommitMigrationArchive(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req CommitMigrationArchiveRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.ThroughVersion == "" {
+		return apperror.ErrBadRequest.WithMessage("through_version is required")
+	}
+
+	result, err := h.svc.CommitMigrationArchive(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// GetMigrationJobStatus handles GET /api/schemas/projects/:projectId/migration-jobs/:jobId
+// @Summary      Get migration job status
+// @Description  Returns the current status and progress of an async schema migration job.
+// @Tags         schemas
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        jobId path string true "Migration Job ID (UUID)"
+// @Success      200 {object} SchemaMigrationJob "Migration job"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schemas/projects/{projectId}/migration-jobs/{jobId} [get]
+// @Security     bearerAuth
+func (h *Handler) GetMigrationJobStatus(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	jobID := c.Param("jobId")
+	if jobID == "" {
+		return apperror.ErrBadRequest.WithMessage("jobId is required")
+	}
+
+	job, err := h.svc.GetMigrationJobStatus(c.Request().Context(), projectID, jobID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, job)
 }

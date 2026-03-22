@@ -4,7 +4,7 @@ title: Schema Creation Guide
 category: guides
 tags: [schemas, mcp, api, ai-agents]
 description: Comprehensive guide for AI agents to create and manage schemas via MCP and REST API
-lastUpdated: 2025-02-11
+lastUpdated: 2026-03-22
 readTime: 15
 related: [mcp-quick-reference, schema-examples]
 ---
@@ -26,10 +26,11 @@ A **schema** is a versioned collection of:
 
 Schemas can be created via:
 
-1. **MCP Tool** - `create_schema` (AI agents, programmatic access)
+1. **MCP Tool** - `schema-create` (AI agents, programmatic access)
 2. **REST API** - `/api/schemas/projects/:projectId/*` (HTTP clients)
+3. **CLI** - `memory schemas create --file <path>` (JSON or YAML files)
 
-Both methods use identical field definitions and validation.
+Both MCP and REST methods use identical field definitions and validation.
 
 ---
 
@@ -398,9 +399,57 @@ Here's a complete schema for a research project domain:
 
 ---
 
+## Creating via CLI
+
+The `memory` CLI accepts both JSON and YAML schema files. YAML is often easier to read and write than JSON for complex schemas.
+
+### JSON format
+
+```bash
+memory schemas create --file my-schema.json --project <projectId>
+```
+
+### YAML format
+
+```yaml
+# my-schema.yaml
+name: Academic Research Schema
+version: 1.0.0
+description: Schema for academic research
+author: Emergent Research Team
+object_type_schemas:
+  ResearchPaper:
+    type: object
+    properties:
+      title:
+        type: string
+        minLength: 10
+      authors:
+        type: array
+        items:
+          type: string
+    required:
+      - title
+      - authors
+```
+
+```bash
+memory schemas create --file my-schema.yaml --project <projectId>
+```
+
+### Diff two schemas before applying
+
+```bash
+memory schemas diff schema-v1.yaml schema-v2.yaml
+```
+
+This compares local files without making any API calls — useful before creating a new version.
+
+---
+
 ## Creating via MCP
 
-### Using the `create_schema` Tool
+### Using the `schema-create` Tool
 
 ```json
 {
@@ -408,7 +457,7 @@ Here's a complete schema for a research project domain:
   "id": 1,
   "method": "tools/call",
   "params": {
-    "name": "create_schema",
+    "name": "schema-create",
     "arguments": {
       "name": "Academic Research Schema",
       "version": "1.0.0",
@@ -577,6 +626,95 @@ If using `extraction_prompts`, test with real documents to ensure AI extracts co
 
 ---
 
+## Advanced schema management
+
+### View compiled types
+
+The compiled types view merges all active installed schemas into a single type registry. Use `verbose` to see which schema each type comes from and whether any type names are shadowed (defined by more than one schema):
+
+**Via MCP:**
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "schema-compiled-types",
+    "arguments": { "verbose": true }
+  }
+}
+```
+
+**Via CLI:**
+```bash
+memory schemas compiled-types --project <projectId> --verbose
+```
+
+### View schema history
+
+See all schemas that have been installed or uninstalled in a project (includes soft-deleted assignments):
+
+**Via MCP:**
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "schema-history",
+    "arguments": {}
+  }
+}
+```
+
+**Via CLI:**
+```bash
+memory schemas history --project <projectId>
+```
+
+### Migrate types (rename types and properties)
+
+Rename object/edge types or property keys across existing live data when you publish a new schema version with different names:
+
+**Via CLI:**
+```bash
+# Dry run to preview changes
+memory schemas migrate --project <projectId> \
+  --rename-type OldType=NewType \
+  --rename-prop "NewType.oldProp=newProp" \
+  --dry-run
+
+# Apply the migration
+memory schemas migrate --project <projectId> \
+  --rename-type OldType=NewType \
+  --rename-prop "NewType.oldProp=newProp"
+```
+
+**Via REST API:**
+```
+POST /api/schemas/projects/:projectId/migrate
+```
+```json
+{
+  "type_renames": [{"from": "OldType", "to": "NewType"}],
+  "property_renames": [{"type_name": "NewType", "from": "oldProp", "to": "newProp"}],
+  "dry_run": true
+}
+```
+
+### Bulk uninstall
+
+Remove multiple schema assignments at once:
+
+```bash
+# Keep only specific schemas, remove the rest
+memory schemas uninstall --project <projectId> --all-except "core,legal-entities"
+
+# Keep only the most recently installed version of each schema name
+memory schemas uninstall --project <projectId> --keep-latest
+
+# Preview before applying
+memory schemas uninstall --project <projectId> --all-except "core" --dry-run
+```
+
+---
+
 ## Deleting Schemas
 
 ### Via MCP
@@ -585,7 +723,7 @@ If using `extraction_prompts`, test with real documents to ensure AI extracts co
 {
   "method": "tools/call",
   "params": {
-    "name": "delete_schema",
+    "name": "schema-delete",
     "arguments": {
       "schema_id": "550e8400-e29b-41d4-a716-446655440000"
     }
@@ -603,7 +741,7 @@ DELETE /api/schemas/projects/:projectId/:schemaId
 
 - Cannot delete **system schemas** (built-in schemas)
 - Cannot delete schemas that are **currently installed** in any project
-- Must uninstall from all projects first using `uninstall_schema`
+- Must uninstall from all projects first using `schema-uninstall`
 
 ---
 
@@ -651,10 +789,11 @@ DELETE /api/schemas/projects/:projectId/:schemaId
 
 **Schemas** are the foundation of structured knowledge in Emergent:
 
-- ✅ **Define once, use everywhere** - Reusable schemas across projects
-- ✅ **Type-safe** - JSON Schema validation ensures data quality
-- ✅ **AI-friendly** - Extraction prompts guide automated entity creation
-- ✅ **Versioned** - Semantic versioning enables safe evolution
-- ✅ **Accessible** - Available via MCP and REST API
+- **Define once, use everywhere** - Reusable schemas across projects
+- **Type-safe** - JSON Schema validation ensures data quality
+- **AI-friendly** - Extraction prompts guide automated entity creation
+- **Versioned** - Semantic versioning enables safe evolution
+- **Accessible** - Available via MCP, REST API, and CLI (JSON or YAML)
+- **Migratable** - Rename types and properties across live data without data loss
 
 Start with simple schemas, iterate based on usage, and leverage extraction prompts for AI-powered knowledge extraction.

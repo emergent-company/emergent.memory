@@ -1707,19 +1707,6 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		maxPendingJobs = opts[0].MaxPendingJobs
 	}
 
-	// Queue depth check: reject new runs when the agent already has too many
-	// pending/processing jobs. Only enforced when MaxPendingJobs > 0.
-	if maxPendingJobs > 0 {
-		count, err := r.CountPendingJobsForAgent(ctx, agentID)
-		if err == nil && count >= maxPendingJobs {
-			return nil, &QueueFullError{
-				AgentID:        agentID,
-				PendingJobs:    count,
-				MaxPendingJobs: maxPendingJobs,
-			}
-		}
-		// Fail-open on count error: log is handled by callers; proceed with insert.
-	}
 	run := &AgentRun{
 		AgentID:         agentID,
 		Status:          RunStatusQueued,
@@ -1731,6 +1718,31 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 	}
 
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Queue depth check inside the transaction so the count and insert are
+		// atomic. This prevents the TOCTOU race where multiple concurrent workers
+		// each see count < max and all insert new jobs simultaneously, causing
+		// exponential queue growth. Only enforced when MaxPendingJobs > 0.
+		if maxPendingJobs > 0 {
+			var count int
+			err := tx.QueryRowContext(ctx, `
+				SELECT COUNT(*)
+				FROM kb.agent_run_jobs arj
+				JOIN kb.agent_runs ar ON ar.id = arj.run_id
+				WHERE ar.agent_id = $1
+				  AND arj.status IN ('pending', 'processing')
+			`, agentID).Scan(&count)
+			if err != nil {
+				// Fail-open on count error so a DB hiccup doesn't halt agents.
+				// Callers log the error; we proceed with the insert.
+			} else if count >= maxPendingJobs {
+				return &QueueFullError{
+					AgentID:        agentID,
+					PendingJobs:    count,
+					MaxPendingJobs: maxPendingJobs,
+				}
+			}
+		}
+
 		if _, err := tx.NewInsert().Model(run).Returning("*").Exec(ctx); err != nil {
 			return fmt.Errorf("insert agent_runs: %w", err)
 		}
@@ -1746,6 +1758,11 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		return nil
 	})
 	if err != nil {
+		// Unwrap QueueFullError from the transaction wrapper so callers can type-assert it.
+		var qfe *QueueFullError
+		if errors.As(err, &qfe) {
+			return nil, qfe
+		}
 		return nil, err
 	}
 	return run, nil

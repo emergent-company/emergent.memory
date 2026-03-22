@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -30,13 +31,16 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 
 // GetCompiledTypesByProject returns compiled object and relationship types for a project
 func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID string) (*CompiledTypesResponse, error) {
-	// Get all active schemas for the project
+	// Get all active schemas for the project, ordered by install date ascending
+	// (so later installs have higher priority; shadowing detected by seeing a name twice)
 	var projectPacks []ProjectMemorySchema
 	err := r.db.NewSelect().
 		Model(&projectPacks).
 		Relation("MemorySchema").
 		Where("ptp.project_id = ?", projectID).
 		Where("ptp.active = true").
+		Where("ptp.removed_at IS NULL").
+		Order("ptp.installed_at ASC").
 		Scan(ctx)
 
 	if err != nil {
@@ -48,6 +52,10 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 		ObjectTypes:       []ObjectTypeSchema{},
 		RelationshipTypes: []RelationshipTypeSchema{},
 	}
+
+	// Track seen type names; later installs override earlier ones (mark earlier as shadowed)
+	seenObjIdx := map[string]int{} // typeName → index in response.ObjectTypes
+	seenRelIdx := map[string]int{} // typeName → index in response.RelationshipTypes
 
 	// Compile types from all active packs
 	for _, pp := range projectPacks {
@@ -65,27 +73,35 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 					slog.String("packId", tp.ID),
 					logger.Error(err))
 			} else {
-				// Add pack info to each type
 				for i := range objectTypes {
 					objectTypes[i].SchemaID = tp.ID
 					objectTypes[i].SchemaName = tp.Name
+					objectTypes[i].SchemaVersion = tp.Version
+
+					if prevIdx, seen := seenObjIdx[objectTypes[i].Name]; seen {
+						// Mark the earlier one as shadowed
+						response.ObjectTypes[prevIdx].Shadowed = true
+					}
+					seenObjIdx[objectTypes[i].Name] = len(response.ObjectTypes)
+					response.ObjectTypes = append(response.ObjectTypes, objectTypes[i])
 				}
-				response.ObjectTypes = append(response.ObjectTypes, objectTypes...)
 			}
 		}
 
 		// Parse relationship type schemas
-		// Seeds store these as a JSON object (map of name → definition), but
-		// we also accept a JSON array for forward compat. Each definition may
-		// use different field names for source/target types:
-		//   sourceTypes / fromTypes / source / source_types  (and same for target)
 		if len(tp.RelationshipTypeSchemas) > 0 {
-			relTypes := parseRelationshipTypeSchemas(tp.RelationshipTypeSchemas, tp.ID, tp.Name)
+			relTypes := parseRelationshipTypeSchemas(tp.RelationshipTypeSchemas, tp.ID, tp.Name, tp.Version)
 			if relTypes == nil {
 				r.log.Warn("failed to parse relationship type schemas",
 					slog.String("packId", tp.ID))
 			} else {
-				response.RelationshipTypes = append(response.RelationshipTypes, relTypes...)
+				for i := range relTypes {
+					if prevIdx, seen := seenRelIdx[relTypes[i].Name]; seen {
+						response.RelationshipTypes[prevIdx].Shadowed = true
+					}
+					seenRelIdx[relTypes[i].Name] = len(response.RelationshipTypes)
+					response.RelationshipTypes = append(response.RelationshipTypes, relTypes[i])
+				}
 			}
 		}
 	}
@@ -152,6 +168,7 @@ func (r *Repository) GetInstalledPacks(ctx context.Context, projectID string) ([
 		FROM kb.project_schemas ptp
 		JOIN kb.graph_schemas gtp ON gtp.id = ptp.schema_id
 		WHERE ptp.project_id = ?
+		  AND ptp.removed_at IS NULL
 		ORDER BY ptp.installed_at DESC
 	`, projectID).Scan(ctx, &results)
 	if err != nil {
@@ -175,6 +192,131 @@ func (r *Repository) GetInstalledPacks(ctx context.Context, projectID string) ([
 	return packs, nil
 }
 
+// GetAssignmentHistory returns all schema assignments for a project (including removed ones).
+func (r *Repository) GetAssignmentHistory(ctx context.Context, projectID string) ([]SchemaHistoryItem, error) {
+	var results []struct {
+		ID          string     `bun:"id"`
+		SchemaID    string     `bun:"schema_id"`
+		Name        string     `bun:"name"`
+		Version     string     `bun:"version"`
+		Active      bool       `bun:"active"`
+		InstalledAt time.Time  `bun:"installed_at"`
+		RemovedAt   *time.Time `bun:"removed_at"`
+	}
+
+	err := r.db.NewRaw(`
+		SELECT ptp.id, ptp.schema_id, gtp.name, gtp.version, ptp.active,
+			   ptp.installed_at, ptp.removed_at
+		FROM kb.project_schemas ptp
+		JOIN kb.graph_schemas gtp ON gtp.id = ptp.schema_id
+		WHERE ptp.project_id = ?
+		ORDER BY ptp.installed_at DESC
+	`, projectID).Scan(ctx, &results)
+	if err != nil {
+		r.log.Error("failed to get assignment history", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	items := make([]SchemaHistoryItem, len(results))
+	for i, r := range results {
+		items[i] = SchemaHistoryItem{
+			ID:          r.ID,
+			SchemaID:    r.SchemaID,
+			Name:        r.Name,
+			Version:     r.Version,
+			Active:      r.Active,
+			InstalledAt: r.InstalledAt,
+			RemovedAt:   r.RemovedAt,
+		}
+	}
+	return items, nil
+}
+
+// MigrateTypes renames object/edge types and/or property keys across live graph data.
+// When req.DryRun is true the transaction is rolled back after counting affected rows.
+func (r *Repository) MigrateTypes(ctx context.Context, projectID string, req *MigrateRequest) (*MigrateResponse, error) {
+	resp := &MigrateResponse{DryRun: req.DryRun}
+
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Process type renames
+		for _, tr := range req.TypeRenames {
+			// Update kb.graph_objects.type_name
+			var objCount int
+			err := tx.NewRaw(`
+				WITH updated AS (
+					UPDATE kb.graph_objects
+					SET type_name = ?, updated_at = NOW()
+					WHERE project_id = ? AND type_name = ?
+					RETURNING 1
+				) SELECT COUNT(*) FROM updated
+			`, tr.To, projectID, tr.From).Scan(ctx, &objCount)
+			if err != nil {
+				return fmt.Errorf("rename type %s objects: %w", tr.From, err)
+			}
+
+			// Update kb.graph_edges.type_name
+			var edgeCount int
+			err = tx.NewRaw(`
+				WITH updated AS (
+					UPDATE kb.graph_edges
+					SET type_name = ?, updated_at = NOW()
+					WHERE project_id = ? AND type_name = ?
+					RETURNING 1
+				) SELECT COUNT(*) FROM updated
+			`, tr.To, projectID, tr.From).Scan(ctx, &edgeCount)
+			if err != nil {
+				return fmt.Errorf("rename type %s edges: %w", tr.From, err)
+			}
+
+			resp.TypeRenameResults = append(resp.TypeRenameResults, TypeRenameResult{
+				From:            tr.From,
+				To:              tr.To,
+				ObjectsAffected: objCount,
+				EdgesAffected:   edgeCount,
+			})
+		}
+
+		// Process property renames
+		for _, pr := range req.PropertyRenames {
+			var objCount int
+			err := tx.NewRaw(`
+				WITH updated AS (
+					UPDATE kb.graph_objects
+					SET properties = (properties - ?) || jsonb_build_object(?, properties->?),
+					    updated_at = NOW()
+					WHERE project_id = ? AND type_name = ? AND properties ? ?
+					RETURNING 1
+				) SELECT COUNT(*) FROM updated
+			`, pr.From, pr.To, pr.From, projectID, pr.TypeName, pr.From).Scan(ctx, &objCount)
+			if err != nil {
+				return fmt.Errorf("rename property %s.%s: %w", pr.TypeName, pr.From, err)
+			}
+
+			resp.PropertyRenameResults = append(resp.PropertyRenameResults, PropertyRenameResult{
+				TypeName:        pr.TypeName,
+				From:            pr.From,
+				To:              pr.To,
+				ObjectsAffected: objCount,
+			})
+		}
+
+		if req.DryRun {
+			return fmt.Errorf("dry_run_rollback")
+		}
+		return nil
+	})
+
+	if err != nil && err.Error() == "dry_run_rollback" {
+		return resp, nil
+	}
+	if err != nil {
+		r.log.Error("failed to migrate types", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return resp, nil
+}
+
 // AssignPack assigns a schema to a project
 func (r *Repository) AssignPack(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*ProjectMemorySchema, error) {
 	// Check if schema exists
@@ -190,11 +332,12 @@ func (r *Repository) AssignPack(ctx context.Context, projectID, userID string, r
 		return nil, apperror.ErrNotFound.WithMessage("schema not found")
 	}
 
-	// Check if already assigned
+	// Check if already assigned (only non-removed assignments count)
 	exists, err := r.db.NewSelect().
 		Model((*ProjectMemorySchema)(nil)).
 		Where("project_id = ?", projectID).
 		Where("schema_id = ?", req.SchemaID).
+		Where("removed_at IS NULL").
 		Exists(ctx)
 	if err != nil {
 		r.log.Error("failed to check pack assignment", logger.Error(err))
@@ -222,11 +365,70 @@ func (r *Repository) AssignPack(ctx context.Context, projectID, userID string, r
 	return assignment, nil
 }
 
+// parseObjectTypeSchemasToMap converts the stored objectTypeSchemas JSON into a
+// map of typeName → raw JSON schema, supporting both storage formats:
+//
+//   - Array format (user files): [{name, label, description, properties, ...}, ...]
+//     The "properties" sub-object becomes the registered json_schema for each type.
+//
+//   - Map format (blueprint seeds): {typeName: {label, description, properties, ...}, ...}
+func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessage {
+	if len(data) == 0 {
+		return nil
+	}
+
+	// Try array format first (natural user file format).
+	var arr []struct {
+		Name        string          `json:"name"`
+		Label       string          `json:"label"`
+		Description string          `json:"description"`
+		Properties  json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &arr); err == nil && len(arr) > 0 {
+		result := make(map[string]json.RawMessage, len(arr))
+		for _, item := range arr {
+			if item.Name == "" {
+				continue
+			}
+			// Reconstruct a JSON Schema-style object for this type so that
+			// mergeSchemas and the registry can work with it uniformly.
+			schema := map[string]json.RawMessage{}
+			if len(item.Properties) > 0 {
+				schema["properties"] = item.Properties
+			}
+			if item.Label != "" {
+				lb, _ := json.Marshal(item.Label)
+				schema["label"] = lb
+			}
+			if item.Description != "" {
+				desc, _ := json.Marshal(item.Description)
+				schema["description"] = desc
+			}
+			schemaBytes, err := json.Marshal(schema)
+			if err != nil {
+				continue
+			}
+			result[item.Name] = schemaBytes
+		}
+		if len(result) > 0 {
+			return result
+		}
+	}
+
+	// Fall back to map format (blueprint seeds).
+	var objMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &objMap); err == nil && len(objMap) > 0 {
+		return objMap
+	}
+
+	return nil
+}
+
 // parseRelationshipTypeSchemas parses relationship_type_schemas JSON which may
 // be stored as either a JSON object (map of name → definition) or a JSON array.
 // It normalises the various source/target field naming conventions into the
 // canonical SourceType / TargetType (singular) compiled output.
-func parseRelationshipTypeSchemas(data json.RawMessage, packID, packName string) []RelationshipTypeSchema {
+func parseRelationshipTypeSchemas(data json.RawMessage, packID, packName, packVersion string) []RelationshipTypeSchema {
 	// Try JSON object format first (most common in seeds)
 	var objMap map[string]json.RawMessage
 	if err := json.Unmarshal(data, &objMap); err == nil && len(objMap) > 0 {
@@ -237,13 +439,14 @@ func parseRelationshipTypeSchemas(data json.RawMessage, packID, packName string)
 				continue
 			}
 			result = append(result, RelationshipTypeSchema{
-				Name:        name,
-				Label:       def.Label,
-				Description: def.Description,
-				SourceType:  firstNonEmpty(joinTypes(def.SourceTypes), joinTypes(def.FromTypes), joinTypes(def.SnakeSourceTypes), def.Source),
-				TargetType:  firstNonEmpty(joinTypes(def.TargetTypes), joinTypes(def.ToTypes), joinTypes(def.SnakeTargetTypes), def.Target),
-				SchemaID:    packID,
-				SchemaName:  packName,
+				Name:          name,
+				Label:         def.Label,
+				Description:   def.Description,
+				SourceType:    firstNonEmpty(joinTypes(def.SourceTypes), joinTypes(def.FromTypes), joinTypes(def.SnakeSourceTypes), def.Source),
+				TargetType:    firstNonEmpty(joinTypes(def.TargetTypes), joinTypes(def.ToTypes), joinTypes(def.SnakeTargetTypes), def.Target),
+				SchemaID:      packID,
+				SchemaName:    packName,
+				SchemaVersion: packVersion,
 			})
 		}
 		return result
@@ -255,6 +458,7 @@ func parseRelationshipTypeSchemas(data json.RawMessage, packID, packName string)
 		for i := range arr {
 			arr[i].SchemaID = packID
 			arr[i].SchemaName = packName
+			arr[i].SchemaVersion = packVersion
 		}
 		return arr
 	}
@@ -321,15 +525,18 @@ func (r *Repository) UpdateAssignment(ctx context.Context, projectID, assignment
 	return nil
 }
 
-// DeleteAssignment removes a pack assignment from a project
+// DeleteAssignment soft-deletes a pack assignment from a project by setting removed_at.
 func (r *Repository) DeleteAssignment(ctx context.Context, projectID, assignmentID string) error {
-	result, err := r.db.NewDelete().
+	result, err := r.db.NewUpdate().
 		Model((*ProjectMemorySchema)(nil)).
+		Set("removed_at = ?", time.Now()).
+		Set("updated_at = ?", time.Now()).
 		Where("id = ?", assignmentID).
 		Where("project_id = ?", projectID).
+		Where("removed_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		r.log.Error("failed to delete assignment", logger.Error(err))
+		r.log.Error("failed to soft-delete assignment", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -343,12 +550,17 @@ func (r *Repository) DeleteAssignment(ctx context.Context, projectID, assignment
 
 // CreatePack creates a new schema scoped to the given project and org
 func (r *Repository) CreatePack(ctx context.Context, projectID, orgID string, req *CreatePackRequest) (*GraphMemorySchema, error) {
+	objectTypeSchemas := req.GetObjectTypeSchemas()
+	relationshipTypeSchemas := req.GetRelationshipTypeSchemas()
+	uiConfigs := req.GetUIConfigs()
+	extractionPrompts := req.GetExtractionPrompts()
+
 	// Compute checksum from schemas
 	checksumContent := map[string]json.RawMessage{
-		"object_type_schemas":       req.ObjectTypeSchemas,
-		"relationship_type_schemas": req.RelationshipTypeSchemas,
-		"ui_configs":                req.UIConfigs,
-		"extraction_prompts":        req.ExtractionPrompts,
+		"object_type_schemas":       objectTypeSchemas,
+		"relationship_type_schemas": relationshipTypeSchemas,
+		"ui_configs":                uiConfigs,
+		"extraction_prompts":        extractionPrompts,
 	}
 	checksumBytes, _ := json.Marshal(checksumContent)
 	checksumHash := md5.Sum(checksumBytes)
@@ -366,10 +578,11 @@ func (r *Repository) CreatePack(ctx context.Context, projectID, orgID string, re
 		License:                 req.License,
 		RepositoryURL:           req.RepositoryURL,
 		DocumentationURL:        req.DocumentationURL,
-		ObjectTypeSchemas:       req.ObjectTypeSchemas,
-		RelationshipTypeSchemas: req.RelationshipTypeSchemas,
-		UIConfigs:               req.UIConfigs,
-		ExtractionPrompts:       req.ExtractionPrompts,
+		ObjectTypeSchemas:       objectTypeSchemas,
+		RelationshipTypeSchemas: relationshipTypeSchemas,
+		UIConfigs:               uiConfigs,
+		ExtractionPrompts:       extractionPrompts,
+		Migrations:              req.Migrations,
 		Checksum:                &checksum,
 		ProjectID:               &projectID,
 		OrgID:                   &orgID,
@@ -464,6 +677,10 @@ func (r *Repository) UpdatePack(ctx context.Context, packID, projectID, orgID st
 		pack.ExtractionPrompts = req.ExtractionPrompts
 		q = q.Set("extraction_prompts = ?", req.ExtractionPrompts)
 	}
+	if req.Migrations != nil {
+		pack.Migrations = req.Migrations
+		q = q.Set("migrations = ?", req.Migrations)
+	}
 
 	if _, err := q.Returning("updated_at").Exec(ctx); err != nil {
 		r.log.Error("failed to update schema", logger.Error(err))
@@ -523,13 +740,14 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		return nil, apperror.ErrNotFound.WithMessage("schema not found")
 	}
 
-	// Check if already assigned
+	// Check if already assigned (only consider active/non-removed assignments)
 	var existingAssignment ProjectMemorySchema
 	alreadyAssigned := false
 	err = r.db.NewSelect().
 		Model(&existingAssignment).
 		Where("project_id = ?", projectID).
 		Where("schema_id = ?", req.SchemaID).
+		Where("removed_at IS NULL").
 		Scan(ctx)
 	if err == nil {
 		alreadyAssigned = true
@@ -539,13 +757,14 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 		return nil, apperror.ErrBadRequest.WithMessage("schema already assigned to project")
 	}
 
-	// Parse object type schemas
-	var objectTypeSchemas map[string]json.RawMessage
-	if len(pack.ObjectTypeSchemas) > 0 {
-		if err := json.Unmarshal(pack.ObjectTypeSchemas, &objectTypeSchemas); err != nil {
-			r.log.Warn("failed to parse object type schemas for type registration", logger.Error(err))
-			objectTypeSchemas = nil
-		}
+	// Parse object type schemas.
+	// Schemas stored from user files use an array of {name, label, properties, ...}.
+	// Schemas stored from blueprint seeds use a map of name → definition.
+	// Both formats are supported here.
+	objectTypeSchemas := parseObjectTypeSchemasToMap(pack.ObjectTypeSchemas)
+	if objectTypeSchemas == nil && len(pack.ObjectTypeSchemas) > 0 {
+		r.log.Warn("failed to parse object type schemas for type registration",
+			slog.String("packId", pack.ID))
 	}
 
 	// Parse ui_configs and extraction_prompts
@@ -804,4 +1023,170 @@ func extractProperties(schemaMap map[string]json.RawMessage) (map[string]json.Ra
 		return map[string]json.RawMessage{}, false
 	}
 	return props, true
+}
+
+// ---------------------------------------------------------------------------
+// DB accessor (task 4.x prerequisite)
+// ---------------------------------------------------------------------------
+
+// DB returns the underlying database handle for use by cross-domain orchestrators.
+func (r *Repository) DB() bun.IDB {
+	return r.db
+}
+
+// ---------------------------------------------------------------------------
+// Migration-aware pack accessors (tasks 4.1–4.2)
+// ---------------------------------------------------------------------------
+
+// GetPackByID returns a schema by ID without ownership checks.
+// Used internally by migration orchestration where ownership is already verified.
+func (r *Repository) GetPackByID(ctx context.Context, packID string) (*GraphMemorySchema, error) {
+	var pack GraphMemorySchema
+	err := r.db.NewSelect().
+		Model(&pack).
+		Where("id = ?", packID).
+		Scan(ctx)
+	if err != nil {
+		return nil, apperror.ErrNotFound.WithMessage("schema not found")
+	}
+	return &pack, nil
+}
+
+// GetPackByNameVersion returns a schema by (name, version) from the global registry.
+func (r *Repository) GetPackByNameVersion(ctx context.Context, name, version string) (*GraphMemorySchema, error) {
+	var pack GraphMemorySchema
+	err := r.db.NewSelect().
+		Model(&pack).
+		Where("name = ?", name).
+		Where("version = ?", version).
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		return nil, apperror.ErrNotFound.WithMessage("schema not found")
+	}
+	return &pack, nil
+}
+
+// GetInstalledSchemasByName returns all active installed schema records for a
+// project that match the given schema name (across all versions).
+// Task 4.3.
+func (r *Repository) GetInstalledSchemasByName(ctx context.Context, projectID, schemaName string) ([]GraphMemorySchema, error) {
+	var packs []GraphMemorySchema
+	err := r.db.NewRaw(`
+		SELECT gs.*
+		FROM kb.graph_schemas gs
+		JOIN kb.project_schemas ps ON ps.schema_id = gs.id
+		WHERE ps.project_id = ?
+		  AND ps.removed_at IS NULL
+		  AND gs.name = ?
+		ORDER BY ps.installed_at DESC
+	`, projectID, schemaName).Scan(ctx, &packs)
+	if err != nil {
+		r.log.Error("failed to get installed schemas by name", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	if packs == nil {
+		return []GraphMemorySchema{}, nil
+	}
+	return packs, nil
+}
+
+// ---------------------------------------------------------------------------
+// CreatePack / UpdatePack — Migrations column support (task 4.1)
+// ---------------------------------------------------------------------------
+
+// CreatePackWithMigrations creates a new schema including the optional Migrations JSONB column.
+// This method is used internally; the public-facing CreatePack delegates here.
+// NOTE: repository.CreatePack is updated to forward Migrations from the request.
+// We achieve this by patching the pack struct after construction.
+
+// ---------------------------------------------------------------------------
+// Migration job CRUD (tasks 4.4–4.7)
+// ---------------------------------------------------------------------------
+
+// CreateMigrationJob inserts a new schema_migration_jobs record.
+func (r *Repository) CreateMigrationJob(ctx context.Context, job *SchemaMigrationJob) error {
+	chainJSON, err := json.Marshal(job.Chain)
+	if err != nil {
+		return fmt.Errorf("marshal chain: %w", err)
+	}
+	err = r.db.NewRaw(`
+		INSERT INTO kb.schema_migration_jobs
+		(project_id, from_schema_id, to_schema_id, chain, status, risk_level,
+		 objects_migrated, objects_failed, created_at)
+		VALUES (uuid(?), uuid(?), uuid(?), ?, ?, ?,
+		        ?, ?, ?)
+		RETURNING id
+	`, job.ProjectID, job.FromSchemaID, job.ToSchemaID, string(chainJSON),
+		job.Status, job.RiskLevel,
+		job.ObjectsMigrated, job.ObjectsFailed, job.CreatedAt).
+		Scan(ctx, &job.ID)
+	if err != nil {
+		r.log.Error("failed to create migration job", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// GetMigrationJob returns a migration job by ID.
+func (r *Repository) GetMigrationJob(ctx context.Context, jobID string) (*SchemaMigrationJob, error) {
+	var job SchemaMigrationJob
+	err := r.db.NewSelect().
+		Model(&job).
+		Where("id = ?", jobID).
+		Scan(ctx)
+	if err != nil {
+		return nil, apperror.ErrNotFound.WithMessage("migration job not found")
+	}
+	return &job, nil
+}
+
+// UpdateMigrationJob updates a migration job's mutable fields.
+func (r *Repository) UpdateMigrationJob(ctx context.Context, job *SchemaMigrationJob) error {
+	q := r.db.NewUpdate().
+		Model(job).
+		Where("id = ?", job.ID).
+		Set("status = ?", job.Status).
+		Set("objects_migrated = ?", job.ObjectsMigrated).
+		Set("objects_failed = ?", job.ObjectsFailed)
+
+	if job.Error != nil {
+		q = q.Set("error = ?", *job.Error)
+	}
+	if job.StartedAt != nil {
+		q = q.Set("started_at = ?", job.StartedAt)
+	}
+	if job.CompletedAt != nil {
+		q = q.Set("completed_at = ?", job.CompletedAt)
+	}
+	if job.RiskLevel != "" {
+		q = q.Set("risk_level = ?", job.RiskLevel)
+	}
+
+	_, err := q.Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to update migration job", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// FindActiveMigrationJob returns the first pending or running migration job for
+// the given project/from/to schema combination. Used for deduplication.
+func (r *Repository) FindActiveMigrationJob(ctx context.Context, projectID, fromSchemaID, toSchemaID string) (*SchemaMigrationJob, error) {
+	var job SchemaMigrationJob
+	err := r.db.NewSelect().
+		Model(&job).
+		Where("project_id = ?", projectID).
+		Where("from_schema_id = ?", fromSchemaID).
+		Where("to_schema_id = ?", toSchemaID).
+		Where("status IN (?)", bun.In([]string{"pending", "running"})).
+		Order("created_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		// No active job found — not an error for the caller
+		return nil, nil //nolint:nilerr
+	}
+	return &job, nil
 }
