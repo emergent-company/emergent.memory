@@ -369,14 +369,14 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 		nodeID = r.FormValue("nodeId")
 	}
 	if nodeID == "" {
-		w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted">Select a node</div>`))
+		_, _ = w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted">Select a node</div>`))
 		return
 	}
 
 	// Fetch node data from the API
 	body, status, err := s.proxyGet(fmt.Sprintf("/api/graph/objects/%s", nodeID))
 	if err != nil || status != 200 {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load node: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load node: %v</div>`, err)))
 		return
 	}
 
@@ -390,7 +390,7 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 		Properties  map[string]interface{} `json:"properties"`
 	}
 	if err := json.Unmarshal(body, &node); err != nil {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
 		return
 	}
 
@@ -429,20 +429,20 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	component := NodeDetailContent(detail)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.URL.Query().Get("nodeId")
 	if nodeID == "" {
-		w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted italic">No relationships</div>`))
+		_, _ = w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted italic">No relationships</div>`))
 		return
 	}
 
 	// Fetch edges
 	body, status, err := s.proxyGet(fmt.Sprintf("/api/graph/objects/%s/edges", nodeID))
 	if err != nil || status != 200 {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed: %v</div>`, err)))
 		return
 	}
 
@@ -451,7 +451,7 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 		Incoming []edgeEntry `json:"incoming"`
 	}
 	if err := json.Unmarshal(body, &edgesResp); err != nil {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
 		return
 	}
 
@@ -576,7 +576,7 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	component := NodeRelationsContent(groups)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
@@ -616,7 +616,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
-			w.Write(buf[:n])
+			_, _ = w.Write(buf[:n])
 		}
 		if rerr != nil {
 			break
@@ -627,7 +627,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 // RenderPartial is a helper to render a templ component to an http.ResponseWriter.
 func RenderPartial(w http.ResponseWriter, r *http.Request, component templ.Component) {
 	w.Header().Set("Content-Type", "text/html")
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 // ── Internal types for JSON parsing ──────────────────────────────────────
