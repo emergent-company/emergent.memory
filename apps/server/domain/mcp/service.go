@@ -249,6 +249,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, key, name, type, created_at, updated_at are always returned for free — do not include them here. When omitted, all properties are returned.",
 						Items:       &PropertySchema{Type: "string"},
 					},
+					"filters": {
+						Type:        "object",
+						Description: "Optional property equality filters as key-value pairs (e.g. {\"status\": \"delivered\", \"priority\": \"high\"}). Only objects whose properties match ALL filters are returned.",
+					},
 				},
 				Required: []string{},
 			},
@@ -1704,6 +1708,28 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		TypeDescription string         `bun:"type_description"`
 	}
 
+	// Parse optional property equality filters: {"status": "delivered", "priority": "high"}
+	// Each key-value pair becomes: go.properties->>'key' = 'value'
+	// Keys are sanitized to alphanumeric+underscore+hyphen to prevent injection.
+	var filterClause string
+	if rawFilters, ok := args["filters"].(map[string]any); ok {
+		var parts []string
+		for k, v := range rawFilters {
+			if !isValidPropertyKey(k) {
+				continue
+			}
+			valStr := fmt.Sprintf("%v", v)
+			// Use parameterized-style quoting: embed value safely via fmt.Sprintf with %q
+			// then strip Go quotes — simpler to just use string interpolation with escaping.
+			// We escape single quotes in the value to prevent SQL injection.
+			safeVal := strings.ReplaceAll(valStr, "'", "''")
+			parts = append(parts, fmt.Sprintf("go.properties->>'%s' = '%s'", k, safeVal))
+		}
+		if len(parts) > 0 {
+			filterClause = " AND " + strings.Join(parts, " AND ")
+		}
+	}
+
 	var entities []entityRow
 	var total int
 
@@ -1733,6 +1759,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
 				AND go.branch_id IS NULL
+				`+filterClause+`
 			ORDER BY `+orderExpr+`
 			LIMIT ? OFFSET ?
 		`, typeName, projectUUID, limit, offset).Scan(ctx, &entities)
@@ -1749,6 +1776,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
 				AND go.branch_id IS NULL
+				`+filterClause+`
 		`, typeName, projectUUID).Scan(ctx, &total)
 		return err
 	})
@@ -2459,7 +2487,10 @@ func containsStr(slice []string, s string) bool {
 	return false
 }
 
-// executeSemanticSearch performs vector-based semantic search
+// executeSemanticSearch performs vector-based semantic search.
+// Routes through search.Service so the query text is automatically embedded
+// before the vector search leg runs. This ensures multi-word queries produce
+// results even when FTS alone would return nothing.
 func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
@@ -2491,21 +2522,34 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 		}
 	}
 
-	// Use hybrid search with query text (which will auto-generate embeddings)
+	// Prefer search.Service which auto-embeds the query text, giving the vector
+	// leg full signal even for multi-word queries that FTS can't match well.
+	if s.searchSvc != nil {
+		unifiedReq := &search.UnifiedSearchRequest{
+			Query: query,
+			Limit: limit,
+		}
+		res, err := s.searchSvc.Search(ctx, projectUUID, unifiedReq, nil)
+		if err != nil {
+			s.log.WarnContext(ctx, "unified search failed in semantic_search, falling back",
+				"error", err, "project_id", projectID)
+		} else {
+			return s.wrapResult(s.mapUnifiedToSearchResponse(res, types, nil))
+		}
+	}
+
+	// Fallback: hybrid search with heavy vector weight (no auto-embedding).
 	req := &graph.HybridSearchRequest{
-		Query: query,
-		Types: types,
-		Limit: limit,
-		// Favor vector search heavily
+		Query:         query,
+		Types:         types,
+		Limit:         limit,
 		LexicalWeight: float32Ptr(0.2),
 		VectorWeight:  float32Ptr(0.8),
 	}
-
 	results, err := s.graphService.HybridSearch(ctx, projectUUID, req, nil)
 	if err != nil {
 		return nil, fmt.Errorf("semantic search: %w", err)
 	}
-
 	return s.wrapResult(results)
 }
 

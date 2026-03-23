@@ -224,7 +224,7 @@ func (s *Service) CountObjects(ctx context.Context, params ListParams) (int, err
 
 // maxListLimit is the maximum number of items returned per page for list endpoints.
 // It must match the cap applied in repository.go to ensure hasMore detection is consistent.
-const maxListLimit = 1000
+const maxListLimit = 5000
 
 // List returns graph objects matching the given parameters.
 func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObjectsResponse, error) {
