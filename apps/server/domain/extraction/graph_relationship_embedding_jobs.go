@@ -204,3 +204,26 @@ func (s *GraphRelationshipEmbeddingJobsService) RecoverStaleJobs(ctx context.Con
 	n, _ := result.RowsAffected()
 	return int(n), nil
 }
+
+// GraphRelationshipEmbeddingQueueStats contains queue statistics for relationship jobs.
+type GraphRelationshipEmbeddingQueueStats struct {
+	Pending    int64 `json:"pending"`
+	Processing int64 `json:"processing"`
+	Completed  int64 `json:"completed"`
+	Failed     int64 `json:"failed"`
+	DeadLetter int64 `json:"deadLetter"`
+}
+
+// Stats returns queue statistics for relationship embedding jobs.
+func (s *GraphRelationshipEmbeddingJobsService) Stats(ctx context.Context) (*GraphRelationshipEmbeddingQueueStats, error) {
+	stats := &GraphRelationshipEmbeddingQueueStats{}
+	err := s.db.NewRaw(`
+		SELECT
+			COUNT(*) FILTER (WHERE status = 'pending') as pending,
+			COUNT(*) FILTER (WHERE status = 'processing') as processing,
+			COUNT(*) FILTER (WHERE status = 'completed') as completed,
+			COUNT(*) FILTER (WHERE status = 'failed') as failed,
+			COUNT(*) FILTER (WHERE status = 'dead_letter') as dead_letter
+		FROM kb.graph_relationship_embedding_jobs`).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.DeadLetter)
+	return stats, err
+}

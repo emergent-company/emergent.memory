@@ -60,6 +60,7 @@ func init() {
 	embeddingsCmd.AddCommand(embeddingsPauseCmd)
 	embeddingsCmd.AddCommand(embeddingsResumeCmd)
 	embeddingsCmd.AddCommand(embeddingsConfigCmd)
+	embeddingsCmd.AddCommand(embeddingsProgressCmd)
 
 	embeddingsConfigCmd.Flags().IntVar(&embeddingsConfigFlags.batchSize, "batch", 0, "Number of jobs to dequeue per poll (0 = no change)")
 	embeddingsConfigCmd.Flags().IntVar(&embeddingsConfigFlags.concurrency, "concurrency", 0, "Number of jobs processed concurrently per poll (0 = no change)")
@@ -283,7 +284,54 @@ and the current Config (batch_size, concurrency, interval_ms, stale_minutes).`,
 	},
 }
 
-// ─── config subcommand ────────────────────────────────────────────────────────
+// ─── progress subcommand ──────────────────────────────────────────────────────
+
+var embeddingsProgressCmd = &cobra.Command{
+	Use:   "progress",
+	Short: "Show embedding job queue progress (pending, processing, completed, failed)",
+	Long: `Show embedding job queue statistics for all queues.
+
+Displays counts of pending, processing, completed, failed, and dead-letter jobs
+for both the graph object and graph relationship embedding queues.
+
+Examples:
+  memory embeddings progress
+  memory embeddings progress --server http://your-server:3002`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		result, err := embeddingsDoRequest(http.MethodGet, "/api/embeddings/progress")
+		if err != nil {
+			return err
+		}
+		printEmbeddingProgress(result)
+		return nil
+	},
+}
+
+func printEmbeddingProgress(result map[string]any) {
+	printQueue := func(name string, q map[string]any) {
+		pending, _ := q["pending"].(float64)
+		processing, _ := q["processing"].(float64)
+		completed, _ := q["completed"].(float64)
+		failed, _ := q["failed"].(float64)
+		deadLetter, _ := q["deadLetter"].(float64)
+		total := pending + processing + completed + failed + deadLetter
+		var pct float64
+		if total > 0 {
+			pct = completed / total * 100
+		}
+		fmt.Printf("  %-16s  pending=%-6.0f  processing=%-6.0f  completed=%-6.0f  failed=%-6.0f  dead_letter=%-6.0f  (%.1f%%)\n",
+			name, pending, processing, completed, failed, deadLetter, pct)
+	}
+
+	fmt.Println()
+	fmt.Println("Embedding queue progress:")
+	for _, name := range []string{"objects", "relationships"} {
+		if q, ok := result[name].(map[string]any); ok {
+			printQueue(name, q)
+		}
+	}
+	fmt.Println()
+}
 
 var embeddingsConfigFlags struct {
 	batchSize    int

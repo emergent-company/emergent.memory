@@ -12,10 +12,12 @@ import (
 // EmbeddingControlHandler exposes HTTP endpoints to pause/resume/inspect
 // all embedding workers. Intended for benchmarking and operational use.
 type EmbeddingControlHandler struct {
-	objectWorker *GraphEmbeddingWorker
-	relWorker    *GraphRelationshipEmbeddingWorker
-	sweepWorker  *EmbeddingSweepWorker
-	staleTask    *scheduler.StaleJobCleanupTask
+	objectWorker  *GraphEmbeddingWorker
+	relWorker     *GraphRelationshipEmbeddingWorker
+	sweepWorker   *EmbeddingSweepWorker
+	staleTask     *scheduler.StaleJobCleanupTask
+	objectJobsSvc *GraphEmbeddingJobsService
+	relJobsSvc    *GraphRelationshipEmbeddingJobsService
 }
 
 // NewEmbeddingControlHandler creates a new control handler.
@@ -24,12 +26,16 @@ func NewEmbeddingControlHandler(
 	relWorker *GraphRelationshipEmbeddingWorker,
 	sweepWorker *EmbeddingSweepWorker,
 	staleTask *scheduler.StaleJobCleanupTask,
+	objectJobsSvc *GraphEmbeddingJobsService,
+	relJobsSvc *GraphRelationshipEmbeddingJobsService,
 ) *EmbeddingControlHandler {
 	return &EmbeddingControlHandler{
-		objectWorker: objectWorker,
-		relWorker:    relWorker,
-		sweepWorker:  sweepWorker,
-		staleTask:    staleTask,
+		objectWorker:  objectWorker,
+		relWorker:     relWorker,
+		sweepWorker:   sweepWorker,
+		staleTask:     staleTask,
+		objectJobsSvc: objectJobsSvc,
+		relJobsSvc:    relJobsSvc,
 	}
 }
 
@@ -199,6 +205,54 @@ func (h *EmbeddingControlHandler) Config(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{
 		"message": "embedding worker config updated",
 		"status":  h.currentStatus(),
+	})
+}
+
+// EmbeddingQueueStats describes job queue stats for a single queue.
+type EmbeddingQueueStats struct {
+	Pending    int64 `json:"pending"`
+	Processing int64 `json:"processing"`
+	Completed  int64 `json:"completed"`
+	Failed     int64 `json:"failed"`
+	DeadLetter int64 `json:"deadLetter"`
+}
+
+// EmbeddingProgressResponse is the response for GET /api/embeddings/progress.
+type EmbeddingProgressResponse struct {
+	Objects       EmbeddingQueueStats `json:"objects"`
+	Relationships EmbeddingQueueStats `json:"relationships"`
+}
+
+// Progress returns per-queue embedding job statistics.
+// @Router /api/embeddings/progress [get]
+func (h *EmbeddingControlHandler) Progress(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	objStats, err := h.objectJobsSvc.Stats(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	relStats, err := h.relJobsSvc.Stats(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, EmbeddingProgressResponse{
+		Objects: EmbeddingQueueStats{
+			Pending:    objStats.Pending,
+			Processing: objStats.Processing,
+			Completed:  objStats.Completed,
+			Failed:     objStats.Failed,
+			DeadLetter: objStats.DeadLetter,
+		},
+		Relationships: EmbeddingQueueStats{
+			Pending:    relStats.Pending,
+			Processing: relStats.Processing,
+			Completed:  relStats.Completed,
+			Failed:     relStats.Failed,
+			DeadLetter: relStats.DeadLetter,
+		},
 	})
 }
 

@@ -26,7 +26,7 @@ type EmbeddingSweepConfig struct {
 func DefaultEmbeddingSweepConfig() *EmbeddingSweepConfig {
 	return &EmbeddingSweepConfig{
 		SweepIntervalSec: 60,
-		BatchSize:        50,
+		BatchSize:        200,
 	}
 }
 

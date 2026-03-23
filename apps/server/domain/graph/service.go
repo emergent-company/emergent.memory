@@ -549,6 +549,10 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		if err := tx.Commit(); err != nil {
 			return nil, false, apperror.ErrDatabase.WithInternal(err)
 		}
+		// Re-enqueue for embedding if not yet embedded (e.g. after an API key recovery).
+		if existing.EmbeddingUpdatedAt == nil {
+			s.enqueueEmbedding(ctx, existing.ID.String())
+		}
 		return existing.ToResponse(), false, nil
 	}
 

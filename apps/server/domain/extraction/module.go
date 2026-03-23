@@ -411,6 +411,8 @@ func provideEmbeddingControlHandler(
 	relWorker *GraphRelationshipEmbeddingWorker,
 	sweepWorker *EmbeddingSweepWorker,
 	staleTask *scheduler.StaleJobCleanupTask,
+	objectJobsSvc *GraphEmbeddingJobsService,
+	relJobsSvc *GraphRelationshipEmbeddingJobsService,
 ) *EmbeddingControlHandler {
-	return NewEmbeddingControlHandler(objectWorker, relWorker, sweepWorker, staleTask)
+	return NewEmbeddingControlHandler(objectWorker, relWorker, sweepWorker, staleTask, objectJobsSvc, relJobsSvc)
 }
