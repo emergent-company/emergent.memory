@@ -37,6 +37,16 @@ The Swift Core layer (`EmergentAPIClient`) provides a lightweight async/await HT
 
 [Swift SDK Overview](swift-sdk/index.md){ .md-button .md-button--primary }
 
+### Python SDK
+
+The Python SDK (`emergent-memory`) provides a full-featured async-capable client library for the Emergent API — 13 sub-clients, three auth modes, SSE streaming, and structured error handling.
+
+**Package:** `emergent-memory` (PyPI)
+
+**Source:** `sdk/python/` in this repo
+
+[Python SDK README](https://github.com/emergent-company/emergent.memory/blob/main/sdk/python/README.md){ .md-button .md-button--primary }
+
 ---
 
 ## LLM Reference Files
@@ -46,6 +56,7 @@ For LLM context injection, flat markdown reference files are available:
 - [`docs/llms.md`](https://github.com/emergent-company/emergent/blob/main/docs/llms.md) — Combined reference
 - [`docs/llms-go-sdk.md`](https://github.com/emergent-company/emergent/blob/main/docs/llms-go-sdk.md) — Go SDK reference
 - [`docs/llms-swift-sdk.md`](https://github.com/emergent-company/emergent/blob/main/docs/llms-swift-sdk.md) — Swift SDK reference
+- [`docs/llms-python-sdk.md`](https://github.com/emergent-company/emergent/blob/main/docs/llms-python-sdk.md) — Python SDK reference
 
 ---
 

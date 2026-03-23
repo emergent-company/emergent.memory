@@ -37,7 +37,9 @@ Quick start
         print(result["text"])
 """
 
+from .api_tokens import APITokenClient
 from .auth import APIKeyProvider, APITokenProvider, AuthProvider, OAuthProvider, make_provider
+from .branches import BranchesClient
 from .client import Client, Config
 from .documents import DocumentsClient
 from .exceptions import APIError, AuthError, EmergentError, StreamError
@@ -50,13 +52,17 @@ from .sse import (
     UnknownEvent,
     iter_sse_events,
 )
+from .tasks import TasksClient
 
 __all__ = [
     # Root client
     "Client",
     "Config",
     # Sub-clients (exported for type hints)
+    "APITokenClient",
+    "BranchesClient",
     "DocumentsClient",
+    "TasksClient",
     # Auth
     "AuthProvider",
     "APIKeyProvider",

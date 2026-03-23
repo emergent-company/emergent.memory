@@ -5,7 +5,6 @@ Endpoints covered
 -----------------
 GET    /api/projects/:projectId/skills
 POST   /api/projects/:projectId/skills
-GET    /api/projects/:projectId/skills/:id
 PATCH  /api/projects/:projectId/skills/:id
 DELETE /api/projects/:projectId/skills/:id
 """
@@ -32,12 +31,6 @@ class SkillsClient(BaseClient):
         if isinstance(data, list):
             return data
         return data.get("skills", data.get("items", data))
-
-    def get(self, skill_id: str, project_id: Optional[str] = None) -> Dict[str, Any]:
-        """GET /api/projects/:id/skills/:skillId"""
-        return self._get(
-            f"{self._project_path(project_id)}/skills/{quote(skill_id, safe='')}"
-        )
 
     def create(
         self, payload: Dict[str, Any], project_id: Optional[str] = None

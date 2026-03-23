@@ -1,0 +1,122 @@
+name: Python SDK Release
+
+on:
+  push:
+    tags:
+      - 'python-sdk/v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (build only, do not publish)'
+        required: false
+        default: 'false'
+        type: boolean
+
+defaults:
+  run:
+    working-directory: sdk/python
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -e '.[dev]'
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Type check
+        run: mypy emergent/
+
+      - name: Test
+        run: pytest -v --tb=short
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sdk-dist
+          path: sdk/python/dist/
+
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/python-sdk/v') && inputs.dry_run != 'true'
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdk-dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/python-sdk/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/python-sdk/}" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdk-dist
+          path: dist/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Python SDK ${{ steps.version.outputs.version }}"
+          body: |
+            ## Python SDK ${{ steps.version.outputs.version }}
+
+            Install from PyPI:
+            ```bash
+            pip install emergent-memory==${{ steps.version.outputs.version }}
+            ```
+          files: dist/*
+          generate_release_notes: true

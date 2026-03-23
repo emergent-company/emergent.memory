@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emergent-memory"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python SDK for the Emergent Memory API"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -30,6 +30,7 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
     "respx>=0.20",
     "mypy>=1.0",
     "ruff>=0.1",
@@ -49,3 +50,13 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["emergent"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+fail_under = 80

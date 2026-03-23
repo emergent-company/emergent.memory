@@ -13,6 +13,7 @@ Object CRUD:
   GET    /api/graph/objects/:id/history
   GET    /api/graph/objects/:id/edges
   GET    /api/graph/objects/:id/similar
+  POST   /api/graph/objects/:id/move
 
 Object search:
   GET    /api/graph/objects/search
@@ -32,6 +33,9 @@ Relationships:
   DELETE /api/graph/relationships/:id
   GET    /api/graph/relationships/search
   POST   /api/graph/relationships/bulk
+  POST   /api/graph/relationships/:id/restore
+  GET    /api/graph/relationships/:id/history
+  GET    /api/graph/relationships/count
 
 Graph algorithms:
   POST   /api/graph/search
@@ -191,6 +195,29 @@ class GraphClient(BaseClient):
         if labels_any:
             params["labelsAny"] = ",".join(labels_any)
         return self._get(f"/api/graph/objects/{quote(object_id, safe='')}/similar", params=params)
+
+    def move_object(
+        self, object_id: str, target_branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Move an object (and its relationships) to another branch.
+
+        POST /api/graph/objects/:id/move
+
+        Parameters
+        ----------
+        target_branch_id:
+            Target branch ID.  Pass ``None`` to move to the main branch.
+
+        Returns
+        -------
+        dict
+            ``{"object": ..., "moved_relationships": [...]}``
+        """
+        return self._post(
+            f"/api/graph/objects/{quote(object_id, safe='')}/move",
+            json={"target_branch_id": target_branch_id},
+        )
 
     # ------------------------------------------------------------------
     # Object search / list
@@ -434,6 +461,53 @@ class GraphClient(BaseClient):
         """Bulk-create relationships (max 100). POST /api/graph/relationships/bulk"""
         return self._post("/api/graph/relationships/bulk", json={"items": items})
 
+    def restore_relationship(self, relationship_id: str) -> Dict[str, Any]:
+        """
+        Restore a soft-deleted relationship.
+
+        POST /api/graph/relationships/:id/restore
+        """
+        return self._post(
+            f"/api/graph/relationships/{quote(relationship_id, safe='')}/restore"
+        )
+
+    def get_relationship_history(self, relationship_id: str) -> List[Dict[str, Any]]:
+        """
+        Get the version history of a relationship.
+
+        GET /api/graph/relationships/:id/history
+        """
+        return self._get(
+            f"/api/graph/relationships/{quote(relationship_id, safe='')}/history"
+        )
+
+    def count_relationships(
+        self,
+        type: Optional[str] = None,
+        src_id: Optional[str] = None,
+        dst_id: Optional[str] = None,
+        branch_id: Optional[str] = None,
+        include_deleted: bool = False,
+    ) -> int:
+        """
+        Count relationships matching the given filters.
+
+        GET /api/graph/relationships/count
+        """
+        params: Dict[str, Any] = {}
+        if type:
+            params["type"] = type
+        if src_id:
+            params["src_id"] = src_id
+        if dst_id:
+            params["dst_id"] = dst_id
+        if branch_id:
+            params["branch_id"] = branch_id
+        if include_deleted:
+            params["include_deleted"] = "true"
+        data = self._get("/api/graph/relationships/count", params=params)
+        return data.get("count", 0)
+
     # ------------------------------------------------------------------
     # Graph algorithms
     # ------------------------------------------------------------------
@@ -477,6 +551,52 @@ class GraphClient(BaseClient):
         POST /api/graph/traverse
         """
         return self._post("/api/graph/traverse", json=payload)
+
+    def bulk_update(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Bulk-update multiple objects (partial updates).
+
+        POST /api/graph/objects/bulk-update
+
+        Parameters
+        ----------
+        items:
+            List of ``{"id": str, <fields to update>}`` dicts (max 100).
+        """
+        return self._post("/api/graph/objects/bulk-update", json={"items": items})
+
+    def subgraph(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract a subgraph around a set of objects.
+
+        POST /api/graph/subgraph
+
+        Parameters
+        ----------
+        payload:
+            Query payload, e.g.::
+
+                {
+                    "object_ids": ["id1", "id2"],
+                    "depth": 2,
+                    "branch_id": "branch_1",   # optional
+                }
+        """
+        return self._post("/api/graph/subgraph", json=payload)
+
+    def upsert_relationship(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Upsert a relationship (create or update by natural key).
+
+        PUT /api/graph/relationships/upsert
+
+        Parameters
+        ----------
+        payload:
+            Relationship data with ``src_id``, ``dst_id``, ``type``, and
+            optional properties.
+        """
+        return self._put("/api/graph/relationships/upsert", json=payload)
 
     # ------------------------------------------------------------------
     # Branch merge

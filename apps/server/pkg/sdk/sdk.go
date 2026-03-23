@@ -28,7 +28,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -179,23 +178,35 @@ func New(cfg Config) (*Client, error) {
 	return client, nil
 }
 
-// NewFromEnv creates a new Emergent API client from environment variables.
-// Required env vars:
-//   - MEMORY_API_KEY   — API key or emt_* token
-//   - MEMORY_API_URL   — server URL (e.g. http://localhost:3002); MEMORY_SERVER_URL is also accepted
+// NewFromEnv creates a new Emergent API client by auto-discovering configuration.
 //
-// Optional env vars:
-//   - MEMORY_PROJECT_ID — default project ID
+// Resolution order (highest priority wins):
+//  1. ~/.memory/config.yaml — CLI config file
+//  2. .env — dotenv file (walked up from current directory)
+//  3. .env.local — local overrides (walked up from current directory)
+//  4. MEMORY_* environment variables
+//
+// Recognised variables / YAML keys:
+//   - MEMORY_SERVER_URL / server_url — server URL (falls back to http://localhost:3002)
+//   - MEMORY_API_KEY / api_key — API key or emt_* token (required)
+//   - MEMORY_PROJECT_TOKEN / project_token — project-scoped emt_* token (overrides api_key)
+//   - MEMORY_ORG_ID / org_id — default organisation ID
+//   - MEMORY_PROJECT_ID / project_id — default project ID
+//
+// MEMORY_API_URL is accepted as an alias for MEMORY_SERVER_URL.
 func NewFromEnv() (*Client, error) {
-	apiKey := os.Getenv("MEMORY_API_KEY")
+	discovered := loadEnvConfig()
+
+	// project_token takes precedence over api_key as the credential
+	apiKey := discovered.ProjectToken
 	if apiKey == "" {
-		return nil, fmt.Errorf("MEMORY_API_KEY environment variable is not set")
+		apiKey = discovered.APIKey
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("no API key found: set MEMORY_API_KEY, add api_key to ~/.memory/config.yaml, or create a .env.local file")
 	}
 
-	serverURL := os.Getenv("MEMORY_API_URL")
-	if serverURL == "" {
-		serverURL = os.Getenv("MEMORY_SERVER_URL")
-	}
+	serverURL := discovered.ServerURL
 	if serverURL == "" {
 		serverURL = "http://localhost:3002"
 	}
@@ -206,7 +217,8 @@ func NewFromEnv() (*Client, error) {
 			Mode:   "apikey",
 			APIKey: apiKey,
 		},
-		ProjectID: os.Getenv("MEMORY_PROJECT_ID"),
+		OrgID:     discovered.OrgID,
+		ProjectID: discovered.ProjectID,
 	})
 }
 

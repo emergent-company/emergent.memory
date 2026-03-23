@@ -48,7 +48,9 @@ import httpx
 
 from .agent_definitions import AgentDefinitionsClient
 from .agents import AgentsClient
+from .api_tokens import APITokenClient
 from .auth import AuthProvider, make_provider
+from .branches import BranchesClient
 from .chat import ChatClient
 from .documents import DocumentsClient
 from .graph import GraphClient
@@ -58,8 +60,147 @@ from .projects import ProjectsClient
 from .schemas import SchemasClient
 from .search import SearchClient
 from .skills import SkillsClient
+from .tasks import TasksClient
 
 _DEFAULT_TIMEOUT = httpx.Timeout(30.0)
+
+
+# ---------------------------------------------------------------------------
+# Config discovery helpers
+# ---------------------------------------------------------------------------
+
+
+def _walk_up_find(filename: str) -> Optional[str]:
+    """Walk up from cwd to find filename. Returns path or None."""
+    import pathlib
+
+    d = pathlib.Path.cwd()
+    while True:
+        candidate = d / filename
+        if candidate.is_file():
+            return str(candidate)
+        parent = d.parent
+        if parent == d:
+            return None
+        d = parent
+
+
+def _parse_dotenv(path: str) -> Dict[str, str]:
+    """Parse a .env file into a dict. Handles KEY=VALUE and KEY="VALUE" lines."""
+    result: Dict[str, str] = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                result[key] = val
+    except OSError:
+        pass
+    return result
+
+
+def _load_memory_yaml(path: str) -> Dict[str, str]:
+    """Load ~/.memory/config.yaml. Returns relevant fields as strings."""
+    try:
+        import yaml  # type: ignore[import]
+
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+        return {k: str(v) for k, v in data.items() if v}
+    except Exception:
+        pass
+    # Fallback: simple key: value parser (no PyYAML dependency)
+    result: Dict[str, str] = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or ":" not in line:
+                    continue
+                key, _, val = line.partition(":")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if val:
+                    result[key] = val
+    except OSError:
+        pass
+    return result
+
+
+def _load_env_config() -> Dict[str, str]:
+    """
+    Discover config from multiple sources in priority order (lowest first).
+
+    Priority (highest wins):
+      1. ~/.memory/config.yaml
+      2. .env (walk up from cwd)
+      3. .env.local (walk up from cwd)
+      4. MEMORY_* environment variables
+    """
+    import pathlib
+
+    cfg: Dict[str, str] = {}
+
+    # 1. ~/.memory/config.yaml
+    yaml_path = pathlib.Path.home() / ".memory" / "config.yaml"
+    if yaml_path.is_file():
+        raw = _load_memory_yaml(str(yaml_path))
+        # Map YAML keys to our internal keys
+        for yaml_key, cfg_key in [
+            ("server_url", "server_url"),
+            ("api_key", "api_key"),
+            ("org_id", "org_id"),
+            ("project_id", "project_id"),
+            ("project_token", "project_token"),
+        ]:
+            if raw.get(yaml_key):
+                cfg[cfg_key] = raw[yaml_key]
+
+    # 2. .env (lower priority than .env.local)
+    if p := _walk_up_find(".env"):
+        for k, v in _parse_dotenv(p).items():
+            _apply_env_key(cfg, k, v)
+
+    # 3. .env.local (overrides .env)
+    if p := _walk_up_find(".env.local"):
+        for k, v in _parse_dotenv(p).items():
+            _apply_env_key(cfg, k, v)
+
+    # 4. Actual environment variables (highest priority)
+    for k, v in os.environ.items():
+        _apply_env_key(cfg, k, v)
+
+    return cfg
+
+
+def _apply_env_key(cfg: Dict[str, str], key: str, value: str) -> None:
+    """Map a MEMORY_* env var name to our internal config key."""
+    if not value:
+        return
+    mapping = {
+        "MEMORY_SERVER_URL": "server_url",
+        "MEMORY_API_URL": "server_url",  # alias, lower priority handled by order
+        "MEMORY_API_KEY": "api_key",
+        "MEMORY_ORG_ID": "org_id",
+        "MEMORY_PROJECT_ID": "project_id",
+        "MEMORY_PROJECT_TOKEN": "project_token",
+    }
+    if key in mapping:
+        # MEMORY_SERVER_URL takes priority over MEMORY_API_URL
+        # Since env vars are applied last and we iterate os.environ,
+        # if both are set MEMORY_SERVER_URL should win.
+        # Handle: only overwrite server_url from MEMORY_API_URL if not already set by MEMORY_SERVER_URL
+        if (
+            key == "MEMORY_API_URL"
+            and cfg.get("server_url")
+            and os.environ.get("MEMORY_SERVER_URL")
+        ):
+            return  # MEMORY_SERVER_URL already set it
+        cfg[mapping[key]] = value
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +263,10 @@ class Client:
     * :attr:`orgs`              — organisation management
     * :attr:`schemas`           — entity schemas
     * :attr:`skills`            — skills library
+    * :attr:`documents`         — document management
+    * :attr:`branches`          — graph branches
+    * :attr:`api_tokens`        — project and account API tokens
+    * :attr:`tasks`             — task management
     """
 
     def __init__(self, config: Config) -> None:
@@ -154,44 +299,58 @@ class Client:
     @classmethod
     def from_env(cls) -> "Client":
         """
-        Build a Client from environment variables.
+        Build a Client by auto-discovering configuration.
 
-        Reads the following environment variables:
+        Resolution order (highest priority wins):
 
-        * ``MEMORY_API_URL``   — server URL (required)
-        * ``MEMORY_API_KEY``   — API key or emt_* token (required)
-        * ``MEMORY_ORG_ID``    — default organisation ID (optional)
-        * ``MEMORY_PROJECT_ID`` — default project ID (optional)
+        1. ``~/.memory/config.yaml`` — CLI config file
+        2. ``.env`` — dotenv file (walked up from current directory)
+        3. ``.env.local`` — local overrides (walked up from current directory)
+        4. ``MEMORY_*`` environment variables
 
-        This is the recommended pattern inside sandbox containers::
+        Recognised variables / YAML keys:
 
-            from emergent import Client
-            client = Client.from_env()
+        * ``MEMORY_SERVER_URL`` / ``server_url`` — server URL (required)
+        * ``MEMORY_API_KEY`` / ``api_key`` — API key or emt_* token
+        * ``MEMORY_PROJECT_TOKEN`` / ``project_token`` — project-scoped emt_* token
+        * ``MEMORY_ORG_ID`` / ``org_id`` — default organisation ID
+        * ``MEMORY_PROJECT_ID`` / ``project_id`` — default project ID
+
+        ``MEMORY_API_URL`` is accepted as an alias for ``MEMORY_SERVER_URL``.
+
+        If ``MEMORY_PROJECT_TOKEN`` is set it is used as the credential (Bearer
+        auth); otherwise ``MEMORY_API_KEY`` is used.
 
         Raises
         ------
         EnvironmentError
-            If ``MEMORY_API_URL`` or ``MEMORY_API_KEY`` is not set.
+            If no server URL or API key can be found from any source.
         """
-        server_url = os.environ.get("MEMORY_API_URL", "")
-        api_key = os.environ.get("MEMORY_API_KEY", "")
+        discovered = _load_env_config()
+
+        server_url = discovered.get("server_url", "")
+        # project_token takes precedence over api_key as the credential
+        api_key = discovered.get("project_token") or discovered.get("api_key", "")
+
         if not server_url:
             raise EnvironmentError(
-                "MEMORY_API_URL environment variable is not set. "
-                "Set it to the Emergent server URL, e.g. http://localhost:3012"
+                "No server URL found. Set MEMORY_SERVER_URL, add it to "
+                "~/.memory/config.yaml, or create a .env.local file with "
+                "MEMORY_SERVER_URL=http://localhost:3012"
             )
         if not api_key:
             raise EnvironmentError(
-                "MEMORY_API_KEY environment variable is not set. "
-                "Set it to your API key or emt_* token."
+                "No API key found. Set MEMORY_API_KEY (or MEMORY_PROJECT_TOKEN), "
+                "add api_key to ~/.memory/config.yaml, or create a .env.local file."
             )
+
         return cls(
             Config(
                 server_url=server_url,
                 api_key=api_key,
                 mode="apikey",
-                org_id=os.environ.get("MEMORY_ORG_ID", ""),
-                project_id=os.environ.get("MEMORY_PROJECT_ID", ""),
+                org_id=discovered.get("org_id", ""),
+                project_id=discovered.get("project_id", ""),
             )
         )
 
@@ -273,6 +432,9 @@ class Client:
         self.schemas = SchemasClient(*args)
         self.skills = SkillsClient(*args)
         self.documents = DocumentsClient(*args)
+        self.branches = BranchesClient(*args)
+        self.api_tokens = APITokenClient(*args)
+        self.tasks = TasksClient(*args)
 
         # Non-context sub-clients (no org/project needed for their API paths)
         self.projects = ProjectsClient(self._http, self._base, self._auth)
@@ -314,6 +476,9 @@ class Client:
             self.schemas.set_context(org_id, project_id)
             self.skills.set_context(org_id, project_id)
             self.documents.set_context(org_id, project_id)
+            self.branches.set_context(org_id, project_id)
+            self.api_tokens.set_context(org_id, project_id)
+            self.tasks.set_context(org_id, project_id)
             # projects / orgs have no org/project context headers
 
     # ------------------------------------------------------------------
