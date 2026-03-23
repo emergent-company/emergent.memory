@@ -13,8 +13,8 @@ Memory exposes its own MCP server at two endpoints:
 
 | Transport | Endpoint | Authentication |
 |---|---|---|
-| SSE (legacy) | `GET /mcp/sse` | `?token=<api_token>` query param |
-| Streamable HTTP (current spec) | `POST /mcp` | `Authorization: Bearer <api_token>` |
+| SSE (project-scoped) | `GET /api/mcp/sse/:projectId` | `Authorization: Bearer <api_token>` |
+| Streamable HTTP (current spec) | `POST /api/mcp` | `Authorization: Bearer <api_token>` |
 
 ### Connecting Claude Desktop
 
@@ -43,6 +43,27 @@ Or using the streamable HTTP transport with a client that supports it:
 https://api.dev.emergent-company.ai/mcp
 Authorization: Bearer <api-token>
 ```
+
+### Connecting OpenCode
+
+Add to `opencode.json` in your project directory:
+
+```json
+{
+  "mcp": {
+    "memory": {
+      "type": "remote",
+      "url": "https://api.dev.emergent-company.ai/api/mcp/sse/<project-id>",
+      "headers": {"Authorization": "Bearer <your-api-token>"},
+      "oauth": false,
+      "enabled": true,
+      "timeout": 60000
+    }
+  }
+}
+```
+
+Replace `<project-id>` with your project UUID and `<your-api-token>` with a project-scoped API token. Run `opencode mcp list` to verify the connection.
 
 ### Available MCP tools (built-in)
 

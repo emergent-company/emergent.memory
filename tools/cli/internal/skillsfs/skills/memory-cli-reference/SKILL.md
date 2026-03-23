@@ -2003,6 +2003,44 @@ memory graph branches delete <id> [flags]
   -h, --help   help for delete
 ```
 
+## memory graph branches fork
+
+Fork a branch with object copies
+
+### Synopsis
+
+Fork a branch — create a new branch and copy all HEAD objects and
+relationships from the source into it.
+
+SOURCE: use a branch UUID from "memory graph branches list", or the special
+keyword "main" to fork from the main graph (branch_id IS NULL).
+
+Copied objects preserve their canonical IDs so a subsequent merge back
+into the source is aware of shared identity. Only HEAD versions are
+copied (not full version history).
+
+Use --filter-type to selectively copy only certain object types. When
+a filter is applied, relationships where one endpoint was excluded are
+silently skipped (the response reports the skipped count).
+
+Examples:
+  memory graph branches fork main --name "what-if-scenario"
+  memory graph branches fork main --name "subset" --filter-type Service --filter-type API
+  memory graph branches fork <source-branch-id> --name "child" --description "child branch"
+
+```
+memory graph branches fork <source-branch-id|main> [flags]
+```
+
+### Options
+
+```
+      --description string    Branch description (optional)
+      --filter-type strings   Only copy objects of these types (repeatable)
+  -h, --help                  help for fork
+      --name string           New branch name (required)
+```
+
 ## memory graph branches get
 
 Get a branch by ID
@@ -2111,6 +2149,44 @@ memory graph branches merge <target-branch-id|main> [flags]
       --execute         Execute the merge (default is dry run)
   -h, --help            help for merge
       --source string   Source branch ID to merge from (required)
+```
+
+## memory graph branches fork
+
+Fork a branch with object copies
+
+### Synopsis
+
+Fork a branch — create a new branch and copy all HEAD objects and
+relationships from the source into it.
+
+SOURCE: use a branch UUID from "memory graph branches list", or the special
+keyword "main" to fork from the main graph (branch_id IS NULL).
+
+Copied objects preserve their canonical IDs so a subsequent merge back
+into the source is aware of shared identity. Only HEAD versions are
+copied (not full version history).
+
+Use --filter-type to selectively copy only certain object types. When
+a filter is applied, relationships where one endpoint was excluded are
+silently skipped (the response reports the skipped count).
+
+Examples:
+  memory graph branches fork main --name "what-if-scenario"
+  memory graph branches fork main --name "subset" --filter-type Service --filter-type API
+  memory graph branches fork <source-branch-id> --name "child" --description "child branch"
+
+```
+memory graph branches fork <source-branch-id|main> [flags]
+```
+
+### Options
+
+```
+      --description string    Branch description (optional)
+      --filter-type strings   Only copy objects of these types (repeatable)
+  -h, --help                  help for fork
+      --name string           New branch name (required)
 ```
 
 ## memory graph branches update
@@ -2354,6 +2430,9 @@ Output is a table with columns: Entity ID, Type, Version, Status, and Created
 date. Use --type to filter by object type, --limit to control result count, and
 --output json to receive the full list as JSON.
 
+Use --key to filter by the object's stable key field directly. This is the most
+efficient way to look up a single object by key without fetching all objects.
+
 Use --filter key=value to filter by object properties (repeatable). All filters
 are combined with AND. The --filter-op flag sets the comparison operator for
 every --filter in the same invocation (default: eq).
@@ -2361,6 +2440,8 @@ every --filter in the same invocation (default: eq).
   --filter-op operators: eq, neq, gt, gte, lt, lte, contains, in, exists
 
 Examples:
+  memory graph objects list --key sq-soft-delete-employee
+  memory graph objects list --branch <branch-id> --key ep-employees-delete
   memory graph objects list --filter status=active
   memory graph objects list --type Feature --filter status=active --filter inertia_tier=1
   memory graph objects list --filter status=active,draft --filter-op in
@@ -2379,6 +2460,7 @@ memory graph objects list [flags]
       --filter-op string     Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists (default "eq")
   -h, --help                 help for list
       --ids string           Fetch specific objects by ID (comma-separated: --ids id1,id2,id3)
+      --key string           Filter by object key (direct key-based lookup)
       --limit int            Maximum number of results (server default: 1000) (default 1000)
       --status string        Filter by object status
       --type string          Filter by object type
@@ -2446,6 +2528,43 @@ memory graph objects similar <id> [flags]
       --type string       Filter results by object type
 ```
 
+## memory graph objects update-batch
+
+Batch-update graph objects from a JSON file
+
+### Synopsis
+
+Update multiple graph objects in one API call.
+
+The input file must contain a JSON array of objects, each with:
+  id         (string, required) — object entity ID to update
+  key        (string, optional)
+  properties (object, optional) — merged with existing properties
+  labels     ([]string, optional) — appended (or replaced with replaceLabels)
+  replaceLabels (bool, optional) — replace labels instead of appending
+  status     (string, optional)
+  branch_id  (string, optional)
+
+Example updates.json:
+  [
+    {"id": "<entity-id-1>", "properties": {"priority": "high"}},
+    {"id": "<entity-id-2>", "status": "archived", "labels": ["deprecated"]}
+  ]
+
+Output (one line per object): <entity-id>  <type>  <version>
+
+```
+memory graph objects update-batch [flags]
+```
+
+### Options
+
+```
+      --file string     Path to JSON file containing array of object updates (required)
+  -h, --help            help for update-batch
+      --output string   Output format: table or json (default "table")
+```
+
 ## memory graph objects update
 
 Update a graph object
@@ -2492,6 +2611,9 @@ The input file must contain a JSON array of objects, each with:
   to    (string, required) — destination entity ID
   properties (object, optional)
 
+Use --upsert to make the operation idempotent: existing relationships (same
+type, from, to) are returned as-is instead of causing an error. Safe to retry.
+
 Example relationships.json:
   [
     {"type": "knows", "from": "<entity-id-1>", "to": "<entity-id-2>"},
@@ -2509,6 +2631,7 @@ memory graph relationships create-batch [flags]
 ```
       --file string   Path to JSON file containing array of relationships (required)
   -h, --help          help for create-batch
+      --upsert        Apply upsert semantics to all items: skip existing relationships instead of failing
 ```
 
 ## memory graph relationships create
@@ -2517,7 +2640,12 @@ Create a relationship
 
 ### Synopsis
 
-Create a directed relationship between two graph objects
+Create a directed relationship between two graph objects.
+
+When --upsert is given, the operation is idempotent: if a relationship with the
+same type, source, and destination already exists, it is returned as-is without
+creating a duplicate. If the relationship was deleted, it is restored.
+Without --upsert, creating a relationship that already exists returns an error.
 
 ```
 memory graph relationships create [flags]
@@ -2532,6 +2660,7 @@ memory graph relationships create [flags]
       --properties string   JSON properties object
       --to string           Destination object ID (required)
       --type string         Relationship type (required)
+      --upsert              Return existing relationship if (type, from, to) already exists instead of creating a duplicate
 ```
 
 ## memory graph relationships delete
@@ -2584,8 +2713,9 @@ List relationships in the current project.
 
 Output is a table with columns: Entity ID, Type, From (source entity ID), To
 (destination entity ID), and Created date. Use --type to filter by relationship
-type, --from/--to to filter by endpoint, --limit to control result count, and
---output json to receive the full list as JSON.
+type, --from/--to to filter by endpoint, --limit to control result count,
+--cursor to paginate through large result sets, and --output json to receive
+the full list as JSON.
 
 ```
 memory graph relationships list [flags]
@@ -2595,6 +2725,7 @@ memory graph relationships list [flags]
 
 ```
       --branch string   Branch ID to scope results to (omit for main branch)
+      --cursor string   Pagination cursor from a previous response (next_cursor field)
       --from string     Filter by source object ID
   -h, --help            help for list
       --limit int       Maximum number of results (server default: 1000) (default 1000)

@@ -41,19 +41,30 @@ curl -X POST http://localhost:5300/api/mcp/rpc \
   }'
 ```
 
-### SSE Transport
+### SSE Transport (project-scoped)
+
+The SSE transport uses a two-step flow: open a persistent SSE stream, then POST messages to the returned endpoint.
 
 ```bash
-# Connect via Server-Sent Events
-curl -N http://localhost:5300/mcp/sse \
+# Step 1 — Open SSE stream (replace <project-id> with your project UUID)
+curl -N "http://localhost:5300/api/mcp/sse/<project-id>" \
   -H "Authorization: Bearer <your-api-token>"
+# Server sends: event: endpoint\ndata: /api/mcp/sse/<project-id>/message?sessionId=<id>
+
+# Step 2 — POST JSON-RPC to the message endpoint
+curl -X POST "http://localhost:5300/api/mcp/sse/<project-id>/message?sessionId=<session-id>" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-api-token>" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
+# Returns: HTTP 200 with JSON-RPC response body
 ```
 
 **SSE Configuration:**
 
 - **Connection Timeout**: 10 minutes (600s)
-- **Ping Interval**: 4 minutes (240s)
-- **Auto-Reconnect**: Client should reconnect on disconnect
+- **Ping Interval**: 4 hours (keeps connection alive under proxy timeouts)
+- **Session state**: Survives SSE reconnects — `initialize` only needs to be called once per `sessionId`
+- **OpenCode compatibility**: POST responses return `200 OK` with the JSON-RPC body directly
 
 ## Authentication
 
@@ -679,6 +690,33 @@ Instead of manually constructing tool calls:
 
 ## Integration Examples
 
+### OpenCode
+
+Add to `opencode.json` in your project directory:
+
+```json
+{
+  "mcp": {
+    "memory": {
+      "type": "remote",
+      "url": "https://api.dev.emergent-company.ai/api/mcp/sse/<project-id>",
+      "headers": {"Authorization": "Bearer <your-api-token>"},
+      "oauth": false,
+      "enabled": true,
+      "timeout": 60000
+    }
+  }
+}
+```
+
+Replace `<project-id>` with your project UUID and `<your-api-token>` with a project-scoped API token.
+
+Verify the connection:
+```bash
+opencode mcp list
+# Should show "memory" as connected with tool count
+```
+
 ### Python Client
 
 ```python
@@ -948,6 +986,17 @@ Test via HTTP:
 ## Changelog
 
 ### 2026-03 (current)
+
+**SSE transport: OpenCode compatibility fix**
+
+- `POST /api/mcp/sse/:projectId/message` now returns `200 OK` with the JSON-RPC response object directly in the HTTP body (previously returned `202 Accepted` with a `{status, jsonrpc, id, result, error}` envelope)
+- Session initialization state is now stored independently of the SSE stream — `tools/list` and `tools/call` work after an SSE reconnect as long as `initialize` was called at least once in the session
+
+**Branch fork endpoint**
+
+- New `POST /api/graph/branches/:id/fork` endpoint creates a branch and bulk-copies HEAD objects + relationships from the source
+- Canonical IDs preserved for merge-back identity awareness
+- Optional `filter_types` for selective type copying
 
 **Tool naming standardisation & expansion (~50+ tools)**
 

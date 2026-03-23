@@ -242,6 +242,53 @@ memory graph branches update <branch-id> --name "new-name" --description "new pu
 memory graph branches delete <branch-id>
 ```
 
+## Fork a branch (copy-on-fork)
+
+`fork` creates a new branch **and immediately copies all HEAD objects and relationships** from the source. This is different from `create --parent`, which only records lineage metadata without copying any data.
+
+Copied objects preserve their canonical IDs so a subsequent merge back into the source is identity-aware.
+
+```bash
+# Fork from main — copies everything:
+FORK_ID=$(memory graph branches fork main \
+  --name "what-if/add-payment-service" --output json \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['branch_id'])")
+
+# Fork from an existing branch:
+memory graph branches fork "$SOURCE_BRANCH_ID" \
+  --name "child-branch" --description "subset of parent"
+
+# Fork with type filter — only copy Service and API objects:
+memory graph branches fork main \
+  --name "services-only" \
+  --filter-type Service \
+  --filter-type API
+```
+
+Output:
+```
+Branch forked successfully.
+Branch ID:             7602d370-64c2-451b-81a2-0b50ba74343a
+Branch Name:           what-if/add-payment-service
+Source:                main
+Copied Objects:        42
+Copied Relationships:  18
+```
+
+**Flags:**
+- `--name <name>` — new branch name (required)
+- `--description <text>` — optional description
+- `--filter-type <type>` — only copy objects of this type (repeatable); relationships where one endpoint was excluded are skipped
+
+**When to use fork vs create:**
+
+| | `branches create` | `branches fork` |
+|---|---|---|
+| Creates a branch | ✓ | ✓ |
+| Records parent lineage | via `--parent` | ✓ (automatic) |
+| Copies objects/relationships | ✗ | ✓ |
+| Use for | empty staging area | what-if with existing data |
+
 ## Querying a branch
 
 Use `memory query --mode=search --branch <id>` to search a specific branch.
@@ -280,6 +327,7 @@ memory query --mode=search --branch "$BRANCH_ID" "planned services"
 | Trying `X-Branch-ID` header | Not a header — branch is a body field (for create) or query param (for list) |
 | Merging without a dry run first | Always preview with `branches merge <target> --source <src>` before `--execute` |
 | Not capturing the branch ID | Run `branches list` to recover it, or always capture at creation time |
+| Using `fork` output `id` field | `fork` returns `branch_id`, not `id` — use `json.load(sys.stdin)['branch_id']` |
 
 ---
 
