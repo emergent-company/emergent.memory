@@ -88,6 +88,14 @@ templ PageLayout(projectID string) {
 			@CanvasArea()
 			@RightPanel()
 		</div>
+		<!-- Right-click context menu (shared, positioned by JS) -->
+		<div id="ctx-menu" class="hidden fixed bg-gh-surface border border-gh-border rounded-lg shadow-xl py-1 z-[100] text-[12px] min-w-[160px]">
+			<button id="ctx-expand" class="w-full text-left px-3 py-1.5 hover:bg-gh-surface2 text-gh-text cursor-pointer">Expand neighbors</button>
+			<button id="ctx-copy-id" class="w-full text-left px-3 py-1.5 hover:bg-gh-surface2 text-gh-text cursor-pointer">Copy ID</button>
+			<div class="my-1 border-t border-gh-border"></div>
+			<button id="ctx-hide-type" class="w-full text-left px-3 py-1.5 hover:bg-gh-surface2 text-gh-muted cursor-pointer">Hide this type</button>
+		</div>
+		@NodeHoverCard()
 		@projectIDScript(projectID)
 		<script type="module" src="/static/graph_explore.js"></script>
 	</body>
@@ -127,6 +135,12 @@ templ Header() {
 		<div class="flex items-center gap-1.5 ml-auto">
 			@LayoutDropdown()
 			<button id="btn-fit" class="btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case" title="Fit graph to screen">⤢ Fit</button>
+			<!-- Zoom controls -->
+			<div class="flex items-center">
+				<button id="btn-zoom-in" class="btn btn-xs btn-ghost border border-gh-border border-r-0 rounded-r-none text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case px-2" title="Zoom in">+</button>
+				<button id="btn-zoom-out" class="btn btn-xs btn-ghost border border-gh-border rounded-l-none text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case px-2" title="Zoom out">−</button>
+			</div>
+			<button id="btn-load-all" class="btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-yellow-500 hover:text-yellow-400 normal-case" title="Load all nodes from graph">⬇ All</button>
 			<button id="btn-clear" class="btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case" title="Clear canvas">✕ Clear</button>
 		</div>
 	</header>
@@ -171,7 +185,7 @@ templ CanvasArea() {
 				<line x1="27" y1="43" x2="53" y2="57" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="4 3"></line>
 			</svg>
 			<p class="text-sm text-gh-muted text-center max-w-[240px] leading-relaxed">
-				Search for nodes to start exploring.<br/>Click any node to expand neighbors.
+				Search for nodes to start exploring.<br/>Double-click any node to expand neighbors.
 			</p>
 		</div>
 		<!-- Loading overlay -->
@@ -186,3 +200,23 @@ templ CanvasArea() {
 		<div id="toast" class="absolute top-3 left-1/2 -translate-x-1/2 bg-gh-surface2 border border-gh-border rounded-lg px-4 py-2 text-[12px] text-gh-muted whitespace-nowrap z-50"></div>
 	</div>
 }
+
+// NodeHoverCard renders the floating hover card used for both canvas node hover
+// and relation row hover. Positioned by JS via fixed coordinates.
+templ NodeHoverCard() {
+	<!-- Hover card: canvas nodes + relation rows -->
+	<div id="node-hover-card" class="hidden fixed z-[90] pointer-events-none" style="max-width:220px">
+		<div class="bg-gh-surface border border-gh-border rounded-lg shadow-xl overflow-hidden" style="font-size:12px">
+			<div id="nhc-header" class="flex items-center gap-2 px-3 py-2 border-b border-gh-border">
+				<span id="nhc-dot" class="w-2.5 h-2.5 rounded-full shrink-0"></span>
+				<span id="nhc-type" class="text-[10px] uppercase tracking-wider font-semibold text-gh-muted"></span>
+			</div>
+			<div class="px-3 py-2 space-y-1.5">
+				<div id="nhc-name" class="font-medium text-gh-text text-[12px] leading-snug break-words"></div>
+				<div id="nhc-props" class="space-y-0.5"></div>
+				<div id="nhc-edges" class="text-[10px] text-gh-muted pt-0.5 border-t border-gh-border/40 mt-1"></div>
+			</div>
+		</div>
+	</div>
+}
+

@@ -49,6 +49,10 @@ const hiddenEdgeTypes = new Set();
 const nodeTypeCounts = {};
 const edgeTypeCounts = {};
 
+// Expand depth setting (1–3)
+let expandDepth = 1;
+const EXPAND_NODE_CAP = 500;
+
 // ── DOM refs ──────────────────────────────────────────────────────────────
 const $loading     = document.getElementById('loading');
 const $emptyState  = document.getElementById('empty-state');
@@ -221,7 +225,7 @@ document.getElementById('edges-toggle-all')?.addEventListener('click', () => {
 function registerNodeType(t) { nodeTypeCounts[t] = (nodeTypeCounts[t] || 0) + 1; }
 function registerEdgeType(t) { edgeTypeCounts[t] = (edgeTypeCounts[t] || 0) + 1; }
 
-function nodeSize(deg) { return Math.min(8 + Math.sqrt(deg) * 3.5, 36); }
+function nodeSize(deg) { return Math.min(14 + Math.sqrt(deg) * 4, 48); }
 
 function mergeNode(n, { forceVisible = false } = {}) {
   const id = n.canonical_id || n.entity_id || n.id;
@@ -232,7 +236,7 @@ function mergeNode(n, { forceVisible = false } = {}) {
   const label = props.name || props.title || n.key || (type + ' ' + String(id).slice(0, 6));
   if (!graph.hasNode(id)) {
     graph.addNode(id, {
-      label, size: 8, color,
+      label, size: 14, color,
       x: Math.random() * 10 - 5, y: Math.random() * 10 - 5,
       nodeType: type, typeInitial: typeIcon(type),
       hidden: forceVisible ? false : hiddenNodeTypes.has(type),
@@ -253,7 +257,7 @@ function mergeObjectResponse(o, { forceVisible = false } = {}) {
   const label = props.name || props.title || o.key || (type + ' ' + String(id).slice(0, 6));
   if (!graph.hasNode(id)) {
     graph.addNode(id, {
-      label, size: 8, color,
+      label, size: 14, color,
       x: Math.random() * 10 - 5, y: Math.random() * 10 - 5,
       nodeType: type, typeInitial: typeIcon(type),
       hidden: forceVisible ? false : hiddenNodeTypes.has(type),
@@ -435,36 +439,41 @@ function drawNodeIcon(context, data) {
 
 function drawNodeLabel(context, data, settings) {
   drawNodeIcon(context, data);
-}
 
-function drawNodeHoverLabel(context, data, settings) {
-  drawNodeIcon(context, data);
-
-  const { size, x, y, color, label, typeInitial } = data;
+  // When the reducer sets a label (zoomed in or selected), draw the two-line chip
+  const { size, x, y, color, label, typeInitial, nodeType } = data;
   if (!label) return;
 
   const icon = typeInitial || (label || '?').charAt(0).toUpperCase();
   const isEmoji = [...icon].length > 1;
-  const ls = 11;
+  const typeStr = nodeType || '';
+
+  const nameFontSize = 11;
+  const typeFontSize = 9;
   const pad = 5;
   const dotR = 7;
   const iconFs = isEmoji ? 10 : 8;
   const gap = 5;
+  const lineGap = 2;
 
   context.save();
-  context.font = `500 ${ls}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-  const tw = context.measureText(label).width;
 
-  const chipW = pad + dotR * 2 + gap + tw + pad;
-  const chipH = ls + 8;
+  context.font = `500 ${nameFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  const nameW = context.measureText(label).width;
+  context.font = `400 ${typeFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  const typeW = context.measureText(typeStr).width;
+
+  const textW = Math.max(nameW, typeW);
+  const chipW = pad + dotR * 2 + gap + textW + pad;
+  const chipH = typeFontSize + lineGap + nameFontSize + 8;
   const chipX = x + size + 6;
   const chipY = y - chipH / 2;
 
   context.fillStyle = 'rgba(13,17,23,0.88)';
-  context.strokeStyle = 'rgba(48,54,61,0.7)';
+  context.strokeStyle = 'rgba(48,54,61,0.65)';
   context.lineWidth = 0.8;
   context.beginPath();
-  context.roundRect(chipX, chipY, chipW, chipH, chipH / 2);
+  context.roundRect(chipX, chipY, chipW, chipH, 6);
   context.fill();
   context.stroke();
 
@@ -481,13 +490,178 @@ function drawNodeHoverLabel(context, data, settings) {
   context.fillStyle = 'rgba(255,255,255,0.92)';
   context.fillText(icon, dotCX, dotCY);
 
-  context.font = `500 ${ls}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  const textX = chipX + pad + dotR * 2 + gap;
+  const typeY = chipY + 4 + typeFontSize / 2;
+  context.font = `400 ${typeFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  context.textAlign = 'left';
+  context.textBaseline = 'middle';
+  context.fillStyle = '#8b949e';
+  context.fillText(typeStr, textX, typeY);
+
+  const nameY = typeY + typeFontSize / 2 + lineGap + nameFontSize / 2;
+  context.font = `500 ${nameFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
   context.textAlign = 'left';
   context.textBaseline = 'middle';
   context.fillStyle = '#e6edf3';
-  context.fillText(label, chipX + pad + dotR * 2 + gap, y);
+  context.fillText(label, textX, nameY);
 
   context.restore();
+}
+
+function drawNodeHoverLabel(context, data, settings) {
+  drawNodeIcon(context, data);
+
+  const { size, x, y, color, label, typeInitial, nodeType } = data;
+  if (!label) return;
+
+  const icon = typeInitial || (label || '?').charAt(0).toUpperCase();
+  const isEmoji = [...icon].length > 1;
+  const typeStr = nodeType || '';
+
+  // Two-line chip dimensions
+  const nameFontSize = 11;
+  const typeFontSize = 9;
+  const pad = 5;
+  const dotR = 7;
+  const iconFs = isEmoji ? 10 : 8;
+  const gap = 5;
+  const lineGap = 2;
+
+  context.save();
+
+  // Measure both lines
+  context.font = `500 ${nameFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  const nameW = context.measureText(label).width;
+  context.font = `400 ${typeFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  const typeW = context.measureText(typeStr).width;
+
+  const textW = Math.max(nameW, typeW);
+  const chipW = pad + dotR * 2 + gap + textW + pad;
+  const chipH = typeFontSize + lineGap + nameFontSize + 8; // top pad + type + gap + name + bottom pad
+  const chipX = x + size + 6;
+  const chipY = y - chipH / 2;
+
+  // Background pill
+  context.fillStyle = 'rgba(13,17,23,0.90)';
+  context.strokeStyle = 'rgba(48,54,61,0.75)';
+  context.lineWidth = 0.8;
+  context.beginPath();
+  context.roundRect(chipX, chipY, chipW, chipH, 6);
+  context.fill();
+  context.stroke();
+
+  // Colored dot with icon (vertically centered in chip)
+  const dotCX = chipX + pad + dotR;
+  const dotCY = y;
+  context.beginPath();
+  context.arc(dotCX, dotCY, dotR, 0, Math.PI * 2);
+  context.fillStyle = color;
+  context.fill();
+
+  context.font = isEmoji ? `${iconFs}px sans-serif` : `700 ${iconFs}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillStyle = 'rgba(255,255,255,0.92)';
+  context.fillText(icon, dotCX, dotCY);
+
+  // Type label (line 1 — dimmed, smaller)
+  const textX = chipX + pad + dotR * 2 + gap;
+  const typeY = chipY + 4 + typeFontSize / 2;
+  context.font = `400 ${typeFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  context.textAlign = 'left';
+  context.textBaseline = 'middle';
+  context.fillStyle = '#8b949e';
+  context.fillText(typeStr, textX, typeY);
+
+  // Entity name (line 2 — normal)
+  const nameY = typeY + typeFontSize / 2 + lineGap + nameFontSize / 2;
+  context.font = `500 ${nameFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  context.textAlign = 'left';
+  context.textBaseline = 'middle';
+  context.fillStyle = '#e6edf3';
+  context.fillText(label, textX, nameY);
+
+  context.restore();
+}
+
+// ── Hover card ────────────────────────────────────────────────────────────
+const $hoverCard  = document.getElementById('node-hover-card');
+const $nhcDot     = document.getElementById('nhc-dot');
+const $nhcType    = document.getElementById('nhc-type');
+const $nhcName    = document.getElementById('nhc-name');
+const $nhcProps   = document.getElementById('nhc-props');
+const $nhcEdges   = document.getElementById('nhc-edges');
+let hoverHideTimer = null;
+
+// Top-5 property keys to skip (already shown in header or rarely useful)
+const HC_SKIP_KEYS = new Set(['name', 'title', 'id', 'canonical_id', 'entity_id', 'type']);
+const HC_MAX_PROPS = 4;
+
+function populateHoverCard(nodeId, color, typeName, label, inGraphProps) {
+  $nhcDot.style.background = color;
+  $nhcType.textContent = typeName || '';
+  $nhcType.style.color = color;
+  $nhcName.textContent = label || nodeId;
+
+  // Properties
+  $nhcProps.innerHTML = '';
+  const propsToShow = [];
+  if (inGraphProps) {
+    for (const [k, v] of Object.entries(inGraphProps)) {
+      if (HC_SKIP_KEYS.has(k)) continue;
+      if (v === null || v === undefined || v === '') continue;
+      const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
+      propsToShow.push({ k, val });
+      if (propsToShow.length >= HC_MAX_PROPS) break;
+    }
+  }
+  for (const { k, val } of propsToShow) {
+    const row = document.createElement('div');
+    row.className = 'flex gap-1.5 items-baseline';
+    row.innerHTML = `<span style="color:#8b949e;font-size:10px;white-space:nowrap">${escHtml(k)}</span>`
+      + `<span style="color:#e6edf3;font-size:11px;font-family:monospace;word-break:break-all;flex:1">${escHtml(val.slice(0, 80))}</span>`;
+    $nhcProps.appendChild(row);
+  }
+
+  // Edge count in graph
+  const deg = (sigmaInstance && graph.hasNode(nodeId)) ? graph.degree(nodeId) : null;
+  if (deg !== null) {
+    $nhcEdges.textContent = `${deg} connection${deg !== 1 ? 's' : ''} in graph`;
+    $nhcEdges.style.display = '';
+  } else {
+    $nhcEdges.style.display = 'none';
+  }
+}
+
+function showHoverCard(nodeId, screenX, screenY, color, typeName, label, inGraphProps) {
+  clearTimeout(hoverHideTimer);
+  populateHoverCard(nodeId, color, typeName, label, inGraphProps);
+
+  // Position: prefer right of cursor, flip left if near right edge
+  const margin = 12;
+  const cardW = 220;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  let left = screenX + margin;
+  if (left + cardW > vw - 8) left = screenX - cardW - margin;
+
+  $hoverCard.style.left = `${left}px`;
+  $hoverCard.style.top  = `${Math.min(screenY - 8, vh - 200)}px`;
+  $hoverCard.classList.remove('hidden');
+}
+
+function hideHoverCard(delay = 0) {
+  if (delay > 0) {
+    hoverHideTimer = setTimeout(() => $hoverCard.classList.add('hidden'), delay);
+  } else {
+    clearTimeout(hoverHideTimer);
+    $hoverCard.classList.add('hidden');
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ── Sigma init ────────────────────────────────────────────────────────────
@@ -510,20 +684,23 @@ function initSigma() {
       if (data.hidden) return { ...res, hidden: true };
       const deg = graph.degree(node);
       res.size = nodeSize(deg);
+      const cameraRatio = sigmaInstance?.getCamera().getState().ratio ?? 1;
+      const zoomedIn = cameraRatio < 0.5;
       if (selectedNode !== null) {
         if (!graph.hasNode(selectedNode)) {
           // Selected node was removed — treat as no selection
-          res.label = '';
+          res.label = zoomedIn ? data.label : '';
         } else if (node === selectedNode) {
           res.highlighted = true; res.size *= 1.5; res.zIndex = 2;
+          // label always shown for selected node (already set by data.label)
         } else if (graph.neighbors(selectedNode).includes(node)) {
           res.color = data.color;
-          res.label = '';
+          res.label = data.label; // always show neighbor labels when selected
         } else {
           res.color = '#1c2128'; res.label = ''; res.opacity = 0.3;
         }
       } else {
-        res.label = '';
+        res.label = zoomedIn ? data.label : '';
       }
       return res;
     },
@@ -544,8 +721,18 @@ function initSigma() {
     },
   });
 
-  sigmaInstance.on('clickNode', ({ node }) => { selectNode(node); expandNode(node); });
+  sigmaInstance.on('clickNode', ({ node }) => { selectNode(node); });
+  sigmaInstance.on('doubleClickNode', ({ node }) => { expandNode(node); });
+  sigmaInstance.on('rightClickNode', ({ node, event }) => {
+    event.preventDefault();
+    selectNode(node);
+    showContextMenu(node, event.clientX, event.clientY);
+  });
   sigmaInstance.on('clickStage', () => deselectNode());
+  // Re-render on camera move so semantic zoom labels update
+  sigmaInstance.getCamera().on('updated', () => sigmaInstance.refresh());
+
+  enableNodeDrag();
 }
 
 // ── Node selection ────────────────────────────────────────────────────────
@@ -589,6 +776,19 @@ function deselectNode() {
 
 // ── Panel actions ─────────────────────────────────────────────────────────
 document.getElementById('panel-close').addEventListener('click', deselectNode);
+
+// Depth selector buttons
+document.addEventListener('click', (e) => {
+  const depthBtn = e.target.closest('.depth-btn');
+  if (!depthBtn) return;
+  expandDepth = parseInt(depthBtn.id.replace('depth-', ''), 10);
+  document.querySelectorAll('.depth-btn').forEach(b => {
+    const active = b.id === depthBtn.id;
+    b.style.background = active ? 'var(--color-gh-accent, #58a6ff)' : '';
+    b.style.color = active ? '#fff' : '';
+    b.classList.toggle('text-gh-muted', !active);
+  });
+});
 
 document.getElementById('btn-expand').addEventListener('click', async () => {
   if (!selectedNode) return;
@@ -653,6 +853,18 @@ document.getElementById('layout-opt-random').addEventListener('click', () => { s
 
 document.getElementById('btn-fit').addEventListener('click', () => {
   if (sigmaInstance) sigmaInstance.getCamera().animatedReset({ duration: 500 });
+});
+
+document.getElementById('btn-zoom-in').addEventListener('click', () => {
+  if (!sigmaInstance) return;
+  const cam = sigmaInstance.getCamera();
+  cam.animate({ ratio: cam.ratio / 1.5 }, { duration: 200 });
+});
+
+document.getElementById('btn-zoom-out').addEventListener('click', () => {
+  if (!sigmaInstance) return;
+  const cam = sigmaInstance.getCamera();
+  cam.animate({ ratio: cam.ratio * 1.5 }, { duration: 200 });
 });
 
 document.getElementById('btn-clear').addEventListener('click', () => {
@@ -723,7 +935,7 @@ async function expandNode(nodeId) {
   const id = d.canonical_id || d.entity_id || nodeId;
   startLoading();
   try {
-    const resp = await api('/api/graph/expand', { root_ids: [id], max_depth: 1, max_nodes: 200 });
+    const resp = await api('/api/graph/expand', { root_ids: [id], max_depth: expandDepth, max_nodes: EXPAND_NODE_CAP });
 
     const nodesBefore = new Set(graph.nodes());
     const edgesBefore = new Set(graph.edges());
@@ -767,7 +979,114 @@ async function loadNodesByType(type) {
   finally { stopLoading(); }
 }
 
-// ── Search ────────────────────────────────────────────────────────────────
+// ── Node drag ─────────────────────────────────────────────────────────────
+// Implemented via Sigma's mousedown/mousemove/mouseup events on the container.
+let dragState = null; // { node, startX, startY }
+
+function enableNodeDrag() {
+  const container = document.getElementById('sigma-container');
+
+  container.addEventListener('mousedown', (e) => {
+    if (!sigmaInstance || e.button !== 0) return;
+    const { x, y } = sigmaInstance.viewportToGraph({ x: e.clientX - container.getBoundingClientRect().left, y: e.clientY - container.getBoundingClientRect().top });
+    // Find nearest node within ~20px
+    let nearest = null, nearestDist = Infinity;
+    graph.forEachNode((node, attrs) => {
+      if (attrs.hidden) return;
+      const nx = attrs.x, ny = attrs.y;
+      const display = sigmaInstance.graphToViewport({ x: nx, y: ny });
+      const rect = container.getBoundingClientRect();
+      const dx = display.x - (e.clientX - rect.left);
+      const dy = display.y - (e.clientY - rect.top);
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < nearestDist && dist < 30) { nearest = node; nearestDist = dist; }
+    });
+    if (nearest) {
+      dragState = { node: nearest };
+      sigmaInstance.getCamera().disable();
+      e.stopPropagation();
+    }
+  });
+
+  container.addEventListener('mousemove', (e) => {
+    if (!dragState || !sigmaInstance) return;
+    const rect = container.getBoundingClientRect();
+    const { x, y } = sigmaInstance.viewportToGraph({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    graph.setNodeAttribute(dragState.node, 'x', x);
+    graph.setNodeAttribute(dragState.node, 'y', y);
+    sigmaInstance.refresh();
+    e.stopPropagation();
+  });
+
+  const endDrag = () => {
+    if (dragState) {
+      dragState = null;
+      if (sigmaInstance) sigmaInstance.getCamera().enable();
+    }
+  };
+  container.addEventListener('mouseup', endDrag);
+  document.addEventListener('mouseup', endDrag);
+}
+
+
+const $ctxMenu = document.getElementById('ctx-menu');
+let ctxMenuNode = null;
+
+function showContextMenu(node, x, y) {
+  ctxMenuNode = node;
+  const d = nodeData[node] || {};
+  const type = d.type || 'unknown';
+  document.getElementById('ctx-hide-type').textContent = `Hide all "${type}"`;
+  $ctxMenu.style.left = `${x}px`;
+  $ctxMenu.style.top  = `${y}px`;
+  $ctxMenu.classList.remove('hidden');
+}
+
+function hideContextMenu() {
+  $ctxMenu.classList.add('hidden');
+  ctxMenuNode = null;
+}
+
+document.getElementById('ctx-expand').addEventListener('click', () => {
+  if (ctxMenuNode) { selectNode(ctxMenuNode); expandNode(ctxMenuNode); }
+  hideContextMenu();
+});
+
+document.getElementById('ctx-copy-id').addEventListener('click', () => {
+  if (ctxMenuNode) {
+    const d = nodeData[ctxMenuNode] || {};
+    const id = d.id || d.canonical_id || ctxMenuNode;
+    navigator.clipboard.writeText(id).then(() => showToast('Copied ID to clipboard'));
+  }
+  hideContextMenu();
+});
+
+document.getElementById('ctx-hide-type').addEventListener('click', () => {
+  if (ctxMenuNode) {
+    const type = (nodeData[ctxMenuNode] || {}).type || 'unknown';
+    hiddenNodeTypes.add(type);
+    applyFilters();
+    syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
+    showToast(`Hidden type: ${type}`);
+  }
+  hideContextMenu();
+});
+
+// Dismiss context menu on any click/escape outside
+document.addEventListener('click', (e) => {
+  if (!$ctxMenu.contains(e.target)) hideContextMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (!$ctxMenu.classList.contains('hidden')) {
+      hideContextMenu();
+    } else {
+      deselectNode();
+    }
+  }
+});
+
+
 async function doSearch() {
   const q = $searchInput.value.trim();
   if (!q) return;
@@ -786,6 +1105,42 @@ async function doSearch() {
 
 document.getElementById('search-btn').addEventListener('click', doSearch);
 $searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+// ── Load all nodes ────────────────────────────────────────────────────────
+async function loadAllNodes() {
+  const types = [...document.querySelectorAll('#node-filter-list [data-type]')].map(el => el.dataset.type);
+  if (!types.length) {
+    showToast('No node types found — load schema first');
+    return;
+  }
+  const confirmed = window.confirm(
+    `This will load all nodes across ${types.length} type(s).\n\nThis may be slow or overwhelming for large graphs.\n\nContinue?`
+  );
+  if (!confirmed) return;
+
+  startLoading();
+  let totalAdded = 0;
+  try {
+    for (const type of types) {
+      const params = new URLSearchParams({ type, limit: '1000' });
+      const res = await fetch(`/proxy/api/graph/objects/search?${params}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const objects = data.data || data.objects || data.items || data.results || [];
+      const prevOrder = graph.order;
+      objects.forEach(o => mergeObjectResponse(o));
+      totalAdded += graph.order - prevOrder;
+    }
+    updateStats();
+    if (sigmaInstance) sigmaInstance.refresh();
+    runLayout({ resetPositions: true });
+    showToast(`+${totalAdded} nodes loaded across ${types.length} types`);
+    syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
+  } catch (e) { showToast('Load all failed: ' + e.message, 3500); }
+  finally { stopLoading(); }
+}
+
+document.getElementById('btn-load-all').addEventListener('click', loadAllNodes);
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 // Update toggle-all button labels whenever the filter lists are re-rendered.

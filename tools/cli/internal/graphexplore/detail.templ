@@ -16,6 +16,16 @@ templ RightPanel() {
 			>
 			</div>
 			<div class="p-3 border-t border-gh-border space-y-1.5 shrink-0">
+				<!-- Depth selector row -->
+				<div class="flex items-center gap-1.5 mb-0.5">
+					<span class="text-[10px] text-gh-muted uppercase tracking-wider shrink-0">Depth</span>
+					<div class="flex items-center rounded overflow-hidden border border-gh-border text-[11px] font-medium">
+						<button id="depth-1" class="depth-btn px-2.5 py-1 bg-gh-accent text-white cursor-pointer border-none">1</button>
+						<button id="depth-2" class="depth-btn px-2.5 py-1 bg-gh-surface2 text-gh-muted cursor-pointer border-none border-l border-gh-border">2</button>
+						<button id="depth-3" class="depth-btn px-2.5 py-1 bg-gh-surface2 text-gh-muted cursor-pointer border-none border-l border-gh-border">3</button>
+					</div>
+					<span class="text-[10px] text-gh-muted ml-auto">cap 500</span>
+				</div>
 				<button id="btn-expand" class="btn btn-sm btn-primary w-full normal-case font-medium">Expand neighbors</button>
 				<button id="btn-copy-id" class="btn btn-sm btn-ghost w-full border border-gh-border normal-case font-normal text-gh-text hover:border-gh-accent hover:text-gh-accent">Copy ID</button>
 				<button id="btn-focus" class="btn btn-sm btn-ghost w-full border border-gh-border normal-case font-normal text-gh-text hover:border-gh-accent hover:text-gh-accent">Focus subgraph</button>

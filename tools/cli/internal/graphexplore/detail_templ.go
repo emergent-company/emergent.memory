@@ -32,7 +32,7 @@ func RightPanel() templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div id=\"right-panel\" class=\"bg-gh-surface border-l border-gh-border\"><div class=\"right-panel-inner flex flex-col h-full overflow-hidden\"><div class=\"flex items-center justify-between px-3.5 py-3 border-b border-gh-border shrink-0\"><span id=\"panel-title\" class=\"font-semibold text-[13px]\">Node details</span> <button id=\"panel-close\" class=\"btn btn-xs btn-ghost text-gh-muted hover:text-gh-text p-1\">×</button></div><div id=\"panel-body\" class=\"flex-1 overflow-y-auto p-3.5 space-y-3\"></div><div class=\"p-3 border-t border-gh-border space-y-1.5 shrink-0\"><button id=\"btn-expand\" class=\"btn btn-sm btn-primary w-full normal-case font-medium\">Expand neighbors</button> <button id=\"btn-copy-id\" class=\"btn btn-sm btn-ghost w-full border border-gh-border normal-case font-normal text-gh-text hover:border-gh-accent hover:text-gh-accent\">Copy ID</button> <button id=\"btn-focus\" class=\"btn btn-sm btn-ghost w-full border border-gh-border normal-case font-normal text-gh-text hover:border-gh-accent hover:text-gh-accent\">Focus subgraph</button></div></div></div><!-- Hidden input for HTMX to pass selected node ID --><input type=\"hidden\" id=\"selected-node-id\" name=\"nodeId\" value=\"\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div id=\"right-panel\" class=\"bg-gh-surface border-l border-gh-border\"><div class=\"right-panel-inner flex flex-col h-full overflow-hidden\"><div class=\"flex items-center justify-between px-3.5 py-3 border-b border-gh-border shrink-0\"><span id=\"panel-title\" class=\"font-semibold text-[13px]\">Node details</span> <button id=\"panel-close\" class=\"btn btn-xs btn-ghost text-gh-muted hover:text-gh-text p-1\">×</button></div><div id=\"panel-body\" class=\"flex-1 overflow-y-auto p-3.5 space-y-3\"></div><div class=\"p-3 border-t border-gh-border space-y-1.5 shrink-0\"><!-- Depth selector row --><div class=\"flex items-center gap-1.5 mb-0.5\"><span class=\"text-[10px] text-gh-muted uppercase tracking-wider shrink-0\">Depth</span><div class=\"flex items-center rounded overflow-hidden border border-gh-border text-[11px] font-medium\"><button id=\"depth-1\" class=\"depth-btn px-2.5 py-1 bg-gh-accent text-white cursor-pointer border-none\">1</button> <button id=\"depth-2\" class=\"depth-btn px-2.5 py-1 bg-gh-surface2 text-gh-muted cursor-pointer border-none border-l border-gh-border\">2</button> <button id=\"depth-3\" class=\"depth-btn px-2.5 py-1 bg-gh-surface2 text-gh-muted cursor-pointer border-none border-l border-gh-border\">3</button></div><span class=\"text-[10px] text-gh-muted ml-auto\">cap 500</span></div><button id=\"btn-expand\" class=\"btn btn-sm btn-primary w-full normal-case font-medium\">Expand neighbors</button> <button id=\"btn-copy-id\" class=\"btn btn-sm btn-ghost w-full border border-gh-border normal-case font-normal text-gh-text hover:border-gh-accent hover:text-gh-accent\">Copy ID</button> <button id=\"btn-focus\" class=\"btn btn-sm btn-ghost w-full border border-gh-border normal-case font-normal text-gh-text hover:border-gh-accent hover:text-gh-accent\">Focus subgraph</button></div></div></div><!-- Hidden input for HTMX to pass selected node ID --><input type=\"hidden\" id=\"selected-node-id\" name=\"nodeId\" value=\"\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -69,7 +69,7 @@ func NodeDetailContent(detail NodeDetail) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(fmt.Sprintf("background:%s22;color:%s;border:1px solid %s44", detail.TypeColor, detail.TypeColor, detail.TypeColor))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 35, Col: 126}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 45, Col: 126}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -82,7 +82,7 @@ func NodeDetailContent(detail NodeDetail) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(detail.Type)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 36, Col: 16}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 46, Col: 16}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -100,7 +100,7 @@ func NodeDetailContent(detail NodeDetail) templ.Component {
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(detail.Key)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 41, Col: 132}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 51, Col: 132}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
@@ -118,7 +118,7 @@ func NodeDetailContent(detail NodeDetail) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(detail.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 46, Col: 130}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 56, Col: 130}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -141,7 +141,7 @@ func NodeDetailContent(detail NodeDetail) templ.Component {
 				var templ_7745c5c3_Var7 string
 				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(l)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 53, Col: 90}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 63, Col: 90}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 				if templ_7745c5c3_Err != nil {
@@ -190,7 +190,7 @@ func NodeDetailContent(detail NodeDetail) templ.Component {
 				var templ_7745c5c3_Var10 string
 				templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(p.Key)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 66, Col: 71}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 76, Col: 71}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 				if templ_7745c5c3_Err != nil {
@@ -203,7 +203,7 @@ func NodeDetailContent(detail NodeDetail) templ.Component {
 				var templ_7745c5c3_Var11 string
 				templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(p.Key)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 66, Col: 81}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 76, Col: 81}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 				if templ_7745c5c3_Err != nil {
@@ -216,7 +216,7 @@ func NodeDetailContent(detail NodeDetail) templ.Component {
 				var templ_7745c5c3_Var12 string
 				templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(p.Value)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 67, Col: 74}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 77, Col: 74}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 				if templ_7745c5c3_Err != nil {
@@ -239,7 +239,7 @@ func NodeDetailContent(detail NodeDetail) templ.Component {
 		var templ_7745c5c3_Var13 string
 		templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/htmx/node-relations?nodeId=%s", detail.ID))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 76, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 86, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 		if templ_7745c5c3_Err != nil {
@@ -297,7 +297,7 @@ func NodeRelationsContent(groups []RelationGroup) templ.Component {
 				var templ_7745c5c3_Var15 string
 				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(g.TypeLabel)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 98, Col: 137}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 108, Col: 137}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 				if templ_7745c5c3_Err != nil {
@@ -315,7 +315,7 @@ func NodeRelationsContent(groups []RelationGroup) templ.Component {
 					var templ_7745c5c3_Var16 string
 					templ_7745c5c3_Var16, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(rowBg(r.Index))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 102, Col: 29}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 112, Col: 29}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 					if templ_7745c5c3_Err != nil {
@@ -328,7 +328,7 @@ func NodeRelationsContent(groups []RelationGroup) templ.Component {
 					var templ_7745c5c3_Var17 string
 					templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(r.OtherID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 103, Col: 31}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 113, Col: 31}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 					if templ_7745c5c3_Err != nil {
@@ -341,7 +341,7 @@ func NodeRelationsContent(groups []RelationGroup) templ.Component {
 					var templ_7745c5c3_Var18 string
 					templ_7745c5c3_Var18, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(fmt.Sprintf("background:%s", r.OtherColor))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 106, Col: 105}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 116, Col: 105}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 					if templ_7745c5c3_Err != nil {
@@ -354,7 +354,7 @@ func NodeRelationsContent(groups []RelationGroup) templ.Component {
 					var templ_7745c5c3_Var19 string
 					templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(r.OtherName)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 107, Col: 81}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 117, Col: 81}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 					if templ_7745c5c3_Err != nil {
@@ -367,7 +367,7 @@ func NodeRelationsContent(groups []RelationGroup) templ.Component {
 					var templ_7745c5c3_Var20 string
 					templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(r.OtherName)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 107, Col: 97}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 117, Col: 97}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 					if templ_7745c5c3_Err != nil {
@@ -380,7 +380,7 @@ func NodeRelationsContent(groups []RelationGroup) templ.Component {
 					var templ_7745c5c3_Var21 string
 					templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(r.OtherType)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 108, Col: 91}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `detail.templ`, Line: 118, Col: 91}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 					if templ_7745c5c3_Err != nil {

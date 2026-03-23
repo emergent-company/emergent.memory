@@ -2151,44 +2151,6 @@ memory graph branches merge <target-branch-id|main> [flags]
       --source string   Source branch ID to merge from (required)
 ```
 
-## memory graph branches fork
-
-Fork a branch with object copies
-
-### Synopsis
-
-Fork a branch — create a new branch and copy all HEAD objects and
-relationships from the source into it.
-
-SOURCE: use a branch UUID from "memory graph branches list", or the special
-keyword "main" to fork from the main graph (branch_id IS NULL).
-
-Copied objects preserve their canonical IDs so a subsequent merge back
-into the source is aware of shared identity. Only HEAD versions are
-copied (not full version history).
-
-Use --filter-type to selectively copy only certain object types. When
-a filter is applied, relationships where one endpoint was excluded are
-silently skipped (the response reports the skipped count).
-
-Examples:
-  memory graph branches fork main --name "what-if-scenario"
-  memory graph branches fork main --name "subset" --filter-type Service --filter-type API
-  memory graph branches fork <source-branch-id> --name "child" --description "child branch"
-
-```
-memory graph branches fork <source-branch-id|main> [flags]
-```
-
-### Options
-
-```
-      --description string    Branch description (optional)
-      --filter-type strings   Only copy objects of these types (repeatable)
-  -h, --help                  help for fork
-      --name string           New branch name (required)
-```
-
 ## memory graph branches update
 
 Update a branch
