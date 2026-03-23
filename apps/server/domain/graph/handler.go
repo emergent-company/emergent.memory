@@ -461,6 +461,48 @@ func (h *Handler) CreateObject(c echo.Context) error {
 	return c.JSON(http.StatusCreated, result)
 }
 
+// ValidateObject checks whether the given type and properties would pass schema
+// validation without creating any object.
+// @Summary      Validate graph object properties
+// @Description  Validates an object's type and properties against the project schema without persisting anything. Returns coerced properties on success.
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body ValidateObjectRequest true "Object type and properties to validate"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} ValidateObjectResponse
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/validate [post]
+// @Security     bearerAuth
+func (h *Handler) ValidateObject(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req ValidateObjectRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Type == "" {
+		return apperror.ErrBadRequest.WithMessage("type is required")
+	}
+
+	result, err := h.svc.ValidateObject(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
 // UpsertObject creates or updates a graph object by (type, key).
 // @Summary      Upsert graph object
 // @Description  Create or update a graph object identified by its (type, key) combination. If an object with the same type and key exists, it is updated; otherwise, a new object is created.

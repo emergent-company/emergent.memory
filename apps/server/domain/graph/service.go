@@ -316,6 +316,55 @@ func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveH
 }
 
 // Create creates a new graph object.
+// ValidateObjectRequest is the request body for the validate endpoint.
+type ValidateObjectRequest struct {
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties"`
+}
+
+// ValidateObjectResponse is the response from the validate endpoint.
+type ValidateObjectResponse struct {
+	Valid             bool           `json:"valid"`
+	CoercedProperties map[string]any `json:"coercedProperties,omitempty"`
+	Errors            []string       `json:"errors,omitempty"`
+}
+
+// ValidateObject checks whether the given type and properties would pass schema
+// validation without creating any object. Returns coerced properties on success.
+func (s *Service) ValidateObject(ctx context.Context, projectID uuid.UUID, req *ValidateObjectRequest) (*ValidateObjectResponse, error) {
+	if s.schemaProvider == nil {
+		return &ValidateObjectResponse{Valid: true, CoercedProperties: req.Properties}, nil
+	}
+
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil {
+		return nil, apperror.ErrInternal.WithMessage("failed to load schemas")
+	}
+
+	// No schemas installed — everything is valid
+	if schemas == nil || schemas.ObjectSchemas == nil {
+		return &ValidateObjectResponse{Valid: true, CoercedProperties: req.Properties}, nil
+	}
+
+	schema, ok := schemas.ObjectSchemas[req.Type]
+	if !ok {
+		return &ValidateObjectResponse{
+			Valid:  false,
+			Errors: []string{"object_type_not_allowed"},
+		}, nil
+	}
+
+	coerced, err := validateProperties(req.Properties, schema)
+	if err != nil {
+		return &ValidateObjectResponse{
+			Valid:  false,
+			Errors: []string{err.Error()},
+		}, nil
+	}
+
+	return &ValidateObjectResponse{Valid: true, CoercedProperties: coerced}, nil
+}
+
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
 	actorType := "user"
 

@@ -22,6 +22,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	objects.POST("/bulk-update-status", h.BulkUpdateStatus)
 	objects.POST("/bulk", h.BulkCreateObjects)
 	objects.POST("/bulk-update", h.BulkUpdateObjects)
+	objects.POST("/validate", h.ValidateObject)
 	objects.PUT("/upsert", h.UpsertObject)
 	objects.GET("/:id", h.GetObject)
 	objects.GET("/:id/similar", h.GetSimilarObjects) // New: similar objects
