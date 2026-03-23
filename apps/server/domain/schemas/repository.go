@@ -65,19 +65,14 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 
 		tp := pp.MemorySchema
 
-		// Parse object type schemas
+		// Parse object type schemas (supports both array and map storage formats)
 		if len(tp.ObjectTypeSchemas) > 0 {
-			var objectTypes []ObjectTypeSchema
-			if err := json.Unmarshal(tp.ObjectTypeSchemas, &objectTypes); err != nil {
+			objectTypes := parseObjectTypeSchemas(tp.ObjectTypeSchemas, tp.ID, tp.Name, tp.Version)
+			if objectTypes == nil {
 				r.log.Warn("failed to parse object type schemas",
-					slog.String("packId", tp.ID),
-					logger.Error(err))
+					slog.String("packId", tp.ID))
 			} else {
 				for i := range objectTypes {
-					objectTypes[i].SchemaID = tp.ID
-					objectTypes[i].SchemaName = tp.Name
-					objectTypes[i].SchemaVersion = tp.Version
-
 					if prevIdx, seen := seenObjIdx[objectTypes[i].Name]; seen {
 						// Mark the earlier one as shadowed
 						response.ObjectTypes[prevIdx].Shadowed = true
@@ -363,6 +358,37 @@ func (r *Repository) AssignPack(ctx context.Context, projectID, userID string, r
 	}
 
 	return assignment, nil
+}
+
+// parseObjectTypeSchemas parses objectTypeSchemas JSON (array or map format) into
+// a slice of ObjectTypeSchema, setting SchemaID/Name/Version on each entry.
+// It delegates format detection to parseObjectTypeSchemasToMap, then extracts the
+// label/description fields from each entry's raw JSON into the typed struct.
+func parseObjectTypeSchemas(data json.RawMessage, packID, packName, packVersion string) []ObjectTypeSchema {
+	typeMap := parseObjectTypeSchemasToMap(data)
+	if typeMap == nil {
+		return nil
+	}
+
+	result := make([]ObjectTypeSchema, 0, len(typeMap))
+	for typeName, raw := range typeMap {
+		var def struct {
+			Label       string          `json:"label"`
+			Description string          `json:"description"`
+			Properties  json.RawMessage `json:"properties"`
+		}
+		_ = json.Unmarshal(raw, &def)
+		result = append(result, ObjectTypeSchema{
+			Name:          typeName,
+			Label:         def.Label,
+			Description:   def.Description,
+			Properties:    def.Properties,
+			SchemaID:      packID,
+			SchemaName:    packName,
+			SchemaVersion: packVersion,
+		})
+	}
+	return result
 }
 
 // parseObjectTypeSchemasToMap converts the stored objectTypeSchemas JSON into a
