@@ -97,6 +97,22 @@ async function api(path, body) {
 // Visibility toggle — called from click handlers on HTMX-rendered filter items.
 // After toggle, we re-request the filter list from the server with updated state.
 
+// syncHiddenInputs — writes current hidden-type state into the hidden <input>
+// elements that are included via hx-include on each HTMX refresh call.
+// Must be called before every htmx.trigger(document.body, 'refreshFilters').
+function syncHiddenInputs() {
+  const hn = document.getElementById('hidden-node-types');
+  const he = document.getElementById('hidden-edge-types');
+  const sf = document.getElementById('selected-type-filter');
+  if (hn) hn.value = [...hiddenNodeTypes].join(',');
+  if (he) he.value = [...hiddenEdgeTypes].join(',');
+  if (sf) {
+    // Pass the node type of the selected node (for relationship filtering)
+    const selType = selectedNode ? ((nodeData[selectedNode] || {}).type || '') : '';
+    sf.value = selType;
+  }
+}
+
 function applyFilters() {
   graph.forEachNode((node) => {
     const type = (nodeData[node] || {}).type || 'unknown';
@@ -116,10 +132,11 @@ function applyFilters() {
 
 // Delegate click events on HTMX-rendered filter items
 document.addEventListener('click', (e) => {
-  // Node type load (click on the row)
+  // Node type load — clicking the label span loads nodes without toggling visibility
   const loadTarget = e.target.closest('[data-action="load"]');
   if (loadTarget) {
-    const type = loadTarget.closest('[data-type]')?.dataset.type;
+    e.stopPropagation(); // prevent bubbling up to toggle-vis handler on parent row
+    const type = loadTarget.dataset.type || loadTarget.closest('[data-type]')?.dataset.type;
     if (type) loadNodesByType(type);
     return;
   }
@@ -133,7 +150,7 @@ document.addEventListener('click', (e) => {
       if (hiddenNodeTypes.has(type)) hiddenNodeTypes.delete(type); else hiddenNodeTypes.add(type);
       applyFilters();
       // Re-render filter lists via HTMX
-      htmx.trigger(document.body, 'refreshFilters');
+      syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
     }
     return;
   }
@@ -145,7 +162,7 @@ document.addEventListener('click', (e) => {
     if (type) {
       if (hiddenEdgeTypes.has(type)) hiddenEdgeTypes.delete(type); else hiddenEdgeTypes.add(type);
       applyFilters();
-      htmx.trigger(document.body, 'refreshFilters');
+      syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
     }
     return;
   }
@@ -166,19 +183,38 @@ document.addEventListener('click', (e) => {
 });
 
 // Toggle-all buttons
+// Reads type names from the rendered filter-item rows so the toggle works
+// even for types that have no nodes loaded in the graph yet.
+function updateToggleAllLabels() {
+  const nodeTypes = [...document.querySelectorAll('#node-filter-list [data-type]')].map(el => el.dataset.type);
+  const edgeTypes = [...document.querySelectorAll('#edge-filter-list [data-type]')].map(el => el.dataset.type);
+  const nodeBtn = document.getElementById('nodes-toggle-all');
+  const edgeBtn = document.getElementById('edges-toggle-all');
+  if (nodeBtn) {
+    const allHidden = nodeTypes.length > 0 && nodeTypes.every(t => hiddenNodeTypes.has(t));
+    nodeBtn.textContent = allHidden ? 'Show all' : 'Hide all';
+  }
+  if (edgeBtn) {
+    const allHidden = edgeTypes.length > 0 && edgeTypes.every(t => hiddenEdgeTypes.has(t));
+    edgeBtn.textContent = allHidden ? 'Show all' : 'Hide all';
+  }
+}
+
 document.getElementById('nodes-toggle-all')?.addEventListener('click', () => {
-  const types = Object.keys(nodeTypeCounts);
+  const types = [...document.querySelectorAll('#node-filter-list [data-type]')].map(el => el.dataset.type);
+  if (!types.length) return;
   const allHidden = types.every(t => hiddenNodeTypes.has(t));
-  if (allHidden) hiddenNodeTypes.clear(); else types.forEach(t => hiddenNodeTypes.add(t));
+  if (allHidden) { types.forEach(t => hiddenNodeTypes.delete(t)); } else { types.forEach(t => hiddenNodeTypes.add(t)); }
   applyFilters();
-  htmx.trigger(document.body, 'refreshFilters');
+  syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
 });
 document.getElementById('edges-toggle-all')?.addEventListener('click', () => {
-  const types = Object.keys(edgeTypeCounts);
+  const types = [...document.querySelectorAll('#edge-filter-list [data-type]')].map(el => el.dataset.type);
+  if (!types.length) return;
   const allHidden = types.every(t => hiddenEdgeTypes.has(t));
-  if (allHidden) hiddenEdgeTypes.clear(); else types.forEach(t => hiddenEdgeTypes.add(t));
+  if (allHidden) { types.forEach(t => hiddenEdgeTypes.delete(t)); } else { types.forEach(t => hiddenEdgeTypes.add(t)); }
   applyFilters();
-  htmx.trigger(document.body, 'refreshFilters');
+  syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
 });
 
 // ── Graph helpers ─────────────────────────────────────────────────────────
@@ -273,7 +309,7 @@ function mergeExpandResponse(resp) {
   updateStats();
   if (sigmaInstance) sigmaInstance.refresh();
   // Tell HTMX to refresh filter lists
-  htmx.trigger(document.body, 'refreshFilters');
+  syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
 }
 
 function mergeSearchResponse(resp) {
@@ -287,7 +323,7 @@ function mergeSearchResponse(resp) {
   });
   updateStats();
   if (sigmaInstance) sigmaInstance.refresh();
-  htmx.trigger(document.body, 'refreshFilters');
+  syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
 }
 
 // ── Layout system ─────────────────────────────────────────────────────────
@@ -475,7 +511,10 @@ function initSigma() {
       const deg = graph.degree(node);
       res.size = nodeSize(deg);
       if (selectedNode !== null) {
-        if (node === selectedNode) {
+        if (!graph.hasNode(selectedNode)) {
+          // Selected node was removed — treat as no selection
+          res.label = '';
+        } else if (node === selectedNode) {
           res.highlighted = true; res.size *= 1.5; res.zIndex = 2;
         } else if (graph.neighbors(selectedNode).includes(node)) {
           res.color = data.color;
@@ -494,7 +533,7 @@ function initSigma() {
       const [src, dst] = graph.extremities(edge);
       if (data.hidden || graph.getNodeAttribute(src, 'hidden') || graph.getNodeAttribute(dst, 'hidden'))
         return { ...res, hidden: true };
-      if (selectedNode !== null) {
+      if (selectedNode !== null && graph.hasNode(selectedNode)) {
         if (src === selectedNode || dst === selectedNode) {
           res.color = graph.getNodeAttribute(src, 'color') + 'cc'; res.size = 2.5; res.zIndex = 1;
         } else {
@@ -511,6 +550,7 @@ function initSigma() {
 
 // ── Node selection ────────────────────────────────────────────────────────
 function selectNode(id) {
+  if (!graph.hasNode(id)) return;
   if (id !== selectedNode) {
     if (expandedNode) collapseExpanded();
     if (focusActive) { focusActive = false; applyFilters(); }
@@ -628,7 +668,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   Object.keys(edgeTypeCounts).forEach(k => delete edgeTypeCounts[k]);
   updateStats();
   updateExpandBtn(); updateFocusBtn();
-  htmx.trigger(document.body, 'refreshFilters');
+  syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
 });
 
 // ── Expand (toggle) ───────────────────────────────────────────────────────
@@ -673,7 +713,7 @@ function collapseExpanded() {
   updateStats();
   if (sigmaInstance) sigmaInstance.refresh();
   updateExpandBtn();
-  htmx.trigger(document.body, 'refreshFilters');
+  syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
 }
 
 async function expandNode(nodeId) {
@@ -722,7 +762,7 @@ async function loadNodesByType(type) {
     if (sigmaInstance) sigmaInstance.refresh();
     runLayout({ resetPositions: prevOrder === 0 });
     showToast(`+${added} ${type} node${added !== 1 ? 's' : ''} loaded`);
-    htmx.trigger(document.body, 'refreshFilters');
+    syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
   } catch (e) { showToast('Load failed: ' + e.message, 3500); }
   finally { stopLoading(); }
 }
@@ -748,5 +788,13 @@ document.getElementById('search-btn').addEventListener('click', doSearch);
 $searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
 
 // ── Boot ──────────────────────────────────────────────────────────────────
+// Update toggle-all button labels whenever the filter lists are re-rendered.
+document.addEventListener('htmx:after:swap', (e) => {
+  const id = e.target?.id;
+  if (id === 'node-filter-list' || id === 'edge-filter-list') {
+    updateToggleAllLabels();
+  }
+});
+
 initSigma();
 updateStats();

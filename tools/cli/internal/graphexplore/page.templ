@@ -13,8 +13,14 @@ templ PageLayout(projectID string) {
 		<!-- DaisyUI v5 + Tailwind CSS v4 (browser) -->
 		<link href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19" rel="stylesheet" type="text/css"/>
 		<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.2"></script>
-		<!-- HTMX -->
-		<script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
+		<!-- HTMX v4 -->
+		<script>
+			// Prevent 4xx/5xx error responses from being swapped into panels
+			window.htmx = window.htmx || {};
+			window.htmx.config = window.htmx.config || {};
+			window.htmx.config.noSwap = [204, 304, '4xx', '5xx'];
+		</script>
+		<script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0-alpha8/dist/htmx.min.js"></script>
 		<style type="text/tailwindcss">
 			@theme {
 				--color-gh-bg:      #0d1117;

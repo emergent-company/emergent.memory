@@ -1626,6 +1626,31 @@ memory embeddings pause [flags]
   -h, --help   help for pause
 ```
 
+## memory embeddings progress
+
+Show embedding job queue progress (pending, processing, completed, failed)
+
+### Synopsis
+
+Show embedding job queue statistics for all queues.
+
+Displays counts of pending, processing, completed, failed, and dead-letter jobs
+for both the graph object and graph relationship embedding queues.
+
+Examples:
+  memory embeddings progress
+  memory embeddings progress --server http://your-server:3002
+
+```
+memory embeddings progress [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for progress
+```
+
 ## memory embeddings resume
 
 Resume all embedding workers
@@ -2436,6 +2461,7 @@ memory graph objects update <id> [flags]
 ### Options
 
 ```
+      --branch string       Branch ID to update the object on (omit for main branch)
   -h, --help                help for update
       --key string          Set a stable key on the object (enables cross-session src_key/dst_key references)
       --properties string   JSON properties object to merge
@@ -2621,8 +2647,12 @@ Install the built-in Memory skills from the embedded catalog into
 Only skills with the "memory-" prefix are installed. This is the set of skills
 that teach AI agents how to use the Memory CLI and platform.
 
-By default the command skips skills that already exist. Use --force to
-overwrite existing skill directories.
+By default the command skips skills that are already up to date. Skills whose
+content has changed since they were last installed are reported as outdated —
+use --force to overwrite them with the latest version.
+
+Use --global to also install into all known global agent skill directories that
+already exist on disk (e.g. ~/.opencode/skills, ~/.claude/skills, ~/.gemini/skills).
 
 After installing, any "memory-" prefixed skill directories in the target that
 are no longer present in the catalog are considered stale. Use --prune to
@@ -2637,6 +2667,7 @@ memory install-memory-skills [flags]
 ```
       --dir string   target directory (default: .agents/skills relative to cwd)
       --force        overwrite existing skill directories
+      --global       also install into known global agent skill dirs (e.g. ~/.opencode/skills, ~/.claude/skills)
   -h, --help         help for install-memory-skills
       --prune        remove stale memory-* skill directories not present in the catalog
 ```
@@ -3541,6 +3572,10 @@ Prints two tables: Object Types (columns: Name, Label, Schema, Description)
 and Relationship Types (columns: Name, Label, Source → Target, Schema). Use
 --output json to receive the raw compiled types as JSON.
 
+With --verbose, additional columns show the schema version and whether a type
+is shadowed (overridden) by a higher-priority schema. Shadowed types also emit
+a warning to stderr.
+
 ```
 memory schemas compiled-types [flags]
 ```
@@ -3548,16 +3583,17 @@ memory schemas compiled-types [flags]
 ### Options
 
 ```
-  -h, --help   help for compiled-types
+  -h, --help      help for compiled-types
+      --verbose   Include schema version and shadowed status in output
 ```
 
 ## memory schemas create
 
-Create a schema from a JSON file
+Create a schema from a JSON or YAML file
 
 ### Synopsis
 
-Create a new schema by loading its definition from a JSON file
+Create a new schema by loading its definition from a JSON or YAML file
 
 ```
 memory schemas create [flags]
@@ -3588,6 +3624,28 @@ memory schemas delete <schema-id> [flags]
   -h, --help   help for delete
 ```
 
+## memory schemas diff
+
+Diff a local schema file against the currently installed version
+
+### Synopsis
+
+Compare a local schema definition file against the version already stored in the
+registry. Shows which object and relationship types would be added or removed.
+
+Requires --file pointing to a JSON, YAML, or YML schema file.
+
+```
+memory schemas diff <schema-id> --file <path> [flags]
+```
+
+### Options
+
+```
+      --file string   Path to incoming schema file (JSON, YAML, or YML)
+  -h, --help          help for diff
+```
+
 ## memory schemas get
 
 Get a schema by ID
@@ -3610,6 +3668,28 @@ memory schemas get <schema-id> [flags]
   -h, --help   help for get
 ```
 
+## memory schemas history
+
+Show installation history for schemas on the current project
+
+### Synopsis
+
+Show the full installation history for schemas assigned to the current project,
+including schemas that have since been removed (soft-deleted).
+
+Output is a table with columns: Assignment ID, Schema ID, Name, Version,
+Installed, Removed. Use --output json to receive the full list as JSON.
+
+```
+memory schemas history [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for history
+```
+
 ## memory schemas install
 
 Install a schema into the current project
@@ -3618,9 +3698,9 @@ Install a schema into the current project
 
 Install a schema into the current project.
 
-Two modes:
-  install <schema-id>         Install an existing schema from the registry by ID.
-  install --file schema.json  Create a new schema from a JSON file and install it in one step.
+	Two modes:
+  install <schema-id>          Install an existing schema from the registry by ID.
+  install --file schema.json   Create a new schema from a JSON or YAML file and install it in one step.
 
 ```
 memory schemas install [<schema-id>] [flags]
@@ -3629,10 +3709,12 @@ memory schemas install [<schema-id>] [flags]
 ### Options
 
 ```
-      --dry-run       Preview what would be installed without making changes
-      --file string   Create schema from JSON file and install in one step
-  -h, --help          help for install
-      --merge         Additively merge incoming type schemas into existing registered types
+      --auto-uninstall   Uninstall the from-version schema after successful migration chain
+      --dry-run          Preview what would be installed without making changes
+      --file string      Create schema from JSON file and install in one step
+      --force            Force migration even if risk level is dangerous
+  -h, --help             help for install
+      --merge            Additively merge incoming type schemas into existing registered types
 ```
 
 ## memory schemas installed
@@ -3683,25 +3765,187 @@ memory schemas list [flags]
   -h, --help        help for list
 ```
 
+## memory schemas migrate
+
+Migrate live graph data by renaming types or properties
+
+### Synopsis
+
+Rename object types or properties across live graph objects and edges.
+
+Use --rename-type OldName:NewName to rename an object or edge type.
+Use --rename-property OldType.old_key:OldType.new_key to rename a property within a type.
+Both flags are repeatable. At least one rename must be provided.
+
+Use --dry-run to preview how many objects/edges would be affected without making changes.
+
+```
+memory schemas migrate [flags]
+```
+
+### Options
+
+```
+      --dry-run                       Preview migration without making changes
+  -h, --help                          help for migrate
+      --rename-property stringArray   Rename a property: OldType.old_key:OldType.new_key (repeatable)
+      --rename-type stringArray       Rename a type: OldName:NewName (repeatable)
+```
+
+## memory schemas migrate commit
+
+Commit (prune) migration archive data through a given schema version
+
+### Synopsis
+
+Remove migration_archive entries from all project objects whose to_version is
+<= the given through_version. Once committed, rollback to those versions is no
+longer possible.
+
+This is an explicit user action — run after a migration has been stable for
+some time. The assignment itself is unaffected.
+
+```
+memory schemas migrate commit [flags]
+```
+
+### Options
+
+```
+  -h, --help                     help for commit
+      --through-version string   Prune archive entries at or below this version (required)
+```
+
+## memory schemas migrate execute
+
+Execute a schema migration (System A: full field-level migration with archive)
+
+### Synopsis
+
+Migrate live graph objects from one schema version to another using System A
+(SchemaMigrator). Applies type renames, property renames, and archives dropped
+properties for rollback.
+
+Use --force to bypass the dangerous-risk block. Use --max-objects to limit how
+many objects are migrated (useful for staged rollouts).
+
+A confirmation prompt is shown for risky or dangerous migrations unless --force
+is set.
+
+```
+memory schemas migrate execute [flags]
+```
+
+### Options
+
+```
+      --force             Force migration even if risk level is dangerous
+      --from string       Source schema ID (required)
+  -h, --help              help for execute
+      --max-objects int   Limit number of objects to migrate (0 = no limit)
+      --to string         Target schema ID (required)
+```
+
+## memory schemas migrate job
+
+Check the status of an async schema migration job
+
+### Synopsis
+
+Poll the status of a background schema migration job.
+
+Use --job-id to specify the job ID (returned by 'memory schemas install' when
+auto-migration is triggered).
+
+Use --wait to block until the job completes, streaming progress updates every
+2 seconds.
+
+```
+memory schemas migrate job [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for job
+      --job-id string   Migration job ID to poll (required)
+      --wait            Block until job completes, streaming progress updates
+```
+
+## memory schemas migrate preview
+
+Preview a schema migration (risk assessment, no data changes)
+
+### Synopsis
+
+Preview the risk of migrating live graph objects from one schema version to another.
+
+Returns a risk breakdown per object type (safe/cautious/risky/dangerous) and a
+total object count, but makes no data changes.
+
+Use --from and --to to specify the source and target schema IDs.
+
+```
+memory schemas migrate preview [flags]
+```
+
+### Options
+
+```
+      --from string   Source schema ID (required)
+  -h, --help          help for preview
+      --to string     Target schema ID (required)
+```
+
+## memory schemas migrate rollback
+
+Roll back a schema migration by restoring archived property data
+
+### Synopsis
+
+Restore property data archived during a previous migration.
+
+Use --to-version to specify which schema version to roll back to.
+Use --restore-registry to also restore the type registry to the pre-migration state
+(re-installs the old schema types and removes new additions). This is a transactional
+operation — if any step fails, the entire rollback is reverted.
+
+```
+memory schemas migrate rollback [flags]
+```
+
+### Options
+
+```
+  -h, --help                help for rollback
+      --restore-registry    Also restore type registry to the pre-migration state
+      --to-version string   Schema version to roll back to (required)
+```
+
 ## memory schemas uninstall
 
 Uninstall (remove) a schema assignment from the current project
 
 ### Synopsis
 
-Remove a schema assignment from the current project by its assignment ID.
+Remove a schema assignment from the current project.
 
-Use 'memory schemas installed' to list assignment IDs. Prints
-"Schema assignment <id> removed." on success.
+Single mode: provide the assignment ID to remove one schema.
+Bulk mode: use --all-except or --keep-latest to remove multiple schemas.
+
+Use 'memory schemas installed' to list assignment IDs.
 
 ```
-memory schemas uninstall <assignment-id> [flags]
+memory schemas uninstall [<assignment-id>] [flags]
 ```
 
 ### Options
 
 ```
-  -h, --help   help for uninstall
+      --all-except string   Remove all assignments except the comma-separated IDs (assignment IDs or schema IDs)
+      --dry-run             Preview what would be removed without making changes
+  -h, --help                help for uninstall
+      --keep-latest         Remove all but the most-recently installed assignment per unique schema
 ```
 
 ## memory server

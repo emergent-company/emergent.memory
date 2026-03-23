@@ -46,8 +46,16 @@ Examples:
 		}
 		c.SetContext("", projectID)
 
+		if projectID == "" {
+			return fmt.Errorf("project is required for graph explore. Use --project flag or configure a project with 'memory config set project_id <id>'")
+		}
+
 		serverURL := c.BaseURL()
 		authHeader := c.AuthorizationHeader()
+
+		if authHeader == "" {
+			return fmt.Errorf("no authentication credentials found. Run 'memory login' or 'memory auth set-token <token>'")
+		}
 
 		// Find a free port
 		port := graphExplorePortFlag

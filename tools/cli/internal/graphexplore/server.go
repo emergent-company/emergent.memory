@@ -62,17 +62,14 @@ func (s *Server) typeColor(typeName string) string {
 	return c
 }
 
-// typeIcon returns the icon for a type (emoji from registry or first letter).
+// typeIcon returns the icon for a type (resolved from registry or first letter).
 func (s *Server) typeIcon(typeName string) string {
 	for _, ot := range s.objectTypes {
 		if ot.Name == typeName && ot.Icon != "" {
 			return ot.Icon
 		}
 	}
-	if typeName == "" {
-		return "?"
-	}
-	return strings.ToUpper(string([]rune(typeName)[0:1]))
+	return firstLetter(typeName)
 }
 
 // proxyGet makes a GET request to the Memory API server.
@@ -103,13 +100,23 @@ func (s *Server) loadSchema() error {
 		return nil
 	}
 
+	if s.ProjectID == "" {
+		return fmt.Errorf("no project ID configured — restart with --project <id>")
+	}
+
 	// 1. compiled-types
 	body, status, err := s.proxyGet(fmt.Sprintf("/api/schemas/projects/%s/compiled-types", s.ProjectID))
 	if err != nil {
 		return fmt.Errorf("compiled-types: %w", err)
 	}
+	if status == 401 {
+		return fmt.Errorf("authentication failed (HTTP 401) — credentials may be expired, run 'memory login'")
+	}
+	if status == 403 {
+		return fmt.Errorf("access denied (HTTP 403) — check project permissions")
+	}
 	if status != 200 {
-		return fmt.Errorf("compiled-types: HTTP %d", status)
+		return fmt.Errorf("compiled-types: HTTP %d — %s", status, truncateBody(body, 200))
 	}
 
 	var compiled struct {
@@ -150,7 +157,9 @@ func (s *Server) loadSchema() error {
 			s.typeColorMap[ot.Name] = color
 		}
 		if icon == "" {
-			icon = strings.ToUpper(string([]rune(ot.Name)[0:1]))
+			icon = firstLetter(ot.Name)
+		} else {
+			icon = resolveIcon(icon, ot.Name)
 		}
 		desc := ot.Description
 		if desc == "" {
@@ -190,7 +199,9 @@ func (s *Server) loadSchema() error {
 				color = s.typeColor(e.Type)
 			}
 			if icon == "" {
-				icon = strings.ToUpper(string([]rune(e.Type)[0:1]))
+				icon = firstLetter(e.Type)
+			} else {
+				icon = resolveIcon(icon, e.Type)
 			}
 			s.objectTypes = append(s.objectTypes, ObjectType{
 				Name:        e.Type,
@@ -240,7 +251,10 @@ func (s *Server) loadSchema() error {
 		}
 	}
 
-	s.schemaLoaded = true
+	// Only cache if we got at least some types — if empty, allow retry on next request
+	if len(s.objectTypes) > 0 || len(s.relationshipTypes) > 0 {
+		s.schemaLoaded = true
+	}
 	return nil
 }
 
@@ -624,4 +638,12 @@ func coalesce(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// truncateBody returns at most maxLen bytes of a response body for error messages.
+func truncateBody(body []byte, maxLen int) string {
+	if len(body) <= maxLen {
+		return string(body)
+	}
+	return string(body[:maxLen]) + "..."
 }

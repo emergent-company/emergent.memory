@@ -14,12 +14,16 @@ templ LeftPanel(nodeTypes []ObjectType, edgeTypes []RelationshipType) {
 					class="text-[10px] text-gh-accent hover:underline bg-transparent border-none cursor-pointer p-0"
 				>Hide all</button>
 			</div>
+			<!-- hidden inputs carry state back to server on each HTMX refresh -->
+			<input type="hidden" id="hidden-node-types" name="hiddenNodeTypes" value=""/>
+			<input type="hidden" id="selected-type-filter" name="selectedType" value=""/>
 			<div
 				id="node-filter-list"
 				class="flex-1 overflow-y-auto py-1"
 				hx-get="/htmx/node-types"
 				hx-trigger="load, refreshFilters from:body"
 				hx-swap="innerHTML"
+				hx-include="#hidden-node-types"
 			>
 				<div class="px-3 py-3 text-[11px] text-gh-muted">Loading types…</div>
 			</div>
@@ -33,12 +37,14 @@ templ LeftPanel(nodeTypes []ObjectType, edgeTypes []RelationshipType) {
 					class="text-[10px] text-gh-accent hover:underline bg-transparent border-none cursor-pointer p-0"
 				>Hide all</button>
 			</div>
+			<input type="hidden" id="hidden-edge-types" name="hiddenEdgeTypes" value=""/>
 			<div
 				id="edge-filter-list"
 				class="flex-1 overflow-y-auto py-1"
 				hx-get="/htmx/edge-types"
 				hx-trigger="load, refreshFilters from:body"
 				hx-swap="innerHTML"
+				hx-include="#hidden-edge-types, #selected-type-filter"
 			>
 			</div>
 		</div>
@@ -53,47 +59,52 @@ templ NodeTypeList(types []ObjectType) {
 }
 
 // NodeTypeItem renders a single node type row in the filter list.
+// Uses the same checkbox pattern as EdgeTypeItem for visual consistency.
 templ NodeTypeItem(t ObjectType) {
 	<div
-		class={ "group flex items-center gap-0 hover:bg-gh-surface2 transition-colors border-b border-gh-border/40",
-			templ.KV("opacity-50", t.Hidden) }
+		class={ "filter-item flex items-center gap-2 px-2 py-1.5 border-b border-gh-border/40 hover:bg-gh-surface2 transition-colors cursor-pointer",
+			templ.KV("opacity-40", t.Hidden) }
 		data-type={ t.Name }
+		data-action="toggle-vis"
 	>
-		<div
-			class="flex items-center gap-2 flex-1 min-w-0 px-2 py-2 cursor-pointer"
+		<!-- colour dot with icon -->
+		<span
+			class="w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-white shadow-sm"
+			style={ fmt.Sprintf("background:%s;font-size:%s;font-weight:700;line-height:1", t.Color, iconFontSize(t.Icon)) }
+		>{ t.Icon }</span>
+		<!-- type name — clicking the row loads the type into graph -->
+		<span
+			class="flex-1 text-[12px] text-gh-text truncate font-medium"
 			data-action="load"
+			data-type={ t.Name }
 			if t.Description != "" {
 				title={ t.Description }
 			}
+		>{ displayType(t.Name) }</span>
+		<!-- count -->
+		<span
+			class={ "text-[10px] shrink-0",
+				templ.KV("text-gh-accent font-semibold", t.InGraph > 0),
+				templ.KV("text-gh-muted", t.InGraph == 0) }
+		>{ countLabel(t.InGraph, t.Count) }</span>
+		<!-- checkbox, same as edge types -->
+		<span
+			class={ "w-3.5 h-3.5 rounded-sm shrink-0 flex items-center justify-center text-[9px] text-white",
+				templ.KV("bg-gh-accent border border-gh-accent", !t.Hidden),
+				templ.KV("bg-gh-surface2 border border-gh-border", t.Hidden) }
 		>
-			<span
-				class="w-6 h-6 rounded-full shrink-0 flex items-center justify-center shadow-sm text-white"
-				style={ fmt.Sprintf("background:%s;font-size:%s;font-weight:700;line-height:1", t.Color, iconFontSize(t.Icon)) }
-			>{ t.Icon }</span>
-			<span class="flex-1 text-[12px] text-gh-text truncate font-medium">{ displayType(t.Name) }</span>
-			<span
-				class={ "text-[10px] shrink-0",
-					templ.KV("text-gh-accent font-semibold", t.InGraph > 0),
-					templ.KV("text-gh-muted", t.InGraph == 0) }
-			>{ countLabel(t.InGraph, t.Count) }</span>
-		</div>
-		<button
-			data-action="toggle-vis"
-			data-type={ t.Name }
-			title={ visTitle(t.Hidden, t.Name) }
-			class="shrink-0 px-1.5 py-2 text-gh-muted hover:text-gh-text opacity-0 group-hover:opacity-100 transition-opacity"
-		>
-			if t.Hidden {
-				@EyeOffIcon()
-			} else {
-				@EyeOnIcon()
+			if !t.Hidden {
+				✓
 			}
-		</button>
+		</span>
 	</div>
 }
 
 // EdgeTypeList renders the list of edge type filter items (HTMX partial).
 templ EdgeTypeList(types []RelationshipType) {
+	if len(types) == 0 {
+		<div class="px-3 py-3 text-[11px] text-gh-muted italic">No relationships for visible types</div>
+	}
 	for _, t := range types {
 		@EdgeTypeItem(t)
 	}
@@ -132,7 +143,7 @@ templ EdgeTypeItem(t RelationshipType) {
 	</div>
 }
 
-// SVG icons for eye on/off
+// SVG icons (kept for potential future use)
 templ EyeOnIcon() {
 	<svg width="13" height="13" viewBox="0 0 16 16" fill="none">
 		<ellipse cx="8" cy="8" rx="7" ry="4.5" stroke="currentColor" stroke-width="1.4"></ellipse>
