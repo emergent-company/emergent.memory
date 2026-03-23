@@ -13,7 +13,6 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
-	"github.com/emergent-company/emergent.memory/domain/schemaregistry"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 )
 
@@ -104,7 +103,7 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 		Name                    string          `bun:"name,notnull"`
 		Version                 string          `bun:"version,notnull"`
 		ObjectTypeSchemas       json.RawMessage `bun:"object_type_schemas,type:jsonb"`
-		RelationshipTypeSchemas JSONMap         `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
+		RelationshipTypeSchemas json.RawMessage `bun:"relationship_type_schemas,type:jsonb"`
 	}
 
 	type ProjectSchemaAssignment struct {
@@ -198,40 +197,7 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 			objectSchemas[typeName] = schema
 		}
 
-		for typeName, schemaRaw := range pack.RelationshipTypeSchemas {
-			schemaMap, ok := schemaRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			// Re-marshal the raw map and unmarshal into schemaregistry.RelationshipSchema
-			// to leverage its multi-convention field parsing and helper methods.
-			schemaBytes, err := json.Marshal(schemaMap)
-			if err != nil {
-				continue
-			}
-			var rs schemaregistry.RelationshipSchema
-			if err := json.Unmarshal(schemaBytes, &rs); err != nil {
-				continue
-			}
-
-			schema := agents.RelationshipSchema{Name: typeName}
-			schema.Description = rs.Description
-			schema.SourceTypes = rs.GetSourceTypes()
-			schema.TargetTypes = rs.GetTargetTypes()
-
-			// Copy properties and required fields.
-			if len(rs.Properties) > 0 {
-				schema.Properties = make(map[string]agents.PropertyDef, len(rs.Properties))
-				for propName, propDef := range rs.Properties {
-					schema.Properties[propName] = agents.PropertyDef{
-						Type:        propDef.Type,
-						Description: propDef.Description,
-					}
-				}
-			}
-			schema.Required = rs.Required
-
+		for typeName, schema := range parseRelationshipTypeSchemasToMap(pack.RelationshipTypeSchemas) {
 			relationshipSchemas[typeName] = schema
 		}
 	}
@@ -500,4 +466,153 @@ func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessag
 	}
 
 	return nil
+}
+
+// parseRelationshipTypeSchemasToMap normalises the two JSONB storage formats for
+// relationship_type_schemas into a map[name]agents.RelationshipSchema.
+//
+// Storage formats:
+//   - Map format:   {"belongs_to": {"sourceTypes": [...], "targetTypes": [...]}, ...}
+//   - Array format: [{"name": "belongs_to", "sourceType": "Service", "targetType": "Domain"}, ...]
+//
+// The array format allows multiple entries with the same relationship name but different
+// sourceType/targetType pairs. These are merged into a single RelationshipSchema with
+// combined SourceTypes/TargetTypes slices (avoiding last-one-wins overwriting).
+func parseRelationshipTypeSchemasToMap(data json.RawMessage) map[string]agents.RelationshipSchema {
+	if len(data) == 0 {
+		return nil
+	}
+
+	result := make(map[string]agents.RelationshipSchema)
+
+	// Try array format first (used by user-uploaded YAML/JSON schemas).
+	type relEntryRaw struct {
+		Name         string          `json:"name"`
+		Description  string          `json:"description"`
+		SourceType   string          `json:"sourceType"`
+		TargetType   string          `json:"targetType"`
+		SourceTypes  []string        `json:"sourceTypes"`
+		TargetTypes  []string        `json:"targetTypes"`
+		Source       string          `json:"source"`
+		Target       string          `json:"target"`
+		SnakeSrcType string          `json:"source_type"`
+		SnakeTgtType string          `json:"target_type"`
+		Properties   json.RawMessage `json:"properties"`
+		Required     []string        `json:"required"`
+	}
+
+	var arr []relEntryRaw
+	if err := json.Unmarshal(data, &arr); err == nil && len(arr) > 0 {
+		for _, entry := range arr {
+			if entry.Name == "" {
+				continue
+			}
+
+			// Collect all source/target types from all naming conventions.
+			srcTypes := append(entry.SourceTypes, entry.SnakeSrcType, entry.SourceType, entry.Source)
+			tgtTypes := append(entry.TargetTypes, entry.SnakeTgtType, entry.TargetType, entry.Target)
+
+			// Filter empty strings.
+			var filteredSrc, filteredTgt []string
+			for _, s := range srcTypes {
+				if s != "" {
+					filteredSrc = append(filteredSrc, s)
+				}
+			}
+			for _, t := range tgtTypes {
+				if t != "" {
+					filteredTgt = append(filteredTgt, t)
+				}
+			}
+
+			existing, alreadySeen := result[entry.Name]
+			if alreadySeen {
+				// Merge source/target types from this entry into the existing schema.
+				existing.SourceTypes = appendUnique(existing.SourceTypes, filteredSrc...)
+				existing.TargetTypes = appendUnique(existing.TargetTypes, filteredTgt...)
+				result[entry.Name] = existing
+			} else {
+				schema := agents.RelationshipSchema{
+					Name:        entry.Name,
+					Description: entry.Description,
+					SourceTypes: filteredSrc,
+					TargetTypes: filteredTgt,
+				}
+				if len(entry.Properties) > 0 {
+					var propMap map[string]agents.PropertyDef
+					if json.Unmarshal(entry.Properties, &propMap) == nil {
+						schema.Properties = propMap
+					}
+				}
+				schema.Required = entry.Required
+				result[entry.Name] = schema
+			}
+		}
+		if len(result) > 0 {
+			return result
+		}
+	}
+
+	// Fall back to map format (used by epf-engine v3 seeds and blueprints).
+	type relMapEntry struct {
+		Description string          `json:"description"`
+		SourceTypes []string        `json:"sourceTypes"`
+		TargetTypes []string        `json:"targetTypes"`
+		SourceType  string          `json:"sourceType"`
+		TargetType  string          `json:"targetType"`
+		Properties  json.RawMessage `json:"properties"`
+		Required    []string        `json:"required"`
+	}
+	var mapFmt map[string]relMapEntry
+	if err := json.Unmarshal(data, &mapFmt); err == nil && len(mapFmt) > 0 {
+		for name, entry := range mapFmt {
+			src := append(entry.SourceTypes, entry.SourceType)
+			tgt := append(entry.TargetTypes, entry.TargetType)
+			var filteredSrc, filteredTgt []string
+			for _, s := range src {
+				if s != "" {
+					filteredSrc = append(filteredSrc, s)
+				}
+			}
+			for _, t := range tgt {
+				if t != "" {
+					filteredTgt = append(filteredTgt, t)
+				}
+			}
+			schema := agents.RelationshipSchema{
+				Name:        name,
+				Description: entry.Description,
+				SourceTypes: filteredSrc,
+				TargetTypes: filteredTgt,
+				Required:    entry.Required,
+			}
+			if len(entry.Properties) > 0 {
+				var propMap map[string]agents.PropertyDef
+				if json.Unmarshal(entry.Properties, &propMap) == nil {
+					schema.Properties = propMap
+				}
+			}
+			result[name] = schema
+		}
+		if len(result) > 0 {
+			return result
+		}
+	}
+
+	return nil
+}
+
+// appendUnique appends values to a slice, skipping duplicates.
+func appendUnique(slice []string, values ...string) []string {
+	seen := make(map[string]struct{}, len(slice))
+	for _, s := range slice {
+		seen[s] = struct{}{}
+	}
+	for _, v := range values {
+		if _, ok := seen[v]; !ok {
+			seen[v] = struct{}{}
+			slice = append(slice, v)
+		}
+	}
+	return slice
 }

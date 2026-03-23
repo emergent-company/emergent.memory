@@ -55,7 +55,10 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 
 	// Track seen type names; later installs override earlier ones (mark earlier as shadowed)
 	seenObjIdx := map[string]int{} // typeName → index in response.ObjectTypes
-	seenRelIdx := map[string]int{} // typeName → index in response.RelationshipTypes
+	// For relationships, the key is "name|sourceType|targetType" because the same relationship
+	// name can legitimately appear multiple times with different source/target type pairs.
+	// Cross-pack shadowing only applies to the exact same (name, source, target) triple.
+	seenRelIdx := map[string]int{} // "name|sourceType|targetType" → index in response.RelationshipTypes
 
 	// Compile types from all active packs
 	for _, pp := range projectPacks {
@@ -91,10 +94,11 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 					slog.String("packId", tp.ID))
 			} else {
 				for i := range relTypes {
-					if prevIdx, seen := seenRelIdx[relTypes[i].Name]; seen {
+					relKey := relTypes[i].Name + "|" + relTypes[i].SourceType + "|" + relTypes[i].TargetType
+					if prevIdx, seen := seenRelIdx[relKey]; seen {
 						response.RelationshipTypes[prevIdx].Shadowed = true
 					}
-					seenRelIdx[relTypes[i].Name] = len(response.RelationshipTypes)
+					seenRelIdx[relKey] = len(response.RelationshipTypes)
 					response.RelationshipTypes = append(response.RelationshipTypes, relTypes[i])
 				}
 			}

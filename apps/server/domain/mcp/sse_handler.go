@@ -161,6 +161,11 @@ func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 	// Process request
 	response := h.processRequest(c, &req, projectID, user)
 
+	// Notifications return nil — no response per JSON-RPC 2.0 spec
+	if response == nil {
+		return c.NoContent(http.StatusAccepted)
+	}
+
 	// Send response via SSE if session exists
 	if sessionID != "" {
 		h.sseSessionsMu.RLock()
@@ -190,6 +195,16 @@ func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID stri
 	h.sseSessionsMu.RLock()
 	session, sessionExists := h.sseSessions[sessionID]
 	h.sseSessionsMu.RUnlock()
+
+	// Handle notifications (no id = no response expected per JSON-RPC 2.0)
+	if req.IsNotification() {
+		if req.Method == "notifications/initialized" && sessionExists {
+			h.sseSessionsMu.Lock()
+			session.Initialized = true
+			h.sseSessionsMu.Unlock()
+		}
+		return nil
+	}
 
 	switch req.Method {
 	case "initialize":
