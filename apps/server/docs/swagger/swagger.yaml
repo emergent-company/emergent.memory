@@ -6263,7 +6263,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.35.95
+  version: 0.35.99
 paths:
   /api/admin/agent-definitions/{id}/sandbox-config:
     get:
@@ -8746,6 +8746,9 @@ paths:
       responses: {}
   /api/embeddings/pause:
     post:
+      responses: {}
+  /api/embeddings/progress:
+    get:
       responses: {}
   /api/embeddings/resume:
     post:

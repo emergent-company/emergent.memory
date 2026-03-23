@@ -3829,6 +3829,11 @@ const docTemplate = `{
                 "responses": {}
             }
         },
+        "/api/embeddings/progress": {
+            "get": {
+                "responses": {}
+            }
+        },
         "/api/embeddings/resume": {
             "post": {
                 "responses": {}
@@ -27096,7 +27101,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.35.95",
+	Version:          "0.35.99",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

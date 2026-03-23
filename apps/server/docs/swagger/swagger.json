@@ -15,7 +15,7 @@
         "license": {
             "name": "Proprietary"
         },
-        "version": "0.35.95"
+        "version": "0.35.99"
     },
     "host": "localhost:5300",
     "basePath": "/",
@@ -3824,6 +3824,11 @@
         },
         "/api/embeddings/pause": {
             "post": {
+                "responses": {}
+            }
+        },
+        "/api/embeddings/progress": {
+            "get": {
                 "responses": {}
             }
         },
