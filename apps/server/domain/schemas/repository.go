@@ -240,13 +240,13 @@ func (r *Repository) MigrateTypes(ctx context.Context, projectID string, req *Mi
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// Process type renames
 		for _, tr := range req.TypeRenames {
-			// Update kb.graph_objects.type_name
+			// Update kb.graph_objects.type
 			var objCount int
 			err := tx.NewRaw(`
 				WITH updated AS (
 					UPDATE kb.graph_objects
-					SET type_name = ?, updated_at = NOW()
-					WHERE project_id = ? AND type_name = ?
+					SET type = ?, updated_at = NOW()
+					WHERE project_id = ? AND type = ?
 					RETURNING 1
 				) SELECT COUNT(*) FROM updated
 			`, tr.To, projectID, tr.From).Scan(ctx, &objCount)
@@ -254,13 +254,13 @@ func (r *Repository) MigrateTypes(ctx context.Context, projectID string, req *Mi
 				return fmt.Errorf("rename type %s objects: %w", tr.From, err)
 			}
 
-			// Update kb.graph_edges.type_name
+			// Update kb.graph_relationships.type
 			var edgeCount int
 			err = tx.NewRaw(`
 				WITH updated AS (
-					UPDATE kb.graph_edges
-					SET type_name = ?, updated_at = NOW()
-					WHERE project_id = ? AND type_name = ?
+					UPDATE kb.graph_relationships
+					SET type = ?
+					WHERE project_id = ? AND type = ?
 					RETURNING 1
 				) SELECT COUNT(*) FROM updated
 			`, tr.To, projectID, tr.From).Scan(ctx, &edgeCount)
@@ -284,7 +284,7 @@ func (r *Repository) MigrateTypes(ctx context.Context, projectID string, req *Mi
 					UPDATE kb.graph_objects
 					SET properties = (properties - ?) || jsonb_build_object(?, properties->?),
 					    updated_at = NOW()
-					WHERE project_id = ? AND type_name = ? AND properties ? ?
+					WHERE project_id = ? AND type = ? AND properties ? ?
 					RETURNING 1
 				) SELECT COUNT(*) FROM updated
 			`, pr.From, pr.To, pr.From, projectID, pr.TypeName, pr.From).Scan(ctx, &objCount)
