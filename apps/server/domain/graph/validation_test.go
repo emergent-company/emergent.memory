@@ -287,16 +287,19 @@ func TestValidateRelationship(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("fromTypes mismatch returns error", func(t *testing.T) {
+	t.Run("fromTypes mismatch is allowed (source types are informational)", func(t *testing.T) {
+		// SourceTypes in the schema are informational — they document the intended
+		// source object types but do not act as hard enforcement gates. Users may
+		// connect any object types via a known relationship type.
 		err := validateRelationship("WORKS_AT", "Animal", "Company", map[string]any{"since": 2020}, schemas)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "relationship_source_type_not_allowed")
+		assert.NoError(t, err)
 	})
 
-	t.Run("toTypes mismatch returns error", func(t *testing.T) {
+	t.Run("toTypes mismatch is allowed (target types are informational)", func(t *testing.T) {
+		// TargetTypes in the schema are informational — they document the intended
+		// target object types but do not act as hard enforcement gates.
 		err := validateRelationship("WORKS_AT", "Person", "School", map[string]any{"since": 2020}, schemas)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "relationship_target_type_not_allowed")
+		assert.NoError(t, err)
 	})
 
 	t.Run("unknown property is passed through", func(t *testing.T) {

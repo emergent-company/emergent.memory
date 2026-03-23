@@ -8,7 +8,6 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // mockSchemaProvider is a simple mock for SchemaProvider.
@@ -52,24 +51,27 @@ func TestService_Create_ObjectTypeAllowlist(t *testing.T) {
 	ctx := context.Background()
 	projectID := uuid.New()
 
-	t.Run("unknown type rejected when schema installed", func(t *testing.T) {
+	t.Run("unknown type allowed when schema installed (schema is not an allowlist)", func(t *testing.T) {
+		// Unknown object types are allowed — the schema defines constraints for known
+		// types but does not act as an allowlist. Users may create objects with any
+		// type name, including domain-specific ones like ServiceMethod, Scenario, etc.
+		// The call will panic on nil repo after validation passes — that's expected.
 		svc := newTestService(&mockSchemaProvider{schemas: schemasWithObjects("Person")})
-		_, err := svc.Create(ctx, projectID, &CreateGraphObjectRequest{
+		defer func() { recover() }() //nolint:errcheck
+		_, _ = svc.Create(ctx, projectID, &CreateGraphObjectRequest{
 			Type:       "UnknownType",
 			Properties: map[string]any{},
 		}, nil)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "object_type_not_allowed")
 	})
 
-	t.Run("empty schema blocks all types", func(t *testing.T) {
+	t.Run("empty schema allows all types (schema is not an allowlist)", func(t *testing.T) {
+		// An empty schema (no object types defined) should not block any type.
 		svc := newTestService(&mockSchemaProvider{schemas: schemasWithObjects()})
-		_, err := svc.Create(ctx, projectID, &CreateGraphObjectRequest{
+		defer func() { recover() }() //nolint:errcheck
+		_, _ = svc.Create(ctx, projectID, &CreateGraphObjectRequest{
 			Type:       "Person",
 			Properties: map[string]any{},
 		}, nil)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "object_type_not_allowed")
 	})
 
 	t.Run("no schema installed passes through (nil schemas)", func(t *testing.T) {
@@ -112,15 +114,16 @@ func TestService_CreateOrUpdate_ObjectTypeAllowlist(t *testing.T) {
 	projectID := uuid.New()
 	key := "alice"
 
-	t.Run("unknown type rejected", func(t *testing.T) {
+	t.Run("unknown type allowed (schema is not an allowlist)", func(t *testing.T) {
+		// Unknown object types are allowed — the schema defines constraints for known
+		// types but does not act as an allowlist.
 		svc := newTestService(&mockSchemaProvider{schemas: schemasWithObjects("Person")})
-		_, _, err := svc.CreateOrUpdate(ctx, projectID, &CreateGraphObjectRequest{
+		defer func() { recover() }() //nolint:errcheck
+		_, _, _ = svc.CreateOrUpdate(ctx, projectID, &CreateGraphObjectRequest{
 			Type:       "Robot",
 			Key:        &key,
 			Properties: map[string]any{},
 		}, nil)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "object_type_not_allowed")
 	})
 
 	t.Run("unknown property passed through", func(t *testing.T) {

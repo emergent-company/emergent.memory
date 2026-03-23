@@ -389,31 +389,11 @@ func validateRelationship(
 		return nil
 	}
 
-	if len(relSchema.SourceTypes) > 0 {
-		allowed := false
-		for _, t := range relSchema.SourceTypes {
-			if t == srcObjType {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return fmt.Errorf("relationship_source_type_not_allowed")
-		}
-	}
-
-	if len(relSchema.TargetTypes) > 0 {
-		allowed := false
-		for _, t := range relSchema.TargetTypes {
-			if t == dstObjType {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return fmt.Errorf("relationship_target_type_not_allowed")
-		}
-	}
+	// SourceTypes and TargetTypes in the schema are informational — they document
+	// the intended source/target object types but do not act as hard enforcement
+	// gates. Users may connect any object types via a known relationship type
+	// (e.g. Scenario --contains--> Action) without needing every combination
+	// pre-registered in the schema.
 
 	if len(relSchema.Properties) > 0 || len(relSchema.Required) > 0 {
 		objSchema := agents.ObjectSchema{

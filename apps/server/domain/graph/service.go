@@ -348,10 +348,9 @@ func (s *Service) ValidateObject(ctx context.Context, projectID uuid.UUID, req *
 
 	schema, ok := schemas.ObjectSchemas[req.Type]
 	if !ok {
-		return &ValidateObjectResponse{
-			Valid:  false,
-			Errors: []string{"object_type_not_allowed"},
-		}, nil
+		// Unknown object types are allowed — the schema defines constraints
+		// for known types but does not act as an allowlist.
+		return &ValidateObjectResponse{Valid: true, CoercedProperties: req.Properties}, nil
 	}
 
 	coerced, err := validateProperties(req.Properties, schema)
@@ -387,9 +386,11 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 				}
 				s.incrementValidationSuccess(duration)
 				validatedProps = validated
-			} else {
-				return nil, apperror.ErrBadRequest.WithMessage("object_type_not_allowed")
 			}
+			// Unknown object types are allowed — the schema defines constraints
+			// for known types but does not act as an allowlist. Users may create
+			// objects with any type name, including domain-specific ones like
+			// ServiceMethod, Scenario, Context, etc.
 		}
 	}
 
@@ -470,9 +471,9 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 				}
 				s.incrementValidationSuccess(duration)
 				validatedProps = validated
-			} else {
-				return nil, false, apperror.ErrBadRequest.WithMessage("object_type_not_allowed")
 			}
+			// Unknown object types are allowed — the schema defines constraints
+			// for known types but does not act as an allowlist.
 		}
 	}
 
