@@ -1038,7 +1038,6 @@ func runSubgraphChunked(cmd *cobra.Command, g *sdkgraph.Client, sg subgraphInput
 
 	// Execute each object chunk.
 	totalObjs, totalRels := 0, 0
-	allRespObjects := make([]sdkgraph.GraphObject, 0)
 	mergedRefMap := make(map[string]string)
 
 	for i, chunk := range chunks {
@@ -1053,7 +1052,6 @@ func runSubgraphChunked(cmd *cobra.Command, g *sdkgraph.Client, sg subgraphInput
 		totalRels += len(resp.Relationships)
 		for _, o := range resp.Objects {
 			fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, nameFromProps(o.Properties))
-			allRespObjects = append(allRespObjects, *o)
 		}
 		for k, v := range resp.RefMap {
 			mergedRefMap[k] = v
@@ -1229,7 +1227,7 @@ SUBGRAPH FORMAT (objects + relationships, preferred when wiring is needed):
 			if err != nil {
 				return err
 			}
-			printSubgraphResult(out, resp, graphOutputFlag)
+			_ = printSubgraphResult(out, resp, graphOutputFlag)
 			return nil
 		}
 

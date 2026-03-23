@@ -127,7 +127,7 @@ func (r *Repository) GetAvailablePacks(ctx context.Context, projectID, orgID str
 	var packs []MemorySchemaListItem
 	q := r.db.NewSelect().
 		Model((*GraphMemorySchema)(nil)).
-		Column("id", "name", "version", "description", "author", "visibility")
+		Column("id", "name", "version", "description", "author", "visibility", "blueprint_source")
 
 	if len(installedIDs) > 0 {
 		q = q.Where("id NOT IN (?)", bun.In(installedIDs))
@@ -151,19 +151,20 @@ func (r *Repository) GetAvailablePacks(ctx context.Context, projectID, orgID str
 // GetInstalledPacks returns schemas installed for a project
 func (r *Repository) GetInstalledPacks(ctx context.Context, projectID string) ([]InstalledSchemaItem, error) {
 	var results []struct {
-		ID             string                 `bun:"id"`
-		SchemaID       string                 `bun:"schema_id"`
-		Name           string                 `bun:"name"`
-		Version        string                 `bun:"version"`
-		Description    *string                `bun:"description"`
-		Active         bool                   `bun:"active"`
-		InstalledAt    time.Time              `bun:"installed_at"`
-		Customizations map[string]interface{} `bun:"customizations,type:jsonb"`
+		ID              string                 `bun:"id"`
+		SchemaID        string                 `bun:"schema_id"`
+		Name            string                 `bun:"name"`
+		Version         string                 `bun:"version"`
+		Description     *string                `bun:"description"`
+		Active          bool                   `bun:"active"`
+		InstalledAt     time.Time              `bun:"installed_at"`
+		Customizations  map[string]interface{} `bun:"customizations,type:jsonb"`
+		BlueprintSource *string                `bun:"blueprint_source"`
 	}
 
 	err := r.db.NewRaw(`
 		SELECT ptp.id, ptp.schema_id, gtp.name, gtp.version, gtp.description,
-			   ptp.active, ptp.installed_at, ptp.customizations
+			   ptp.active, ptp.installed_at, ptp.customizations, gtp.blueprint_source
 		FROM kb.project_schemas ptp
 		JOIN kb.graph_schemas gtp ON gtp.id = ptp.schema_id
 		WHERE ptp.project_id = ?
@@ -178,17 +179,78 @@ func (r *Repository) GetInstalledPacks(ctx context.Context, projectID string) ([
 	packs := make([]InstalledSchemaItem, len(results))
 	for i, r := range results {
 		packs[i] = InstalledSchemaItem{
-			ID:             r.ID,
-			SchemaID:       r.SchemaID,
-			Name:           r.Name,
-			Version:        r.Version,
-			Description:    r.Description,
-			Active:         r.Active,
-			InstalledAt:    r.InstalledAt,
-			Customizations: r.Customizations,
+			ID:              r.ID,
+			SchemaID:        r.SchemaID,
+			Name:            r.Name,
+			Version:         r.Version,
+			Description:     r.Description,
+			Active:          r.Active,
+			InstalledAt:     r.InstalledAt,
+			Customizations:  r.Customizations,
+			BlueprintSource: r.BlueprintSource,
 		}
 	}
 	return packs, nil
+}
+
+// GetAllPacks returns all schemas for a project — both installed and available —
+// as a unified list. Installed schemas have Installed=true and a populated
+// AssignmentID / InstalledAt. Available (not installed) schemas have Installed=false.
+func (r *Repository) GetAllPacks(ctx context.Context, projectID, orgID string) ([]UnifiedSchemaItem, error) {
+	var results []struct {
+		ID              string     `bun:"id"`
+		Name            string     `bun:"name"`
+		Version         string     `bun:"version"`
+		Description     *string    `bun:"description"`
+		Author          *string    `bun:"author"`
+		Visibility      string     `bun:"visibility"`
+		Installed       bool       `bun:"installed"`
+		InstalledAt     *time.Time `bun:"installed_at"`
+		AssignmentID    *string    `bun:"assignment_id"`
+		BlueprintSource *string    `bun:"blueprint_source"`
+	}
+
+	err := r.db.NewRaw(`
+		SELECT gtp.id,
+		       ptp.schema_id,
+		       gtp.name,
+		       gtp.version,
+		       gtp.description,
+		       gtp.author,
+		       gtp.visibility,
+		       (ptp.id IS NOT NULL) AS installed,
+		       ptp.installed_at,
+		       ptp.id AS assignment_id,
+		       gtp.blueprint_source
+		FROM kb.graph_schemas gtp
+		LEFT JOIN kb.project_schemas ptp
+		       ON ptp.schema_id = gtp.id
+		      AND ptp.project_id = ?
+		      AND ptp.removed_at IS NULL
+		WHERE (gtp.project_id = ? OR (gtp.org_id = ? AND gtp.visibility = 'organization'))
+		ORDER BY gtp.name ASC, gtp.version ASC
+	`, projectID, projectID, orgID).Scan(ctx, &results)
+	if err != nil {
+		r.log.Error("failed to get all packs", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	items := make([]UnifiedSchemaItem, len(results))
+	for i, res := range results {
+		items[i] = UnifiedSchemaItem{
+			ID:              res.ID,
+			Name:            res.Name,
+			Version:         res.Version,
+			Description:     res.Description,
+			Author:          res.Author,
+			Visibility:      res.Visibility,
+			Installed:       res.Installed,
+			InstalledAt:     res.InstalledAt,
+			AssignmentID:    res.AssignmentID,
+			BlueprintSource: res.BlueprintSource,
+		}
+	}
+	return items, nil
 }
 
 // GetAssignmentHistory returns all schema assignments for a project (including removed ones).
@@ -614,6 +676,7 @@ func (r *Repository) CreatePack(ctx context.Context, projectID, orgID string, re
 		ExtractionPrompts:       extractionPrompts,
 		Migrations:              req.Migrations,
 		Checksum:                &checksum,
+		BlueprintSource:         req.BlueprintSource,
 		ProjectID:               &projectID,
 		OrgID:                   &orgID,
 		Visibility:              req.Visibility,

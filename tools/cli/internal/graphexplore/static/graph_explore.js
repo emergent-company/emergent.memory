@@ -42,6 +42,7 @@ function typeIcon(type) {
 const graph = new Graph({ multi: false, allowSelfLoops: false });
 let sigmaInstance = null;
 let selectedNode = null;
+let selectedTypeFilter = ''; // type selected in left panel for rel filtering
 let nodeData = {};
 let edgeData = {};
 const hiddenNodeTypes = new Set();
@@ -106,11 +107,7 @@ function syncHiddenInputs() {
   const sf = document.getElementById('selected-type-filter');
   if (hn) hn.value = [...hiddenNodeTypes].join(',');
   if (he) he.value = [...hiddenEdgeTypes].join(',');
-  if (sf) {
-    // Pass the node type of the selected node (for relationship filtering)
-    const selType = selectedNode ? ((nodeData[selectedNode] || {}).type || '') : '';
-    sf.value = selType;
-  }
+  if (sf) sf.value = selectedTypeFilter;
 }
 
 function applyFilters() {
@@ -132,12 +129,16 @@ function applyFilters() {
 
 // Delegate click events on HTMX-rendered filter items
 document.addEventListener('click', (e) => {
-  // Node type load — clicking the label span loads nodes without toggling visibility
-  const loadTarget = e.target.closest('[data-action="load"]');
-  if (loadTarget) {
+  // Node type select — clicking the label span filters the relationship panel
+  const selectTarget = e.target.closest('[data-action="select-type"]');
+  if (selectTarget) {
     e.stopPropagation(); // prevent bubbling up to toggle-vis handler on parent row
-    const type = loadTarget.dataset.type || loadTarget.closest('[data-type]')?.dataset.type;
-    if (type) loadNodesByType(type);
+    const type = selectTarget.dataset.type || selectTarget.closest('[data-type]')?.dataset.type;
+    if (type) {
+      // Toggle: clicking the same type again clears the filter
+      selectedTypeFilter = (selectedTypeFilter === type) ? '' : type;
+      syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
+    }
     return;
   }
 
@@ -660,6 +661,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   graph.clear();
   nodeData = {}; edgeData = {};
   selectedNode = null;
+  selectedTypeFilter = '';
   expandedNode = null; expandedNodeIds.clear(); expandedEdgeKeys.clear();
   focusActive = false;
   $panel.classList.remove('open');

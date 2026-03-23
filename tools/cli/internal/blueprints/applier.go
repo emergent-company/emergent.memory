@@ -222,6 +222,9 @@ func (b *Blueprinter) createPack(ctx context.Context, p PackFile) BlueprintsResu
 	if p.DocumentationURL != "" {
 		req.DocumentationURL = &p.DocumentationURL
 	}
+	if p.SourceFile != "" {
+		req.BlueprintSource = &p.SourceFile
+	}
 
 	created, err := b.packs.CreatePack(ctx, req)
 	if err != nil {

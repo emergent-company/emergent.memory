@@ -412,6 +412,38 @@ func (h *Handler) DeletePack(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// GetAllPacks handles GET /api/schemas/projects/:projectId/all
+// @Summary      List all schemas (installed + available)
+// @Description  Returns all schemas visible to a project — both installed and available — in a single unified list
+// @Tags         schemas
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {array} UnifiedSchemaItem "All schemas"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schemas/projects/{projectId}/all [get]
+// @Security     bearerAuth
+func (h *Handler) GetAllPacks(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	packs, err := h.svc.GetAllPacks(c.Request().Context(), projectID, user.OrgID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, packs)
+}
+
 // GetSchemaHistory handles GET /api/schemas/projects/:projectId/history
 // @Summary      Schema installation history
 // @Description  Returns all schema assignments for a project including removed (soft-deleted) ones

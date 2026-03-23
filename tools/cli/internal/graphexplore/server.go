@@ -62,16 +62,6 @@ func (s *Server) typeColor(typeName string) string {
 	return c
 }
 
-// typeIcon returns the icon for a type (resolved from registry or first letter).
-func (s *Server) typeIcon(typeName string) string {
-	for _, ot := range s.objectTypes {
-		if ot.Name == typeName && ot.Icon != "" {
-			return ot.Icon
-		}
-	}
-	return firstLetter(typeName)
-}
-
 // proxyGet makes a GET request to the Memory API server.
 func (s *Server) proxyGet(path string) ([]byte, int, error) {
 	url := s.ServerURL + path
@@ -235,6 +225,8 @@ func (s *Server) loadSchema() error {
 			Label:        label,
 			InverseLabel: coalesce(rel.InverseLabel, rel.InverseLabelAlt),
 			Color:        s.typeColor(rtype),
+			SourceType:   rel.SourceType,
+			TargetType:   rel.TargetType,
 		})
 	}
 
@@ -283,47 +275,92 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	component := PageLayout(s.ProjectID)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleStaticJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(graphExploreJS)
+	_, _ = w.Write(graphExploreJS)
 }
 
 func (s *Server) handleNodeTypes(w http.ResponseWriter, r *http.Request) {
 	if err := s.loadSchema(); err != nil {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load types: %s</div>`, err.Error())))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load types: %s</div>`, err.Error())))
 		return
 	}
 
-	// Sort by count descending
+	// Build set of hidden type names from query param (comma-separated)
+	hiddenSet := make(map[string]bool)
+	if h := r.URL.Query().Get("hiddenNodeTypes"); h != "" {
+		for _, name := range strings.Split(h, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				hiddenSet[name] = true
+			}
+		}
+	}
+
+	// Which type is currently selected (for relationship filtering highlight)
+	selectedType := strings.TrimSpace(r.URL.Query().Get("selectedType"))
+
+	// Sort by count descending; apply hidden + selected state
 	types := make([]ObjectType, len(s.objectTypes))
 	copy(types, s.objectTypes)
 	sort.Slice(types, func(i, j int) bool {
 		return types[i].Count > types[j].Count
 	})
+	for i := range types {
+		types[i].Hidden = hiddenSet[types[i].Name]
+		types[i].Selected = selectedType != "" && types[i].Name == selectedType
+	}
 
 	w.Header().Set("Content-Type", "text/html")
 	component := NodeTypeList(types)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleEdgeTypes(w http.ResponseWriter, r *http.Request) {
 	if err := s.loadSchema(); err != nil {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load edge types</div>`))
+		_, _ = w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load edge types</div>`))
 		return
 	}
 
-	types := make([]RelationshipType, len(s.relationshipTypes))
-	copy(types, s.relationshipTypes)
+	// Build set of hidden edge type names from query param (comma-separated)
+	hiddenSet := make(map[string]bool)
+	if h := r.URL.Query().Get("hiddenEdgeTypes"); h != "" {
+		for _, name := range strings.Split(h, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				hiddenSet[name] = true
+			}
+		}
+	}
+
+	// Filter by selected node type — only show relationships where source or target matches
+	selectedType := strings.TrimSpace(r.URL.Query().Get("selectedType"))
+
+	types := make([]RelationshipType, 0, len(s.relationshipTypes))
+	for _, rt := range s.relationshipTypes {
+		// If a type is selected, skip relationships that don't involve it
+		if selectedType != "" {
+			src := rt.SourceType
+			dst := rt.TargetType
+			if src != "" || dst != "" {
+				// Both fields present — filter strictly
+				if src != selectedType && dst != selectedType {
+					continue
+				}
+			}
+			// If both SourceType and TargetType are empty (no schema info), include it
+		}
+		rt.Hidden = hiddenSet[rt.Name]
+		types = append(types, rt)
+	}
 
 	w.Header().Set("Content-Type", "text/html")
 	component := EdgeTypeList(types)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
@@ -332,14 +369,14 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 		nodeID = r.FormValue("nodeId")
 	}
 	if nodeID == "" {
-		w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted">Select a node</div>`))
+		_, _ = w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted">Select a node</div>`))
 		return
 	}
 
 	// Fetch node data from the API
 	body, status, err := s.proxyGet(fmt.Sprintf("/api/graph/objects/%s", nodeID))
 	if err != nil || status != 200 {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load node: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load node: %v</div>`, err)))
 		return
 	}
 
@@ -353,7 +390,7 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 		Properties  map[string]interface{} `json:"properties"`
 	}
 	if err := json.Unmarshal(body, &node); err != nil {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
 		return
 	}
 
@@ -392,20 +429,20 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	component := NodeDetailContent(detail)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.URL.Query().Get("nodeId")
 	if nodeID == "" {
-		w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted italic">No relationships</div>`))
+		_, _ = w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted italic">No relationships</div>`))
 		return
 	}
 
 	// Fetch edges
 	body, status, err := s.proxyGet(fmt.Sprintf("/api/graph/objects/%s/edges", nodeID))
 	if err != nil || status != 200 {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed: %v</div>`, err)))
 		return
 	}
 
@@ -414,7 +451,7 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 		Incoming []edgeEntry `json:"incoming"`
 	}
 	if err := json.Unmarshal(body, &edgesResp); err != nil {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
 		return
 	}
 
@@ -440,7 +477,7 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 				Items []json.RawMessage `json:"items"`
 				Data  []json.RawMessage `json:"data"`
 			}
-			json.Unmarshal(searchBody, &searchResp)
+			_ = json.Unmarshal(searchBody, &searchResp)
 			items := searchResp.Items
 			if len(items) == 0 {
 				items = searchResp.Data
@@ -539,7 +576,7 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	component := NodeRelationsContent(groups)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
@@ -579,7 +616,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
-			w.Write(buf[:n])
+			_, _ = w.Write(buf[:n])
 		}
 		if rerr != nil {
 			break
@@ -590,7 +627,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 // RenderPartial is a helper to render a templ component to an http.ResponseWriter.
 func RenderPartial(w http.ResponseWriter, r *http.Request, component templ.Component) {
 	w.Header().Set("Content-Type", "text/html")
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 // ── Internal types for JSON parsing ──────────────────────────────────────
@@ -607,6 +644,8 @@ type compiledRelType struct {
 	Label           string `json:"label"`
 	InverseLabel    string `json:"inverseLabel"`
 	InverseLabelAlt string `json:"inverse_label"`
+	SourceType      string `json:"sourceType"`
+	TargetType      string `json:"targetType"`
 }
 
 type registryEntry struct {
