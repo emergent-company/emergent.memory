@@ -24,29 +24,43 @@ type SSEHandler struct {
 	handler *Handler
 	log     *slog.Logger
 
-	// SSE sessions
+	// SSE sessions — active streaming connections (keyed by session ID)
 	sseSessions   map[string]*SSESession
 	sseSessionsMu sync.RWMutex
+
+	// sessionState tracks per-session initialization state independently of the
+	// SSE stream. This allows tools/list and tools/call to work even after an
+	// SSE reconnect, as long as initialize was called at least once.
+	sessionState   map[string]*sessionInitState
+	sessionStateMu sync.RWMutex
 }
 
-// SSESession represents an SSE connection session
-type SSESession struct {
-	ID          string
+// sessionInitState holds durable per-session state that survives SSE reconnects.
+type sessionInitState struct {
 	ProjectID   string
 	UserID      string
 	Initialized bool
-	Done        chan struct{}
-	Writer      http.ResponseWriter
-	Flusher     http.Flusher
+	CreatedAt   time.Time
+}
+
+// SSESession represents an active SSE streaming connection
+type SSESession struct {
+	ID        string
+	ProjectID string
+	UserID    string
+	Done      chan struct{}
+	Writer    http.ResponseWriter
+	Flusher   http.Flusher
 }
 
 // NewSSEHandler creates a new SSE handler
 func NewSSEHandler(svc *Service, handler *Handler, log *slog.Logger) *SSEHandler {
 	return &SSEHandler{
-		svc:         svc,
-		handler:     handler,
-		log:         log.With(logger.Scope("mcp.sse")),
-		sseSessions: make(map[string]*SSESession),
+		svc:          svc,
+		handler:      handler,
+		log:          log.With(logger.Scope("mcp.sse")),
+		sseSessions:  make(map[string]*SSESession),
+		sessionState: make(map[string]*sessionInitState),
 	}
 }
 
@@ -79,13 +93,12 @@ func (h *SSEHandler) HandleSSEConnect(c echo.Context) error {
 
 	// Create session
 	session := &SSESession{
-		ID:          sessionID,
-		ProjectID:   projectID,
-		UserID:      user.ID,
-		Initialized: false,
-		Done:        make(chan struct{}),
-		Writer:      w,
-		Flusher:     flusher,
+		ID:        sessionID,
+		ProjectID: projectID,
+		UserID:    user.ID,
+		Done:      make(chan struct{}),
+		Writer:    w,
+		Flusher:   flusher,
 	}
 
 	h.sseSessionsMu.Lock()
@@ -144,12 +157,7 @@ func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 	// Parse JSON-RPC request
 	var req Request
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error": map[string]string{
-				"code":    "parse_error",
-				"message": "Failed to parse JSON-RPC request",
-			},
-		})
+		return c.JSON(http.StatusBadRequest, NewErrorResponse(nil, ErrCodeParseError, "Failed to parse JSON-RPC request", nil))
 	}
 
 	// Validate JSON-RPC version
@@ -159,14 +167,15 @@ func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 	}
 
 	// Process request
-	response := h.processRequest(c, &req, projectID, user)
+	response := h.processRequest(c, &req, projectID, user, sessionID)
 
 	// Notifications return nil — no response per JSON-RPC 2.0 spec
 	if response == nil {
 		return c.NoContent(http.StatusAccepted)
 	}
 
-	// Send response via SSE if session exists
+	// Also push response via SSE stream if the client has an active connection.
+	// This is optional — clients that only use the HTTP response body don't need it.
 	if sessionID != "" {
 		h.sseSessionsMu.RLock()
 		session, ok := h.sseSessions[sessionID]
@@ -178,45 +187,57 @@ func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 		}
 	}
 
-	// Also return response directly (for clients that prefer HTTP response)
-	return c.JSON(http.StatusAccepted, map[string]any{
-		"status":  "accepted",
-		"jsonrpc": response.JSONRPC,
-		"id":      response.ID,
-		"result":  response.Result,
-		"error":   response.Error,
-	})
+	// Return the JSON-RPC response directly in the HTTP body with 200 OK.
+	// OpenCode (and the MCP SSE spec) expects the response in the POST body.
+	return c.JSON(http.StatusOK, response)
 }
 
-// processRequest processes a JSON-RPC request for SSE transport
-func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID string, user *auth.AuthUser) *Response {
-	sessionID := c.QueryParam("sessionId")
+// processRequest processes a JSON-RPC request for SSE transport.
+// sessionID is the ?sessionId query param (may be empty for sessionless clients).
+func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID string, user *auth.AuthUser, sessionID string) *Response {
+	// Look up durable session state (survives SSE reconnects)
+	h.sessionStateMu.RLock()
+	state, stateExists := h.sessionState[sessionID]
+	h.sessionStateMu.RUnlock()
 
-	h.sseSessionsMu.RLock()
-	session, sessionExists := h.sseSessions[sessionID]
-	h.sseSessionsMu.RUnlock()
+	initialized := stateExists && state.Initialized
 
 	// Handle notifications (no id = no response expected per JSON-RPC 2.0)
 	if req.IsNotification() {
-		if req.Method == "notifications/initialized" && sessionExists {
-			h.sseSessionsMu.Lock()
-			session.Initialized = true
-			h.sseSessionsMu.Unlock()
+		if req.Method == "notifications/initialized" && sessionID != "" {
+			h.sessionStateMu.Lock()
+			if h.sessionState[sessionID] == nil {
+				h.sessionState[sessionID] = &sessionInitState{
+					ProjectID: projectID,
+					UserID:    user.ID,
+					CreatedAt: time.Now().UTC(),
+				}
+			}
+			h.sessionState[sessionID].Initialized = true
+			h.sessionStateMu.Unlock()
 		}
 		return nil
 	}
 
 	switch req.Method {
 	case "initialize":
-		if sessionExists {
-			h.sseSessionsMu.Lock()
-			session.Initialized = true
-			h.sseSessionsMu.Unlock()
+		// Mark session as initialized in the durable state map
+		if sessionID != "" {
+			h.sessionStateMu.Lock()
+			if h.sessionState[sessionID] == nil {
+				h.sessionState[sessionID] = &sessionInitState{
+					ProjectID: projectID,
+					UserID:    user.ID,
+					CreatedAt: time.Now().UTC(),
+				}
+			}
+			h.sessionState[sessionID].Initialized = true
+			h.sessionStateMu.Unlock()
 		}
 		return h.handleInitialize(req, projectID)
 
 	case "tools/list":
-		if !sessionExists || !session.Initialized {
+		if !initialized {
 			return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
 				"Client must call initialize before tools/list",
 				map[string]string{"hint": "Call initialize method first to establish session"},
@@ -225,7 +246,7 @@ func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID stri
 		return h.handleToolsList(req)
 
 	case "tools/call":
-		if !sessionExists || !session.Initialized {
+		if !initialized {
 			return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
 				"Client must call initialize before tools/call",
 				map[string]string{"hint": "Call initialize method first to establish session"},
