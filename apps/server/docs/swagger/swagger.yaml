@@ -6263,7 +6263,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.35.99
+  version: 0.35.100
 paths:
   /api/admin/agent-definitions/{id}/sandbox-config:
     get:
