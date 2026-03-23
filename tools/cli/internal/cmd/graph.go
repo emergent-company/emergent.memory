@@ -208,6 +208,9 @@ Output is a table with columns: Entity ID, Type, Version, Status, and Created
 date. Use --type to filter by object type, --limit to control result count, and
 --output json to receive the full list as JSON.
 
+Use --key to filter by the object's stable key field directly. This is the most
+efficient way to look up a single object by key without fetching all objects.
+
 Use --filter key=value to filter by object properties (repeatable). All filters
 are combined with AND. The --filter-op flag sets the comparison operator for
 every --filter in the same invocation (default: eq).
@@ -215,6 +218,8 @@ every --filter in the same invocation (default: eq).
   --filter-op operators: eq, neq, gt, gte, lt, lte, contains, in, exists
 
 Examples:
+  memory graph objects list --key sq-soft-delete-employee
+  memory graph objects list --branch <branch-id> --key ep-employees-delete
   memory graph objects list --filter status=active
   memory graph objects list --type Feature --filter status=active --filter inertia_tier=1
   memory graph objects list --filter status=active,draft --filter-op in
@@ -250,6 +255,9 @@ Examples:
 		}
 		if graphIDsFlag != "" {
 			opts.IDs = strings.Split(graphIDsFlag, ",")
+		}
+		if graphKeyFlag != "" {
+			opts.Key = graphKeyFlag
 		}
 
 		resp, err := g.ListObjects(context.Background(), opts)
@@ -1558,6 +1566,7 @@ func init() {
 	graphObjectsListCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to scope results to (omit for main branch)")
 	graphObjectsListCmd.Flags().StringVar(&graphStatusFlag, "status", "", "Filter by object status")
 	graphObjectsListCmd.Flags().StringVar(&graphIDsFlag, "ids", "", "Fetch specific objects by ID (comma-separated: --ids id1,id2,id3)")
+	graphObjectsListCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Filter by object key (direct key-based lookup)")
 
 	graphObjectsGetCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
 
