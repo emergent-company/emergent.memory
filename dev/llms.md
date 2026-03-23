@@ -2,9 +2,10 @@
 
 Emergent is an AI memory and knowledge graph platform. It stores objects and relationships in a graph, chunks and embeds documents, and exposes a REST API for queries, agent orchestration, and LLM tracing.
 
-There are two client SDKs:
+There are three client SDKs:
 - **Go SDK** — full-featured server-side client (`github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk`)
 - **Swift SDK** — lightweight Mac app client (`emergent-company/emergent.memory.mac`)
+- **Python SDK** — full-featured REST client (`emergent-memory` on PyPI, `sdk/python/`)
 
 Full docs site: https://emergent-company.github.io/emergent.memory/
 
@@ -72,3 +73,30 @@ let projects = try await EmergentAPIClient.shared.fetchProjects()
 **Error type:** `EmergentAPIError` — cases: `notConfigured`, `invalidURL`, `unauthorized`, `notFound`, `serverError(statusCode:message:)`, `httpError(statusCode:)`, `network(Error)`, `decodingFailed(Error)`
 
 **Key model types:** `Project`, `ProjectStats`, `AccountStats`, `Trace`, `LLMCall`, `Worker`, `GraphObject`, `AnyCodable`, `Agent`, `MCPServer`, `UserProfile`, `Document`, `EmbeddingStatus`, `EmbeddingPolicy`, `QueryResult`, `ServerDiagnostics`
+
+---
+
+## Python SDK
+
+Full reference: [docs/llms-python-sdk.md](llms-python-sdk.md)
+
+**Package:** `emergent-memory` · **Install:** `pip install emergent-memory-sdk`
+
+**Quick start:**
+```python
+from emergent import Client
+
+client = Client.from_api_key("https://api.emergent-company.ai", "emt_abc123")
+client.set_context(org_id="org_1", project_id="proj_1")
+```
+
+**13 sub-clients** on `client.*`:
+
+`graph`, `chat`, `agents`, `agent_definitions`, `documents`, `search`, `mcp`, `projects`, `orgs`, `schemas`, `skills`, `branches`, `api_tokens`, `tasks`
+
+**Auth modes:** `from_api_key()` (X-API-Key; auto-upgrades `emt_*` to Bearer), `from_oauth_token()` (Bearer), `from_env()` (reads `EMERGENT_SERVER_URL` + `EMERGENT_API_KEY`)
+
+**Error handling:** `APIError` with `.status_code`, `.message`, `.is_not_found`, `.is_forbidden`, `.is_unauthorized`
+
+**Streaming:** `client.chat.stream(conversation_id, message)` yields typed SSE events: `MetaEvent`, `TokenEvent`, `MCPToolEvent`, `ErrorEvent`, `DoneEvent`
+
