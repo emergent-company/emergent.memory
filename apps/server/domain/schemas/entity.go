@@ -414,6 +414,23 @@ type DeletePackRequest struct {
 	ID string `json:"id"`
 }
 
+// ValidateObjectsResponse is the response for GET /api/schemas/projects/:projectId/validate
+type ValidateObjectsResponse struct {
+	ProjectID    string                   `json:"project_id"`
+	TotalObjects int                      `json:"total_objects"`
+	StaleObjects int                      `json:"stale_objects"`
+	Results      []ObjectValidationResult `json:"results"`
+}
+
+// ObjectValidationResult describes one object's validation state.
+type ObjectValidationResult struct {
+	EntityID      string   `json:"entity_id"`
+	Type          string   `json:"type"`
+	Key           *string  `json:"key,omitempty"`
+	SchemaVersion *string  `json:"schema_version,omitempty"`
+	Issues        []string `json:"issues"`
+}
+
 // SchemaHistoryItem represents a historical schema assignment entry (including removed ones)
 type SchemaHistoryItem struct {
 	ID          string     `json:"id"` // assignment ID

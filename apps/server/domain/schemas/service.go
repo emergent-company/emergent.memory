@@ -204,6 +204,71 @@ func (s *Service) GetSchemaHistory(ctx context.Context, projectID string) ([]Sch
 	return s.repo.GetAssignmentHistory(ctx, projectID)
 }
 
+// ValidateObjects scans all graph objects in a project against the current compiled schema
+// and reports which objects have drifted (stale schema_version).
+func (s *Service) ValidateObjects(ctx context.Context, projectID string) (*ValidateObjectsResponse, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid projectId")
+	}
+
+	// Get current compiled types to know the current schema version per type
+	compiled, err := s.repo.GetCompiledTypesByProject(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get compiled types: %w", err)
+	}
+
+	// Build map: typeName → current schema version
+	currentVersion := make(map[string]string)
+	for _, t := range compiled.ObjectTypes {
+		if t.SchemaVersion != "" {
+			currentVersion[t.Name] = t.SchemaVersion
+		}
+	}
+
+	// List all objects in the project
+	objs, err := s.graphSvc.GetRepository().List(ctx, graph.ListParams{
+		ProjectID: projectUUID,
+		Limit:     10000, // reasonable cap
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list objects: %w", err)
+	}
+
+	resp := &ValidateObjectsResponse{
+		ProjectID:    projectID,
+		TotalObjects: len(objs),
+	}
+
+	for _, obj := range objs {
+		var issues []string
+		if cv, ok := currentVersion[obj.Type]; ok {
+			objVersion := ""
+			if obj.SchemaVersion != nil {
+				objVersion = *obj.SchemaVersion
+			}
+			if objVersion == "" {
+				issues = append(issues, fmt.Sprintf("schema_version not set (current: %s)", cv))
+			} else if objVersion != cv {
+				issues = append(issues, fmt.Sprintf("schema_version mismatch: object has %q, current is %q", objVersion, cv))
+			}
+		}
+
+		if len(issues) > 0 {
+			resp.StaleObjects++
+			resp.Results = append(resp.Results, ObjectValidationResult{
+				EntityID:      obj.CanonicalID.String(),
+				Type:          obj.Type,
+				Key:           obj.Key,
+				SchemaVersion: obj.SchemaVersion,
+				Issues:        issues,
+			})
+		}
+	}
+
+	return resp, nil
+}
+
 // MigrateTypes renames object/edge types and/or property keys across live graph data.
 func (s *Service) MigrateTypes(ctx context.Context, projectID string, req *MigrateRequest) (*MigrateResponse, error) {
 	return s.repo.MigrateTypes(ctx, projectID, req)

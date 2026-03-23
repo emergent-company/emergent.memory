@@ -703,6 +703,33 @@ type SchemaMigrationJob struct {
 	CompletedAt     *string `json:"completed_at,omitempty"`
 }
 
+// SchemaValidationResult represents one object with schema version issues.
+type SchemaValidationResult struct {
+	EntityID      string   `json:"entity_id"`
+	Type          string   `json:"type"`
+	Key           string   `json:"key"`
+	SchemaVersion string   `json:"schema_version"`
+	Issues        []string `json:"issues"`
+}
+
+// SchemaValidationResponse is returned from GET /api/schemas/projects/:projectId/validate.
+type SchemaValidationResponse struct {
+	ProjectID    string                   `json:"project_id"`
+	TotalObjects int                      `json:"total_objects"`
+	StaleObjects int                      `json:"stale_objects"`
+	Results      []SchemaValidationResult `json:"results"`
+}
+
+// ValidateSchemas checks project objects for schema version mismatches.
+// GET /api/schemas/projects/:projectId/validate
+func (c *Client) ValidateSchemas(ctx context.Context) (*SchemaValidationResponse, error) {
+	var result SchemaValidationResponse
+	if err := c.getJSON(ctx, c.projectPath()+"/validate", &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // PreviewMigration previews a schema migration without making changes.
 // POST /api/schemas/projects/:projectId/migrate/preview
 func (c *Client) PreviewMigration(ctx context.Context, req *SchemaMigrationPreviewRequest) (*SchemaMigrationPreviewResponse, error) {

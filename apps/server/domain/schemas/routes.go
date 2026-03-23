@@ -43,6 +43,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Get schema installation history (including soft-deleted)
 	projects.GET("/history", h.GetSchemaHistory)
 
+	// Validate graph objects (check for schema drift)
+	projects.GET("/validate", h.ValidateObjects)
+
 	// Migrate live graph data (type/property renames) — System B, unchanged
 	projects.POST("/migrate", h.MigrateTypes)
 

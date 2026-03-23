@@ -363,6 +363,9 @@ Use --output json to receive the full object as JSON instead.`,
 			fmt.Fprintf(out, "Labels:      %s\n", strings.Join(obj.Labels, ", "))
 		}
 		fmt.Fprintf(out, "Created:     %s\n", obj.CreatedAt.Format("2006-01-02 15:04:05"))
+		if obj.SchemaVersion != nil && *obj.SchemaVersion != "" {
+			fmt.Fprintf(out, "Schema Ver:  %s\n", *obj.SchemaVersion)
+		}
 		if len(obj.Properties) > 0 {
 			propsJSON, _ := json.MarshalIndent(obj.Properties, "             ", "  ")
 			fmt.Fprintf(out, "Properties:  %s\n", propsJSON)

@@ -793,81 +793,115 @@ type propTypeChange struct {
 }
 
 var schemasDiffCmd = &cobra.Command{
-	Use:   "diff <schema-id> --file <path>",
-	Short: "Diff a local schema file against the currently installed version",
-	Long: `Compare a local schema definition file against the version already stored in the
-registry. Shows which object and relationship types would be added or removed.
+	Use:   "diff <schema-id-a> [<schema-id-b>] [--file <path>]",
+	Short: "Diff two schemas — registry vs registry, or registry vs local file",
+	Long: `Compare two schema definitions and show type-level and property-level differences.
 
-Requires --file pointing to a JSON, YAML, or YML schema file.`,
-	Args: cobra.ExactArgs(1),
+Two modes:
+
+  diff <schema-id> --file <path>
+      Compare a schema in the registry against a local JSON/YAML file.
+      The local file is treated as the "incoming" (new) version.
+
+  diff <schema-id-a> <schema-id-b>
+      Compare two schemas already stored in the registry.
+      Schema A is treated as the "before" (base) version and schema B as the "after" version.
+
+Output shows added (+), removed (-) types, and property-level changes for shared
+types. A suggested migrations YAML block is printed when removals are detected.
+Use --output json for machine-readable output.`,
+	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if schemaFileFlag == "" {
-			return fmt.Errorf("--file is required")
-		}
-
-		schemaID := args[0]
-
-		// Fetch the installed (current) schema
 		c, err := getClient(cmd)
 		if err != nil {
 			return err
 		}
-		existing, err := c.SDK.Schemas.GetPack(context.Background(), schemaID)
+
+		// Decide mode: registry vs file, or registry vs registry
+		twoRegistryMode := len(args) == 2 && schemaFileFlag == ""
+		fileMode := schemaFileFlag != ""
+
+		if !twoRegistryMode && !fileMode {
+			return fmt.Errorf("provide either a second schema ID or --file <path>")
+		}
+		if len(args) == 2 && fileMode {
+			return fmt.Errorf("cannot use both a second schema ID and --file at the same time")
+		}
+
+		// Fetch the base (first) schema
+		baseSchemaID := args[0]
+		base, err := c.SDK.Schemas.GetPack(context.Background(), baseSchemaID)
 		if err != nil {
-			return fmt.Errorf("failed to fetch schema %s: %w", schemaID, err)
+			return fmt.Errorf("failed to fetch schema %s: %w", baseSchemaID, err)
 		}
 
-		// Load the local (incoming) schema
-		data, err := loadSchemaFile(schemaFileFlag)
-		if err != nil {
-			return err
+		// Resolve the incoming schema's raw type data
+		var incomingObjData json.RawMessage
+		var incomingRelData json.RawMessage
+		var diffLabel string // describes what we're diffing against
+
+		if twoRegistryMode {
+			// Two-registry mode: fetch the second schema
+			headSchemaID := args[1]
+			head, headErr := c.SDK.Schemas.GetPack(context.Background(), headSchemaID)
+			if headErr != nil {
+				return fmt.Errorf("failed to fetch schema %s: %w", headSchemaID, headErr)
+			}
+			incomingObjData = head.ObjectTypeSchemas
+			incomingRelData = head.RelationshipTypeSchemas
+			diffLabel = fmt.Sprintf("%s (%s v%s)  →  %s (%s v%s)",
+				baseSchemaID[:8], base.Name, base.Version,
+				headSchemaID[:8], head.Name, head.Version)
+		} else {
+			// File mode: load and parse the local file
+			data, loadErr := loadSchemaFile(schemaFileFlag)
+			if loadErr != nil {
+				return loadErr
+			}
+			var raw struct {
+				ObjectTypeSchemas      json.RawMessage `json:"object_type_schemas"`
+				ObjectTypeSchemasCamel json.RawMessage `json:"objectTypeSchemas"`
+				RelTypeSchemas         json.RawMessage `json:"relationship_type_schemas"`
+				RelTypeSchemasCamel    json.RawMessage `json:"relationshipTypeSchemas"`
+			}
+			if err := json.Unmarshal(data, &raw); err != nil {
+				return fmt.Errorf("failed to parse schema file: %w", err)
+			}
+			incomingObjData = raw.ObjectTypeSchemas
+			if len(incomingObjData) == 0 {
+				incomingObjData = raw.ObjectTypeSchemasCamel
+			}
+			incomingRelData = raw.RelTypeSchemas
+			if len(incomingRelData) == 0 {
+				incomingRelData = raw.RelTypeSchemasCamel
+			}
+			diffLabel = fmt.Sprintf("%s (%s v%s)  →  %s (local file)", baseSchemaID[:8], base.Name, base.Version, schemaFileFlag)
 		}
 
-		// Parse both schemas into type name sets
-		existingObjNames := extractObjectTypeNames(existing.ObjectTypeSchemas)
-		existingRelNames := extractRelationshipTypeNames(existing.RelationshipTypeSchemas)
+		// Build type name sets and property maps
+		baseObjNames := extractObjectTypeNames(base.ObjectTypeSchemas)
+		baseRelNames := extractRelationshipTypeNames(base.RelationshipTypeSchemas)
+		incomingObjNames := extractObjectTypeNames(incomingObjData)
+		incomingRelNames := extractRelationshipTypeNames(incomingRelData)
 
-		var incomingRaw struct {
-			ObjectTypeSchemas      json.RawMessage `json:"object_type_schemas"`
-			ObjectTypeSchemasCamel json.RawMessage `json:"objectTypeSchemas"`
-			RelTypeSchemas         json.RawMessage `json:"relationship_type_schemas"`
-			RelTypeSchemasCamel    json.RawMessage `json:"relationshipTypeSchemas"`
-		}
-		if err := json.Unmarshal(data, &incomingRaw); err != nil {
-			return fmt.Errorf("failed to parse schema file: %w", err)
-		}
-		objData := incomingRaw.ObjectTypeSchemas
-		if len(objData) == 0 {
-			objData = incomingRaw.ObjectTypeSchemasCamel
-		}
-		relData := incomingRaw.RelTypeSchemas
-		if len(relData) == 0 {
-			relData = incomingRaw.RelTypeSchemasCamel
-		}
+		result := schemaDiffResult{SchemaID: baseSchemaID}
 
-		incomingObjNames := extractObjectTypeNames(objData)
-		incomingRelNames := extractRelationshipTypeNames(relData)
-
-		result := schemaDiffResult{SchemaID: schemaID}
-
-		// Compute added/removed object types
 		for name := range incomingObjNames {
-			if !existingObjNames[name] {
+			if !baseObjNames[name] {
 				result.AddedObjects = append(result.AddedObjects, name)
 			}
 		}
-		for name := range existingObjNames {
+		for name := range baseObjNames {
 			if !incomingObjNames[name] {
 				result.RemovedObjects = append(result.RemovedObjects, name)
 			}
 		}
-		// Compute added/removed relationship types
 		for name := range incomingRelNames {
-			if !existingRelNames[name] {
+			if !baseRelNames[name] {
 				result.AddedRels = append(result.AddedRels, name)
 			}
 		}
-		for name := range existingRelNames {
+		for name := range baseRelNames {
 			if !incomingRelNames[name] {
 				result.RemovedRels = append(result.RemovedRels, name)
 			}
@@ -878,12 +912,12 @@ Requires --file pointing to a JSON, YAML, or YML schema file.`,
 		sort.Strings(result.AddedRels)
 		sort.Strings(result.RemovedRels)
 
-		// Compute property-level diffs for shared object types
-		existingProps := extractObjectTypeProperties(existing.ObjectTypeSchemas)
-		incomingProps := extractObjectTypeProperties(objData)
+		// Property-level diffs for shared types
+		baseProps := extractObjectTypeProperties(base.ObjectTypeSchemas)
+		incomingProps := extractObjectTypeProperties(incomingObjData)
 
 		var sharedTypes []string
-		for name := range existingObjNames {
+		for name := range baseObjNames {
 			if incomingObjNames[name] {
 				sharedTypes = append(sharedTypes, name)
 			}
@@ -891,13 +925,13 @@ Requires --file pointing to a JSON, YAML, or YML schema file.`,
 		sort.Strings(sharedTypes)
 
 		for _, typeName := range sharedTypes {
-			existP := existingProps[typeName]
+			baseP := baseProps[typeName]
 			incomP := incomingProps[typeName]
 			var diff typePropertyDiff
 			diff.TypeName = typeName
 
 			for prop, pType := range incomP {
-				if oldType, exists := existP[prop]; !exists {
+				if oldType, exists := baseP[prop]; !exists {
 					diff.Added = append(diff.Added, prop+" ("+pType+")")
 				} else if oldType != pType && pType != "" && oldType != "" {
 					diff.TypeChanged = append(diff.TypeChanged, propTypeChange{
@@ -907,7 +941,7 @@ Requires --file pointing to a JSON, YAML, or YML schema file.`,
 					})
 				}
 			}
-			for prop := range existP {
+			for prop := range baseP {
 				if _, exists := incomP[prop]; !exists {
 					diff.Removed = append(diff.Removed, prop)
 				}
@@ -931,7 +965,7 @@ Requires --file pointing to a JSON, YAML, or YML schema file.`,
 		}
 
 		// Human-readable output
-		fmt.Fprintf(out, "Schema diff for %s\n\n", schemaID)
+		fmt.Fprintf(out, "Schema diff: %s\n\n", diffLabel)
 
 		fmt.Fprintf(out, "Object Types:\n")
 		if len(result.AddedObjects) == 0 && len(result.RemovedObjects) == 0 {
@@ -955,7 +989,6 @@ Requires --file pointing to a JSON, YAML, or YML schema file.`,
 			fmt.Fprintf(out, "  - %s\n", n)
 		}
 
-		// Property-level diffs for shared types
 		if len(result.PropertyDiffs) > 0 {
 			fmt.Fprintf(out, "\nProperty Changes:\n")
 			for _, pd := range result.PropertyDiffs {
@@ -978,22 +1011,19 @@ Requires --file pointing to a JSON, YAML, or YML schema file.`,
 		if hasMigrationHints {
 			fmt.Fprintf(out, "\nSuggested migrations block (paste into your schema file):\n")
 			fmt.Fprintf(out, "  migrations:\n")
-			fmt.Fprintf(out, "    from_version: \"<current-version>\"\n")
+			fmt.Fprintf(out, "    from_version: \"%s\"\n", base.Version)
 
-			// type_renames: user must fill in — we can't detect renames automatically
 			if len(result.RemovedObjects) > 0 && len(result.AddedObjects) > 0 {
 				fmt.Fprintf(out, "    # type_renames: (fill in if any types were renamed)\n")
 				fmt.Fprintf(out, "    #   OldName: NewName\n")
 			}
 
-			// property_renames: user must fill in
 			for _, pd := range result.PropertyDiffs {
 				if len(pd.Removed) > 0 && len(pd.Added) > 0 {
 					fmt.Fprintf(out, "    # property_renames for [%s]: (fill in if any properties were renamed)\n", pd.TypeName)
 				}
 			}
 
-			// removed_properties: we can auto-populate from removed props
 			var hasRemovedProps bool
 			for _, pd := range result.PropertyDiffs {
 				if len(pd.Removed) > 0 {
@@ -1118,6 +1148,61 @@ func extractObjectTypeProperties(data json.RawMessage) map[string]map[string]str
 		}
 	}
 	return result
+}
+
+// ─────────────────────────────────────────────
+// schemas validate
+// ─────────────────────────────────────────────
+
+var schemasValidateCmd = &cobra.Command{
+	Use:   "validate",
+	Short: "Check project objects for schema version mismatches",
+	Long: `Identify objects whose stored schema version is out of date with the
+currently installed schemas in the project.
+
+Returns a list of entity IDs, their types, keys, and the specific issues
+(e.g., version mismatch). Exits with code 1 if any stale objects are found.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		tp, err := getSchemasClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		resp, err := tp.ValidateSchemas(context.Background())
+		if err != nil {
+			return fmt.Errorf("failed to validate schemas: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+
+		if schemaOutputFlag == "json" {
+			return json.NewEncoder(out).Encode(resp)
+		}
+
+		if resp.StaleObjects == 0 {
+			fmt.Fprintln(out, "✓ All objects are up to date with the current schema.")
+			return nil
+		}
+
+		fmt.Fprintf(out, "Found %d stale object(s) out of %d total.\n\n", resp.StaleObjects, resp.TotalObjects)
+
+		table := tablewriter.NewWriter(out)
+		table.Header("ENTITY ID", "TYPE", "KEY", "SCHEMA VERSION", "ISSUES")
+		for _, r := range resp.Results {
+			_ = table.Append(
+				r.EntityID,
+				r.Type,
+				r.Key,
+				r.SchemaVersion,
+				strings.Join(r.Issues, ", "),
+			)
+		}
+		_ = table.Render()
+
+		// Exit with code 1 as stale objects were found
+		os.Exit(1)
+		return nil
+	},
 }
 
 // ─────────────────────────────────────────────
@@ -1676,7 +1761,7 @@ func init() {
 	schemasUninstallCmd.Flags().BoolVar(&schemaDryRunFlag, "dry-run", false, "Preview what would be removed without making changes")
 
 	// Diff flags
-	schemasDiffCmd.Flags().StringVar(&schemaFileFlag, "file", "", "Path to incoming schema file (JSON, YAML, or YML)")
+	schemasDiffCmd.Flags().StringVar(&schemaFileFlag, "file", "", "Path to incoming schema file (JSON, YAML, or YML) for registry-vs-file mode")
 
 	// Compiled-types flags
 	schemasCompiledTypesCmd.Flags().BoolVar(&schemaVerboseFlag, "verbose", false, "Include schema version and shadowed status in output")
@@ -1726,6 +1811,7 @@ func init() {
 	schemasCmd.AddCommand(schemasDiffCmd)
 	schemasCmd.AddCommand(schemasHistoryCmd)
 	schemasCmd.AddCommand(schemasMigrateCmd)
+	schemasCmd.AddCommand(schemasValidateCmd)
 
 	rootCmd.AddCommand(schemasCmd)
 }

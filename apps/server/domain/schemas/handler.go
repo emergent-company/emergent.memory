@@ -444,6 +444,38 @@ func (h *Handler) GetSchemaHistory(c echo.Context) error {
 	return c.JSON(http.StatusOK, history)
 }
 
+// ValidateObjects handles GET /api/schemas/projects/:projectId/validate
+// @Summary      Validate graph objects
+// @Description  Scans all graph objects in a project against the current compiled schema and reports which objects have drifted (stale schema_version).
+// @Tags         schemas
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {object} ValidateObjectsResponse "Validation result"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schemas/projects/{projectId}/validate [get]
+// @Security     bearerAuth
+func (h *Handler) ValidateObjects(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	resp, err := h.svc.ValidateObjects(c.Request().Context(), projectID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, resp)
+}
+
 // MigrateTypes handles POST /api/schemas/projects/:projectId/migrate
 // @Summary      Migrate live graph data
 // @Description  Renames object/edge types and/or property keys across live graph objects and edges in a single transaction. Supports dry_run.
