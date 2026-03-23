@@ -289,6 +289,107 @@ func TestSchemaProviderMetrics(t *testing.T) {
 	})
 }
 
+// TestSchemaProviderExcludesRemovedSchemas is a regression test for issue #111:
+// object_type_not_allowed for all types after schema reinstall.
+//
+// Root cause: GetProjectSchemas was missing "removed_at IS NULL" filter, so
+// reinstalled schemas (which set removed_at on the old row) caused stale removed
+// rows to be returned, leaving the type map empty.
+func TestSchemaProviderExcludesRemovedSchemas(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping database integration test in short mode")
+	}
+
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://emergent:local-test-password@127.0.0.1:5436/emergent?sslmode=disable"
+	}
+
+	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
+	db := bun.NewDB(sqldb, pgdialect.New())
+	defer db.Close()
+
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Use stable UUIDs for test isolation
+	orgID := "d0000000-0000-0000-0000-000000000001"
+	projectID := "a0000000-0000-0000-0000-000000000001"
+	schemaIDOld := "b0000000-0000-0000-0000-000000000001"
+	schemaIDNew := "b0000000-0000-0000-0000-000000000002"
+	assignmentIDOld := "c0000000-0000-0000-0000-000000000001"
+	assignmentIDNew := "c0000000-0000-0000-0000-000000000002"
+
+	objectTypeSchemasOld := `{"OldType":{"label":"Old Type","description":"Should not appear"}}`
+	objectTypeSchemasNew := `{"NewType":{"label":"New Type","description":"Should appear"}}`
+
+	// Seed org and project to satisfy FK constraints (ON CONFLICT DO NOTHING for idempotency)
+	_, err := db.NewRaw(`
+		INSERT INTO kb.orgs (id, name, created_at, updated_at)
+		VALUES (?::uuid, 'test-org-regression-111', NOW(), NOW())
+		ON CONFLICT (id) DO NOTHING
+	`, orgID).Exec(ctx)
+	require.NoError(t, err, "seeding org")
+
+	_, err = db.NewRaw(`
+		INSERT INTO kb.projects (id, organization_id, name, created_at, updated_at)
+		VALUES (?::uuid, ?::uuid, 'test-project-regression-111', NOW(), NOW())
+		ON CONFLICT (id) DO NOTHING
+	`, projectID, orgID).Exec(ctx)
+	require.NoError(t, err, "seeding project")
+
+	// Seed: two graph_schemas rows (old version, new version)
+	_, err = db.NewRaw(`
+		INSERT INTO kb.graph_schemas (id, name, version, object_type_schemas, relationship_type_schemas, visibility, draft, created_at, updated_at)
+		VALUES
+			(?::uuid, 'test-schema-regression-111', '1.0.0', ?::jsonb, '{}'::jsonb, 'project', false, NOW(), NOW()),
+			(?::uuid, 'test-schema-regression-111', '2.0.0', ?::jsonb, '{}'::jsonb, 'project', false, NOW(), NOW())
+		ON CONFLICT (id) DO UPDATE SET
+			object_type_schemas = EXCLUDED.object_type_schemas,
+			relationship_type_schemas = EXCLUDED.relationship_type_schemas,
+			updated_at = NOW()
+	`, schemaIDOld, objectTypeSchemasOld, schemaIDNew, objectTypeSchemasNew).Exec(ctx)
+	require.NoError(t, err, "seeding graph_schemas")
+
+	now := time.Now()
+	removedAt := now.Add(-1 * time.Minute)
+
+	// Seed: old assignment with removed_at set (simulates schema reinstall),
+	// new assignment active with no removed_at.
+	_, err = db.NewRaw(`
+		INSERT INTO kb.project_schemas (id, project_id, schema_id, active, installed_at, removed_at, created_at, updated_at)
+		VALUES
+			(?::uuid, ?::uuid, ?::uuid, true, ?, ?, NOW(), NOW()),
+			(?::uuid, ?::uuid, ?::uuid, true, ?, NULL, NOW(), NOW())
+		ON CONFLICT (id) DO UPDATE SET
+			removed_at = EXCLUDED.removed_at,
+			updated_at = NOW()
+	`, assignmentIDOld, projectID, schemaIDOld, removedAt, removedAt,
+		assignmentIDNew, projectID, schemaIDNew, now).Exec(ctx)
+	require.NoError(t, err, "seeding project_schemas")
+
+	// Cleanup in reverse FK order
+	t.Cleanup(func() {
+		_, _ = db.NewRaw(`DELETE FROM kb.project_schemas WHERE id IN (?::uuid, ?::uuid)`, assignmentIDOld, assignmentIDNew).Exec(ctx)
+		_, _ = db.NewRaw(`DELETE FROM kb.graph_schemas WHERE id IN (?::uuid, ?::uuid)`, schemaIDOld, schemaIDNew).Exec(ctx)
+		_, _ = db.NewRaw(`DELETE FROM kb.projects WHERE id = ?::uuid`, projectID).Exec(ctx)
+		_, _ = db.NewRaw(`DELETE FROM kb.orgs WHERE id = ?::uuid`, orgID).Exec(ctx)
+	})
+
+	provider := ProvideSchemaProvider(db, log)
+	schemas, err := provider.GetProjectSchemas(ctx, projectID)
+	require.NoError(t, err)
+	require.NotNil(t, schemas)
+
+	// Should contain NewType from the active (non-removed) schema
+	assert.Contains(t, schemas.ObjectSchemas, "NewType",
+		"active schema type should be present")
+
+	// Must NOT contain OldType from the removed schema
+	assert.NotContains(t, schemas.ObjectSchemas, "OldType",
+		"removed schema type must not appear (regression: issue #111)")
+}
+
 func TestSchemaProviderWithMockData(t *testing.T) {
 	t.Run("empty_schemas_structure", func(t *testing.T) {
 		schemas := &ExtractionSchemas{
