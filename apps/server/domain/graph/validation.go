@@ -214,7 +214,10 @@ func validateProperties(
 	for key, value := range props {
 		propDef, hasDef := schema.Properties[key]
 		if !hasDef {
-			validationErrors = append(validationErrors, fmt.Sprintf("unknown property: %s", key))
+			// Unknown properties are passed through as-is. The schema defines
+			// known properties for type coercion and validation, but does not
+			// act as an allowlist — users may store arbitrary metadata keys.
+			validated[key] = value
 			continue
 		}
 
@@ -306,7 +309,8 @@ func validatePatchProperties(
 
 		propDef, hasDef := schema.Properties[key]
 		if !hasDef {
-			validationErrors = append(validationErrors, fmt.Sprintf("unknown property: %s", key))
+			// Unknown properties are passed through as-is (same policy as validateProperties).
+			validated[key] = value
 			continue
 		}
 

@@ -81,7 +81,10 @@ func TestService_Create_ObjectTypeAllowlist(t *testing.T) {
 		}, nil)
 	})
 
-	t.Run("unknown property rejected when schema has properties", func(t *testing.T) {
+	t.Run("unknown property passed through when schema has properties", func(t *testing.T) {
+		// Unknown properties are not rejected — the schema defines known properties
+		// for type coercion but does not act as an allowlist. Users may store
+		// arbitrary metadata keys alongside schema-defined ones.
 		schemas := &ExtractionSchemas{
 			ObjectSchemas: map[string]agents.ObjectSchema{
 				"Person": {
@@ -93,12 +96,12 @@ func TestService_Create_ObjectTypeAllowlist(t *testing.T) {
 			},
 		}
 		svc := newTestService(&mockSchemaProvider{schemas: schemas})
-		_, err := svc.Create(ctx, projectID, &CreateGraphObjectRequest{
+		// Will panic on nil repo after validation passes — that's expected in unit tests.
+		defer func() { recover() }() //nolint:errcheck
+		_, _ = svc.Create(ctx, projectID, &CreateGraphObjectRequest{
 			Type:       "Person",
 			Properties: map[string]any{"name": "Alice", "unknown_field": "oops"},
 		}, nil)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown property")
 	})
 }
 
@@ -118,7 +121,8 @@ func TestService_CreateOrUpdate_ObjectTypeAllowlist(t *testing.T) {
 		assert.Contains(t, err.Error(), "object_type_not_allowed")
 	})
 
-	t.Run("unknown property rejected", func(t *testing.T) {
+	t.Run("unknown property passed through", func(t *testing.T) {
+		// Unknown properties are not rejected — schema is not an allowlist.
 		schemas := &ExtractionSchemas{
 			ObjectSchemas: map[string]agents.ObjectSchema{
 				"Person": {
@@ -130,13 +134,12 @@ func TestService_CreateOrUpdate_ObjectTypeAllowlist(t *testing.T) {
 			},
 		}
 		svc := newTestService(&mockSchemaProvider{schemas: schemas})
-		_, _, err := svc.CreateOrUpdate(ctx, projectID, &CreateGraphObjectRequest{
+		defer func() { recover() }() //nolint:errcheck
+		_, _, _ = svc.CreateOrUpdate(ctx, projectID, &CreateGraphObjectRequest{
 			Type:       "Person",
 			Key:        &key,
-			Properties: map[string]any{"name": "Alice", "extra": "bad"},
+			Properties: map[string]any{"name": "Alice", "extra": "fine"},
 		}, nil)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown property")
 	})
 }
 
@@ -211,12 +214,14 @@ func TestPatch_SchemaVersionCompatibility(t *testing.T) {
 		assert.Equal(t, "Bob", out["name"])
 	})
 
-	t.Run("patch delta introducing an unknown property is rejected", func(t *testing.T) {
-		// If someone tries to ADD a property that isn't in the current schema, reject it.
-		patchDelta := map[string]any{"name": "Bob", "new_unknown": "oops"}
-		_, err := validatePatchProperties(patchDelta, schemaV2)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown property: new_unknown")
+	t.Run("patch delta introducing an unknown property is passed through", func(t *testing.T) {
+		// Unknown properties are not rejected — schema is not an allowlist.
+		// Users may store arbitrary metadata keys alongside schema-defined ones.
+		patchDelta := map[string]any{"name": "Bob", "new_unknown": "fine"}
+		out, err := validatePatchProperties(patchDelta, schemaV2)
+		assert.NoError(t, err)
+		assert.Equal(t, "Bob", out["name"])
+		assert.Equal(t, "fine", out["new_unknown"])
 	})
 
 	t.Run("patch delta with nil (delete) for legacy property is allowed", func(t *testing.T) {

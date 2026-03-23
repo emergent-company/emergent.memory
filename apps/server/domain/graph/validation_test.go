@@ -196,7 +196,8 @@ func TestValidateProperties(t *testing.T) {
 		assert.Contains(t, err.Error(), "birth_date")
 	})
 
-	t.Run("unknown properties rejected when schema has properties", func(t *testing.T) {
+	t.Run("unknown properties passed through when schema has properties", func(t *testing.T) {
+		// Schema is not an allowlist — unknown properties are stored as-is.
 		props := map[string]any{
 			"name":            "John Doe",
 			"age":             25,
@@ -204,9 +205,10 @@ func TestValidateProperties(t *testing.T) {
 			"another_unknown": 123,
 		}
 
-		_, err := validateProperties(props, schema)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown property")
+		out, err := validateProperties(props, schema)
+		assert.NoError(t, err)
+		assert.Equal(t, "some value", out["unknown_prop"])
+		assert.Equal(t, 123, out["another_unknown"])
 	})
 
 	t.Run("unknown properties allowed when schema has no properties", func(t *testing.T) {
@@ -296,10 +298,10 @@ func TestValidateRelationship(t *testing.T) {
 		assert.Contains(t, err.Error(), "relationship_target_type_not_allowed")
 	})
 
-	t.Run("unknown property returns error", func(t *testing.T) {
-		err := validateRelationship("WORKS_AT", "Person", "Company", map[string]any{"since": 2020, "extra": "nope"}, schemas)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown property")
+	t.Run("unknown property is passed through", func(t *testing.T) {
+		// Schema is not an allowlist — unknown properties are stored as-is.
+		err := validateRelationship("WORKS_AT", "Person", "Company", map[string]any{"since": 2020, "extra": "fine"}, schemas)
+		assert.NoError(t, err)
 	})
 
 	t.Run("missing required property returns error", func(t *testing.T) {
@@ -331,10 +333,11 @@ func TestValidatePatchProperties(t *testing.T) {
 		assert.Equal(t, "Alice", out["name"])
 	})
 
-	t.Run("unknown property in delta is rejected", func(t *testing.T) {
-		_, err := validatePatchProperties(map[string]any{"legacy_field": "old"}, schema)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown property: legacy_field")
+	t.Run("unknown property in delta is passed through", func(t *testing.T) {
+		// Schema is not an allowlist — unknown properties are stored as-is.
+		out, err := validatePatchProperties(map[string]any{"legacy_field": "old"}, schema)
+		assert.NoError(t, err)
+		assert.Equal(t, "old", out["legacy_field"])
 	})
 
 	t.Run("required field missing from delta does NOT cause error (delta-only check)", func(t *testing.T) {
