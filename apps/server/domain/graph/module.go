@@ -100,11 +100,11 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 
 	type GraphSchema struct {
 		bun.BaseModel           `bun:"kb.graph_schemas,alias:gs"`
-		ID                      string  `bun:"id,pk,type:uuid"`
-		Name                    string  `bun:"name,notnull"`
-		Version                 string  `bun:"version,notnull"`
-		ObjectTypeSchemas       JSONMap `bun:"object_type_schemas,type:jsonb,notnull"`
-		RelationshipTypeSchemas JSONMap `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
+		ID                      string          `bun:"id,pk,type:uuid"`
+		Name                    string          `bun:"name,notnull"`
+		Version                 string          `bun:"version,notnull"`
+		ObjectTypeSchemas       json.RawMessage `bun:"object_type_schemas,type:jsonb"`
+		RelationshipTypeSchemas JSONMap         `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
 	}
 
 	type ProjectSchemaAssignment struct {
@@ -151,9 +151,15 @@ func (p *schemaProviderAdapter) GetProjectSchemas(ctx context.Context, projectID
 
 		pack := assignment.Schema
 
-		for typeName, schemaRaw := range pack.ObjectTypeSchemas {
-			schemaMap, ok := schemaRaw.(map[string]any)
-			if !ok {
+		// parseObjectTypeSchemasToMap handles both storage formats:
+		//   - Array format: [{name, label, description, properties, ...}, ...]
+		//   - Map format:   {TypeName: {label, description, properties, ...}, ...}
+		// epf-engine v3 and blueprint seeds use the map format; user-uploaded
+		// YAML files typically use the array format.
+		objTypeMap := parseObjectTypeSchemasToMap(pack.ObjectTypeSchemas)
+		for typeName, raw := range objTypeMap {
+			var schemaMap map[string]any
+			if err := json.Unmarshal(raw, &schemaMap); err != nil {
 				continue
 			}
 
@@ -437,4 +443,61 @@ func (p *inverseTypeProviderAdapter) getOrLoadInverseMap(ctx context.Context, pr
 		slog.Int("mappings", len(inverseMap)))
 
 	return inverseMap
+}
+
+// parseObjectTypeSchemasToMap normalises the two storage formats used for
+// object_type_schemas in kb.graph_schemas:
+//
+//   - Array format (user YAML files): [{name, label, description, properties, ...}, ...]
+//   - Map format  (blueprint seeds / epf-engine v3): {TypeName: {label, description, properties, ...}, ...}
+//
+// Returns a map of typeName → raw JSON definition, or nil on empty/invalid input.
+func parseObjectTypeSchemasToMap(data json.RawMessage) map[string]json.RawMessage {
+	if len(data) == 0 {
+		return nil
+	}
+
+	// Try array format first.
+	var arr []struct {
+		Name        string          `json:"name"`
+		Label       string          `json:"label"`
+		Description string          `json:"description"`
+		Properties  json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &arr); err == nil && len(arr) > 0 {
+		result := make(map[string]json.RawMessage, len(arr))
+		for _, item := range arr {
+			if item.Name == "" {
+				continue
+			}
+			schema := map[string]json.RawMessage{}
+			if len(item.Properties) > 0 {
+				schema["properties"] = item.Properties
+			}
+			if item.Label != "" {
+				lb, _ := json.Marshal(item.Label)
+				schema["label"] = lb
+			}
+			if item.Description != "" {
+				desc, _ := json.Marshal(item.Description)
+				schema["description"] = desc
+			}
+			schemaBytes, err := json.Marshal(schema)
+			if err != nil {
+				continue
+			}
+			result[item.Name] = schemaBytes
+		}
+		if len(result) > 0 {
+			return result
+		}
+	}
+
+	// Fall back to map format.
+	var objMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &objMap); err == nil && len(objMap) > 0 {
+		return objMap
+	}
+
+	return nil
 }
