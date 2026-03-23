@@ -49,6 +49,11 @@ func (s *Service) GetInstalledPacks(ctx context.Context, projectID string) ([]In
 	return s.repo.GetInstalledPacks(ctx, projectID)
 }
 
+// GetAllPacks returns all schemas for a project — both installed and available — as a unified list.
+func (s *Service) GetAllPacks(ctx context.Context, projectID, orgID string) ([]UnifiedSchemaItem, error) {
+	return s.repo.GetAllPacks(ctx, projectID, orgID)
+}
+
 // AssignPack assigns a schema to a project and registers its types.
 // When req.DryRun is true, returns a preview without making any changes.
 // When req.Merge is true, additively merges incoming schemas into existing types.

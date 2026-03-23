@@ -125,14 +125,17 @@ func getSchemasClient(cmd *cobra.Command) (*sdkschemas.Client, error) {
 // ─────────────────────────────────────────────
 
 var schemasListAvailableFlag bool
+var schemasListInstalledFlag bool
 
 var schemasListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List schemas installed on this project",
-	Long: `List schemas installed on the current project (default), or schemas available
-in the registry to install (--available).
+	Short: "List schemas for this project",
+	Long: `List all schemas for the current project — both installed and available — in a single unified view.
 
-Schemas installed via 'memory blueprints install' appear here under 'installed'.
+By default shows all schemas with STATUS (installed/available) and SOURCE columns.
+Use --installed to show only installed schemas, or --available to show only available ones.
+
+Schemas installed via 'memory blueprints install' will show their source file path.
 Use 'memory schemas compiled-types' to see the full merged set of active types.
 
 Output is a table. Use --output json to receive the full list as JSON.`,
@@ -144,56 +147,68 @@ Output is a table. Use --output json to receive the full list as JSON.`,
 
 		out := cmd.OutOrStdout()
 
-		if schemasListAvailableFlag {
-			// Show registry schemas not yet installed
-			packs, err := tp.GetAvailablePacks(context.Background())
-			if err != nil {
-				return fmt.Errorf("failed to list available schemas: %w", err)
-			}
-			if schemaOutputFlag == "json" {
-				return json.NewEncoder(out).Encode(packs)
-			}
-			if len(packs) == 0 {
-				fmt.Fprintln(out, "No schemas available in the registry.")
-				fmt.Fprintln(out, "Schemas are typically installed via 'memory blueprints install', not the registry.")
-				return nil
-			}
-			table := tablewriter.NewWriter(out)
-			table.Header("ID", "Name", "Version", "Description")
-			for _, p := range packs {
-				desc := ""
-				if p.Description != nil {
-					desc = *p.Description
-				}
-				if len(desc) > 60 {
-					desc = desc[:59] + "…"
-				}
-				_ = table.Append(p.ID, p.Name, p.Version, desc)
-			}
-			return table.Render()
+		packs, err := tp.GetAllPacks(context.Background())
+		if err != nil {
+			return fmt.Errorf("failed to list schemas: %w", err)
 		}
 
-		// Default: show installed schemas (same as 'schemas installed')
-		packs, err := tp.GetInstalledPacks(context.Background())
-		if err != nil {
-			return fmt.Errorf("failed to list installed schemas: %w", err)
+		// Apply filters
+		if schemasListInstalledFlag {
+			filtered := packs[:0]
+			for _, p := range packs {
+				if p.Installed {
+					filtered = append(filtered, p)
+				}
+			}
+			packs = filtered
+		} else if schemasListAvailableFlag {
+			filtered := packs[:0]
+			for _, p := range packs {
+				if !p.Installed {
+					filtered = append(filtered, p)
+				}
+			}
+			packs = filtered
 		}
+
 		if schemaOutputFlag == "json" {
 			return json.NewEncoder(out).Encode(packs)
 		}
+
 		if len(packs) == 0 {
-			fmt.Fprintln(out, "No schemas installed on this project.")
-			fmt.Fprintln(out, "Install schemas via: memory blueprints install <source>")
+			if schemasListInstalledFlag {
+				fmt.Fprintln(out, "No schemas installed on this project.")
+				fmt.Fprintln(out, "Install schemas via: memory blueprints install <source>")
+			} else if schemasListAvailableFlag {
+				fmt.Fprintln(out, "No schemas available in the registry.")
+				fmt.Fprintln(out, "Schemas are typically installed via 'memory blueprints install', not the registry.")
+			} else {
+				fmt.Fprintln(out, "No schemas found for this project.")
+			}
 			return nil
 		}
+
 		table := tablewriter.NewWriter(out)
-		table.Header("Schema ID", "Name", "Version", "Active", "Installed")
+		table.Header("Name", "Version", "Status", "Source", "Description")
 		for _, p := range packs {
-			active := "yes"
-			if !p.Active {
-				active = "no"
+			status := "available"
+			if p.Installed {
+				status = "installed"
 			}
-			_ = table.Append(p.SchemaID, p.Name, p.Version, active, p.InstalledAt.Format("2006-01-02"))
+			source := "-"
+			if p.BlueprintSource != nil && *p.BlueprintSource != "" {
+				source = *p.BlueprintSource
+			} else if p.Installed {
+				source = "manual"
+			}
+			desc := ""
+			if p.Description != nil {
+				desc = *p.Description
+			}
+			if len(desc) > 60 {
+				desc = desc[:59] + "…"
+			}
+			_ = table.Append(p.Name, p.Version, status, source, desc)
 		}
 		return table.Render()
 	},
@@ -1663,6 +1678,7 @@ func init() {
 
 	// Per-subcommand flags
 	schemasListCmd.Flags().BoolVar(&schemasListAvailableFlag, "available", false, "Show schemas available in the registry (not yet installed) instead of installed schemas")
+	schemasListCmd.Flags().BoolVarP(&schemasListInstalledFlag, "installed", "i", false, "Show only installed schemas")
 	schemasCreateCmd.Flags().StringVar(&schemaFileFlag, "file", "", "Path to schema JSON file (required)")
 	schemasInstallCmd.Flags().StringVar(&schemaFileFlag, "file", "", "Create schema from JSON file and install in one step")
 	schemasInstallCmd.Flags().BoolVar(&schemaDryRunFlag, "dry-run", false, "Preview what would be installed without making changes")

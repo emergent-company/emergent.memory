@@ -43,7 +43,7 @@
         "-y",
         "chrome-devtools-mcp@latest",
         "--browserUrl",
-        "http://localhost:9222"
+        "http://100.75.227.125:9222"
       ],
       "timeout": 120000
     }

@@ -165,6 +165,7 @@ type GraphMemorySchema struct {
 	ExtractionPrompts       json.RawMessage       `bun:"extraction_prompts,type:jsonb" json:"extractionPrompts,omitempty"`
 	Migrations              *SchemaMigrationHints `bun:"migrations,type:jsonb" json:"migrations,omitempty"`
 	Checksum                *string               `bun:"checksum" json:"checksum,omitempty"`
+	BlueprintSource         *string               `bun:"blueprint_source" json:"blueprintSource,omitempty"`
 	ProjectID               *string               `bun:"project_id,type:uuid" json:"projectId,omitempty"`
 	OrgID                   *string               `bun:"org_id,type:uuid" json:"orgId,omitempty"`
 	Visibility              string                `bun:"visibility,notnull,default:'project'" json:"visibility"`
@@ -225,24 +226,26 @@ type RelationshipTypeSchema struct {
 
 // MemorySchemaListItem is a simplified schema for listing
 type MemorySchemaListItem struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Version     string  `json:"version"`
-	Description *string `json:"description,omitempty"`
-	Author      *string `json:"author,omitempty"`
-	Visibility  string  `json:"visibility,omitempty"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Version         string  `json:"version"`
+	Description     *string `json:"description,omitempty"`
+	Author          *string `json:"author,omitempty"`
+	Visibility      string  `json:"visibility,omitempty"`
+	BlueprintSource *string `json:"blueprintSource,omitempty"`
 }
 
 // InstalledSchemaItem represents an installed schema for a project
 type InstalledSchemaItem struct {
-	ID             string                 `json:"id"` // assignment ID
-	SchemaID       string                 `json:"schemaId"`
-	Name           string                 `json:"name"`
-	Version        string                 `json:"version"`
-	Description    *string                `json:"description,omitempty"`
-	Active         bool                   `json:"active"`
-	InstalledAt    time.Time              `json:"installedAt"`
-	Customizations map[string]interface{} `json:"customizations,omitempty"`
+	ID              string                 `json:"id"` // assignment ID
+	SchemaID        string                 `json:"schemaId"`
+	Name            string                 `json:"name"`
+	Version         string                 `json:"version"`
+	Description     *string                `json:"description,omitempty"`
+	Active          bool                   `json:"active"`
+	InstalledAt     time.Time              `json:"installedAt"`
+	Customizations  map[string]interface{} `json:"customizations,omitempty"`
+	BlueprintSource *string                `json:"blueprintSource,omitempty"`
 }
 
 // AssignPackRequest is the request to assign a memory schema to a project
@@ -330,6 +333,9 @@ type CreatePackRequest struct {
 	License          *string `json:"license,omitempty"`
 	RepositoryURL    *string `json:"repository_url,omitempty"`
 	DocumentationURL *string `json:"documentation_url,omitempty"`
+	// BlueprintSource is the file path or URL of the blueprint that created this schema.
+	// Set by the blueprints applier; nil for schemas created manually.
+	BlueprintSource *string `json:"blueprint_source,omitempty"`
 	// Visibility controls schema scope: "project" (default) or "organization".
 	Visibility string `json:"visibility,omitempty"`
 
@@ -466,4 +472,18 @@ type MigrateResponse struct {
 	DryRun                bool                   `json:"dry_run"`
 	TypeRenameResults     []TypeRenameResult     `json:"type_rename_results,omitempty"`
 	PropertyRenameResults []PropertyRenameResult `json:"property_rename_results,omitempty"`
+}
+
+// UnifiedSchemaItem represents a schema entry in the unified list (available + installed).
+type UnifiedSchemaItem struct {
+	ID              string     `json:"id"`                     // schema ID (kb.graph_schemas.id)
+	AssignmentID    *string    `json:"assignmentId,omitempty"` // kb.project_schemas.id when installed
+	Name            string     `json:"name"`
+	Version         string     `json:"version"`
+	Description     *string    `json:"description,omitempty"`
+	Author          *string    `json:"author,omitempty"`
+	Visibility      string     `json:"visibility,omitempty"`
+	Installed       bool       `json:"installed"`
+	InstalledAt     *time.Time `json:"installedAt,omitempty"`
+	BlueprintSource *string    `json:"blueprintSource,omitempty"`
 }

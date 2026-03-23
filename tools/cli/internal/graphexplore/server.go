@@ -235,6 +235,8 @@ func (s *Server) loadSchema() error {
 			Label:        label,
 			InverseLabel: coalesce(rel.InverseLabel, rel.InverseLabelAlt),
 			Color:        s.typeColor(rtype),
+			SourceType:   rel.SourceType,
+			TargetType:   rel.TargetType,
 		})
 	}
 
@@ -299,12 +301,29 @@ func (s *Server) handleNodeTypes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sort by count descending
+	// Build set of hidden type names from query param (comma-separated)
+	hiddenSet := make(map[string]bool)
+	if h := r.URL.Query().Get("hiddenNodeTypes"); h != "" {
+		for _, name := range strings.Split(h, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				hiddenSet[name] = true
+			}
+		}
+	}
+
+	// Which type is currently selected (for relationship filtering highlight)
+	selectedType := strings.TrimSpace(r.URL.Query().Get("selectedType"))
+
+	// Sort by count descending; apply hidden + selected state
 	types := make([]ObjectType, len(s.objectTypes))
 	copy(types, s.objectTypes)
 	sort.Slice(types, func(i, j int) bool {
 		return types[i].Count > types[j].Count
 	})
+	for i := range types {
+		types[i].Hidden = hiddenSet[types[i].Name]
+		types[i].Selected = selectedType != "" && types[i].Name == selectedType
+	}
 
 	w.Header().Set("Content-Type", "text/html")
 	component := NodeTypeList(types)
@@ -318,8 +337,36 @@ func (s *Server) handleEdgeTypes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	types := make([]RelationshipType, len(s.relationshipTypes))
-	copy(types, s.relationshipTypes)
+	// Build set of hidden edge type names from query param (comma-separated)
+	hiddenSet := make(map[string]bool)
+	if h := r.URL.Query().Get("hiddenEdgeTypes"); h != "" {
+		for _, name := range strings.Split(h, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				hiddenSet[name] = true
+			}
+		}
+	}
+
+	// Filter by selected node type — only show relationships where source or target matches
+	selectedType := strings.TrimSpace(r.URL.Query().Get("selectedType"))
+
+	types := make([]RelationshipType, 0, len(s.relationshipTypes))
+	for _, rt := range s.relationshipTypes {
+		// If a type is selected, skip relationships that don't involve it
+		if selectedType != "" {
+			src := rt.SourceType
+			dst := rt.TargetType
+			if src != "" || dst != "" {
+				// Both fields present — filter strictly
+				if src != selectedType && dst != selectedType {
+					continue
+				}
+			}
+			// If both SourceType and TargetType are empty (no schema info), include it
+		}
+		rt.Hidden = hiddenSet[rt.Name]
+		types = append(types, rt)
+	}
 
 	w.Header().Set("Content-Type", "text/html")
 	component := EdgeTypeList(types)
@@ -607,6 +654,8 @@ type compiledRelType struct {
 	Label           string `json:"label"`
 	InverseLabel    string `json:"inverseLabel"`
 	InverseLabelAlt string `json:"inverse_label"`
+	SourceType      string `json:"sourceType"`
+	TargetType      string `json:"targetType"`
 }
 
 type registryEntry struct {
