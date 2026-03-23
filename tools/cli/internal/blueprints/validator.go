@@ -133,8 +133,6 @@ func Validate(
 // Pack validation
 // ──────────────────────────────────────────────
 
-var validPackNamePattern = "[a-zA-Z0-9_-]"
-
 func (r *ValidationReport) validatePacks(packs []PackFile) {
 	seen := make(map[string]string) // name → sourceFile
 

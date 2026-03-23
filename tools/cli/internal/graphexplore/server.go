@@ -62,16 +62,6 @@ func (s *Server) typeColor(typeName string) string {
 	return c
 }
 
-// typeIcon returns the icon for a type (resolved from registry or first letter).
-func (s *Server) typeIcon(typeName string) string {
-	for _, ot := range s.objectTypes {
-		if ot.Name == typeName && ot.Icon != "" {
-			return ot.Icon
-		}
-	}
-	return firstLetter(typeName)
-}
-
 // proxyGet makes a GET request to the Memory API server.
 func (s *Server) proxyGet(path string) ([]byte, int, error) {
 	url := s.ServerURL + path
@@ -285,19 +275,19 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	component := PageLayout(s.ProjectID)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleStaticJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(graphExploreJS)
+	_, _ = w.Write(graphExploreJS)
 }
 
 func (s *Server) handleNodeTypes(w http.ResponseWriter, r *http.Request) {
 	if err := s.loadSchema(); err != nil {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load types: %s</div>`, err.Error())))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load types: %s</div>`, err.Error())))
 		return
 	}
 
@@ -327,13 +317,13 @@ func (s *Server) handleNodeTypes(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	component := NodeTypeList(types)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleEdgeTypes(w http.ResponseWriter, r *http.Request) {
 	if err := s.loadSchema(); err != nil {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load edge types</div>`))
+		_, _ = w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load edge types</div>`))
 		return
 	}
 
@@ -370,7 +360,7 @@ func (s *Server) handleEdgeTypes(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	component := EdgeTypeList(types)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
@@ -487,7 +477,7 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 				Items []json.RawMessage `json:"items"`
 				Data  []json.RawMessage `json:"data"`
 			}
-			json.Unmarshal(searchBody, &searchResp)
+			_ = json.Unmarshal(searchBody, &searchResp)
 			items := searchResp.Items
 			if len(items) == 0 {
 				items = searchResp.Data
