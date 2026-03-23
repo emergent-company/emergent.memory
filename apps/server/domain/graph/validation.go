@@ -382,7 +382,11 @@ func validateRelationship(
 
 	relSchema, ok := schemas.RelationshipSchemas[relType]
 	if !ok {
-		return fmt.Errorf("relationship_type_not_allowed")
+		// Unknown relationship types are allowed — the schema defines constraints
+		// for known types but does not act as an allowlist. Users may create
+		// relationships with any type name, including domain-specific ones like
+		// requires, calls, has_step, etc.
+		return nil
 	}
 
 	if len(relSchema.SourceTypes) > 0 {

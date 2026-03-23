@@ -280,10 +280,11 @@ func TestValidateRelationship(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("relationship type not in schema returns error", func(t *testing.T) {
+	t.Run("relationship type not in schema is passed through", func(t *testing.T) {
+		// Schema is not an allowlist — unknown relationship types are allowed.
+		// Users may create relationships with any type name.
 		err := validateRelationship("UNKNOWN_REL", "Person", "Company", map[string]any{"since": 2020}, schemas)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "relationship_type_not_allowed")
+		assert.NoError(t, err)
 	})
 
 	t.Run("fromTypes mismatch returns error", func(t *testing.T) {
