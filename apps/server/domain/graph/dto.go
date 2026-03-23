@@ -885,3 +885,25 @@ type MoveObjectResponse struct {
 	SourceBranchID     *uuid.UUID           `json:"source_branch_id,omitempty"`
 	TargetBranchID     *uuid.UUID           `json:"target_branch_id,omitempty"`
 }
+
+// =============================================================================
+// Fork Branch DTOs
+// =============================================================================
+
+// ForkBranchRequest is the request body for forking a branch.
+// Creates a new branch and copies objects (and their relationships) from the source.
+type ForkBranchRequest struct {
+	Name        string   `json:"name" validate:"required"`
+	Description *string  `json:"description,omitempty"`
+	FilterTypes []string `json:"filter_types,omitempty"` // If set, only copy objects of these types
+}
+
+// ForkBranchResponse is the response for a fork branch operation.
+type ForkBranchResponse struct {
+	BranchID             string `json:"branch_id"`
+	BranchName           string `json:"branch_name"`
+	SourceBranchID       string `json:"source_branch_id"`
+	CopiedObjects        int    `json:"copied_objects"`
+	CopiedRelationships  int    `json:"copied_relationships"`
+	SkippedRelationships int    `json:"skipped_relationships"` // Relationships where one end was filtered out
+}

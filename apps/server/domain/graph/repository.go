@@ -2416,3 +2416,206 @@ func (r *Repository) GetRelationshipsByEndpoint(ctx context.Context, tx bun.Tx, 
 func (r *Repository) CheckObjectExistsOnBranch(ctx context.Context, tx bun.Tx, projectID uuid.UUID, targetBranchID *uuid.UUID, objType string, key string) (*GraphObject, error) {
 	return r.FindHeadByTypeAndKey(ctx, tx, projectID, targetBranchID, objType, key)
 }
+
+// CreateBranch inserts a new branch record into kb.branches.
+func (r *Repository) CreateBranch(ctx context.Context, branch *Branch) error {
+	_, err := r.db.NewInsert().Model(branch).Returning("*").Exec(ctx)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// GetBranchByNameAndProject checks if a branch with the given name already exists for a project.
+func (r *Repository) GetBranchByNameAndProject(ctx context.Context, name string, projectID uuid.UUID) (*Branch, error) {
+	branch := new(Branch)
+	err := r.db.NewSelect().Model(branch).
+		Where("name = ?", name).
+		Where("project_id = ?", projectID).
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return branch, nil
+}
+
+// EnsureBranchLineage populates the branch_lineage closure table for a new branch.
+func (r *Repository) EnsureBranchLineage(ctx context.Context, branchID uuid.UUID, parentBranchID *uuid.UUID) {
+	// Self lineage (depth=0)
+	_, _ = r.db.NewRaw(`
+		INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth)
+		VALUES (?, ?, 0)
+		ON CONFLICT DO NOTHING
+	`, branchID, branchID).Exec(ctx)
+
+	if parentBranchID != nil {
+		// Ensure parent self row exists
+		_, _ = r.db.NewRaw(`
+			INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth)
+			VALUES (?, ?, 0)
+			ON CONFLICT DO NOTHING
+		`, *parentBranchID, *parentBranchID).Exec(ctx)
+
+		// Copy parent lineage rows with depth+1
+		_, _ = r.db.NewRaw(`
+			INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth)
+			SELECT ?, ancestor_branch_id, depth + 1
+			FROM kb.branch_lineage
+			WHERE branch_id = ?
+			ON CONFLICT (branch_id, ancestor_branch_id) DO NOTHING
+		`, branchID, *parentBranchID).Exec(ctx)
+
+		// Add direct parent (depth=1) if not already captured
+		_, _ = r.db.NewRaw(`
+			INSERT INTO kb.branch_lineage(branch_id, ancestor_branch_id, depth)
+			VALUES (?, ?, 1)
+			ON CONFLICT (branch_id, ancestor_branch_id) DO NOTHING
+		`, branchID, *parentBranchID).Exec(ctx)
+	}
+}
+
+// BulkCopyObjectsToBranch copies HEAD object versions from one branch to another.
+// It inserts new rows with new IDs but preserving canonical_id, type, key, properties, etc.
+// If filterTypes is non-empty, only objects of those types are copied.
+// Returns the set of copied canonical_ids and the count.
+func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid.UUID, sourceBranchID, targetBranchID *uuid.UUID, filterTypes []string) (map[uuid.UUID]bool, int, error) {
+	// Get HEAD objects on source branch
+	var objects []*GraphObject
+	q := r.db.NewSelect().
+		Model(&objects).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL")
+
+	if sourceBranchID != nil {
+		q = q.Where("branch_id = ?", *sourceBranchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	if len(filterTypes) > 0 {
+		q = q.Where("type IN (?)", bun.In(filterTypes))
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		if err == sql.ErrNoRows {
+			return make(map[uuid.UUID]bool), 0, nil
+		}
+		return nil, 0, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if len(objects) == 0 {
+		return make(map[uuid.UUID]bool), 0, nil
+	}
+
+	copiedCanonicals := make(map[uuid.UUID]bool, len(objects))
+
+	// Insert copies in batches of 100
+	batch := make([]*GraphObject, 0, 100)
+	for _, obj := range objects {
+		newObj := &GraphObject{
+			ID:          uuid.New(),
+			ProjectID:   projectID,
+			BranchID:    targetBranchID,
+			CanonicalID: obj.CanonicalID, // Preserve canonical ID for merge-back support
+			Version:     1,
+			Type:        obj.Type,
+			Key:         obj.Key,
+			Status:      obj.Status,
+			Properties:  obj.Properties,
+			Labels:      obj.Labels,
+			ContentHash: obj.ContentHash,
+		}
+		batch = append(batch, newObj)
+		copiedCanonicals[obj.CanonicalID] = true
+
+		if len(batch) >= 100 {
+			if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
+				return nil, 0, apperror.ErrDatabase.WithInternal(err)
+			}
+			batch = batch[:0]
+		}
+	}
+	if len(batch) > 0 {
+		if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
+			return nil, 0, apperror.ErrDatabase.WithInternal(err)
+		}
+	}
+
+	return copiedCanonicals, len(objects), nil
+}
+
+// BulkCopyRelationshipsToBranch copies HEAD relationships from one branch to another,
+// but only for relationships where both src and dst are in the copiedCanonicals set.
+// Returns (copied count, skipped count, error).
+func (r *Repository) BulkCopyRelationshipsToBranch(ctx context.Context, projectID uuid.UUID, sourceBranchID, targetBranchID *uuid.UUID, copiedCanonicals map[uuid.UUID]bool) (int, int, error) {
+	// Get HEAD relationships on source branch
+	var rels []*GraphRelationship
+	q := r.db.NewSelect().
+		Model(&rels).
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL")
+
+	if sourceBranchID != nil {
+		q = q.Where("branch_id = ?", *sourceBranchID)
+	} else {
+		q = q.Where("branch_id IS NULL")
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, 0, nil
+		}
+		return 0, 0, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if len(rels) == 0 {
+		return 0, 0, nil
+	}
+
+	copied := 0
+	skipped := 0
+
+	batch := make([]*GraphRelationship, 0, 100)
+	for _, rel := range rels {
+		// Only copy relationships where both endpoints were copied
+		if !copiedCanonicals[rel.SrcID] || !copiedCanonicals[rel.DstID] {
+			skipped++
+			continue
+		}
+
+		newRel := &GraphRelationship{
+			ID:          uuid.New(),
+			ProjectID:   projectID,
+			BranchID:    targetBranchID,
+			CanonicalID: rel.CanonicalID, // Preserve canonical ID
+			Version:     1,
+			Type:        rel.Type,
+			SrcID:       rel.SrcID,
+			DstID:       rel.DstID,
+			Properties:  rel.Properties,
+			Weight:      rel.Weight,
+			ContentHash: rel.ContentHash,
+		}
+		batch = append(batch, newRel)
+		copied++
+
+		if len(batch) >= 100 {
+			if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
+				return 0, 0, apperror.ErrDatabase.WithInternal(err)
+			}
+			batch = batch[:0]
+		}
+	}
+	if len(batch) > 0 {
+		if _, err := r.db.NewInsert().Model(&batch).Exec(ctx); err != nil {
+			return 0, 0, apperror.ErrDatabase.WithInternal(err)
+		}
+	}
+
+	return copied, skipped, nil
+}

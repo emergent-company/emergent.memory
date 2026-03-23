@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	sdkbranches "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/branches"
+	sdkgraph "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
@@ -20,6 +21,7 @@ var (
 	branchParentFlag      string
 	branchSourceFlag      string
 	branchExecuteFlag     bool
+	branchFilterTypeFlag  []string
 )
 
 // ─────────────────────────────────────────────
@@ -472,6 +474,75 @@ Examples:
 }
 
 // ─────────────────────────────────────────────
+// graph branches fork
+// ─────────────────────────────────────────────
+
+var graphBranchesForkCmd = &cobra.Command{
+	Use:   "fork <source-branch-id|main>",
+	Short: "Fork a branch with object copies",
+	Long: `Fork a branch — create a new branch and copy all HEAD objects and
+relationships from the source into it.
+
+SOURCE: use a branch UUID from "memory graph branches list", or the special
+keyword "main" to fork from the main graph (branch_id IS NULL).
+
+Copied objects preserve their canonical IDs so a subsequent merge back
+into the source is aware of shared identity. Only HEAD versions are
+copied (not full version history).
+
+Use --filter-type to selectively copy only certain object types. When
+a filter is applied, relationships where one endpoint was excluded are
+silently skipped (the response reports the skipped count).
+
+Examples:
+  memory graph branches fork main --name "what-if-scenario"
+  memory graph branches fork main --name "subset" --filter-type Service --filter-type API
+  memory graph branches fork <source-branch-id> --name "child" --description "child branch"`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if branchNameFlag == "" {
+			return fmt.Errorf("--name is required")
+		}
+
+		g, err := getGraphClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		req := &sdkgraph.ForkBranchRequest{
+			Name:        branchNameFlag,
+			FilterTypes: branchFilterTypeFlag,
+		}
+		if branchDescriptionFlag != "" {
+			req.Description = &branchDescriptionFlag
+		}
+
+		result, err := g.ForkBranch(context.Background(), args[0], req)
+		if err != nil {
+			return fmt.Errorf("failed to fork branch: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+
+		if graphOutputFlag == "json" {
+			return json.NewEncoder(out).Encode(result)
+		}
+
+		fmt.Fprintf(out, "Branch forked successfully.\n")
+		fmt.Fprintf(out, "Branch ID:             %s\n", result.BranchID)
+		fmt.Fprintf(out, "Branch Name:           %s\n", result.BranchName)
+		fmt.Fprintf(out, "Source:                %s\n", result.SourceBranchID)
+		fmt.Fprintf(out, "Copied Objects:        %d\n", result.CopiedObjects)
+		fmt.Fprintf(out, "Copied Relationships:  %d\n", result.CopiedRelationships)
+		if result.SkippedRelationships > 0 {
+			fmt.Fprintf(out, "Skipped Relationships: %d\n", result.SkippedRelationships)
+		}
+
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
 // init — wire up the branches sub-tree
 // ─────────────────────────────────────────────
 
@@ -489,6 +560,11 @@ func init() {
 	graphBranchesMergeCmd.Flags().StringVar(&branchSourceFlag, "source", "", "Source branch ID to merge from (required)")
 	graphBranchesMergeCmd.Flags().BoolVar(&branchExecuteFlag, "execute", false, "Execute the merge (default is dry run)")
 
+	// Flags for branches fork
+	graphBranchesForkCmd.Flags().StringVar(&branchNameFlag, "name", "", "New branch name (required)")
+	graphBranchesForkCmd.Flags().StringVar(&branchDescriptionFlag, "description", "", "Branch description (optional)")
+	graphBranchesForkCmd.Flags().StringSliceVar(&branchFilterTypeFlag, "filter-type", nil, "Only copy objects of these types (repeatable)")
+
 	// Assemble branches subcommands
 	graphBranchesCmd.AddCommand(graphBranchesListCmd)
 	graphBranchesCmd.AddCommand(graphBranchesGetCmd)
@@ -496,4 +572,5 @@ func init() {
 	graphBranchesCmd.AddCommand(graphBranchesUpdateCmd)
 	graphBranchesCmd.AddCommand(graphBranchesDeleteCmd)
 	graphBranchesCmd.AddCommand(graphBranchesMergeCmd)
+	graphBranchesCmd.AddCommand(graphBranchesForkCmd)
 }

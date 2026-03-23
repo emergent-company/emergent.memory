@@ -3902,6 +3902,88 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 	}, nil
 }
 
+// ForkBranch creates a new branch from a source branch and copies all HEAD objects
+// and their relationships. This is the "copy-on-fork" semantics requested by
+// `branches create --parent --copy-objects`.
+func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBranchID *uuid.UUID, req *ForkBranchRequest) (*ForkBranchResponse, error) {
+	// Validate source branch exists (nil = main, no row to check)
+	if sourceBranchID != nil {
+		if _, err := s.repo.GetBranchByID(ctx, projectID, *sourceBranchID); err != nil {
+			return nil, apperror.ErrNotFound.WithMessage("source branch not found")
+		}
+	}
+
+	// Check target name uniqueness
+	existing, err := s.repo.GetBranchByNameAndProject(ctx, req.Name, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, apperror.ErrConflict.WithMessage("a branch with that name already exists")
+	}
+
+	// Create the new branch
+	newBranch := &Branch{
+		ID:        uuid.New(),
+		ProjectID: projectID,
+		Name:      req.Name,
+	}
+	if sourceBranchID != nil {
+		newBranch.ParentBranchID = sourceBranchID
+	}
+
+	if err := s.repo.CreateBranch(ctx, newBranch); err != nil {
+		return nil, fmt.Errorf("create branch: %w", err)
+	}
+
+	// Populate lineage closure table
+	s.repo.EnsureBranchLineage(ctx, newBranch.ID, sourceBranchID)
+
+	// Copy HEAD objects
+	targetBranchID := newBranch.ID
+	copiedCanonicals, copiedObjects, err := s.repo.BulkCopyObjectsToBranch(ctx, projectID, sourceBranchID, &targetBranchID, req.FilterTypes)
+	if err != nil {
+		return nil, fmt.Errorf("copy objects: %w", err)
+	}
+
+	// Copy relationships where both endpoints were copied
+	copiedRels, skippedRels, err := s.repo.BulkCopyRelationshipsToBranch(ctx, projectID, sourceBranchID, &targetBranchID, copiedCanonicals)
+	if err != nil {
+		return nil, fmt.Errorf("copy relationships: %w", err)
+	}
+
+	// Journal log
+	if s.journal != nil {
+		s.journal.Log(ctx, journal.LogParams{
+			ProjectID: projectID,
+			BranchID:  &targetBranchID,
+			EventType: journal.EventTypeBatch,
+			ActorType: journal.ActorUser,
+			Metadata: map[string]any{
+				"action":                "fork",
+				"source_branch_id":      sourceBranchID,
+				"copied_objects":        copiedObjects,
+				"copied_relationships":  copiedRels,
+				"skipped_relationships": skippedRels,
+			},
+		})
+	}
+
+	sourceID := "main"
+	if sourceBranchID != nil {
+		sourceID = sourceBranchID.String()
+	}
+
+	return &ForkBranchResponse{
+		BranchID:             newBranch.ID.String(),
+		BranchName:           newBranch.Name,
+		SourceBranchID:       sourceID,
+		CopiedObjects:        copiedObjects,
+		CopiedRelationships:  copiedRels,
+		SkippedRelationships: skippedRels,
+	}, nil
+}
+
 // GetRepository exposes the underlying Repository for use by cross-domain orchestrators.
 func (s *Service) GetRepository() *Repository {
 	return s.repo

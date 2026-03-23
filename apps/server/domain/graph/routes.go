@@ -49,6 +49,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Branch routes
 	branches := g.Group("/branches")
 	branches.POST("/:targetBranchId/merge", h.MergeBranch)
+	branches.POST("/:id/fork", h.ForkBranch)
 
 	// Analytics routes
 	analytics := g.Group("/analytics")

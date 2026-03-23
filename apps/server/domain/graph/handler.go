@@ -2071,3 +2071,58 @@ func (h *Handler) CreateSubgraph(c echo.Context) error {
 
 	return c.JSON(http.StatusCreated, result)
 }
+
+// ForkBranch forks a source branch into a new branch, copying all HEAD objects and relationships.
+// @Summary      Fork a branch
+// @Description  Creates a new branch and copies HEAD objects/relationships from the source branch
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Source branch ID (UUID or 'main' for the main graph)"
+// @Param        request body ForkBranchRequest true "Fork configuration"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} ForkBranchResponse "Fork result"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Source branch not found"
+// @Failure      409 {object} apperror.Error "Branch name already exists"
+// @Router       /api/graph/branches/{id}/fork [post]
+// @Security     bearerAuth
+func (h *Handler) ForkBranch(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	// Accept "main" (or "null") as a sentinel meaning the main graph (branch_id IS NULL).
+	var sourceBranchID *uuid.UUID
+	sourceParam := c.Param("id")
+	if sourceParam != "main" && sourceParam != "null" {
+		parsed, err := uuid.Parse(sourceParam)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid source branch id (use a UUID or 'main')")
+		}
+		sourceBranchID = &parsed
+	}
+
+	var req ForkBranchRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Name == "" {
+		return apperror.ErrBadRequest.WithMessage("name is required")
+	}
+
+	result, err := h.svc.ForkBranch(c.Request().Context(), projectID, sourceBranchID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}

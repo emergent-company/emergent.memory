@@ -390,6 +390,23 @@ type BranchMergeRequest struct {
 	Limit          *int   `json:"limit,omitempty"`
 }
 
+// ForkBranchRequest is the request for forking a branch.
+type ForkBranchRequest struct {
+	Name        string   `json:"name"`
+	Description *string  `json:"description,omitempty"`
+	FilterTypes []string `json:"filter_types,omitempty"`
+}
+
+// ForkBranchResponse is the response for a fork branch operation.
+type ForkBranchResponse struct {
+	BranchID             string `json:"branch_id"`
+	BranchName           string `json:"branch_name"`
+	SourceBranchID       string `json:"source_branch_id"`
+	CopiedObjects        int    `json:"copied_objects"`
+	CopiedRelationships  int    `json:"copied_relationships"`
+	SkippedRelationships int    `json:"skipped_relationships"`
+}
+
 // AnalyticsOptions holds query parameters for analytics endpoints.
 type AnalyticsOptions struct {
 	Limit    int
@@ -1474,6 +1491,16 @@ func (c *Client) TraverseGraph(ctx context.Context, req *TraverseGraphRequest) (
 func (c *Client) MergeBranch(ctx context.Context, targetBranchID string, req *BranchMergeRequest) (*BranchMergeResponse, error) {
 	var result BranchMergeResponse
 	if err := c.postJSON(ctx, c.base+"/api/graph/branches/"+url.PathEscape(targetBranchID)+"/merge", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ForkBranch creates a new branch from a source branch and copies all HEAD objects and relationships.
+// sourceBranchID can be a UUID or "main" for the main graph.
+func (c *Client) ForkBranch(ctx context.Context, sourceBranchID string, req *ForkBranchRequest) (*ForkBranchResponse, error) {
+	var result ForkBranchResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/branches/"+url.PathEscape(sourceBranchID)+"/fork", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
