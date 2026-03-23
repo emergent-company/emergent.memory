@@ -30,6 +30,10 @@ type ExtractionSchemas struct {
 // SchemaProvider provides access to template pack schemas for validation.
 type SchemaProvider interface {
 	GetProjectSchemas(ctx context.Context, projectID string) (*ExtractionSchemas, error)
+	// InvalidateProjectCache evicts the cached schemas for a project so the next
+	// call to GetProjectSchemas fetches fresh data from the database. Call this
+	// after any schema install, update, or removal.
+	InvalidateProjectCache(projectID string)
 }
 
 // InverseTypeProvider resolves inverse relationship types from template pack schemas.
@@ -3533,6 +3537,13 @@ type ValidationMetrics struct {
 	Success       int64
 	Errors        int64
 	TotalDuration time.Duration
+}
+
+// InvalidateSchemaCache evicts the cached schemas for a project so the next
+// graph operation fetches fresh schema data from the database. Call this after
+// any schema install, update, or removal to avoid stale validation.
+func (s *Service) InvalidateSchemaCache(projectID string) {
+	s.schemaProvider.InvalidateProjectCache(projectID)
 }
 
 // =============================================================================

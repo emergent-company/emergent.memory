@@ -59,6 +59,12 @@ func (s *Service) AssignPack(ctx context.Context, projectID, userID string, req 
 		return nil, err
 	}
 
+	// Invalidate the schema cache so the next graph operation uses the fresh schema
+	// immediately rather than waiting for the 5-minute TTL to expire.
+	if !req.DryRun {
+		s.graphSvc.InvalidateSchemaCache(projectID)
+	}
+
 	// Get the full schema to check for migration hints
 	pack, packErr := s.repo.GetPackByID(ctx, req.SchemaID)
 	if packErr != nil || pack == nil || pack.Migrations == nil {
@@ -127,12 +133,20 @@ func (s *Service) AssignPack(ctx context.Context, projectID, userID string, req 
 
 // UpdateAssignment updates a pack assignment
 func (s *Service) UpdateAssignment(ctx context.Context, projectID, assignmentID string, req *UpdateAssignmentRequest) error {
-	return s.repo.UpdateAssignment(ctx, projectID, assignmentID, req)
+	if err := s.repo.UpdateAssignment(ctx, projectID, assignmentID, req); err != nil {
+		return err
+	}
+	s.graphSvc.InvalidateSchemaCache(projectID)
+	return nil
 }
 
 // DeleteAssignment removes a pack assignment from a project
 func (s *Service) DeleteAssignment(ctx context.Context, projectID, assignmentID string) error {
-	return s.repo.DeleteAssignment(ctx, projectID, assignmentID)
+	if err := s.repo.DeleteAssignment(ctx, projectID, assignmentID); err != nil {
+		return err
+	}
+	s.graphSvc.InvalidateSchemaCache(projectID)
+	return nil
 }
 
 // CreatePack creates a new schema scoped to the given project and org.

@@ -21,6 +21,8 @@ func (m *mockSchemaProvider) GetProjectSchemas(_ context.Context, _ string) (*Ex
 	return m.schemas, m.err
 }
 
+func (m *mockSchemaProvider) InvalidateProjectCache(_ string) {}
+
 // newTestService creates a Service wired only with a schema provider (repo is nil).
 // Only use for tests that expect early-return errors from schema validation.
 func newTestService(sp SchemaProvider) *Service {

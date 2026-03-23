@@ -256,6 +256,15 @@ func (p *schemaProviderAdapter) Metrics() SchemaProviderMetrics {
 	}
 }
 
+// InvalidateProjectCache evicts the cached schemas for a project so the next
+// call to GetProjectSchemas fetches fresh data from the database.
+func (p *schemaProviderAdapter) InvalidateProjectCache(projectID string) {
+	p.cacheMu.Lock()
+	delete(p.schemaCache, projectID)
+	p.cacheMu.Unlock()
+	p.log.Debug("schema cache invalidated", slog.String("project_id", projectID))
+}
+
 type SchemaProviderMetrics struct {
 	CacheHits     int64
 	CacheMisses   int64
