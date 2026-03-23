@@ -17,14 +17,14 @@ templ LeftPanel(nodeTypes []ObjectType, edgeTypes []RelationshipType) {
 			<!-- hidden inputs carry state back to server on each HTMX refresh -->
 			<input type="hidden" id="hidden-node-types" name="hiddenNodeTypes" value=""/>
 			<input type="hidden" id="selected-type-filter" name="selectedType" value=""/>
-			<div
-				id="node-filter-list"
-				class="flex-1 overflow-y-auto py-1"
-				hx-get="/htmx/node-types"
-				hx-trigger="load, refreshFilters from:body"
-				hx-swap="innerHTML"
-				hx-include="#hidden-node-types"
-			>
+		<div
+			id="node-filter-list"
+			class="flex-1 overflow-y-auto py-1"
+			hx-get="/htmx/node-types"
+			hx-trigger="load, refreshFilters from:body"
+			hx-swap="innerHTML"
+			hx-include="#hidden-node-types, #selected-type-filter"
+		>
 				<div class="px-3 py-3 text-[11px] text-gh-muted">Loading types…</div>
 			</div>
 		</div>
@@ -63,7 +63,8 @@ templ NodeTypeList(types []ObjectType) {
 templ NodeTypeItem(t ObjectType) {
 	<div
 		class={ "filter-item flex items-center gap-2 px-2 py-1.5 border-b border-gh-border/40 hover:bg-gh-surface2 transition-colors cursor-pointer",
-			templ.KV("opacity-40", t.Hidden) }
+			templ.KV("opacity-40", t.Hidden),
+			templ.KV("bg-gh-surface2 border-l-2 border-l-gh-accent", t.Selected) }
 		data-type={ t.Name }
 		data-action="toggle-vis"
 	>
@@ -72,10 +73,12 @@ templ NodeTypeItem(t ObjectType) {
 			class="w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-white shadow-sm"
 			style={ fmt.Sprintf("background:%s;font-size:%s;font-weight:700;line-height:1", t.Color, iconFontSize(t.Icon)) }
 		>{ t.Icon }</span>
-		<!-- type name — clicking the row loads the type into graph -->
+		<!-- type name — clicking the span selects/deselects the type for relationship filtering -->
 		<span
-			class="flex-1 text-[12px] text-gh-text truncate font-medium"
-			data-action="load"
+			class={ "flex-1 text-[12px] truncate font-medium",
+				templ.KV("text-gh-accent", t.Selected),
+				templ.KV("text-gh-text", !t.Selected) }
+			data-action="select-type"
 			data-type={ t.Name }
 			if t.Description != "" {
 				title={ t.Description }

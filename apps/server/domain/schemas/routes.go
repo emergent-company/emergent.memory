@@ -28,6 +28,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Get installed packs for a project
 	projects.GET("/installed", h.GetInstalledPacks)
 
+	// Get all packs (installed + available) for a project
+	projects.GET("/all", h.GetAllPacks)
+
 	// Get compiled types for a project
 	projects.GET("/compiled-types", h.GetCompiledTypes)
 

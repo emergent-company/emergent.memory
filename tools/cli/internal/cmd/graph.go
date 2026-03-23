@@ -728,8 +728,9 @@ var graphRelationshipsListCmd = &cobra.Command{
 
 Output is a table with columns: Entity ID, Type, From (source entity ID), To
 (destination entity ID), and Created date. Use --type to filter by relationship
-type, --from/--to to filter by endpoint, --limit to control result count, and
---output json to receive the full list as JSON.`,
+type, --from/--to to filter by endpoint, --limit to control result count,
+--cursor to paginate through large result sets, and --output json to receive
+the full list as JSON.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)
 		if err != nil {
@@ -1452,6 +1453,7 @@ func init() {
 	graphRelationshipsListCmd.Flags().StringVar(&graphFromFlag, "from", "", "Filter by source object ID")
 	graphRelationshipsListCmd.Flags().StringVar(&graphToFlag, "to", "", "Filter by destination object ID")
 	graphRelationshipsListCmd.Flags().IntVar(&graphLimitFlag, "limit", 1000, "Maximum number of results (server default: 1000)")
+	graphRelationshipsListCmd.Flags().StringVar(&graphCursorFlag, "cursor", "", "Pagination cursor from a previous response (next_cursor field)")
 	graphRelationshipsListCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to scope results to (omit for main branch)")
 
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphRelTypeFlag, "type", "", "Relationship type (required)")

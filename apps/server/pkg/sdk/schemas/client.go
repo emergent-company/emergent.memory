@@ -168,6 +168,20 @@ type MemorySchemaListItem struct {
 	Visibility  string  `json:"visibility,omitempty"`
 }
 
+// UnifiedSchemaItem represents a schema in the unified list, showing both installed and available schemas.
+type UnifiedSchemaItem struct {
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	Version         string     `json:"version"`
+	Description     *string    `json:"description,omitempty"`
+	Author          *string    `json:"author,omitempty"`
+	Visibility      string     `json:"visibility,omitempty"`
+	Installed       bool       `json:"installed"`
+	InstalledAt     *time.Time `json:"installedAt,omitempty"`
+	AssignmentID    *string    `json:"assignmentId,omitempty"`
+	BlueprintSource *string    `json:"blueprintSource,omitempty"`
+}
+
 // CreatePackRequest is the request to create a new memory schema.
 // Both snake_case and camelCase field names are accepted when unmarshalling
 // from a user-supplied JSON file, so that files written with either convention
@@ -200,6 +214,10 @@ type CreatePackRequest struct {
 
 	// Migrations carries optional schema migration hints (snake_case or YAML).
 	Migrations *SchemaMigrationHints `json:"migrations,omitempty" yaml:"migrations,omitempty"`
+
+	// BlueprintSource records the file path or URL from which this schema was installed.
+	// Set by the blueprint applier; nil for schemas created directly via API.
+	BlueprintSource *string `json:"blueprint_source,omitempty"`
 }
 
 // MarshalJSON serialises the request for transmission to the server,
@@ -220,6 +238,7 @@ func (r CreatePackRequest) MarshalJSON() ([]byte, error) {
 		UIConfigs               json.RawMessage       `json:"ui_configs,omitempty"`
 		ExtractionPrompts       json.RawMessage       `json:"extraction_prompts,omitempty"`
 		Migrations              *SchemaMigrationHints `json:"migrations,omitempty"`
+		BlueprintSource         *string               `json:"blueprint_source,omitempty"`
 	}
 	w := wire{
 		Name:             r.Name,
@@ -231,6 +250,7 @@ func (r CreatePackRequest) MarshalJSON() ([]byte, error) {
 		DocumentationURL: r.DocumentationURL,
 		Visibility:       r.Visibility,
 		Migrations:       r.Migrations,
+		BlueprintSource:  r.BlueprintSource,
 	}
 	if len(r.ObjectTypeSchemasSnake) > 0 {
 		w.ObjectTypeSchemas = r.ObjectTypeSchemasSnake
@@ -510,6 +530,16 @@ func (c *Client) GetAvailablePacks(ctx context.Context) ([]MemorySchemaListItem,
 func (c *Client) GetInstalledPacks(ctx context.Context) ([]InstalledSchemaItem, error) {
 	var result []InstalledSchemaItem
 	if err := c.getJSON(ctx, c.projectPath()+"/installed", &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetAllPacks returns all memory schemas visible to the current project — both installed and available.
+// GET /api/schemas/projects/:projectId/all
+func (c *Client) GetAllPacks(ctx context.Context) ([]UnifiedSchemaItem, error) {
+	var result []UnifiedSchemaItem
+	if err := c.getJSON(ctx, c.projectPath()+"/all", &result); err != nil {
 		return nil, err
 	}
 	return result, nil

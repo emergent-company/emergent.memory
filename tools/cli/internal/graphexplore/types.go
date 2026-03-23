@@ -10,6 +10,7 @@ type ObjectType struct {
 	Count       int    `json:"count"`    // total objects in DB
 	InGraph     int    `json:"in_graph"` // currently loaded in the graph
 	Hidden      bool   `json:"hidden"`   // filter state
+	Selected    bool   `json:"selected"` // clicked — filters the relationship panel
 }
 
 // RelationshipType represents an edge type from compiled-types.
@@ -20,6 +21,8 @@ type RelationshipType struct {
 	Count        int    `json:"count"` // edges of this type in the graph
 	Hidden       bool   `json:"hidden"`
 	Color        string `json:"color"`
+	SourceType   string `json:"source_type"` // compiled-types source node type
+	TargetType   string `json:"target_type"` // compiled-types target node type
 }
 
 // NodeDetail holds data for the right panel when a node is selected.
