@@ -58,6 +58,17 @@ type batchRelationshipItem struct {
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
+// batchUpdateObjectItem is the JSON shape accepted by graph objects update-batch.
+type batchUpdateObjectItem struct {
+	ID            string         `json:"id"`
+	Key           *string        `json:"key,omitempty"`
+	Properties    map[string]any `json:"properties,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	ReplaceLabels *bool          `json:"replaceLabels,omitempty"`
+	Status        *string        `json:"status,omitempty"`
+	BranchID      *string        `json:"branch_id,omitempty"`
+}
+
 // nameFromProps returns the "name" property from a properties map, or "" if absent.
 func nameFromProps(props map[string]any) string {
 	if props == nil {
@@ -504,6 +515,103 @@ var graphObjectsUpdateCmd = &cobra.Command{
 }
 
 // ─────────────────────────────────────────────
+// graph objects update-batch
+// ─────────────────────────────────────────────
+
+var graphObjectsUpdateBatchCmd = &cobra.Command{
+	Use:   "update-batch",
+	Short: "Batch-update graph objects from a JSON file",
+	Long: `Update multiple graph objects in one API call.
+
+The input file must contain a JSON array of objects, each with:
+  id         (string, required) — object entity ID to update
+  key        (string, optional)
+  properties (object, optional) — merged with existing properties
+  labels     ([]string, optional) — appended (or replaced with replaceLabels)
+  replaceLabels (bool, optional) — replace labels instead of appending
+  status     (string, optional)
+  branch_id  (string, optional)
+
+Example updates.json:
+  [
+    {"id": "<entity-id-1>", "properties": {"priority": "high"}},
+    {"id": "<entity-id-2>", "status": "archived", "labels": ["deprecated"]}
+  ]
+
+Output (one line per object): <entity-id>  <type>  <version>`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if graphBatchFile == "" {
+			return fmt.Errorf("--file is required")
+		}
+
+		data, err := os.ReadFile(graphBatchFile)
+		if err != nil {
+			return fmt.Errorf("reading file: %w", err)
+		}
+
+		var items []batchUpdateObjectItem
+		if err := json.Unmarshal(data, &items); err != nil {
+			return fmt.Errorf("parsing JSON: %w", err)
+		}
+		if len(items) == 0 {
+			return fmt.Errorf("file contains no items")
+		}
+
+		reqs := make([]sdkgraph.BulkUpdateObjectItem, 0, len(items))
+		for _, item := range items {
+			if item.ID == "" {
+				return fmt.Errorf("item missing 'id' field")
+			}
+			req := sdkgraph.BulkUpdateObjectItem{
+				ID:            item.ID,
+				Key:           item.Key,
+				Properties:    item.Properties,
+				Labels:        item.Labels,
+				ReplaceLabels: item.ReplaceLabels,
+				Status:        item.Status,
+				BranchID:      item.BranchID,
+			}
+			reqs = append(reqs, req)
+		}
+
+		g, err := getGraphClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		resp, err := g.BulkUpdateObjects(context.Background(), &sdkgraph.BulkUpdateObjectsRequest{
+			Items: reqs,
+		})
+		if err != nil {
+			return fmt.Errorf("bulk update failed: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+
+		if graphOutputFlag == "json" {
+			return json.NewEncoder(out).Encode(resp)
+		}
+
+		for _, r := range resp.Results {
+			if r.Success && r.Object != nil {
+				fmt.Fprintf(out, "%s\t%s\tv%d\n", r.Object.EntityID, r.Object.Type, r.Object.Version)
+			} else {
+				errMsg := "unknown error"
+				if r.Error != nil {
+					errMsg = *r.Error
+				}
+				fmt.Fprintf(out, "ERROR[%d]\t%s\t%s\n", r.Index, r.ID, errMsg)
+			}
+		}
+
+		if resp.Failed > 0 {
+			return fmt.Errorf("%d item(s) failed to update", resp.Failed)
+		}
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
 // graph objects delete
 // ─────────────────────────────────────────────
 
@@ -855,7 +963,12 @@ JSON. Use --output json to receive the full relationship as JSON instead.`,
 var graphRelationshipsCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a relationship",
-	Long:  "Create a directed relationship between two graph objects",
+	Long: `Create a directed relationship between two graph objects.
+
+When --upsert is given, the operation is idempotent: if a relationship with the
+same type, source, and destination already exists, it is returned as-is without
+creating a duplicate. If the relationship was deleted, it is restored.
+Without --upsert, creating a relationship that already exists returns an error.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if graphRelTypeFlag == "" {
 			return fmt.Errorf("--type is required")
@@ -890,12 +1003,24 @@ var graphRelationshipsCreateCmd = &cobra.Command{
 			req.Properties = props
 		}
 
+		out := cmd.OutOrStdout()
+
+		if graphUpsertFlag {
+			r, err := g.UpsertRelationship(context.Background(), req)
+			if err != nil {
+				return fmt.Errorf("failed to upsert relationship: %w", err)
+			}
+			if graphOutputFlag == "json" {
+				return json.NewEncoder(out).Encode(r)
+			}
+			fmt.Fprintf(out, "%s\t%s\t%s -> %s\n", r.EntityID, r.Type, r.SrcID, r.DstID)
+			return nil
+		}
+
 		r, err := g.CreateRelationship(context.Background(), req)
 		if err != nil {
 			return fmt.Errorf("failed to create relationship: %w", err)
 		}
-
-		out := cmd.OutOrStdout()
 
 		if graphOutputFlag == "json" {
 			return json.NewEncoder(out).Encode(r)
@@ -1327,6 +1452,9 @@ The input file must contain a JSON array of objects, each with:
   to    (string, required) — destination entity ID
   properties (object, optional)
 
+Use --upsert to make the operation idempotent: existing relationships (same
+type, from, to) are returned as-is instead of causing an error. Safe to retry.
+
 Example relationships.json:
   [
     {"type": "knows", "from": "<entity-id-1>", "to": "<entity-id-2>"},
@@ -1364,9 +1492,10 @@ Output (one line per relationship): <entity-id>  <type>  <from> -> <to>`,
 				return fmt.Errorf("item missing 'to' field")
 			}
 			req := sdkgraph.CreateRelationshipRequest{
-				Type:  item.Type,
-				SrcID: item.From,
-				DstID: item.To,
+				Type:   item.Type,
+				SrcID:  item.From,
+				DstID:  item.To,
+				Upsert: graphUpsertFlag,
 			}
 			if len(item.Properties) > 0 {
 				req.Properties = item.Properties
@@ -1461,8 +1590,10 @@ func init() {
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphToFlag, "to", "", "Destination object ID (required)")
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object")
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to create the relationship on (omit for main branch)")
+	graphRelationshipsCreateCmd.Flags().BoolVar(&graphUpsertFlag, "upsert", false, "Return existing relationship if (type, from, to) already exists instead of creating a duplicate")
 
 	graphRelationshipsCreateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "Path to JSON file containing array of relationships (required)")
+	graphRelationshipsCreateBatchCmd.Flags().BoolVar(&graphUpsertFlag, "upsert", false, "Apply upsert semantics to all items: skip existing relationships instead of failing")
 
 	// Assemble objects subcommands
 	graphObjectsSimilarCmd.Flags().IntVar(&graphSimilarLimitFlag, "limit", 10, "Maximum number of similar objects to return")
@@ -1473,11 +1604,15 @@ func init() {
 	graphObjectsMoveCmd.Flags().StringVar(&graphMoveTargetBranchFlag, "target-branch", "", "Target branch UUID (use 'main' or omit for main branch)")
 	graphObjectsMoveCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
 
+	graphObjectsUpdateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "Path to JSON file containing array of object updates (required)")
+	graphObjectsUpdateBatchCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
+
 	graphObjectsCmd.AddCommand(graphObjectsListCmd)
 	graphObjectsCmd.AddCommand(graphObjectsGetCmd)
 	graphObjectsCmd.AddCommand(graphObjectsCreateCmd)
 	graphObjectsCmd.AddCommand(graphObjectsCreateBatchCmd)
 	graphObjectsCmd.AddCommand(graphObjectsUpdateCmd)
+	graphObjectsCmd.AddCommand(graphObjectsUpdateBatchCmd)
 	graphObjectsCmd.AddCommand(graphObjectsDeleteCmd)
 	graphObjectsCmd.AddCommand(graphObjectsEdgesCmd)
 	graphObjectsCmd.AddCommand(graphObjectsSimilarCmd)

@@ -1418,6 +1418,20 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	return newHead.ToResponse(), nil
 }
 
+// UpsertRelationship provides idempotent create-or-skip semantics for relationships.
+// Dedup key: (project_id, branch_id, type, src_id, dst_id).
+// Returns (response, created=true) when a new relationship is inserted.
+// Returns (response, created=false) when an existing relationship is returned or updated.
+func (s *Service) UpsertRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest) (*GraphRelationshipResponse, bool, error) {
+	// Delegate to CreateRelationship which already implements full upsert logic.
+	// We detect "created" by checking whether the returned relationship is version 1.
+	resp, err := s.CreateRelationship(ctx, projectID, req)
+	if err != nil {
+		return nil, false, err
+	}
+	return resp, resp.Version == 1, nil
+}
+
 // maybeCreateInverse checks if the template pack declares an inverseType for the given
 // relationship type, and if so, creates the inverse relationship (swapped src/dst) within
 // the same transaction. Returns the inverse response (or nil) and the inverse relationship ID
@@ -2304,6 +2318,95 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 	}
 
 	return &BulkCreateObjectsResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
+// BulkUpdateObjects updates multiple objects in a single batch.
+// Each object is updated independently and concurrently — failures do not roll back other successes.
+func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, req *BulkUpdateObjectsRequest, actorID *uuid.UUID) (*BulkUpdateObjectsResponse, error) {
+	results := make([]BulkUpdateObjectResult, len(req.Items))
+
+	workerCtx := context.WithoutCancel(ctx)
+
+	// Pre-warm schema cache for this project to avoid lock contention
+	if s.schemaProvider != nil {
+		_, _ = s.schemaProvider.GetProjectSchemas(workerCtx, projectID.String())
+	}
+
+	type work struct {
+		i    int
+		item BulkUpdateObjectItem
+	}
+	jobs := make(chan work, len(req.Items))
+	for i, item := range req.Items {
+		jobs <- work{i, item}
+	}
+	close(jobs)
+
+	workers := len(req.Items)
+	if workers > 50 {
+		workers = 50
+	}
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				id, parseErr := uuid.Parse(j.item.ID)
+				if parseErr != nil {
+					errMsg := "invalid id: " + parseErr.Error()
+					results[j.i] = BulkUpdateObjectResult{Index: j.i, ID: j.item.ID, Success: false, Error: &errMsg}
+					continue
+				}
+
+				patchReq := &PatchGraphObjectRequest{
+					Key:           j.item.Key,
+					Properties:    j.item.Properties,
+					Labels:        j.item.Labels,
+					ReplaceLabels: j.item.ReplaceLabels,
+					Status:        j.item.Status,
+					BranchID:      j.item.BranchID,
+				}
+
+				resp, err := s.Patch(workerCtx, projectID, id, patchReq, actorID)
+				if err != nil {
+					errMsg := err.Error()
+					results[j.i] = BulkUpdateObjectResult{Index: j.i, ID: j.item.ID, Success: false, Error: &errMsg}
+				} else {
+					results[j.i] = BulkUpdateObjectResult{Index: j.i, ID: j.item.ID, Success: true, Object: resp}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	successCount, failedCount := 0, 0
+	for _, r := range results {
+		if r.Success {
+			successCount++
+		} else {
+			failedCount++
+		}
+	}
+
+	if s.journal != nil && successCount > 0 {
+		s.journal.Log(ctx, journal.LogParams{
+			ProjectID: projectID,
+			EventType: journal.EventTypeBatch,
+			ActorType: journal.ActorUser,
+			ActorID:   actorID,
+			Metadata: map[string]any{
+				"updated": successCount,
+			},
+		})
+	}
+
+	return &BulkUpdateObjectsResponse{
 		Success: successCount,
 		Failed:  failedCount,
 		Results: results,

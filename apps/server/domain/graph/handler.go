@@ -1001,6 +1001,63 @@ func (h *Handler) CreateRelationship(c echo.Context) error {
 	return c.JSON(http.StatusCreated, result)
 }
 
+// UpsertRelationship creates or returns a relationship identified by (type, src_id, dst_id).
+// @Summary      Upsert graph relationship
+// @Description  Idempotent create-or-skip for relationships. Dedup key: (type, src_id, dst_id).
+// @Description  - If no relationship with the same (type, src_id, dst_id) exists, one is created (HTTP 201).
+// @Description  - If an identical relationship already exists (same properties), it is returned as-is (HTTP 200).
+// @Description  - If the relationship exists but was deleted, it is restored (HTTP 200).
+// @Description  - If properties differ, a new version is created (HTTP 200).
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateGraphRelationshipRequest true "Relationship data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphRelationshipResponse "Relationship already existed (returned as-is or updated)"
+// @Success      201 {object} GraphRelationshipResponse "Relationship was newly created"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/upsert [put]
+// @Security     bearerAuth
+func (h *Handler) UpsertRelationship(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req CreateGraphRelationshipRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Type == "" {
+		return apperror.ErrBadRequest.WithMessage("type is required")
+	}
+	if req.SrcID == uuid.Nil {
+		return apperror.ErrBadRequest.WithMessage("src_id is required")
+	}
+	if req.DstID == uuid.Nil {
+		return apperror.ErrBadRequest.WithMessage("dst_id is required")
+	}
+
+	req.Upsert = true
+
+	result, created, err := h.svc.UpsertRelationship(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	if created {
+		return c.JSON(http.StatusCreated, result)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
 // PatchRelationship updates a relationship by creating a new version.
 // @Summary      Update graph relationship
 // @Description  Update a relationship by creating a new version in the version chain
@@ -1871,6 +1928,51 @@ func (h *Handler) BulkCreateObjects(c echo.Context) error {
 
 	actorID, _ := getUserID(c)
 	result, err := h.svc.BulkCreateObjects(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// BulkUpdateObjects updates multiple graph objects in a single request.
+// @Summary      Bulk update objects
+// @Description  Update multiple graph objects in a single request with partial success semantics
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkUpdateObjectsRequest true "Objects to update (max 100)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} BulkUpdateObjectsResponse "Update results"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/bulk-update [post]
+// @Security     bearerAuth
+func (h *Handler) BulkUpdateObjects(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req BulkUpdateObjectsRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.Items) == 0 {
+		return apperror.ErrBadRequest.WithMessage("items is required and must not be empty")
+	}
+	if len(req.Items) > h.cfg.MaxBatchObjects {
+		return apperror.ErrBadRequest.WithMessage("items must not exceed " + strconv.Itoa(h.cfg.MaxBatchObjects))
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkUpdateObjects(c.Request().Context(), projectID, &req, actorID)
 	if err != nil {
 		return err
 	}

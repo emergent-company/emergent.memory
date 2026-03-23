@@ -21,6 +21,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	objects.GET("/tags", h.GetTags)
 	objects.POST("/bulk-update-status", h.BulkUpdateStatus)
 	objects.POST("/bulk", h.BulkCreateObjects)
+	objects.POST("/bulk-update", h.BulkUpdateObjects)
 	objects.PUT("/upsert", h.UpsertObject)
 	objects.GET("/:id", h.GetObject)
 	objects.GET("/:id/similar", h.GetSimilarObjects) // New: similar objects
@@ -59,6 +60,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	relationships.GET("/search", h.ListRelationships)
 	relationships.GET("/count", h.CountRelationships)
 	relationships.POST("/bulk", h.BulkCreateRelationships)
+	relationships.PUT("/upsert", h.UpsertRelationship)
 	relationships.GET("/:id", h.GetRelationship)
 	relationships.POST("", h.CreateRelationship)
 	relationships.PATCH("/:id", h.PatchRelationship)

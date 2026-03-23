@@ -416,6 +416,9 @@ type CreateRelationshipRequest struct {
 	Properties map[string]any `json:"properties,omitempty"`
 	Weight     *float32       `json:"weight,omitempty"`
 	BranchID   *string        `json:"branch_id,omitempty"`
+	// Upsert enables idempotent create-or-skip semantics.
+	// Dedup key: (type, src_id, dst_id). See server docs for full semantics.
+	Upsert bool `json:"upsert,omitempty"`
 }
 
 // UpdateRelationshipRequest is the request body for patching a relationship.
@@ -570,6 +573,38 @@ type BulkCreateObjectsResponse struct {
 // BulkCreateObjectResult is the result for a single object in bulk creation.
 type BulkCreateObjectResult struct {
 	Index   int          `json:"index"`
+	Success bool         `json:"success"`
+	Object  *GraphObject `json:"object,omitempty"`
+	Error   *string      `json:"error,omitempty"`
+}
+
+// BulkUpdateObjectsRequest is the request for bulk object updates.
+type BulkUpdateObjectsRequest struct {
+	Items []BulkUpdateObjectItem `json:"items"`
+}
+
+// BulkUpdateObjectItem represents a single object update in a bulk request.
+type BulkUpdateObjectItem struct {
+	ID            string         `json:"id"`
+	Key           *string        `json:"key,omitempty"`
+	Properties    map[string]any `json:"properties,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	ReplaceLabels *bool          `json:"replaceLabels,omitempty"`
+	Status        *string        `json:"status,omitempty"`
+	BranchID      *string        `json:"branch_id,omitempty"`
+}
+
+// BulkUpdateObjectsResponse is the response for bulk object updates.
+type BulkUpdateObjectsResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkUpdateObjectResult `json:"results"`
+}
+
+// BulkUpdateObjectResult is the result for a single object in bulk update.
+type BulkUpdateObjectResult struct {
+	Index   int          `json:"index"`
+	ID      string       `json:"id"`
 	Success bool         `json:"success"`
 	Object  *GraphObject `json:"object,omitempty"`
 	Error   *string      `json:"error,omitempty"`
@@ -1365,6 +1400,17 @@ func (c *Client) BulkCreateObjects(ctx context.Context, req *BulkCreateObjectsRe
 	return &result, nil
 }
 
+// BulkUpdateObjects updates multiple graph objects in a single request.
+// Each item is processed independently — failures don't roll back other successes.
+// Maximum 100 items per request.
+func (c *Client) BulkUpdateObjects(ctx context.Context, req *BulkUpdateObjectsRequest) (*BulkUpdateObjectsResponse, error) {
+	var result BulkUpdateObjectsResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/bulk-update", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // CreateSubgraph atomically creates objects and relationships in a single request.
 // Objects may carry a _ref placeholder; relationships reference objects via src_ref/dst_ref.
 // Maximum 100 objects and 200 relationships per call.
@@ -1518,6 +1564,18 @@ func (c *Client) GetUnused(ctx context.Context, opts *UnusedOptions) (*UnusedObj
 func (c *Client) CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) (*GraphRelationship, error) {
 	var result GraphRelationship
 	if err := c.postJSON(ctx, c.base+"/api/graph/relationships", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpsertRelationship creates a relationship or returns the existing one if it already exists.
+// Dedup key: (type, src_id, dst_id). If the relationship exists with the same properties,
+// it is returned as-is. If properties differ, a new version is created.
+// Safe to call multiple times — retries never produce duplicates.
+func (c *Client) UpsertRelationship(ctx context.Context, req *CreateRelationshipRequest) (*GraphRelationship, error) {
+	var result GraphRelationship
+	if err := c.putJSON(ctx, c.base+"/api/graph/relationships/upsert", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

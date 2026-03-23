@@ -201,6 +201,12 @@ type CreateGraphRelationshipRequest struct {
 	Properties map[string]any `json:"properties,omitempty"`
 	Weight     *float32       `json:"weight,omitempty"`
 	BranchID   *uuid.UUID     `json:"branch_id,omitempty"`
+	// Upsert enables idempotent create-or-skip semantics: if a relationship with the
+	// same (type, src_id, dst_id) already exists (and is not deleted), it is returned
+	// as-is without modification. If the relationship was previously deleted, it is
+	// restored. If properties differ, a new version is created.
+	// Dedup key: (project_id, branch_id, type, src_id, dst_id).
+	Upsert bool `json:"upsert,omitempty"`
 }
 
 // PatchGraphRelationshipRequest is the request body for patching a relationship.
@@ -325,6 +331,42 @@ type BulkCreateObjectsResponse struct {
 // BulkCreateObjectResult is the result for a single object in bulk creation.
 type BulkCreateObjectResult struct {
 	Index   int                  `json:"index"`
+	Success bool                 `json:"success"`
+	Object  *GraphObjectResponse `json:"object,omitempty"`
+	Error   *string              `json:"error,omitempty"`
+}
+
+// =============================================================================
+// Bulk Update DTOs
+// =============================================================================
+
+// BulkUpdateObjectsRequest is the request for bulk object updates.
+type BulkUpdateObjectsRequest struct {
+	Items []BulkUpdateObjectItem `json:"items" validate:"required,min=1,max=100"`
+}
+
+// BulkUpdateObjectItem represents a single object update in a bulk request.
+type BulkUpdateObjectItem struct {
+	ID            string         `json:"id" validate:"required"`
+	Key           *string        `json:"key,omitempty"`
+	Properties    map[string]any `json:"properties,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	ReplaceLabels bool           `json:"replaceLabels,omitempty"`
+	Status        *string        `json:"status,omitempty"`
+	BranchID      *uuid.UUID     `json:"branch_id,omitempty"`
+}
+
+// BulkUpdateObjectsResponse is the response for bulk object updates.
+type BulkUpdateObjectsResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkUpdateObjectResult `json:"results"`
+}
+
+// BulkUpdateObjectResult is the result for a single object in bulk update.
+type BulkUpdateObjectResult struct {
+	Index   int                  `json:"index"`
+	ID      string               `json:"id"`
 	Success bool                 `json:"success"`
 	Object  *GraphObjectResponse `json:"object,omitempty"`
 	Error   *string              `json:"error,omitempty"`
