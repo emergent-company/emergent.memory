@@ -241,7 +241,11 @@ Examples:
 			opts.Cursor = graphCursorFlag
 		}
 		if graphBranchFlag != "" {
-			opts.BranchID = graphBranchFlag
+			branchID, err := resolveBranchNameOrID(cmd, graphBranchFlag)
+			if err != nil {
+				return err
+			}
+			opts.BranchID = branchID
 		}
 		if graphStatusFlag != "" {
 			opts.Status = graphStatusFlag
@@ -315,13 +319,26 @@ Examples:
 // ─────────────────────────────────────────────
 
 var graphObjectsGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get a graph object by ID",
-	Long: `Get details for a graph object (entity) by its ID.
+	Use:   "get <id|key>",
+	Short: "Get a graph object by ID or key",
+	Long: `Get details for a graph object (entity) by its ID or key.
+
+When a UUID is provided it is fetched directly. When a non-UUID string is
+provided it is treated as a key and resolved against the specified branch
+(or the main branch when --branch is omitted).
+
+Use --branch to scope key resolution to a specific branch — accepts either
+a branch UUID or a human-readable branch name.
 
 Prints Entity ID, Version ID, Type, Version number, Key (if set), Status (if
 set), Labels (if any), Created timestamp, and Properties as formatted JSON.
-Use --output json to receive the full object as JSON instead.`,
+Use --output json to receive the full object as JSON instead.
+
+Examples:
+  memory graph objects get <uuid>
+  memory graph objects get my-object-key
+  memory graph objects get my-object-key --branch plan/next-gen
+  memory graph objects get my-object-key --branch <branch-uuid>`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)
@@ -329,7 +346,41 @@ Use --output json to receive the full object as JSON instead.`,
 			return err
 		}
 
-		obj, err := g.GetObject(context.Background(), args[0])
+		idOrKey := args[0]
+
+		// Resolve branch name → UUID if --branch was provided.
+		var resolvedBranchID string
+		if graphBranchFlag != "" {
+			resolvedBranchID, err = resolveBranchNameOrID(cmd, graphBranchFlag)
+			if err != nil {
+				return err
+			}
+		}
+
+		// If the argument is not a UUID, treat it as a key and resolve via ListObjects.
+		if !isUUID(idOrKey) {
+			listOpts := &sdkgraph.ListObjectsOptions{
+				Key:   idOrKey,
+				Limit: 2,
+			}
+			if resolvedBranchID != "" {
+				listOpts.BranchID = resolvedBranchID
+			}
+			resp, err := g.ListObjects(context.Background(), listOpts)
+			if err != nil {
+				return fmt.Errorf("failed to resolve key %q: %w", idOrKey, err)
+			}
+			switch len(resp.Items) {
+			case 0:
+				return fmt.Errorf("no object found with key %q", idOrKey)
+			case 1:
+				idOrKey = resp.Items[0].EntityID
+			default:
+				return fmt.Errorf("ambiguous key %q — multiple objects matched; use the object UUID instead", idOrKey)
+			}
+		}
+
+		obj, err := g.GetObject(context.Background(), idOrKey)
 		if err != nil {
 			return fmt.Errorf("failed to get object: %w", err)
 		}
@@ -1572,6 +1623,7 @@ func init() {
 	graphObjectsListCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Filter by object key (direct key-based lookup)")
 
 	graphObjectsGetCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
+	graphObjectsGetCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID or name to resolve the key against (omit for main branch)")
 
 	graphObjectsCreateCmd.Flags().StringVar(&graphTypeFlag, "type", "", "Object type (required)")
 	graphObjectsCreateCmd.Flags().StringVar(&graphNameFlag, "name", "", "Set properties.name")

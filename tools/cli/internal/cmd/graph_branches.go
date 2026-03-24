@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	sdkbranches "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/branches"
 	sdkgraph "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
@@ -43,6 +44,41 @@ func getBranchesClient(cmd *cobra.Command) (*sdkbranches.Client, string, error) 
 
 	c.SetContext("", projectID)
 	return c.SDK.Branches, projectID, nil
+}
+
+// resolveBranchNameOrID resolves a branch name or UUID to a branch ID.
+// If the input looks like a UUID it is returned as-is. Otherwise all branches
+// for the current project are fetched and matched by name (case-insensitive).
+func resolveBranchNameOrID(cmd *cobra.Command, nameOrID string) (string, error) {
+	if isUUID(nameOrID) {
+		return nameOrID, nil
+	}
+
+	b, _, err := getBranchesClient(cmd)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve branch name: %w", err)
+	}
+
+	branches, err := b.List(context.Background(), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to list branches for name resolution: %w", err)
+	}
+
+	var matches []string
+	for _, br := range branches {
+		if strings.EqualFold(br.Name, nameOrID) {
+			matches = append(matches, br.ID)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no branch found with name %q", nameOrID)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("ambiguous branch name %q — use the branch UUID instead", nameOrID)
+	}
 }
 
 // ─────────────────────────────────────────────
