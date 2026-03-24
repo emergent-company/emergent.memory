@@ -17,6 +17,7 @@ var (
 	graphExplorePortFlag    int
 	graphExploreHostFlag    string
 	graphExploreProjectFlag string
+	graphExploreBranchFlag  string
 )
 
 var graphExploreCmd = &cobra.Command{
@@ -32,7 +33,8 @@ Examples:
   memory graph explore
   memory graph explore --port 7734
   memory graph explore --host 0.0.0.0 --port 7734
-  memory graph explore --project my-project`,
+  memory graph explore --project my-project
+  memory graph explore --branch my-feature-branch`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Resolve client + auth
 		c, err := getClient(cmd)
@@ -76,7 +78,7 @@ Examples:
 		}
 
 		// Create the graph explore server with templ+HTMX UI
-		exploreSrv := graphexplore.NewServer(projectID, serverURL, authHeader)
+		exploreSrv := graphexplore.NewServer(projectID, serverURL, authHeader, graphExploreBranchFlag)
 
 		mux := http.NewServeMux()
 		exploreSrv.RegisterRoutes(mux)
@@ -96,6 +98,9 @@ Examples:
 		explorerURL := fmt.Sprintf("http://%s:%d", browserHost, port)
 		fmt.Fprintf(os.Stderr, "\033[2;36mGraph Explorer running at %s\033[0m\n", explorerURL)
 		fmt.Fprintf(os.Stderr, "\033[2;36mProject: %s\033[0m\n", projectID)
+		if graphExploreBranchFlag != "" {
+			fmt.Fprintf(os.Stderr, "\033[2;36mBranch: %s\033[0m\n", graphExploreBranchFlag)
+		}
 		fmt.Fprintf(os.Stderr, "\033[2mPress Ctrl+C to stop.\033[0m\n")
 
 		// Open the browser after a short delay to let the server start
@@ -126,6 +131,7 @@ func init() {
 	graphExploreCmd.Flags().IntVar(&graphExplorePortFlag, "port", 7734, "Local port to listen on")
 	graphExploreCmd.Flags().StringVar(&graphExploreHostFlag, "host", "127.0.0.1", "Host/IP to bind (use 0.0.0.0 to listen on all interfaces)")
 	graphExploreCmd.Flags().StringVar(&graphExploreProjectFlag, "project", "", "Project ID (overrides config/env)")
+	graphExploreCmd.Flags().StringVar(&graphExploreBranchFlag, "branch", "", "Branch name or ID to explore (default: main graph)")
 
 	graphCmd.AddCommand(graphExploreCmd)
 }

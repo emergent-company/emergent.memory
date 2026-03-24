@@ -8,10 +8,13 @@ package graphexplore
 import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // PageLayout renders the full page shell with head, body, and all panels.
-func PageLayout(projectID string) templ.Component {
+func PageLayout(projectID, branchID string, typeColors map[string]string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -36,7 +39,7 @@ func PageLayout(projectID string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = Header().Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = Header(branchID).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -60,7 +63,19 @@ func PageLayout(projectID string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Err = NodeHoverCard().Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
 		templ_7745c5c3_Err = projectIDScript(projectID).Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = branchIDScript(branchID).Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = typeColorsScript(typeColors).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -102,8 +117,8 @@ func projectIDScript(projectID string) templ.Component {
 	})
 }
 
-// Header renders the top bar with logo, search, and toolbar.
-func Header() templ.Component {
+// branchIDScript injects the branch ID as a JS global variable.
+func branchIDScript(branchID string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -124,7 +139,73 @@ func Header() templ.Component {
 			templ_7745c5c3_Var3 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<header class=\"relative flex items-center px-3 h-[52px] bg-gh-surface border-b border-gh-border shrink-0 z-10\"><!-- Logo --><span class=\"font-bold text-sm tracking-tight whitespace-nowrap\">memory <span class=\"text-gh-accent\">graph</span></span><!-- Search — absolutely centered --><div class=\"absolute left-1/2 -translate-x-1/2 flex w-full max-w-sm border border-gh-border rounded-lg overflow-hidden bg-gh-surface2\"><input id=\"search-input\" type=\"text\" name=\"query\" placeholder=\"Search nodes by name, type, or key…\" autocomplete=\"off\" class=\"flex-1 bg-transparent border-none outline-none text-gh-text px-3 py-1.5 text-[13px] placeholder:text-gh-muted\"> <button id=\"search-btn\" class=\"bg-gh-accent hover:bg-[#79baff] text-white text-[13px] font-medium px-4 border-none cursor-pointer whitespace-nowrap transition-colors\">Search</button></div><!-- Right controls --><div class=\"flex items-center gap-1.5 ml-auto\">")
+		templ_7745c5c3_Err = templ.Raw(fmt.Sprintf(`<script>window.__BRANCH_ID = %q;</script>`, branchID)).Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		return nil
+	})
+}
+
+// typeColorsScript injects the server's type-to-color map as a JS global.
+// This ensures node colors match the panel's color dots from the very first render.
+func typeColorsScript(colors map[string]string) templ.Component {
+	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
+			return templ_7745c5c3_CtxErr
+		}
+		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+		if !templ_7745c5c3_IsBuffer {
+			defer func() {
+				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+				if templ_7745c5c3_Err == nil {
+					templ_7745c5c3_Err = templ_7745c5c3_BufErr
+				}
+			}()
+		}
+		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Var4 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var4 == nil {
+			templ_7745c5c3_Var4 = templ.NopComponent
+		}
+		ctx = templ.ClearChildren(ctx)
+		if len(colors) > 0 {
+			templ_7745c5c3_Err = templ.Raw(func() string {
+				b, _ := json.Marshal(colors)
+				return fmt.Sprintf(`<script>window.__TYPE_COLORS = %s;</script>`, string(b))
+			}()).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		return nil
+	})
+}
+
+// Header renders the top bar with logo, search, and toolbar.
+func Header(branchID string) templ.Component {
+	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
+			return templ_7745c5c3_CtxErr
+		}
+		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+		if !templ_7745c5c3_IsBuffer {
+			defer func() {
+				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+				if templ_7745c5c3_Err == nil {
+					templ_7745c5c3_Err = templ_7745c5c3_BufErr
+				}
+			}()
+		}
+		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Var5 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var5 == nil {
+			templ_7745c5c3_Var5 = templ.NopComponent
+		}
+		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<header class=\"relative flex items-center px-3 h-[52px] bg-gh-surface border-b border-gh-border shrink-0 z-10\"><!-- Logo --><span class=\"font-bold text-sm tracking-tight whitespace-nowrap\">memory <span class=\"text-gh-accent\">graph</span></span><!-- Branch picker --><div id=\"branch-picker\" class=\"ml-3 relative\"><button id=\"branch-btn\" class=\"btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case flex items-center gap-1.5\" title=\"Switch branch\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 16 16\" fill=\"currentColor\"><path d=\"M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.5 2.5 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Z\"></path></svg> <span id=\"branch-label\">main</span> <svg width=\"9\" height=\"9\" viewBox=\"0 0 10 10\" fill=\"currentColor\"><path d=\"M1 3l4 4 4-4\"></path></svg></button><div id=\"branch-dropdown\" class=\"hidden absolute top-full left-0 mt-1 bg-gh-surface border border-gh-border rounded-lg shadow-xl py-1 z-50 min-w-[180px] max-h-[300px] overflow-y-auto text-[12px]\"><div id=\"branch-list\" class=\"py-0.5\"><div class=\"px-3 py-2 text-gh-muted text-[11px]\">Loading branches…</div></div></div></div><!-- Search — absolutely centered --><div class=\"absolute left-1/2 -translate-x-1/2 flex w-full max-w-sm border border-gh-border rounded-lg overflow-hidden bg-gh-surface2\"><input id=\"search-input\" type=\"text\" name=\"query\" placeholder=\"Search nodes by name, type, or key…\" autocomplete=\"off\" class=\"flex-1 bg-transparent border-none outline-none text-gh-text px-3 py-1.5 text-[13px] placeholder:text-gh-muted\"> <button id=\"search-btn\" class=\"bg-gh-accent hover:bg-[#79baff] text-white text-[13px] font-medium px-4 border-none cursor-pointer whitespace-nowrap transition-colors\">Search</button></div><!-- Right controls --><div class=\"flex items-center gap-1.5 ml-auto\"><!-- Mode tabs --><div id=\"mode-tabs\" class=\"flex items-center rounded-lg overflow-hidden border border-gh-border mr-1\"><button id=\"tab-graph\" class=\"px-3 py-1 text-[11px] font-medium bg-gh-accent text-white cursor-pointer border-none\" title=\"Object graph view\">Graph</button> <button id=\"tab-schema\" class=\"px-3 py-1 text-[11px] font-medium bg-gh-surface2 text-gh-muted cursor-pointer border-none border-l border-gh-border hover:text-gh-text\" title=\"Schema type graph\">Schema</button></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -132,7 +213,22 @@ func Header() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<button id=\"btn-fit\" class=\"btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case\" title=\"Fit graph to screen\">⤢ Fit</button><!-- Zoom controls --><div class=\"flex items-center\"><button id=\"btn-zoom-in\" class=\"btn btn-xs btn-ghost border border-gh-border border-r-0 rounded-r-none text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case px-2\" title=\"Zoom in\">+</button> <button id=\"btn-zoom-out\" class=\"btn btn-xs btn-ghost border border-gh-border rounded-l-none text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case px-2\" title=\"Zoom out\">−</button></div><button id=\"btn-load-all\" class=\"btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-yellow-500 hover:text-yellow-400 normal-case\" title=\"Load all nodes from graph\">⬇ All</button> <button id=\"btn-clear\" class=\"btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case\" title=\"Clear canvas\">✕ Clear</button></div></header>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<button id=\"btn-fit\" class=\"btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case\" title=\"Fit graph to screen\">⤢ Fit</button><!-- Zoom controls --><div class=\"flex items-center\"><button id=\"btn-zoom-in\" class=\"btn btn-xs btn-ghost border border-gh-border border-r-0 rounded-r-none text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case px-2\" title=\"Zoom in\">+</button> <button id=\"btn-zoom-out\" class=\"btn btn-xs btn-ghost border border-gh-border rounded-l-none text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case px-2\" title=\"Zoom out\">−</button></div><button id=\"btn-load-all\" class=\"btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-yellow-500 hover:text-yellow-400 normal-case\" title=\"Load all nodes from graph\">⬇ All</button> <button id=\"btn-clear\" class=\"btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case\" title=\"Clear canvas\">✕ Clear</button><!-- Diff toggle button — hidden on main, shown by JS when a branch is active -->")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		if branchID != "" && branchID != "main" {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<button id=\"btn-diff\" class=\"btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-yellow-500 hover:text-yellow-400 normal-case\" title=\"Show branch diff vs main\">⊞ Diff</button>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		} else {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<button id=\"btn-diff\" class=\"hidden btn btn-xs btn-ghost border border-gh-border text-gh-muted hover:border-yellow-500 hover:text-yellow-400 normal-case\" title=\"Show branch diff vs main\">⊞ Diff</button>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</div></header>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -157,12 +253,12 @@ func LayoutDropdown() templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var4 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var4 == nil {
-			templ_7745c5c3_Var4 = templ.NopComponent
+		templ_7745c5c3_Var6 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var6 == nil {
+			templ_7745c5c3_Var6 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"dropdown dropdown-end\"><div class=\"flex items-center\"><button id=\"btn-layout\" class=\"btn btn-xs btn-ghost border border-gh-border border-r-0 rounded-r-none text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case\" title=\"Run layout\">⟳ <span id=\"layout-label\">ForceAtlas2</span></button> <label tabindex=\"0\" class=\"btn btn-xs btn-ghost border border-gh-border rounded-l-none text-gh-muted hover:border-gh-accent hover:text-gh-text px-1.5 cursor-pointer normal-case\"><svg width=\"9\" height=\"9\" viewBox=\"0 0 10 10\" fill=\"currentColor\"><path d=\"M1 3l4 4 4-4\"></path></svg></label></div><ul tabindex=\"0\" class=\"dropdown-content menu menu-xs bg-gh-surface border border-gh-border rounded-lg shadow-xl p-1 mt-1 z-50 w-40 text-[12px]\"><li><a id=\"layout-opt-fa2\" class=\"layout-opt rounded active-layout\">ForceAtlas2</a></li><li><a id=\"layout-opt-circular\" class=\"layout-opt rounded\">Circular</a></li><li><a id=\"layout-opt-circlepack\" class=\"layout-opt rounded\">Circle Pack</a></li><li><a id=\"layout-opt-random\" class=\"layout-opt rounded\">Random</a></li></ul></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<div class=\"dropdown dropdown-end\"><div class=\"flex items-center\"><button id=\"btn-layout\" class=\"btn btn-xs btn-ghost border border-gh-border border-r-0 rounded-r-none text-gh-muted hover:border-gh-accent hover:text-gh-text normal-case\" title=\"Run layout\">⟳ <span id=\"layout-label\">ForceAtlas2</span></button> <label tabindex=\"0\" class=\"btn btn-xs btn-ghost border border-gh-border rounded-l-none text-gh-muted hover:border-gh-accent hover:text-gh-text px-1.5 cursor-pointer normal-case\"><svg width=\"9\" height=\"9\" viewBox=\"0 0 10 10\" fill=\"currentColor\"><path d=\"M1 3l4 4 4-4\"></path></svg></label></div><ul tabindex=\"0\" class=\"dropdown-content menu menu-xs bg-gh-surface border border-gh-border rounded-lg shadow-xl p-1 mt-1 z-50 w-40 text-[12px]\"><li><a id=\"layout-opt-fa2\" class=\"layout-opt rounded active-layout\">ForceAtlas2</a></li><li><a id=\"layout-opt-circular\" class=\"layout-opt rounded\">Circular</a></li><li><a id=\"layout-opt-circlepack\" class=\"layout-opt rounded\">Circle Pack</a></li><li><a id=\"layout-opt-random\" class=\"layout-opt rounded\">Random</a></li></ul></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -187,12 +283,43 @@ func CanvasArea() templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var5 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var5 == nil {
-			templ_7745c5c3_Var5 = templ.NopComponent
+		templ_7745c5c3_Var7 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var7 == nil {
+			templ_7745c5c3_Var7 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<div id=\"canvas-wrap\" class=\"flex-1 relative\"><div id=\"sigma-container\"></div><!-- Empty state --><div id=\"empty-state\" class=\"absolute inset-0 flex flex-col items-center justify-center gap-3 opacity-40 pointer-events-none\"><svg width=\"64\" height=\"64\" viewBox=\"0 0 80 80\" fill=\"none\"><circle cx=\"20\" cy=\"40\" r=\"8\" stroke=\"#8b949e\" stroke-width=\"2\"></circle> <circle cx=\"60\" cy=\"20\" r=\"8\" stroke=\"#8b949e\" stroke-width=\"2\"></circle> <circle cx=\"60\" cy=\"60\" r=\"8\" stroke=\"#8b949e\" stroke-width=\"2\"></circle> <line x1=\"27\" y1=\"37\" x2=\"53\" y2=\"23\" stroke=\"#8b949e\" stroke-width=\"1.5\" stroke-dasharray=\"4 3\"></line> <line x1=\"27\" y1=\"43\" x2=\"53\" y2=\"57\" stroke=\"#8b949e\" stroke-width=\"1.5\" stroke-dasharray=\"4 3\"></line></svg><p class=\"text-sm text-gh-muted text-center max-w-[240px] leading-relaxed\">Search for nodes to start exploring.<br>Double-click any node to expand neighbors.</p></div><!-- Loading overlay --><div id=\"loading\" class=\"hidden absolute inset-0 bg-gh-bg/60 backdrop-blur-sm flex items-center justify-center z-20\"><div class=\"spinner\"></div></div><!-- Stats bar --><div id=\"stats\" class=\"absolute bottom-3 left-3 text-[11px] text-gh-muted bg-gh-surface/85 border border-gh-border rounded px-2.5 py-1 pointer-events-none\">0 nodes · 0 edges</div><!-- Toast --><div id=\"toast\" class=\"absolute top-3 left-1/2 -translate-x-1/2 bg-gh-surface2 border border-gh-border rounded-lg px-4 py-2 text-[12px] text-gh-muted whitespace-nowrap z-50\"></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<div id=\"canvas-wrap\" class=\"flex-1 relative\"><div id=\"sigma-container\"></div><!-- Empty state --><div id=\"empty-state\" class=\"absolute inset-0 flex flex-col items-center justify-center gap-3 opacity-40 pointer-events-none\"><svg width=\"64\" height=\"64\" viewBox=\"0 0 80 80\" fill=\"none\"><circle cx=\"20\" cy=\"40\" r=\"8\" stroke=\"#8b949e\" stroke-width=\"2\"></circle> <circle cx=\"60\" cy=\"20\" r=\"8\" stroke=\"#8b949e\" stroke-width=\"2\"></circle> <circle cx=\"60\" cy=\"60\" r=\"8\" stroke=\"#8b949e\" stroke-width=\"2\"></circle> <line x1=\"27\" y1=\"37\" x2=\"53\" y2=\"23\" stroke=\"#8b949e\" stroke-width=\"1.5\" stroke-dasharray=\"4 3\"></line> <line x1=\"27\" y1=\"43\" x2=\"53\" y2=\"57\" stroke=\"#8b949e\" stroke-width=\"1.5\" stroke-dasharray=\"4 3\"></line></svg><p class=\"text-sm text-gh-muted text-center max-w-[240px] leading-relaxed\">Search for nodes to start exploring.<br>Double-click any node to expand neighbors.</p></div><!-- Loading overlay --><div id=\"loading\" class=\"hidden absolute inset-0 bg-gh-bg/60 backdrop-blur-sm flex items-center justify-center z-20\"><div class=\"spinner\"></div></div><!-- Stats bar --><div id=\"stats\" class=\"absolute bottom-3 left-3 text-[11px] text-gh-muted bg-gh-surface/85 border border-gh-border rounded px-2.5 py-1 pointer-events-none\">0 nodes · 0 edges</div><!-- Toast --><div id=\"toast\" class=\"absolute top-3 left-1/2 -translate-x-1/2 bg-gh-surface2 border border-gh-border rounded-lg px-4 py-2 text-[12px] text-gh-muted whitespace-nowrap z-50\"></div><!-- Diff legend — shown only while diff mode is active --><div id=\"diff-legend\" class=\"hidden absolute bottom-0 left-1/2 -translate-x-1/2 flex items-center gap-3 px-3 py-1 bg-gh-surface2/90 border border-gh-border rounded-t-lg text-[11px] text-gh-muted z-30\"><span class=\"flex items-center gap-1\"><span class=\"inline-block w-2 h-2 rounded-full\" style=\"background:#22c55e\"></span>new</span> <span class=\"flex items-center gap-1\"><span class=\"inline-block w-2 h-2 rounded-full\" style=\"background:#eab308\"></span>updated</span> <span class=\"text-gh-muted/60\">(deleted objects not shown)</span></div><!-- Schema legend — shown only while schema mode is active --><div id=\"schema-legend\" class=\"hidden absolute bottom-0 left-1/2 -translate-x-1/2 flex items-center gap-3 px-3 py-1.5 bg-gh-surface2/90 border border-gh-border rounded-t-lg text-[11px] text-gh-muted z-30\"><span class=\"flex items-center gap-1\"><span class=\"inline-block w-2.5 h-2.5 rounded\" style=\"background:#58a6ff\"></span>type node</span> <span>click type → details</span> <span>double-click → browse objects</span></div></div>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		return nil
+	})
+}
+
+// NodeHoverCard renders the floating hover card used for both canvas node hover
+// and relation row hover. Positioned by JS via fixed coordinates.
+func NodeHoverCard() templ.Component {
+	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
+			return templ_7745c5c3_CtxErr
+		}
+		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+		if !templ_7745c5c3_IsBuffer {
+			defer func() {
+				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+				if templ_7745c5c3_Err == nil {
+					templ_7745c5c3_Err = templ_7745c5c3_BufErr
+				}
+			}()
+		}
+		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Var8 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var8 == nil {
+			templ_7745c5c3_Var8 = templ.NopComponent
+		}
+		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<!-- Hover card: canvas nodes + relation rows --><div id=\"node-hover-card\" class=\"hidden fixed z-[90] pointer-events-none\" style=\"max-width:220px\"><div class=\"bg-gh-surface border border-gh-border rounded-lg shadow-xl overflow-hidden\" style=\"font-size:12px\"><div id=\"nhc-header\" class=\"flex items-center gap-2 px-3 py-2 border-b border-gh-border\"><span id=\"nhc-dot\" class=\"w-2.5 h-2.5 rounded-full shrink-0\"></span> <span id=\"nhc-type\" class=\"text-[10px] tracking-wider font-semibold text-gh-muted\"></span></div><div class=\"px-3 py-2 space-y-1.5\"><div id=\"nhc-name\" class=\"font-medium text-gh-text text-[12px] leading-snug break-words\"></div><div id=\"nhc-props\" class=\"space-y-0.5\"></div><div id=\"nhc-edges\" class=\"text-[10px] text-gh-muted pt-0.5 border-t border-gh-border/40 mt-1\"></div></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

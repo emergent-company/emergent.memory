@@ -14,8 +14,11 @@ from emergent import Client, Config
 # From API key (auto-detects emt_* → Bearer)
 client = Client.from_api_key("https://api.emergent-company.ai", "emt_abc123")
 
-# From environment variables (EMERGENT_SERVER_URL, EMERGENT_API_KEY)
+# Auto-discover from ~/.memory/config.yaml, .env.local, .env, or MEMORY_* env vars
 client = Client.from_env()
+# Resolution order (highest priority wins):
+#   MEMORY_* env vars > .env.local (walk up) > .env (walk up) > ~/.memory/config.yaml
+# Keys: MEMORY_SERVER_URL, MEMORY_API_KEY, MEMORY_PROJECT_TOKEN, MEMORY_ORG_ID, MEMORY_PROJECT_ID
 
 # Full config
 client = Client(Config(

@@ -2196,6 +2196,7 @@ Examples:
   memory graph explore --port 7734
   memory graph explore --host 0.0.0.0 --port 7734
   memory graph explore --project my-project
+  memory graph explore --branch my-feature-branch
 
 ```
 memory graph explore [flags]
@@ -2204,6 +2205,7 @@ memory graph explore [flags]
 ### Options
 
 ```
+      --branch string    Branch name or ID to explore (default: main graph)
   -h, --help             help for explore
       --host string      Host/IP to bind (use 0.0.0.0 to listen on all interfaces) (default "127.0.0.1")
       --port int         Local port to listen on (default 7734)
@@ -2359,23 +2361,37 @@ memory graph objects edges <id> [flags]
 
 ## memory graph objects get
 
-Get a graph object by ID
+Get a graph object by ID or key
 
 ### Synopsis
 
-Get details for a graph object (entity) by its ID.
+Get details for a graph object (entity) by its ID or key.
+
+When a UUID is provided it is fetched directly. When a non-UUID string is
+provided it is treated as a key and resolved against the specified branch
+(or the main branch when --branch is omitted).
+
+Use --branch to scope key resolution to a specific branch — accepts either
+a branch UUID or a human-readable branch name.
 
 Prints Entity ID, Version ID, Type, Version number, Key (if set), Status (if
 set), Labels (if any), Created timestamp, and Properties as formatted JSON.
 Use --output json to receive the full object as JSON instead.
 
+Examples:
+  memory graph objects get <uuid>
+  memory graph objects get my-object-key
+  memory graph objects get my-object-key --branch plan/next-gen
+  memory graph objects get my-object-key --branch <branch-uuid>
+
 ```
-memory graph objects get <id> [flags]
+memory graph objects get <id|key> [flags]
 ```
 
 ### Options
 
 ```
+      --branch string   Branch ID or name to resolve the key against (omit for main branch)
   -h, --help            help for get
       --output string   Output format: table or json (default "table")
 ```
@@ -2631,7 +2647,15 @@ Delete a relationship
 
 ### Synopsis
 
-Soft-delete a graph relationship by ID
+Soft-delete a graph relationship by ID.
+
+Use --branch to scope the deletion to a specific branch (name or UUID).
+Without --branch the relationship is deleted from the main graph.
+
+Examples:
+  memory graph relationships delete <id>
+  memory graph relationships delete <id> --branch plan/next-gen
+  memory graph relationships delete <id> --branch <branch-uuid>
 
 ```
 memory graph relationships delete <id> [flags]
@@ -2640,7 +2664,8 @@ memory graph relationships delete <id> [flags]
 ### Options
 
 ```
-  -h, --help   help for delete
+      --branch string   Branch name or ID to scope deletion to (omit for main branch)
+  -h, --help            help for delete
 ```
 
 ## memory graph relationships get
@@ -3719,23 +3744,34 @@ memory schemas delete <schema-id> [flags]
 
 ## memory schemas diff
 
-Diff a local schema file against the currently installed version
+Diff two schemas — registry vs registry, or registry vs local file
 
 ### Synopsis
 
-Compare a local schema definition file against the version already stored in the
-registry. Shows which object and relationship types would be added or removed.
+Compare two schema definitions and show type-level and property-level differences.
 
-Requires --file pointing to a JSON, YAML, or YML schema file.
+Two modes:
+
+  diff <schema-id> --file <path>
+      Compare a schema in the registry against a local JSON/YAML file.
+      The local file is treated as the "incoming" (new) version.
+
+  diff <schema-id-a> <schema-id-b>
+      Compare two schemas already stored in the registry.
+      Schema A is treated as the "before" (base) version and schema B as the "after" version.
+
+Output shows added (+), removed (-) types, and property-level changes for shared
+types. A suggested migrations YAML block is printed when removals are detected.
+Use --output json for machine-readable output.
 
 ```
-memory schemas diff <schema-id> --file <path> [flags]
+memory schemas diff <schema-id-a> [<schema-id-b>] [--file <path>] [flags]
 ```
 
 ### Options
 
 ```
-      --file string   Path to incoming schema file (JSON, YAML, or YML)
+      --file string   Path to incoming schema file (JSON, YAML, or YML) for registry-vs-file mode
   -h, --help          help for diff
 ```
 
@@ -4039,6 +4075,28 @@ memory schemas uninstall [<assignment-id>] [flags]
       --dry-run             Preview what would be removed without making changes
   -h, --help                help for uninstall
       --keep-latest         Remove all but the most-recently installed assignment per unique schema
+```
+
+## memory schemas validate
+
+Check project objects for schema version mismatches
+
+### Synopsis
+
+Identify objects whose stored schema version is out of date with the
+currently installed schemas in the project.
+
+Returns a list of entity IDs, their types, keys, and the specific issues
+(e.g., version mismatch). Exits with code 1 if any stale objects are found.
+
+```
+memory schemas validate [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for validate
 ```
 
 ## memory server

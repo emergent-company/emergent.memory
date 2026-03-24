@@ -12,6 +12,7 @@ import Sigma from 'sigma';
 
 // ── Project context (injected by Go template) ─────────────────────────────
 const PROJECT_ID = window.__PROJECT_ID;
+let currentBranchID = window.__BRANCH_ID || '';
 
 // ── Palette ───────────────────────────────────────────────────────────────
 const PALETTE = [
@@ -22,10 +23,45 @@ const PALETTE = [
 const typeColorCache = {};
 let paletteIdx = 0;
 
+// Pre-seed from server-injected type colors (available before HTMX loads filter lists)
+if (window.__TYPE_COLORS) Object.assign(typeColorCache, window.__TYPE_COLORS);
+
 function typeColor(type) {
   if (!typeColorCache[type]) typeColorCache[type] = PALETTE[paletteIdx++ % PALETTE.length];
   return typeColorCache[type];
 }
+
+// Sync type colors from server-rendered DOM (data-color attributes on filter items).
+// Must be called after initial load and after every HTMX swap of the filter lists.
+// Also recolors any existing graph nodes whose color doesn't match.
+function syncTypeColorsFromDOM() {
+  let changed = false;
+  document.querySelectorAll('#node-filter-list [data-type][data-color]').forEach(el => {
+    const t = el.dataset.type, c = el.dataset.color;
+    if (t && c && typeColorCache[t] !== c) { typeColorCache[t] = c; changed = true; }
+  });
+  document.querySelectorAll('#edge-filter-list [data-type][data-color]').forEach(el => {
+    const t = el.dataset.type, c = el.dataset.color;
+    if (t && c && typeColorCache[t] !== c) { typeColorCache[t] = c; changed = true; }
+  });
+  // Recolor existing graph nodes if colors changed
+  if (changed && graph.order > 0) {
+    graph.forEachNode((id, attrs) => {
+      const expected = typeColorCache[attrs.nodeType];
+      if (expected && attrs.color !== expected) graph.setNodeAttribute(id, 'color', expected);
+    });
+    if (sigmaInstance) sigmaInstance.refresh();
+  }
+}
+// Seed color cache on page load (may be empty if HTMX hasn't loaded filter lists yet)
+syncTypeColorsFromDOM();
+// Re-sync after HTMX swaps the filter lists
+document.body.addEventListener('htmx:afterSettle', (e) => {
+  const tgt = e.detail?.target;
+  if (tgt && (tgt.id === 'node-filter-list' || tgt.id === 'edge-filter-list')) {
+    syncTypeColorsFromDOM();
+  }
+});
 
 // Schema type config — populated from HTMX-loaded filter items
 const schemaTypeConfig = {};
@@ -52,6 +88,25 @@ const edgeTypeCounts = {};
 // Expand depth setting (1–3)
 let expandDepth = 1;
 const EXPAND_NODE_CAP = 500;
+
+// ── Schema mode state ─────────────────────────────────────────────────────
+let isSchemaMode = false;
+let preSchemaGraphState = null;
+let schemaData = null; // { types: [...], rels: [...] }
+let selectedSchemaType = null;
+
+// ── Diff mode state ───────────────────────────────────────────────────────
+let isDiffMode = false;
+// Map<canonicalId, 'added'|'fast_forward'|'conflict'>
+let diffStatusMap = new Map();
+// Snapshot of nodeData/edgeData/graph state before entering diff mode
+let preDiffGraphState = null;
+
+const DIFF_COLORS = {
+  added:        '#22c55e',  // green
+  fast_forward: '#eab308',  // yellow
+  conflict:     '#f97316',  // orange
+};
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
 const $loading     = document.getElementById('loading');
@@ -87,8 +142,15 @@ function updateStats() {
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────
+// appendBranch adds branch_id to a URL if a branch is active.
+function appendBranch(url) {
+  if (!currentBranchID) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return url + sep + 'branch_id=' + encodeURIComponent(currentBranchID);
+}
+
 async function api(path, body) {
-  const res = await fetch('/proxy' + path, {
+  const res = await fetch(appendBranch('/proxy' + path), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -177,10 +239,6 @@ document.addEventListener('click', (e) => {
     const nid = navNode.dataset.nodeId;
     if (nid && graph.hasNode(nid)) {
       selectNode(nid);
-      sigmaInstance.getCamera().animate(
-        { ...sigmaInstance.getNodeDisplayData(nid), ratio: 0.5 },
-        { duration: 400 }
-      );
     }
     return;
   }
@@ -505,83 +563,61 @@ function drawNodeLabel(context, data, settings) {
   context.fillStyle = '#e6edf3';
   context.fillText(label, textX, nameY);
 
+  // Diff status badge (shown below the chip in diff mode)
+  if (isDiffMode) {
+    const diffStatus = diffStatusMap.get(data.id);
+    if (diffStatus) {
+      const badgeColor = DIFF_COLORS[diffStatus] || DIFF_COLORS.fast_forward;
+      const badgeLabel = diffStatus === 'added' ? 'new' : 'updated';
+      const badgeFontSize = 8;
+      context.font = `600 ${badgeFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+      const badgeW = context.measureText(badgeLabel).width + 8;
+      const badgeH = badgeFontSize + 6;
+      const badgeX = chipX;
+      const badgeY = chipY + chipH + 2;
+      context.fillStyle = badgeColor + '33';
+      context.strokeStyle = badgeColor;
+      context.lineWidth = 0.8;
+      context.beginPath();
+      context.roundRect(badgeX, badgeY, badgeW, badgeH, 3);
+      context.fill();
+      context.stroke();
+      context.fillStyle = badgeColor;
+      context.textAlign = 'left';
+      context.textBaseline = 'middle';
+      context.fillText(badgeLabel, badgeX + 4, badgeY + badgeH / 2);
+    }
+  }
+
+  // Schema mode: show "N props" pill below the chip
+  if (isSchemaMode && data.propCount !== undefined) {
+    const pillLabel = `${data.propCount} props`;
+    const pillFontSize = 8;
+    context.font = `500 ${pillFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+    const pillW = context.measureText(pillLabel).width + 10;
+    const pillH = pillFontSize + 6;
+    const pillX = chipX;
+    const pillY = chipY + chipH + 2;
+    context.fillStyle = 'rgba(88,166,255,0.12)';
+    context.strokeStyle = 'rgba(88,166,255,0.4)';
+    context.lineWidth = 0.8;
+    context.beginPath();
+    context.roundRect(pillX, pillY, pillW, pillH, 3);
+    context.fill();
+    context.stroke();
+    context.fillStyle = '#8b949e';
+    context.textAlign = 'left';
+    context.textBaseline = 'middle';
+    context.fillText(pillLabel, pillX + 5, pillY + pillH / 2);
+  }
+
   context.restore();
 }
 
 function drawNodeHoverLabel(context, data, settings) {
+  // Only draw the icon inside the node circle.
+  // The rich hover card is an HTML overlay, positioned by enterNode/leaveNode events.
   drawNodeIcon(context, data);
-
-  const { size, x, y, color, label, typeInitial, nodeType } = data;
-  if (!label) return;
-
-  const icon = typeInitial || (label || '?').charAt(0).toUpperCase();
-  const isEmoji = [...icon].length > 1;
-  const typeStr = nodeType || '';
-
-  // Two-line chip dimensions
-  const nameFontSize = 11;
-  const typeFontSize = 9;
-  const pad = 5;
-  const dotR = 7;
-  const iconFs = isEmoji ? 10 : 8;
-  const gap = 5;
-  const lineGap = 2;
-
-  context.save();
-
-  // Measure both lines
-  context.font = `500 ${nameFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-  const nameW = context.measureText(label).width;
-  context.font = `400 ${typeFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-  const typeW = context.measureText(typeStr).width;
-
-  const textW = Math.max(nameW, typeW);
-  const chipW = pad + dotR * 2 + gap + textW + pad;
-  const chipH = typeFontSize + lineGap + nameFontSize + 8; // top pad + type + gap + name + bottom pad
-  const chipX = x + size + 6;
-  const chipY = y - chipH / 2;
-
-  // Background pill
-  context.fillStyle = 'rgba(13,17,23,0.90)';
-  context.strokeStyle = 'rgba(48,54,61,0.75)';
-  context.lineWidth = 0.8;
-  context.beginPath();
-  context.roundRect(chipX, chipY, chipW, chipH, 6);
-  context.fill();
-  context.stroke();
-
-  // Colored dot with icon (vertically centered in chip)
-  const dotCX = chipX + pad + dotR;
-  const dotCY = y;
-  context.beginPath();
-  context.arc(dotCX, dotCY, dotR, 0, Math.PI * 2);
-  context.fillStyle = color;
-  context.fill();
-
-  context.font = isEmoji ? `${iconFs}px sans-serif` : `700 ${iconFs}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.fillStyle = 'rgba(255,255,255,0.92)';
-  context.fillText(icon, dotCX, dotCY);
-
-  // Type label (line 1 — dimmed, smaller)
-  const textX = chipX + pad + dotR * 2 + gap;
-  const typeY = chipY + 4 + typeFontSize / 2;
-  context.font = `400 ${typeFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-  context.textAlign = 'left';
-  context.textBaseline = 'middle';
-  context.fillStyle = '#8b949e';
-  context.fillText(typeStr, textX, typeY);
-
-  // Entity name (line 2 — normal)
-  const nameY = typeY + typeFontSize / 2 + lineGap + nameFontSize / 2;
-  context.font = `500 ${nameFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-  context.textAlign = 'left';
-  context.textBaseline = 'middle';
-  context.fillStyle = '#e6edf3';
-  context.fillText(label, textX, nameY);
-
-  context.restore();
 }
 
 // ── Hover card ────────────────────────────────────────────────────────────
@@ -686,6 +722,37 @@ function initSigma() {
       res.size = nodeSize(deg);
       const cameraRatio = sigmaInstance?.getCamera().getState().ratio ?? 1;
       const zoomedIn = cameraRatio < 0.5;
+
+      // Schema mode — always show labels, highlight selected + neighbors
+      if (isSchemaMode) {
+        res.size = 22;
+        res.label = data.label;
+        res.borderSize = 3;
+        res.borderColor = data.color;
+        if (selectedNode !== null && graph.hasNode(selectedNode)) {
+          if (node === selectedNode) {
+            res.highlighted = true; res.size = 28; res.zIndex = 2;
+          } else if (graph.neighbors(selectedNode).includes(node)) {
+            // neighbor — keep visible
+          } else {
+            res.color = data.color + '44'; res.borderColor = data.color + '44';
+          }
+        }
+        return res;
+      }
+
+      // In diff mode, apply diff status color (already set on the node attr)
+      if (isDiffMode) {
+        const diffStatus = graph.getNodeAttribute(node, 'diffStatus');
+        if (diffStatus && DIFF_COLORS[diffStatus]) {
+          res.color = DIFF_COLORS[diffStatus];
+          res.borderColor = DIFF_COLORS[diffStatus];
+          res.borderSize = 3;
+        }
+        res.label = data.label; // always show labels in diff mode
+        return res;
+      }
+
       if (selectedNode !== null) {
         if (!graph.hasNode(selectedNode)) {
           // Selected node was removed — treat as no selection
@@ -710,6 +777,25 @@ function initSigma() {
       const [src, dst] = graph.extremities(edge);
       if (data.hidden || graph.getNodeAttribute(src, 'hidden') || graph.getNodeAttribute(dst, 'hidden'))
         return { ...res, hidden: true };
+
+      // Schema mode — always show edge labels, dim unconnected
+      if (isSchemaMode) {
+        res.forceLabel = true;
+        if (selectedNode !== null && graph.hasNode(selectedNode)) {
+          if (src === selectedNode || dst === selectedNode) {
+            res.size = 3; res.zIndex = 1;
+            res.color = graph.getNodeAttribute(src, 'color') + 'cc';
+          } else {
+            res.color = 'rgba(48,54,61,0.2)'; res.size = 1;
+          }
+        }
+        return res;
+      }
+
+      // In diff mode, edge color is already set by loadDiffView; just use it
+      if (isDiffMode) {
+        return res;
+      }
       if (selectedNode !== null && graph.hasNode(selectedNode)) {
         if (src === selectedNode || dst === selectedNode) {
           res.color = graph.getNodeAttribute(src, 'color') + 'cc'; res.size = 2.5; res.zIndex = 1;
@@ -721,23 +807,115 @@ function initSigma() {
     },
   });
 
-  sigmaInstance.on('clickNode', ({ node }) => { selectNode(node); });
-  sigmaInstance.on('doubleClickNode', ({ node }) => { expandNode(node); });
+  sigmaInstance.on('clickNode', ({ node }) => {
+    if (isSchemaMode) { selectSchemaTypeNode(node); return; }
+    selectNode(node);
+  });
+  sigmaInstance.on('doubleClickNode', ({ node }) => {
+    if (isSchemaMode) { exitSchemaView(node); return; }
+    expandNode(node);
+  });
   sigmaInstance.on('rightClickNode', ({ node, event }) => {
     event.preventDefault();
     selectNode(node);
     showContextMenu(node, event.clientX, event.clientY);
   });
   sigmaInstance.on('clickStage', () => deselectNode());
-  // Re-render on camera move so semantic zoom labels update
-  sigmaInstance.getCamera().on('updated', () => sigmaInstance.refresh());
+
+  // Hover card on canvas nodes
+  sigmaInstance.on('enterNode', ({ node }) => {
+    if (dragState) return; // don't show while dragging
+    const d = nodeData[node] || {};
+    const attrs = graph.getNodeAttributes(node);
+    const vp = sigmaInstance.graphToViewport({ x: attrs.x, y: attrs.y });
+    const container = document.getElementById('sigma-container');
+    const rect = container.getBoundingClientRect();
+    showHoverCard(
+      node,
+      rect.left + vp.x,
+      rect.top + vp.y,
+      attrs.color || '#8b949e',
+      d.type || attrs.nodeType || '',
+      attrs.label || '',
+      d.properties || null
+    );
+  });
+  sigmaInstance.on('leaveNode', () => hideHoverCard(80));
+
+  // Re-render on camera move so semantic zoom labels update; hide hover card during pan
+  sigmaInstance.getCamera().on('updated', () => {
+    sigmaInstance.refresh();
+    hideHoverCard();
+  });
 
   enableNodeDrag();
 }
 
 // ── Node selection ────────────────────────────────────────────────────────
+// Smoothly animate camera to frame the selected node + all its visible neighbors.
+// Works entirely in Sigma's normalized display coordinates to avoid circular
+// dependency on the current camera state.
+function zoomToNodeNeighborhood(nodeId) {
+  if (!sigmaInstance || !graph.hasNode(nodeId)) return;
+  const neighbors = graph.neighbors(nodeId).filter(n => !graph.getNodeAttribute(n, 'hidden'));
+  const nodes = [nodeId, ...neighbors];
+  if (nodes.length === 0) return;
+
+  // Single node — center on it with a moderate zoom
+  if (nodes.length === 1) {
+    const nd = sigmaInstance.getNodeDisplayData(nodeId);
+    if (!nd) return;
+    sigmaInstance.getCamera().animate(
+      { x: nd.x, y: nd.y, ratio: 0.3 },
+      { duration: 600, easing: 'cubicInOut' }
+    );
+    return;
+  }
+
+  // Compute bounding box in normalized display coords (0..1 range)
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    const nd = sigmaInstance.getNodeDisplayData(n);
+    if (!nd) continue;
+    if (nd.x < minX) minX = nd.x;
+    if (nd.x > maxX) maxX = nd.x;
+    if (nd.y < minY) minY = nd.y;
+    if (nd.y > maxY) maxY = nd.y;
+  }
+
+  // Center of the neighborhood
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+
+  // Bbox span in normalized coords
+  const bboxW = (maxX - minX) || 0.01;
+  const bboxH = (maxY - minY) || 0.01;
+
+  // Account for viewport aspect ratio — Sigma's ratio maps to the smaller
+  // dimension, so we need to scale the bbox axis that's tighter.
+  const container = document.getElementById('sigma-container');
+  const aspect = container.clientWidth / container.clientHeight;
+
+  // In Sigma v3, camera ratio = fraction of the normalized space visible.
+  // For a square viewport: visible range ≈ ratio in both axes.
+  // For non-square: visible width ≈ ratio * aspect, visible height ≈ ratio.
+  // We want the bbox to fill ~60% of the viewport in the larger axis.
+  const fill = 0.6;
+  const ratioFromW = bboxW / (fill * aspect);
+  const ratioFromH = bboxH / fill;
+  let newRatio = Math.max(ratioFromW, ratioFromH);
+  // Clamp: don't zoom too far in (< 0.08) or too far out (> 2)
+  newRatio = Math.max(0.08, Math.min(newRatio, 2));
+
+  sigmaInstance.getCamera().animate(
+    { x: cx, y: cy, ratio: newRatio },
+    { duration: 600, easing: 'cubicInOut' }
+  );
+}
+
 function selectNode(id) {
   if (!graph.hasNode(id)) return;
+  hideHoverCard();
   if (id !== selectedNode) {
     if (expandedNode) collapseExpanded();
     if (focusActive) { focusActive = false; applyFilters(); }
@@ -749,6 +927,11 @@ function selectNode(id) {
   const d = nodeData[id] || {};
   const entityId = d.canonical_id || d.entity_id || id;
   document.getElementById('selected-node-id').value = entityId;
+  document.getElementById('panel-title').textContent = 'Node details';
+
+  // Restore panel footer visibility (may have been hidden in schema mode)
+  const panelFooter = document.querySelector('#right-panel .right-panel-inner > .p-3.border-t');
+  if (panelFooter) panelFooter.style.display = '';
 
   // Use htmx.ajax to directly fetch node detail into the panel body
   htmx.ajax('GET', `/htmx/node-detail?nodeId=${encodeURIComponent(entityId)}`, {
@@ -757,7 +940,11 @@ function selectNode(id) {
   });
 
   $panel.classList.add('open');
-  setTimeout(() => sigmaInstance?.resize(), 210);
+  setTimeout(() => {
+    sigmaInstance?.resize();
+    // After resize settles, zoom to show node + neighbors
+    setTimeout(() => zoomToNodeNeighborhood(id), 50);
+  }, 210);
 
   updateFocusBtn();
   updateExpandBtn();
@@ -781,18 +968,25 @@ document.getElementById('panel-close').addEventListener('click', deselectNode);
 document.addEventListener('click', (e) => {
   const depthBtn = e.target.closest('.depth-btn');
   if (!depthBtn) return;
-  expandDepth = parseInt(depthBtn.id.replace('depth-', ''), 10);
+  const newDepth = parseInt(depthBtn.id.replace('depth-', ''), 10);
+  if (newDepth === expandDepth) return;
+  expandDepth = newDepth;
   document.querySelectorAll('.depth-btn').forEach(b => {
     const active = b.id === depthBtn.id;
-    b.style.background = active ? 'var(--color-gh-accent, #58a6ff)' : '';
-    b.style.color = active ? '#fff' : '';
+    b.classList.toggle('bg-gh-accent', active);
+    b.classList.toggle('text-white', active);
+    b.classList.toggle('bg-gh-surface2', !active);
     b.classList.toggle('text-gh-muted', !active);
   });
+  // If a node is already expanded, re-expand with the new depth
+  if (expandedNode && selectedNode === expandedNode) {
+    expandNode(selectedNode);
+  }
 });
 
 document.getElementById('btn-expand').addEventListener('click', async () => {
   if (!selectedNode) return;
-  if (expandedNode === selectedNode) {
+  if (expandedNode === selectedNode && expandedNodeDepth === expandDepth) {
     collapseExpanded();
   } else {
     await expandNode(selectedNode);
@@ -872,7 +1066,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   graph.clear();
   nodeData = {}; edgeData = {};
   selectedNode = null;
-  expandedNode = null; expandedNodeIds.clear(); expandedEdgeKeys.clear();
+  expandedNode = null; expandedNodeDepth = 0; expandedNodeIds.clear(); expandedEdgeKeys.clear();
   focusActive = false;
   $panel.classList.remove('open');
   hiddenNodeTypes.clear(); hiddenEdgeTypes.clear();
@@ -885,6 +1079,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
 
 // ── Expand (toggle) ───────────────────────────────────────────────────────
 let expandedNode = null;
+let expandedNodeDepth = 0;   // depth used for the last expand
 let expandedNodeIds = new Set();
 let expandedEdgeKeys = new Set();
 
@@ -920,6 +1115,7 @@ function collapseExpanded() {
     }
   }
   expandedNode = null;
+  expandedNodeDepth = 0;
   expandedNodeIds.clear();
   expandedEdgeKeys.clear();
   updateStats();
@@ -929,7 +1125,8 @@ function collapseExpanded() {
 }
 
 async function expandNode(nodeId) {
-  if (expandedNode && expandedNode !== nodeId) collapseExpanded();
+  // Collapse previous expand (different node OR same node at different depth)
+  if (expandedNode) collapseExpanded();
 
   const d = nodeData[nodeId] || {};
   const id = d.canonical_id || d.entity_id || nodeId;
@@ -949,9 +1146,10 @@ async function expandNode(nodeId) {
     graph.forEachEdge(e => { if (!edgesBefore.has(e)) expandedEdgeKeys.add(e); });
 
     expandedNode = nodeId;
+    expandedNodeDepth = expandDepth;
     const added = graph.order - prevOrder;
     runLayout({ resetPositions: prevOrder === 0 });
-    showToast(added > 0 ? `+${added} node${added !== 1 ? 's' : ''} added` : 'No new neighbors found');
+    showToast(added > 0 ? `+${added} node${added !== 1 ? 's' : ''} added (depth ${expandDepth})` : 'No new neighbors found');
     updateExpandBtn();
   } catch (e) { showToast('Expand failed: ' + e.message, 3500); }
   finally { stopLoading(); }
@@ -962,7 +1160,7 @@ async function loadNodesByType(type) {
   startLoading();
   try {
     const params = new URLSearchParams({ type, limit: '100' });
-    const res = await fetch(`/proxy/api/graph/objects/search?${params}`);
+    const res = await fetch(appendBranch(`/proxy/api/graph/objects/search?${params}`));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const objects = data.data || data.objects || data.items || data.results || [];
@@ -1123,7 +1321,7 @@ async function loadAllNodes() {
   try {
     for (const type of types) {
       const params = new URLSearchParams({ type, limit: '1000' });
-      const res = await fetch(`/proxy/api/graph/objects/search?${params}`);
+      const res = await fetch(appendBranch(`/proxy/api/graph/objects/search?${params}`));
       if (!res.ok) continue;
       const data = await res.json();
       const objects = data.data || data.objects || data.items || data.results || [];
@@ -1142,6 +1340,562 @@ async function loadAllNodes() {
 
 document.getElementById('btn-load-all').addEventListener('click', loadAllNodes);
 
+// ── Relation row hover card ───────────────────────────────────────────────
+// Delegated mouseenter/mouseleave on [data-action="navigate-node"] rows in the
+// right panel. Shows the shared hover card with the neighbor's info.
+document.addEventListener('mouseover', (e) => {
+  const row = e.target.closest('[data-action="navigate-node"]');
+  if (!row) return;
+  const nid = row.dataset.nodeId;
+  if (!nid) return;
+
+  // Gather info — prefer in-graph data, fall back to row content
+  const d = nodeData[nid];
+  const typeName = d?.type || row.querySelector('.text-gh-muted.shrink-0')?.textContent?.trim() || '';
+  const name = d?.properties?.name || d?.properties?.title || d?.key ||
+    row.querySelector('.text-gh-text.truncate')?.textContent?.trim() || nid.slice(0, 8);
+  const color = d ? typeColor(typeName) : (row.querySelector('.rounded-full')?.style.background || '#8b949e');
+  const props = d?.properties || null;
+
+  const rect = row.getBoundingClientRect();
+  showHoverCard(nid, rect.left - 232, rect.top + rect.height / 2, color, typeName, name, props);
+});
+
+document.addEventListener('mouseout', (e) => {
+  const row = e.target.closest('[data-action="navigate-node"]');
+  if (row) hideHoverCard(120);
+});
+
+// ── Branch picker ─────────────────────────────────────────────────────────
+const $branchBtn = document.getElementById('branch-btn');
+const $branchDropdown = document.getElementById('branch-dropdown');
+const $branchList = document.getElementById('branch-list');
+const $branchLabel = document.getElementById('branch-label');
+let branchesLoaded = false;
+
+// Set initial label
+if (currentBranchID) {
+  $branchLabel.textContent = currentBranchID;
+} else {
+  $branchLabel.textContent = 'main';
+}
+
+async function loadBranches() {
+  if (branchesLoaded) return;
+  try {
+    const res = await fetch('/htmx/branches');
+    const branches = await res.json();
+    $branchList.innerHTML = '';
+
+    // Main graph option
+    const mainItem = document.createElement('button');
+    mainItem.className = 'w-full text-left px-3 py-1.5 hover:bg-gh-surface2 text-gh-text cursor-pointer flex items-center gap-2'
+      + (!currentBranchID ? ' bg-gh-surface2' : '');
+    mainItem.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${!currentBranchID ? 'bg-gh-accent' : 'bg-transparent'}"></span>main`;
+    mainItem.addEventListener('click', () => switchBranch('', 'main'));
+    $branchList.appendChild(mainItem);
+
+    if (branches.length > 0) {
+      const sep = document.createElement('div');
+      sep.className = 'my-1 border-t border-gh-border';
+      $branchList.appendChild(sep);
+    }
+
+    for (const b of branches) {
+      const name = b.name || b.id;
+      const isActive = currentBranchID === b.id || currentBranchID === b.name;
+      const item = document.createElement('button');
+      item.className = 'w-full text-left px-3 py-1.5 hover:bg-gh-surface2 text-gh-text cursor-pointer flex items-center gap-2'
+        + (isActive ? ' bg-gh-surface2' : '');
+      item.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${isActive ? 'bg-gh-accent' : 'bg-transparent'}"></span>`
+        + `<span class="truncate">${escHtml(name)}</span>`;
+      item.addEventListener('click', () => switchBranch(b.id, name));
+      $branchList.appendChild(item);
+    }
+
+    branchesLoaded = true;
+  } catch (e) {
+    $branchList.innerHTML = `<div class="px-3 py-2 text-red-400 text-[11px]">Failed to load branches</div>`;
+  }
+}
+
+function switchBranch(branchID, label) {
+  if (branchID === currentBranchID) {
+    $branchDropdown.classList.add('hidden');
+    return;
+  }
+
+  // Exit diff mode before switching (don't restore pre-diff state)
+  if (isDiffMode) {
+    isDiffMode = false;
+    diffStatusMap.clear();
+    preDiffGraphState = null;
+    hideDiffLegend();
+  }
+
+  // Exit schema mode before switching
+  if (isSchemaMode) {
+    isSchemaMode = false;
+    selectedSchemaType = null;
+    schemaData = null;
+    preSchemaGraphState = null;
+    hideSchemaLegend();
+    disableGraphControls(false);
+    updateModeTabs();
+  }
+
+  currentBranchID = branchID;
+  $branchLabel.textContent = label;
+  $branchDropdown.classList.add('hidden');
+  branchesLoaded = false; // force reload next time
+
+  // Show/hide diff button based on whether we're on a branch
+  const $diffBtn = document.getElementById('btn-diff');
+  if ($diffBtn) {
+    if (branchID) {
+      $diffBtn.classList.remove('hidden');
+    } else {
+      $diffBtn.classList.add('hidden');
+    }
+    updateDiffBtn();
+  }
+
+  // Clear graph and reload everything
+  stopFA2();
+  graph.clear();
+  nodeData = {}; edgeData = {};
+  selectedNode = null;
+  expandedNode = null; expandedNodeDepth = 0; expandedNodeIds.clear(); expandedEdgeKeys.clear();
+  focusActive = false;
+  $panel.classList.remove('open');
+  hiddenNodeTypes.clear(); hiddenEdgeTypes.clear();
+  Object.keys(nodeTypeCounts).forEach(k => delete nodeTypeCounts[k]);
+  Object.keys(edgeTypeCounts).forEach(k => delete edgeTypeCounts[k]);
+
+  // Force schema reload on server side by clearing cache
+  // (the server will reload with the new branch_id in proxyGet)
+  updateStats();
+  updateExpandBtn(); updateFocusBtn();
+  syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
+  showToast(branchID ? `Switched to branch: ${label}` : 'Switched to main graph');
+}
+
+$branchBtn?.addEventListener('click', () => {
+  const isOpen = !$branchDropdown.classList.contains('hidden');
+  if (isOpen) {
+    $branchDropdown.classList.add('hidden');
+  } else {
+    loadBranches();
+    $branchDropdown.classList.remove('hidden');
+  }
+});
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  if (!$branchDropdown?.classList.contains('hidden') && !e.target.closest('#branch-picker')) {
+    $branchDropdown.classList.add('hidden');
+  }
+});
+
+// ── Diff mode ─────────────────────────────────────────────────────────────
+async function callMergeDryRun() {
+  // POST to the merge dry-run endpoint proxied through /proxy/
+  const res = await fetch('/proxy/api/graph/branches/main/merge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Project-ID': PROJECT_ID },
+    body: JSON.stringify({ source_branch_id: currentBranchID, execute: false }),
+  });
+  if (!res.ok) throw new Error(`Merge dry-run failed: ${res.status}`);
+  return res.json();
+}
+
+async function loadDiffView() {
+  if (!currentBranchID) return;
+  const $btn = document.getElementById('btn-diff');
+  if ($btn) { $btn.classList.add('diff-loading'); $btn.disabled = true; }
+  startLoading();
+
+  try {
+    const resp = await callMergeDryRun();
+
+    // Build diff status map (objects + relationships)
+    diffStatusMap.clear();
+    const relDiffMap = new Map();
+    for (const obj of (resp.objects || [])) {
+      if (obj.status !== 'unchanged') diffStatusMap.set(obj.canonical_id, obj.status);
+    }
+    for (const rel of (resp.relationships || [])) {
+      if (rel.status !== 'unchanged') relDiffMap.set(rel.canonical_id || rel.id, rel.status);
+    }
+
+    if (diffStatusMap.size === 0 && relDiffMap.size === 0) {
+      showToast('No changes found between branch and main', 3500);
+      return;
+    }
+
+    // Save pre-diff graph state
+    preDiffGraphState = {
+      nodes: graph.nodes().map(n => ({ id: n, attrs: { ...graph.getNodeAttributes(n) } })),
+      edges: graph.edges().map(e => ({ key: e, src: graph.source(e), dst: graph.target(e), attrs: { ...graph.getEdgeAttributes(e) } })),
+      nodeData: { ...nodeData },
+      edgeData: { ...edgeData },
+    };
+
+    // Clear canvas
+    stopFA2();
+    graph.clear();
+    nodeData = {}; edgeData = {};
+
+    // Fetch each changed object from the branch
+    const ids = [...diffStatusMap.keys()];
+    for (const canonicalId of ids) {
+      try {
+        const res = await fetch(appendBranch(`/proxy/api/graph/objects/${encodeURIComponent(canonicalId)}`));
+        if (!res.ok) continue;
+        const obj = await res.json();
+        mergeObjectResponse(obj, { forceVisible: true });
+      } catch (_) {}
+    }
+
+    // Color diff nodes using their diff status color
+    diffStatusMap.forEach((status, cid) => {
+      if (graph.hasNode(cid)) {
+        graph.setNodeAttribute(cid, 'color', DIFF_COLORS[status] || DIFF_COLORS.fast_forward);
+        graph.setNodeAttribute(cid, 'diffStatus', status);
+      }
+    });
+
+    // Load relationships between diff nodes (best-effort)
+    if (ids.length > 0) {
+      try {
+        const expandResp = await api('/api/graph/expand', { root_ids: ids, max_depth: 1, max_nodes: 500 });
+        const v2c = {};
+        (expandResp.nodes || []).forEach(n => {
+          const cid = n.canonical_id || n.entity_id;
+          const vid = n.id || n.version_id;
+          if (cid && vid) v2c[vid] = cid;
+        });
+        (expandResp.edges || []).forEach(e => {
+          const src = v2c[e.src_id] || e.src_id;
+          const dst = v2c[e.dst_id] || e.dst_id;
+          // Only add edges between diff nodes
+          if (diffStatusMap.has(src) && diffStatusMap.has(dst)) {
+            mergeEdge({ ...e, src_id: src, dst_id: dst }, { forceVisible: true });
+          }
+        });
+      } catch (_) {}
+    }
+
+    // Color edges by source node diff status
+    graph.forEachEdge((key) => {
+      const src = graph.source(key);
+      const status = diffStatusMap.get(src);
+      if (status) graph.setEdgeAttribute(key, 'color', (DIFF_COLORS[status] || DIFF_COLORS.fast_forward) + 'cc');
+    });
+
+    isDiffMode = true;
+    updateStats();
+    if (sigmaInstance) sigmaInstance.refresh();
+    runLayout({ resetPositions: true });
+    syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
+    updateDiffBtn();
+    showDiffLegend();
+    showToast(`Diff mode: ${diffStatusMap.size} changed object${diffStatusMap.size !== 1 ? 's' : ''}`);
+  } catch (e) {
+    showToast('Diff failed: ' + e.message, 4000);
+  } finally {
+    stopLoading();
+    if ($btn) { $btn.classList.remove('diff-loading'); $btn.disabled = false; }
+  }
+}
+
+function exitDiffView() {
+  if (!isDiffMode) return;
+  isDiffMode = false;
+  diffStatusMap.clear();
+
+  // Clear diff canvas
+  stopFA2();
+  graph.clear();
+  nodeData = {}; edgeData = {};
+
+  // Restore pre-diff state
+  if (preDiffGraphState) {
+    preDiffGraphState.nodes.forEach(({ id, attrs }) => {
+      if (!graph.hasNode(id)) graph.addNode(id, attrs);
+    });
+    preDiffGraphState.edges.forEach(({ key, src, dst, attrs }) => {
+      if (graph.hasNode(src) && graph.hasNode(dst) && !graph.hasEdge(key)) {
+        try { graph.addEdgeWithKey(key, src, dst, attrs); } catch (_) {}
+      }
+    });
+    Object.assign(nodeData, preDiffGraphState.nodeData);
+    Object.assign(edgeData, preDiffGraphState.edgeData);
+    preDiffGraphState = null;
+  }
+
+  updateStats();
+  if (sigmaInstance) sigmaInstance.refresh();
+  updateDiffBtn();
+  hideDiffLegend();
+  syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
+}
+
+function updateDiffBtn() {
+  const $btn = document.getElementById('btn-diff');
+  if (!$btn) return;
+  if (isDiffMode) {
+    $btn.textContent = '⊟ Exit Diff';
+    $btn.classList.add('border-yellow-500', 'text-yellow-400');
+    $btn.classList.remove('text-gh-muted');
+  } else {
+    $btn.textContent = '⊞ Diff';
+    $btn.classList.remove('border-yellow-500', 'text-yellow-400');
+    $btn.classList.add('text-gh-muted');
+  }
+}
+
+function showDiffLegend() {
+  const $legend = document.getElementById('diff-legend');
+  if ($legend) $legend.classList.remove('hidden');
+}
+
+function hideDiffLegend() {
+  const $legend = document.getElementById('diff-legend');
+  if ($legend) $legend.classList.add('hidden');
+}
+
+// Wire diff button
+document.getElementById('btn-diff')?.addEventListener('click', () => {
+  if (isDiffMode) exitDiffView(); else loadDiffView();
+});
+
+// ── Schema mode ───────────────────────────────────────────────────────────
+async function loadSchemaView() {
+  if (isSchemaMode) return;
+
+  // Exit diff mode first if active
+  if (isDiffMode) exitDiffView();
+
+  startLoading();
+  try {
+    // Fetch compiled-types + registry in parallel via proxy
+    const [ctRes, regRes] = await Promise.all([
+      fetch(`/proxy/api/schemas/projects/${PROJECT_ID}/compiled-types`),
+      fetch(`/proxy/api/schema-registry/projects/${PROJECT_ID}`),
+    ]);
+    const compiled = await ctRes.json();
+    const registry = await regRes.json();
+
+    // Build type set from registry (objectTypes is empty, so use registry)
+    const regByType = {};
+    for (const e of (registry || [])) {
+      if (e.type) regByType[e.type] = e;
+    }
+
+    const rels = compiled.relationshipTypes || [];
+
+    // Also gather types referenced in rels but missing from registry
+    const allTypeNames = new Set(Object.keys(regByType));
+    for (const r of rels) {
+      if (r.sourceType) allTypeNames.add(r.sourceType);
+      if (r.targetType) allTypeNames.add(r.targetType);
+    }
+
+    schemaData = { types: [...allTypeNames], rels };
+
+    // Save pre-schema graph state
+    preSchemaGraphState = {
+      nodes: graph.nodes().map(n => ({ id: n, attrs: { ...graph.getNodeAttributes(n) } })),
+      edges: graph.edges().map(e => ({ key: e, src: graph.source(e), dst: graph.target(e), attrs: { ...graph.getEdgeAttributes(e) } })),
+      nodeData: { ...nodeData },
+      edgeData: { ...edgeData },
+      selectedNode,
+    };
+
+    // Clear canvas
+    stopFA2();
+    graph.clear();
+    nodeData = {}; edgeData = {};
+    selectedNode = null; selectedSchemaType = null;
+    $panel.classList.remove('open');
+
+    // Build type nodes
+    for (const typeName of allTypeNames) {
+      const reg = regByType[typeName];
+      const color = typeColor(typeName);
+      const propCount = reg?.json_schema?.properties ? Object.keys(reg.json_schema.properties).length : 0;
+      graph.addNode(typeName, {
+        label: typeName,
+        size: 22,
+        color,
+        x: Math.random() * 10 - 5,
+        y: Math.random() * 10 - 5,
+        nodeType: typeName,
+        typeInitial: typeIcon(typeName),
+        isSchemaNode: true,
+        propCount,
+      });
+    }
+
+    // Build relationship edges
+    for (const rel of rels) {
+      const src = rel.sourceType;
+      const dst = rel.targetType;
+      const label = rel.label || rel.name || '';
+      if (!src || !dst || !graph.hasNode(src) || !graph.hasNode(dst)) continue;
+      // Self-loops: skip in graph (note in detail panel) since allowSelfLoops is false
+      if (src === dst) continue;
+      const key = `schema__${rel.name}__${src}__${dst}`;
+      if (!graph.hasEdge(key)) {
+        try {
+          graph.addEdgeWithKey(key, src, dst, {
+            label,
+            size: 2,
+            color: typeColor(src) + '88',
+            forceLabel: true,
+          });
+        } catch (_) {}
+      }
+    }
+
+    isSchemaMode = true;
+    updateModeTabs();
+    updateStats();
+    disableGraphControls(true);
+    showSchemaLegend();
+
+    // Layout
+    runLayout({ resetPositions: true });
+    showToast(`Schema: ${allTypeNames.size} types, ${rels.length} relationships`);
+  } catch (e) {
+    showToast('Schema load failed: ' + e.message, 3500);
+  } finally {
+    stopLoading();
+  }
+}
+
+function exitSchemaView(loadTypeName) {
+  if (!isSchemaMode) return;
+  isSchemaMode = false;
+  selectedSchemaType = null;
+  schemaData = null;
+
+  // Clear schema canvas
+  stopFA2();
+  graph.clear();
+  nodeData = {}; edgeData = {};
+  $panel.classList.remove('open');
+
+  // Restore panel footer visibility
+  const panelFooter = document.querySelector('#right-panel .right-panel-inner > .p-3.border-t');
+  if (panelFooter) panelFooter.style.display = '';
+
+  // Restore pre-schema state
+  if (preSchemaGraphState) {
+    preSchemaGraphState.nodes.forEach(({ id, attrs }) => {
+      if (!graph.hasNode(id)) graph.addNode(id, attrs);
+    });
+    preSchemaGraphState.edges.forEach(({ key, src, dst, attrs }) => {
+      if (graph.hasNode(src) && graph.hasNode(dst) && !graph.hasEdge(key)) {
+        try { graph.addEdgeWithKey(key, src, dst, attrs); } catch (_) {}
+      }
+    });
+    Object.assign(nodeData, preSchemaGraphState.nodeData);
+    Object.assign(edgeData, preSchemaGraphState.edgeData);
+    selectedNode = preSchemaGraphState.selectedNode;
+    preSchemaGraphState = null;
+  }
+
+  updateModeTabs();
+  updateStats();
+  disableGraphControls(false);
+  hideSchemaLegend();
+  if (sigmaInstance) sigmaInstance.refresh();
+  syncHiddenInputs(); htmx.trigger(document.body, 'refreshFilters');
+
+  // If asked to load a specific type, do it
+  if (loadTypeName) {
+    loadNodesByType(loadTypeName);
+  }
+}
+
+function updateModeTabs() {
+  const $tabGraph = document.getElementById('tab-graph');
+  const $tabSchema = document.getElementById('tab-schema');
+  if (!$tabGraph || !$tabSchema) return;
+  if (isSchemaMode) {
+    $tabGraph.className = 'px-3 py-1 text-[11px] font-medium bg-gh-surface2 text-gh-muted cursor-pointer border-none border-r border-gh-border hover:text-gh-text';
+    $tabSchema.className = 'px-3 py-1 text-[11px] font-medium bg-gh-accent text-white cursor-pointer border-none border-l border-gh-border';
+  } else {
+    $tabGraph.className = 'px-3 py-1 text-[11px] font-medium bg-gh-accent text-white cursor-pointer border-none';
+    $tabSchema.className = 'px-3 py-1 text-[11px] font-medium bg-gh-surface2 text-gh-muted cursor-pointer border-none border-l border-gh-border hover:text-gh-text';
+  }
+}
+
+function disableGraphControls(disable) {
+  const ids = ['btn-load-all', 'btn-diff', 'search-btn', 'search-input'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.disabled = disable;
+      if (disable) el.classList.add('opacity-40', 'pointer-events-none');
+      else el.classList.remove('opacity-40', 'pointer-events-none');
+    }
+  });
+}
+
+function selectSchemaTypeNode(typeName) {
+  selectedSchemaType = typeName;
+  selectedNode = typeName; // for reducer highlighting
+  if (sigmaInstance) sigmaInstance.refresh();
+
+  // Fetch schema type detail via HTMX
+  document.getElementById('panel-title').textContent = 'Type details';
+  htmx.ajax('GET', `/htmx/schema-type-detail?type=${encodeURIComponent(typeName)}`, {
+    target: '#panel-body',
+    swap: 'innerHTML',
+  });
+
+  // Hide the panel footer (expand/copy/focus buttons) — not relevant for schema types
+  const panelFooter = document.querySelector('#right-panel .right-panel-inner > .p-3.border-t');
+  if (panelFooter) panelFooter.style.display = 'none';
+
+  $panel.classList.add('open');
+  setTimeout(() => {
+    sigmaInstance?.resize();
+    setTimeout(() => zoomToNodeNeighborhood(typeName), 50);
+  }, 210);
+}
+
+function showSchemaLegend() {
+  const $legend = document.getElementById('schema-legend');
+  if ($legend) $legend.classList.remove('hidden');
+}
+
+function hideSchemaLegend() {
+  const $legend = document.getElementById('schema-legend');
+  if ($legend) $legend.classList.add('hidden');
+}
+
+// Wire schema mode tabs
+document.getElementById('tab-graph')?.addEventListener('click', () => {
+  if (isSchemaMode) exitSchemaView();
+});
+document.getElementById('tab-schema')?.addEventListener('click', () => {
+  if (!isSchemaMode) loadSchemaView();
+});
+
+// Wire "Browse objects" button in schema detail panel (delegated click)
+document.addEventListener('click', (e) => {
+  const browseBtn = e.target.closest('[data-action="browse-objects"]');
+  if (browseBtn) {
+    const typeName = browseBtn.dataset.type;
+    if (typeName && isSchemaMode) exitSchemaView(typeName);
+    return;
+  }
+});
+
 // ── Boot ──────────────────────────────────────────────────────────────────
 // Update toggle-all button labels whenever the filter lists are re-rendered.
 document.addEventListener('htmx:after:swap', (e) => {
@@ -1153,3 +1907,9 @@ document.addEventListener('htmx:after:swap', (e) => {
 
 initSigma();
 updateStats();
+
+// ── Debug helpers (expose for DevTools testing) ───────────────────────────
+window.__ge = { get graph() { return graph; }, get sigma() { return sigmaInstance; },
+  selectNode, deselectNode, zoomToNodeNeighborhood, nodeData,
+  loadDiffView, exitDiffView, get isDiffMode() { return isDiffMode; }, get diffStatusMap() { return diffStatusMap; },
+  loadSchemaView, exitSchemaView, get isSchemaMode() { return isSchemaMode; } };

@@ -23,6 +23,7 @@ type Server struct {
 	ProjectID  string
 	ServerURL  string
 	AuthHeader string
+	BranchID   string // branch ID or name; empty = main graph
 	httpClient *http.Client
 
 	// Cached schema data (loaded once on first request)
@@ -32,6 +33,8 @@ type Server struct {
 	relLabelMap       map[string]relLabelEntry
 	paletteIdx        int
 	schemaLoaded      bool
+	rawSchemaByType   map[string]json.RawMessage
+	compiledRelTypes  []compiledRelType
 }
 
 type relLabelEntry struct {
@@ -40,14 +43,16 @@ type relLabelEntry struct {
 }
 
 // NewServer creates a new graph explore server.
-func NewServer(projectID, serverURL, authHeader string) *Server {
+func NewServer(projectID, serverURL, authHeader, branchID string) *Server {
 	return &Server{
-		ProjectID:    projectID,
-		ServerURL:    serverURL,
-		AuthHeader:   authHeader,
-		httpClient:   &http.Client{},
-		typeColorMap: make(map[string]string),
-		relLabelMap:  make(map[string]relLabelEntry),
+		ProjectID:       projectID,
+		ServerURL:       serverURL,
+		AuthHeader:      authHeader,
+		BranchID:        branchID,
+		httpClient:      &http.Client{},
+		typeColorMap:    make(map[string]string),
+		relLabelMap:     make(map[string]relLabelEntry),
+		rawSchemaByType: make(map[string]json.RawMessage),
 	}
 }
 
@@ -73,8 +78,9 @@ func (s *Server) typeIcon(typeName string) string {
 }
 
 // proxyGet makes a GET request to the Memory API server.
+// It automatically appends branch_id if the server is configured with one.
 func (s *Server) proxyGet(path string) ([]byte, int, error) {
-	url := s.ServerURL + path
+	url := s.ServerURL + s.appendBranchParam(path)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, 0, err
@@ -135,6 +141,9 @@ func (s *Server) loadSchema() error {
 	for _, e := range regEntries {
 		if e.Type != "" {
 			regByType[e.Type] = e
+			if len(e.JsonSchema) > 0 {
+				s.rawSchemaByType[e.Type] = e.JsonSchema
+			}
 		}
 	}
 
@@ -197,6 +206,8 @@ func (s *Server) loadSchema() error {
 			}
 			if color == "" {
 				color = s.typeColor(e.Type)
+			} else {
+				s.typeColorMap[e.Type] = color
 			}
 			if icon == "" {
 				icon = firstLetter(e.Type)
@@ -237,6 +248,7 @@ func (s *Server) loadSchema() error {
 			Color:        s.typeColor(rtype),
 		})
 	}
+	s.compiledRelTypes = compiled.RelationshipTypes
 
 	// 5. Fetch per-type counts in parallel (sequentially here for simplicity)
 	for i, ot := range s.objectTypes {
@@ -271,9 +283,13 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/htmx/edge-types", s.handleEdgeTypes)
 	mux.HandleFunc("/htmx/node-detail", s.handleNodeDetail)
 	mux.HandleFunc("/htmx/node-relations", s.handleNodeRelations)
+	mux.HandleFunc("/htmx/schema-type-detail", s.handleSchemaTypeDetail)
 
 	// Proxy — pass-through to Memory API (for JS canvas operations: expand, search, load-by-type)
 	mux.HandleFunc("/proxy/", s.handleProxy)
+
+	// Branch list — returns JSON for the branch picker dropdown
+	mux.HandleFunc("/htmx/branches", s.handleBranches)
 }
 
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
@@ -281,8 +297,10 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// Eagerly load schema so the type-color map is available for the page template.
+	_ = s.loadSchema()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	component := PageLayout(s.ProjectID)
+	component := PageLayout(s.ProjectID, s.BranchID, s.typeColorMap)
 	component.Render(r.Context(), w)
 }
 
@@ -299,9 +317,15 @@ func (s *Server) handleNodeTypes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse hidden types from the HTMX request (sent via hx-include)
+	hiddenSet := parseCommaSeparated(r.FormValue("hiddenNodeTypes"))
+
 	// Sort by count descending
 	types := make([]ObjectType, len(s.objectTypes))
 	copy(types, s.objectTypes)
+	for i := range types {
+		types[i].Hidden = hiddenSet[types[i].Name]
+	}
 	sort.Slice(types, func(i, j int) bool {
 		return types[i].Count > types[j].Count
 	})
@@ -318,12 +342,29 @@ func (s *Server) handleEdgeTypes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse hidden types from the HTMX request (sent via hx-include)
+	hiddenSet := parseCommaSeparated(r.FormValue("hiddenEdgeTypes"))
+
 	types := make([]RelationshipType, len(s.relationshipTypes))
 	copy(types, s.relationshipTypes)
+	for i := range types {
+		types[i].Hidden = hiddenSet[types[i].Name]
+	}
 
 	w.Header().Set("Content-Type", "text/html")
 	component := EdgeTypeList(types)
 	component.Render(r.Context(), w)
+}
+
+func (s *Server) handleBranches(w http.ResponseWriter, r *http.Request) {
+	body, status, err := s.proxyGet(fmt.Sprintf("/api/graph/branches?project_id=%s", s.ProjectID))
+	if err != nil || status != 200 {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
 }
 
 func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
@@ -542,11 +583,126 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 	component.Render(r.Context(), w)
 }
 
+func (s *Server) handleSchemaTypeDetail(w http.ResponseWriter, r *http.Request) {
+	typeName := r.URL.Query().Get("type")
+	if typeName == "" {
+		w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted">Select a type</div>`))
+		return
+	}
+
+	if err := s.loadSchema(); err != nil {
+		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load schema: %s</div>`, err.Error())))
+		return
+	}
+
+	// Find the object type
+	var ot *ObjectType
+	for i := range s.objectTypes {
+		if s.objectTypes[i].Name == typeName {
+			ot = &s.objectTypes[i]
+			break
+		}
+	}
+	if ot == nil {
+		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Type "%s" not found</div>`, typeName)))
+		return
+	}
+
+	detail := SchemaTypeDetail{
+		Name:        ot.Name,
+		Label:       ot.Label,
+		Description: ot.Description,
+		Color:       ot.Color,
+		Icon:        ot.Icon,
+	}
+
+	// Parse properties from raw JSON schema
+	if raw, ok := s.rawSchemaByType[typeName]; ok {
+		var schema struct {
+			Properties map[string]struct {
+				Type        string `json:"type"`
+				Description string `json:"description"`
+			} `json:"properties"`
+			Required []string `json:"required"`
+		}
+		if json.Unmarshal(raw, &schema) == nil {
+			reqSet := make(map[string]bool)
+			for _, r := range schema.Required {
+				reqSet[r] = true
+			}
+			idx := 0
+			for name, prop := range schema.Properties {
+				detail.Properties = append(detail.Properties, SchemaProperty{
+					Name:        name,
+					Type:        prop.Type,
+					Description: prop.Description,
+					Required:    reqSet[name],
+					Index:       idx,
+				})
+				idx++
+			}
+			// Sort properties: required first, then alphabetical
+			sort.Slice(detail.Properties, func(i, j int) bool {
+				if detail.Properties[i].Required != detail.Properties[j].Required {
+					return detail.Properties[i].Required
+				}
+				return detail.Properties[i].Name < detail.Properties[j].Name
+			})
+			for i := range detail.Properties {
+				detail.Properties[i].Index = i
+			}
+		}
+	}
+
+	// Collect outgoing and incoming relationships
+	outIdx, inIdx := 0, 0
+	for _, rel := range s.compiledRelTypes {
+		rtype := rel.Name
+		if rtype == "" {
+			rtype = rel.Type
+		}
+		label := rel.Label
+		if label == "" {
+			label = rtype
+		}
+		if rel.SourceType == typeName {
+			detail.Outgoing = append(detail.Outgoing, SchemaRelation{
+				RelName:    rtype,
+				RelLabel:   label,
+				OtherType:  rel.TargetType,
+				OtherColor: s.typeColor(rel.TargetType),
+				Direction:  "out",
+				Index:      outIdx,
+			})
+			outIdx++
+		}
+		if rel.TargetType == typeName {
+			detail.Incoming = append(detail.Incoming, SchemaRelation{
+				RelName:    rtype,
+				RelLabel:   label,
+				OtherType:  rel.SourceType,
+				OtherColor: s.typeColor(rel.SourceType),
+				Direction:  "in",
+				Index:      inIdx,
+			})
+			inIdx++
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	component := SchemaTypeDetailContent(detail)
+	component.Render(r.Context(), w)
+}
+
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	upstreamPath := strings.TrimPrefix(r.URL.Path, "/proxy")
-	upstreamURL := s.ServerURL + upstreamPath
+	upstreamURL := s.ServerURL + s.appendBranchParam(upstreamPath)
 	if r.URL.RawQuery != "" {
-		upstreamURL += "?" + r.URL.RawQuery
+		if strings.Contains(upstreamURL, "?") {
+			upstreamURL += "&" + r.URL.RawQuery
+		} else {
+			upstreamURL += "?" + r.URL.RawQuery
+		}
 	}
 
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, r.Body)
@@ -607,12 +763,15 @@ type compiledRelType struct {
 	Label           string `json:"label"`
 	InverseLabel    string `json:"inverseLabel"`
 	InverseLabelAlt string `json:"inverse_label"`
+	SourceType      string `json:"sourceType"`
+	TargetType      string `json:"targetType"`
 }
 
 type registryEntry struct {
-	Type        string    `json:"type"`
-	Description string    `json:"description"`
-	UIConfig    *uiConfig `json:"ui_config"`
+	Type        string          `json:"type"`
+	Description string          `json:"description"`
+	UIConfig    *uiConfig       `json:"ui_config"`
+	JsonSchema  json.RawMessage `json:"json_schema"`
 }
 
 type uiConfig struct {
@@ -646,4 +805,31 @@ func truncateBody(body []byte, maxLen int) string {
 		return string(body)
 	}
 	return string(body[:maxLen]) + "..."
+}
+
+// parseCommaSeparated splits a comma-separated string into a set of non-empty values.
+func parseCommaSeparated(s string) map[string]bool {
+	result := make(map[string]bool)
+	if s == "" {
+		return result
+	}
+	for _, v := range strings.Split(s, ",") {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			result[v] = true
+		}
+	}
+	return result
+}
+
+// appendBranchParam adds ?branch_id=<id> or &branch_id=<id> to a URL path
+// if the server is configured with a branch. Returns path unchanged if no branch.
+func (s *Server) appendBranchParam(path string) string {
+	if s.BranchID == "" {
+		return path
+	}
+	if strings.Contains(path, "?") {
+		return path + "&branch_id=" + s.BranchID
+	}
+	return path + "?branch_id=" + s.BranchID
 }

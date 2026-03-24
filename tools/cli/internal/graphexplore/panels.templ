@@ -65,6 +65,7 @@ templ NodeTypeItem(t ObjectType) {
 		class={ "filter-item flex items-center gap-2 px-2 py-1.5 border-b border-gh-border/40 hover:bg-gh-surface2 transition-colors cursor-pointer",
 			templ.KV("opacity-40", t.Hidden) }
 		data-type={ t.Name }
+		data-color={ t.Color }
 		data-action="toggle-vis"
 	>
 		<!-- colour dot with icon -->
@@ -116,6 +117,7 @@ templ EdgeTypeItem(t RelationshipType) {
 		class={ "filter-item flex items-center gap-2 px-2 py-1.5 border-b border-gh-border/40 hover:bg-gh-surface2 transition-colors",
 			templ.KV("opacity-40", t.Hidden) }
 		data-type={ t.Name }
+		data-color={ t.Color }
 		data-action="toggle-edge-vis"
 	>
 		<span class="w-4 h-4 shrink-0 flex items-center justify-center">

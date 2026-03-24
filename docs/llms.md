@@ -94,7 +94,7 @@ client.set_context(org_id="org_1", project_id="proj_1")
 
 `graph`, `chat`, `agents`, `agent_definitions`, `documents`, `search`, `mcp`, `projects`, `orgs`, `schemas`, `skills`, `branches`, `api_tokens`, `tasks`
 
-**Auth modes:** `from_api_key()` (X-API-Key; auto-upgrades `emt_*` to Bearer), `from_oauth_token()` (Bearer), `from_env()` (reads `EMERGENT_SERVER_URL` + `EMERGENT_API_KEY`)
+**Auth modes:** `from_api_key()` (X-API-Key; auto-upgrades `emt_*` to Bearer), `from_oauth_token()` (Bearer), `from_env()` (auto-discovers from `~/.memory/config.yaml`, `.env.local`, `.env`, then `MEMORY_*` env vars)
 
 **Error handling:** `APIError` with `.status_code`, `.message`, `.is_not_found`, `.is_forbidden`, `.is_unauthorized`
 

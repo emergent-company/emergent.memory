@@ -32,6 +32,25 @@ Three auth modes are supported, matching the Go SDK.
 
 `emt_*` prefix is auto-detected in `apikey` mode and transparently upgraded to Bearer auth.
 
+### Auto-discovery (`from_env`)
+
+`Client.from_env()` discovers configuration automatically — no arguments needed:
+
+```python
+client = Client.from_env()
+```
+
+Resolution order (highest priority wins):
+
+| Source | Example |
+|--------|---------|
+| `MEMORY_*` env vars | `MEMORY_SERVER_URL=http://...` |
+| `.env.local` (walked up from cwd) | `MEMORY_API_KEY=emt_abc123` |
+| `.env` (walked up from cwd) | `MEMORY_PROJECT_ID=proj_1` |
+| `~/.memory/config.yaml` | `api_key: emt_abc123` |
+
+Recognised keys: `MEMORY_SERVER_URL` (or `MEMORY_API_URL`), `MEMORY_API_KEY`, `MEMORY_PROJECT_TOKEN`, `MEMORY_ORG_ID`, `MEMORY_PROJECT_ID`. If `MEMORY_PROJECT_TOKEN` is set it takes precedence over `MEMORY_API_KEY` as the credential.
+
 ---
 
 ## Quick start

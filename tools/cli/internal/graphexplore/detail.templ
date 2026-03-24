@@ -105,7 +105,7 @@ templ NodeRelationsContent(groups []RelationGroup) {
 		<div class="space-y-0 rounded border border-gh-border overflow-hidden">
 			for _, g := range groups {
 				<div class="border-b border-gh-border/30">
-					<div class="px-3 py-1.5 text-[10px] font-semibold text-gh-accent bg-gh-surface2 uppercase tracking-wider sticky top-0">{ g.TypeLabel }</div>
+					<div class="px-3 py-1.5 text-[10px] font-semibold text-gh-accent bg-gh-surface2 tracking-wider sticky top-0">{ g.TypeLabel }</div>
 					for _, r := range g.Relations {
 						<div
 							class="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-gh-surface2 transition-colors"
@@ -125,4 +125,108 @@ templ NodeRelationsContent(groups []RelationGroup) {
 			}
 		</div>
 	}
+}
+
+// SchemaTypeDetailContent renders the detail content for a schema type (HTMX partial).
+templ SchemaTypeDetailContent(detail SchemaTypeDetail) {
+	<div class="space-y-4">
+		<!-- Header -->
+		<div class="flex items-center gap-2.5">
+			<div
+				class="w-8 h-8 rounded bg-gh-surface2 border border-gh-border flex items-center justify-center text-[16px]"
+				style={ fmt.Sprintf("color:%s", detail.Color) }
+			>
+				{ detail.Icon }
+			</div>
+			<div>
+				<div class="font-semibold text-[14px] text-gh-text leading-tight">{ detail.Label }</div>
+				<div class="font-mono text-[10px] text-gh-muted">{ detail.Name }</div>
+			</div>
+		</div>
+		if detail.Description != "" {
+			<div class="text-[11px] text-gh-muted leading-relaxed italic bg-gh-surface2/50 border border-gh-border/50 rounded px-2.5 py-2">
+				{ detail.Description }
+			</div>
+		}
+		<!-- Properties -->
+		if len(detail.Properties) > 0 {
+			<div>
+				<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1.5 font-semibold">Properties</div>
+				<div class="space-y-0 rounded border border-gh-border overflow-hidden">
+					for _, p := range detail.Properties {
+						<div class={ "flex flex-col px-3 py-1.5 gap-0.5 border-b border-gh-border last:border-0",
+							templ.KV("bg-gh-surface2", p.Index % 2 == 0),
+							templ.KV("bg-gh-surface", p.Index % 2 != 0) }>
+							<div class="flex items-center justify-between">
+								<span class="text-[11px] text-gh-text font-mono font-medium">{ p.Name }</span>
+								<span class="text-[9px] text-gh-muted bg-gh-surface border border-gh-border rounded px-1">{ p.Type }</span>
+							</div>
+							if p.Description != "" {
+								<span class="text-[10px] text-gh-muted leading-snug">{ p.Description }</span>
+							}
+							if p.Required {
+								<span class="text-[9px] text-red-400 font-medium uppercase tracking-tighter">Required</span>
+							}
+						</div>
+					}
+				</div>
+			</div>
+		}
+		<!-- Outgoing Relationships -->
+		if len(detail.Outgoing) > 0 {
+			<div>
+				<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1.5 font-semibold">Outgoing Relationships</div>
+				<div class="space-y-0 rounded border border-gh-border overflow-hidden">
+					for _, r := range detail.Outgoing {
+						<div class={ "flex flex-col px-3 py-1.5 gap-0.5 border-b border-gh-border last:border-0",
+							templ.KV("bg-gh-surface2", r.Index % 2 == 0),
+							templ.KV("bg-gh-surface", r.Index % 2 != 0) }>
+							<div class="flex items-center justify-between">
+								<span class="text-[11px] text-gh-accent font-medium">{ r.RelLabel }</span>
+								<span class="text-[9px] text-gh-muted font-mono">{ r.RelName }</span>
+							</div>
+							<div class="flex items-center gap-1.5 mt-0.5">
+								<span class="text-[10px] text-gh-muted">to</span>
+								<span class="badge badge-sm border border-gh-border/50 font-medium text-[10px]" style={ fmt.Sprintf("background:%s22;color:%s;border-color:%s44", r.OtherColor, r.OtherColor, r.OtherColor) }>
+									{ r.OtherType }
+								</span>
+							</div>
+						</div>
+					}
+				</div>
+			</div>
+		}
+		<!-- Incoming Relationships -->
+		if len(detail.Incoming) > 0 {
+			<div>
+				<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1.5 font-semibold">Incoming Relationships</div>
+				<div class="space-y-0 rounded border border-gh-border overflow-hidden">
+					for _, r := range detail.Incoming {
+						<div class={ "flex flex-col px-3 py-1.5 gap-0.5 border-b border-gh-border last:border-0",
+							templ.KV("bg-gh-surface2", r.Index % 2 == 0),
+							templ.KV("bg-gh-surface", r.Index % 2 != 0) }>
+							<div class="flex items-center justify-between">
+								<span class="text-[11px] text-gh-accent font-medium">{ r.RelLabel }</span>
+								<span class="text-[9px] text-gh-muted font-mono">{ r.RelName }</span>
+							</div>
+							<div class="flex items-center gap-1.5 mt-0.5">
+								<span class="text-[10px] text-gh-muted">from</span>
+								<span class="badge badge-sm border border-gh-border/50 font-medium text-[10px]" style={ fmt.Sprintf("background:%s22;color:%s;border-color:%s44", r.OtherColor, r.OtherColor, r.OtherColor) }>
+									{ r.OtherType }
+								</span>
+							</div>
+						</div>
+					}
+				</div>
+			</div>
+		}
+		<!-- Browse objects button -->
+		<button
+			class="btn btn-sm btn-primary w-full normal-case font-medium mt-2"
+			data-action="browse-objects"
+			data-type={ detail.Name }
+		>
+			Browse objects →
+		</button>
+	</div>
 }

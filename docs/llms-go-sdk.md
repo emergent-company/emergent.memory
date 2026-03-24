@@ -118,6 +118,13 @@ client, err := sdk.NewWithDeviceFlow(sdk.Config{
         CredsPath: "~/.memory/credentials.json",
     },
 })
+
+// NewFromEnv — auto-discovers config (no arguments needed)
+// Resolution order (highest priority wins):
+//   MEMORY_* env vars > .env.local (walk up) > .env (walk up) > ~/.memory/config.yaml
+// Keys: MEMORY_SERVER_URL (or MEMORY_API_URL), MEMORY_API_KEY, MEMORY_PROJECT_TOKEN,
+//       MEMORY_ORG_ID, MEMORY_PROJECT_ID
+client, err := sdk.NewFromEnv()
 ```
 
 ---
