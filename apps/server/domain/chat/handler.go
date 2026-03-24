@@ -16,6 +16,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	adkmodel "google.golang.org/adk/model"
+	"google.golang.org/genai"
+
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/provider"
@@ -440,6 +443,39 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 	ctx := c.Request().Context()
 
+	// Inject project ID into context so the credential resolver (ResolveAny) can
+	// look up org-level credentials even when the caller authenticates via user JWT
+	// (which does not set X-Project-ID in the auth context).
+	if auth.ProjectIDFromContext(ctx) == "" && user.ProjectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, user.ProjectID)
+	}
+
+	// Fail fast if no LLM provider is configured. Probe the model factory before
+	// opening the SSE stream so clients get a proper HTTP error code, not a
+	// success status with an error buried in the stream.
+	if h.modelFactory != nil {
+		probeModelName := h.modelFactory.ModelName()
+		if probeModelName == "" {
+			probeModelName = "gemini-2.0-flash"
+		}
+		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
+		if probeErr != nil {
+			errMsg := probeErr.Error()
+			if strings.Contains(errMsg, "no LLM credentials configured") ||
+				strings.Contains(errMsg, "no_provider") ||
+				strings.Contains(errMsg, "provider config found for organization") {
+				return apperror.New(http.StatusServiceUnavailable, "no_provider",
+					"No LLM provider configured for this project. "+
+						"Please configure a Google AI or Vertex AI credential in your project settings.")
+			}
+			return apperror.New(http.StatusServiceUnavailable, "provider_error",
+				friendlyProviderError(probeErr))
+		}
+		if closer, ok := probeModel.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}
+
 	// Start chat span before conversation is resolved (conversation_id added below)
 	ctx, span := tracing.Start(ctx, "chat.handle_message",
 		attribute.String("memory.project.id", user.ProjectID),
@@ -553,16 +589,6 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		return nil
 	}
 
-	// Check if LLM client is available
-	if h.llmClient == nil || !h.llmClient.IsAvailable() {
-		// Emit error and synthetic response
-		sseWriter.WriteData(sse.NewErrorEvent("LLM service not configured"))
-		sseWriter.WriteData(sse.NewTokenEvent("I'm sorry, but the chat service is not currently available. Please try again later."))
-		sseWriter.WriteData(sse.NewDoneEvent())
-		sseWriter.Close()
-		return nil
-	}
-
 	// RAG: search knowledge graph for context (non-blocking — failure doesn't prevent chat)
 	var searchResults *search.UnifiedSearchResponse
 	if h.searchSvc != nil {
@@ -599,10 +625,63 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		}
 	}
 
-	// Stream tokens from LLM
+	// Stream tokens from LLM — prefer the per-org model factory (resolves DB credentials),
+	// fall back to the legacy server-wide vertex client if the factory is unavailable.
 	var fullResponse strings.Builder
 	var llmErr error
-	{
+	if h.modelFactory != nil {
+		modelName := h.modelFactory.ModelName()
+		if modelName == "" {
+			modelName = "gemini-2.0-flash"
+		}
+		llmModel, createErr := h.modelFactory.CreateModelWithName(ctx, modelName)
+		if createErr != nil {
+			llmErr = createErr
+		} else {
+			llmCtx, llmSpan := tracing.Start(ctx, "chat.llm_generate",
+				attribute.String("memory.llm.model", modelName),
+			)
+			llmReq := &adkmodel.LLMRequest{
+				Model: modelName,
+				Contents: []*genai.Content{
+					{
+						Role:  "user",
+						Parts: []*genai.Part{{Text: message}},
+					},
+				},
+				Config: &genai.GenerateContentConfig{
+					SystemInstruction: &genai.Content{
+						Parts: []*genai.Part{{Text: systemPrompt}},
+					},
+				},
+			}
+			for resp, iterErr := range llmModel.GenerateContent(llmCtx, llmReq, true) {
+				if iterErr != nil {
+					llmErr = iterErr
+					break
+				}
+				if resp == nil || resp.Content == nil {
+					continue
+				}
+				for _, part := range resp.Content.Parts {
+					if part != nil && part.Text != "" {
+						fullResponse.WriteString(part.Text)
+						sseWriter.WriteData(sse.NewTokenEvent(part.Text))
+					}
+				}
+			}
+			if llmErr != nil {
+				llmSpan.RecordError(llmErr)
+				llmSpan.SetStatus(codes.Error, llmErr.Error())
+			} else {
+				llmSpan.SetStatus(codes.Ok, "")
+			}
+			llmSpan.End()
+			if closer, ok := llmModel.(interface{ Close() error }); ok {
+				_ = closer.Close()
+			}
+		}
+	} else if h.llmClient != nil && h.llmClient.IsAvailable() {
 		llmCtx, llmSpan := tracing.Start(ctx, "chat.llm_generate",
 			attribute.String("memory.llm.model", h.llmClient.Model()),
 		)
@@ -620,6 +699,8 @@ func (h *Handler) StreamChat(c echo.Context) error {
 			llmSpan.SetStatus(codes.Ok, "")
 		}
 		llmSpan.End()
+	} else {
+		llmErr = fmt.Errorf("no LLM provider configured")
 	}
 
 	if llmErr != nil {

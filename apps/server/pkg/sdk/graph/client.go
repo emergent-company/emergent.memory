@@ -1638,8 +1638,13 @@ func (c *Client) UpdateRelationship(ctx context.Context, id string, req *UpdateR
 }
 
 // DeleteRelationship soft-deletes a graph relationship.
-func (c *Client) DeleteRelationship(ctx context.Context, id string) error {
-	return c.doDelete(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id))
+// Pass a non-empty branchID to scope the deletion to a specific branch.
+func (c *Client) DeleteRelationship(ctx context.Context, id string, branchID ...string) error {
+	u := c.base + "/api/graph/relationships/" + url.PathEscape(id)
+	if len(branchID) > 0 && branchID[0] != "" {
+		u += "?branch_id=" + url.QueryEscape(branchID[0])
+	}
+	return c.doDelete(ctx, u)
 }
 
 // RestoreRelationship restores a soft-deleted graph relationship.

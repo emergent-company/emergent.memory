@@ -1713,7 +1713,7 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 }
 
 // DeleteRelationship soft-deletes a relationship.
-func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUID) (*GraphRelationshipResponse, error) {
+func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUID, branchID *uuid.UUID) (*GraphRelationshipResponse, error) {
 	current, err := s.repo.GetRelationshipByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
@@ -1730,10 +1730,13 @@ func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUI
 		return nil, err
 	}
 
-	// Get HEAD version
-	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	// Get HEAD version — scoped to the requested branch when provided.
+	head, err := s.repo.GetRelationshipHead(ctx, tx.Tx, projectID, branchID, current.Type, current.SrcID, current.DstID)
 	if err != nil {
 		return nil, err
+	}
+	if head == nil {
+		return nil, apperror.ErrNotFound
 	}
 
 	if head.DeletedAt != nil {
@@ -1749,7 +1752,10 @@ func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUI
 	}
 
 	// Return the tombstone
-	tombstone, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	tombstone, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, branchID, head.Type, head.SrcID, head.DstID)
+	if tombstone == nil {
+		return head.ToResponse(), nil
+	}
 	return tombstone.ToResponse(), nil
 }
 

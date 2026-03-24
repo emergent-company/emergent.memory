@@ -1146,11 +1146,12 @@ func (h *Handler) PatchRelationship(c echo.Context) error {
 
 // DeleteRelationship soft-deletes a relationship.
 // @Summary      Delete graph relationship
-// @Description  Soft-delete a relationship (sets deleted_at timestamp)
+// @Description  Soft-delete a relationship (sets deleted_at timestamp). Pass branch_id to scope the deletion to a specific branch.
 // @Tags         graph
 // @Produce      json
 // @Param        id path string true "Relationship ID (UUID)"
 // @Param        X-Project-ID header string true "Project ID"
+// @Param        branch_id query string false "Branch ID to scope deletion to (omit for main branch)"
 // @Success      200 {object} map[string]interface{} "Deletion confirmation"
 // @Failure      400 {object} apperror.Error "Invalid ID"
 // @Failure      404 {object} apperror.Error "Relationship not found"
@@ -1173,7 +1174,16 @@ func (h *Handler) DeleteRelationship(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
 	}
 
-	result, err := h.svc.DeleteRelationship(c.Request().Context(), projectID, id)
+	var branchID *uuid.UUID
+	if branchStr := c.QueryParam("branch_id"); branchStr != "" {
+		parsed, parseErr := uuid.Parse(branchStr)
+		if parseErr != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+		}
+		branchID = &parsed
+	}
+
+	result, err := h.svc.DeleteRelationship(c.Request().Context(), projectID, id, branchID)
 	if err != nil {
 		return err
 	}

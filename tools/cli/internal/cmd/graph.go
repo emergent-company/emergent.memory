@@ -1100,15 +1100,31 @@ Without --upsert, creating a relationship that already exists returns an error.`
 var graphRelationshipsDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a relationship",
-	Long:  "Soft-delete a graph relationship by ID",
-	Args:  cobra.ExactArgs(1),
+	Long: `Soft-delete a graph relationship by ID.
+
+Use --branch to scope the deletion to a specific branch (name or UUID).
+Without --branch the relationship is deleted from the main graph.
+
+Examples:
+  memory graph relationships delete <id>
+  memory graph relationships delete <id> --branch plan/next-gen
+  memory graph relationships delete <id> --branch <branch-uuid>`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		g, err := getGraphClient(cmd)
 		if err != nil {
 			return err
 		}
 
-		if err := g.DeleteRelationship(context.Background(), args[0]); err != nil {
+		var resolvedBranch string
+		if graphBranchFlag != "" {
+			resolvedBranch, err = resolveBranchNameOrID(cmd, graphBranchFlag)
+			if err != nil {
+				return err
+			}
+		}
+
+		if err := g.DeleteRelationship(context.Background(), args[0], resolvedBranch); err != nil {
 			return fmt.Errorf("failed to delete relationship: %w", err)
 		}
 
@@ -1648,6 +1664,8 @@ func init() {
 	graphRelationshipsListCmd.Flags().IntVar(&graphLimitFlag, "limit", 1000, "Maximum number of results (server default: 1000)")
 	graphRelationshipsListCmd.Flags().StringVar(&graphCursorFlag, "cursor", "", "Pagination cursor from a previous response (next_cursor field)")
 	graphRelationshipsListCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to scope results to (omit for main branch)")
+
+	graphRelationshipsDeleteCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch name or ID to scope deletion to (omit for main branch)")
 
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphRelTypeFlag, "type", "", "Relationship type (required)")
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphFromFlag, "from", "", "Source object ID (required)")
