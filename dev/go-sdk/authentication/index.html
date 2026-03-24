@@ -1140,6 +1140,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#auto-discovery-newfromenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      Auto-discovery (NewFromEnv)
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2277,6 +2286,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#auto-discovery-newfromenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      Auto-discovery (NewFromEnv)
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2371,6 +2389,75 @@ polls for a token and stores credentials to disk.</p>
 </code></pre></div>
 <p>See the <a href="../reference/auth/">auth reference</a> for the full <code>Provider</code> interface, credential
 helpers, and OIDC discovery.</p>
+<h2 id="auto-discovery-newfromenv">Auto-discovery (<code>NewFromEnv</code>)<a class="headerlink" href="#auto-discovery-newfromenv" title="Permanent link">&para;</a></h2>
+<p><code>sdk.NewFromEnv()</code> discovers configuration automatically — no arguments needed. This is the recommended pattern when running inside agent sandboxes or CI environments.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nx">client</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sdk</span><span class="p">.</span><span class="nx">NewFromEnv</span><span class="p">()</span>
+</code></pre></div>
+<p>Resolution order (highest priority wins):</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MEMORY_*</code> env vars</td>
+<td><code>MEMORY_SERVER_URL=http://...</code></td>
+</tr>
+<tr>
+<td><code>.env.local</code> (walked up from cwd)</td>
+<td><code>MEMORY_API_KEY=emt_abc123</code></td>
+</tr>
+<tr>
+<td><code>.env</code> (walked up from cwd)</td>
+<td><code>MEMORY_PROJECT_ID=proj_1</code></td>
+</tr>
+<tr>
+<td><code>~/.memory/config.yaml</code></td>
+<td><code>api_key: emt_abc123</code></td>
+</tr>
+</tbody>
+</table>
+<p>Recognised variables / YAML keys:</p>
+<table>
+<thead>
+<tr>
+<th>Env var</th>
+<th>YAML key</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MEMORY_SERVER_URL</code> (or <code>MEMORY_API_URL</code>)</td>
+<td><code>server_url</code></td>
+<td>Server URL</td>
+</tr>
+<tr>
+<td><code>MEMORY_API_KEY</code></td>
+<td><code>api_key</code></td>
+<td>API key or <code>emt_*</code> token</td>
+</tr>
+<tr>
+<td><code>MEMORY_PROJECT_TOKEN</code></td>
+<td><code>project_token</code></td>
+<td>Project-scoped token (overrides <code>api_key</code>)</td>
+</tr>
+<tr>
+<td><code>MEMORY_ORG_ID</code></td>
+<td><code>org_id</code></td>
+<td>Default organisation ID</td>
+</tr>
+<tr>
+<td><code>MEMORY_PROJECT_ID</code></td>
+<td><code>project_id</code></td>
+<td>Default project ID</td>
+</tr>
+</tbody>
+</table>
+<p>If <code>MEMORY_PROJECT_TOKEN</code> is set it takes precedence over <code>MEMORY_API_KEY</code> as the credential.</p>
 
 
 
