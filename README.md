@@ -31,6 +31,14 @@ Connect to an existing Memory server without installing the full stack:
 curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/install-cli.sh | bash
 ```
 
+### After Installation
+
+Initialize a project to start using Memory:
+
+```bash
+memory init
+```
+
 ### Self-Update
 
 ```bash
