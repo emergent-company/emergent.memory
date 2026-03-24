@@ -54,3 +54,34 @@ type RelationGroup struct {
 	TypeLabel string     `json:"type_label"`
 	Relations []Relation `json:"relations"`
 }
+
+// SchemaTypeDetail holds data for the right panel when a schema type node is selected.
+type SchemaTypeDetail struct {
+	Name        string
+	Label       string
+	Description string
+	Color       string
+	Icon        string
+	Properties  []SchemaProperty
+	Outgoing    []SchemaRelation // rel types where sourceType == this type
+	Incoming    []SchemaRelation // rel types where targetType == this type
+}
+
+// SchemaProperty represents a property from the JSON schema definition.
+type SchemaProperty struct {
+	Name        string
+	Type        string // "string", "integer", etc.
+	Description string
+	Required    bool
+	Index       int
+}
+
+// SchemaRelation represents a relationship type involving a schema type.
+type SchemaRelation struct {
+	RelName    string // "belongs_to"
+	RelLabel   string // "Belongs To"
+	OtherType  string // "Organization"
+	OtherColor string
+	Direction  string // "out" or "in"
+	Index      int
+}
