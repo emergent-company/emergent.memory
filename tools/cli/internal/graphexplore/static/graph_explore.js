@@ -672,10 +672,75 @@ const $nhcName    = document.getElementById('nhc-name');
 const $nhcProps   = document.getElementById('nhc-props');
 const $nhcEdges   = document.getElementById('nhc-edges');
 let hoverHideTimer = null;
+let _sigmaNodeHovered = false; // true while sigma's enterNode is active (cursor on dot)
 
 // Top-5 property keys to skip (already shown in header or rarely useful)
 const HC_SKIP_KEYS = new Set(['name', 'title', 'id', 'canonical_id', 'entity_id', 'type']);
 const HC_MAX_PROPS = 4;
+
+// ── Chip hit-testing constants (must match drawNodeLabel geometry) ─────────
+const CHIP_PAD   = 5;
+const CHIP_DOT_R = 7;
+const CHIP_GAP   = 5;
+const CHIP_H     = 30; // 9 + 2 + 11 + 8 (fixed regardless of text)
+
+// Measure approximate chip width for a node, given its rendered size.
+// We use an off-screen canvas for text measurement to stay accurate.
+const _measureCtx = (() => { const c = document.createElement('canvas'); return c.getContext('2d'); })();
+function chipBounds(node) {
+  if (!sigmaInstance || !graph.hasNode(node)) return null;
+  const attrs   = graph.getNodeAttributes(node);
+  if (attrs.hidden) return null;
+  const label   = attrs.label;
+  if (!label) return null; // chip only drawn when label is set
+
+  const nodeType = attrs.nodeType || '';
+  _measureCtx.font = `500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  const nameW   = _measureCtx.measureText(label).width;
+  _measureCtx.font = `400 9px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  const typeW   = _measureCtx.measureText(nodeType).width;
+  const textW   = Math.max(nameW, typeW);
+  const chipW   = CHIP_PAD + CHIP_DOT_R * 2 + CHIP_GAP + textW + CHIP_PAD;
+
+  const vp      = sigmaInstance.graphToViewport({ x: attrs.x, y: attrs.y });
+  const size    = sigmaInstance.getNodeDisplayData(node)?.size ?? attrs.size ?? 14;
+  const chipX   = vp.x + size + 6;
+  const chipY   = vp.y - CHIP_H / 2;
+
+  return { x: chipX, y: chipY, w: chipW, h: CHIP_H, vp, size };
+}
+
+// Called on every mousemove over the sigma canvas when no dot is hovered.
+function handleChipMouseMove(clientX, clientY) {
+  if (_sigmaNodeHovered) return; // dot hover takes precedence
+  const container = document.getElementById('sigma-container');
+  if (!container) return;
+  const rect = container.getBoundingClientRect();
+  const cx = clientX - rect.left; // coords relative to container
+  const cy = clientY - rect.top;
+
+  for (const node of graph.nodes()) {
+    const b = chipBounds(node);
+    if (!b) continue;
+    if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h) {
+      // Cursor is inside this node's chip
+      const d = nodeData[node] || {};
+      const attrs = graph.getNodeAttributes(node);
+      showHoverCard(
+        node,
+        rect.left + b.vp.x,
+        rect.top  + b.vp.y,
+        attrs.color || '#8b949e',
+        d.type || attrs.nodeType || '',
+        attrs.label || '',
+        d.properties || null
+      );
+      return;
+    }
+  }
+  // Not over any chip — hide after short delay
+  hideHoverCard(60);
+}
 
 function populateHoverCard(nodeId, color, typeName, label, inGraphProps) {
   $nhcDot.style.background = color;
@@ -916,6 +981,7 @@ function initSigma() {
   // Hover card on canvas nodes
   sigmaInstance.on('enterNode', ({ node }) => {
     if (dragState) return; // don't show while dragging
+    _sigmaNodeHovered = true;
     const d = nodeData[node] || {};
     const attrs = graph.getNodeAttributes(node);
     const vp = sigmaInstance.graphToViewport({ x: attrs.x, y: attrs.y });
@@ -931,7 +997,23 @@ function initSigma() {
       d.properties || null
     );
   });
-  sigmaInstance.on('leaveNode', () => hideHoverCard(80));
+  sigmaInstance.on('leaveNode', () => {
+    _sigmaNodeHovered = false;
+    hideHoverCard(80);
+  });
+
+  // Also show hover card when cursor moves over the chip (drawn outside the node dot).
+  // We listen on sigma-container itself (always exists) rather than the canvas element
+  // to avoid any canvas creation timing issues.
+  const sigmaContainer = document.getElementById('sigma-container');
+  sigmaContainer.addEventListener('mousemove', (e) => {
+    if (dragState) return;
+    handleChipMouseMove(e.clientX, e.clientY);
+  });
+  sigmaContainer.addEventListener('mouseleave', () => {
+    _sigmaNodeHovered = false;
+    hideHoverCard(80);
+  });
 
   // Re-render on camera move so semantic zoom labels update; hide hover card during pan
   sigmaInstance.getCamera().on('updated', () => {
