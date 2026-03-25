@@ -26,6 +26,8 @@ type Config struct {
 	WorkerIntervalMs int
 	// WorkerBatchSize is the number of jobs to process per poll (default: 10)
 	WorkerBatchSize int
+	// MailgunRegion is the Mailgun region ("us" or "eu")
+	MailgunRegion string
 }
 
 // NewConfig creates email configuration from the app config
@@ -40,6 +42,7 @@ func NewConfig(cfg *config.Config) *Config {
 		RetryDelaySec:    cfg.Email.RetryDelaySec,
 		WorkerIntervalMs: cfg.Email.WorkerIntervalMs,
 		WorkerBatchSize:  cfg.Email.WorkerBatchSize,
+		MailgunRegion:    cfg.Email.MailgunRegion,
 	}
 }
 

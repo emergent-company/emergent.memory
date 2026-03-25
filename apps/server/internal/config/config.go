@@ -256,6 +256,8 @@ type EmailConfig struct {
 	WorkerIntervalMs int `env:"EMAIL_WORKER_INTERVAL_MS" envDefault:"5000"`
 	// WorkerBatchSize is the number of jobs to process per poll (default: 10)
 	WorkerBatchSize int `env:"EMAIL_WORKER_BATCH_SIZE" envDefault:"10"`
+	// MailgunRegion is the Mailgun region ("us" or "eu", default: "us")
+	MailgunRegion string `env:"MAILGUN_REGION" envDefault:"us"`
 }
 
 // IsConfigured returns true if Mailgun is configured

@@ -27,6 +27,9 @@ func NewMailgunSender(cfg *Config, log *slog.Logger) *MailgunSender {
 	}
 
 	client := mailgun.NewMailgun(cfg.MailgunDomain, cfg.MailgunAPIKey)
+	if cfg.MailgunRegion == "eu" {
+		client.SetAPIBase(mailgun.APIBaseEU)
+	}
 
 	return &MailgunSender{
 		cfg:    cfg,
