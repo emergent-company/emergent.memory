@@ -19,6 +19,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/email"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/domain/provider"
@@ -70,6 +71,9 @@ type Service struct {
 	// API token service (for token management tools)
 	apitokenSvc *apitoken.Service
 
+	// Email jobs service (for MCP invite emails)
+	emailSvc *email.JobsService
+
 	// Journal service (for journal-list and journal-add-note tools)
 	journalSvc *journal.Service
 
@@ -102,6 +106,7 @@ type ServiceParams struct {
 	ProviderCredSvc    *provider.CredentialService
 	ProviderCatalogSvc *provider.ModelCatalogService
 	ApitokenSvc        *apitoken.Service
+	EmailSvc           *email.JobsService
 	JournalSvc         *journal.Service
 	SchemasSvc         *schemas.Service
 }
@@ -129,6 +134,7 @@ func NewService(p ServiceParams) *Service {
 		providerCredSvc:    p.ProviderCredSvc,
 		providerCatalogSvc: p.ProviderCatalogSvc,
 		apitokenSvc:        p.ApitokenSvc,
+		emailSvc:           p.EmailSvc,
 		tempoBaseURL:       tempoURL,
 		serverPort:         cfg.ServerPort,
 		journalSvc:         p.JournalSvc,

@@ -983,6 +983,52 @@ Test via HTTP:
 - [Timeout Optimization](./MCP_SSE_TIMEOUT_INCREASE.md)
 - [Tools Reference](./MCP_TOOLS.md)
 
+## Sharing Read-Only MCP Access
+
+Project admins can generate a read-only MCP token and optionally email setup instructions to teammates or external agents — no Memory account required on the recipient's end.
+
+### Endpoint
+
+```
+POST /api/projects/:projectId/mcp/share
+```
+
+**Request body** (all fields optional):
+
+```json
+{
+  "name": "Alice CI agent",
+  "emails": ["alice@example.com"]
+}
+```
+
+**Response:**
+
+```json
+{
+  "token": "emt_...",
+  "mcpUrl": "https://api.dev.emergent-company.ai/api/mcp",
+  "projectId": "<uuid>",
+  "snippets": {
+    "claudeDesktop": "{ ... }",
+    "cursor": "{ ... }"
+  }
+}
+```
+
+**Implementation notes (`share.go`):**
+
+- Calls `apitokenSvc.Create` with `readOnlyMCPScopes` (`data:read`, `schema:read`, `agents:read`, `projects:read`)
+- Enforces `project_admin` role via `apitokenSvc.GetUserProjectRole` — returns 403 for non-admins
+- Email addresses are validated (RFC 5322 regex) before token creation — invalid address → 422, no token created
+- Emails dispatched via `emailSvc.Enqueue` (async, non-blocking) using the `mcp-invite` Handlebars template
+- `mcpUrl` is derived from the incoming request's `Host` + `X-Forwarded-Proto` headers
+- Token name defaults to `"MCP Read-Only Share — YYYY-MM-DD HH:MM:SS"` to avoid duplicate-name conflicts
+
+See `docs/guides/mcp-sharing.md` for the full user-facing guide.
+
+---
+
 ## Changelog
 
 ### 2026-03 (current)

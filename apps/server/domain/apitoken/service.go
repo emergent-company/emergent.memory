@@ -154,6 +154,11 @@ func (s *Service) Create(ctx context.Context, projectID, userID, name string, sc
 	}, nil
 }
 
+// GetUserProjectRole returns the role of a user in a project ("" if not a member).
+func (s *Service) GetUserProjectRole(ctx context.Context, projectID, userID string) (string, error) {
+	return s.repo.GetUserProjectRole(ctx, projectID, userID)
+}
+
 // ListByProject returns all tokens for a project
 func (s *Service) ListByProject(ctx context.Context, projectID string) (*ApiTokenListResponseDTO, error) {
 	tokens, err := s.repo.ListByProject(ctx, projectID)

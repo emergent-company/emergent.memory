@@ -23,4 +23,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 
 	// Legacy JSON-RPC endpoint
 	g.POST("/rpc", h.HandleRPC)
+
+	// Project-scoped MCP share endpoint
+	pg := e.Group("/api/projects/:projectId/mcp")
+	pg.Use(authMiddleware.RequireAuth())
+	pg.POST("/share", h.HandleShareMCPAccess)
 }

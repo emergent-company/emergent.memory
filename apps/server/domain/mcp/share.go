@@ -1,0 +1,216 @@
+package mcp
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"regexp"
+	"time"
+
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/domain/email"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// ShareMCPAccessRequest is the request body for POST /api/projects/:projectId/mcp/share.
+type ShareMCPAccessRequest struct {
+	// Name is an optional display name for the generated token.
+	// Defaults to "MCP Read-Only Share — <YYYY-MM-DD>".
+	Name string `json:"name"`
+
+	// Emails is an optional list of email addresses to send the MCP invite to.
+	Emails []string `json:"emails"`
+}
+
+// MCPSnippets contains pre-formatted agent config blocks.
+type MCPSnippets struct {
+	ClaudeDesktop string `json:"claudeDesktop"`
+	Cursor        string `json:"cursor"`
+}
+
+// ShareMCPAccessResponse is the response for POST /api/projects/:projectId/mcp/share.
+type ShareMCPAccessResponse struct {
+	// Token is the raw API token value — returned only once.
+	Token string `json:"token"`
+
+	// MCPURL is the fully-qualified MCP server endpoint URL.
+	MCPURL string `json:"mcpUrl"`
+
+	// ProjectID is the project this token is scoped to.
+	ProjectID string `json:"projectId"`
+
+	// Snippets contains ready-to-paste agent config blocks.
+	Snippets MCPSnippets `json:"snippets"`
+}
+
+// readOnlyMCPScopes are the scopes granted to a read-only MCP share token.
+var readOnlyMCPScopes = []string{"data:read", "schema:read", "agents:read", "projects:read"}
+
+// emailRegexp is a simple RFC 5322-ish email validator.
+var emailRegexp = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+
+// ShareMCPAccess creates a read-only MCP API token for a project and optionally
+// sends invite emails to the provided addresses.
+func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderName, mcpBaseURL string, req ShareMCPAccessRequest) (*ShareMCPAccessResponse, error) {
+	// Enforce project admin role.
+	role, err := s.apitokenSvc.GetUserProjectRole(ctx, projectID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("check project role: %w", err)
+	}
+	if role != "project_admin" {
+		return nil, apperror.ErrForbidden.WithMessage("project admin role required to share MCP access")
+	}
+
+	// Determine token name — include a short timestamp to avoid duplicate-name conflicts.
+	name := req.Name
+	if name == "" {
+		name = fmt.Sprintf("MCP Read-Only Share — %s", time.Now().UTC().Format("2006-01-02 15:04:05"))
+	}
+
+	// Create the read-only token via the existing apitoken service.
+	tokenResp, err := s.apitokenSvc.Create(ctx, projectID, userID, name, readOnlyMCPScopes)
+	if err != nil {
+		return nil, fmt.Errorf("create mcp share token: %w", err)
+	}
+
+	mcpURL := mcpBaseURL + "/api/mcp"
+
+	// Build agent config snippets.
+	snippets := buildSnippets(mcpURL, tokenResp.Token)
+
+	// Dispatch invite emails asynchronously (best-effort; errors are logged, not fatal).
+	if s.emailSvc != nil {
+		for _, email := range req.Emails {
+			enqErr := s.enqueueMCPInviteEmail(ctx, email, senderName, projectID, mcpURL, tokenResp.Token, snippets)
+			if enqErr != nil {
+				s.log.Warn("failed to enqueue mcp invite email",
+					"email", email,
+					"error", enqErr)
+			}
+		}
+	}
+
+	return &ShareMCPAccessResponse{
+		Token:     tokenResp.Token,
+		MCPURL:    mcpURL,
+		ProjectID: projectID,
+		Snippets:  snippets,
+	}, nil
+}
+
+// buildSnippets constructs ready-to-paste config blocks for supported MCP clients.
+func buildSnippets(mcpURL, apiKey string) MCPSnippets {
+	claudeDesktop := fmt.Sprintf(`{
+  "mcpServers": {
+    "memory": {
+      "url": %q,
+      "headers": {
+        "X-API-Key": %q
+      }
+    }
+  }
+}`, mcpURL, apiKey)
+
+	cursor := fmt.Sprintf(`{
+  "mcpServers": {
+    "memory": {
+      "url": %q,
+      "headers": {
+        "X-API-Key": %q
+      }
+    }
+  }
+}`, mcpURL, apiKey)
+
+	return MCPSnippets{
+		ClaudeDesktop: claudeDesktop,
+		Cursor:        cursor,
+	}
+}
+
+// enqueueMCPInviteEmail enqueues a single MCP invite email.
+func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName, projectID, mcpURL, apiKey string, snippets MCPSnippets) error {
+	subject := fmt.Sprintf("MCP Access — %s", projectID)
+
+	_, err := s.emailSvc.Enqueue(ctx, email.EnqueueOptions{
+		TemplateName: "mcp-invite",
+		ToEmail:      toEmail,
+		Subject:      subject,
+		TemplateData: map[string]interface{}{
+			"senderName": senderName,
+			"projectId":  projectID,
+			"mcpUrl":     mcpURL,
+			"apiKey":     apiKey,
+			"snippets": map[string]interface{}{
+				"claudeDesktop": snippets.ClaudeDesktop,
+				"cursor":        snippets.Cursor,
+			},
+		},
+	})
+	return err
+}
+
+// HandleShareMCPAccess handles POST /api/projects/:projectId/mcp/share.
+//
+// @Summary      Share read-only MCP access
+// @Description  Generates a read-only MCP API token for a project and optionally sends invite emails with agent setup instructions.
+// @Tags         mcp
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body ShareMCPAccessRequest false "Share request (name and optional email list)"
+// @Success      201 {object} ShareMCPAccessResponse "Token and agent config snippets"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden — project admin required"
+// @Failure      422 {object} apperror.Error "Invalid email address"
+// @Router       /api/projects/{projectId}/mcp/share [post]
+// @Security     bearerAuth
+func (h *Handler) HandleShareMCPAccess(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req ShareMCPAccessRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	// Validate email addresses before creating the token.
+	for _, email := range req.Emails {
+		if !emailRegexp.MatchString(email) {
+			return apperror.New(http.StatusUnprocessableEntity, "invalid_email",
+				fmt.Sprintf("invalid email address: %s", email))
+		}
+	}
+
+	// Derive the public base URL from the incoming request.
+	scheme := "https"
+	if c.Request().TLS == nil && c.Request().Header.Get("X-Forwarded-Proto") == "" {
+		scheme = "http"
+	}
+	if proto := c.Request().Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	}
+	mcpBaseURL := fmt.Sprintf("%s://%s", scheme, c.Request().Host)
+
+	senderName := user.Email
+	if senderName == "" {
+		senderName = "A team member"
+	}
+
+	resp, err := h.svc.ShareMCPAccess(c.Request().Context(), projectID, user.ID, senderName, mcpBaseURL, req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, resp)
+}
