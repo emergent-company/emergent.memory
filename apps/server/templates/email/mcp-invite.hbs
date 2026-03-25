@@ -17,7 +17,7 @@
     .key-box { background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; padding: 18px 22px; margin: 24px 0; }
     .key-box .label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #92400e; margin: 0 0 8px; }
     .key-box .warning { font-size: 12px; color: #b45309; margin: 10px 0 0; }
-    .code { font-family: 'Courier New', monospace; background: #1e293b; color: #e2e8f0; padding: 10px 14px; border-radius: 4px; font-size: 13px; display: block; margin: 6px 0; overflow-x: auto; word-break: break-all; }
+    .code { font-family: 'Courier New', monospace; background: #1e293b; color: #e2e8f0; padding: 10px 14px; border-radius: 4px; font-size: 13px; display: block; margin: 6px 0; overflow-x: auto; white-space: pre; white-space: pre-wrap; word-break: break-all; }
     .key-box .code { background: #37474f; }
     .section { margin: 28px 0; }
     .section h2 { font-size: 16px; font-weight: 600; color: #111; margin: 0 0 6px; }
@@ -89,6 +89,17 @@
           <h3>⚡ One-click install (Claude Desktop)</h3>
           <p class="path">Opens Claude Desktop and adds the server automatically</p>
           <a href="{{installUrl}}" style="display:inline-block;background:#1a1a2e;color:#fff;text-decoration:none;padding:10px 22px;border-radius:6px;font-size:14px;font-weight:600;margin:4px 0;">Add to Claude Desktop →</a>
+        </div>
+
+        <div class="client">
+          <h3>Claude.ai (web)</h3>
+          <p class="path">Settings → Connectors → Add custom connector</p>
+          <ol style="margin:8px 0 10px;padding-left:20px;font-size:14px;color:#374151;line-height:1.8;">
+            <li>Go to <a href="https://claude.ai/settings/connectors" style="color:#1a56db;">claude.ai/settings/connectors</a></li>
+            <li>Click <strong>Add custom connector</strong></li>
+            <li>Enter the MCP URL above, then open <strong>Advanced settings</strong> and add header <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">X-API-Key</code> → your API key</li>
+          </ol>
+          <a href="https://claude.ai/settings/connectors" style="display:inline-block;background:#d97706;color:#fff;text-decoration:none;padding:10px 22px;border-radius:6px;font-size:14px;font-weight:600;margin:4px 0;">Open Connectors Settings →</a>
         </div>
 
         <div class="client">
