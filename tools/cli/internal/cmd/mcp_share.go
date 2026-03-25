@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcp"
 	"github.com/spf13/cobra"
@@ -55,12 +56,36 @@ func runMCPShare(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to share MCP access: %w", err)
 	}
 
+	now := time.Now().Format("2006-01-02 15:04:05")
+
 	if mcpShareJSON {
 		out, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Println(string(out))
 		return nil
 	}
 
+	// Email mode — compact summary only, the guide is in the email
+	if len(mcpShareEmails) > 0 {
+		fmt.Println()
+		fmt.Println("MCP invite sent!")
+		fmt.Println()
+		fmt.Printf("  To:        %s\n", strings.Join(mcpShareEmails, ", "))
+		fmt.Printf("  Project:   %s\n", result.ProjectID)
+		fmt.Printf("  MCP URL:   %s\n", result.MCPURL)
+		fmt.Printf("  Scopes:    data:read, schema:read, agents:read, projects:read\n")
+		fmt.Printf("  Token:     %s\n", result.Token)
+		fmt.Printf("  Generated: %s\n", now)
+		fmt.Printf("  Email sent: %s\n", now)
+		fmt.Println()
+		fmt.Println("  The email contains the API key and setup instructions for")
+		fmt.Println("  Claude Desktop and Cursor.")
+		fmt.Println()
+		fmt.Printf("  Revoke:  memory tokens revoke <token-id> --project %s\n", projectID)
+		fmt.Println()
+		return nil
+	}
+
+	// No email — print full guide to terminal
 	fmt.Println()
 	fmt.Println("MCP access token created!")
 	fmt.Println()
@@ -71,11 +96,6 @@ func runMCPShare(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Printf("  MCP URL:  %s\n", result.MCPURL)
 	fmt.Println()
-
-	if len(mcpShareEmails) > 0 {
-		fmt.Printf("  Invite sent to: %s\n", strings.Join(mcpShareEmails, ", "))
-		fmt.Println()
-	}
 
 	fmt.Println("─────────────────────────────────────────────────────────────────")
 	fmt.Println("Claude Desktop  (~/.config/Claude/claude_desktop_config.json)")
