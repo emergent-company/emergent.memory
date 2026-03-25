@@ -1383,7 +1383,10 @@ Supported keys:
   auto_update_enabled         Enable/disable automatic update checks (true/false)
   auto_update_mode            Update mode: notify (default) or auto
   auto_update_check_interval  How often to check for updates (e.g., 24h, 12h)
-  google_api_key              Google API key (standalone installations only)
+  google_api_key              Google AI API key (for LLM features)
+  openai_base_url             OpenAI-compatible base URL (e.g., http://localhost:11434/v1)
+  openai_api_key              OpenAI-compatible API key (optional for local servers)
+  llm_model                   LLM model name (e.g., llama3, mistral)
 
 For standalone installations, google_api_key is saved to .env.local.
 All other keys are saved to config.yaml.
@@ -3280,6 +3283,39 @@ memory projects set [name-or-id] [flags]
   -h, --help    help for set
 ```
 
+## memory projects share-mcp
+
+Share read-only MCP access with a teammate or AI agent
+
+### Synopsis
+
+Generate a read-only API token for your project and print ready-to-use
+MCP config snippets for Claude Desktop, Cursor, and OpenCode.
+
+The token is scoped to data:read, schema:read, agents:read, and projects:read.
+Write operations will be rejected. The token can be revoked at any time with:
+
+  memory tokens revoke <token-id> --project <project>
+
+Examples:
+  memory projects share-mcp --project my-project
+  memory projects share-mcp --project my-project --name "Alice read-only"
+  memory projects share-mcp --project my-project --email alice@example.com --email bob@example.com
+
+```
+memory projects share-mcp [flags]
+```
+
+### Options
+
+```
+      --email stringArray   Email address to invite (can be repeated)
+  -h, --help                help for share-mcp
+      --json                Output raw JSON response
+      --name string         Display name for the token (default: auto-generated)
+      --project string      Project name or ID (required if not set in config)
+```
+
 ## memory projects team
 
 Manage project team members
@@ -3386,14 +3422,16 @@ This overrides the organization's provider config for this project.
 Use --remove to remove the project-level override and fall back to the org config.
 
 Supported providers:
-  google   — Google AI (Gemini API); requires --api-key
-  google-vertex   — Google Cloud Vertex AI; requires --gcp-project, --location
+  google            — Google AI (Gemini API); requires --api-key
+  google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
+  openai-compatible — OpenAI-compatible API (Ollama, vLLM, etc.); requires --api-key, --base-url, --generative-model
 
 The project is read from --project or the MEMORY_PROJECT_ID environment variable.
 
 Examples:
   memory provider configure-project google --api-key AIzaSy...
   memory provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
+  memory provider configure-project openai-compatible --api-key sk-... --base-url http://localhost:11434/v1 --generative-model llama3
   memory provider configure-project google --remove
 
 ```
@@ -3404,6 +3442,7 @@ memory provider configure-project <provider> [flags]
 
 ```
       --api-key string            API key (required for google)
+      --base-url string           OpenAI-compatible base URL (required for openai-compatible)
       --embedding-model string    Embedding model to use (auto-selected from catalog if omitted)
       --gcp-project string        GCP project ID (required for google-vertex)
       --generative-model string   Generative model to use (auto-selected from catalog if omitted)
@@ -3425,13 +3464,14 @@ current organization. Runs a live credential test and syncs the model catalog
 on success. Models are auto-selected from the catalog if not specified.
 
 Supported providers:
-  google   — Google AI (Gemini API); requires --api-key
-  google-vertex   — Google Cloud Vertex AI; requires --gcp-project, --location
-                Optionally supply --key-file for a service account JSON key.
+  google            — Google AI (Gemini API); requires --api-key
+  google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
+  openai-compatible — OpenAI-compatible API (Ollama, vLLM, etc.); requires --api-key, --base-url, --generative-model
 
 Examples:
   memory provider configure google --api-key AIzaSy...
   memory provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
+  memory provider configure openai-compatible --api-key sk-... --base-url http://localhost:11434/v1 --generative-model llama3
   memory provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004
 
 ```
@@ -3442,6 +3482,7 @@ memory provider configure <provider> [flags]
 
 ```
       --api-key string            API key (required for google)
+      --base-url string           OpenAI-compatible base URL (required for openai-compatible)
       --embedding-model string    Embedding model to use (auto-selected from catalog if omitted)
       --gcp-project string        GCP project ID (required for google-vertex)
       --generative-model string   Generative model to use (auto-selected from catalog if omitted)
@@ -3495,6 +3536,7 @@ Use --type to filter by model type (embedding or generative).
 
 Examples:
   memory provider models
+  memory provider models openai-compatible
   memory provider models google-vertex
   memory provider models google --type generative
 
@@ -3520,13 +3562,14 @@ Send a live "say hello" generate call to verify that provider credentials
 work end-to-end.
 
 Without a provider argument, tests all configured providers.
-Pass a provider name (google or google-vertex) to test a specific one.
+Pass a provider name (google, google-vertex, or openai-compatible) to test a specific one.
 
 Use --project to test using the project-level credential hierarchy
 (project override → org) instead of org credentials only.
 
 Examples:
   memory provider test
+  memory provider test openai-compatible
   memory provider test google-vertex
   memory provider test google --project <id>
 
@@ -4329,6 +4372,7 @@ This command will:
 Example:
   memory install
   memory install --port 8080 --google-api-key YOUR_KEY
+  memory install --open-api-base-url http://localhost:11434/v1 --llm-model llama3
   memory install --dir /opt/memory --skip-start
 
 ```
@@ -4338,12 +4382,14 @@ memory server install [flags]
 ### Options
 
 ```
-      --dir string              Installation directory (default "/root/.memory")
-      --force                   Overwrite existing installation
-      --google-api-key string   Google API key for embeddings
-  -h, --help                    help for install
-      --port int                Server port (default 3002)
-      --skip-start              Generate config but don't start services
+      --dir string                 Installation directory (default "/root/.memory")
+      --force                      Overwrite existing installation
+      --google-api-key string      Google API key for embeddings
+  -h, --help                       help for install
+      --llm-model string           LLM model name (for OpenAI-compatible)
+      --open-api-base-url string   OpenAI-compatible base URL
+      --port int                   Server port (default 3002)
+      --skip-start                 Generate config but don't start services
 ```
 
 ## memory server uninstall
