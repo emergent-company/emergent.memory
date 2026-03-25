@@ -1,9 +1,13 @@
 package provider
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -33,6 +37,20 @@ func NewModelCatalogService(repo *Repository, log *slog.Logger) *ModelCatalogSer
 // If the API call fails (timeout or non-auth error), it falls back to a
 // static known-good model list.
 func (s *ModelCatalogService) SyncModels(ctx context.Context, provider ProviderType, cred *ResolvedCredential) error {
+	// OpenAI-compatible: no model catalog API — store the user-supplied model name directly.
+	if provider == ProviderOpenAICompatible {
+		if cred.GenerativeModel == "" {
+			return fmt.Errorf("openai-compatible provider requires a model name")
+		}
+		models := []ProviderSupportedModel{{
+			Provider:    provider,
+			ModelName:   cred.GenerativeModel,
+			ModelType:   ModelTypeGenerative,
+			DisplayName: cred.GenerativeModel,
+		}}
+		return s.repo.UpsertSupportedModels(ctx, models)
+	}
+
 	models, err := s.fetchModelsFromAPI(ctx, provider, cred)
 	if err != nil {
 		return fmt.Errorf("failed to fetch model catalog from %s API: %w", provider, err)
@@ -241,6 +259,58 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 		model = s.pickCheapTestModel(models)
 	}
 
+	// OpenAI-compatible: use direct HTTP call instead of genai client.
+	if provider == ProviderOpenAICompatible {
+		if cred.BaseURL == "" {
+			return "", "", fmt.Errorf("openai-compatible provider requires base_url")
+		}
+		reqBody := map[string]interface{}{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "user", "content": "Say hello in one sentence."},
+			},
+			"max_tokens": 64,
+		}
+		bodyBytes, err := json.Marshal(reqBody)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to marshal request: %w", err)
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			strings.TrimSuffix(cred.BaseURL, "/")+"/chat/completions",
+			bytes.NewReader(bodyBytes))
+		if err != nil {
+			return "", "", fmt.Errorf("failed to create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		if cred.APIKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+cred.APIKey)
+		}
+		httpClient := &http.Client{Timeout: 30 * time.Second}
+		resp, err := httpClient.Do(httpReq)
+		if err != nil {
+			return "", "", fmt.Errorf("openai-compatible generate call failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(resp.Body)
+			return "", "", fmt.Errorf("openai-compatible generate call returned %d: %s", resp.StatusCode, string(body))
+		}
+		var result struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return "", "", fmt.Errorf("failed to decode openai-compatible response: %w", err)
+		}
+		if len(result.Choices) == 0 {
+			return "", "", fmt.Errorf("openai-compatible response had no choices")
+		}
+		return model, result.Choices[0].Message.Content, nil
+	}
+
 	clientCfg, err := buildClientConfig(provider, cred)
 	if err != nil {
 		return "", "", err
@@ -319,6 +389,11 @@ func (s *ModelCatalogService) TestEmbed(ctx context.Context, provider ProviderTy
 			return "", fmt.Errorf("embedding model test failed: empty vector returned")
 		}
 
+	case ProviderOpenAICompatible:
+		// Embedding is not supported for OpenAI-compatible providers.
+		// Return the model name as "not supported" — non-fatal.
+		return "not supported", nil
+
 	default:
 		return "", fmt.Errorf("unsupported provider for embedding test: %s", provider)
 	}
@@ -387,6 +462,9 @@ func buildClientConfig(provider ProviderType, cred *ResolvedCredential) (*genai.
 			cfg.Credentials = c
 		}
 		return cfg, nil
+
+	case ProviderOpenAICompatible:
+		return nil, fmt.Errorf("openai-compatible provider does not use genai client — use the HTTP adapter directly")
 
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)

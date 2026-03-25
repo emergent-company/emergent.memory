@@ -109,6 +109,23 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				resolvedModel = f.cfg.Model
 			}
 
+			if cred.IsOpenAICompatible {
+				resolvedModel := cred.GenerativeModel
+				if resolvedModel == "" {
+					resolvedModel = modelName
+				}
+				if resolvedModel == "" {
+					resolvedModel = f.cfg.Model
+				}
+				f.log.Debug("creating ADK model via OpenAI-compatible endpoint (DB cred)",
+					slog.String("model", resolvedModel),
+					slog.String("baseURL", cred.OpenAIBaseURL),
+					slog.String("source", cred.Source),
+				)
+				llm := NewOpenAICompatibleModel(cred.OpenAIBaseURL, cred.APIKey, resolvedModel)
+				return f.wrapModel(llm, "openai-compatible"), nil
+			}
+
 			if cred.IsVertexAI {
 				clientCfg := &genai.ClientConfig{
 					Backend:  genai.BackendVertexAI,
@@ -161,6 +178,20 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 	}
 
 	// --- 2. Static env-var fallback ---
+	// Try OpenAI-compatible env-var config first (explicit config wins).
+	if f.cfg.OpenAIBaseURL != "" {
+		modelName := f.cfg.OpenAIModel
+		if modelName == "" {
+			return nil, fmt.Errorf("model name is required: set LLM_MODEL when using OPENAI_BASE_URL")
+		}
+		f.log.Debug("creating ADK model via OpenAI-compatible endpoint (env config)",
+			slog.String("model", modelName),
+			slog.String("baseURL", f.cfg.OpenAIBaseURL),
+		)
+		llm := NewOpenAICompatibleModel(f.cfg.OpenAIBaseURL, f.cfg.OpenAIAPIKey, modelName)
+		return f.wrapModel(llm, "openai-compatible"), nil
+	}
+
 	// Try Vertex AI first (production), then fall back to Google AI API key (standalone/dev)
 	if f.cfg.UseVertexAI() {
 		clientCfg := &genai.ClientConfig{
@@ -205,7 +236,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 		return f.wrapModel(llm, "google"), nil
 	}
 
-	return nil, fmt.Errorf("no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI")
+	return nil, fmt.Errorf("no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, GOOGLE_API_KEY for Google AI, or OPENAI_BASE_URL+OPENAI_API_KEY+LLM_MODEL for OpenAI-compatible endpoints")
 }
 
 // wrapModel applies the optional ModelWrapper to the given LLM.

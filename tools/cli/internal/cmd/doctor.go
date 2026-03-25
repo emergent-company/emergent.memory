@@ -85,7 +85,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	results = append(results, checkShellCompletion())
 
 	if isStandalone {
-		results = append(results, checkGoogleAPIKey(installDir))
+		results = append(results, checkLLMProvider(installDir))
 		results = append(results, checkDockerContainers(installDir))
 	}
 
@@ -573,43 +573,51 @@ func fixShellCompletion() error {
 	return fmt.Errorf("could not write to any shell config file — add manually: %s", completionLine)
 }
 
-func checkGoogleAPIKey(installDir string) checkResult {
-	fmt.Print("Checking Google API key... ")
+func checkLLMProvider(installDir string) checkResult {
+	fmt.Print("Checking LLM provider... ")
 
 	envPath := filepath.Join(installDir, "config", ".env.local")
 	content, err := os.ReadFile(envPath)
 	if err != nil {
 		fmt.Println("SKIPPED")
 		return checkResult{
-			name:    "Google API Key",
+			name:    "LLM Provider",
 			status:  "warn",
 			message: "Could not read configuration file",
 		}
 	}
 
-	for _, line := range strings.Split(string(content), "\n") {
-		if strings.HasPrefix(line, "GOOGLE_API_KEY=") {
-			value := strings.TrimPrefix(line, "GOOGLE_API_KEY=")
-			value = strings.TrimSpace(value)
-			if value != "" {
-				fmt.Println("OK")
-				return checkResult{
-					name:    "Google API Key",
-					status:  "pass",
-					message: fmt.Sprintf("Configured (%s...)", value[:min(8, len(value))]),
-				}
-			}
+	envVars := parseEnvFile(string(content))
+
+	// Check Google AI
+	if key, ok := envVars["GOOGLE_API_KEY"]; ok && key != "" {
+		fmt.Println("GOOGLE")
+		return checkResult{
+			name:    "LLM Provider",
+			status:  "pass",
+			message: fmt.Sprintf("Using Google AI (%s...)", key[:min(8, len(key))]),
+		}
+	}
+
+	// Check OpenAI-compatible
+	if baseURL, ok := envVars["OPENAI_BASE_URL"]; ok && baseURL != "" {
+		model := envVars["LLM_MODEL"]
+		fmt.Println("OPENAI-COMPATIBLE")
+		return checkResult{
+			name:    "LLM Provider",
+			status:  "pass",
+			message: fmt.Sprintf("Using OpenAI-compatible API (%s, model: %s)", baseURL, model),
 		}
 	}
 
 	fmt.Println("NOT SET")
 	return checkResult{
-		name:   "Google API Key",
+		name:   "LLM Provider",
 		status: "warn",
-		message: "Google API key is not configured. It is needed for AI-powered features " +
-			"including semantic search, document analysis, and entity extraction.\n" +
-			"         To get a key: visit https://aistudio.google.com/apikey\n" +
-			"         To set it:   memory config set google_api_key YOUR_KEY",
+		message: "No LLM provider is configured. This is needed for AI-powered features.\n" +
+			"         To use Google AI (Gemini): memory config set google_api_key YOUR_KEY\n" +
+			"         To use a local/custom API: memory config set openai_base_url http://localhost:11434/v1\n" +
+			"                                    memory config set llm_model llama3",
 	}
 }
 

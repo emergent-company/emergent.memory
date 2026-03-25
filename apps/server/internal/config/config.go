@@ -208,6 +208,17 @@ type LLMConfig struct {
 	// Google API Key for Google AI (standalone/development fallback)
 	GoogleAPIKey string `env:"GOOGLE_API_KEY" envDefault:""`
 
+	// OpenAI-compatible provider configuration
+	// OpenAIBaseURL is the base URL for any OpenAI-compatible endpoint (e.g. http://localhost:11434/v1).
+	// When set, takes priority over Google AI / Vertex AI for generative model calls.
+	OpenAIBaseURL string `env:"OPENAI_BASE_URL" envDefault:""`
+
+	// OpenAIAPIKey is the API key for the OpenAI-compatible endpoint (optional for keyless local servers).
+	OpenAIAPIKey string `env:"OPENAI_API_KEY" envDefault:""`
+
+	// OpenAIModel is the model name to use with the OpenAI-compatible endpoint (e.g. "llama3", "kvasir").
+	OpenAIModel string `env:"LLM_MODEL" envDefault:""`
+
 	// Disable LLM network calls (for testing)
 	NetworkDisabled bool `env:"LLM_NETWORK_DISABLED" envDefault:"false"`
 }
@@ -217,7 +228,7 @@ func (l *LLMConfig) IsEnabled() bool {
 	if l.NetworkDisabled {
 		return false
 	}
-	return l.UseVertexAI() || l.GoogleAPIKey != ""
+	return l.UseVertexAI() || l.GoogleAPIKey != "" || l.OpenAIBaseURL != ""
 }
 
 // UseVertexAI returns true if Vertex AI should be used (GCP credentials available)

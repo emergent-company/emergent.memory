@@ -18,8 +18,11 @@ type Config struct {
 	InstallDir string
 	// ServerPort is the port for the server (default: 3002)
 	ServerPort int
-	// GoogleAPIKey is the optional Google API key for embeddings
+	// LLM Provider configuration
 	GoogleAPIKey string
+	// OpenAI-compatible configuration
+	OpenAIBaseURL string
+	LLMModel      string
 	// SkipStart skips starting services after installation
 	SkipStart bool
 	// Force overwrites existing installation
@@ -181,11 +184,13 @@ KREUZBERG_PORT=18000
 SERVER_PORT=%d
 
 GOOGLE_API_KEY=%s
+OPENAI_BASE_URL=%s
+LLM_MODEL=%s
 EMBEDDING_DIMENSION=768
 KREUZBERG_LOG_LEVEL=info
 
 LLM_ENCRYPTION_KEY=%s
-`, postgresPassword, minioPassword, apiKey, i.config.ServerPort, i.config.GoogleAPIKey, llmEncryptionKey)
+`, postgresPassword, minioPassword, apiKey, i.config.ServerPort, i.config.GoogleAPIKey, i.config.OpenAIBaseURL, i.config.LLMModel, llmEncryptionKey)
 
 	envPath := filepath.Join(i.config.InstallDir, "config", ".env.local")
 	if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
@@ -297,10 +302,10 @@ func (i *Installer) Install() error {
 
 	if i.config.SkipStart {
 		i.output.Info("Skipping service start (--skip-start)")
-		i.printCompletionMessage(apiKey, false, i.config.GoogleAPIKey != "")
-		// Prompt for Google API key if not provided via flag
-		if i.config.GoogleAPIKey == "" {
-			i.PromptGoogleAPIKey()
+		i.printCompletionMessage(apiKey, false, i.config.GoogleAPIKey != "" || i.config.OpenAIBaseURL != "")
+		// Prompt for LLM provider if not provided via flag
+		if i.config.GoogleAPIKey == "" && i.config.OpenAIBaseURL == "" {
+			i.PromptLLMProvider()
 		}
 		return nil
 	}
@@ -340,11 +345,11 @@ func (i *Installer) Install() error {
 		i.output.Success("Go SDK sandbox image built")
 	}
 
-	i.printCompletionMessage(apiKey, true, i.config.GoogleAPIKey != "")
+	i.printCompletionMessage(apiKey, true, i.config.GoogleAPIKey != "" || i.config.OpenAIBaseURL != "")
 
-	// Prompt for Google API key if not provided via flag
-	if i.config.GoogleAPIKey == "" {
-		i.PromptGoogleAPIKey()
+	// Prompt for LLM provider if not provided via flag
+	if i.config.GoogleAPIKey == "" && i.config.OpenAIBaseURL == "" {
+		i.PromptLLMProvider()
 	}
 
 	return nil
@@ -560,61 +565,140 @@ func (i *Installer) Uninstall(keepData bool) error {
 	return nil
 }
 
-// PromptGoogleAPIKey interactively asks the user for a Google API key and saves it
-func (i *Installer) PromptGoogleAPIKey() {
+// PromptLLMProvider interactively asks the user to configure an LLM provider (Google AI or OpenAI-compatible)
+func (i *Installer) PromptLLMProvider() {
 	fmt.Println()
-	fmt.Printf("%s%sGoogle API Key Setup (optional)%s\n", colorCyan, colorBold, colorReset)
+	fmt.Printf("%s%sLLM Provider Setup (optional)%s\n", colorCyan, colorBold, colorReset)
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
-	fmt.Println("A Google API key enables AI-powered features including:")
+	fmt.Println("An LLM provider enables AI-powered features including:")
 	fmt.Println("  - Semantic search with text embeddings")
 	fmt.Println("  - AI-powered document analysis")
 	fmt.Println("  - Intelligent entity extraction")
+	fmt.Println()
+	fmt.Println("Choose a provider to configure:")
+	fmt.Println("  1. Google AI (Gemini) — requires an API key")
+	fmt.Println("  2. OpenAI-compatible API — for local (Ollama, vLLM) or other providers")
+	fmt.Println("  3. Skip for now")
+	fmt.Println()
+	fmt.Print("Choice [1-3]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	choice, _ := reader.ReadString('\n')
+	choice = strings.TrimSpace(choice)
+
+	switch choice {
+	case "1":
+		i.PromptGoogleAI()
+	case "2":
+		i.PromptOpenAICompatible()
+	default:
+		fmt.Println()
+		i.output.Warn("Skipped. You can configure a provider later with the 'memory provider' command.")
+	}
+}
+
+// PromptGoogleAI interactively asks the user for a Google API key and saves it
+func (i *Installer) PromptGoogleAI() {
+	fmt.Println()
+	fmt.Printf("%s%sGoogle AI Setup%s\n", colorCyan, colorBold, colorReset)
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
 	fmt.Println("To get a Google API key:")
 	fmt.Println("  1. Go to https://aistudio.google.com/apikey")
 	fmt.Println("  2. Click 'Create API Key'")
 	fmt.Println("  3. Copy the generated key")
 	fmt.Println()
-	fmt.Print("Enter your Google API key (press Enter to skip): ")
+	fmt.Print("Enter your Google API key: ")
 
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 
 	if input == "" {
-		fmt.Println()
-		i.output.Warn("Skipped. You can set it later with: memory provider set-key YOUR_KEY")
+		i.output.Warn("No key provided. Skipping Google AI setup.")
 		return
 	}
 
-	// Update the .env.local file
+	if err := i.updateEnv(map[string]string{"GOOGLE_API_KEY": input}); err != nil {
+		i.output.Error("Could not save Google API key: %v", err)
+		return
+	}
+
+	i.output.Success("Google AI configured successfully")
+}
+
+// PromptOpenAICompatible interactively asks the user for OpenAI-compatible settings and saves them
+func (i *Installer) PromptOpenAICompatible() {
+	fmt.Println()
+	fmt.Printf("%s%sOpenAI-compatible API Setup%s\n", colorCyan, colorBold, colorReset)
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println()
+	fmt.Println("Configure settings for your local (e.g., Ollama) or custom API.")
+	fmt.Println()
+
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Print("Base URL (e.g., http://localhost:11434/v1): ")
+	baseURL, _ := reader.ReadString('\n')
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		i.output.Warn("Base URL is required. Skipping OpenAI-compatible setup.")
+		return
+	}
+
+	fmt.Print("API Key (leave blank for local servers): ")
+	apiKey, _ := reader.ReadString('\n')
+	apiKey = strings.TrimSpace(apiKey)
+
+	fmt.Print("Model Name (e.g., llama3): ")
+	model, _ := reader.ReadString('\n')
+	model = strings.TrimSpace(model)
+	if model == "" {
+		i.output.Warn("Model name is required. Skipping OpenAI-compatible setup.")
+		return
+	}
+
+	updates := map[string]string{
+		"OPENAI_BASE_URL": baseURL,
+		"LLM_MODEL":       model,
+	}
+	if apiKey != "" {
+		updates["GOOGLE_API_KEY"] = apiKey // Standalone uses GOOGLE_API_KEY as the fallback auth header
+	}
+
+	if err := i.updateEnv(updates); err != nil {
+		i.output.Error("Could not save OpenAI-compatible settings: %v", err)
+		return
+	}
+
+	i.output.Success("OpenAI-compatible API configured successfully")
+}
+
+// updateEnv updates one or more variables in the .env.local file
+func (i *Installer) updateEnv(updates map[string]string) error {
 	envPath := i.GetEnvPath()
 	content, err := os.ReadFile(envPath)
 	if err != nil {
-		i.output.Warn("Could not read config file: %v", err)
-		return
+		return err
 	}
 
 	lines := strings.Split(string(content), "\n")
-	found := false
-	for idx, line := range lines {
-		if strings.HasPrefix(line, "GOOGLE_API_KEY=") {
-			lines[idx] = "GOOGLE_API_KEY=" + input
-			found = true
-			break
+	for key, value := range updates {
+		found := false
+		for idx, line := range lines {
+			if strings.HasPrefix(line, key+"=") {
+				lines[idx] = key + "=" + value
+				found = true
+				break
+			}
+		}
+		if !found {
+			lines = append(lines, key+"="+value)
 		}
 	}
-	if !found {
-		lines = append(lines, "GOOGLE_API_KEY="+input)
-	}
 
-	if err := os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0600); err != nil {
-		i.output.Warn("Could not save Google API key: %v", err)
-		return
-	}
-
-	i.output.Success("Google API key saved to configuration")
+	return os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0600)
 }
 
 func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, providerConfigured bool) {
@@ -668,12 +752,10 @@ func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, 
 		fmt.Println("No LLM provider was configured during install.")
 		fmt.Println("AI features (embeddings, extraction, chat) will not work until you add one.")
 		fmt.Println()
-		fmt.Println("To configure Google AI (Gemini):")
-		fmt.Println("  1. Get an API key from https://aistudio.google.com/apikey")
-		fmt.Printf("  2. Run: memory provider set-key <your-api-key>\n")
-		fmt.Println()
-		fmt.Println("To configure Vertex AI:")
-		fmt.Printf("  Run: memory provider set-vertex --project <gcp-project> --location <region>\n")
+		fmt.Println("To configure a provider, run:")
+		fmt.Println("  memory provider configure google --api-key <your-key>")
+		fmt.Println("  OR")
+		fmt.Println("  memory provider configure openai-compatible --base-url <url> --api-key <key> --generative-model <model>")
 		fmt.Println()
 	}
 }

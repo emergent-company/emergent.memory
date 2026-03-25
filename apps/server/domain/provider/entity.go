@@ -10,8 +10,9 @@ import (
 type ProviderType string
 
 const (
-	ProviderGoogleAI ProviderType = "google"
-	ProviderVertexAI ProviderType = "google-vertex"
+	ProviderGoogleAI         ProviderType = "google"
+	ProviderVertexAI         ProviderType = "google-vertex"
+	ProviderOpenAICompatible ProviderType = "openai-compatible"
 )
 
 // ModelType classifies a model as embedding or generative.
@@ -45,6 +46,7 @@ type OrgProviderConfig struct {
 	EncryptionNonce     []byte       `bun:"encryption_nonce,notnull" json:"-"`
 	GCPProject          string       `bun:"gcp_project" json:"gcpProject,omitempty"`
 	Location            string       `bun:"location" json:"location,omitempty"`
+	BaseURL             string       `bun:"base_url" json:"baseUrl,omitempty"`
 	GenerativeModel     string       `bun:"generative_model" json:"generativeModel,omitempty"`
 	EmbeddingModel      string       `bun:"embedding_model" json:"embeddingModel,omitempty"`
 	CreatedAt           time.Time    `bun:"created_at,notnull,default:now()" json:"createdAt"`
@@ -64,6 +66,7 @@ type ProjectProviderConfig struct {
 	EncryptionNonce     []byte       `bun:"encryption_nonce,notnull" json:"-"`
 	GCPProject          string       `bun:"gcp_project" json:"gcpProject,omitempty"`
 	Location            string       `bun:"location" json:"location,omitempty"`
+	BaseURL             string       `bun:"base_url" json:"baseUrl,omitempty"`
 	GenerativeModel     string       `bun:"generative_model" json:"generativeModel,omitempty"`
 	EmbeddingModel      string       `bun:"embedding_model" json:"embeddingModel,omitempty"`
 	CreatedAt           time.Time    `bun:"created_at,notnull,default:now()" json:"createdAt"`
@@ -79,6 +82,7 @@ type UpsertProviderConfigRequest struct {
 	ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
 	GCPProject         string `json:"gcpProject,omitempty"`
 	Location           string `json:"location,omitempty"`
+	BaseURL            string `json:"baseUrl,omitempty"`
 	GenerativeModel    string `json:"generativeModel,omitempty"`
 	EmbeddingModel     string `json:"embeddingModel,omitempty"`
 }
@@ -90,6 +94,7 @@ type ProviderConfigResponse struct {
 	Provider        ProviderType `json:"provider"`
 	GCPProject      string       `json:"gcpProject,omitempty"`
 	Location        string       `json:"location,omitempty"`
+	BaseURL         string       `json:"baseUrl,omitempty"`
 	GenerativeModel string       `json:"generativeModel,omitempty"`
 	EmbeddingModel  string       `json:"embeddingModel,omitempty"`
 	CreatedAt       time.Time    `json:"createdAt"`
@@ -105,6 +110,7 @@ type ProjectProviderConfigResponse struct {
 	Provider        ProviderType `json:"provider"`
 	GCPProject      string       `json:"gcpProject,omitempty"`
 	Location        string       `json:"location,omitempty"`
+	BaseURL         string       `json:"baseUrl,omitempty"`
 	GenerativeModel string       `json:"generativeModel,omitempty"`
 	EmbeddingModel  string       `json:"embeddingModel,omitempty"`
 	CreatedAt       time.Time    `json:"createdAt"`

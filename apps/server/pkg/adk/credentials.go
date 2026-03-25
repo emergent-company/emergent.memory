@@ -17,6 +17,10 @@ type ResolvedCredential struct {
 	Location           string
 	ServiceAccountJSON string
 	GenerativeModel    string
+	// IsOpenAICompatible is true when the credential is for an OpenAI-compatible endpoint.
+	IsOpenAICompatible bool
+	// OpenAIBaseURL is the base URL for OpenAI-compatible endpoints (e.g. http://localhost:11434/v1).
+	OpenAIBaseURL string
 	// Source describes where the credential was resolved from (project/organization/environment).
 	// Informational only; used for logging and tracing.
 	Source string

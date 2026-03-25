@@ -50,6 +50,16 @@ func NewRegistry() *Registry {
 		},
 	}
 
+	r.providers[ProviderOpenAICompatible] = &ProviderDefinition{
+		Type:        ProviderOpenAICompatible,
+		DisplayName: "OpenAI-Compatible",
+		Description: "Any OpenAI-compatible LLM endpoint (Ollama, llama.cpp, vLLM, etc.)",
+		CredentialFields: []CredentialField{
+			{Name: "base_url", Description: "Base URL of the OpenAI-compatible API (e.g. http://localhost:11434/v1)", Required: true, Secret: false},
+			{Name: "api_key", Description: "API key (use any value for keyless local servers)", Required: false, Secret: true},
+		},
+	}
+
 	return r
 }
 

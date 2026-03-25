@@ -30,6 +30,10 @@ type ResolvedCredential struct {
 	GCPProject         string
 	Location           string
 
+	// OpenAI-compatible fields (set for openai-compatible)
+	IsOpenAICompatible bool
+	BaseURL            string
+
 	// Selected models (may come from org selection, project override, or env config)
 	EmbeddingModel  string
 	GenerativeModel string
@@ -160,6 +164,7 @@ func (s *CredentialService) decryptOrgConfig(cfg *OrgProviderConfig) (*ResolvedC
 		Source:          SourceOrganization,
 		GCPProject:      cfg.GCPProject,
 		Location:        cfg.Location,
+		BaseURL:         cfg.BaseURL,
 		GenerativeModel: cfg.GenerativeModel,
 		EmbeddingModel:  cfg.EmbeddingModel,
 	}
@@ -168,6 +173,10 @@ func (s *CredentialService) decryptOrgConfig(cfg *OrgProviderConfig) (*ResolvedC
 		resolved.APIKey = string(plaintext)
 	case ProviderVertexAI:
 		resolved.ServiceAccountJSON = string(plaintext)
+	case ProviderOpenAICompatible:
+		resolved.IsOpenAICompatible = true
+		resolved.BaseURL = cfg.BaseURL
+		resolved.APIKey = string(plaintext) // plaintext is the api_key (may be empty)
 	}
 	return resolved, nil
 }
@@ -188,6 +197,7 @@ func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*R
 		Source:          SourceProject,
 		GCPProject:      cfg.GCPProject,
 		Location:        cfg.Location,
+		BaseURL:         cfg.BaseURL,
 		GenerativeModel: cfg.GenerativeModel,
 		EmbeddingModel:  cfg.EmbeddingModel,
 	}
@@ -196,6 +206,10 @@ func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*R
 		resolved.APIKey = string(plaintext)
 	case ProviderVertexAI:
 		resolved.ServiceAccountJSON = string(plaintext)
+	case ProviderOpenAICompatible:
+		resolved.IsOpenAICompatible = true
+		resolved.BaseURL = cfg.BaseURL
+		resolved.APIKey = string(plaintext)
 	}
 	return resolved, nil
 }
@@ -219,7 +233,7 @@ func (s *CredentialService) EncryptCredential(plaintext []byte) (ciphertext, non
 // This method satisfies the adk.CredentialResolver interface.
 func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential, error) {
 	var lastErr error
-	for _, provider := range []ProviderType{ProviderVertexAI, ProviderGoogleAI} {
+	for _, provider := range []ProviderType{ProviderOpenAICompatible, ProviderVertexAI, ProviderGoogleAI} {
 		cred, err := s.Resolve(ctx, provider)
 		if err != nil {
 			s.log.Debug("provider resolution failed, trying next",
@@ -329,6 +343,7 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 		EncryptionNonce:     nonce,
 		GCPProject:          req.GCPProject,
 		Location:            req.Location,
+		BaseURL:             req.BaseURL,
 		GenerativeModel:     generativeModel,
 		EmbeddingModel:      embeddingModel,
 	}
@@ -342,6 +357,7 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 		Provider:        cfg.Provider,
 		GCPProject:      cfg.GCPProject,
 		Location:        cfg.Location,
+		BaseURL:         cfg.BaseURL,
 		GenerativeModel: cfg.GenerativeModel,
 		EmbeddingModel:  cfg.EmbeddingModel,
 		CreatedAt:       cfg.CreatedAt,
@@ -366,6 +382,7 @@ func (s *CredentialService) GetOrgConfig(ctx context.Context, orgID string, prov
 		Provider:        cfg.Provider,
 		GCPProject:      cfg.GCPProject,
 		Location:        cfg.Location,
+		BaseURL:         cfg.BaseURL,
 		GenerativeModel: cfg.GenerativeModel,
 		EmbeddingModel:  cfg.EmbeddingModel,
 		CreatedAt:       cfg.CreatedAt,
@@ -397,6 +414,7 @@ func (s *CredentialService) ListOrgConfigs(ctx context.Context, orgID string) ([
 			Provider:        cfg.Provider,
 			GCPProject:      cfg.GCPProject,
 			Location:        cfg.Location,
+			BaseURL:         cfg.BaseURL,
 			GenerativeModel: cfg.GenerativeModel,
 			EmbeddingModel:  cfg.EmbeddingModel,
 			CreatedAt:       cfg.CreatedAt,
@@ -424,6 +442,7 @@ func (s *CredentialService) ListProjectConfigsByOrg(ctx context.Context, orgID s
 			Provider:        cfg.Provider,
 			GCPProject:      cfg.GCPProject,
 			Location:        cfg.Location,
+			BaseURL:         cfg.BaseURL,
 			GenerativeModel: cfg.GenerativeModel,
 			EmbeddingModel:  cfg.EmbeddingModel,
 			CreatedAt:       cfg.CreatedAt,
@@ -509,6 +528,7 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 		EncryptionNonce:     nonce,
 		GCPProject:          req.GCPProject,
 		Location:            req.Location,
+		BaseURL:             req.BaseURL,
 		GenerativeModel:     generativeModel,
 		EmbeddingModel:      embeddingModel,
 	}
@@ -522,6 +542,7 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 		Provider:        cfg.Provider,
 		GCPProject:      cfg.GCPProject,
 		Location:        cfg.Location,
+		BaseURL:         cfg.BaseURL,
 		GenerativeModel: cfg.GenerativeModel,
 		EmbeddingModel:  cfg.EmbeddingModel,
 		CreatedAt:       cfg.CreatedAt,
@@ -546,6 +567,7 @@ func (s *CredentialService) GetProjectConfig(ctx context.Context, projectID stri
 		Provider:        cfg.Provider,
 		GCPProject:      cfg.GCPProject,
 		Location:        cfg.Location,
+		BaseURL:         cfg.BaseURL,
 		GenerativeModel: cfg.GenerativeModel,
 		EmbeddingModel:  cfg.EmbeddingModel,
 		CreatedAt:       cfg.CreatedAt,
@@ -582,6 +604,12 @@ func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertPr
 			return nil, apperror.NewBadRequest("location is required for google-vertex")
 		}
 		return []byte(req.ServiceAccountJSON), nil
+	case ProviderOpenAICompatible:
+		if req.BaseURL == "" {
+			return nil, apperror.NewBadRequest("baseUrl is required for openai-compatible")
+		}
+		// APIKey is optional (keyless local servers); encrypt empty string if not provided
+		return []byte(req.APIKey), nil
 	default:
 		return nil, apperror.NewBadRequest(fmt.Sprintf("unsupported provider: %s", provider))
 	}
@@ -599,6 +627,10 @@ func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req Ups
 		cred.APIKey = req.APIKey
 	case ProviderVertexAI:
 		cred.ServiceAccountJSON = req.ServiceAccountJSON
+	case ProviderOpenAICompatible:
+		cred.IsOpenAICompatible = true
+		cred.BaseURL = req.BaseURL
+		cred.APIKey = req.APIKey
 	}
 	return cred
 }

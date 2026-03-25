@@ -10,11 +10,13 @@ import (
 )
 
 var installFlags struct {
-	dir          string
-	port         int
-	googleAPIKey string
-	skipStart    bool
-	force        bool
+	dir           string
+	port          int
+	googleAPIKey  string
+	openAIBaseURL string
+	llmModel      string
+	skipStart     bool
+	force         bool
 }
 
 var installCmd = &cobra.Command{
@@ -33,6 +35,7 @@ This command will:
 Example:
   memory install
   memory install --port 8080 --google-api-key YOUR_KEY
+  memory install --open-api-base-url http://localhost:11434/v1 --llm-model llama3
   memory install --dir /opt/memory --skip-start`,
 	RunE: runInstall,
 }
@@ -44,6 +47,8 @@ func init() {
 	installCmd.Flags().StringVar(&installFlags.dir, "dir", defaultDir, "Installation directory")
 	installCmd.Flags().IntVar(&installFlags.port, "port", 3002, "Server port")
 	installCmd.Flags().StringVar(&installFlags.googleAPIKey, "google-api-key", "", "Google API key for embeddings")
+	installCmd.Flags().StringVar(&installFlags.openAIBaseURL, "open-api-base-url", "", "OpenAI-compatible base URL")
+	installCmd.Flags().StringVar(&installFlags.llmModel, "llm-model", "", "LLM model name (for OpenAI-compatible)")
 	installCmd.Flags().BoolVar(&installFlags.skipStart, "skip-start", false, "Generate config but don't start services")
 	installCmd.Flags().BoolVar(&installFlags.force, "force", false, "Overwrite existing installation")
 
@@ -51,11 +56,13 @@ func init() {
 
 func runInstall(cmd *cobra.Command, args []string) error {
 	cfg := installer.Config{
-		InstallDir:   installFlags.dir,
-		ServerPort:   installFlags.port,
-		GoogleAPIKey: installFlags.googleAPIKey,
-		SkipStart:    installFlags.skipStart,
-		Force:        installFlags.force,
+		InstallDir:    installFlags.dir,
+		ServerPort:    installFlags.port,
+		GoogleAPIKey:  installFlags.googleAPIKey,
+		OpenAIBaseURL: installFlags.openAIBaseURL,
+		LLMModel:      installFlags.llmModel,
+		SkipStart:     installFlags.skipStart,
+		Force:         installFlags.force,
 	}
 
 	inst := installer.New(cfg)

@@ -33,16 +33,17 @@ current organization. Runs a live credential test and syncs the model catalog
 on success. Models are auto-selected from the catalog if not specified.
 
 Supported providers:
-  google   — Google AI (Gemini API); requires --api-key
-  google-vertex   — Google Cloud Vertex AI; requires --gcp-project, --location
-                Optionally supply --key-file for a service account JSON key.
+  google            — Google AI (Gemini API); requires --api-key
+  google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
+  openai-compatible — OpenAI-compatible API (Ollama, vLLM, etc.); requires --api-key, --base-url, --generative-model
 
 Examples:
   memory provider configure google --api-key AIzaSy...
   memory provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
+  memory provider configure openai-compatible --api-key sk-... --base-url http://localhost:11434/v1 --generative-model llama3
   memory provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004`,
 	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"google", "google-vertex"},
+	ValidArgs: []string{"google", "google-vertex", "openai-compatible"},
 	RunE:      runProviderConfigure,
 }
 
@@ -51,6 +52,7 @@ var (
 	configureKeyFile         string
 	configureGCPProject      string
 	configureLocation        string
+	configureBaseURL         string
 	configureGenerativeModel string
 	configureEmbeddingModel  string
 	configureOrgID           string
@@ -98,8 +100,21 @@ func runProviderConfigure(cmd *cobra.Command, args []string) error {
 		req.GCPProject = configureGCPProject
 		req.Location = configureLocation
 
+	case provider.ProviderOpenAICompatible:
+		if configureAPIKey == "" {
+			return fmt.Errorf("--api-key is required for openai-compatible")
+		}
+		if configureBaseURL == "" {
+			return fmt.Errorf("--base-url is required for openai-compatible")
+		}
+		if configureGenerativeModel == "" {
+			return fmt.Errorf("--generative-model is required for openai-compatible")
+		}
+		req.APIKey = configureAPIKey
+		req.BaseURL = configureBaseURL
+
 	default:
-		return fmt.Errorf("unsupported provider %q; must be google or google-vertex", providerArg)
+		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, or openai-compatible", providerArg)
 	}
 
 	fmt.Printf("Configuring %s for org %s...\n", providerArg, orgID)
@@ -130,17 +145,19 @@ This overrides the organization's provider config for this project.
 Use --remove to remove the project-level override and fall back to the org config.
 
 Supported providers:
-  google   — Google AI (Gemini API); requires --api-key
-  google-vertex   — Google Cloud Vertex AI; requires --gcp-project, --location
+  google            — Google AI (Gemini API); requires --api-key
+  google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
+  openai-compatible — OpenAI-compatible API (Ollama, vLLM, etc.); requires --api-key, --base-url, --generative-model
 
 The project is read from --project or the MEMORY_PROJECT_ID environment variable.
 
 Examples:
   memory provider configure-project google --api-key AIzaSy...
   memory provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
+  memory provider configure-project openai-compatible --api-key sk-... --base-url http://localhost:11434/v1 --generative-model llama3
   memory provider configure-project google --remove`,
 	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"google", "google-vertex"},
+	ValidArgs: []string{"google", "google-vertex", "openai-compatible"},
 	RunE:      runProviderConfigureProject,
 }
 
@@ -149,6 +166,7 @@ var (
 	configureProjectKeyFile         string
 	configureProjectGCPProject      string
 	configureProjectLocation        string
+	configureProjectBaseURL         string
 	configureProjectGenerativeModel string
 	configureProjectEmbeddingModel  string
 	configureProjectID              string
@@ -209,8 +227,21 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 		req.GCPProject = configureProjectGCPProject
 		req.Location = configureProjectLocation
 
+	case provider.ProviderOpenAICompatible:
+		if configureProjectAPIKey == "" {
+			return fmt.Errorf("--api-key is required for openai-compatible")
+		}
+		if configureProjectBaseURL == "" {
+			return fmt.Errorf("--base-url is required for openai-compatible")
+		}
+		if configureProjectGenerativeModel == "" {
+			return fmt.Errorf("--generative-model is required for openai-compatible")
+		}
+		req.APIKey = configureProjectAPIKey
+		req.BaseURL = configureProjectBaseURL
+
 	default:
-		return fmt.Errorf("unsupported provider %q; must be google or google-vertex", providerArg)
+		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, or openai-compatible", providerArg)
 	}
 
 	fmt.Printf("Configuring %s for project %s...\n", providerArg, projectID)
@@ -244,10 +275,11 @@ Use --type to filter by model type (embedding or generative).
 
 Examples:
   memory provider models
+  memory provider models openai-compatible
   memory provider models google-vertex
   memory provider models google --type generative`,
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"google", "google-vertex"},
+	ValidArgs: []string{"google", "google-vertex", "openai-compatible"},
 	RunE:      runProviderModels,
 }
 
@@ -633,17 +665,18 @@ var providerTestCmd = &cobra.Command{
 work end-to-end.
 
 Without a provider argument, tests all configured providers.
-Pass a provider name (google or google-vertex) to test a specific one.
+Pass a provider name (google, google-vertex, or openai-compatible) to test a specific one.
 
 Use --project to test using the project-level credential hierarchy
 (project override → org) instead of org credentials only.
 
 Examples:
   memory provider test
+  memory provider test openai-compatible
   memory provider test google-vertex
   memory provider test google --project <id>`,
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"google", "google-vertex"},
+	ValidArgs: []string{"google", "google-vertex", "openai-compatible"},
 	RunE:      runProviderTest,
 }
 
@@ -781,13 +814,14 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 
 	// Table output
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SCOPE\tPROVIDER\tGENERATIVE MODEL\tEMBEDDING MODEL\tGCP PROJECT\tLOCATION\tUPDATED")
+	fmt.Fprintln(w, "SCOPE\tPROVIDER\tGENERATIVE MODEL\tEMBEDDING MODEL\tBASE URL\tGCP PROJECT\tLOCATION\tUPDATED")
 
 	for _, cfg := range orgConfigs {
-		fmt.Fprintf(w, "org\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "org\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			cfg.Provider,
 			valueOrDash(cfg.GenerativeModel),
 			valueOrDash(cfg.EmbeddingModel),
+			valueOrDash(cfg.BaseURL),
 			valueOrDash(cfg.GCPProject),
 			valueOrDash(cfg.Location),
 			cfg.UpdatedAt.Format(time.DateOnly),
@@ -795,11 +829,12 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 	}
 	for _, cfg := range projectConfigs {
 		scope := "project:" + shortID(cfg.ProjectID)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			scope,
 			cfg.Provider,
 			valueOrDash(cfg.GenerativeModel),
 			valueOrDash(cfg.EmbeddingModel),
+			valueOrDash(cfg.BaseURL),
 			valueOrDash(cfg.GCPProject),
 			valueOrDash(cfg.Location),
 			cfg.UpdatedAt.Format(time.DateOnly),
@@ -853,6 +888,7 @@ func init() {
 	configureCmd.Flags().StringVar(&configureKeyFile, "key-file", "", "Path to service account JSON key file (google-vertex)")
 	configureCmd.Flags().StringVar(&configureGCPProject, "gcp-project", "", "GCP project ID (required for google-vertex)")
 	configureCmd.Flags().StringVar(&configureLocation, "location", "", "GCP region, e.g. us-central1 (required for google-vertex)")
+	configureCmd.Flags().StringVar(&configureBaseURL, "base-url", "", "OpenAI-compatible base URL (required for openai-compatible)")
 	configureCmd.Flags().StringVar(&configureGenerativeModel, "generative-model", "", "Generative model to use (auto-selected from catalog if omitted)")
 	configureCmd.Flags().StringVar(&configureEmbeddingModel, "embedding-model", "", "Embedding model to use (auto-selected from catalog if omitted)")
 	configureCmd.Flags().StringVar(&configureOrgID, "org-id", "", "Organization ID (auto-detected from config)")
@@ -862,6 +898,7 @@ func init() {
 	configureProjectCmd.Flags().StringVar(&configureProjectKeyFile, "key-file", "", "Path to service account JSON key file (google-vertex)")
 	configureProjectCmd.Flags().StringVar(&configureProjectGCPProject, "gcp-project", "", "GCP project ID (required for google-vertex)")
 	configureProjectCmd.Flags().StringVar(&configureProjectLocation, "location", "", "GCP region, e.g. us-central1 (required for google-vertex)")
+	configureProjectCmd.Flags().StringVar(&configureProjectBaseURL, "base-url", "", "OpenAI-compatible base URL (required for openai-compatible)")
 	configureProjectCmd.Flags().StringVar(&configureProjectGenerativeModel, "generative-model", "", "Generative model to use (auto-selected from catalog if omitted)")
 	configureProjectCmd.Flags().StringVar(&configureProjectEmbeddingModel, "embedding-model", "", "Embedding model to use (auto-selected from catalog if omitted)")
 	configureProjectCmd.Flags().StringVar(&configureProjectID, "project", "", "Project ID (auto-detected from MEMORY_PROJECT_ID)")

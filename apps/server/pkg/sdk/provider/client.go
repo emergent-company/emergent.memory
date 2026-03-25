@@ -38,8 +38,9 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 type ProviderType = string
 
 const (
-	ProviderGoogleAI ProviderType = "google"
-	ProviderVertexAI ProviderType = "google-vertex"
+	ProviderGoogleAI         ProviderType = "google"
+	ProviderVertexAI         ProviderType = "google-vertex"
+	ProviderOpenAICompatible ProviderType = "openai-compatible"
 )
 
 // ModelType classifies a model.
@@ -57,6 +58,7 @@ type ProviderConfig struct {
 	Provider        string    `json:"provider"`
 	GCPProject      string    `json:"gcpProject,omitempty"`
 	Location        string    `json:"location,omitempty"`
+	BaseURL         string    `json:"baseUrl,omitempty"`
 	GenerativeModel string    `json:"generativeModel,omitempty"`
 	EmbeddingModel  string    `json:"embeddingModel,omitempty"`
 	CreatedAt       time.Time `json:"createdAt"`
@@ -71,6 +73,7 @@ type ProjectProviderConfig struct {
 	Provider        string    `json:"provider"`
 	GCPProject      string    `json:"gcpProject,omitempty"`
 	Location        string    `json:"location,omitempty"`
+	BaseURL         string    `json:"baseUrl,omitempty"`
 	GenerativeModel string    `json:"generativeModel,omitempty"`
 	EmbeddingModel  string    `json:"embeddingModel,omitempty"`
 	CreatedAt       time.Time `json:"createdAt"`
@@ -156,12 +159,14 @@ type TestProviderResponse struct {
 // updating a provider config (org-level or project-level).
 // For google: set APIKey.
 // For google-vertex: set ServiceAccountJSON, GCPProject, Location.
+// For openai-compatible: set APIKey, BaseURL, GenerativeModel.
 // GenerativeModel and EmbeddingModel are auto-selected from the catalog if omitted.
 type UpsertProviderConfigRequest struct {
 	APIKey             string `json:"apiKey,omitempty"`
 	ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
 	GCPProject         string `json:"gcpProject,omitempty"`
 	Location           string `json:"location,omitempty"`
+	BaseURL            string `json:"baseUrl,omitempty"`
 	GenerativeModel    string `json:"generativeModel,omitempty"`
 	EmbeddingModel     string `json:"embeddingModel,omitempty"`
 }
