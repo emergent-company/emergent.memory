@@ -94,8 +94,10 @@ func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderN
 			Where("id = ?", projectID).
 			Scan(ctx, &projectName)
 
+		bundleURL := fmt.Sprintf("%s/api/mcp/bundle?token=%s", mcpBaseURL, tokenResp.Token)
+
 		for _, addr := range req.Emails {
-			enqErr := s.enqueueMCPInviteEmail(ctx, addr, senderName, projectID, projectName, mcpURL, tokenResp.Token, snippets)
+			enqErr := s.enqueueMCPInviteEmail(ctx, addr, senderName, projectID, projectName, mcpURL, tokenResp.Token, bundleURL, snippets)
 			if enqErr != nil {
 				s.log.Warn("failed to enqueue mcp invite email",
 					"email", addr,
@@ -202,7 +204,7 @@ func (h *Handler) HandleInstallRedirect(c echo.Context) error {
 }
 
 // enqueueMCPInviteEmail enqueues a single MCP invite email.
-func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName, projectID, projectName, mcpURL, apiKey string, snippets MCPSnippets) error {
+func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName, projectID, projectName, mcpURL, apiKey, bundleURL string, snippets MCPSnippets) error {
 	displayName := projectName
 	if displayName == "" {
 		displayName = projectID
@@ -220,6 +222,7 @@ func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName
 			"mcpUrl":      mcpURL,
 			"apiKey":      apiKey,
 			"installUrl":  snippets.InstallURL,
+			"bundleUrl":   bundleURL,
 			"snippets": map[string]interface{}{
 				"claudeDesktop": snippets.ClaudeDesktop,
 				"claudeCode":    snippets.ClaudeCode,

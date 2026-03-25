@@ -41,6 +41,35 @@ func NewHandler(svc *Service, log *slog.Logger, userProfileSvc *auth.UserProfile
 	}
 }
 
+// HandleOAuthProtectedResource handles GET /.well-known/oauth-protected-resource
+// This endpoint is required by the MCP 2025-11-25 authorization spec (RFC 9728).
+// Returning an empty authorization_servers array tells MCP clients (e.g. mcp-remote)
+// that this server uses bearer token / API key auth and does NOT require an OAuth flow.
+//
+// @Summary      OAuth Protected Resource Metadata
+// @Description  Returns OAuth 2.0 Protected Resource Metadata per RFC 9728. Signals that the MCP server accepts bearer token authentication without an OAuth authorization flow.
+// @Tags         mcp
+// @Produce      json
+// @Success      200 {object} map[string]any "Protected resource metadata"
+// @Router       /.well-known/oauth-protected-resource [get]
+func (h *Handler) HandleOAuthProtectedResource(c echo.Context) error {
+	// Build resource URL from the request host
+	scheme := "https"
+	if c.Request().TLS == nil && c.Request().Header.Get("X-Forwarded-Proto") == "" {
+		scheme = "http"
+	}
+	if fwdProto := c.Request().Header.Get("X-Forwarded-Proto"); fwdProto != "" {
+		scheme = fwdProto
+	}
+	resourceURL := scheme + "://" + c.Request().Host
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"resource":                 resourceURL,
+		"bearer_methods_supported": []string{"header"},
+		"authorization_servers":    []string{},
+	})
+}
+
 // HandleRPC handles POST /mcp/rpc - JSON-RPC 2.0 endpoint (legacy)
 // @Summary      Execute Model Context Protocol JSON-RPC 2.0 requests
 // @Description  Legacy JSON-RPC endpoint for Model Context Protocol. Supports initialize, tools/*, resources/*, and prompts/* methods. Use unified /api/mcp endpoint for SSE support (Spec 2025-11-25).

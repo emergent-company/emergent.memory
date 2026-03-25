@@ -402,6 +402,11 @@ func (m *Middleware) extractToken(r *http.Request) string {
 		}
 	}
 
+	// Check X-API-Key header (accepted for emt_* API tokens; used by MCP clients like mcp-remote)
+	if apiKey := r.Header.Get("X-API-Key"); apiKey != "" {
+		return apiKey
+	}
+
 	// Fall back to query parameter (for SSE endpoints)
 	if token := r.URL.Query().Get("token"); token != "" {
 		return token
