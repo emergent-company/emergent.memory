@@ -49,8 +49,10 @@ func NewTemplateServiceFromConfig(log *slog.Logger) *TemplateService {
 		templateDir = "templates/email"
 	}
 
-	absPath, _ := filepath.Abs(templateDir)
-	log.Info("initializing email template service", slog.String("template_dir", absPath))
+	if absPath, err := filepath.Abs(templateDir); err == nil {
+		templateDir = absPath
+	}
+	log.Info("initializing email template service", slog.String("template_dir", templateDir))
 
 	return NewTemplateService(templateDir, log)
 }

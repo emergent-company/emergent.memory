@@ -10,7 +10,7 @@ cmd = "go build -buildvcs=false -o ./tmp/main ./cmd/server"
 # Binary to run
 bin = "./tmp/main"
 # Watch these file extensions
-include_ext = ["go", "tpl", "tmpl", "html"]
+include_ext = ["go", "tpl", "tmpl", "html", "hbs"]
 # Exclude these directories
 exclude_dir = ["assets", "tmp", "vendor", "testdata", "node_modules"]
 # Exclude these files
