@@ -681,35 +681,82 @@ function populateHoverCard(nodeId, color, typeName, label, inGraphProps) {
   $nhcDot.style.background = color;
   $nhcType.textContent = typeName || '';
   $nhcType.style.color = color;
-  $nhcName.textContent = label || nodeId;
 
-  // Properties
   $nhcProps.innerHTML = '';
-  const propsToShow = [];
-  if (inGraphProps) {
-    for (const [k, v] of Object.entries(inGraphProps)) {
-      if (HC_SKIP_KEYS.has(k)) continue;
-      if (v === null || v === undefined || v === '') continue;
-      const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
-      propsToShow.push({ k, val });
-      if (propsToShow.length >= HC_MAX_PROPS) break;
-    }
-  }
-  for (const { k, val } of propsToShow) {
-    const row = document.createElement('div');
-    row.className = 'flex gap-1.5 items-baseline';
-    row.innerHTML = `<span style="color:#8b949e;font-size:10px;white-space:nowrap">${escHtml(k)}</span>`
-      + `<span style="color:#e6edf3;font-size:11px;font-family:monospace;word-break:break-all;flex:1">${escHtml(val.slice(0, 80))}</span>`;
-    $nhcProps.appendChild(row);
-  }
+  $nhcEdges.innerHTML = '';
+  $nhcEdges.style.display = 'none';
 
-  // Edge count in graph
-  const deg = (sigmaInstance && graph.hasNode(nodeId)) ? graph.degree(nodeId) : null;
-  if (deg !== null) {
-    $nhcEdges.textContent = `${deg} connection${deg !== 1 ? 's' : ''} in graph`;
-    $nhcEdges.style.display = '';
+  if (isSchemaMode && schemaData) {
+    // Schema node: show description instead of the (duplicate) type name, then list relationships
+    const reg = schemaData.regByType?.[nodeId];
+    const desc = reg?.description;
+    $nhcName.textContent = desc || '';
+
+    // Collect outgoing and incoming relationships for this type
+    const outgoing = [];
+    const incoming = [];
+    for (const rel of schemaData.rels) {
+      const relLabel = rel.label || rel.name || rel.type || '';
+      if (rel.sourceType === nodeId && rel.targetType && rel.targetType !== nodeId) {
+        outgoing.push({ label: relLabel, other: rel.targetType });
+      } else if (rel.targetType === nodeId && rel.sourceType && rel.sourceType !== nodeId) {
+        incoming.push({ label: relLabel, other: rel.sourceType });
+      }
+    }
+
+    // Deduplicate by label+other
+    const seen = new Set();
+    const deduped = (list) => list.filter(({ label: l, other: o }) => {
+      const key = `${l}→${o}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const allRels = [...deduped(outgoing).map(r => ({ ...r, dir: 'out' })),
+                    ...deduped(incoming).map(r => ({ ...r, dir: 'in' }))];
+
+    if (allRels.length > 0) {
+      $nhcEdges.style.display = '';
+      for (const { label: relLabel, other, dir } of allRels) {
+        const row = document.createElement('div');
+        row.className = 'flex gap-1 items-center';
+        const arrow = dir === 'out' ? '→' : '←';
+        row.innerHTML =
+          `<span style="color:#8b949e;font-size:10px;white-space:nowrap">${escHtml(relLabel)}</span>`
+          + `<span style="color:#8b949e;font-size:10px">${arrow}</span>`
+          + `<span style="color:#e6edf3;font-size:10px;white-space:nowrap">${escHtml(other)}</span>`;
+        $nhcEdges.appendChild(row);
+      }
+    }
   } else {
-    $nhcEdges.style.display = 'none';
+    // Normal graph node: show label and properties
+    $nhcName.textContent = label || nodeId;
+
+    const propsToShow = [];
+    if (inGraphProps) {
+      for (const [k, v] of Object.entries(inGraphProps)) {
+        if (HC_SKIP_KEYS.has(k)) continue;
+        if (v === null || v === undefined || v === '') continue;
+        const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        propsToShow.push({ k, val });
+        if (propsToShow.length >= HC_MAX_PROPS) break;
+      }
+    }
+    for (const { k, val } of propsToShow) {
+      const row = document.createElement('div');
+      row.className = 'flex gap-1.5 items-baseline';
+      row.innerHTML = `<span style="color:#8b949e;font-size:10px;white-space:nowrap">${escHtml(k)}</span>`
+        + `<span style="color:#e6edf3;font-size:11px;font-family:monospace;word-break:break-all;flex:1">${escHtml(val.slice(0, 80))}</span>`;
+      $nhcProps.appendChild(row);
+    }
+
+    // Edge count in graph
+    const deg = (sigmaInstance && graph.hasNode(nodeId)) ? graph.degree(nodeId) : null;
+    if (deg !== null) {
+      $nhcEdges.style.display = '';
+      $nhcEdges.textContent = `${deg} connection${deg !== 1 ? 's' : ''} in graph`;
+    }
   }
 }
 
@@ -1754,7 +1801,7 @@ async function loadSchemaView() {
       if (r.targetType) allTypeNames.add(r.targetType);
     }
 
-    schemaData = { types: [...allTypeNames], rels };
+    schemaData = { types: [...allTypeNames], rels, regByType };
 
     // Clear any active focus/expand state before snapshotting, so restored
     // nodes don't carry stale 'hidden' attrs that can't be undone after exit.
