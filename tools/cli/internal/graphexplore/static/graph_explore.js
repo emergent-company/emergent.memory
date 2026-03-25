@@ -125,6 +125,29 @@ function showToast(msg, duration = 2500) {
   toastTimer = setTimeout(() => $toast.classList.remove('show'), duration);
 }
 
+// ── Confirm dialog ────────────────────────────────────────────────────────
+// Returns a Promise<boolean> — resolves true (OK) or false (Cancel).
+// Uses an in-page <dialog> instead of window.confirm() so DevTools can click it.
+function showConfirm(msg) {
+  return new Promise(resolve => {
+    document.getElementById('confirm-dialog-msg').textContent = msg;
+    const dlg = document.getElementById('confirm-dialog');
+    dlg.showModal();
+    const okBtn     = document.getElementById('confirm-dialog-ok');
+    const cancelBtn = document.getElementById('confirm-dialog-cancel');
+    function cleanup(result) {
+      dlg.close();
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    }
+    function onOk()     { cleanup(true); }
+    function onCancel() { cleanup(false); }
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+  });
+}
+
 // ── Loading ───────────────────────────────────────────────────────────────
 let loadingCount = 0;
 function startLoading() { loadingCount++; $loading.classList.remove('hidden'); $loading.classList.add('flex'); }
@@ -181,7 +204,10 @@ function syncHiddenInputs() {
 
 function applyFilters() {
   graph.forEachNode((node) => {
-    const type = (nodeData[node] || {}).type || 'unknown';
+    // In schema mode, node key IS the type name; in graph mode, look up nodeData
+    const type = isSchemaMode
+      ? (graph.getNodeAttribute(node, 'nodeType') || node)
+      : ((nodeData[node] || {}).type || 'unknown');
     graph.setNodeAttribute(node, 'hidden', hiddenNodeTypes.has(type));
   });
   graph.forEachEdge((edge) => {
@@ -1023,11 +1049,19 @@ document.getElementById('btn-focus').addEventListener('click', () => {
     showToast('Focus cleared');
   } else {
     focusActive = true;
-    const neighbors = new Set([...graph.neighbors(selectedNode), selectedNode]);
-    graph.forEachNode(n => graph.setNodeAttribute(n, 'hidden', !neighbors.has(n)));
+    // BFS from selected node to find the full connected subgraph (not just depth-1)
+    const reachable = new Set([selectedNode]);
+    const queue = [selectedNode];
+    while (queue.length > 0) {
+      const cur = queue.shift();
+      for (const nb of graph.neighbors(cur)) {
+        if (!reachable.has(nb)) { reachable.add(nb); queue.push(nb); }
+      }
+    }
+    graph.forEachNode(n => graph.setNodeAttribute(n, 'hidden', !reachable.has(n)));
     graph.forEachEdge((e) => {
       const [s, d] = graph.extremities(e);
-      graph.setEdgeAttribute(e, 'hidden', !neighbors.has(s) || !neighbors.has(d));
+      graph.setEdgeAttribute(e, 'hidden', !reachable.has(s) || !reachable.has(d));
     });
     sigmaInstance.refresh(); updateStats();
     updateFocusBtn();
@@ -1311,7 +1345,7 @@ async function loadAllNodes() {
     showToast('No node types found — load schema first');
     return;
   }
-  const confirmed = window.confirm(
+  const confirmed = await showConfirm(
     `This will load all nodes across ${types.length} type(s).\n\nThis may be slow or overwhelming for large graphs.\n\nContinue?`
   );
   if (!confirmed) return;
@@ -1704,7 +1738,23 @@ async function loadSchemaView() {
 
     schemaData = { types: [...allTypeNames], rels };
 
-    // Save pre-schema graph state
+    // Clear any active focus/expand state before snapshotting, so restored
+    // nodes don't carry stale 'hidden' attrs that can't be undone after exit.
+    if (focusActive) {
+      focusActive = false;
+      graph.forEachNode(n => graph.setNodeAttribute(n, 'hidden', false));
+      graph.forEachEdge(e => graph.setEdgeAttribute(e, 'hidden', false));
+      updateFocusBtn();
+    }
+    if (expandedNode) {
+      // Collapse without side-effects: just reset tracking vars; the full
+      // pre-schema snapshot below will capture the current graph state.
+      expandedNode = null; expandedNodeDepth = 0;
+      expandedNodeIds.clear(); expandedEdgeKeys.clear();
+      updateExpandBtn();
+    }
+
+    // Save pre-schema graph state (now free of focus/expand artifacts)
     preSchemaGraphState = {
       nodes: graph.nodes().map(n => ({ id: n, attrs: { ...graph.getNodeAttributes(n) } })),
       edges: graph.edges().map(e => ({ key: e, src: graph.source(e), dst: graph.target(e), attrs: { ...graph.getEdgeAttributes(e) } })),
@@ -1738,25 +1788,29 @@ async function loadSchemaView() {
       });
     }
 
-    // Build relationship edges
+    // Build relationship edges (merge labels for duplicate src→dst pairs since multi=false)
+    const edgePairs = {};  // "src→dst" → { labels: [], key, src, dst, color }
     for (const rel of rels) {
       const src = rel.sourceType;
       const dst = rel.targetType;
       const label = rel.label || rel.name || '';
       if (!src || !dst || !graph.hasNode(src) || !graph.hasNode(dst)) continue;
-      // Self-loops: skip in graph (note in detail panel) since allowSelfLoops is false
-      if (src === dst) continue;
-      const key = `schema__${rel.name}__${src}__${dst}`;
-      if (!graph.hasEdge(key)) {
-        try {
-          graph.addEdgeWithKey(key, src, dst, {
-            label,
-            size: 2,
-            color: typeColor(src) + '88',
-            forceLabel: true,
-          });
-        } catch (_) {}
+      if (src === dst) continue;  // self-loops: skip in graph, shown in detail panel
+      const pairKey = `${src}→${dst}`;
+      if (!edgePairs[pairKey]) {
+        edgePairs[pairKey] = { labels: [], key: `schema__${rel.name}__${src}__${dst}`, src, dst, color: typeColor(src) + '88' };
       }
+      edgePairs[pairKey].labels.push(label);
+    }
+    for (const pair of Object.values(edgePairs)) {
+      try {
+        graph.addEdgeWithKey(pair.key, pair.src, pair.dst, {
+          label: pair.labels.join(' / '),
+          size: 2,
+          color: pair.color,
+          forceLabel: true,
+        });
+      } catch (_) {}
     }
 
     isSchemaMode = true;
@@ -1806,6 +1860,14 @@ function exitSchemaView(loadTypeName) {
     selectedNode = preSchemaGraphState.selectedNode;
     preSchemaGraphState = null;
   }
+
+  // Ensure focus/expand button states reflect restored graph state
+  // (they were reset on schema entry but reset again here as a safety net)
+  focusActive = false;
+  updateFocusBtn();
+  expandedNode = null; expandedNodeDepth = 0;
+  expandedNodeIds.clear(); expandedEdgeKeys.clear();
+  updateExpandBtn();
 
   updateModeTabs();
   updateStats();
