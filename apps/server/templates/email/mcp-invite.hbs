@@ -25,7 +25,9 @@
     .client { background: #f8f9fa; border-radius: 6px; padding: 18px 22px; margin: 12px 0; }
     .client h3 { font-size: 14px; font-weight: 600; color: #1a1a2e; margin: 0 0 4px; }
     .client .path { font-size: 12px; color: #6b7280; margin: 0 0 10px; font-family: 'Courier New', monospace; }
-    .scopes { margin: 16px 0; line-height: 2; }
+    .scopes-box { background: #f8f9fa; border-radius: 6px; padding: 16px 20px; margin: 16px 0 24px; }
+    .scopes-box p { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: #111; }
+    .scopes { margin: 0; line-height: 2; }
     .scope-tag { display: inline-block; background: #e8f0fe; color: #1a56db; font-size: 12px; padding: 3px 10px; border-radius: 12px; font-weight: 500; margin: 0 4px 4px 0; }
     .divider { border: none; border-top: 1px solid #e5e7eb; margin: 28px 0; }
     .footer { padding: 20px 40px; color: #9ca3af; font-size: 12px; line-height: 1.6; }
@@ -58,13 +60,15 @@
         </p>
       </div>
 
-      <p><strong>What you can do with this access:</strong></p>
-      <div class="scopes">
-        <span class="scope-tag">Search the knowledge graph</span>
-        <span class="scope-tag">Browse entities &amp; relationships</span>
-        <span class="scope-tag">Read schemas</span>
-        <span class="scope-tag">View agent definitions</span>
-        <span class="scope-tag">Read project metadata</span>
+      <div class="scopes-box">
+        <p>What you can do with this access:</p>
+        <div class="scopes">
+          <span class="scope-tag">Search the knowledge graph</span>
+          <span class="scope-tag">Browse entities &amp; relationships</span>
+          <span class="scope-tag">Read schemas</span>
+          <span class="scope-tag">View agent definitions</span>
+          <span class="scope-tag">Read project metadata</span>
+        </div>
       </div>
 
       <hr class="divider">
