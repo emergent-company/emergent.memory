@@ -164,6 +164,63 @@ func (c *Client) ReadResource(ctx context.Context, uri string) (json.RawMessage,
 	return c.CallMethod(ctx, "resources/read", params)
 }
 
+// ShareRequest is the request body for POST /api/projects/:projectId/mcp/share.
+type ShareRequest struct {
+	Name   string   `json:"name,omitempty"`
+	Emails []string `json:"emails,omitempty"`
+}
+
+// ShareSnippets contains pre-formatted agent config blocks.
+type ShareSnippets struct {
+	ClaudeDesktop string `json:"claudeDesktop"`
+	Cursor        string `json:"cursor"`
+}
+
+// ShareResponse is the response from POST /api/projects/:projectId/mcp/share.
+type ShareResponse struct {
+	Token     string        `json:"token"`
+	MCPURL    string        `json:"mcpUrl"`
+	ProjectID string        `json:"projectId"`
+	Snippets  ShareSnippets `json:"snippets"`
+}
+
+// Share generates a read-only MCP access token for the given project and
+// optionally sends invite emails. The returned token is shown only once.
+func (c *Client) Share(ctx context.Context, projectID string, req ShareRequest) (*ShareResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST",
+		fmt.Sprintf("%s/api/projects/%s/mcp/share", c.base, projectID),
+		bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.auth.Authenticate(httpReq); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result ShareResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &result, nil
+}
+
 // ListPrompts lists available MCP prompts.
 func (c *Client) ListPrompts(ctx context.Context) (json.RawMessage, error) {
 	return c.CallMethod(ctx, "prompts/list", nil)
