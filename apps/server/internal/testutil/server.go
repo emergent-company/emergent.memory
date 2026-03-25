@@ -245,7 +245,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 		SkillsRepo:   skillsRepo,
 		ApitokenSvc:  apitokenSvc,
 	})
-	mcpHandler := mcp.NewHandler(mcpSvc, log)
+	mcpHandler := mcp.NewHandler(mcpSvc, log, userSvc)
 	mcpSSEHandler := mcp.NewSSEHandler(mcpSvc, mcpHandler, log)
 	mcpStreamableHandler := mcp.NewStreamableHTTPHandler(mcpSvc, log)
 	mcp.RegisterRoutes(e, mcpHandler, mcpSSEHandler, mcpStreamableHandler, authMiddleware)
