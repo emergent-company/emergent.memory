@@ -173,7 +173,10 @@ type ShareRequest struct {
 // ShareSnippets contains pre-formatted agent config blocks.
 type ShareSnippets struct {
 	ClaudeDesktop string `json:"claudeDesktop"`
+	ClaudeCode    string `json:"claudeCode"`
 	Cursor        string `json:"cursor"`
+	CloudCode     string `json:"cloudCode"`
+	InstallURL    string `json:"installUrl"`
 }
 
 // ShareResponse is the response from POST /api/projects/:projectId/mcp/share.

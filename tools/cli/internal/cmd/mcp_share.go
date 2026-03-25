@@ -105,6 +105,13 @@ func runMCPShare(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	fmt.Println("─────────────────────────────────────────────────────────────────")
+	fmt.Println("Claude Code  (.mcp.json in project root)")
+	fmt.Println("─────────────────────────────────────────────────────────────────")
+	fmt.Println()
+	fmt.Println(result.Snippets.ClaudeCode)
+
+	fmt.Println()
+	fmt.Println("─────────────────────────────────────────────────────────────────")
 	fmt.Println("Cursor  (Settings → MCP)")
 	fmt.Println("─────────────────────────────────────────────────────────────────")
 	fmt.Println()
@@ -127,6 +134,13 @@ func runMCPShare(cmd *cobra.Command, args []string) error {
 	}
 	out, _ := json.MarshalIndent(openCodeConfig, "", "  ")
 	fmt.Println(string(out))
+	fmt.Println()
+
+	fmt.Println("─────────────────────────────────────────────────────────────────")
+	fmt.Println("One-click install (Claude Desktop)")
+	fmt.Println("─────────────────────────────────────────────────────────────────")
+	fmt.Println()
+	fmt.Printf("  %s\n", result.Snippets.InstallURL)
 	fmt.Println()
 
 	fmt.Printf("  Revoke:  memory tokens revoke <token-id> --project %s\n", projectID)

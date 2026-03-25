@@ -82,9 +82,22 @@
         <p class="subtitle">Add the config below to your preferred tool. The MCP server endpoint is: <code style="background:#f1f5f9;padding:2px 6px;border-radius:3px;font-size:12px;">{{mcpUrl}}</code></p>
 
         <div class="client">
-          <h3>Claude Desktop</h3>
+          <h3>⚡ One-click install (Claude Desktop)</h3>
+          <p class="path">Opens Claude Desktop and adds the server automatically</p>
+          <a href="{{installUrl}}" style="display:inline-block;background:#1a1a2e;color:#fff;text-decoration:none;padding:10px 22px;border-radius:6px;font-size:14px;font-weight:600;margin:4px 0;">Add to Claude Desktop →</a>
+        </div>
+
+        <div class="client">
+          <h3>Claude Desktop (manual)</h3>
           <p class="path">~/Library/Application Support/Claude/claude_desktop_config.json &nbsp;(macOS)<br>%APPDATA%\Claude\claude_desktop_config.json &nbsp;(Windows)</p>
           <code class="code">{{snippets.claudeDesktop}}</code>
+        </div>
+
+        <div class="client">
+          <h3>Claude Code (CLI)</h3>
+          <p class="path">Save as <strong>.mcp.json</strong> in your project root, or run:<br>
+          <code style="background:#f1f5f9;padding:2px 6px;border-radius:3px;font-size:12px;">claude mcp add memory --transport http {{mcpUrl}} -H "X-API-Key: &lt;your-key&gt;"</code></p>
+          <code class="code">{{snippets.claudeCode}}</code>
         </div>
 
         <div class="client">

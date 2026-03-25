@@ -27,8 +27,10 @@ type ShareMCPAccessRequest struct {
 // MCPSnippets contains pre-formatted agent config blocks.
 type MCPSnippets struct {
 	ClaudeDesktop string `json:"claudeDesktop"`
+	ClaudeCode    string `json:"claudeCode"`
 	Cursor        string `json:"cursor"`
 	CloudCode     string `json:"cloudCode"`
+	InstallURL    string `json:"installUrl"`
 }
 
 // ShareMCPAccessResponse is the response for POST /api/projects/:projectId/mcp/share.
@@ -133,6 +135,20 @@ func buildSnippets(mcpURL, apiKey string) MCPSnippets {
   }
 }`, mcpURL, apiKey)
 
+	// Claude Code (CLI) — .mcp.json in project root (--scope project)
+	// Uses "type": "http" with headers for remote servers.
+	claudeCode := fmt.Sprintf(`{
+  "mcpServers": {
+    "memory": {
+      "type": "http",
+      "url": %q,
+      "headers": {
+        "X-API-Key": %q
+      }
+    }
+  }
+}`, mcpURL, apiKey)
+
 	// Cloud Code / Gemini Code Assist — .gemini/settings.json
 	// Uses "httpUrl" key (not "url") and supports headers for auth.
 	cloudCode := fmt.Sprintf(`{
@@ -146,10 +162,15 @@ func buildSnippets(mcpURL, apiKey string) MCPSnippets {
   }
 }`, mcpURL, apiKey)
 
+	// claude://install-mcp deep link — opens Claude Desktop with one-click install dialog.
+	installURL := fmt.Sprintf("claude://install-mcp?url=%s&name=memory", mcpURL)
+
 	return MCPSnippets{
 		ClaudeDesktop: claudeDesktop,
+		ClaudeCode:    claudeCode,
 		Cursor:        cursor,
 		CloudCode:     cloudCode,
+		InstallURL:    installURL,
 	}
 }
 
@@ -171,8 +192,10 @@ func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName
 			"projectName": displayName,
 			"mcpUrl":      mcpURL,
 			"apiKey":      apiKey,
+			"installUrl":  snippets.InstallURL,
 			"snippets": map[string]interface{}{
 				"claudeDesktop": snippets.ClaudeDesktop,
+				"claudeCode":    snippets.ClaudeCode,
 				"cursor":        snippets.Cursor,
 				"cloudCode":     snippets.CloudCode,
 			},
