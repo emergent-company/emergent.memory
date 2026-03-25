@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -509,6 +510,11 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 		Scan(ctx, &result)
 
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			m.log.Warn("API token not found or expired", slog.String("token_prefix", token[:min(8, len(token))]))
+		} else {
+			m.log.Error("API token DB lookup failed", logger.Error(err))
+		}
 		return nil, apperror.ErrInvalidToken.WithInternal(err)
 	}
 

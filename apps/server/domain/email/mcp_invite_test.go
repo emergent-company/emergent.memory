@@ -117,7 +117,7 @@ func TestMCPInviteTemplate_Renders(t *testing.T) {
 		{"claude code section", "Claude Code"},
 		{"cursor section", "Cursor"},
 		{"cloud code section", "Cloud Code"},
-		{"not a fallback", "emergent memory"},
+		{"not a fallback", "emergent.memory"},
 	}
 
 	for _, c := range checks {

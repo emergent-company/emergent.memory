@@ -76,9 +76,9 @@ func (h *StreamableHTTPHandler) HandleUnifiedEndpoint(c echo.Context) error {
 	// Validate and extract protocol version
 	protocolVersion := c.Request().Header.Get("MCP-Protocol-Version")
 	if protocolVersion == "" {
-		// Backward compatibility: assume 2025-03-26 if not specified
-		protocolVersion = "2025-03-26"
-		h.log.Debug("no protocol version header, assuming 2025-03-26")
+		// Backward compatibility: default to latest supported version if not specified
+		protocolVersion = LatestProtocolVersion
+		h.log.Debug("no protocol version header, defaulting to latest", slog.String("version", LatestProtocolVersion))
 	}
 
 	// Validate protocol version

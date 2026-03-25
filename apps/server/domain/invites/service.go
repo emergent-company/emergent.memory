@@ -260,7 +260,7 @@ func (s *Service) Create(ctx context.Context, req *CreateInviteRequest) (*Invite
 			TemplateName: "project-invitation",
 			ToEmail:      req.Email,
 			ToName:       &toName,
-			Subject:      fmt.Sprintf("You've been invited to join %s on emergent memory", projectName),
+			Subject:      fmt.Sprintf("You've been invited to join %s on emergent.memory", projectName),
 			TemplateData: map[string]interface{}{
 				"inviterName": inviterName,
 				"projectName": projectName,

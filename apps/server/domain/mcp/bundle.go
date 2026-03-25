@@ -20,7 +20,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
-//go:embed mcpremote/proxy.js mcpremote/chunk-65X3S4HB.js
+//go:embed mcpremote/proxy-bundle.js
 var mcpRemoteFS embed.FS
 
 // mcpbManifest is the JSON structure for a .mcpb bundle manifest.
@@ -123,11 +123,11 @@ func (s *Service) GenerateMCPBundle(ctx context.Context, projectID, userID, mcpB
 		Homepage: "https://emergent.memory",
 		Server: mcpbServer{
 			Type:       "node",
-			EntryPoint: "mcp-remote/proxy.js",
+			EntryPoint: "mcp-remote/proxy-bundle.js",
 			MCPConfig: mcpbMCPConfig{
 				Command: "node",
 				Args: []string{
-					"${__dirname}/mcp-remote/proxy.js",
+					"${__dirname}/mcp-remote/proxy-bundle.js",
 					mcpURL,
 					"--header",
 					fmt.Sprintf("Authorization: Bearer %s", tokenResp.Token),
@@ -158,21 +158,13 @@ func (s *Service) GenerateMCPBundle(ctx context.Context, projectID, userID, mcpB
 		return nil, "", fmt.Errorf("add manifest: %w", err)
 	}
 
-	// Add mcp-remote proxy files from embedded FS.
-	proxyJS, err := mcpRemoteFS.ReadFile("mcpremote/proxy.js")
+	// Add the self-contained mcp-remote bundle (all deps inlined, CJS-compatible).
+	proxyBundle, err := mcpRemoteFS.ReadFile("mcpremote/proxy-bundle.js")
 	if err != nil {
-		return nil, "", fmt.Errorf("read proxy.js: %w", err)
+		return nil, "", fmt.Errorf("read proxy-bundle.js: %w", err)
 	}
-	if err := addZipFile(zw, "mcp-remote/proxy.js", proxyJS); err != nil {
-		return nil, "", fmt.Errorf("add proxy.js: %w", err)
-	}
-
-	chunkJS, err := mcpRemoteFS.ReadFile("mcpremote/chunk-65X3S4HB.js")
-	if err != nil {
-		return nil, "", fmt.Errorf("read chunk js: %w", err)
-	}
-	if err := addZipFile(zw, "mcp-remote/chunk-65X3S4HB.js", chunkJS); err != nil {
-		return nil, "", fmt.Errorf("add chunk js: %w", err)
+	if err := addZipFile(zw, "mcp-remote/proxy-bundle.js", proxyBundle); err != nil {
+		return nil, "", fmt.Errorf("add proxy-bundle.js: %w", err)
 	}
 
 	if err := zw.Close(); err != nil {
@@ -237,11 +229,11 @@ func buildMCPBundleZIP(projectName, slug, mcpURL, apiToken string) ([]byte, stri
 		Homepage: "https://emergent.memory",
 		Server: mcpbServer{
 			Type:       "node",
-			EntryPoint: "mcp-remote/proxy.js",
+			EntryPoint: "mcp-remote/proxy-bundle.js",
 			MCPConfig: mcpbMCPConfig{
 				Command: "node",
 				Args: []string{
-					"${__dirname}/mcp-remote/proxy.js",
+					"${__dirname}/mcp-remote/proxy-bundle.js",
 					mcpURL,
 					"--header",
 					fmt.Sprintf("Authorization: Bearer %s", apiToken),
@@ -270,20 +262,12 @@ func buildMCPBundleZIP(projectName, slug, mcpURL, apiToken string) ([]byte, stri
 		return nil, "", fmt.Errorf("add manifest: %w", err)
 	}
 
-	proxyJS, err := mcpRemoteFS.ReadFile("mcpremote/proxy.js")
+	proxyBundle, err := mcpRemoteFS.ReadFile("mcpremote/proxy-bundle.js")
 	if err != nil {
-		return nil, "", fmt.Errorf("read proxy.js: %w", err)
+		return nil, "", fmt.Errorf("read proxy-bundle.js: %w", err)
 	}
-	if err := addZipFile(zw, "mcp-remote/proxy.js", proxyJS); err != nil {
-		return nil, "", fmt.Errorf("add proxy.js: %w", err)
-	}
-
-	chunkJS, err := mcpRemoteFS.ReadFile("mcpremote/chunk-65X3S4HB.js")
-	if err != nil {
-		return nil, "", fmt.Errorf("read chunk js: %w", err)
-	}
-	if err := addZipFile(zw, "mcp-remote/chunk-65X3S4HB.js", chunkJS); err != nil {
-		return nil, "", fmt.Errorf("add chunk js: %w", err)
+	if err := addZipFile(zw, "mcp-remote/proxy-bundle.js", proxyBundle); err != nil {
+		return nil, "", fmt.Errorf("add proxy-bundle.js: %w", err)
 	}
 
 	if err := zw.Close(); err != nil {
