@@ -96,7 +96,9 @@ func RegisterWorkerLifecycle(lc fx.Lifecycle, worker *Worker, cfg *Config) {
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			return worker.Start(ctx)
+			// Use context.Background() - fx lifecycle context has a 15s timeout
+			// and would cancel the worker goroutine after startup completes
+			return worker.Start(context.Background())
 		},
 		OnStop: func(ctx context.Context) error {
 			return worker.Stop(ctx)
