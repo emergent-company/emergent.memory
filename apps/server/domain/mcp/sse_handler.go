@@ -243,7 +243,7 @@ func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID stri
 				map[string]string{"hint": "Call initialize method first to establish session"},
 			)
 		}
-		return h.handleToolsList(req)
+		return h.handleToolsList(req, user.Scopes)
 
 	case "tools/call":
 		if !initialized {
@@ -302,8 +302,9 @@ func (h *SSEHandler) handleInitialize(req *Request, projectID string) *Response 
 }
 
 // handleToolsList handles tools/list for SSE transport
-func (h *SSEHandler) handleToolsList(req *Request) *Response {
+func (h *SSEHandler) handleToolsList(req *Request, scopes []string) *Response {
 	tools := h.svc.GetToolDefinitions()
+	tools = FilterToolsForScopes(tools, scopes)
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 

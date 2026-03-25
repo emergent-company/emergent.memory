@@ -1049,6 +1049,60 @@ func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID st
 	return tools
 }
 
+// readOnlyToolNames is the allowlist of tools exposed to read-only share tokens
+// (scopes: data:read, schema:read, agents:read, projects:read — no write scopes).
+// Only graph-querying and knowledge-retrieval tools are included.
+var readOnlyToolNames = map[string]bool{
+	// Project context
+	"project-get": true,
+	// Schema / type inspection
+	"schema-version":   true,
+	"entity-type-list": true,
+	"schema-list":      true,
+	"schema-get":       true,
+	// Graph querying
+	"entity-query":      true,
+	"entity-history":    true,
+	"entity-search":     true,
+	"entity-edges-get":  true,
+	"relationship-list": true,
+	"graph-traverse":    true,
+	"tag-list":          true,
+	// Semantic / hybrid search
+	"search-hybrid":    true,
+	"search-semantic":  true,
+	"search-similar":   true,
+	"search-knowledge": true,
+	// Journal (read)
+	"journal-list": true,
+}
+
+// isReadOnlyToken returns true when the token has only read scopes and no write scopes.
+// A token is considered read-only when it lacks any "*:write" or "*:admin" scope.
+func isReadOnlyToken(scopes []string) bool {
+	for _, s := range scopes {
+		if len(s) > 6 && (s[len(s)-6:] == ":write" || s[len(s)-6:] == ":admin") {
+			return false
+		}
+	}
+	return true
+}
+
+// FilterToolsForScopes filters the tool list based on token scopes.
+// Read-only tokens (no write/admin scopes) receive only the graph-querying allowlist.
+func FilterToolsForScopes(tools []ToolDefinition, scopes []string) []ToolDefinition {
+	if !isReadOnlyToken(scopes) {
+		return tools
+	}
+	filtered := make([]ToolDefinition, 0, len(readOnlyToolNames))
+	for _, t := range tools {
+		if readOnlyToolNames[t.Name] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
 func (s *Service) GetResourceDefinitions() []ResourceDefinition {
 	return []ResourceDefinition{
 		{

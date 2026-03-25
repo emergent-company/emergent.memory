@@ -42,6 +42,7 @@ type MCPSession struct {
 	ProjectID       string
 	UserID          string
 	OrgID           string
+	Scopes          []string
 	Initialized     bool
 	ProtocolVersion string
 	CreatedAt       time.Time
@@ -402,6 +403,7 @@ func (h *StreamableHTTPHandler) getOrCreateSession(sessionID string, user *auth.
 		ProjectID:       user.ProjectID,
 		UserID:          user.ID,
 		OrgID:           user.OrgID,
+		Scopes:          user.Scopes,
 		Initialized:     false,
 		ProtocolVersion: protocolVersion,
 		CreatedAt:       time.Now(),
@@ -519,6 +521,7 @@ func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, se
 	}
 
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), session.ProjectID)
+	tools = FilterToolsForScopes(tools, session.Scopes)
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 
