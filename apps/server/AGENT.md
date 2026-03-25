@@ -691,6 +691,16 @@ The agents module includes safeguards to prevent runaway execution, infinite ret
 | `BUDGET_ENFORCEMENT_ENABLED` | `true` | Block agent runs when project monthly budget is exceeded (HTTP 402) |
 | `AGENT_EXECUTION_ENABLED` | `true` | Emergency kill switch — set to `false` to halt all agent execution |
 
+**OpenAI-Compatible Fallbacks (Standalone/Dev):**
+
+These variables provide a fallback for standalone or development use when no database provider is configured. They are alternatives to `GOOGLE_API_KEY` or `VERTEX_*`.
+
+| Env Var | Description |
+| ------- | ----------- |
+| `OPENAI_BASE_URL` | OpenAI-compatible endpoint base URL (e.g., http://localhost:11434/v1 for Ollama, http://localhost:8000/v1 for vLLM, http://localhost:8080/v1 for llama.cpp) |
+| `OPENAI_API_KEY` | API key for OpenAI-compatible server (optional — leave empty for keyless local servers) |
+| `LLM_MODEL` | Model name to use with OpenAI-compatible provider (e.g., llama3, mistral, codellama) |
+
 **Error codes returned by the agents API:**
 
 | HTTP Status | Error Code | Cause |

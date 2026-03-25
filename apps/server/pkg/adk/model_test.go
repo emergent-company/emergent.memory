@@ -49,7 +49,7 @@ func TestModelFactoryCreateModelWithName_ValidationErrors(t *testing.T) {
 				VertexAILocation: "us-central1",
 			},
 			modelName: "gemini-1.5-pro",
-			wantErr:   "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI",
+			wantErr:   "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, GOOGLE_API_KEY for Google AI, or OPENAI_BASE_URL+OPENAI_API_KEY+LLM_MODEL for OpenAI-compatible endpoints",
 		},
 		{
 			name: "missing Vertex AI location",
@@ -58,7 +58,7 @@ func TestModelFactoryCreateModelWithName_ValidationErrors(t *testing.T) {
 				VertexAILocation: "",
 			},
 			modelName: "gemini-1.5-pro",
-			wantErr:   "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI",
+			wantErr:   "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, GOOGLE_API_KEY for Google AI, or OPENAI_BASE_URL+OPENAI_API_KEY+LLM_MODEL for OpenAI-compatible endpoints",
 		},
 		{
 			name: "missing model name",
@@ -259,7 +259,7 @@ func TestModelFactoryCreateModel_ValidationErrors(t *testing.T) {
 				VertexAILocation: "us-central1",
 				Model:            "gemini-1.5-pro",
 			},
-			wantErr: "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI",
+			wantErr: "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, GOOGLE_API_KEY for Google AI, or OPENAI_BASE_URL+OPENAI_API_KEY+LLM_MODEL for OpenAI-compatible endpoints",
 		},
 		{
 			name: "missing Vertex AI location",
@@ -268,7 +268,7 @@ func TestModelFactoryCreateModel_ValidationErrors(t *testing.T) {
 				VertexAILocation: "",
 				Model:            "gemini-1.5-pro",
 			},
-			wantErr: "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, or GOOGLE_API_KEY for Google AI",
+			wantErr: "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, GOOGLE_API_KEY for Google AI, or OPENAI_BASE_URL+OPENAI_API_KEY+LLM_MODEL for OpenAI-compatible endpoints",
 		},
 		{
 			name: "missing model name (uses config's empty model)",

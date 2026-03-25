@@ -158,6 +158,40 @@ overriding environment variables.`,
 			_ = table.Append("Auto-Update Mode", cfg.AutoUpdate.Mode)
 			_ = table.Append("Auto-Update Interval", cfg.AutoUpdate.CheckInterval)
 
+			// Show environment variables from standalone .env.local if it exists
+			homeDir, _ = os.UserHomeDir()
+			envPath := filepath.Join(homeDir, ".memory", "config", ".env.local")
+			if _, err := os.Stat(envPath); err == nil {
+				content, err := os.ReadFile(envPath)
+				if err == nil {
+					lines := strings.Split(string(content), "\n")
+					for _, line := range lines {
+						if strings.HasPrefix(line, "GOOGLE_API_KEY=") {
+							val := strings.TrimPrefix(line, "GOOGLE_API_KEY=")
+							if val != "" {
+								masked := val[:minInt(8, len(val))] + "..." + val[maxInt(0, len(val)-4):]
+								_ = table.Append("GOOGLE_API_KEY", masked+" (.env.local)")
+							}
+						}
+						if strings.HasPrefix(line, "OPENAI_BASE_URL=") {
+							val := strings.TrimPrefix(line, "OPENAI_BASE_URL=")
+							_ = table.Append("OPENAI_BASE_URL", val+" (.env.local)")
+						}
+						if strings.HasPrefix(line, "OPENAI_API_KEY=") {
+							val := strings.TrimPrefix(line, "OPENAI_API_KEY=")
+							if val != "" {
+								masked := val[:minInt(8, len(val))] + "..." + val[maxInt(0, len(val)-4):]
+								_ = table.Append("OPENAI_API_KEY", masked+" (.env.local)")
+							}
+						}
+						if strings.HasPrefix(line, "LLM_MODEL=") {
+							val := strings.TrimPrefix(line, "LLM_MODEL=")
+							_ = table.Append("LLM_MODEL", val+" (.env.local)")
+						}
+					}
+				}
+			}
+
 			return table.Render()
 		},
 	}
@@ -166,9 +200,26 @@ overriding environment variables.`,
 	return cmd
 }
 
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // Settable keys and their mapping for standalone .env.local
 var standaloneEnvKeys = map[string]string{
-	"google_api_key": "GOOGLE_API_KEY",
+	"google_api_key":  "GOOGLE_API_KEY",
+	"openai_base_url": "OPENAI_BASE_URL",
+	"openai_api_key":  "OPENAI_API_KEY",
+	"llm_model":       "LLM_MODEL",
 }
 
 // Settable keys for config.yaml
@@ -200,7 +251,10 @@ Supported keys:
   auto_update_enabled         Enable/disable automatic update checks (true/false)
   auto_update_mode            Update mode: notify (default) or auto
   auto_update_check_interval  How often to check for updates (e.g., 24h, 12h)
-  google_api_key              Google API key (standalone installations only)
+  google_api_key              Google AI API key (for LLM features)
+  openai_base_url             OpenAI-compatible base URL (e.g., http://localhost:11434/v1)
+  openai_api_key              OpenAI-compatible API key (optional for local servers)
+  llm_model                   LLM model name (e.g., llama3, mistral)
 
 For standalone installations, google_api_key is saved to .env.local.
 All other keys are saved to config.yaml.`,
