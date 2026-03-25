@@ -247,7 +247,7 @@ type EmailConfig struct {
 	// FromEmail is the default from email address
 	FromEmail string `env:"EMAIL_FROM_ADDRESS" envDefault:"noreply@example.com"`
 	// FromName is the default from name
-	FromName string `env:"EMAIL_FROM_NAME" envDefault:"Memory"`
+	FromName string `env:"EMAIL_FROM_NAME" envDefault:"emergent.memory"`
 	// MaxRetries is the maximum number of retry attempts (default: 3)
 	MaxRetries int `env:"EMAIL_MAX_RETRIES" envDefault:"3"`
 	// RetryDelaySec is the base delay in seconds for retries (default: 60)
