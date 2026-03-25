@@ -429,6 +429,10 @@ func (h *StreamableHTTPHandler) processRequest(c echo.Context, req *Request, ses
 		return h.handleToolsList(c, req, session)
 	case "tools/call":
 		return h.handleToolsCall(c, req, session, user)
+	case "prompts/list":
+		return h.handlePromptsList(c, req, session)
+	case "prompts/get":
+		return h.handlePromptsGet(c, req, session, user)
 	default:
 		return NewErrorResponse(
 			req.ID,
@@ -436,7 +440,7 @@ func (h *StreamableHTTPHandler) processRequest(c echo.Context, req *Request, ses
 			"Method not found: "+req.Method,
 			map[string]any{
 				"method":            req.Method,
-				"supported_methods": []string{"initialize", "tools/list", "tools/call"},
+				"supported_methods": []string{"initialize", "tools/list", "tools/call", "prompts/list", "prompts/get"},
 			},
 		)
 	}
@@ -577,7 +581,52 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 	return NewSuccessResponse(req.ID, result)
 }
 
-// handleNotification handles JSON-RPC notifications
+// handlePromptsList handles prompts/list method
+func (h *StreamableHTTPHandler) handlePromptsList(c echo.Context, req *Request, session *MCPSession) *Response {
+	if !session.Initialized {
+		return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
+			"Client must call initialize before prompts/list",
+			map[string]string{"hint": "Call initialize method first to establish session"},
+		)
+	}
+	prompts := h.svc.GetPromptDefinitions()
+	return NewSuccessResponse(req.ID, PromptsListResult{Prompts: prompts})
+}
+
+// handlePromptsGet handles prompts/get method
+func (h *StreamableHTTPHandler) handlePromptsGet(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser) *Response {
+	if !session.Initialized {
+		return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
+			"Client must call initialize before prompts/get",
+			map[string]string{"hint": "Call initialize method first to establish session"},
+		)
+	}
+	var params PromptGetParams
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return NewErrorResponse(req.ID, ErrCodeInvalidParams,
+				"Invalid prompts/get params", map[string]string{"error": err.Error()})
+		}
+	}
+	if params.Name == "" {
+		return NewErrorResponse(req.ID, ErrCodeInvalidParams,
+			"Missing required parameter: name",
+			map[string]any{"required": []string{"name"}},
+		)
+	}
+	projectID := session.ProjectID
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	result, err := h.svc.GetPrompt(c.Request().Context(), projectID, params.Name, params.Arguments)
+	if err != nil {
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Failed to get prompt: "+err.Error(),
+			map[string]string{"name": params.Name},
+		)
+	}
+	return NewSuccessResponse(req.ID, result)
+}
 func (h *StreamableHTTPHandler) handleNotification(c echo.Context, req *Request, session *MCPSession) {
 	switch req.Method {
 	case "notifications/initialized":

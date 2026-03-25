@@ -1147,79 +1147,9 @@ func (s *Service) GetResourceDefinitions() []ResourceDefinition {
 func (s *Service) GetPromptDefinitions() []PromptDefinition {
 	return []PromptDefinition{
 		{
-			Name:        "explore_entity_type",
-			Description: "Guide to exploring entities of a specific type with filtering and relationship analysis",
-			Arguments: []PromptArgument{
-				{
-					Name:        "entity_type",
-					Description: "The entity type to explore (e.g., 'Decision', 'Project', 'Document')",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "create_from_template",
-			Description: "Step-by-step workflow for creating a new entity using a schema",
-			Arguments: []PromptArgument{
-				{
-					Name:        "entity_type",
-					Description: "Type of entity to create",
-					Required:    true,
-				},
-				{
-					Name:        "schema",
-					Description: "Memory schema to use (optional, will suggest if not provided)",
-					Required:    false,
-				},
-			},
-		},
-		{
-			Name:        "analyze_relationships",
-			Description: "Guide for discovering and analyzing entity relationships in the knowledge graph",
-			Arguments: []PromptArgument{
-				{
-					Name:        "entity_name",
-					Description: "Name or ID of the entity to analyze",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "setup_research_project",
-			Description: "Complete workflow for setting up a research project with tasks, documents, and relationships",
-			Arguments: []PromptArgument{
-				{
-					Name:        "project_name",
-					Description: "Name of the research project",
-					Required:    true,
-				},
-				{
-					Name:        "methodology",
-					Description: "Research methodology (optional)",
-					Required:    false,
-				},
-			},
-		},
-		{
-			Name:        "find_related_entities",
-			Description: "Discover entities related to a given entity through various relationship types",
-			Arguments: []PromptArgument{
-				{
-					Name:        "entity_name",
-					Description: "Starting entity name or ID",
-					Required:    true,
-				},
-				{
-					Name:        "relationship_type",
-					Description: "Filter by specific relationship type (optional)",
-					Required:    false,
-				},
-				{
-					Name:        "depth",
-					Description: "How many hops to traverse (default: 1)",
-					Required:    false,
-				},
-			},
+			Name:        "memory-guide",
+			Description: "Get guidance on how to use this knowledge base — what it contains, how to query it, and which tools to use for different tasks",
+			Arguments:   []PromptArgument{},
 		},
 	}
 }
@@ -4584,6 +4514,42 @@ func (s *Service) readProjectTemplatesResource(ctx context.Context, projectID st
 
 func (s *Service) GetPrompt(ctx context.Context, projectID, name string, arguments map[string]any) (*PromptGetResult, error) {
 	switch name {
+	case "memory-guide":
+		return &PromptGetResult{
+			Description: "Understand what this knowledge base contains and how to query it",
+			Messages: []PromptMessage{
+				{
+					Role: "user",
+					Content: PromptContent{
+						Type: "text",
+						Text: `You are connected to a knowledge graph via the Memory MCP server (by emergent.memory).
+
+Start by calling 'project-get' to read the project description — it explains what this knowledge base is about and what it contains.
+
+Then call 'entity-type-list' to see what kinds of entities are stored.
+
+## How to answer questions about this knowledge base
+
+For natural language questions ("What do we know about X?", "Summarize our decisions on Y"):
+→ Use 'search-knowledge' — it queries the graph and generates a grounded answer.
+
+For finding specific entities by attribute or type:
+→ Use 'entity-query' or 'entity-search'
+
+For similarity / semantic search:
+→ Use 'search-hybrid' or 'search-semantic'
+
+For exploring how entities connect to each other:
+→ Use 'graph-traverse' or 'entity-edges-get'
+
+## Key concepts
+- This is a knowledge graph, not a document store. Data is structured as typed Entities with Attributes and typed Relationships between them.
+- Always call 'project-get' first if you haven't already — it tells you what domain this graph covers.
+- When a user asks a question, prefer 'search-knowledge' as your first tool — it handles retrieval and synthesis in one step.`,
+					},
+				},
+			},
+		}, nil
 	case "explore_entity_type":
 		return s.getExploreEntityTypePrompt(arguments)
 	case "create_from_template":
