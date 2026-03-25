@@ -16,8 +16,9 @@ import (
 
 // Handler handles MCP HTTP requests
 type Handler struct {
-	svc *Service
-	log *slog.Logger
+	svc            *Service
+	log            *slog.Logger
+	userProfileSvc *auth.UserProfileService
 
 	// Session management (token -> session)
 	sessions   map[string]*Session
@@ -31,11 +32,12 @@ type Session struct {
 }
 
 // NewHandler creates a new MCP handler
-func NewHandler(svc *Service, log *slog.Logger) *Handler {
+func NewHandler(svc *Service, log *slog.Logger, userProfileSvc *auth.UserProfileService) *Handler {
 	return &Handler{
-		svc:      svc,
-		log:      log.With(logger.Scope("mcp.handler")),
-		sessions: make(map[string]*Session),
+		svc:            svc,
+		log:            log.With(logger.Scope("mcp.handler")),
+		userProfileSvc: userProfileSvc,
+		sessions:       make(map[string]*Session),
 	}
 }
 

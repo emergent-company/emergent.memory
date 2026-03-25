@@ -7,6 +7,11 @@ import (
 )
 
 func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamableHandler *StreamableHTTPHandler, authMiddleware *auth.Middleware) {
+	// Public redirect: /api/mcp/install?url=<mcpUrl>&name=<name>
+	// Redirects to claude://install-mcp deep link. Must be registered before the
+	// auth-gated group so it doesn't require authentication.
+	e.GET("/api/mcp/install", h.HandleInstallRedirect)
+
 	g := e.Group("/api/mcp")
 	g.Use(authMiddleware.RequireAuth())
 

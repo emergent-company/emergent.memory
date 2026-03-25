@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -81,7 +82,7 @@ func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderN
 	mcpURL := mcpBaseURL + "/api/mcp"
 
 	// Build agent config snippets.
-	snippets := buildSnippets(mcpURL, tokenResp.Token)
+	snippets := buildSnippets(mcpBaseURL, mcpURL, tokenResp.Token)
 
 	// Dispatch invite emails asynchronously (best-effort; errors are logged, not fatal).
 	if s.emailSvc != nil && len(req.Emails) > 0 {
@@ -112,7 +113,7 @@ func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderN
 }
 
 // buildSnippets constructs ready-to-paste config blocks for supported MCP clients.
-func buildSnippets(mcpURL, apiKey string) MCPSnippets {
+func buildSnippets(mcpBaseURL, mcpURL, apiKey string) MCPSnippets {
 	claudeDesktop := fmt.Sprintf(`{
   "mcpServers": {
     "memory": {
@@ -162,8 +163,9 @@ func buildSnippets(mcpURL, apiKey string) MCPSnippets {
   }
 }`, mcpURL, apiKey)
 
-	// claude://install-mcp deep link — opens Claude Desktop with one-click install dialog.
-	installURL := fmt.Sprintf("claude://install-mcp?url=%s&name=memory", mcpURL)
+	// Use an HTTPS redirect through our server so email clients don't block the link.
+	// /api/mcp/install?url=<mcpURL>&name=memory → 302 → claude://install-mcp?url=…
+	installURL := fmt.Sprintf("%s/api/mcp/install?url=%s&name=memory", mcpBaseURL, mcpURL)
 
 	return MCPSnippets{
 		ClaudeDesktop: claudeDesktop,
@@ -172,6 +174,31 @@ func buildSnippets(mcpURL, apiKey string) MCPSnippets {
 		CloudCode:     cloudCode,
 		InstallURL:    installURL,
 	}
+}
+
+// HandleInstallRedirect handles GET /api/mcp/install
+// Redirects to the claude://install-mcp deep link so email clients (which block
+// custom protocol hrefs) can follow an https:// link that bounces to Claude Desktop.
+//
+// @Summary      Claude Desktop install redirect
+// @Description  Redirects to the claude://install-mcp deep link for one-click Claude Desktop MCP server installation. No authentication required.
+// @Tags         mcp
+// @Param        url   query string true  "MCP server URL"
+// @Param        name  query string false "Server name (default: memory)"
+// @Success      302   "Redirect to claude://install-mcp deep link"
+// @Failure      400   {object} apperror.Error "Missing url parameter"
+// @Router       /api/mcp/install [get]
+func (h *Handler) HandleInstallRedirect(c echo.Context) error {
+	mcpURL := c.QueryParam("url")
+	if mcpURL == "" {
+		return apperror.New(http.StatusBadRequest, "missing_param", "url parameter is required")
+	}
+	name := c.QueryParam("name")
+	if name == "" {
+		name = "memory"
+	}
+	claudeURL := fmt.Sprintf("claude://install-mcp?url=%s&name=%s", mcpURL, name)
+	return c.Redirect(http.StatusFound, claudeURL)
 }
 
 // enqueueMCPInviteEmail enqueues a single MCP invite email.
@@ -255,6 +282,18 @@ func (h *Handler) HandleShareMCPAccess(c echo.Context) error {
 	mcpBaseURL := fmt.Sprintf("%s://%s", scheme, c.Request().Host)
 
 	senderName := user.Email
+	if profile, err := h.userProfileSvc.GetByID(c.Request().Context(), user.ID); err == nil {
+		if profile.DisplayName != nil && *profile.DisplayName != "" {
+			senderName = *profile.DisplayName
+		} else if profile.FirstName != nil && *profile.FirstName != "" {
+			senderName = strings.TrimSpace(*profile.FirstName + " " + func() string {
+				if profile.LastName != nil {
+					return *profile.LastName
+				}
+				return ""
+			}())
+		}
+	}
 	if senderName == "" {
 		senderName = "A team member"
 	}
