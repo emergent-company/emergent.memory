@@ -17,14 +17,15 @@ templ LeftPanel(nodeTypes []ObjectType, edgeTypes []RelationshipType) {
 			<!-- hidden inputs carry state back to server on each HTMX refresh -->
 			<input type="hidden" id="hidden-node-types" name="hiddenNodeTypes" value=""/>
 			<input type="hidden" id="selected-type-filter" name="selectedType" value=""/>
-			<div
-				id="node-filter-list"
-				class="flex-1 overflow-y-auto py-1"
-				hx-get="/htmx/node-types"
-				hx-trigger="load, refreshFilters from:body"
-				hx-swap="innerHTML"
-				hx-include="#hidden-node-types"
-			>
+		<div
+			id="node-filter-list"
+			class="flex-1 overflow-y-auto py-1"
+			hx-get="/htmx/node-types"
+			hx-trigger="load, refreshFilters from:body"
+			hx-swap="innerHTML"
+			hx-include="#hidden-node-types"
+			hx-sync="#node-filter-list:replace"
+		>
 				<div class="px-3 py-3 text-[11px] text-gh-muted">Loading types…</div>
 			</div>
 		</div>
@@ -38,14 +39,15 @@ templ LeftPanel(nodeTypes []ObjectType, edgeTypes []RelationshipType) {
 				>Hide all</button>
 			</div>
 			<input type="hidden" id="hidden-edge-types" name="hiddenEdgeTypes" value=""/>
-			<div
-				id="edge-filter-list"
-				class="flex-1 overflow-y-auto py-1"
-				hx-get="/htmx/edge-types"
-				hx-trigger="load, refreshFilters from:body"
-				hx-swap="innerHTML"
-				hx-include="#hidden-edge-types, #selected-type-filter"
-			>
+		<div
+			id="edge-filter-list"
+			class="flex-1 overflow-y-auto py-1"
+			hx-get="/htmx/edge-types"
+			hx-trigger="load, refreshFilters from:body"
+			hx-swap="innerHTML"
+			hx-include="#hidden-edge-types, #selected-type-filter"
+			hx-sync="#edge-filter-list:replace"
+		>
 			</div>
 		</div>
 	</div>

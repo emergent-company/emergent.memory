@@ -32,7 +32,7 @@ func LeftPanel(nodeTypes []ObjectType, edgeTypes []RelationshipType) templ.Compo
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div id=\"left-panel\" class=\"bg-gh-surface border-r border-gh-border flex flex-col overflow-hidden\"><!-- Node types — top half --><div id=\"panel-nodes\" class=\"flex flex-col flex-1 min-h-0 overflow-hidden border-b border-gh-border\"><div class=\"flex items-center justify-between px-3 pt-2.5 pb-2 shrink-0 border-b border-gh-border\"><span class=\"text-[10px] uppercase tracking-widest text-gh-muted font-semibold\">Node types</span> <button id=\"nodes-toggle-all\" class=\"text-[10px] text-gh-accent hover:underline bg-transparent border-none cursor-pointer p-0\">Hide all</button></div><!-- hidden inputs carry state back to server on each HTMX refresh --><input type=\"hidden\" id=\"hidden-node-types\" name=\"hiddenNodeTypes\" value=\"\"> <input type=\"hidden\" id=\"selected-type-filter\" name=\"selectedType\" value=\"\"><div id=\"node-filter-list\" class=\"flex-1 overflow-y-auto py-1\" hx-get=\"/htmx/node-types\" hx-trigger=\"load, refreshFilters from:body\" hx-swap=\"innerHTML\" hx-include=\"#hidden-node-types\"><div class=\"px-3 py-3 text-[11px] text-gh-muted\">Loading types…</div></div></div><!-- Edge types — bottom half --><div id=\"panel-edges\" class=\"flex flex-col flex-1 min-h-0 overflow-hidden\"><div class=\"flex items-center justify-between px-3 pt-2.5 pb-2 shrink-0 border-b border-gh-border\"><span class=\"text-[10px] uppercase tracking-widest text-gh-muted font-semibold\">Relationships</span> <button id=\"edges-toggle-all\" class=\"text-[10px] text-gh-accent hover:underline bg-transparent border-none cursor-pointer p-0\">Hide all</button></div><input type=\"hidden\" id=\"hidden-edge-types\" name=\"hiddenEdgeTypes\" value=\"\"><div id=\"edge-filter-list\" class=\"flex-1 overflow-y-auto py-1\" hx-get=\"/htmx/edge-types\" hx-trigger=\"load, refreshFilters from:body\" hx-swap=\"innerHTML\" hx-include=\"#hidden-edge-types, #selected-type-filter\"></div></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div id=\"left-panel\" class=\"bg-gh-surface border-r border-gh-border flex flex-col overflow-hidden\"><!-- Node types — top half --><div id=\"panel-nodes\" class=\"flex flex-col flex-1 min-h-0 overflow-hidden border-b border-gh-border\"><div class=\"flex items-center justify-between px-3 pt-2.5 pb-2 shrink-0 border-b border-gh-border\"><span class=\"text-[10px] uppercase tracking-widest text-gh-muted font-semibold\">Node types</span> <button id=\"nodes-toggle-all\" class=\"text-[10px] text-gh-accent hover:underline bg-transparent border-none cursor-pointer p-0\">Hide all</button></div><!-- hidden inputs carry state back to server on each HTMX refresh --><input type=\"hidden\" id=\"hidden-node-types\" name=\"hiddenNodeTypes\" value=\"\"> <input type=\"hidden\" id=\"selected-type-filter\" name=\"selectedType\" value=\"\"><div id=\"node-filter-list\" class=\"flex-1 overflow-y-auto py-1\" hx-get=\"/htmx/node-types\" hx-trigger=\"load, refreshFilters from:body\" hx-swap=\"innerHTML\" hx-include=\"#hidden-node-types\" hx-sync=\"#node-filter-list:replace\"><div class=\"px-3 py-3 text-[11px] text-gh-muted\">Loading types…</div></div></div><!-- Edge types — bottom half --><div id=\"panel-edges\" class=\"flex flex-col flex-1 min-h-0 overflow-hidden\"><div class=\"flex items-center justify-between px-3 pt-2.5 pb-2 shrink-0 border-b border-gh-border\"><span class=\"text-[10px] uppercase tracking-widest text-gh-muted font-semibold\">Relationships</span> <button id=\"edges-toggle-all\" class=\"text-[10px] text-gh-accent hover:underline bg-transparent border-none cursor-pointer p-0\">Hide all</button></div><input type=\"hidden\" id=\"hidden-edge-types\" name=\"hiddenEdgeTypes\" value=\"\"><div id=\"edge-filter-list\" class=\"flex-1 overflow-y-auto py-1\" hx-get=\"/htmx/edge-types\" hx-trigger=\"load, refreshFilters from:body\" hx-swap=\"innerHTML\" hx-include=\"#hidden-edge-types, #selected-type-filter\" hx-sync=\"#edge-filter-list:replace\"></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -121,7 +121,7 @@ func NodeTypeItem(t ObjectType) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(t.Name)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 67, Col: 20}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 69, Col: 20}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -134,7 +134,7 @@ func NodeTypeItem(t ObjectType) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(t.Color)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 68, Col: 22}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 70, Col: 22}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -147,7 +147,7 @@ func NodeTypeItem(t ObjectType) templ.Component {
 		var templ_7745c5c3_Var8 string
 		templ_7745c5c3_Var8, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(fmt.Sprintf("background:%s;font-size:%s;font-weight:700;line-height:1", t.Color, iconFontSize(t.Icon)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 74, Col: 113}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 76, Col: 113}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 		if templ_7745c5c3_Err != nil {
@@ -160,7 +160,7 @@ func NodeTypeItem(t ObjectType) templ.Component {
 		var templ_7745c5c3_Var9 string
 		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(t.Icon)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 75, Col: 11}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 77, Col: 11}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 		if templ_7745c5c3_Err != nil {
@@ -173,7 +173,7 @@ func NodeTypeItem(t ObjectType) templ.Component {
 		var templ_7745c5c3_Var10 string
 		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(t.Name)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 80, Col: 21}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 82, Col: 21}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
@@ -191,7 +191,7 @@ func NodeTypeItem(t ObjectType) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(t.Description)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 82, Col: 25}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 84, Col: 25}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -209,7 +209,7 @@ func NodeTypeItem(t ObjectType) templ.Component {
 		var templ_7745c5c3_Var12 string
 		templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(displayType(t.Name))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 84, Col: 24}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 86, Col: 24}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 		if templ_7745c5c3_Err != nil {
@@ -246,7 +246,7 @@ func NodeTypeItem(t ObjectType) templ.Component {
 		var templ_7745c5c3_Var15 string
 		templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(countLabel(t.InGraph, t.Count))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 90, Col: 35}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 92, Col: 35}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 		if templ_7745c5c3_Err != nil {
@@ -380,7 +380,7 @@ func EdgeTypeItem(t RelationshipType) templ.Component {
 		var templ_7745c5c3_Var22 string
 		templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(t.Name)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 119, Col: 20}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 121, Col: 20}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 		if templ_7745c5c3_Err != nil {
@@ -393,7 +393,7 @@ func EdgeTypeItem(t RelationshipType) templ.Component {
 		var templ_7745c5c3_Var23 string
 		templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(t.Color)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 120, Col: 22}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 122, Col: 22}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 		if templ_7745c5c3_Err != nil {
@@ -406,7 +406,7 @@ func EdgeTypeItem(t RelationshipType) templ.Component {
 		var templ_7745c5c3_Var24 string
 		templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(t.Color)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 125, Col: 55}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 127, Col: 55}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 		if templ_7745c5c3_Err != nil {
@@ -419,7 +419,7 @@ func EdgeTypeItem(t RelationshipType) templ.Component {
 		var templ_7745c5c3_Var25 string
 		templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(t.Color)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 126, Col: 48}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 128, Col: 48}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 		if templ_7745c5c3_Err != nil {
@@ -432,7 +432,7 @@ func EdgeTypeItem(t RelationshipType) templ.Component {
 		var templ_7745c5c3_Var26 string
 		templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(t.Color)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 127, Col: 49}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 129, Col: 49}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 		if templ_7745c5c3_Err != nil {
@@ -445,7 +445,7 @@ func EdgeTypeItem(t RelationshipType) templ.Component {
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(displayType(t.Name))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 130, Col: 78}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 132, Col: 78}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 		if templ_7745c5c3_Err != nil {
@@ -459,7 +459,7 @@ func EdgeTypeItem(t RelationshipType) templ.Component {
 			var templ_7745c5c3_Var28 string
 			templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", t.Count))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 133, Col: 32}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `panels.templ`, Line: 135, Col: 32}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 			if templ_7745c5c3_Err != nil {

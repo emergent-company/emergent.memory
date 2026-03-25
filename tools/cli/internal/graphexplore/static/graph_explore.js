@@ -125,6 +125,24 @@ function showToast(msg, duration = 2500) {
   toastTimer = setTimeout(() => $toast.classList.remove('show'), duration);
 }
 
+// ── Clipboard helper ──────────────────────────────────────────────────────
+// Copies text to clipboard. Falls back to execCommand for non-HTTPS contexts
+// (e.g., http://mcj-one:7734 where navigator.clipboard is unavailable).
+function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  // Fallback: temporary textarea + execCommand
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+  return Promise.resolve();
+}
+
 // ── Confirm dialog ────────────────────────────────────────────────────────
 // Returns a Promise<boolean> — resolves true (OK) or false (Cancel).
 // Uses an in-page <dialog> instead of window.confirm() so DevTools can click it.
@@ -1022,7 +1040,7 @@ document.getElementById('btn-expand').addEventListener('click', async () => {
 document.getElementById('btn-copy-id').addEventListener('click', () => {
   if (!selectedNode) return;
   const id = (nodeData[selectedNode] || {}).id || (nodeData[selectedNode] || {}).canonical_id || selectedNode;
-  navigator.clipboard.writeText(id).then(() => showToast('Copied ID to clipboard'));
+  copyToClipboard(id).then(() => showToast('Copied ID to clipboard'));
 });
 
 let focusActive = false;
@@ -1288,7 +1306,7 @@ document.getElementById('ctx-copy-id').addEventListener('click', () => {
   if (ctxMenuNode) {
     const d = nodeData[ctxMenuNode] || {};
     const id = d.id || d.canonical_id || ctxMenuNode;
-    navigator.clipboard.writeText(id).then(() => showToast('Copied ID to clipboard'));
+    copyToClipboard(id).then(() => showToast('Copied ID to clipboard'));
   }
   hideContextMenu();
 });
