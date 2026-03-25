@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -166,8 +167,8 @@ func buildSnippets(mcpBaseURL, mcpURL, apiKey string) MCPSnippets {
 }`, mcpURL, apiKey)
 
 	// Use an HTTPS redirect through our server so email clients don't block the link.
-	// /api/mcp/install?url=<mcpURL>&name=memory → 302 → claude://install-mcp?url=…
-	installURL := fmt.Sprintf("%s/api/mcp/install?url=%s&name=memory", mcpBaseURL, mcpURL)
+	// /api/mcp/install?token=<token>&url=<mcpURL>&name=memory → 302 → claude://install-mcp?…
+	installURL := fmt.Sprintf("%s/api/mcp/install?token=%s&url=%s&name=memory", mcpBaseURL, url.QueryEscape(apiKey), url.QueryEscape(mcpURL))
 
 	return MCPSnippets{
 		ClaudeDesktop: claudeDesktop,
@@ -182,11 +183,16 @@ func buildSnippets(mcpBaseURL, mcpURL, apiKey string) MCPSnippets {
 // Redirects to the claude://install-mcp deep link so email clients (which block
 // custom protocol hrefs) can follow an https:// link that bounces to Claude Desktop.
 //
+// When a token is provided, it builds a full npx mcp-remote invocation with the
+// API key in --header args so Claude Desktop installs an authenticated stdio server
+// (preventing the OAuth discovery crash that occurs when no auth is present).
+//
 // @Summary      Claude Desktop install redirect
 // @Description  Redirects to the claude://install-mcp deep link for one-click Claude Desktop MCP server installation. No authentication required.
 // @Tags         mcp
-// @Param        url   query string true  "MCP server URL"
-// @Param        name  query string false "Server name (default: memory)"
+// @Param        url    query string true  "MCP server URL"
+// @Param        name   query string false "Server name (default: memory)"
+// @Param        token  query string false "API key — when present, installs via npx mcp-remote with auth header"
 // @Success      302   "Redirect to claude://install-mcp deep link"
 // @Failure      400   {object} apperror.Error "Missing url parameter"
 // @Router       /api/mcp/install [get]
@@ -199,7 +205,28 @@ func (h *Handler) HandleInstallRedirect(c echo.Context) error {
 	if name == "" {
 		name = "memory"
 	}
-	claudeURL := fmt.Sprintf("claude://install-mcp?url=%s&name=%s", mcpURL, name)
+	token := c.QueryParam("token")
+
+	var claudeURL string
+	if token != "" {
+		// Build a full npx mcp-remote deep link with the API key in --header args.
+		// This installs an authenticated stdio server so the proxy never hits the
+		// OAuth discovery path (which crashes when our server has no /register route).
+		params := url.Values{}
+		params.Set("name", name)
+		params.Set("command", "npx")
+		params.Add("args", "-y")
+		params.Add("args", "mcp-remote")
+		params.Add("args", mcpURL)
+		params.Add("args", "--header")
+		params.Add("args", fmt.Sprintf("Authorization: Bearer %s", token))
+		params.Add("args", "--transport")
+		params.Add("args", "http-first")
+		claudeURL = "claude://install-mcp?" + params.Encode()
+	} else {
+		// Fallback: no token — old behaviour (url+name only).
+		claudeURL = fmt.Sprintf("claude://install-mcp?url=%s&name=%s", mcpURL, name)
+	}
 	return c.Redirect(http.StatusFound, claudeURL)
 }
 
