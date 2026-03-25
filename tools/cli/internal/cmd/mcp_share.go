@@ -17,7 +17,7 @@ var (
 )
 
 var mcpShareCmd = &cobra.Command{
-	Use:   "share",
+	Use:   "share-mcp",
 	Short: "Share read-only MCP access with a teammate or AI agent",
 	Long: `Generate a read-only API token for your project and print ready-to-use
 MCP config snippets for Claude Desktop, Cursor, and OpenCode.
@@ -28,9 +28,9 @@ Write operations will be rejected. The token can be revoked at any time with:
   memory tokens revoke <token-id> --project <project>
 
 Examples:
-  memory mcp share --project my-project
-  memory mcp share --project my-project --name "Alice read-only"
-  memory mcp share --project my-project --email alice@example.com --email bob@example.com`,
+  memory projects share-mcp --project my-project
+  memory projects share-mcp --project my-project --name "Alice read-only"
+  memory projects share-mcp --project my-project --email alice@example.com --email bob@example.com`,
 	RunE: runMCPShare,
 }
 
@@ -136,5 +136,5 @@ func init() {
 	mcpShareCmd.Flags().StringArrayVar(&mcpShareEmails, "email", []string{}, "Email address to invite (can be repeated)")
 	mcpShareCmd.Flags().BoolVar(&mcpShareJSON, "json", false, "Output raw JSON response")
 
-	agentsCmd.AddCommand(mcpShareCmd)
+	projectsCmd.AddCommand(mcpShareCmd)
 }
