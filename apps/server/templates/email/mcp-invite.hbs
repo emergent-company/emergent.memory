@@ -3,86 +3,120 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MCP Access — {{projectName}}</title>
+  <title>{{senderName}} shared Memory access with you</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; margin: 0; padding: 0; }
-    .container { max-width: 600px; margin: 40px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .container { max-width: 620px; margin: 40px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
     .header { background: #1a1a2e; padding: 32px 40px; }
-    .header h1 { color: #fff; margin: 0; font-size: 22px; font-weight: 600; }
+    .header h1 { color: #fff; margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
+    .header p { color: #9ca3af; margin: 6px 0 0; font-size: 14px; }
     .body { padding: 32px 40px; color: #333; }
-    .body p { line-height: 1.6; margin: 0 0 16px; }
-    .badge { display: inline-block; background: #e8f0fe; color: #1a73e8; padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 500; }
-    .section { background: #f8f9fa; border-radius: 6px; padding: 20px 24px; margin: 24px 0; }
-    .section h3 { margin: 0 0 12px; font-size: 15px; color: #444; }
-    .section h4 { margin: 16px 0 8px; font-size: 13px; color: #555; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-    .code { font-family: 'Courier New', monospace; background: #1a1a2e; color: #e2e8f0; padding: 10px 14px; border-radius: 4px; font-size: 13px; display: block; margin: 6px 0; overflow-x: auto; word-break: break-all; }
-    .key-box { background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; padding: 16px 20px; margin: 16px 0; }
-    .key-box p { margin: 0 0 8px; font-size: 13px; color: #795548; }
+    .body p { line-height: 1.65; margin: 0 0 16px; font-size: 15px; }
+    .what-is { background: #f0f4ff; border-left: 3px solid #4f6ef7; border-radius: 0 6px 6px 0; padding: 16px 20px; margin: 20px 0 24px; }
+    .what-is p { margin: 0; font-size: 14px; color: #374151; }
+    .key-box { background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; padding: 18px 22px; margin: 24px 0; }
+    .key-box .label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #92400e; margin: 0 0 8px; }
+    .key-box .warning { font-size: 12px; color: #b45309; margin: 10px 0 0; }
+    .code { font-family: 'Courier New', monospace; background: #1e293b; color: #e2e8f0; padding: 10px 14px; border-radius: 4px; font-size: 13px; display: block; margin: 6px 0; overflow-x: auto; word-break: break-all; }
     .key-box .code { background: #37474f; }
-    .warning { font-size: 12px; color: #e65100; margin: 6px 0 0; }
-    .footer { padding: 20px 40px; border-top: 1px solid #eee; color: #888; font-size: 12px; }
-    .footer a { color: #1a73e8; }
+    .section { margin: 28px 0; }
+    .section h2 { font-size: 16px; font-weight: 600; color: #111; margin: 0 0 6px; }
+    .section .subtitle { font-size: 13px; color: #6b7280; margin: 0 0 14px; }
+    .client { background: #f8f9fa; border-radius: 6px; padding: 18px 22px; margin: 12px 0; }
+    .client h3 { font-size: 14px; font-weight: 600; color: #1a1a2e; margin: 0 0 4px; }
+    .client .path { font-size: 12px; color: #6b7280; margin: 0 0 10px; font-family: 'Courier New', monospace; }
+    .scopes { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0; }
+    .scope-tag { background: #e8f0fe; color: #1a56db; font-size: 12px; padding: 3px 10px; border-radius: 12px; font-weight: 500; }
+    .divider { border: none; border-top: 1px solid #e5e7eb; margin: 28px 0; }
+    .footer { padding: 20px 40px; color: #9ca3af; font-size: 12px; line-height: 1.6; }
+    .footer a { color: #6b7280; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
       <h1>emergent memory</h1>
+      <p>Knowledge graph platform</p>
     </div>
     <div class="body">
+
       <p>Hi there,</p>
+
       <p>
-        <strong>{{senderName}}</strong> has shared read-only MCP access to the project
-        <strong>{{projectName}}</strong> with you.
+        <strong>{{senderName}}</strong> has granted you read-only access to the
+        <strong>{{projectName}}</strong> knowledge graph on Memory.
       </p>
-      <p>
-        You can connect any MCP-compatible AI agent to this project using the credentials below.
-        No account required.
-      </p>
+
+      <div class="what-is">
+        <p>
+          <strong>What is this?</strong> Memory is a knowledge graph platform that stores structured information —
+          entities, relationships, documents, and decisions — about a project. With this access, your AI assistant
+          (Claude, Cursor, Cloud Code, etc.) can query and search that knowledge directly, giving it context about
+          <strong>{{projectName}}</strong> without you having to explain it every time.
+          <br><br>
+          Your access is <strong>read-only</strong>: you can search and browse, but cannot modify anything.
+        </p>
+      </div>
+
+      <p><strong>What you can do with this access:</strong></p>
+      <div class="scopes">
+        <span class="scope-tag">Search the knowledge graph</span>
+        <span class="scope-tag">Browse entities &amp; relationships</span>
+        <span class="scope-tag">Read schemas</span>
+        <span class="scope-tag">View agent definitions</span>
+        <span class="scope-tag">Read project metadata</span>
+      </div>
+
+      <hr class="divider">
 
       <div class="key-box">
-        <p><strong>Your API Key</strong> — keep this private, do not forward this email</p>
+        <p class="label">Your API Key — keep this private</p>
         <code class="code">{{apiKey}}</code>
-        <p class="warning">⚠ This key grants read-only access to {{projectName}}. It will not be shown again.</p>
+        <p class="warning">⚠ This key grants read-only access to <strong>{{projectName}}</strong>. Do not forward this email or share the key publicly. It will not be shown again.</p>
       </div>
+
+      <hr class="divider">
 
       <div class="section">
-        <h3>MCP Server Details</h3>
-        <p style="margin:0 0 6px;font-size:13px;color:#555;">Endpoint URL</p>
-        <code class="code">{{mcpUrl}}</code>
-        <p style="margin:12px 0 6px;font-size:13px;color:#555;">Project ID</p>
-        <code class="code">{{projectId}}</code>
+        <h2>Connect your AI assistant</h2>
+        <p class="subtitle">Add the config below to your preferred tool. The MCP server endpoint is: <code style="background:#f1f5f9;padding:2px 6px;border-radius:3px;font-size:12px;">{{mcpUrl}}</code></p>
+
+        <div class="client">
+          <h3>Claude Desktop</h3>
+          <p class="path">~/Library/Application Support/Claude/claude_desktop_config.json &nbsp;(macOS)<br>%APPDATA%\Claude\claude_desktop_config.json &nbsp;(Windows)</p>
+          <code class="code">{{snippets.claudeDesktop}}</code>
+        </div>
+
+        <div class="client">
+          <h3>Cursor</h3>
+          <p class="path">Settings → MCP → Add server</p>
+          <code class="code">{{snippets.cursor}}</code>
+        </div>
+
+        <div class="client">
+          <h3>Google Cloud Code / Gemini Code Assist</h3>
+          <p class="path">Save as <strong>.gemini/settings.json</strong> in your project root (or ~/.gemini/settings.json for global)</p>
+          <code class="code">{{snippets.cloudCode}}</code>
+        </div>
+
       </div>
 
-      <div class="section">
-        <h3>Configure your AI agent</h3>
+      <hr class="divider">
 
-        <h4>Claude Desktop</h4>
-        <p style="margin:0 0 8px;font-size:13px;color:#555;">
-          Add the following to your <code style="background:#eee;padding:2px 5px;border-radius:3px;">claude_desktop_config.json</code>:
-        </p>
-        <code class="code">{{snippets.claudeDesktop}}</code>
-
-        <h4>Cursor</h4>
-        <p style="margin:0 0 8px;font-size:13px;color:#555;">
-          Add the following to your Cursor MCP settings:
-        </p>
-        <code class="code">{{snippets.cursor}}</code>
-      </div>
-
-      <p>
-        To revoke this access at any time, the project admin can delete the token from the
-        project's API token settings.
+      <p style="font-size:14px;color:#6b7280;">
+        To revoke this access, ask <strong>{{senderName}}</strong> to delete the token from the project's API token settings.
       </p>
 
-      <p>If you weren't expecting this, you can safely ignore this email — no action is required.</p>
+      <p style="font-size:14px;color:#6b7280;">
+        If you weren't expecting this email, you can safely ignore it — no action is required and no account has been created for you.
+      </p>
 
-      <p>— The emergent memory team</p>
     </div>
     <div class="footer">
       <p>
-        MCP endpoint: <a href="{{mcpUrl}}">{{mcpUrl}}</a><br>
-        Sent from emergent memory · <a href="https://emergent.memory">emergent.memory</a>
+        Sent by <strong>{{senderName}}</strong> via emergent memory ·
+        <a href="https://emergent.memory">emergent.memory</a><br>
+        MCP endpoint: <a href="{{mcpUrl}}">{{mcpUrl}}</a>
       </p>
     </div>
   </div>

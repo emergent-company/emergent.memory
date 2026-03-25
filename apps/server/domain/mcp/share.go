@@ -28,6 +28,7 @@ type ShareMCPAccessRequest struct {
 type MCPSnippets struct {
 	ClaudeDesktop string `json:"claudeDesktop"`
 	Cursor        string `json:"cursor"`
+	CloudCode     string `json:"cloudCode"`
 }
 
 // ShareMCPAccessResponse is the response for POST /api/projects/:projectId/mcp/share.
@@ -81,12 +82,20 @@ func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderN
 	snippets := buildSnippets(mcpURL, tokenResp.Token)
 
 	// Dispatch invite emails asynchronously (best-effort; errors are logged, not fatal).
-	if s.emailSvc != nil {
-		for _, email := range req.Emails {
-			enqErr := s.enqueueMCPInviteEmail(ctx, email, senderName, projectID, mcpURL, tokenResp.Token, snippets)
+	if s.emailSvc != nil && len(req.Emails) > 0 {
+		// Fetch project name for the email subject/body.
+		var projectName string
+		_ = s.db.NewSelect().
+			TableExpr("kb.projects").
+			ColumnExpr("name").
+			Where("id = ?", projectID).
+			Scan(ctx, &projectName)
+
+		for _, addr := range req.Emails {
+			enqErr := s.enqueueMCPInviteEmail(ctx, addr, senderName, projectID, projectName, mcpURL, tokenResp.Token, snippets)
 			if enqErr != nil {
 				s.log.Warn("failed to enqueue mcp invite email",
-					"email", email,
+					"email", addr,
 					"error", enqErr)
 			}
 		}
@@ -124,28 +133,48 @@ func buildSnippets(mcpURL, apiKey string) MCPSnippets {
   }
 }`, mcpURL, apiKey)
 
+	// Cloud Code / Gemini Code Assist — .gemini/settings.json
+	// Uses "httpUrl" key (not "url") and supports headers for auth.
+	cloudCode := fmt.Sprintf(`{
+  "mcpServers": {
+    "memory": {
+      "httpUrl": %q,
+      "headers": {
+        "X-API-Key": %q
+      }
+    }
+  }
+}`, mcpURL, apiKey)
+
 	return MCPSnippets{
 		ClaudeDesktop: claudeDesktop,
 		Cursor:        cursor,
+		CloudCode:     cloudCode,
 	}
 }
 
 // enqueueMCPInviteEmail enqueues a single MCP invite email.
-func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName, projectID, mcpURL, apiKey string, snippets MCPSnippets) error {
-	subject := fmt.Sprintf("MCP Access — %s", projectID)
+func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName, projectID, projectName, mcpURL, apiKey string, snippets MCPSnippets) error {
+	displayName := projectName
+	if displayName == "" {
+		displayName = projectID
+	}
+	subject := fmt.Sprintf("%s has shared Memory project access with you", senderName)
 
 	_, err := s.emailSvc.Enqueue(ctx, email.EnqueueOptions{
 		TemplateName: "mcp-invite",
 		ToEmail:      toEmail,
 		Subject:      subject,
 		TemplateData: map[string]interface{}{
-			"senderName": senderName,
-			"projectId":  projectID,
-			"mcpUrl":     mcpURL,
-			"apiKey":     apiKey,
+			"senderName":  senderName,
+			"projectId":   projectID,
+			"projectName": displayName,
+			"mcpUrl":      mcpURL,
+			"apiKey":      apiKey,
 			"snippets": map[string]interface{}{
 				"claudeDesktop": snippets.ClaudeDesktop,
 				"cursor":        snippets.Cursor,
+				"cloudCode":     snippets.CloudCode,
 			},
 		},
 	})
