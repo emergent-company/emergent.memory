@@ -135,6 +135,9 @@ COPY --from=cli-builder /out/memory /usr/local/bin/
 # Copy swagger docs (server looks for ./docs/swagger relative to WORKDIR)
 COPY --from=server-builder /build/server/docs/swagger /app/docs/swagger
 
+# Copy email templates (Handlebars .hbs files for invite emails, etc.)
+COPY apps/server/templates/ /app/templates/
+
 # Copy migrations
 COPY apps/server/migrations/*.sql /app/migrations/
 
