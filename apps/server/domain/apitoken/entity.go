@@ -58,13 +58,13 @@ type ApiTokenListResponseDTO struct {
 // CreateApiTokenRequest is the request body for creating a token
 type CreateApiTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read data:read data:write agents:read agents:write projects:read projects:write"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read data:read data:write agents:read agents:write projects:read projects:write chat:use"`
 }
 
 // CreateAccountTokenRequest is the request body for creating an account-level token (no project binding)
 type CreateAccountTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read data:read data:write agents:read agents:write projects:read projects:write"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read data:read data:write agents:read agents:write projects:read projects:write chat:use"`
 }
 
 // Available scopes for API tokens
@@ -76,6 +76,7 @@ var ValidApiTokenScopes = []string{
 	"agents:write",
 	"projects:read",
 	"projects:write",
+	"chat:use",
 }
 
 // ToDTO converts an ApiToken entity to ApiTokenDTO
