@@ -4515,41 +4515,7 @@ func (s *Service) readProjectTemplatesResource(ctx context.Context, projectID st
 func (s *Service) GetPrompt(ctx context.Context, projectID, name string, arguments map[string]any) (*PromptGetResult, error) {
 	switch name {
 	case "memory-guide":
-		return &PromptGetResult{
-			Description: "Understand what this knowledge base contains and how to query it",
-			Messages: []PromptMessage{
-				{
-					Role: "user",
-					Content: PromptContent{
-						Type: "text",
-						Text: `You are connected to a knowledge graph via the Memory MCP server (by emergent.memory).
-
-Start by calling 'project-get' to read the project description — it explains what this knowledge base is about and what it contains.
-
-Then call 'entity-type-list' to see what kinds of entities are stored.
-
-## How to answer questions about this knowledge base
-
-For natural language questions ("What do we know about X?", "Summarize our decisions on Y"):
-→ Use 'search-knowledge' — it queries the graph and generates a grounded answer.
-
-For finding specific entities by attribute or type:
-→ Use 'entity-query' or 'entity-search'
-
-For similarity / semantic search:
-→ Use 'search-hybrid' or 'search-semantic'
-
-For exploring how entities connect to each other:
-→ Use 'graph-traverse' or 'entity-edges-get'
-
-## Key concepts
-- This is a knowledge graph, not a document store. Data is structured as typed Entities with Attributes and typed Relationships between them.
-- Always call 'project-get' first if you haven't already — it tells you what domain this graph covers.
-- When a user asks a question, prefer 'search-knowledge' as your first tool — it handles retrieval and synthesis in one step.`,
-					},
-				},
-			},
-		}, nil
+		return s.getMemoryGuidePrompt(ctx, projectID)
 	case "explore_entity_type":
 		return s.getExploreEntityTypePrompt(arguments)
 	case "create_from_template":
@@ -4563,6 +4529,101 @@ For exploring how entities connect to each other:
 	default:
 		return nil, fmt.Errorf("unknown prompt: %s", name)
 	}
+}
+
+func (s *Service) getMemoryGuidePrompt(ctx context.Context, projectID string) (*PromptGetResult, error) {
+	// Fetch project name and info
+	var row struct {
+		Name string  `bun:"name"`
+		Info *string `bun:"project_info"`
+	}
+	err := s.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("name, project_info").
+		Where("id = ?", projectID).
+		Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("get project info: %w", err)
+	}
+
+	// Fetch entity types with counts
+	projectUUID, _ := uuid.Parse(projectID)
+	type typeRow struct {
+		Name          string `bun:"name"`
+		Description   string `bun:"description"`
+		InstanceCount int    `bun:"instance_count"`
+	}
+	var types []typeRow
+	_ = s.db.NewRaw(`
+		SELECT
+			tr.type_name as name,
+			COALESCE(tr.description, '') as description,
+			COUNT(go.id)::int as instance_count
+		FROM kb.project_object_schema_registry tr
+		LEFT JOIN kb.graph_objects go
+			ON go.type = tr.type_name
+			AND go.deleted_at IS NULL
+			AND go.project_id = ?
+		WHERE tr.enabled = true
+			AND tr.project_id = ?
+		GROUP BY tr.type_name, tr.description
+		ORDER BY tr.type_name
+	`, projectUUID, projectUUID).Scan(ctx, &types)
+
+	// Build project info section
+	projectName := row.Name
+	if projectName == "" {
+		projectName = "this knowledge base"
+	}
+
+	var sb strings.Builder
+
+	// Project info block
+	if row.Info != nil && *row.Info != "" {
+		sb.WriteString("## About this knowledge base\n\n")
+		sb.WriteString(*row.Info)
+		sb.WriteString("\n\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("## %s\n\n", projectName))
+		sb.WriteString("You have access to a structured knowledge base. Use the tools below to explore and query it.\n\n")
+	}
+
+	// Entity types section
+	if len(types) > 0 {
+		sb.WriteString("## What's in here\n\n")
+		for _, t := range types {
+			if t.Description != "" {
+				sb.WriteString(fmt.Sprintf("- **%s** (%d entries) — %s\n", t.Name, t.InstanceCount, t.Description))
+			} else {
+				sb.WriteString(fmt.Sprintf("- **%s** (%d entries)\n", t.Name, t.InstanceCount))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	// How to query section
+	sb.WriteString("## How to query\n\n")
+	sb.WriteString("For natural language questions (\"What do we know about X?\", \"Summarize decisions on Y\"):\n")
+	sb.WriteString("→ Use **search-knowledge** — retrieves and synthesizes an answer in one step.\n\n")
+	sb.WriteString("To find specific entities by type or attribute:\n")
+	sb.WriteString("→ Use **entity-query** or **entity-search**\n\n")
+	sb.WriteString("To explore how entities connect:\n")
+	sb.WriteString("→ Use **graph-traverse** or **entity-edges-get**\n\n")
+	sb.WriteString("For semantic / similarity search:\n")
+	sb.WriteString("→ Use **search-hybrid** or **search-semantic**\n")
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Guide to querying the %s knowledge base", projectName),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: sb.String(),
+				},
+			},
+		},
+	}, nil
 }
 
 func (s *Service) getExploreEntityTypePrompt(args map[string]any) (*PromptGetResult, error) {
