@@ -68,26 +68,14 @@ func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderN
 		return nil, apperror.ErrForbidden.WithMessage("project admin role required to share MCP access")
 	}
 
-	// Determine token name — include a short timestamp to avoid duplicate-name conflicts.
-	name := req.Name
-	if name == "" {
-		name = fmt.Sprintf("MCP Read-Only Share — %s", time.Now().UTC().Format("2006-01-02 15:04:05"))
-	}
-
-	// Create the read-only token via the existing apitoken service.
-	tokenResp, err := s.apitokenSvc.Create(ctx, projectID, userID, name, readOnlyMCPScopes)
-	if err != nil {
-		return nil, fmt.Errorf("create mcp share token: %w", err)
-	}
-
 	mcpURL := mcpBaseURL + "/api/mcp"
+	timestamp := time.Now().UTC().Format("2006-01-02 15:04:05")
 
-	// Build agent config snippets.
-	snippets := buildSnippets(mcpBaseURL, mcpURL, tokenResp.Token)
-
-	// Dispatch invite emails asynchronously (best-effort; errors are logged, not fatal).
-	if s.emailSvc != nil && len(req.Emails) > 0 {
-		// Fetch project name for the email subject/body.
+	// When emails are provided, create one token per recipient so each token name
+	// clearly identifies its purpose and recipient (e.g. "MCP Share → alice@example.com — 2026-01-02 15:04:05").
+	// This makes it trivial to find and revoke a specific recipient's access later.
+	if len(req.Emails) > 0 {
+		// Fetch project name once for all invite emails.
 		var projectName string
 		_ = s.db.NewSelect().
 			TableExpr("kb.projects").
@@ -95,17 +83,57 @@ func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderN
 			Where("id = ?", projectID).
 			Scan(ctx, &projectName)
 
-		bundleURL := fmt.Sprintf("%s/api/mcp/bundle?token=%s", mcpBaseURL, tokenResp.Token)
+		// Issue one token per recipient.
+		var firstToken string
+		var firstSnippets MCPSnippets
+		for i, addr := range req.Emails {
+			tokenName := req.Name
+			if tokenName == "" {
+				tokenName = fmt.Sprintf("MCP Share → %s — %s", addr, timestamp)
+			}
 
-		for _, addr := range req.Emails {
-			enqErr := s.enqueueMCPInviteEmail(ctx, addr, senderName, projectID, projectName, mcpURL, tokenResp.Token, bundleURL, snippets)
-			if enqErr != nil {
-				s.log.Warn("failed to enqueue mcp invite email",
-					"email", addr,
-					"error", enqErr)
+			tokenResp, err := s.apitokenSvc.Create(ctx, projectID, userID, tokenName, readOnlyMCPScopes)
+			if err != nil {
+				return nil, fmt.Errorf("create mcp share token for %s: %w", addr, err)
+			}
+
+			snippets := buildSnippets(mcpBaseURL, mcpURL, tokenResp.Token)
+			if i == 0 {
+				firstToken = tokenResp.Token
+				firstSnippets = snippets
+			}
+
+			if s.emailSvc != nil {
+				bundleURL := fmt.Sprintf("%s/api/mcp/bundle?token=%s", mcpBaseURL, tokenResp.Token)
+				enqErr := s.enqueueMCPInviteEmail(ctx, addr, senderName, projectID, projectName, mcpURL, tokenResp.Token, bundleURL, snippets)
+				if enqErr != nil {
+					s.log.Warn("failed to enqueue mcp invite email",
+						"email", addr,
+						"error", enqErr)
+				}
 			}
 		}
+
+		return &ShareMCPAccessResponse{
+			Token:     firstToken,
+			MCPURL:    mcpURL,
+			ProjectID: projectID,
+			Snippets:  firstSnippets,
+		}, nil
 	}
+
+	// No emails — create a single token with the provided name or a generic default.
+	name := req.Name
+	if name == "" {
+		name = fmt.Sprintf("MCP Read-Only Share — %s", timestamp)
+	}
+
+	tokenResp, err := s.apitokenSvc.Create(ctx, projectID, userID, name, readOnlyMCPScopes)
+	if err != nil {
+		return nil, fmt.Errorf("create mcp share token: %w", err)
+	}
+
+	snippets := buildSnippets(mcpBaseURL, mcpURL, tokenResp.Token)
 
 	return &ShareMCPAccessResponse{
 		Token:     tokenResp.Token,
