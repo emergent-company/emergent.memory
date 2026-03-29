@@ -255,6 +255,14 @@ type TriggerResponse struct {
 	Error   *string `json:"error,omitempty"`
 }
 
+// TriggerRequest is the optional request body for triggering an agent with input.
+type TriggerRequest struct {
+	// Input is an initial user message passed to the agent at trigger time.
+	Input string `json:"prompt,omitempty"`
+	// Metadata is arbitrary caller context injected into the agent's system instruction.
+	Metadata map[string]string `json:"context,omitempty"`
+}
+
 // PendingEventObject represents a graph object pending processing.
 type PendingEventObject struct {
 	ID        string    `json:"id"`
@@ -708,6 +716,43 @@ func (c *Client) Trigger(ctx context.Context, agentID string) (*TriggerResponse,
 	}
 
 	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result TriggerResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// TriggerWithInput triggers an immediate run of an agent with an optional input message.
+// POST /api/projects/:projectId/agents/:id/trigger
+// Requires project:write scope.
+func (c *Client) TriggerWithInput(ctx context.Context, agentID string, req TriggerRequest) (*TriggerResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/projects/"+url.PathEscape(c.projectID)+"/agents/"+url.PathEscape(agentID)+"/trigger", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.setHeaders(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

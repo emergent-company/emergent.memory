@@ -134,6 +134,7 @@ var (
 	getRunJSONOutput      bool
 	agentListLimit        int
 	agentListPage         int
+	triggerInputFlag      string
 )
 
 // resolveAgentArgOrPick resolves an agent ID from args[0], or, when args is
@@ -241,7 +242,6 @@ func runListAgents(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
-
 
 func runGetAgent(cmd *cobra.Command, args []string) error {
 	c, err := getClient(cmd)
@@ -460,7 +460,14 @@ func runTriggerAgent(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	result, err := c.SDK.Agents.Trigger(context.Background(), agentID)
+	var result *agents.TriggerResponse
+	if triggerInputFlag != "" {
+		result, err = c.SDK.Agents.TriggerWithInput(context.Background(), agentID, agents.TriggerRequest{
+			Input: triggerInputFlag,
+		})
+	} else {
+		result, err = c.SDK.Agents.Trigger(context.Background(), agentID)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to trigger agent: %w", err)
 	}
@@ -1018,7 +1025,10 @@ func init() {
 	agentsCmd.AddCommand(createAgentCmd)
 	agentsCmd.AddCommand(updateAgentCmd)
 	agentsCmd.AddCommand(deleteAgentCmd)
+
+	triggerAgentCmd.Flags().StringVar(&triggerInputFlag, "input", "", "Initial message to pass to the agent at trigger time")
 	agentsCmd.AddCommand(triggerAgentCmd)
+
 	agentsCmd.AddCommand(runsAgentCmd)
 	agentsCmd.AddCommand(getRunCmd)
 	agentsCmd.AddCommand(questionsCmd)
