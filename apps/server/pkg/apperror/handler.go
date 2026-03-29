@@ -1,6 +1,7 @@
 package apperror
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -22,8 +23,9 @@ func HTTPErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 			"message": "An internal error occurred",
 		}
 
-		// Handle our custom app errors first
-		if appErr, ok := err.(*Error); ok {
+		// Handle our custom app errors first (errors.As unwraps fmt.Errorf chains)
+		var appErr *Error
+		if errors.As(err, &appErr) {
 			code = appErr.HTTPStatus
 			errorObj["code"] = appErr.Code
 			errorObj["message"] = appErr.Message

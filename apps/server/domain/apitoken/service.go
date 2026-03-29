@@ -101,8 +101,8 @@ func (s *Service) Create(ctx context.Context, projectID, userID, name string, sc
 		}
 	}
 
-	// Check for duplicate name
-	existing, err := s.repo.FindByProjectAndName(ctx, projectID, name)
+	// Check for duplicate name (matches DB unique index on user_id + name)
+	existing, err := s.repo.FindByUserAndProjectAndName(ctx, userID, projectID, name)
 	if err != nil {
 		return nil, err
 	}

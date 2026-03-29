@@ -40,11 +40,14 @@ func (r *Repository) Create(ctx context.Context, token *ApiToken) error {
 	return nil
 }
 
-// FindByProjectAndName finds an active token by project ID and name (for uniqueness check)
-func (r *Repository) FindByProjectAndName(ctx context.Context, projectID, name string) (*ApiToken, error) {
+// FindByUserAndProjectAndName finds an active token by user ID, project ID and name.
+// This matches the DB unique index on (user_id, name) WHERE revoked_at IS NULL,
+// scoped to the specific project.
+func (r *Repository) FindByUserAndProjectAndName(ctx context.Context, userID, projectID, name string) (*ApiToken, error) {
 	var token ApiToken
 	err := r.db.NewSelect().
 		Model(&token).
+		Where("user_id = ?", userID).
 		Where("project_id = ?", projectID).
 		Where("name = ?", name).
 		Where("revoked_at IS NULL").

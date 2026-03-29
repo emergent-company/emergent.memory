@@ -2,6 +2,7 @@ package apperror
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -215,5 +216,65 @@ func TestHTTPErrorHandler_CommittedResponse(t *testing.T) {
 	// Status should still be OK (not changed to bad request)
 	if rec.Code != http.StatusOK {
 		t.Errorf("Status = %d, want %d (committed response)", rec.Code, http.StatusOK)
+	}
+}
+
+func TestHTTPErrorHandler_WrappedAppError(t *testing.T) {
+	// Regression test: errors wrapped with fmt.Errorf("%w") must still be
+	// recognised as *apperror.Error via errors.As (not direct type assertion).
+	// This was the root cause of issue #138 where a 409 "token_name_exists"
+	// became a 500 "internal_error".
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "single_wrap",
+			err:        fmt.Errorf("create token: %w", New(409, "token_name_exists", "A token with this name already exists")),
+			wantStatus: 409,
+			wantCode:   "token_name_exists",
+		},
+		{
+			name:       "double_wrap",
+			err:        fmt.Errorf("share mcp: %w", fmt.Errorf("create token: %w", New(403, "viewer-write-scope-denied", "viewer may only request read-only scopes"))),
+			wantStatus: 403,
+			wantCode:   "viewer-write-scope-denied",
+		},
+		{
+			name:       "wrapped_bad_request",
+			err:        fmt.Errorf("validate: %w", ErrBadRequest.WithMessage("invalid scope: admin:nuke")),
+			wantStatus: 400,
+			wantCode:   "bad_request",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := echo.New()
+			log := slog.Default()
+			handler := HTTPErrorHandler(log)
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+
+			handler(tt.err, c)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("Status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+
+			var resp map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("Failed to parse response: %v", err)
+			}
+
+			errObj := resp["error"].(map[string]any)
+			if errObj["code"] != tt.wantCode {
+				t.Errorf("Code = %v, want %v", errObj["code"], tt.wantCode)
+			}
+		})
 	}
 }
