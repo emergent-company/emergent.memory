@@ -936,7 +936,8 @@ memory agents trigger [id] [flags]
 ### Options
 
 ```
-  -h, --help   help for trigger
+  -h, --help           help for trigger
+      --input string   Initial message to pass to the agent at trigger time
 ```
 
 ## memory agents update
