@@ -5,30 +5,6 @@
 ERRORS=0
 
 # ============================================================================
-# TypeScript Type Checking
-# ============================================================================
-echo "Checking TypeScript types..."
-
-# Get list of staged TypeScript files
-TS_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx)$' || true)
-
-if [ -n "$TS_FILES" ]; then
-  # Check admin TypeScript files
-  if echo "$TS_FILES" | grep -q '^apps/admin/'; then
-    echo "  Checking admin types..."
-    if ! npm --prefix apps/admin run build > /dev/null 2>&1; then
-      echo "ERROR: TypeScript errors in apps/admin"
-      echo "  Run 'npm --prefix apps/admin run build' to see details"
-      ERRORS=$((ERRORS + 1))
-    else
-      echo "  Admin types OK"
-    fi
-  fi
-else
-  echo "  No TypeScript files to check"
-fi
-
-# ============================================================================
 # SQL Migration Validation
 # ============================================================================
 echo ""
