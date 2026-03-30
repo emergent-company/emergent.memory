@@ -129,6 +129,7 @@ type ExecuteRequest struct {
 	TriggerSource   *string
 	TriggerMetadata map[string]any
 	StreamCallback  StreamCallback // Optional: enables streaming of text deltas and tool call events
+	Model           string         // Optional per-run model override; takes precedence over AgentDefinition.Model
 
 	// Ephemeral sandbox token — set by the chat handler before calling Execute.
 	// AuthToken is the raw emt_* token value to inject into sandbox containers as MEMORY_API_KEY.
@@ -283,8 +284,8 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 
 	// Start OTel span now that we have the run ID
 	agentName := ae.resolveAgentName(req)
-	modelName := ""
-	if req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
+	modelName := req.Model
+	if modelName == "" && req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
 		modelName = req.AgentDefinition.Model.Name
 	}
 	ctx, span := tracing.Start(ctx, "agent.run",
@@ -425,8 +426,8 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 
 	// Start OTel span
 	agentName := ae.resolveAgentName(req)
-	modelName := ""
-	if req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
+	modelName := req.Model
+	if modelName == "" && req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
 		modelName = req.AgentDefinition.Model.Name
 	}
 	ctx, span := tracing.Start(ctx, "agent.run",
@@ -444,6 +445,16 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	if sc := span.SpanContext(); sc.IsValid() {
 		if err := ae.repo.UpdateTraceAndRootRun(ctx, run.ID, sc.TraceID().String(), *req.RootRunID); err != nil {
 			ae.log.Warn("failed to persist trace_id/root_run_id on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	// Persist the resolved model name on the run record for observability (#141)
+	if modelName != "" {
+		if err := ae.repo.UpdateRunModel(ctx, run.ID, modelName); err != nil {
+			ae.log.Warn("failed to persist model on agent run",
 				slog.String("run_id", run.ID),
 				slog.String("error", err.Error()),
 			)
@@ -769,9 +780,9 @@ func (ae *AgentExecutor) runPipeline(
 	ctx, cancelRun = context.WithCancel(ctx)
 	defer cancelRun()
 
-	// Create the LLM model
-	modelName := ""
-	if req.AgentDefinition != nil && req.AgentDefinition.Model != nil && req.AgentDefinition.Model.Name != "" {
+	// Create the LLM model — per-run override takes precedence
+	modelName := req.Model
+	if modelName == "" && req.AgentDefinition != nil && req.AgentDefinition.Model != nil && req.AgentDefinition.Model.Name != "" {
 		modelName = req.AgentDefinition.Model.Name
 	}
 

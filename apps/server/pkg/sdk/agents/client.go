@@ -261,6 +261,8 @@ type TriggerRequest struct {
 	Input string `json:"prompt,omitempty"`
 	// Metadata is arbitrary caller context injected into the agent's system instruction.
 	Metadata map[string]string `json:"context,omitempty"`
+	// Model overrides the agent definition's model for this single run.
+	Model string `json:"model,omitempty"`
 }
 
 // PendingEventObject represents a graph object pending processing.

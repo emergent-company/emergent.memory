@@ -135,6 +135,7 @@ var (
 	agentListLimit        int
 	agentListPage         int
 	triggerInputFlag      string
+	triggerModelFlag      string
 )
 
 // resolveAgentArgOrPick resolves an agent ID from args[0], or, when args is
@@ -461,9 +462,10 @@ func runTriggerAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	var result *agents.TriggerResponse
-	if triggerInputFlag != "" {
+	if triggerInputFlag != "" || triggerModelFlag != "" {
 		result, err = c.SDK.Agents.TriggerWithInput(context.Background(), agentID, agents.TriggerRequest{
 			Input: triggerInputFlag,
+			Model: triggerModelFlag,
 		})
 	} else {
 		result, err = c.SDK.Agents.Trigger(context.Background(), agentID)
@@ -1027,6 +1029,7 @@ func init() {
 	agentsCmd.AddCommand(deleteAgentCmd)
 
 	triggerAgentCmd.Flags().StringVar(&triggerInputFlag, "input", "", "Initial message to pass to the agent at trigger time")
+	triggerAgentCmd.Flags().StringVar(&triggerModelFlag, "model", "", "Override the model for this single run (e.g. claude-sonnet-4.7)")
 	agentsCmd.AddCommand(triggerAgentCmd)
 
 	agentsCmd.AddCommand(runsAgentCmd)

@@ -1186,6 +1186,7 @@ func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOpt
 		TriggerSource:   opts.TriggerSource,
 		TriggerMetadata: opts.TriggerMetadata,
 		TriggerMessage:  opts.TriggerMessage,
+		Model:           opts.Model,
 	}
 	_, err := r.db.NewInsert().
 		Model(run).
@@ -1275,6 +1276,16 @@ func (r *Repository) CompleteRunWithSteps(ctx context.Context, runID string, sum
 		Set("step_count = ?", stepCount).
 		Set("duration_ms = ?", durationMs).
 		Set("session_status = ?", SessionStatusCompleted).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
+// UpdateRunModel sets the model name on an agent run.
+func (r *Repository) UpdateRunModel(ctx context.Context, runID string, model string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("model = ?", model).
 		Where("id = ?", runID).
 		Exec(ctx)
 	return err

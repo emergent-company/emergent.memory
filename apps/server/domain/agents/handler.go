@@ -510,10 +510,18 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 
 	// Create a run record synchronously so we can return the run ID immediately.
 	triggerSource := "manual"
+
+	// Resolve model override from trigger request
+	var modelOverride *string
+	if triggerReq.Model != "" {
+		modelOverride = &triggerReq.Model
+	}
+
 	run, err := h.repo.CreateRunWithOptions(c.Request().Context(), CreateRunOptions{
 		AgentID:         agent.ID,
 		TriggerSource:   &triggerSource,
 		TriggerMetadata: triggerReq.Context,
+		Model:           modelOverride,
 	})
 	if err != nil {
 		return apperror.NewInternal("failed to create agent run", err)
@@ -539,6 +547,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			OrgID:           orgID,
 			UserMessage:     userMessage,
 			TriggerMetadata: triggerReq.Context,
+			Model:           triggerReq.Model,
 		})
 		if execResult != nil && execResult.Cleanup != nil {
 			execResult.Cleanup()

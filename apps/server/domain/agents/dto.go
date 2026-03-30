@@ -48,6 +48,9 @@ type AgentRunDTO struct {
 	TraceID   *string `json:"traceId,omitempty"`
 	RootRunID *string `json:"rootRunId,omitempty"`
 
+	// Model used for this run (resolved at execution time)
+	Model string `json:"model,omitempty"`
+
 	// Token usage aggregated from kb.llm_usage_events for this run.
 	TokenUsage *RunTokenUsage `json:"tokenUsage,omitempty"`
 }
@@ -128,6 +131,7 @@ type BatchTriggerResponseDTO struct {
 type TriggerRequestDTO struct {
 	Prompt  string         `json:"prompt"`
 	Context map[string]any `json:"context,omitempty"`
+	Model   string         `json:"model,omitempty"`
 }
 
 // TriggerResponseDTO is the response for triggering an agent
@@ -192,6 +196,9 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 	}
 	if r.Agent != nil {
 		dto.AgentName = r.Agent.Name
+	}
+	if r.Model != nil {
+		dto.Model = *r.Model
 	}
 	return dto
 }
