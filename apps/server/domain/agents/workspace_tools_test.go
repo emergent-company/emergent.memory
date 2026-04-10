@@ -178,7 +178,7 @@ func TestBuildWorkspaceTools_AllToolsBuilt(t *testing.T) {
 
 	tools, err := BuildWorkspaceTools(deps)
 	require.NoError(t, err)
-	require.Len(t, tools, 7)
+	require.Len(t, tools, 9)
 
 	// Verify tool names in deterministic order (matches sandbox.ValidToolNames)
 	expectedNames := []string{
@@ -189,6 +189,8 @@ func TestBuildWorkspaceTools_AllToolsBuilt(t *testing.T) {
 		"workspace_glob",
 		"workspace_grep",
 		"workspace_git",
+		"run_python",
+		"run_go",
 	}
 	for i, tool := range tools {
 		assert.Equal(t, expectedNames[i], tool.Name(), "tool %d name mismatch", i)
@@ -254,7 +256,7 @@ func TestBuildWorkspaceTools_EmptyToolsListAllowsAll(t *testing.T) {
 
 	tools, err := BuildWorkspaceTools(deps)
 	require.NoError(t, err)
-	assert.Len(t, tools, 7) // All 7 tools
+	assert.Len(t, tools, 9) // All 9 tools (bash, read, write, edit, glob, grep, git, run_python, run_go)
 }
 
 func TestBuildWorkspaceTools_NilProviderReturnsNil(t *testing.T) {

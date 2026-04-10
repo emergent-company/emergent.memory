@@ -1,0 +1,417 @@
+package agents
+
+import (
+	"encoding/json"
+	"regexp"
+	"strings"
+	"time"
+)
+
+// --- ACP Status Constants ---
+
+const (
+	ACPStatusSubmitted     = "submitted"
+	ACPStatusWorking       = "working"
+	ACPStatusInputRequired = "input-required"
+	ACPStatusCompleted     = "completed"
+	ACPStatusFailed        = "failed"
+	ACPStatusCancelling    = "cancelling"
+	ACPStatusCancelled     = "cancelled"
+)
+
+// --- ACP SSE Event Type Constants ---
+
+const (
+	ACPEventRunCreated       = "run.created"
+	ACPEventRunInProgress    = "run.in-progress"
+	ACPEventRunAwaiting      = "run.awaiting"
+	ACPEventRunCompleted     = "run.completed"
+	ACPEventRunFailed        = "run.failed"
+	ACPEventRunCancelled     = "run.cancelled"
+	ACPEventMessageCreated   = "message.created"
+	ACPEventMessagePart      = "message.part"
+	ACPEventMessageCompleted = "message.completed"
+	ACPEventGeneric          = "generic"
+	ACPEventError            = "error"
+)
+
+// --- ACP Wire Types ---
+
+// ACPAgentManifest is the ACP agent card returned by discovery endpoints.
+type ACPAgentManifest struct {
+	Name               string              `json:"name"`
+	Description        string              `json:"description"`
+	Provider           *ACPProvider        `json:"provider,omitempty"`
+	Version            string              `json:"version"`
+	Capabilities       *ACPCapabilities    `json:"capabilities,omitempty"`
+	DefaultInputModes  []string            `json:"default_input_modes"`
+	DefaultOutputModes []string            `json:"default_output_modes"`
+	Status             *AgentStatusMetrics `json:"status,omitempty"`
+
+	// Optional metadata fields (omitted when empty)
+	Tags              []string `json:"tags,omitempty"`
+	Domains           []string `json:"domains,omitempty"`
+	RecommendedModels []string `json:"recommended_models,omitempty"`
+	Documentation     string   `json:"documentation,omitempty"`
+	Framework         string   `json:"framework,omitempty"`
+}
+
+// ACPProvider identifies the agent provider.
+type ACPProvider struct {
+	Organization string `json:"organization"`
+	URL          string `json:"url,omitempty"`
+}
+
+// ACPCapabilities describes what the agent supports.
+type ACPCapabilities struct {
+	Streaming      bool `json:"streaming"`
+	HumanInTheLoop bool `json:"human_in_the_loop"`
+	SessionSupport bool `json:"session_support"`
+}
+
+// AgentStatusMetrics holds live computed metrics for an agent.
+type AgentStatusMetrics struct {
+	AvgRunTokens      *float64 `json:"avg_run_tokens,omitempty"`
+	AvgRunTimeSeconds *float64 `json:"avg_run_time_seconds,omitempty"`
+	SuccessRate       *float64 `json:"success_rate,omitempty"`
+}
+
+// ACPMessage is an ACP protocol message with role and parts.
+type ACPMessage struct {
+	Role  string           `json:"role"`
+	Parts []ACPMessagePart `json:"parts"`
+}
+
+// ACPMessagePart is a single part of an ACP message.
+type ACPMessagePart struct {
+	ContentType string              `json:"content_type"`
+	Content     string              `json:"content"`
+	Metadata    *TrajectoryMetadata `json:"metadata,omitempty"`
+}
+
+// TrajectoryMetadata describes a tool call trajectory attached to a message part.
+type TrajectoryMetadata struct {
+	Type       string `json:"type"` // always "trajectory"
+	ToolName   string `json:"tool_name"`
+	ToolInput  string `json:"tool_input"`  // JSON string
+	ToolOutput string `json:"tool_output"` // JSON string
+}
+
+// ACPRunObject is the ACP run representation returned by run endpoints.
+type ACPRunObject struct {
+	ID           string           `json:"id"`
+	AgentName    string           `json:"agent_name"`
+	Status       string           `json:"status"`
+	CreatedAt    time.Time        `json:"created_at"`
+	UpdatedAt    *time.Time       `json:"updated_at,omitempty"`
+	Output       []ACPMessage     `json:"output,omitempty"`
+	AwaitRequest *ACPAwaitRequest `json:"await_request,omitempty"`
+	Error        *ACPRunError     `json:"error,omitempty"`
+	SessionID    *string          `json:"session_id,omitempty"`
+	Metadata     map[string]any   `json:"metadata,omitempty"`
+}
+
+// ACPRunError describes an error that occurred during a run.
+type ACPRunError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// ACPAwaitRequest represents a human-in-the-loop question posed by the agent.
+type ACPAwaitRequest struct {
+	QuestionID string                `json:"question_id"`
+	Question   string                `json:"question"`
+	Options    []AgentQuestionOption `json:"options,omitempty"`
+}
+
+// ACPSessionObject is the ACP session representation.
+type ACPSessionObject struct {
+	ID        string          `json:"id"`
+	AgentName *string         `json:"agent_name,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	History   []ACPRunSummary `json:"history"`
+}
+
+// ACPRunSummary is a lightweight run reference inside a session.
+type ACPRunSummary struct {
+	ID        string    `json:"id"`
+	AgentName string    `json:"agent_name"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ACPSSEEvent represents a persisted or streamed SSE event.
+type ACPSSEEvent struct {
+	Type      string         `json:"type"`
+	Data      map[string]any `json:"data"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
+// --- ACP Request Types ---
+
+// ACPCreateRunRequest is the request body for POST /acp/v1/agents/:name/runs.
+type ACPCreateRunRequest struct {
+	Message   []ACPMessagePart `json:"message" validate:"required,min=1"`
+	Mode      string           `json:"mode,omitempty"` // sync (default), async, stream
+	SessionID *string          `json:"session_id,omitempty"`
+}
+
+// ACPResumeRunRequest is the request body for POST /acp/v1/agents/:name/runs/:runId/resume.
+type ACPResumeRunRequest struct {
+	Message []ACPMessagePart `json:"message" validate:"required,min=1"`
+	Mode    string           `json:"mode,omitempty"` // sync (default), async, stream
+}
+
+// ACPCreateSessionRequest is the request body for POST /acp/v1/sessions.
+type ACPCreateSessionRequest struct {
+	AgentName *string `json:"agent_name,omitempty"`
+}
+
+// --- Conversion Functions ---
+
+// acpSlugRegexp matches any non-alphanumeric, non-hyphen character.
+var acpSlugRegexp = regexp.MustCompile(`[^a-z0-9-]`)
+
+// acpMultiHyphenRegexp matches consecutive hyphens.
+var acpMultiHyphenRegexp = regexp.MustCompile(`-{2,}`)
+
+// ACPSlugFromName normalizes a free-form agent name to an RFC 1123 DNS label:
+// lowercase, replace non-alphanumeric with hyphens, collapse consecutive hyphens,
+// trim leading/trailing hyphens, truncate to 63 characters.
+func ACPSlugFromName(name string) string {
+	s := strings.ToLower(name)
+	s = acpSlugRegexp.ReplaceAllString(s, "-")
+	s = acpMultiHyphenRegexp.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 63 {
+		s = s[:63]
+		s = strings.TrimRight(s, "-")
+	}
+	return s
+}
+
+// MapMemoryStatusToACP maps a Memory AgentRunStatus to the ACP status string.
+func MapMemoryStatusToACP(status AgentRunStatus) string {
+	switch status {
+	case RunStatusQueued:
+		return ACPStatusSubmitted
+	case RunStatusRunning:
+		return ACPStatusWorking
+	case RunStatusPaused:
+		return ACPStatusInputRequired
+	case RunStatusSuccess:
+		return ACPStatusCompleted
+	case RunStatusError:
+		return ACPStatusFailed
+	case RunStatusCancelling:
+		return ACPStatusCancelling
+	case RunStatusCancelled:
+		return ACPStatusCancelled
+	case RunStatusSkipped:
+		return ACPStatusCompleted
+	default:
+		return string(status)
+	}
+}
+
+// AgentDefinitionToManifest converts an AgentDefinition entity to an ACP agent manifest.
+// If status is nil, the Status field is omitted from the manifest.
+func AgentDefinitionToManifest(def *AgentDefinition, status *AgentStatusMetrics) ACPAgentManifest {
+	manifest := ACPAgentManifest{
+		Name:               ACPSlugFromName(def.Name),
+		Version:            "0.2.0",
+		DefaultInputModes:  []string{"text/plain"},
+		DefaultOutputModes: []string{"text/plain"},
+		Capabilities: &ACPCapabilities{
+			Streaming:      true,
+			HumanInTheLoop: true,
+			SessionSupport: true,
+		},
+		Status: status,
+	}
+
+	// Description: prefer ACPConfig.Description, fall back to definition description
+	if def.ACPConfig != nil && def.ACPConfig.Description != "" {
+		manifest.Description = def.ACPConfig.Description
+	} else if def.Description != nil {
+		manifest.Description = *def.Description
+	}
+
+	// Override input/output modes from ACPConfig if present
+	if def.ACPConfig != nil {
+		if len(def.ACPConfig.InputModes) > 0 {
+			manifest.DefaultInputModes = def.ACPConfig.InputModes
+		}
+		if len(def.ACPConfig.OutputModes) > 0 {
+			manifest.DefaultOutputModes = def.ACPConfig.OutputModes
+		}
+		if len(def.ACPConfig.Capabilities) > 0 {
+			// ACPConfig.Capabilities is a string list of capability names;
+			// the manifest Capabilities struct is fixed, so store them as tags.
+			// This keeps backward compat with the existing ACPConfig shape.
+		}
+	}
+
+	// Provider defaults (can be overridden by ACPConfig in future)
+	manifest.Provider = &ACPProvider{
+		Organization: "Emergent",
+	}
+
+	return manifest
+}
+
+// RunToACPObject converts a Memory AgentRun (with optional messages and pending question)
+// to the ACP run wire format.
+func RunToACPObject(run *AgentRun, messages []AgentRunMessage, question *AgentQuestion) ACPRunObject {
+	agentName := ""
+	if run.Agent != nil {
+		agentName = ACPSlugFromName(run.Agent.Name)
+	}
+
+	obj := ACPRunObject{
+		ID:        run.ID,
+		AgentName: agentName,
+		Status:    MapMemoryStatusToACP(run.Status),
+		CreatedAt: run.CreatedAt,
+		SessionID: run.ACPSessionID,
+	}
+
+	// UpdatedAt: use CompletedAt if available, otherwise nil
+	if run.CompletedAt != nil {
+		obj.UpdatedAt = run.CompletedAt
+	}
+
+	// Build output messages from Memory run messages
+	if len(messages) > 0 {
+		obj.Output = memoryMessagesToACP(messages)
+	}
+
+	// Populate await_request if the run is paused with a pending question
+	if run.Status == RunStatusPaused && question != nil {
+		obj.AwaitRequest = &ACPAwaitRequest{
+			QuestionID: question.ID,
+			Question:   question.Question,
+			Options:    question.Options,
+		}
+	}
+
+	// Populate error if the run failed
+	if run.Status == RunStatusError && run.ErrorMessage != nil {
+		obj.Error = &ACPRunError{
+			Code:    "execution_error",
+			Message: *run.ErrorMessage,
+		}
+	}
+
+	// Add skip reason as metadata if skipped
+	if run.Status == RunStatusSkipped && run.SkipReason != nil {
+		obj.Metadata = map[string]any{
+			"skipped":     true,
+			"skip_reason": *run.SkipReason,
+		}
+	}
+
+	return obj
+}
+
+// memoryMessagesToACP converts a slice of Memory run messages to ACP message format.
+func memoryMessagesToACP(messages []AgentRunMessage) []ACPMessage {
+	var result []ACPMessage
+
+	for _, msg := range messages {
+		acpRole := memoryRoleToACP(msg.Role)
+		parts := memoryContentToACPParts(msg.Content)
+
+		if len(parts) > 0 {
+			result = append(result, ACPMessage{
+				Role:  acpRole,
+				Parts: parts,
+			})
+		}
+	}
+
+	return result
+}
+
+// memoryRoleToACP maps Memory message roles to ACP roles.
+func memoryRoleToACP(role string) string {
+	switch role {
+	case "assistant":
+		return "agent"
+	case "user":
+		return "user"
+	case "system":
+		return "agent" // system messages are from the agent side
+	case "tool_result":
+		return "agent" // tool results are part of agent workflow
+	default:
+		return role
+	}
+}
+
+// memoryContentToACPParts extracts ACP message parts from Memory's JSONB content.
+// Memory content format: {"text": "...", "function_calls": [...], ...}
+func memoryContentToACPParts(content map[string]any) []ACPMessagePart {
+	var parts []ACPMessagePart
+
+	// Extract text content
+	if text, ok := content["text"]; ok {
+		if textStr, ok := text.(string); ok && textStr != "" {
+			parts = append(parts, ACPMessagePart{
+				ContentType: "text/plain",
+				Content:     textStr,
+			})
+		}
+	}
+
+	return parts
+}
+
+// ToolCallToTrajectoryMetadata converts a Memory AgentRunToolCall to ACP TrajectoryMetadata.
+func ToolCallToTrajectoryMetadata(tc *AgentRunToolCall) TrajectoryMetadata {
+	inputJSON, _ := json.Marshal(tc.Input)
+	outputJSON, _ := json.Marshal(tc.Output)
+
+	return TrajectoryMetadata{
+		Type:       "trajectory",
+		ToolName:   tc.ToolName,
+		ToolInput:  string(inputJSON),
+		ToolOutput: string(outputJSON),
+	}
+}
+
+// SessionToACPObject converts an ACPSession entity with associated runs to the ACP wire format.
+func SessionToACPObject(session *ACPSession, runs []*AgentRun) ACPSessionObject {
+	obj := ACPSessionObject{
+		ID:        session.ID,
+		AgentName: session.AgentName,
+		CreatedAt: session.CreatedAt,
+		UpdatedAt: session.UpdatedAt,
+		History:   make([]ACPRunSummary, 0, len(runs)),
+	}
+
+	for _, run := range runs {
+		agentName := ""
+		if run.Agent != nil {
+			agentName = ACPSlugFromName(run.Agent.Name)
+		}
+		obj.History = append(obj.History, ACPRunSummary{
+			ID:        run.ID,
+			AgentName: agentName,
+			Status:    MapMemoryStatusToACP(run.Status),
+			CreatedAt: run.CreatedAt,
+		})
+	}
+
+	return obj
+}
+
+// RunEventToACPSSEEvent converts a persisted ACPRunEvent to the wire format.
+func RunEventToACPSSEEvent(event *ACPRunEvent) ACPSSEEvent {
+	return ACPSSEEvent{
+		Type:      event.EventType,
+		Data:      event.Data,
+		CreatedAt: event.CreatedAt,
+	}
+}

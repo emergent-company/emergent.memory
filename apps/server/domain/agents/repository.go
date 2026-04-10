@@ -2102,3 +2102,211 @@ func (r *Repository) DisableAgent(ctx context.Context, agentID string, reason st
 	}
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// ACP Repository Methods
+// ---------------------------------------------------------------------------
+
+// FindExternalAgentDefinitions returns all agent definitions with visibility = 'external'
+// for the given project. Used by ACP agent discovery endpoints.
+func (r *Repository) FindExternalAgentDefinitions(ctx context.Context, projectID string) ([]*AgentDefinition, error) {
+	var defs []*AgentDefinition
+	err := r.db.NewSelect().
+		Model(&defs).
+		Where("project_id = ?", projectID).
+		Where("visibility = ?", VisibilityExternal).
+		Order("name ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("FindExternalAgentDefinitions: %w", err)
+	}
+	return defs, nil
+}
+
+// FindExternalAgentBySlug returns an external agent definition matching the given
+// ACP slug within a project. Since slugs are computed (not stored), this fetches
+// all external definitions and matches in-memory.
+// Returns nil, nil when no matching agent is found.
+func (r *Repository) FindExternalAgentBySlug(ctx context.Context, projectID, slug string) (*AgentDefinition, error) {
+	defs, err := r.FindExternalAgentDefinitions(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, def := range defs {
+		if ACPSlugFromName(def.Name) == slug {
+			return def, nil
+		}
+	}
+	return nil, nil
+}
+
+// GetAgentStatusMetrics computes live metrics for an agent definition based on
+// runs from the last 30 days: average tokens per run, average duration in seconds,
+// and success rate (fraction of terminal runs that succeeded).
+// Returns nil when no runs exist in the window.
+func (r *Repository) GetAgentStatusMetrics(ctx context.Context, agentDefID string) (*AgentStatusMetrics, error) {
+	since := time.Now().Add(-30 * 24 * time.Hour)
+
+	// Compute success rate and average duration from agent_runs.
+	// We need the agent_id (legacy Agent), not the definition ID directly.
+	// agent_runs.agent_id references kb.agents.id, and agents have a definition_id.
+	// For simplicity we query runs whose agent's definition matches.
+	type runStats struct {
+		TotalRuns   int64    `bun:"total_runs"`
+		SuccessRuns int64    `bun:"success_runs"`
+		AvgDuration *float64 `bun:"avg_duration"`
+	}
+	var rs runStats
+	err := r.db.NewSelect().
+		TableExpr("kb.agent_runs AS ar").
+		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
+		ColumnExpr("COUNT(*) AS total_runs").
+		ColumnExpr("COUNT(*) FILTER (WHERE ar.status = 'success') AS success_runs").
+		ColumnExpr("AVG(ar.duration_ms) FILTER (WHERE ar.duration_ms IS NOT NULL) AS avg_duration").
+		Where("a.definition_id = ?", agentDefID).
+		Where("ar.created_at >= ?", since).
+		Where("ar.status IN (?)", bun.In([]string{"success", "error", "cancelled", "skipped"})).
+		Scan(ctx, &rs)
+	if err != nil {
+		return nil, fmt.Errorf("GetAgentStatusMetrics runs: %w", err)
+	}
+	if rs.TotalRuns == 0 {
+		return nil, nil
+	}
+
+	metrics := &AgentStatusMetrics{}
+
+	// Success rate
+	rate := float64(rs.SuccessRuns) / float64(rs.TotalRuns)
+	metrics.SuccessRate = &rate
+
+	// Average duration (ms → seconds)
+	if rs.AvgDuration != nil {
+		secs := *rs.AvgDuration / 1000.0
+		metrics.AvgRunTimeSeconds = &secs
+	}
+
+	// Average tokens from llm_usage_events
+	type tokenStats struct {
+		AvgTokens *float64 `bun:"avg_tokens"`
+	}
+	var ts tokenStats
+	err = r.db.NewRaw(`
+		SELECT AVG(run_total) AS avg_tokens FROM (
+			SELECT lue.run_id,
+				SUM(lue.text_input_tokens + lue.image_input_tokens + lue.video_input_tokens + lue.audio_input_tokens + lue.output_tokens) AS run_total
+			FROM kb.llm_usage_events lue
+			JOIN kb.agent_runs ar ON ar.id = lue.run_id
+			JOIN kb.agents a ON a.id = ar.agent_id
+			WHERE a.definition_id = ?
+			  AND ar.created_at >= ?
+			GROUP BY lue.run_id
+		) sub`, agentDefID, since).Scan(ctx, &ts)
+	if err != nil {
+		return nil, fmt.Errorf("GetAgentStatusMetrics tokens: %w", err)
+	}
+	metrics.AvgRunTokens = ts.AvgTokens
+
+	return metrics, nil
+}
+
+// CreateACPSession inserts a new ACP session record.
+func (r *Repository) CreateACPSession(ctx context.Context, session *ACPSession) error {
+	_, err := r.db.NewInsert().
+		Model(session).
+		Returning("*").
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("CreateACPSession: %w", err)
+	}
+	return nil
+}
+
+// GetACPSession returns an ACP session by ID, scoped to the given project.
+// Returns nil, nil when not found.
+func (r *Repository) GetACPSession(ctx context.Context, projectID, sessionID string) (*ACPSession, error) {
+	session := new(ACPSession)
+	err := r.db.NewSelect().
+		Model(session).
+		Where("id = ?", sessionID).
+		Where("project_id = ?", projectID).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("GetACPSession: %w", err)
+	}
+	return session, nil
+}
+
+// GetSessionRunHistory returns all agent runs linked to the given ACP session,
+// ordered by created_at ascending (oldest first).
+func (r *Repository) GetSessionRunHistory(ctx context.Context, sessionID string) ([]*AgentRun, error) {
+	var runs []*AgentRun
+	err := r.db.NewSelect().
+		Model(&runs).
+		Relation("Agent").
+		Where("ar.acp_session_id = ?", sessionID).
+		Order("ar.created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("GetSessionRunHistory: %w", err)
+	}
+	return runs, nil
+}
+
+// InsertACPRunEvent persists an SSE event emitted during an ACP run.
+func (r *Repository) InsertACPRunEvent(ctx context.Context, event *ACPRunEvent) error {
+	_, err := r.db.NewInsert().
+		Model(event).
+		Returning("*").
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("InsertACPRunEvent: %w", err)
+	}
+	return nil
+}
+
+// GetACPRunEvents returns all persisted SSE events for a run, ordered by
+// created_at ascending. Used to serve the events replay endpoint.
+func (r *Repository) GetACPRunEvents(ctx context.Context, runID string) ([]*ACPRunEvent, error) {
+	var events []*ACPRunEvent
+	err := r.db.NewSelect().
+		Model(&events).
+		Where("run_id = ?", runID).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("GetACPRunEvents: %w", err)
+	}
+	return events, nil
+}
+
+// SetRunCancelling transitions a run to the "cancelling" intermediate state.
+// This is the first step of the ACP two-step cancel protocol: the intent is
+// acknowledged but the executor hasn't stopped yet.
+func (r *Repository) SetRunCancelling(ctx context.Context, runID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelling).
+		Where("id = ?", runID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("SetRunCancelling: %w", err)
+	}
+	return nil
+}
+
+// UpdateRunACPSessionID sets the acp_session_id column on an agent run.
+func (r *Repository) UpdateRunACPSessionID(ctx context.Context, runID, sessionID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("acp_session_id = ?", sessionID).
+		Where("id = ?", runID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("UpdateRunACPSessionID: %w", err)
+	}
+	return nil
+}

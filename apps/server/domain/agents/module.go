@@ -31,6 +31,7 @@ var Module = fx.Module("agents",
 		provideSessionService,
 		provideAgentExecutor,
 		provideHandler,
+		provideACPHandler,
 		provideTriggerService,
 		provideMCPToolHandler,
 		provideWebhookRateLimiter,
@@ -38,6 +39,7 @@ var Module = fx.Module("agents",
 	),
 	fx.Invoke(
 		RegisterRoutes,
+		RegisterACPRoutes,
 		registerAgentTriggers,
 		registerOrphanRecovery,
 		registerWorkerPool,
@@ -86,6 +88,11 @@ func provideAgentExecutor(
 // provideHandler creates a Handler with both repo and executor.
 func provideHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter) *Handler {
 	return NewHandler(repo, executor, rateLimiter)
+}
+
+// provideACPHandler creates an ACPHandler from fx dependencies.
+func provideACPHandler(repo *Repository, executor *AgentExecutor, log *slog.Logger) *ACPHandler {
+	return NewACPHandler(repo, executor, log)
 }
 
 // provideTriggerService creates a TriggerService from fx dependencies.

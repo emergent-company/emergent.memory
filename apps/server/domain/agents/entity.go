@@ -58,13 +58,14 @@ const (
 type AgentRunStatus string
 
 const (
-	RunStatusQueued    AgentRunStatus = "queued" // enqueued, waiting for a worker
-	RunStatusRunning   AgentRunStatus = "running"
-	RunStatusSuccess   AgentRunStatus = "success"
-	RunStatusSkipped   AgentRunStatus = "skipped"
-	RunStatusError     AgentRunStatus = "error"
-	RunStatusPaused    AgentRunStatus = "paused"
-	RunStatusCancelled AgentRunStatus = "cancelled"
+	RunStatusQueued     AgentRunStatus = "queued" // enqueued, waiting for a worker
+	RunStatusRunning    AgentRunStatus = "running"
+	RunStatusSuccess    AgentRunStatus = "success"
+	RunStatusSkipped    AgentRunStatus = "skipped"
+	RunStatusError      AgentRunStatus = "error"
+	RunStatusPaused     AgentRunStatus = "paused"
+	RunStatusCancelled  AgentRunStatus = "cancelled"
+	RunStatusCancelling AgentRunStatus = "cancelling" // ACP two-step cancel: intent acknowledged, awaiting execution stop
 
 	// MaxTotalStepsPerRun is the global hard cap on cumulative steps across all resumes
 	MaxTotalStepsPerRun = 500
@@ -196,6 +197,9 @@ type AgentRun struct {
 	// root_run_id links sub-agent runs back to the top-level orchestration run.
 	TraceID   *string `bun:"trace_id" json:"traceId,omitempty"`
 	RootRunID *string `bun:"root_run_id,type:uuid" json:"rootRunId,omitempty"`
+
+	// ACP session linkage: optional grouping of runs under an ACP session.
+	ACPSessionID *string `bun:"acp_session_id,type:uuid" json:"acpSessionId,omitempty"`
 
 	// Relations
 	Agent     *Agent    `bun:"rel:belongs-to,join:agent_id=id" json:"-"`
@@ -414,6 +418,35 @@ type AgentRunJob struct {
 	NextRunAt    time.Time      `bun:"next_run_at,notnull,default:now()" json:"nextRunAt"`
 	CreatedAt    time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 	CompletedAt  *time.Time     `bun:"completed_at" json:"completedAt,omitempty"`
+
+	// Relations
+	Run *AgentRun `bun:"rel:belongs-to,join:run_id=id" json:"-"`
+}
+
+// ACPSession represents a thin session grouping for ACP runs.
+// Sessions track run history only — no cross-run context injection.
+// Table: kb.acp_sessions
+type ACPSession struct {
+	bun.BaseModel `bun:"table:kb.acp_sessions,alias:acps"`
+
+	ID        string    `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProjectID string    `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	AgentName *string   `bun:"agent_name" json:"agentName,omitempty"`
+	CreatedAt time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+}
+
+// ACPRunEvent represents a persisted SSE event emitted during an ACP run.
+// Used to serve GET /acp/v1/agents/:name/runs/:runId/events as a JSON array.
+// Table: kb.acp_run_events
+type ACPRunEvent struct {
+	bun.BaseModel `bun:"table:kb.acp_run_events,alias:acre"`
+
+	ID        string         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	RunID     string         `bun:"run_id,type:uuid,notnull" json:"runId"`
+	EventType string         `bun:"event_type,notnull" json:"eventType"`
+	Data      map[string]any `bun:"data,type:jsonb,notnull,default:'{}'" json:"data"`
+	CreatedAt time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 
 	// Relations
 	Run *AgentRun `bun:"rel:belongs-to,join:run_id=id" json:"-"`

@@ -1188,6 +1188,69 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 				Required:   []string{},
 			},
 		},
+
+		// --- ACP (Agent Communication Protocol) tools ---
+		{
+			Name:        "acp-list-agents",
+			Description: "List externally-visible agents via ACP semantics. Returns agent manifests for all agents with visibility='external' in ACP discovery format.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"include_status": {
+						Type:        "boolean",
+						Description: "Include status metrics (avg_run_tokens, avg_run_time_seconds, success_rate) for each agent",
+						Default:     false,
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
+			Name:        "acp-trigger-run",
+			Description: "Create and execute a run against an externally-visible agent via ACP semantics. The agent must have visibility='external'. Stream mode is not supported via MCP — use sync or async.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"agent_name": {
+						Type:        "string",
+						Description: "ACP slug name of the agent to run (e.g. 'my-agent')",
+					},
+					"message": {
+						Type:        "string",
+						Description: "Plain text input message for the agent",
+					},
+					"mode": {
+						Type:        "string",
+						Description: "Execution mode: sync (block until complete) or async (return immediately). Default: sync.",
+						Enum:        []string{"sync", "async"},
+						Default:     "sync",
+					},
+					"session_id": {
+						Type:        "string",
+						Description: "Optional ACP session ID to link this run to",
+					},
+				},
+				Required: []string{"agent_name", "message"},
+			},
+		},
+		{
+			Name:        "acp-get-run-status",
+			Description: "Get the current state of an agent run with ACP status mapping applied. Returns the full run object including output messages and await_request if paused.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"agent_name": {
+						Type:        "string",
+						Description: "ACP slug name of the agent that owns the run",
+					},
+					"run_id": {
+						Type:        "string",
+						Description: "UUID of the agent run",
+					},
+				},
+				Required: []string{"agent_name", "run_id"},
+			},
+		},
 	}
 }
 
@@ -1518,4 +1581,226 @@ func (h *MCPToolHandler) ExecuteGetADKSession(ctx context.Context, projectID str
 	dto.Events = eventDTOs
 
 	return wrapResult(dto)
+}
+
+// ============================================================================
+// ACP (Agent Communication Protocol) MCP Tools
+// ============================================================================
+
+// ExecuteACPListAgents lists externally-visible agents in ACP manifest format.
+func (h *MCPToolHandler) ExecuteACPListAgents(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	includeStatus, _ := args["include_status"].(bool)
+
+	defs, err := h.repo.FindExternalAgentDefinitions(ctx, projectID)
+	if err != nil {
+		return errResult("failed to list external agents: " + err.Error())
+	}
+
+	manifests := make([]ACPAgentManifest, 0, len(defs))
+	for _, def := range defs {
+		var status *AgentStatusMetrics
+		if includeStatus {
+			status, _ = h.repo.GetAgentStatusMetrics(ctx, def.ID)
+		}
+		manifests = append(manifests, AgentDefinitionToManifest(def, status))
+	}
+
+	return wrapResult(manifests)
+}
+
+// ExecuteACPTriggerRun creates and executes a run against an externally-visible agent via ACP.
+func (h *MCPToolHandler) ExecuteACPTriggerRun(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	agentName, _ := args["agent_name"].(string)
+	if agentName == "" {
+		return errResult("agent_name is required")
+	}
+	message, _ := args["message"].(string)
+	if message == "" {
+		return errResult("message is required")
+	}
+	mode, _ := args["mode"].(string)
+	if mode == "" {
+		mode = "sync"
+	}
+	sessionID, _ := args["session_id"].(string)
+
+	// Reject stream mode — MCP doesn't support streaming
+	if mode == "stream" {
+		return errResult("Stream mode is not supported via MCP tools. Use sync or async.")
+	}
+
+	// Resolve agent definition by ACP slug — must be external
+	def, err := h.repo.FindExternalAgentBySlug(ctx, projectID, agentName)
+	if err != nil {
+		return errResult("failed to look up agent: " + err.Error())
+	}
+	if def == nil {
+		// Check if the agent exists but isn't external
+		allDefs, _ := h.repo.FindAllDefinitions(ctx, projectID, true)
+		for _, d := range allDefs {
+			if ACPSlugFromName(d.Name) == agentName {
+				return errResult(fmt.Sprintf("Agent '%s' is not externally visible via ACP", agentName))
+			}
+		}
+		return errResult(fmt.Sprintf("Agent '%s' not found", agentName))
+	}
+
+	// Resolve runtime agent by definition name
+	agent, err := h.repo.FindByName(ctx, projectID, def.Name)
+	if err != nil {
+		return errResult("failed to resolve runtime agent: " + err.Error())
+	}
+	if agent == nil {
+		return errResult(fmt.Sprintf("Runtime agent for '%s' not found", agentName))
+	}
+
+	// Check executor
+	if h.executor == nil {
+		return errResult("agent executor not available")
+	}
+
+	// Resolve org ID
+	orgID := auth.OrgIDFromContext(ctx)
+	if orgID == "" {
+		orgID, _ = h.repo.GetOrgIDByProjectID(ctx, agent.ProjectID)
+	}
+
+	if mode == "async" {
+		// Async: create run and execute in background, return immediately
+		run, err := h.repo.CreateRun(ctx, agent.ID)
+		if err != nil {
+			return errResult("failed to create run: " + err.Error())
+		}
+
+		// Link to ACP session if provided
+		if sessionID != "" {
+			_ = h.repo.UpdateRunACPSessionID(ctx, run.ID, sessionID)
+		}
+
+		// Launch execution in background
+		go func() {
+			bgCtx := context.Background()
+			result, execErr := h.executor.ExecuteWithRun(bgCtx, run, ExecuteRequest{
+				Agent:           agent,
+				AgentDefinition: def,
+				ProjectID:       agent.ProjectID,
+				OrgID:           orgID,
+				UserMessage:     message,
+			})
+			if result != nil && result.Cleanup != nil {
+				result.Cleanup()
+			}
+			if execErr != nil {
+				h.log.Error("async ACP MCP run failed", "run_id", run.ID, "error", execErr)
+			}
+		}()
+
+		// Return immediately with submitted status
+		acpObj := ACPRunObject{
+			ID:        run.ID,
+			AgentName: agentName,
+			Status:    ACPStatusSubmitted,
+			CreatedAt: run.CreatedAt,
+		}
+		if sessionID != "" {
+			acpObj.SessionID = &sessionID
+		}
+		return wrapResult(acpObj)
+	}
+
+	// Sync: block until completion
+	result, err := h.executor.Execute(ctx, ExecuteRequest{
+		Agent:           agent,
+		AgentDefinition: def,
+		ProjectID:       agent.ProjectID,
+		OrgID:           orgID,
+		UserMessage:     message,
+	})
+	if result != nil && result.Cleanup != nil {
+		defer result.Cleanup()
+	}
+	if err != nil {
+		return errResult("failed to execute agent: " + err.Error())
+	}
+
+	// Link to ACP session if provided
+	if sessionID != "" && result.RunID != "" {
+		_ = h.repo.UpdateRunACPSessionID(ctx, result.RunID, sessionID)
+	}
+
+	// Re-fetch the run to build a full ACP response
+	run, err := h.repo.FindRunByID(ctx, result.RunID)
+	if err != nil || run == nil {
+		// Fallback: return basic info from result
+		return wrapResult(map[string]any{
+			"id":         result.RunID,
+			"agent_name": agentName,
+			"status":     MapMemoryStatusToACP(AgentRunStatus(result.Status)),
+			"duration":   result.Duration.String(),
+		})
+	}
+
+	msgs, _ := h.repo.FindMessagesByRunID(ctx, run.ID)
+	var question *AgentQuestion
+	if run.Status == RunStatusPaused {
+		questions, _ := h.repo.FindPendingQuestionsByRunID(ctx, run.ID)
+		if len(questions) > 0 {
+			question = questions[0]
+		}
+	}
+
+	// Convert pointer messages to values for RunToACPObject
+	valMsgs := make([]AgentRunMessage, len(msgs))
+	for i, m := range msgs {
+		valMsgs[i] = *m
+	}
+
+	return wrapResult(RunToACPObject(run, valMsgs, question))
+}
+
+// ExecuteACPGetRunStatus retrieves an agent run in ACP format with status mapping.
+func (h *MCPToolHandler) ExecuteACPGetRunStatus(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	agentName, _ := args["agent_name"].(string)
+	if agentName == "" {
+		return errResult("agent_name is required")
+	}
+	runID, _ := args["run_id"].(string)
+	if runID == "" {
+		return errResult("run_id is required")
+	}
+
+	run, err := h.repo.FindRunByID(ctx, runID)
+	if err != nil {
+		return errResult("failed to get run: " + err.Error())
+	}
+	if run == nil {
+		return errResult("Run not found")
+	}
+
+	// Verify the run belongs to the correct agent (by ACP slug)
+	if run.Agent == nil || ACPSlugFromName(run.Agent.Name) != agentName {
+		return errResult("Run not found")
+	}
+
+	// Verify the run belongs to this project
+	if run.Agent.ProjectID != projectID {
+		return errResult("Run not found")
+	}
+
+	msgs, _ := h.repo.FindMessagesByRunID(ctx, run.ID)
+	var question *AgentQuestion
+	if run.Status == RunStatusPaused {
+		questions, _ := h.repo.FindPendingQuestionsByRunID(ctx, run.ID)
+		if len(questions) > 0 {
+			question = questions[0]
+		}
+	}
+
+	// Convert pointer messages to values for RunToACPObject
+	valMsgs := make([]AgentRunMessage, len(msgs))
+	for i, m := range msgs {
+		valMsgs[i] = *m
+	}
+
+	return wrapResult(RunToACPObject(run, valMsgs, question))
 }
