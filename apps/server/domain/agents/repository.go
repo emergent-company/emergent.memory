@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
@@ -1372,6 +1373,71 @@ func (r *Repository) FindToolCallsByRunID(ctx context.Context, runID string) ([]
 		return nil, err
 	}
 	return tcs, nil
+}
+
+// RunLogEntry is a unified log entry merging a message or tool call from a run,
+// ordered by creation time. Used by the GET /api/v1/runs/:runId/logs endpoint.
+type RunLogEntry struct {
+	// Kind is either "message" or "tool_call"
+	Kind       string    `json:"kind"`
+	StepNumber int       `json:"stepNumber"`
+	CreatedAt  time.Time `json:"createdAt"`
+	// Message fields (Kind == "message")
+	Role    string         `json:"role,omitempty"`
+	Content map[string]any `json:"content,omitempty"`
+	// Tool call fields (Kind == "tool_call")
+	ToolName   string         `json:"toolName,omitempty"`
+	Input      map[string]any `json:"input,omitempty"`
+	Output     map[string]any `json:"output,omitempty"`
+	Status     string         `json:"status,omitempty"`
+	DurationMs *int           `json:"durationMs,omitempty"`
+}
+
+// FindRunLogEntries returns a unified, chronologically ordered log for a run by
+// merging agent_run_messages and agent_run_tool_calls. This powers the
+// GET /api/v1/runs/:runId/logs streaming endpoint.
+func (r *Repository) FindRunLogEntries(ctx context.Context, runID string) ([]*RunLogEntry, error) {
+	msgs, err := r.FindMessagesByRunID(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("FindRunLogEntries messages: %w", err)
+	}
+	tcs, err := r.FindToolCallsByRunID(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("FindRunLogEntries tool_calls: %w", err)
+	}
+
+	entries := make([]*RunLogEntry, 0, len(msgs)+len(tcs))
+	for _, m := range msgs {
+		entries = append(entries, &RunLogEntry{
+			Kind:       "message",
+			StepNumber: m.StepNumber,
+			CreatedAt:  m.CreatedAt,
+			Role:       m.Role,
+			Content:    m.Content,
+		})
+	}
+	for _, tc := range tcs {
+		entries = append(entries, &RunLogEntry{
+			Kind:       "tool_call",
+			StepNumber: tc.StepNumber,
+			CreatedAt:  tc.CreatedAt,
+			ToolName:   tc.ToolName,
+			Input:      tc.Input,
+			Output:     tc.Output,
+			Status:     tc.Status,
+			DurationMs: tc.DurationMs,
+		})
+	}
+
+	// Sort by created_at ascending; break ties with messages before tool_calls
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].CreatedAt.Equal(entries[j].CreatedAt) {
+			return entries[i].Kind == "message" && entries[j].Kind == "tool_call"
+		}
+		return entries[i].CreatedAt.Before(entries[j].CreatedAt)
+	})
+
+	return entries, nil
 }
 
 // --- Project-scoped Run History ---

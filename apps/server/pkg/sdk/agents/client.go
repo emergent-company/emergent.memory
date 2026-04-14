@@ -1038,6 +1038,95 @@ func (c *Client) GetRunToolCalls(ctx context.Context, projectID, runID string) (
 	return &result, nil
 }
 
+// RunLogEntry is a unified log entry from GET /api/v1/runs/:runId/logs.
+// Kind is either "message" or "tool_call".
+type RunLogEntry struct {
+	Kind       string    `json:"kind"`
+	StepNumber int       `json:"stepNumber"`
+	CreatedAt  time.Time `json:"createdAt"`
+	// Message fields (Kind == "message")
+	Role    string         `json:"role,omitempty"`
+	Content map[string]any `json:"content,omitempty"`
+	// Tool call fields (Kind == "tool_call")
+	ToolName   string         `json:"toolName,omitempty"`
+	Input      map[string]any `json:"input,omitempty"`
+	Output     map[string]any `json:"output,omitempty"`
+	Status     string         `json:"status,omitempty"`
+	DurationMs *int           `json:"durationMs,omitempty"`
+}
+
+// GetRunLogs opens the SSE log stream for a run and returns the raw response
+// body as an io.ReadCloser. The caller is responsible for closing it.
+//
+// The stream emits SSE events with event names "message", "tool_call", or "done".
+// Each data field is a JSON-encoded RunLogEntry (or a done summary object).
+//
+// GET /api/v1/runs/:runId/logs
+// Requires agents:read scope.
+func (c *Client) GetRunLogs(ctx context.Context, runID string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"GET",
+		c.base+"/api/v1/runs/"+url.PathEscape(runID)+"/logs",
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	return resp.Body, nil
+}
+
+// GetRunLogsText opens the plain-text log stream for a run and returns the raw
+// response body as an io.ReadCloser. Each line is a human-readable log entry.
+// The caller is responsible for closing it.
+//
+// GET /api/v1/runs/:runId/logs  (Accept: text/plain)
+// Requires agents:read scope.
+func (c *Client) GetRunLogsText(ctx context.Context, runID string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"GET",
+		c.base+"/api/v1/runs/"+url.PathEscape(runID)+"/logs",
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/plain")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	return resp.Body, nil
+}
+
 // --- Webhook Hook Methods ---
 
 // CreateWebhookHook creates a new webhook hook for an agent.

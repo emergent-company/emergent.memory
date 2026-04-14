@@ -15,6 +15,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/sse"
 )
 
 // Handler handles HTTP requests for agents
@@ -1639,6 +1640,125 @@ func (h *Handler) GetRunSteps(c echo.Context) error {
 	})
 
 	return c.JSON(http.StatusOK, SuccessResponse(steps))
+}
+
+// GetRunLogs handles GET /api/v1/runs/:runId/logs
+//
+// Returns a chronological log stream for a run, merging messages and tool calls
+// ordered by creation time. Supports two response formats:
+//
+//   - SSE (default, or Accept: text/event-stream): streams each entry as a
+//     named SSE event ("message" or "tool_call") with JSON data.
+//   - Plain text (Accept: text/plain): streams each entry as a single
+//     human-readable line followed by a newline, suitable for log viewers.
+//
+// For completed runs the snapshot is returned immediately. For in-progress runs
+// the current snapshot is returned; clients should poll if live tailing is needed.
+//
+// @Summary      Stream run logs
+// @Description  Returns the merged message + tool-call log for a run as an SSE stream or plain text.
+// @Tags         agents
+// @Produce      text/event-stream
+// @Param        runId path string true "Run ID (UUID)"
+// @Success      200 {string} string "SSE stream of log entries"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Run not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v1/runs/{runId}/logs [get]
+// @Security     bearerAuth
+func (h *Handler) GetRunLogs(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	runID := c.Param("runId")
+	if runID == "" {
+		return apperror.NewBadRequest("runId is required")
+	}
+
+	ctx := c.Request().Context()
+
+	// Verify the run exists (global lookup — run IDs are globally unique UUIDs)
+	run, err := h.repo.FindRunByID(ctx, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent run", err)
+	}
+	if run == nil {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	entries, err := h.repo.FindRunLogEntries(ctx, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get run log entries", err)
+	}
+
+	// Plain-text mode: Accept: text/plain
+	if strings.Contains(c.Request().Header.Get("Accept"), "text/plain") {
+		c.Response().Header().Set("Content-Type", "text/plain; charset=utf-8")
+		c.Response().Header().Set("Cache-Control", "no-cache")
+		c.Response().Header().Set("X-Content-Type-Options", "nosniff")
+		c.Response().WriteHeader(http.StatusOK)
+
+		flusher, canFlush := c.Response().Writer.(http.Flusher)
+		for _, entry := range entries {
+			var line string
+			switch entry.Kind {
+			case "message":
+				// Extract text content if present, otherwise use role label
+				text := ""
+				if t, ok := entry.Content["text"].(string); ok && t != "" {
+					text = t
+				} else if parts, ok := entry.Content["parts"].([]any); ok && len(parts) > 0 {
+					if p, ok := parts[0].(map[string]any); ok {
+						if t, ok := p["text"].(string); ok {
+							text = t
+						}
+					}
+				}
+				if text != "" {
+					line = fmt.Sprintf("[%s] %s: %s\n",
+						entry.CreatedAt.Format("15:04:05"), entry.Role, text)
+				} else {
+					line = fmt.Sprintf("[%s] %s\n",
+						entry.CreatedAt.Format("15:04:05"), entry.Role)
+				}
+			case "tool_call":
+				line = fmt.Sprintf("[%s] tool_call: %s (status=%s)\n",
+					entry.CreatedAt.Format("15:04:05"), entry.ToolName, entry.Status)
+			}
+			if line != "" {
+				_, _ = fmt.Fprint(c.Response().Writer, line)
+				if canFlush {
+					flusher.Flush()
+				}
+			}
+		}
+		return nil
+	}
+
+	// SSE mode (default)
+	writer := sse.NewWriter(c.Response().Writer)
+	if err := writer.Start(); err != nil {
+		return apperror.NewInternal("SSE streaming not supported", err)
+	}
+	defer writer.Close()
+
+	for _, entry := range entries {
+		if err := writer.WriteEvent(entry.Kind, entry); err != nil {
+			// Client disconnected — stop streaming
+			break
+		}
+	}
+
+	// Emit a terminal "done" event so clients know the stream is complete
+	_ = writer.WriteEvent("done", map[string]any{
+		"runId":  runID,
+		"status": string(run.Status),
+		"count":  len(entries),
+	})
+
+	return nil
 }
 
 // --- Workspace Config Handlers ---
