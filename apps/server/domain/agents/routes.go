@@ -70,6 +70,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	runs.GET("/:runId", h.GetProjectRun)
 	runs.GET("/:runId/messages", h.GetRunMessages)
 	runs.GET("/:runId/tool-calls", h.GetRunToolCalls)
+	runs.GET("/:runId/steps", h.GetRunSteps)
 	runs.GET("/:runId/questions", h.HandleListQuestionsByRun)
 
 	// --- Project-scoped agent question routes ---

@@ -797,6 +797,19 @@ func (ae *AgentExecutor) runPipeline(
 		return nil, fmt.Errorf("failed to create LLM model: %w", err)
 	}
 
+	// Persist the resolved model name on the run record.
+	// llm.Name() reflects the actual model used (including factory/credential defaults),
+	// which may differ from the modelName variable when a credential-level default applies.
+	if resolvedModelName := llm.Name(); resolvedModelName != "" {
+		if err := ae.repo.UpdateRunModel(ctx, run.ID, resolvedModelName); err != nil {
+			ae.log.Warn("failed to persist model on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("model", resolvedModelName),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
 	// Resolve tools from the tool pool
 	maxDepth := req.MaxDepth
 	if maxDepth <= 0 {

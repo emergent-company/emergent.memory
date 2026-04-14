@@ -353,6 +353,14 @@ type AgentRunToolCallDTO struct {
 	CreatedAt  time.Time      `json:"createdAt"`
 }
 
+// AgentRunStepDTO represents a single LLM invocation step within a run,
+// grouping the assistant message with any tool calls made during that step.
+type AgentRunStepDTO struct {
+	StepNumber int                    `json:"stepNumber"`
+	Messages   []*AgentRunMessageDTO  `json:"messages"`
+	ToolCalls  []*AgentRunToolCallDTO `json:"toolCalls"`
+}
+
 // --- ToDTO methods ---
 
 // ToDTO converts an AgentDefinition entity to AgentDefinitionDTO

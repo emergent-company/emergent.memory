@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -1559,6 +1560,85 @@ func (h *Handler) GetRunToolCalls(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(dtos))
+}
+
+// GetRunSteps handles GET /api/projects/:projectId/agent-runs/:runId/steps
+// It returns a per-step trace of the run, grouping messages and tool calls by
+// step number so callers can inspect each LLM invocation turn.
+func (h *Handler) GetRunSteps(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	runID := c.Param("runId")
+	if runID == "" {
+		return apperror.NewBadRequest("runId is required")
+	}
+
+	ctx := c.Request().Context()
+
+	// Verify the run belongs to this project
+	run, err := h.repo.FindRunByIDForProject(ctx, runID, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent run", err)
+	}
+	if run == nil {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	messages, err := h.repo.FindMessagesByRunID(ctx, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get run messages", err)
+	}
+
+	toolCalls, err := h.repo.FindToolCallsByRunID(ctx, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get run tool calls", err)
+	}
+
+	// Group messages and tool calls by step number
+	stepMap := make(map[int]*AgentRunStepDTO)
+	for _, msg := range messages {
+		s, ok := stepMap[msg.StepNumber]
+		if !ok {
+			s = &AgentRunStepDTO{
+				StepNumber: msg.StepNumber,
+				Messages:   []*AgentRunMessageDTO{},
+				ToolCalls:  []*AgentRunToolCallDTO{},
+			}
+			stepMap[msg.StepNumber] = s
+		}
+		s.Messages = append(s.Messages, msg.ToDTO())
+	}
+	for _, tc := range toolCalls {
+		s, ok := stepMap[tc.StepNumber]
+		if !ok {
+			s = &AgentRunStepDTO{
+				StepNumber: tc.StepNumber,
+				Messages:   []*AgentRunMessageDTO{},
+				ToolCalls:  []*AgentRunToolCallDTO{},
+			}
+			stepMap[tc.StepNumber] = s
+		}
+		s.ToolCalls = append(s.ToolCalls, tc.ToDTO())
+	}
+
+	// Flatten and sort by step number
+	steps := make([]*AgentRunStepDTO, 0, len(stepMap))
+	for _, s := range stepMap {
+		steps = append(steps, s)
+	}
+	sort.Slice(steps, func(i, j int) bool {
+		return steps[i].StepNumber < steps[j].StepNumber
+	})
+
+	return c.JSON(http.StatusOK, SuccessResponse(steps))
 }
 
 // --- Workspace Config Handlers ---
