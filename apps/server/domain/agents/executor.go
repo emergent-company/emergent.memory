@@ -830,7 +830,13 @@ func (ae *AgentExecutor) runPipeline(
 		resolvedTools = append(resolvedTools, coordTools...)
 	}
 
-	// Add workspace tools if a non-degraded workspace was provisioned
+	// Whether the agent definition requests a sandbox workspace.
+	hasSandboxConfig := req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
+
+	// Add workspace tools if a non-degraded workspace was provisioned.
+	// When provisioning failed or is degraded, register stub tools that return an
+	// error result so the model gets a proper tool response and afterToolCb fires
+	// (persisting the call to the DB) instead of a silent drop from the ADK.
 	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
 		wsTools, wsToolErr := ae.resolveWorkspaceTools(wsResult, req)
 		if wsToolErr != nil {
@@ -843,6 +849,19 @@ func (ae *AgentExecutor) runPipeline(
 			ae.log.Info("workspace tools added to agent pipeline",
 				slog.String("run_id", run.ID),
 				slog.Int("count", len(wsTools)),
+			)
+		}
+	} else if hasSandboxConfig {
+		var wsCfg *sandbox.AgentSandboxConfig
+		if req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0 {
+			wsCfg, _ = sandbox.ParseAgentSandboxConfig(req.AgentDefinition.SandboxConfig)
+		}
+		stubTools := BuildStubWorkspaceTools(wsCfg, ae.log)
+		if len(stubTools) > 0 {
+			resolvedTools = append(resolvedTools, stubTools...)
+			ae.log.Warn("workspace stub tools registered (provisioning failed/degraded)",
+				slog.String("run_id", run.ID),
+				slog.Int("count", len(stubTools)),
 			)
 		}
 	}
@@ -892,7 +911,6 @@ func (ae *AgentExecutor) runPipeline(
 	// If workspace was requested but provisioning failed or is degraded, inject a clear
 	// unavailability notice so the model doesn't attempt to call workspace tools that
 	// have no registered handler (which would cause silent tool-call drops).
-	hasSandboxConfig := req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
 	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
 		instruction = ae.augmentInstructionWithWorkspace(instruction, wsResult)
 	} else if hasSandboxConfig {
