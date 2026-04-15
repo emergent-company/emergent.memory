@@ -3,11 +3,13 @@ package sandboximages
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
+
+	"github.com/docker/docker/api/types/image"
+	dockerclient "github.com/docker/docker/client"
 )
 
 // builtInVariants maps known Firecracker rootfs variant names to their rootfs file suffix.
@@ -210,19 +212,46 @@ func (s *Service) SeedBuiltIns(ctx context.Context, projectID string) error {
 	return nil
 }
 
-// pullDockerImage runs `docker pull` in the background and updates the image status.
+// pullDockerImage pulls an image via the Docker SDK and updates the catalog status.
+// Uses the Docker daemon socket instead of shelling out to the docker CLI,
+// so it works inside containers without the docker binary installed.
 func (s *Service) pullDockerImage(imageID, dockerRef string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	ctx := context.Background()
-	s.log.Info("pulling Docker image", "image_id", imageID, "docker_ref", dockerRef)
+	s.log.Info("pulling Docker image via SDK", "image_id", imageID, "docker_ref", dockerRef)
 
-	cmd := exec.CommandContext(ctx, "docker", "pull", dockerRef)
-	output, err := cmd.CombinedOutput()
+	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
 	if err != nil {
-		errMsg := fmt.Sprintf("docker pull failed: %s: %s", err.Error(), strings.TrimSpace(string(output)))
+		errMsg := fmt.Sprintf("docker client init failed: %s", err.Error())
+		s.log.Error("Docker SDK client creation failed",
+			"image_id", imageID,
+			"docker_ref", dockerRef,
+			"error", errMsg,
+		)
+		_ = s.store.UpdateStatus(ctx, imageID, ImageStatusError, &errMsg)
+		return
+	}
+	defer cli.Close()
+
+	reader, err := cli.ImagePull(ctx, dockerRef, image.PullOptions{})
+	if err != nil {
+		errMsg := fmt.Sprintf("docker pull failed: %s", err.Error())
 		s.log.Error("Docker pull failed",
+			"image_id", imageID,
+			"docker_ref", dockerRef,
+			"error", errMsg,
+		)
+		_ = s.store.UpdateStatus(ctx, imageID, ImageStatusError, &errMsg)
+		return
+	}
+	defer reader.Close()
+
+	// Consume pull output (required for pull to complete)
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		errMsg := fmt.Sprintf("docker pull stream error: %s", err.Error())
+		s.log.Error("Docker pull stream read failed",
 			"image_id", imageID,
 			"docker_ref", dockerRef,
 			"error", errMsg,
