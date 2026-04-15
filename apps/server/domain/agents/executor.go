@@ -888,9 +888,15 @@ func (ae *AgentExecutor) runPipeline(
 		}
 	}
 
-	// Augment system instruction with workspace context if available
+	// Augment system instruction with workspace context if available.
+	// If workspace was requested but provisioning failed or is degraded, inject a clear
+	// unavailability notice so the model doesn't attempt to call workspace tools that
+	// have no registered handler (which would cause silent tool-call drops).
+	hasSandboxConfig := req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
 	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
 		instruction = ae.augmentInstructionWithWorkspace(instruction, wsResult)
+	} else if hasSandboxConfig {
+		instruction = ae.augmentInstructionWithWorkspaceUnavailable(instruction, wsResult)
 	}
 
 	genConfig := ae.modelFactory.DefaultGenerateConfig()
@@ -1554,6 +1560,26 @@ Workspace tools are prefixed with workspace_ and run inside the sandboxed contai
 `
 
 	return instruction + wsContext
+}
+
+// augmentInstructionWithWorkspaceUnavailable appends a notice to the system prompt
+// when workspace provisioning was requested (SandboxConfig is set) but failed or
+// produced a degraded result. This prevents the model from calling workspace tools
+// (workspace_bash, workspace_read, etc.) that have no registered handler, which
+// would otherwise result in silent tool-call drops and confusing agent behaviour.
+func (ae *AgentExecutor) augmentInstructionWithWorkspaceUnavailable(instruction string, wsResult *sandbox.ProvisioningResult) string {
+	reason := "workspace provisioning failed"
+	if wsResult != nil && wsResult.Degraded {
+		reason = "workspace is running in degraded mode"
+	}
+	notice := "\n\n## Workspace Unavailable\n" +
+		"A sandboxed workspace was requested for this run but " + reason + ".\n" +
+		"Workspace tools (workspace_bash, workspace_read, workspace_write, workspace_edit, " +
+		"workspace_glob, workspace_grep, workspace_git, run_python, run_go) are NOT available.\n" +
+		"Do not attempt to call these tools. Accomplish the task using only the tools listed " +
+		"in your tool definitions, or explain that you are unable to complete the task without " +
+		"a working workspace.\n"
+	return instruction + notice
 }
 
 // resolveWorkspaceTools builds ADK tools that let the agent interact with its
