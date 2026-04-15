@@ -1053,15 +1053,13 @@ func (ae *AgentExecutor) runPipeline(
 				slog.String("tool", toolName),
 				slog.Int("consecutive", doomDetector.consecutiveCount),
 			)
-			// Cancel the run context so the ADK runner exits cleanly on the next
-			// iteration. The cancellation is caught by the beforeModelCb and by the
-			// r.Run() event loop, which will surface it as a context error, causing
-			// the run to be marked failed.
+			// Cancel the run context AND return an error from the callback so
+			// the ADK runner surfaces it immediately as an eventErr in the event
+			// loop rather than waiting for the next beforeModelCb check.
+			// Returning a non-nil error causes the framework to propagate it
+			// through r.Run(), which exits the inner loop and marks the run failed.
 			cancelRun()
-			return map[string]any{
-				"error":   "DOOM_LOOP_DETECTED",
-				"message": fmt.Sprintf("Detected %d consecutive identical calls to %q. Agent is stuck in a loop and has been stopped.", doomDetector.consecutiveCount, toolName),
-			}, nil
+			return nil, fmt.Errorf("DOOM_LOOP_DETECTED: %d consecutive identical calls to %q — agent is stuck in a loop and has been stopped", doomDetector.consecutiveCount, toolName)
 		}
 
 		// Emit ToolCallEnd streaming event
@@ -1386,11 +1384,30 @@ func (ae *AgentExecutor) runPipeline(
 			// Track the last non-partial event that carries text — used as fallback
 			// when IsFinalResponse() never fires (e.g. agent ends with a tool call).
 			if !event.Partial && event.Content != nil {
+				stepHasText := false
 				for _, part := range event.Content.Parts {
 					if part != nil && part.Text != "" {
 						lastTextEvent = event
+						stepHasText = true
 						break
 					}
+				}
+				// Check for consecutive tool-only steps (issue #146).
+				// recordStep resets its counter when text is produced; if the step
+				// contained only tool calls it increments and may abort the run.
+				toolOnlyAction := doomDetector.recordStep(stepHasText)
+				switch toolOnlyAction {
+				case doomActionWarn:
+					ae.log.Warn("tool-only loop warning: consecutive steps with no assistant text",
+						slog.String("run_id", run.ID),
+						slog.Int("consecutive_tool_only_steps", doomDetector.toolOnlySteps),
+					)
+				case doomActionStop:
+					ae.log.Error("tool-only loop detected, stopping agent",
+						slog.String("run_id", run.ID),
+						slog.Int("consecutive_tool_only_steps", doomDetector.toolOnlySteps),
+					)
+					cancelRun()
 				}
 			}
 		} // end inner for-range r.Run(...)
@@ -1952,18 +1969,48 @@ const (
 	doomWarnThreshold = 3
 	// doomStopThreshold is the number of consecutive identical calls before stopping.
 	doomStopThreshold = 5
+
+	// toolOnlyWarnThreshold is the number of consecutive tool-only steps (no
+	// assistant text produced) before issuing a warning.
+	toolOnlyWarnThreshold = 6
+	// toolOnlyStopThreshold is the number of consecutive tool-only steps before
+	// aborting the run. This catches loops where different tools cycle without
+	// ever producing meaningful output — the failure mode from issue #146.
+	toolOnlyStopThreshold = 10
 )
 
-// doomLoopDetector tracks consecutive identical tool calls to detect infinite loops.
+// doomLoopDetector tracks two loop patterns:
+//  1. Consecutive identical tool calls (same tool + same args).
+//  2. Consecutive tool-only steps where the LLM produces no assistant text.
 type doomLoopDetector struct {
 	log              *slog.Logger
 	lastToolName     string
 	lastArgsHash     string
 	consecutiveCount int
+	// toolOnlySteps counts LLM steps that produced only tool calls, no text.
+	toolOnlySteps int
 }
 
 func newDoomLoopDetector(log *slog.Logger) *doomLoopDetector {
 	return &doomLoopDetector{log: log}
+}
+
+// recordStep is called once per completed LLM step with whether the step
+// produced any assistant text. It resets the tool-only counter on text output
+// and returns an action recommendation when the counter exceeds thresholds.
+func (d *doomLoopDetector) recordStep(hasText bool) doomAction {
+	if hasText {
+		d.toolOnlySteps = 0
+		return doomActionNone
+	}
+	d.toolOnlySteps++
+	if d.toolOnlySteps >= toolOnlyStopThreshold {
+		return doomActionStop
+	}
+	if d.toolOnlySteps >= toolOnlyWarnThreshold {
+		return doomActionWarn
+	}
+	return doomActionNone
 }
 
 // closestToolName returns the tool name from candidates that is most similar
