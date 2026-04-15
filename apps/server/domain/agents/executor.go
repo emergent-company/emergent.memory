@@ -722,11 +722,11 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 
 	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.SandboxConfig, nil, req.AuthToken)
 	if err != nil {
-		ae.log.Error("workspace provisioning returned error, running without workspace",
+		ae.log.Error("workspace provisioning failed, failing run",
 			slog.String("run_id", runID),
 			slog.String("error", err.Error()),
 		)
-		return nil, nil
+		return nil, fmt.Errorf("workspace provisioning failed: %w", err)
 	}
 	if result == nil {
 		// Workspace not enabled in agent definition config
@@ -1159,6 +1159,19 @@ func (ae *AgentExecutor) runPipeline(
 		}
 
 		return result, toolErr
+	}
+
+	// Log final resolved tool names for diagnostics
+	if len(resolvedTools) > 0 {
+		toolNames := make([]string, len(resolvedTools))
+		for i, t := range resolvedTools {
+			toolNames[i] = t.Name()
+		}
+		ae.log.Info("final resolved tools for agent",
+			slog.String("run_id", run.ID),
+			slog.Int("count", len(resolvedTools)),
+			slog.Any("tools", toolNames),
+		)
 	}
 
 	llmAgent, err := llmagent.New(llmagent.Config{

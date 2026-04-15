@@ -97,6 +97,39 @@ func mergeMaps(base, override map[string]any) map[string]any {
 	return merged
 }
 
+// workspaceToolNameSet is the set of tool names that are resolved as workspace
+// tools (not MCP tools). These should be filtered from agent catalog responses
+// to avoid confusing the LLM into thinking they are spawnable sub-agents.
+var workspaceToolNameSet = map[string]bool{
+	"workspace_bash":  true,
+	"workspace_read":  true,
+	"workspace_write": true,
+	"workspace_edit":  true,
+	"workspace_glob":  true,
+	"workspace_grep":  true,
+	"workspace_git":   true,
+	"run_python":      true,
+	"run_go":          true,
+}
+
+// filterWorkspaceToolNames removes workspace tool names from a tools list.
+// The agent definition's Tools array is a whitelist for MCP tool resolution,
+// but workspace tools are resolved separately via sandbox config. Exposing
+// them in list_available_agents confuses the LLM into treating them as
+// spawnable agents or direct tools on other agents.
+func filterWorkspaceToolNames(tools []string) []string {
+	if len(tools) == 0 {
+		return tools
+	}
+	filtered := make([]string, 0, len(tools))
+	for _, t := range tools {
+		if !workspaceToolNameSet[t] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
 // --- list_available_agents ---
 
 // ListAvailableAgentsArgs is the input for the list_available_agents tool.
@@ -146,7 +179,7 @@ func BuildListAvailableAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) 
 				agents = append(agents, AgentSummary{
 					Name:        def.Name,
 					Description: desc,
-					Tools:       def.Tools,
+					Tools:       filterWorkspaceToolNames(def.Tools),
 					FlowType:    def.FlowType,
 					Visibility:  string(def.Visibility),
 				})
