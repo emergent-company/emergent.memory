@@ -29,6 +29,19 @@ func (a *imageResolverAdapter) ResolveImage(ctx context.Context, projectID, imag
 	return resolved, nil
 }
 
+// GetImageStatus returns the current status string of an image in the catalog.
+// Returns ("", nil) if the image is not found.
+func (a *imageResolverAdapter) GetImageStatus(ctx context.Context, projectID, imageName string) (string, error) {
+	img, err := a.svc.store.GetByName(ctx, projectID, imageName)
+	if err != nil {
+		return "", err
+	}
+	if img == nil {
+		return "", nil
+	}
+	return string(img.Status), nil
+}
+
 // AsImageResolver returns an adapter that implements sandbox.ImageResolver.
 func (s *Service) AsImageResolver() sandbox.ImageResolver {
 	return &imageResolverAdapter{svc: s}

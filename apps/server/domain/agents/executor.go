@@ -329,7 +329,25 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		}
 	}
 
-	wsResult := ae.provisionWorkspace(ctx, run.ID, req)
+	wsResult, wsErr := ae.provisionWorkspace(ctx, run.ID, req)
+	if wsErr != nil {
+		// Fatal provisioning failure (e.g. image not ready) — fail the run
+		errMsg := wsErr.Error()
+		_ = ae.repo.FailRunWithSteps(ctx, run.ID, errMsg, 0)
+		span.RecordError(wsErr)
+		span.SetStatus(codes.Error, errMsg)
+		span.SetAttributes(
+			attribute.Int("memory.agent.step_count", 0),
+			attribute.String("memory.agent.run_status", string(RunStatusError)),
+		)
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusError,
+			Summary:  map[string]any{"error": errMsg},
+			Steps:    0,
+			Duration: time.Since(startTime),
+		}, nil
+	}
 
 	// Build an idempotent cleanup function so teardown runs exactly once.
 	// Callers are responsible for invoking Cleanup on the returned ExecuteResult.
@@ -481,7 +499,24 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		}
 	}
 
-	wsResult := ae.provisionWorkspace(ctx, run.ID, req)
+	wsResult, wsErr := ae.provisionWorkspace(ctx, run.ID, req)
+	if wsErr != nil {
+		errMsg := wsErr.Error()
+		_ = ae.repo.FailRunWithSteps(ctx, run.ID, errMsg, 0)
+		span.RecordError(wsErr)
+		span.SetStatus(codes.Error, errMsg)
+		span.SetAttributes(
+			attribute.Int("memory.agent.step_count", 0),
+			attribute.String("memory.agent.run_status", string(RunStatusError)),
+		)
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusError,
+			Summary:  map[string]any{"error": errMsg},
+			Steps:    0,
+			Duration: time.Since(startTime),
+		}, nil
+	}
 
 	// Build an idempotent cleanup function so teardown runs exactly once.
 	var cleanupOnce sync.Once
@@ -606,7 +641,18 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		}
 	}
 
-	wsResult := ae.provisionWorkspace(ctx, newRun.ID, req)
+	wsResult, wsErr := ae.provisionWorkspace(ctx, newRun.ID, req)
+	if wsErr != nil {
+		errMsg := wsErr.Error()
+		_ = ae.repo.FailRunWithSteps(ctx, newRun.ID, errMsg, priorRun.StepCount)
+		return &ExecuteResult{
+			RunID:    newRun.ID,
+			Status:   RunStatusError,
+			Summary:  map[string]any{"error": errMsg},
+			Steps:    priorRun.StepCount,
+			Duration: time.Since(startTime),
+		}, nil
+	}
 
 	// Build an idempotent cleanup function so teardown runs exactly once.
 	var cleanupOnce sync.Once
@@ -645,15 +691,17 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 }
 
 // provisionWorkspace provisions a workspace for the agent run if configured.
-// Returns nil if workspace provisioning is disabled, not configured, or not needed.
-// Provisioning failures are non-fatal — the agent runs in degraded mode without a workspace.
-func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, req ExecuteRequest) *sandbox.ProvisioningResult {
+// Returns (nil, nil) if workspace provisioning is disabled, not configured, or not needed.
+// Returns (result, nil) on success or degraded provisioning.
+// Returns (nil, error) for fatal pre-provisioning failures (e.g. image not ready) —
+// callers must fail the run with RunStatusError.
+func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, req ExecuteRequest) (*sandbox.ProvisioningResult, error) {
 	// Check preconditions: feature enabled, provisioner available, definition has workspace config
 	if !ae.wsEnabled || ae.provisioner == nil {
-		return nil
+		return nil, nil
 	}
 	if req.AgentDefinition == nil || len(req.AgentDefinition.SandboxConfig) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	ae.log.Info("provisioning workspace for agent run",
@@ -661,17 +709,28 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 		slog.String("agent_definition_id", req.AgentDefinition.ID),
 	)
 
+	// Check image readiness before attempting provisioning.
+	// If the image is still pulling or in error state, fail the run immediately
+	// rather than silently degrading to stub tools.
+	if err := ae.provisioner.WaitForImageReady(ctx, req.ProjectID, req.AgentDefinition.SandboxConfig); err != nil {
+		ae.log.Error("sandbox image not ready, failing run",
+			slog.String("run_id", runID),
+			slog.String("error", err.Error()),
+		)
+		return nil, fmt.Errorf("sandbox image not ready: %w", err)
+	}
+
 	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.SandboxConfig, nil, req.AuthToken)
 	if err != nil {
 		ae.log.Error("workspace provisioning returned error, running without workspace",
 			slog.String("run_id", runID),
 			slog.String("error", err.Error()),
 		)
-		return nil
+		return nil, nil
 	}
 	if result == nil {
 		// Workspace not enabled in agent definition config
-		return nil
+		return nil, nil
 	}
 
 	// Link workspace to this run
@@ -697,7 +756,7 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 		)
 	}
 
-	return result
+	return result, nil
 }
 
 // teardownWorkspace destroys the provisioned workspace after the agent run completes.
@@ -1509,6 +1568,31 @@ func (ae *AgentExecutor) runPipeline(
 		if wsResult.Degraded {
 			summary["workspace_degraded"] = true
 		}
+	}
+
+	// If workspace was required but ended up degraded (stub tools), mark as error.
+	// The agent completed but could not actually use its sandbox — this is not success.
+	// (hasSandboxConfig was set earlier in this function at tool resolution time)
+	if hasSandboxConfig && wsResult != nil && wsResult.Degraded {
+		summary["error"] = "workspace provisioning failed: " + wsResult.Error.Error()
+		_ = ae.repo.FailRunWithSteps(ctx, run.ID, summary["error"].(string), steps)
+
+		if req.Agent != nil && req.Agent.ID != "" {
+			_ = ae.repo.UpdateLastRun(ctx, req.Agent.ID, string(RunStatusError))
+		}
+
+		ae.log.Warn("agent run completed with degraded workspace, marking as error",
+			slog.String("run_id", run.ID),
+			slog.Int("steps", steps),
+		)
+
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusError,
+			Summary:  summary,
+			Steps:    steps,
+			Duration: duration,
+		}, nil
 	}
 
 	// Mark run as complete

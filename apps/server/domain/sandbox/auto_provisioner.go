@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 )
 
 // ProvisioningResult holds the result of auto-provisioning a workspace for an agent session.
@@ -27,6 +28,9 @@ type ResolvedImage struct {
 // This is implemented by the workspaceimages package and injected via fx.
 type ImageResolver interface {
 	ResolveImage(ctx context.Context, projectID, imageName string) (*ResolvedImage, error)
+	// GetImageStatus returns the current status of an image in the catalog.
+	// Returns ("", nil) if the image is not found in the catalog.
+	GetImageStatus(ctx context.Context, projectID, imageName string) (string, error)
 }
 
 // AutoProvisioner handles automatic workspace provisioning for agent sessions.
@@ -63,6 +67,69 @@ func NewAutoProvisioner(
 // Called by the workspaceimages module during fx startup.
 func (ap *AutoProvisioner) SetImageResolver(resolver ImageResolver) {
 	ap.imageResolver = resolver
+}
+
+// WaitForImageReady checks whether the sandbox image required by the config is ready.
+// For "pulling" status, it polls with backoff up to maxWait. For "error" status, it
+// fails immediately. Returns nil if the image is ready or not in the catalog (direct routing).
+func (ap *AutoProvisioner) WaitForImageReady(ctx context.Context, projectID string, workspaceConfig map[string]any) error {
+	if ap.imageResolver == nil {
+		return nil // no catalog — direct routing, nothing to check
+	}
+
+	cfg, err := ParseAgentSandboxConfig(workspaceConfig)
+	if err != nil || cfg == nil || !cfg.Enabled || cfg.BaseImage == "" {
+		return nil
+	}
+
+	const (
+		maxWait  = 60 * time.Second
+		pollBase = 2 * time.Second
+	)
+	deadline := time.Now().Add(maxWait)
+
+	for {
+		status, err := ap.imageResolver.GetImageStatus(ctx, projectID, cfg.BaseImage)
+		if err != nil {
+			ap.log.Warn("image status check failed, proceeding with direct routing",
+				"base_image", cfg.BaseImage,
+				"error", err,
+			)
+			return nil // catalog lookup failed — let provisioning try direct
+		}
+
+		switch status {
+		case "":
+			// Not in catalog — direct routing, no wait needed
+			return nil
+		case "ready":
+			return nil
+		case "error":
+			return fmt.Errorf("sandbox image %q has status \"error\" — cannot provision workspace; delete and re-create the image catalog entry to retry", cfg.BaseImage)
+		case "pulling", "pending":
+			if time.Now().After(deadline) {
+				return fmt.Errorf("sandbox image %q still in %q state after %s — cannot provision workspace", cfg.BaseImage, status, maxWait)
+			}
+			wait := pollBase
+			remaining := time.Until(deadline)
+			if wait > remaining {
+				wait = remaining
+			}
+			ap.log.Info("sandbox image not ready, waiting",
+				"base_image", cfg.BaseImage,
+				"status", status,
+				"retry_in", wait,
+			)
+			select {
+			case <-time.After(wait):
+				// retry
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		default:
+			return fmt.Errorf("sandbox image %q has unexpected status %q", cfg.BaseImage, status)
+		}
+	}
 }
 
 // CheckoutService returns the checkout service used by this provisioner.

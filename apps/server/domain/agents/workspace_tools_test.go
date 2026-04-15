@@ -393,8 +393,9 @@ func TestProvisionWorkspace_DisabledReturnsNil(t *testing.T) {
 		log:         testAgentLogger(),
 	}
 
-	result := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{})
+	result, err := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{})
 	assert.Nil(t, result)
+	assert.NoError(t, err)
 }
 
 func TestProvisionWorkspace_NilProvisionerReturnsNil(t *testing.T) {
@@ -404,8 +405,9 @@ func TestProvisionWorkspace_NilProvisionerReturnsNil(t *testing.T) {
 		log:         testAgentLogger(),
 	}
 
-	result := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{})
+	result, err := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{})
 	assert.Nil(t, result)
+	assert.NoError(t, err)
 }
 
 func TestProvisionWorkspace_NilDefinitionReturnsNil(t *testing.T) {
@@ -415,10 +417,11 @@ func TestProvisionWorkspace_NilDefinitionReturnsNil(t *testing.T) {
 		log:         testAgentLogger(),
 	}
 
-	result := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{
+	result, err := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{
 		AgentDefinition: nil,
 	})
 	assert.Nil(t, result)
+	assert.NoError(t, err)
 }
 
 func TestProvisionWorkspace_EmptyWorkspaceConfigReturnsNil(t *testing.T) {
@@ -428,12 +431,13 @@ func TestProvisionWorkspace_EmptyWorkspaceConfigReturnsNil(t *testing.T) {
 		log:         testAgentLogger(),
 	}
 
-	result := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{
+	result, err := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{
 		AgentDefinition: &AgentDefinition{
 			SandboxConfig: nil, // no workspace config
 		},
 	})
 	assert.Nil(t, result)
+	assert.NoError(t, err)
 }
 
 func TestProvisionWorkspace_EmptyMapWorkspaceConfigReturnsNil(t *testing.T) {
@@ -443,12 +447,13 @@ func TestProvisionWorkspace_EmptyMapWorkspaceConfigReturnsNil(t *testing.T) {
 		log:         testAgentLogger(),
 	}
 
-	result := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{
+	result, err := ae.provisionWorkspace(context.Background(), "run-1", ExecuteRequest{
 		AgentDefinition: &AgentDefinition{
 			SandboxConfig: map[string]any{}, // empty map
 		},
 	})
 	assert.Nil(t, result)
+	assert.NoError(t, err)
 }
 
 // --- teardownWorkspace tests ---
