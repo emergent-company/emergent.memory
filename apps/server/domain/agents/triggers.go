@@ -392,7 +392,7 @@ func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID str
 
 	// Look up the corresponding AgentDefinition for config (system prompt, tools, etc.)
 	var agentDef *AgentDefinition
-	agentDef, _ = ts.repo.FindDefinitionByName(ctx, projectID, agent.Name)
+	agentDef, _ = ts.repo.ResolveDefinitionForAgent(ctx, agent)
 
 	// Build user message
 	userMessage := fmt.Sprintf("Scheduled execution of agent %q", agent.Name)

@@ -137,7 +137,7 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 	}
 
 	// Look up definition (optional)
-	agentDef, _ := p.repo.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
+	agentDef, _ := p.repo.ResolveDefinitionForAgent(ctx, agent)
 
 	userMessage := "Execute agent tasks"
 	if run.TriggerMessage != nil && *run.TriggerMessage != "" {

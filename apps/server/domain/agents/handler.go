@@ -496,7 +496,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 
 	// Look up the agent definition for this agent (if one exists)
 	var agentDef *AgentDefinition
-	agentDef, _ = h.repo.FindDefinitionByName(c.Request().Context(), agent.ProjectID, agent.Name)
+	agentDef, _ = h.repo.ResolveDefinitionForAgent(c.Request().Context(), agent)
 
 	// Parse optional request body for dynamic prompt
 	var triggerReq TriggerRequestDTO
@@ -1015,7 +1015,7 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 
 	// Look up the agent definition
 	var agentDef *AgentDefinition
-	agentDef, _ = h.repo.FindDefinitionByName(c.Request().Context(), agent.ProjectID, agent.Name)
+	agentDef, _ = h.repo.ResolveDefinitionForAgent(c.Request().Context(), agent)
 
 	// Parse payload
 	var payload WebhookTriggerPayloadDTO
@@ -2020,7 +2020,7 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 		}
 
 		// Look up the agent definition (optional, may be nil)
-		agentDef, _ := h.repo.FindDefinitionByName(c.Request().Context(), agent.ProjectID, agent.Name)
+		agentDef, _ := h.repo.ResolveDefinitionForAgent(c.Request().Context(), agent)
 
 		// Build the resume user message with Q&A context (task 5.4)
 		userMessage := fmt.Sprintf(

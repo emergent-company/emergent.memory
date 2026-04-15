@@ -455,6 +455,28 @@ func (r *Repository) FindDefinitionByName(ctx context.Context, projectID, name s
 	return def, nil
 }
 
+// ResolveDefinitionForAgent looks up the AgentDefinition for a runtime Agent.
+// It first tries the agent's AgentDefinitionID (FK), then falls back to a
+// name-based lookup. Returns (nil, nil) when no definition is found.
+func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent) (*AgentDefinition, error) {
+	if agent == nil {
+		return nil, nil
+	}
+	// Prefer the explicit FK when set
+	if agent.AgentDefinitionID != nil && *agent.AgentDefinitionID != "" {
+		def, err := r.FindDefinitionByID(ctx, *agent.AgentDefinitionID, &agent.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		if def != nil {
+			return def, nil
+		}
+		// FK set but definition deleted — fall through to name match
+	}
+	// Fall back to name match
+	return r.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
+}
+
 // FindEnabledByTriggerType returns all enabled agents matching the given trigger type,
 // excluding agents that belong to soft-deleted projects.
 func (r *Repository) FindEnabledByTriggerType(ctx context.Context, triggerType AgentTriggerType) ([]*Agent, error) {

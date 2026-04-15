@@ -144,6 +144,7 @@ type Agent struct {
 
 	ID                  string             `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
 	ProjectID           string             `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	AgentDefinitionID   *string            `bun:"agent_definition_id,type:uuid" json:"definitionId,omitempty"`
 	Name                string             `bun:"name,notnull" json:"name"`
 	StrategyType        string             `bun:"strategy_type,notnull" json:"strategyType"`
 	Prompt              *string            `bun:"prompt" json:"prompt"`

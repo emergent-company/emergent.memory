@@ -276,7 +276,7 @@ func (h *MCPToolHandler) ExecuteListAgents(ctx context.Context, projectID string
 		}
 
 		// Enrich with definition metadata (best-effort; ignore errors)
-		if def, defErr := h.repo.FindDefinitionByName(ctx, projectID, agent.Name); defErr == nil && def != nil {
+		if def, defErr := h.repo.ResolveDefinitionForAgent(ctx, agent); defErr == nil && def != nil {
 			dto.Description = def.Description
 			dto.FlowType = def.FlowType
 			dto.Model = def.Model
@@ -499,7 +499,7 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 	}
 
 	// Look up the agent definition for this agent (if one exists)
-	agentDef, _ := h.repo.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
+	agentDef, _ := h.repo.ResolveDefinitionForAgent(ctx, agent)
 
 	// Build the user message from structured input
 	// Accepts: message as a JSON object { instructions, task_id } or legacy plain string
@@ -1380,7 +1380,7 @@ func (h *MCPToolHandler) ExecuteRespondToAgentQuestion(ctx context.Context, proj
 		if err == nil && run != nil && run.Status == RunStatusPaused {
 			agent, err := h.repo.FindByID(ctx, run.AgentID, nil)
 			if err == nil && agent != nil {
-				agentDef, _ := h.repo.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
+				agentDef, _ := h.repo.ResolveDefinitionForAgent(ctx, agent)
 				userMessage := fmt.Sprintf(
 					"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
 					question.Question, response,
