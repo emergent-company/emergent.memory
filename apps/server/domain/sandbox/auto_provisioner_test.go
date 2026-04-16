@@ -90,6 +90,7 @@ func TestIntegration_AutoProvision_DisabledConfig(t *testing.T) {
 		map[string]any{"enabled": false},
 		nil,
 		"",
+		nil,
 	)
 	assert.NoError(t, err)
 	assert.Nil(t, result)
@@ -99,7 +100,7 @@ func TestIntegration_AutoProvision_NilConfig(t *testing.T) {
 	// When workspace config is nil, ProvisionForSession returns nil.
 	ap := NewAutoProvisioner(nil, nil, nil, nil, nil, testLogger())
 
-	result, err := ap.ProvisionForSession(t.Context(), "agent-def-1", "", nil, nil, "")
+	result, err := ap.ProvisionForSession(t.Context(), "agent-def-1", "", nil, nil, "", nil)
 	assert.NoError(t, err)
 	assert.Nil(t, result)
 }
@@ -114,6 +115,7 @@ func TestIntegration_AutoProvision_InvalidConfig(t *testing.T) {
 		map[string]any{},
 		nil,
 		"",
+		nil,
 	)
 	// Empty map → enabled=false (default) → nil result
 	assert.NoError(t, err)
@@ -137,7 +139,7 @@ func TestIntegration_AutoProvision_NoProviders_DegradedMode(t *testing.T) {
 		},
 	}
 
-	result, err := ap.ProvisionForSession(t.Context(), "agent-def-1", "", config, nil, "")
+	result, err := ap.ProvisionForSession(t.Context(), "agent-def-1", "", config, nil, "", nil)
 	assert.NoError(t, err) // No top-level error — degraded mode
 	require.NotNil(t, result)
 	assert.True(t, result.Degraded)

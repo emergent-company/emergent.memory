@@ -263,6 +263,8 @@ type TriggerRequest struct {
 	Metadata map[string]string `json:"context,omitempty"`
 	// Model overrides the agent definition's model for this single run.
 	Model string `json:"model,omitempty"`
+	// EnvVars are runtime environment variables injected into the sandbox container.
+	EnvVars map[string]string `json:"env_vars,omitempty"`
 }
 
 // PendingEventObject represents a graph object pending processing.

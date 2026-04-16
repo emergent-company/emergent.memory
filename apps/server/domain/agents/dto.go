@@ -60,6 +60,10 @@ type RunTokenUsage struct {
 	TotalInputTokens  int64   `json:"totalInputTokens"`
 	TotalOutputTokens int64   `json:"totalOutputTokens"`
 	EstimatedCostUSD  float64 `json:"estimatedCostUsd"`
+	// Provider and Model identify the LLM used. Format: "<provider>/<model>",
+	// e.g. "google/gemini-2.0-flash". Empty when unknown.
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
 // CreateAgentDTO is the request DTO for creating an agent
@@ -129,9 +133,10 @@ type BatchTriggerResponseDTO struct {
 
 // TriggerRequestDTO is the request body for triggering an agent
 type TriggerRequestDTO struct {
-	Prompt  string         `json:"prompt"`
-	Context map[string]any `json:"context,omitempty"`
-	Model   string         `json:"model,omitempty"`
+	Prompt  string            `json:"prompt"`
+	Context map[string]any    `json:"context,omitempty"`
+	Model   string            `json:"model,omitempty"`
+	EnvVars map[string]string `json:"env_vars,omitempty"`
 }
 
 // TriggerResponseDTO is the response for triggering an agent

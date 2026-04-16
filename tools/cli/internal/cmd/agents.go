@@ -136,6 +136,7 @@ var (
 	agentListPage         int
 	triggerInputFlag      string
 	triggerModelFlag      string
+	triggerEnvVarsFlag    []string
 )
 
 // resolveAgentArgOrPick resolves an agent ID from args[0], or, when args is
@@ -461,11 +462,25 @@ func runTriggerAgent(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Parse --env KEY=VALUE flags into a map
+	var envVars map[string]string
+	if len(triggerEnvVarsFlag) > 0 {
+		envVars = make(map[string]string, len(triggerEnvVarsFlag))
+		for _, kv := range triggerEnvVarsFlag {
+			parts := strings.SplitN(kv, "=", 2)
+			if len(parts) != 2 || parts[0] == "" {
+				return fmt.Errorf("invalid --env value %q: expected KEY=VALUE format", kv)
+			}
+			envVars[parts[0]] = parts[1]
+		}
+	}
+
 	var result *agents.TriggerResponse
-	if triggerInputFlag != "" || triggerModelFlag != "" {
+	if triggerInputFlag != "" || triggerModelFlag != "" || len(envVars) > 0 {
 		result, err = c.SDK.Agents.TriggerWithInput(context.Background(), agentID, agents.TriggerRequest{
-			Input: triggerInputFlag,
-			Model: triggerModelFlag,
+			Input:   triggerInputFlag,
+			Model:   triggerModelFlag,
+			EnvVars: envVars,
 		})
 	} else {
 		result, err = c.SDK.Agents.Trigger(context.Background(), agentID)
@@ -1030,6 +1045,7 @@ func init() {
 
 	triggerAgentCmd.Flags().StringVar(&triggerInputFlag, "input", "", "Initial message to pass to the agent at trigger time")
 	triggerAgentCmd.Flags().StringVar(&triggerModelFlag, "model", "", "Override the model for this single run (e.g. claude-sonnet-4.7)")
+	triggerAgentCmd.Flags().StringArrayVar(&triggerEnvVarsFlag, "env", nil, "Environment variable to inject into sandbox (KEY=VALUE, repeatable)")
 	agentsCmd.AddCommand(triggerAgentCmd)
 
 	agentsCmd.AddCommand(runsAgentCmd)

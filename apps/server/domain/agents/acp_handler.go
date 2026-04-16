@@ -268,6 +268,7 @@ func (h *ACPHandler) CreateRun(c echo.Context) error {
 		ProjectID:       projectID,
 		OrgID:           orgID,
 		UserMessage:     userMessage,
+		EnvVars:         req.EnvVars,
 	}
 
 	switch mode {

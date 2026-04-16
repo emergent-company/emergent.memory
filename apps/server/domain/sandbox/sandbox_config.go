@@ -32,6 +32,7 @@ type AgentSandboxConfig struct {
 	CheckoutOnStart bool              `json:"checkout_on_start,omitempty"`
 	BaseImage       string            `json:"base_image,omitempty"`
 	SetupCommands   []string          `json:"setup_commands,omitempty"`
+	EnvVars         map[string]string `json:"env_vars,omitempty"`
 }
 
 // RepoSourceConfig defines the repository source for a workspace.
@@ -102,6 +103,14 @@ func (c *AgentSandboxConfig) Validate() []string {
 		// Non-fixed types should not have a URL
 		if c.RepoSource.Type != RepoSourceFixed && c.RepoSource.URL != "" {
 			errs = append(errs, fmt.Sprintf("repo_source.url should not be set when type is %q", c.RepoSource.Type))
+		}
+	}
+
+	// Warn about reserved env var keys (not an error — system keys always win at merge time)
+	reservedKeys := []string{"MEMORY_API_KEY", "MEMORY_PROJECT_ID", "MEMORY_SERVER_URL", "MEMORY_API_URL"}
+	for _, rk := range reservedKeys {
+		if _, ok := c.EnvVars[rk]; ok {
+			errs = append(errs, fmt.Sprintf("env_vars contains reserved key %q — it will be overridden by the system at runtime", rk))
 		}
 	}
 

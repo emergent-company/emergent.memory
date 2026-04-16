@@ -136,6 +136,11 @@ type ExecuteRequest struct {
 	// EphemeralTokenID is the DB id of the token; the executor revokes it on workspace teardown.
 	AuthToken        string
 	EphemeralTokenID string
+
+	// EnvVars are runtime environment variables passed per-run by the caller.
+	// They are merged into the sandbox container environment with lower priority
+	// than system keys (MEMORY_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL).
+	EnvVars map[string]string
 }
 
 // ExecuteResult is the outcome of an agent execution.
@@ -723,7 +728,7 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 		return nil, fmt.Errorf("sandbox image not ready: %w", err)
 	}
 
-	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.SandboxConfig, nil, req.AuthToken)
+	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.SandboxConfig, nil, req.AuthToken, req.EnvVars)
 	if err != nil {
 		ae.log.Error("workspace provisioning failed, failing run",
 			slog.String("run_id", runID),
@@ -1725,13 +1730,29 @@ func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *sandbox.ProvisioningRes
 	// Build per-session env vars so that tools executing inside the container
 	// (run_python, bash) have credentials even when a warm-pool container was
 	// used (warm containers are pre-booted without session-specific env vars).
+	//
+	// Merge priority (later wins):
+	//   1. Static env vars from agent definition (cfg.EnvVars)
+	//   2. Runtime env vars from trigger request (req.EnvVars)
+	//   3. System keys (MEMORY_API_KEY, etc.) — always win
 	sessionEnv := map[string]string{}
+
+	// 1. Static env vars from agent sandbox config
+	if wsCfg != nil {
+		for k, v := range wsCfg.EnvVars {
+			sessionEnv[k] = v
+		}
+	}
+
+	// 2. Runtime env vars from trigger request
+	for k, v := range req.EnvVars {
+		sessionEnv[k] = v
+	}
+
+	// 3. System keys — always win
 	if req.AuthToken != "" {
 		sessionEnv["MEMORY_API_KEY"] = req.AuthToken
 		sessionEnv["MEMORY_PROJECT_ID"] = req.ProjectID
-		// Go SDK uses MEMORY_SERVER_URL; Python SDK uses MEMORY_API_URL.
-		// Both are already baked into the container image as MEMORY_API_URL;
-		// we also export the alias so Go programs work without extra config.
 		sessionEnv["MEMORY_SERVER_URL"] = "http://host.docker.internal:3002"
 	}
 

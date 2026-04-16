@@ -152,9 +152,10 @@ type ACPSSEEvent struct {
 
 // ACPCreateRunRequest is the request body for POST /acp/v1/agents/:name/runs.
 type ACPCreateRunRequest struct {
-	Message   []ACPMessagePart `json:"message" validate:"required,min=1"`
-	Mode      string           `json:"mode,omitempty"` // sync (default), async, stream
-	SessionID *string          `json:"session_id,omitempty"`
+	Message   []ACPMessagePart  `json:"message" validate:"required,min=1"`
+	Mode      string            `json:"mode,omitempty"` // sync (default), async, stream
+	SessionID *string           `json:"session_id,omitempty"`
+	EnvVars   map[string]string `json:"env_vars,omitempty"`
 }
 
 // ACPResumeRunRequest is the request body for POST /acp/v1/agents/:name/runs/:runId/resume.

@@ -47,6 +47,263 @@ For self-hosted deployments, use 'memory server' to install and manage your serv
       --server string          Memory server URL
 ```
 
+## memory acp
+
+Agent Communication Protocol (ACP) operations
+
+### Synopsis
+
+Commands for interacting with agents via the Agent Communication Protocol (ACP) v1 API.
+
+### Options
+
+```
+  -h, --help   help for acp
+```
+
+## memory acp agents
+
+Manage ACP agents
+
+### Synopsis
+
+Discover and inspect agents exposed via the Agent Communication Protocol.
+
+### Options
+
+```
+  -h, --help   help for agents
+```
+
+## memory acp agents get
+
+Get an ACP agent manifest
+
+### Synopsis
+
+Get the full manifest for a specific ACP agent by its slug name.
+
+Displays the agent's name, description, capabilities, input/output modes,
+and status metrics. Use --json for the raw JSON response.
+
+```
+memory acp agents get <name> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory acp agents list
+
+List externally-visible ACP agents
+
+### Synopsis
+
+List all agents with visibility='external' that are exposed via ACP.
+
+Displays a table with NAME, DESCRIPTION, VERSION, and SUCCESS RATE columns.
+Use --json to output the raw JSON response.
+
+```
+memory acp agents list [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+```
+
+## memory acp ping
+
+Check that the ACP endpoint is reachable
+
+### Synopsis
+
+Ping the ACP v1 endpoint on the configured Memory server.
+
+This command does not require authentication.
+
+```
+memory acp ping [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for ping
+```
+
+## memory acp runs
+
+Manage ACP agent runs
+
+### Synopsis
+
+Create, inspect, cancel, and resume agent runs via ACP.
+
+### Options
+
+```
+  -h, --help   help for runs
+```
+
+## memory acp runs cancel
+
+Cancel an ACP run
+
+### Synopsis
+
+Cancel a running or queued ACP run.
+
+Requests cancellation of the specified run. The run transitions to
+'cancelling' and eventually 'cancelled'.
+
+```
+memory acp runs cancel <agent-name> <run-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for cancel
+```
+
+## memory acp runs create
+
+Create a new ACP agent run
+
+### Synopsis
+
+Create a new run for an ACP agent.
+
+Requires --message with the user's input text. The --mode flag controls
+execution mode:
+  sync   (default) — blocks until the run completes, prints output
+  async  — returns immediately with the run ID and status
+  stream — streams the agent's output to stdout in real-time
+
+If a sync run pauses for human input (status: input-required), the CLI
+will prompt you interactively and automatically resume the run.
+
+Use --session to link the run to an existing ACP session.
+
+```
+memory acp runs create <agent-name> [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for create
+      --message string   Input message for the agent (required)
+      --mode string      Execution mode: sync, async, stream (default "sync")
+      --session string   Link run to an existing ACP session ID
+```
+
+## memory acp runs get
+
+Get an ACP run by ID
+
+### Synopsis
+
+Get the state of a specific ACP run.
+
+Displays run status, output messages, and timing. If the run is paused
+(input-required), shows the pending question. Use --json for raw JSON output.
+
+```
+memory acp runs get <agent-name> <run-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory acp runs resume
+
+Resume a paused ACP run
+
+### Synopsis
+
+Resume an ACP run that is waiting for human input (status: input-required).
+
+Requires --message with the response to the agent's question.
+Use --mode to control execution mode (sync, async, stream).
+
+```
+memory acp runs resume <agent-name> <run-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for resume
+      --message string   Response message (required)
+      --mode string      Execution mode: sync, async, stream (default "sync")
+```
+
+## memory acp sessions
+
+Manage ACP sessions
+
+### Synopsis
+
+Create and inspect ACP sessions for grouping related agent runs.
+
+### Options
+
+```
+  -h, --help   help for sessions
+```
+
+## memory acp sessions create
+
+Create a new ACP session
+
+### Synopsis
+
+Create a new ACP session.
+
+Sessions group related agent runs together. Use --agent to scope the
+session to a specific agent.
+
+```
+memory acp sessions create [flags]
+```
+
+### Options
+
+```
+      --agent string   Scope session to a specific agent
+  -h, --help           help for create
+```
+
+## memory acp sessions get
+
+Get an ACP session
+
+### Synopsis
+
+Get details of an ACP session including its run history.
+
+Use --json for raw JSON output.
+
+```
+memory acp sessions get <session-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
 ## memory adk-sessions
 
 Manage and inspect ADK sessions
@@ -936,8 +1193,10 @@ memory agents trigger [id] [flags]
 ### Options
 
 ```
-  -h, --help           help for trigger
-      --input string   Initial message to pass to the agent at trigger time
+      --env stringArray   Environment variable to inject into sandbox (KEY=VALUE, repeatable)
+  -h, --help              help for trigger
+      --input string      Initial message to pass to the agent at trigger time
+      --model string      Override the model for this single run (e.g. claude-sonnet-4.7)
 ```
 
 ## memory agents update

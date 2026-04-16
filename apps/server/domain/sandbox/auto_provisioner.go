@@ -157,6 +157,7 @@ func (ap *AutoProvisioner) ProvisionForSession(
 	workspaceConfig map[string]any,
 	taskMetadata map[string]any,
 	authToken string,
+	runtimeEnvVars map[string]string,
 ) (*ProvisioningResult, error) {
 	// Parse workspace config
 	cfg, err := ParseAgentSandboxConfig(workspaceConfig)
@@ -180,7 +181,7 @@ func (ap *AutoProvisioner) ProvisionForSession(
 	)
 
 	// Attempt provisioning (with one retry on fallback provider)
-	result, err := ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout, authToken)
+	result, err := ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout, authToken, runtimeEnvVars)
 	if err != nil {
 		ap.log.Warn("first provisioning attempt failed, retrying with fallback",
 			"agent_definition_id", agentDefID,
@@ -193,7 +194,7 @@ func (ap *AutoProvisioner) ProvisionForSession(
 		}
 
 		// Retry once with fallback
-		result, err = ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout, authToken)
+		result, err = ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout, authToken, runtimeEnvVars)
 		if err != nil {
 			ap.log.Error("workspace provisioning failed after retry, starting in degraded mode",
 				"agent_definition_id", agentDefID,
@@ -290,6 +291,7 @@ func (ap *AutoProvisioner) attemptProvision(
 	repoURL, branch string,
 	shouldCheckout bool,
 	authToken string,
+	runtimeEnvVars map[string]string,
 ) (*ProvisioningResult, error) {
 	ap.log.Info("starting workspace provisioning attempt",
 		"repo_url", repoURL,
@@ -350,16 +352,26 @@ func (ap *AutoProvisioner) attemptProvision(
 		BaseImage:      cfg.BaseImage,
 	}
 
-	// Inject SDK environment variables if an ephemeral token was minted.
+	// Inject environment variables into the container.
+	// Merge priority (later wins): cfg.EnvVars → runtimeEnvVars → system keys.
+	containerEnv := make(map[string]string)
+	for k, v := range cfg.EnvVars {
+		containerEnv[k] = v
+	}
+	for k, v := range runtimeEnvVars {
+		containerEnv[k] = v
+	}
+	// System keys always win — inject SDK credentials if an ephemeral token was minted.
 	// Note: MEMORY_API_URL is already set by the gVisor provider to
 	// http://host.docker.internal:<port> so that sandbox containers can reach
 	// the API server from inside Docker.  We only need to add the token and
 	// project ID here.
 	if authToken != "" {
-		containerReq.Env = map[string]string{
-			"MEMORY_API_KEY":    authToken,
-			"MEMORY_PROJECT_ID": projectID,
-		}
+		containerEnv["MEMORY_API_KEY"] = authToken
+		containerEnv["MEMORY_PROJECT_ID"] = projectID
+	}
+	if len(containerEnv) > 0 {
+		containerReq.Env = containerEnv
 	}
 
 	// Try warm pool first, fall back to cold creation.

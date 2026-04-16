@@ -18,21 +18,43 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/sse"
 )
 
+// PricingLookup is a narrow interface for resolving LLM pricing by model name.
+// It is satisfied by *provider.Repository but declared here to avoid a direct
+// import of the provider package into the agents package.
+type PricingLookup interface {
+	// GetPricingByModel returns global pricing for the given model name,
+	// searching across all providers. Returns nil when not found.
+	GetPricingByModel(ctx context.Context, model string) (interface {
+		GetProvider() string
+		GetTextInputPrice() float64
+		GetOutputPrice() float64
+	}, error)
+}
+
 // Handler handles HTTP requests for agents
 type Handler struct {
 	repo         *Repository
 	executor     *AgentExecutor // may be nil in tests
 	rateLimiter  *WebhookRateLimiter
-	tempoBaseURL string // internal Tempo query URL; empty when tracing disabled
+	tempoBaseURL string        // internal Tempo query URL; empty when tracing disabled
+	pricing      pricingLookup // optional; nil when provider repo not available
+}
+
+// pricingLookup is the internal interface used by Handler to resolve model pricing.
+// Kept unexported; satisfied by *provider.Repository via providerPricingAdapter.
+type pricingLookup interface {
+	lookupModelPricing(ctx context.Context, model string) (provider string, textIn float64, out float64, found bool)
 }
 
 // NewHandler creates a new agents handler
-func NewHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, tempoBaseURL string) *Handler {
-	return &Handler{repo: repo, executor: executor, rateLimiter: rateLimiter, tempoBaseURL: tempoBaseURL}
+func NewHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, tempoBaseURL string, pricing pricingLookup) *Handler {
+	return &Handler{repo: repo, executor: executor, rateLimiter: rateLimiter, tempoBaseURL: tempoBaseURL, pricing: pricing}
 }
 
 // getTokenUsage returns token usage for a run, falling back to trace-based
 // aggregation when no llm_usage_events exist but the run has a trace ID.
+// When the trace fallback is used and a model name is found, cost is computed
+// from the pricing table.
 func (h *Handler) getTokenUsage(ctx context.Context, runID string, traceID *string) *RunTokenUsage {
 	if usage, err := h.repo.GetRunTokenUsage(ctx, runID); err == nil && usage != nil {
 		return usage
@@ -40,6 +62,15 @@ func (h *Handler) getTokenUsage(ctx context.Context, runID string, traceID *stri
 	// Fallback: aggregate from Tempo trace spans.
 	if traceID != nil && *traceID != "" {
 		if usage, _ := GetTokenUsageFromTrace(ctx, h.tempoBaseURL, *traceID); usage != nil {
+			// Compute cost from pricing table when model is known.
+			if usage.Model != "" && h.pricing != nil {
+				if prov, textIn, out, ok := h.pricing.lookupModelPricing(ctx, usage.Model); ok {
+					const perMillion = 1_000_000.0
+					usage.Provider = prov
+					usage.EstimatedCostUSD = float64(usage.TotalInputTokens)*textIn/perMillion +
+						float64(usage.TotalOutputTokens)*out/perMillion
+				}
+			}
 			return usage
 		}
 	}
@@ -566,6 +597,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			UserMessage:     userMessage,
 			TriggerMetadata: triggerReq.Context,
 			Model:           triggerReq.Model,
+			EnvVars:         triggerReq.EnvVars,
 		})
 		if execResult != nil && execResult.Cleanup != nil {
 			execResult.Cleanup()
