@@ -36,6 +36,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/schemaregistry"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/search"
@@ -312,7 +313,8 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register agents routes
 	agentsRepo := agents.NewRepository(db)
-	agentsHandler := agents.NewHandler(agentsRepo, nil, nil, "", nil)
+	sandboxStore := sandbox.NewStore(db)
+	agentsHandler := agents.NewHandler(agentsRepo, nil, nil, "", nil, sandboxStore)
 	agents.RegisterRoutes(e, agentsHandler, authMiddleware)
 
 	// Register extraction admin routes

@@ -389,6 +389,7 @@ func (ap *AutoProvisioner) attemptProvision(
 	}
 
 	// Cold create if warm pool was skipped or had no available containers
+	var createResult *CreateContainerResult
 	if containerProviderID == "" {
 		result, err := provider.Create(ctx, containerReq)
 		if err != nil {
@@ -396,6 +397,7 @@ func (ap *AutoProvisioner) attemptProvision(
 			return &ProvisioningResult{ProviderType: providerType}, fmt.Errorf("failed to create container via %s: %w", providerType, err)
 		}
 		containerProviderID = result.ProviderID
+		createResult = result
 	}
 	ap.log.Info("container created successfully",
 		"provider_type", providerType,
@@ -429,6 +431,10 @@ func (ap *AutoProvisioner) attemptProvision(
 		ProviderWorkspaceID: containerProviderID,
 		Status:              StatusCreating,
 	}
+	if createResult != nil {
+		wsEntity.BaseImage = createResult.BaseImage
+		wsEntity.ImageDigest = createResult.ImageDigest
+	}
 
 	// Update provider workspace ID
 	ap.log.Info("updating provider workspace ID",
@@ -436,7 +442,7 @@ func (ap *AutoProvisioner) attemptProvision(
 		"provider_id", containerProviderID,
 	)
 	wsEntity.ProviderWorkspaceID = containerProviderID
-	_, err = ap.service.store.Update(ctx, wsEntity, "provider_workspace_id")
+	_, err = ap.service.store.Update(ctx, wsEntity, "provider_workspace_id", "base_image", "image_digest")
 	if err != nil {
 		ap.log.Warn("failed to update provider_workspace_id", "workspace_id", ws.ID, "error", err)
 	}

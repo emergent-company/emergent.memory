@@ -78,7 +78,9 @@ type CreateContainerRequest struct {
 
 // CreateContainerResult holds the result of a container creation.
 type CreateContainerResult struct {
-	ProviderID string `json:"provider_id"` // Provider-specific container/VM ID
+	ProviderID  string `json:"provider_id"`  // Provider-specific container/VM ID
+	BaseImage   string `json:"base_image"`   // Resolved image reference used
+	ImageDigest string `json:"image_digest"` // Image digest (sha256:...) for version tracking
 }
 
 // ExecRequest holds parameters for executing a command inside a workspace.

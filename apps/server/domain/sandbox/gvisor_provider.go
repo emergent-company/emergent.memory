@@ -135,20 +135,21 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 
 	p.log.Info("using workspace image", "image", image)
 
-	// Ensure image is available
+	// Ensure image is available (always pulls to guarantee freshness)
 	p.log.Info("ensuring image is available", "image", image)
-	if err := p.ensureImage(ctx, image); err != nil {
+	imageDigest, err := p.ensureImage(ctx, image)
+	if err != nil {
 		p.log.Error("failed to ensure image", "image", image, "error", err)
 		return nil, fmt.Errorf("failed to ensure image %s: %w", image, err)
 	}
-	p.log.Info("image is ready", "image", image)
+	p.log.Info("image is ready", "image", image, "digest", imageDigest)
 
 	// Generate volume name
 	volumeName := fmt.Sprintf("memory-workspace-%d", time.Now().UnixNano())
 	p.log.Info("creating volume", "volume_name", volumeName)
 
 	// Create named volume for persistence
-	_, err := p.client.VolumeCreate(ctx, volume.CreateOptions{
+	_, err = p.client.VolumeCreate(ctx, volume.CreateOptions{
 		Name: volumeName,
 		Labels: map[string]string{
 			defaultRuntimeLabel: "true",
@@ -299,7 +300,9 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 	)
 
 	return &CreateContainerResult{
-		ProviderID: resp.ID,
+		ProviderID:  resp.ID,
+		BaseImage:   image,
+		ImageDigest: imageDigest,
 	}, nil
 }
 
@@ -450,7 +453,7 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 		imgRef = req.BaseImage
 	}
 
-	if err := p.ensureImage(ctx, imgRef); err != nil {
+	if _, err := p.ensureImage(ctx, imgRef); err != nil {
 		return nil, fmt.Errorf("failed to ensure image %s: %w", imgRef, err)
 	}
 
@@ -870,33 +873,48 @@ func (p *GVisorProvider) applyResourceLimits(hostConfig *container.HostConfig, l
 	// Disk limits are handled via volume quotas (not directly supported in Docker)
 }
 
-// ensureImage pulls an image if it's not already available locally.
-func (p *GVisorProvider) ensureImage(ctx context.Context, imgRef string) error {
-	p.log.Info("checking if image exists locally", "image", imgRef)
-	_, _, err := p.client.ImageInspectWithRaw(ctx, imgRef)
-	if err == nil {
-		p.log.Info("image already exists locally", "image", imgRef)
-		return nil // Image already exists
-	}
-
-	p.log.Info("image not found locally, pulling from registry", "image", imgRef)
+// ensureImage pulls the latest version of an image and returns its digest.
+// Always pulls to guarantee freshness — Docker layer caching keeps this fast
+// when the image hasn't changed.
+func (p *GVisorProvider) ensureImage(ctx context.Context, imgRef string) (string, error) {
+	p.log.Info("pulling image to ensure freshness", "image", imgRef)
 	reader, err := p.client.ImagePull(ctx, imgRef, image.PullOptions{})
 	if err != nil {
-		p.log.Error("failed to start image pull", "image", imgRef, "error", err)
-		return fmt.Errorf("failed to pull image %s: %w", imgRef, err)
+		// If pull fails (e.g. offline), fall back to local image
+		p.log.Warn("image pull failed, checking local cache", "image", imgRef, "error", err)
+		inspect, _, inspectErr := p.client.ImageInspectWithRaw(ctx, imgRef)
+		if inspectErr != nil {
+			return "", fmt.Errorf("failed to pull image %s and no local copy: %w", imgRef, err)
+		}
+		digest := ""
+		if len(inspect.RepoDigests) > 0 {
+			digest = inspect.RepoDigests[0]
+		}
+		p.log.Info("using cached local image", "image", imgRef, "digest", digest)
+		return digest, nil
 	}
 	defer reader.Close()
 
 	p.log.Info("image pull started, consuming output stream", "image", imgRef)
-	// Consume the pull output (required for the pull to complete)
 	bytesRead, err := io.Copy(io.Discard, reader)
 	if err != nil {
-		p.log.Error("error reading image pull output", "image", imgRef, "error", err)
-		return fmt.Errorf("failed to read pull output for %s: %w", imgRef, err)
+		return "", fmt.Errorf("failed to read pull output for %s: %w", imgRef, err)
+	}
+	p.log.Info("image pull completed", "image", imgRef, "bytes_read", bytesRead)
+
+	// Inspect to get the digest
+	inspect, _, err := p.client.ImageInspectWithRaw(ctx, imgRef)
+	if err != nil {
+		p.log.Warn("failed to inspect image after pull", "image", imgRef, "error", err)
+		return "", nil // Non-fatal — image is available, just no digest
 	}
 
-	p.log.Info("image pull completed successfully", "image", imgRef, "bytes_read", bytesRead)
-	return nil
+	digest := ""
+	if len(inspect.RepoDigests) > 0 {
+		digest = inspect.RepoDigests[0]
+	}
+	p.log.Info("image digest resolved", "image", imgRef, "digest", digest)
+	return digest, nil
 }
 
 // parseMemoryBytes converts a memory string like "4G", "512M" to bytes.

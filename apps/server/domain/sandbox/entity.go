@@ -88,4 +88,6 @@ type AgentSandbox struct {
 	SnapshotID          *string         `bun:"snapshot_id" json:"snapshot_id,omitempty"`
 	MCPConfig           *MCPConfig      `bun:"mcp_config,type:jsonb" json:"mcp_config,omitempty"`
 	Metadata            map[string]any  `bun:"metadata,type:jsonb" json:"metadata,omitempty"`
+	BaseImage           string          `bun:"base_image" json:"base_image,omitempty"`
+	ImageDigest         string          `bun:"image_digest" json:"image_digest,omitempty"`
 }

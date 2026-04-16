@@ -25,6 +25,12 @@ type Handler struct {
 	rateLimiter  *WebhookRateLimiter
 	tempoBaseURL string        // internal Tempo query URL; empty when tracing disabled
 	pricing      pricingLookup // optional; nil when provider repo not available
+	sandboxStore sandboxStoreLookup
+}
+
+// sandboxStoreLookup is the internal interface for looking up sandbox records by session ID.
+type sandboxStoreLookup interface {
+	GetBySessionID(ctx context.Context, sessionID string) (*sandbox.AgentSandbox, error)
 }
 
 // pricingLookup is the internal interface used by Handler to resolve model pricing.
@@ -34,8 +40,25 @@ type pricingLookup interface {
 }
 
 // NewHandler creates a new agents handler
-func NewHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, tempoBaseURL string, pricing pricingLookup) *Handler {
-	return &Handler{repo: repo, executor: executor, rateLimiter: rateLimiter, tempoBaseURL: tempoBaseURL, pricing: pricing}
+func NewHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, tempoBaseURL string, pricing pricingLookup, sandboxStore sandboxStoreLookup) *Handler {
+	return &Handler{repo: repo, executor: executor, rateLimiter: rateLimiter, tempoBaseURL: tempoBaseURL, pricing: pricing, sandboxStore: sandboxStore}
+}
+
+// getWorkspaceInfo loads sandbox details for a run, returning nil if unavailable.
+func (h *Handler) getWorkspaceInfo(ctx context.Context, runID string) *RunWorkspaceDTO {
+	if h.sandboxStore == nil {
+		return nil
+	}
+	sb, err := h.sandboxStore.GetBySessionID(ctx, runID)
+	if err != nil || sb == nil {
+		return nil
+	}
+	return &RunWorkspaceDTO{
+		Provider:    string(sb.Provider),
+		ContainerID: sb.ProviderWorkspaceID,
+		BaseImage:   sb.BaseImage,
+		ImageDigest: sb.ImageDigest,
+	}
 }
 
 // getTokenUsage returns token usage for a run, falling back to trace-based
@@ -1473,6 +1496,7 @@ func (h *Handler) GetProjectRun(c echo.Context) error {
 
 	dto := run.ToDTO()
 	dto.TokenUsage = h.getTokenUsage(c.Request().Context(), runID, run.TraceID)
+	dto.Workspace = h.getWorkspaceInfo(c.Request().Context(), runID)
 
 	return c.JSON(http.StatusOK, SuccessResponse(dto))
 }
@@ -1512,6 +1536,7 @@ func (h *Handler) GetRunByID(c echo.Context) error {
 
 	dto := run.ToDTO()
 	dto.TokenUsage = h.getTokenUsage(c.Request().Context(), runID, run.TraceID)
+	dto.Workspace = h.getWorkspaceInfo(c.Request().Context(), runID)
 
 	return c.JSON(http.StatusOK, SuccessResponse(dto))
 }

@@ -53,6 +53,17 @@ type AgentRunDTO struct {
 
 	// Token usage aggregated from kb.llm_usage_events for this run.
 	TokenUsage *RunTokenUsage `json:"tokenUsage,omitempty"`
+
+	// Workspace/sandbox details for this run (when applicable).
+	Workspace *RunWorkspaceDTO `json:"workspace,omitempty"`
+}
+
+// RunWorkspaceDTO exposes sandbox/workspace details on a run response.
+type RunWorkspaceDTO struct {
+	Provider    string `json:"provider"`
+	ContainerID string `json:"containerId,omitempty"`
+	BaseImage   string `json:"baseImage,omitempty"`
+	ImageDigest string `json:"imageDigest,omitempty"`
 }
 
 // RunTokenUsage holds aggregated LLM token counts and estimated cost for a run.
