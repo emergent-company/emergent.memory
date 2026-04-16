@@ -219,6 +219,7 @@ func NewAgentExecutor(
 // Execute runs an agent from scratch using the provided request.
 func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
+	dbCtx := context.Background()
 
 	// Emergency kill switch — blocks all agent execution when disabled.
 	if !ae.safeguards.ExecutionEnabled {
@@ -266,7 +267,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	}
 
 	// Create the run record
-	run, err := ae.repo.CreateRunWithOptions(ctx, CreateRunOptions{
+	run, err := ae.repo.CreateRunWithOptions(dbCtx, CreateRunOptions{
 		AgentID:         ae.resolveAgentID(req),
 		ParentRunID:     req.ParentRunID,
 		MaxSteps:        &maxSteps,
@@ -301,7 +302,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	// Persist trace_id and root_run_id back to the run row so the reverse link
 	// (run → trace, run → orchestration root) is queryable without OTEL.
 	if sc := span.SpanContext(); sc.IsValid() {
-		if err := ae.repo.UpdateTraceAndRootRun(ctx, run.ID, sc.TraceID().String(), *req.RootRunID); err != nil {
+		if err := ae.repo.UpdateTraceAndRootRun(dbCtx, run.ID, sc.TraceID().String(), *req.RootRunID); err != nil {
 			ae.log.Warn("failed to persist trace_id/root_run_id on agent run",
 				slog.String("run_id", run.ID),
 				slog.String("error", err.Error()),
@@ -321,7 +322,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
 		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
 	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusProvisioning); err != nil {
+		if err := ae.repo.UpdateSessionStatus(dbCtx, run.ID, SessionStatusProvisioning); err != nil {
 			ae.log.Warn("failed to update session status to provisioning",
 				slog.String("run_id", run.ID),
 				slog.String("error", err.Error()),
@@ -333,7 +334,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	if wsErr != nil {
 		// Fatal provisioning failure (e.g. image not ready) — fail the run
 		errMsg := wsErr.Error()
-		_ = ae.repo.FailRunWithSteps(ctx, run.ID, errMsg, 0)
+		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, 0)
 		span.RecordError(wsErr)
 		span.SetStatus(codes.Error, errMsg)
 		span.SetAttributes(
@@ -362,7 +363,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
+		if err := ae.repo.UpdateSessionStatus(dbCtx, run.ID, SessionStatusActive); err != nil {
 			ae.log.Warn("failed to update session status to active",
 				slog.String("run_id", run.ID),
 				slog.String("error", err.Error()),
@@ -374,7 +375,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	result, err := ae.runPipeline(ctx, run, req, maxSteps, 0, startTime, wsResult, nil)
 	if err != nil {
 		// Mark run as failed
-		_ = ae.repo.FailRunWithSteps(ctx, run.ID, err.Error(), 0)
+		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, err.Error(), 0)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(
@@ -421,6 +422,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 // (synchronous, returns immediately) from actual execution (async).
 func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
+	dbCtx := context.Background()
 
 	// Validate depth
 	maxDepth := req.MaxDepth
@@ -471,7 +473,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 
 	// Persist the resolved model name on the run record for observability (#141)
 	if modelName != "" {
-		if err := ae.repo.UpdateRunModel(ctx, run.ID, modelName); err != nil {
+		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, modelName); err != nil {
 			ae.log.Warn("failed to persist model on agent run",
 				slog.String("run_id", run.ID),
 				slog.String("error", err.Error()),
@@ -491,7 +493,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
 		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
 	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusProvisioning); err != nil {
+		if err := ae.repo.UpdateSessionStatus(dbCtx, run.ID, SessionStatusProvisioning); err != nil {
 			ae.log.Warn("failed to update session status to provisioning",
 				slog.String("run_id", run.ID),
 				slog.String("error", err.Error()),
@@ -502,7 +504,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	wsResult, wsErr := ae.provisionWorkspace(ctx, run.ID, req)
 	if wsErr != nil {
 		errMsg := wsErr.Error()
-		_ = ae.repo.FailRunWithSteps(ctx, run.ID, errMsg, 0)
+		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, 0)
 		span.RecordError(wsErr)
 		span.SetStatus(codes.Error, errMsg)
 		span.SetAttributes(
@@ -537,7 +539,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 
 	result, err := ae.runPipeline(ctx, run, req, maxSteps, 0, startTime, wsResult, nil)
 	if err != nil {
-		_ = ae.repo.FailRunWithSteps(ctx, run.ID, err.Error(), 0)
+		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, err.Error(), 0)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(
@@ -579,6 +581,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 }
 func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
+	dbCtx := context.Background()
 
 	if priorRun.Status != RunStatusPaused {
 		return nil, fmt.Errorf("cannot resume run %s: status is %s (expected paused)", priorRun.ID, priorRun.Status)
@@ -595,7 +598,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 
 	// Create a new run record that tracks the resume chain
 	resumedFrom := priorRun.ID
-	newRun, err := ae.repo.CreateRunWithOptions(ctx, CreateRunOptions{
+	newRun, err := ae.repo.CreateRunWithOptions(dbCtx, CreateRunOptions{
 		AgentID:          priorRun.AgentID,
 		ParentRunID:      req.ParentRunID,
 		MaxSteps:         &maxSteps,
@@ -615,7 +618,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	// Persist root_run_id on the resumed run row. trace_id is omitted here since
 	// Resume has no dedicated agent.run span — the caller's HTTP span context is
 	// not meaningful to store as the run's trace.
-	if err := ae.repo.UpdateTraceAndRootRun(ctx, newRun.ID, "", *req.RootRunID); err != nil {
+	if err := ae.repo.UpdateTraceAndRootRun(dbCtx, newRun.ID, "", *req.RootRunID); err != nil {
 		ae.log.Warn("failed to persist root_run_id on resumed agent run",
 			slog.String("run_id", newRun.ID),
 			slog.String("error", err.Error()),
@@ -633,7 +636,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
 		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
 	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(ctx, newRun.ID, SessionStatusProvisioning); err != nil {
+		if err := ae.repo.UpdateSessionStatus(dbCtx, newRun.ID, SessionStatusProvisioning); err != nil {
 			ae.log.Warn("failed to update session status to provisioning",
 				slog.String("run_id", newRun.ID),
 				slog.String("error", err.Error()),
@@ -644,7 +647,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	wsResult, wsErr := ae.provisionWorkspace(ctx, newRun.ID, req)
 	if wsErr != nil {
 		errMsg := wsErr.Error()
-		_ = ae.repo.FailRunWithSteps(ctx, newRun.ID, errMsg, priorRun.StepCount)
+		_ = ae.repo.FailRunWithSteps(dbCtx, newRun.ID, errMsg, priorRun.StepCount)
 		return &ExecuteResult{
 			RunID:    newRun.ID,
 			Status:   RunStatusError,
@@ -664,7 +667,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasSandboxConfig {
-		if err := ae.repo.UpdateSessionStatus(ctx, newRun.ID, SessionStatusActive); err != nil {
+		if err := ae.repo.UpdateSessionStatus(dbCtx, newRun.ID, SessionStatusActive); err != nil {
 			ae.log.Warn("failed to update session status to active",
 				slog.String("run_id", newRun.ID),
 				slog.String("error", err.Error()),
@@ -675,7 +678,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	// Build and run the pipeline with accumulated step count
 	result, err := ae.runPipeline(ctx, newRun, req, maxSteps, priorRun.StepCount, startTime, wsResult, nil)
 	if err != nil {
-		_ = ae.repo.FailRunWithSteps(ctx, newRun.ID, err.Error(), priorRun.StepCount)
+		_ = ae.repo.FailRunWithSteps(dbCtx, newRun.ID, err.Error(), priorRun.StepCount)
 		return &ExecuteResult{
 			RunID:    newRun.ID,
 			Status:   RunStatusError,
@@ -802,6 +805,8 @@ func (ae *AgentExecutor) runPipeline(
 	wsResult *sandbox.ProvisioningResult,
 	askPauseState *AskPauseState,
 ) (*ExecuteResult, error) {
+	dbCtx := context.Background()
+
 	// Identify the root session ID
 	sessionID := ae.getRootRunID(ctx, run)
 
@@ -860,7 +865,7 @@ func (ae *AgentExecutor) runPipeline(
 	// llm.Name() reflects the actual model used (including factory/credential defaults),
 	// which may differ from the modelName variable when a credential-level default applies.
 	if resolvedModelName := llm.Name(); resolvedModelName != "" {
-		if err := ae.repo.UpdateRunModel(ctx, run.ID, resolvedModelName); err != nil {
+		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, resolvedModelName); err != nil {
 			ae.log.Warn("failed to persist model on agent run",
 				slog.String("run_id", run.ID),
 				slog.String("model", resolvedModelName),
@@ -1035,7 +1040,7 @@ func (ae *AgentExecutor) runPipeline(
 				slog.Int("max_steps", maxSteps),
 			)
 			// Pause the run instead of failing
-			_ = ae.repo.PauseRun(ctx, run.ID, currentStep)
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
 			return &model.LLMResponse{
 				Content: genai.NewContentFromText("Step limit reached. Run has been paused.", genai.RoleModel),
 			}, nil
@@ -1048,7 +1053,7 @@ func (ae *AgentExecutor) runPipeline(
 				slog.String("question_id", askPauseState.QuestionID()),
 				slog.Int("step", currentStep),
 			)
-			_ = ae.repo.PauseRun(ctx, run.ID, currentStep)
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
 			return &model.LLMResponse{
 				Content: genai.NewContentFromText("Execution paused. Waiting for user response to your question.", genai.RoleModel),
 			}, nil
@@ -1056,7 +1061,7 @@ func (ae *AgentExecutor) runPipeline(
 
 		// Periodically persist step count
 		if currentStep%5 == 0 {
-			_ = ae.repo.UpdateStepCount(ctx, run.ID, currentStep)
+			_ = ae.repo.UpdateStepCount(dbCtx, run.ID, currentStep)
 		}
 
 		return nil, nil
@@ -1102,7 +1107,7 @@ func (ae *AgentExecutor) runPipeline(
 			Status:     status,
 			StepNumber: currentStep,
 		}
-		if persistErr := ae.repo.CreateToolCall(ctx, tcRecord); persistErr != nil {
+		if persistErr := ae.repo.CreateToolCall(dbCtx, tcRecord); persistErr != nil {
 			ae.log.Warn("failed to persist tool call",
 				slog.String("run_id", run.ID),
 				slog.String("tool", toolName),
@@ -1118,7 +1123,7 @@ func (ae *AgentExecutor) runPipeline(
 				slog.String("run_id", run.ID),
 				slog.String("question_id", askPauseState.QuestionID()),
 			)
-			_ = ae.repo.PauseRun(ctx, run.ID, currentStep)
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
 		}
 
 		// Check for doom loop
@@ -1246,7 +1251,7 @@ func (ae *AgentExecutor) runPipeline(
 	userContent := genai.NewContentFromText(req.UserMessage, genai.RoleUser)
 
 	// Persist the user message
-	ae.persistMessage(ctx, run.ID, "user", req.UserMessage, initialSteps)
+	ae.persistMessage(dbCtx, run.ID, "user", req.UserMessage, initialSteps)
 
 	// Run the agent with MALFORMED_FUNCTION_CALL retry logic.
 	// When the LLM emits a malformed function call we inject a recovery turn
@@ -1307,7 +1312,7 @@ func (ae *AgentExecutor) runPipeline(
 							)
 						}
 					}
-					_ = ae.repo.FailRunWithSteps(ctx, run.ID, "spending cap exceeded, agent disabled", steps)
+					_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, "spending cap exceeded, agent disabled", steps)
 					return &ExecuteResult{
 						RunID:  run.ID,
 						Status: RunStatusError,
@@ -1385,7 +1390,7 @@ func (ae *AgentExecutor) runPipeline(
 						Error: errStr,
 					})
 				}
-				_ = ae.repo.FailRunWithSteps(ctx, run.ID, errStr, steps)
+				_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errStr, steps)
 				return &ExecuteResult{
 					RunID:    run.ID,
 					Status:   RunStatusError,
@@ -1446,7 +1451,7 @@ func (ae *AgentExecutor) runPipeline(
 						Error: errMsg,
 					})
 				}
-				_ = ae.repo.FailRunWithSteps(ctx, run.ID, errMsg, steps)
+				_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, steps)
 				return &ExecuteResult{
 					RunID:    run.ID,
 					Status:   RunStatusError,
@@ -1470,7 +1475,7 @@ func (ae *AgentExecutor) runPipeline(
 
 			// Persist assistant messages from events
 			if event.Content != nil && !event.Partial {
-				ae.persistEventContent(ctx, run.ID, event, tracker.current())
+				ae.persistEventContent(dbCtx, run.ID, event, tracker.current())
 			}
 
 			if event.IsFinalResponse() {
@@ -1538,7 +1543,7 @@ func (ae *AgentExecutor) runPipeline(
 			slog.Int("steps", steps),
 		)
 
-		_ = ae.repo.FailRunWithSteps(ctx, run.ID, errMsg, steps)
+		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, steps)
 		return &ExecuteResult{
 			RunID:    run.ID,
 			Status:   RunStatusError,
@@ -1554,7 +1559,7 @@ func (ae *AgentExecutor) runPipeline(
 	durationMs := int(duration.Milliseconds())
 
 	// Check if we were paused by the step limit callback or ask_user tool
-	currentRun, _ := ae.repo.FindRunByID(ctx, run.ID)
+	currentRun, _ := ae.repo.FindRunByID(dbCtx, run.ID)
 	if currentRun != nil && currentRun.Status == RunStatusPaused {
 		pauseReason := "step_limit_reached"
 		pauseSummary := map[string]any{"reason": pauseReason, "steps": steps}
@@ -1588,10 +1593,10 @@ func (ae *AgentExecutor) runPipeline(
 	// (hasSandboxConfig was set earlier in this function at tool resolution time)
 	if hasSandboxConfig && wsResult != nil && wsResult.Degraded {
 		summary["error"] = "workspace provisioning failed: " + wsResult.Error.Error()
-		_ = ae.repo.FailRunWithSteps(ctx, run.ID, summary["error"].(string), steps)
+		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, summary["error"].(string), steps)
 
 		if req.Agent != nil && req.Agent.ID != "" {
-			_ = ae.repo.UpdateLastRun(ctx, req.Agent.ID, string(RunStatusError))
+			_ = ae.repo.UpdateLastRun(dbCtx, req.Agent.ID, string(RunStatusError))
 		}
 
 		ae.log.Warn("agent run completed with degraded workspace, marking as error",
@@ -1609,7 +1614,7 @@ func (ae *AgentExecutor) runPipeline(
 	}
 
 	// Mark run as complete
-	if err := ae.repo.CompleteRunWithSteps(ctx, run.ID, summary, steps, durationMs); err != nil {
+	if err := ae.repo.CompleteRunWithSteps(dbCtx, run.ID, summary, steps, durationMs); err != nil {
 		ae.log.Warn("failed to complete run record",
 			slog.String("run_id", run.ID),
 			slog.String("error", err.Error()),
@@ -1618,7 +1623,7 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Update the agent's last run status
 	if req.Agent != nil && req.Agent.ID != "" {
-		_ = ae.repo.UpdateLastRun(ctx, req.Agent.ID, string(RunStatusSuccess))
+		_ = ae.repo.UpdateLastRun(dbCtx, req.Agent.ID, string(RunStatusSuccess))
 	}
 
 	ae.log.Info("agent execution completed",
