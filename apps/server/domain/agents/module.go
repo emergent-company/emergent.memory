@@ -88,8 +88,12 @@ func provideAgentExecutor(
 }
 
 // provideHandler creates a Handler with both repo and executor.
-func provideHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter) *Handler {
-	return NewHandler(repo, executor, rateLimiter)
+func provideHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, cfg *config.Config) *Handler {
+	tempoURL := ""
+	if cfg.Otel.Enabled() {
+		tempoURL = cfg.Otel.InternalTempoQueryURL()
+	}
+	return NewHandler(repo, executor, rateLimiter, tempoURL)
 }
 
 // provideACPHandler creates an ACPHandler from fx dependencies.

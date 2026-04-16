@@ -20,14 +20,30 @@ import (
 
 // Handler handles HTTP requests for agents
 type Handler struct {
-	repo        *Repository
-	executor    *AgentExecutor // may be nil in tests
-	rateLimiter *WebhookRateLimiter
+	repo         *Repository
+	executor     *AgentExecutor // may be nil in tests
+	rateLimiter  *WebhookRateLimiter
+	tempoBaseURL string // internal Tempo query URL; empty when tracing disabled
 }
 
 // NewHandler creates a new agents handler
-func NewHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter) *Handler {
-	return &Handler{repo: repo, executor: executor, rateLimiter: rateLimiter}
+func NewHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, tempoBaseURL string) *Handler {
+	return &Handler{repo: repo, executor: executor, rateLimiter: rateLimiter, tempoBaseURL: tempoBaseURL}
+}
+
+// getTokenUsage returns token usage for a run, falling back to trace-based
+// aggregation when no llm_usage_events exist but the run has a trace ID.
+func (h *Handler) getTokenUsage(ctx context.Context, runID string, traceID *string) *RunTokenUsage {
+	if usage, err := h.repo.GetRunTokenUsage(ctx, runID); err == nil && usage != nil {
+		return usage
+	}
+	// Fallback: aggregate from Tempo trace spans.
+	if traceID != nil && *traceID != "" {
+		if usage, _ := GetTokenUsageFromTrace(ctx, h.tempoBaseURL, *traceID); usage != nil {
+			return usage
+		}
+	}
+	return nil
 }
 
 // mapExecutorError converts typed executor errors to appropriate HTTP responses.
@@ -1437,9 +1453,7 @@ func (h *Handler) GetProjectRun(c echo.Context) error {
 	}
 
 	dto := run.ToDTO()
-	if usage, uErr := h.repo.GetRunTokenUsage(c.Request().Context(), runID); uErr == nil {
-		dto.TokenUsage = usage
-	}
+	dto.TokenUsage = h.getTokenUsage(c.Request().Context(), runID, run.TraceID)
 
 	return c.JSON(http.StatusOK, SuccessResponse(dto))
 }
@@ -1478,9 +1492,7 @@ func (h *Handler) GetRunByID(c echo.Context) error {
 	}
 
 	dto := run.ToDTO()
-	if usage, uErr := h.repo.GetRunTokenUsage(c.Request().Context(), runID); uErr == nil {
-		dto.TokenUsage = usage
-	}
+	dto.TokenUsage = h.getTokenUsage(c.Request().Context(), runID, run.TraceID)
 
 	return c.JSON(http.StatusOK, SuccessResponse(dto))
 }
