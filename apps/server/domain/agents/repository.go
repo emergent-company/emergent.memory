@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
@@ -456,25 +457,27 @@ func (r *Repository) FindDefinitionByName(ctx context.Context, projectID, name s
 }
 
 // ResolveDefinitionForAgent looks up the AgentDefinition for a runtime Agent.
-// It first tries the agent's AgentDefinitionID (FK), then falls back to a
-// name-based lookup. Returns (nil, nil) when no definition is found.
+// It first tries an exact name match, then strips common prefixes like
+// "Chat session for " to handle runtime agents whose names differ from
+// their definition name. Returns (nil, nil) when no definition is found.
 func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent) (*AgentDefinition, error) {
 	if agent == nil {
 		return nil, nil
 	}
-	// Prefer the explicit FK when set
-	if agent.AgentDefinitionID != nil && *agent.AgentDefinitionID != "" {
-		def, err := r.FindDefinitionByID(ctx, *agent.AgentDefinitionID, &agent.ProjectID)
-		if err != nil {
-			return nil, err
-		}
-		if def != nil {
-			return def, nil
-		}
-		// FK set but definition deleted — fall through to name match
+	// Try exact name match first
+	def, err := r.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
+	if err != nil {
+		return nil, err
 	}
-	// Fall back to name match
-	return r.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
+	if def != nil {
+		return def, nil
+	}
+	// Strip known prefixes and retry
+	name := agent.Name
+	if stripped, ok := strings.CutPrefix(name, "Chat session for "); ok && stripped != "" {
+		return r.FindDefinitionByName(ctx, agent.ProjectID, stripped)
+	}
+	return nil, nil
 }
 
 // FindEnabledByTriggerType returns all enabled agents matching the given trigger type,
