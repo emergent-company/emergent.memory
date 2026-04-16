@@ -88,12 +88,26 @@ func provideAgentExecutor(
 }
 
 // provideHandler creates a Handler with both repo and executor.
-func provideHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, cfg *config.Config) *Handler {
+func provideHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, cfg *config.Config, providerRepo *provider.Repository) *Handler {
 	tempoURL := ""
 	if cfg.Otel.Enabled() {
 		tempoURL = cfg.Otel.InternalTempoQueryURL()
 	}
-	return NewHandler(repo, executor, rateLimiter, tempoURL)
+	return NewHandler(repo, executor, rateLimiter, tempoURL, &providerPricingAdapter{repo: providerRepo})
+}
+
+// providerPricingAdapter wraps *provider.Repository to satisfy the pricingLookup
+// interface without importing the provider package from handler.go.
+type providerPricingAdapter struct {
+	repo *provider.Repository
+}
+
+func (a *providerPricingAdapter) lookupModelPricing(ctx context.Context, model string) (providerName string, textIn float64, out float64, found bool) {
+	p, err := a.repo.GetPricingByModel(ctx, model)
+	if err != nil || p == nil {
+		return "", 0, 0, false
+	}
+	return string(p.Provider), p.TextInputPrice, p.OutputPrice, true
 }
 
 // provideACPHandler creates an ACPHandler from fx dependencies.

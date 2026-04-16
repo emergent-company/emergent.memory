@@ -2083,16 +2083,28 @@ func (r *Repository) GetRunTokenUsage(ctx context.Context, runID string) (*RunTo
 		TotalInput  int64   `bun:"total_input"`
 		TotalOutput int64   `bun:"total_output"`
 		TotalCost   float64 `bun:"total_cost"`
+		Provider    string  `bun:"provider"`
+		Model       string  `bun:"model"`
 	}
 	var result row
 	err := r.db.NewRaw(`
 		SELECT
 			COALESCE(SUM(text_input_tokens + image_input_tokens + video_input_tokens + audio_input_tokens), 0) AS total_input,
 			COALESCE(SUM(output_tokens), 0)        AS total_output,
-			COALESCE(SUM(estimated_cost_usd), 0.0) AS total_cost
+			COALESCE(SUM(estimated_cost_usd), 0.0) AS total_cost,
+			COALESCE(
+				(SELECT provider FROM kb.llm_usage_events
+				 WHERE run_id = ?
+				 GROUP BY provider ORDER BY COUNT(*) DESC LIMIT 1), ''
+			) AS provider,
+			COALESCE(
+				(SELECT model FROM kb.llm_usage_events
+				 WHERE run_id = ?
+				 GROUP BY model ORDER BY COUNT(*) DESC LIMIT 1), ''
+			) AS model
 		FROM kb.llm_usage_events
 		WHERE run_id = ?`,
-		runID,
+		runID, runID, runID,
 	).Scan(ctx, &result)
 	if err != nil {
 		return nil, fmt.Errorf("get run token usage: %w", err)
@@ -2101,11 +2113,14 @@ func (r *Repository) GetRunTokenUsage(ctx context.Context, runID string) (*RunTo
 	if result.TotalInput == 0 && result.TotalOutput == 0 && result.TotalCost == 0 {
 		return nil, nil
 	}
-	return &RunTokenUsage{
+	usage := &RunTokenUsage{
 		TotalInputTokens:  result.TotalInput,
 		TotalOutputTokens: result.TotalOutput,
 		EstimatedCostUSD:  result.TotalCost,
-	}, nil
+		Provider:          result.Provider,
+		Model:             result.Model,
+	}
+	return usage, nil
 }
 
 // GetOrgIDByProjectID returns the organization ID for the given project ID.

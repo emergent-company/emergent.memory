@@ -367,6 +367,30 @@ func (r *Repository) GetPricing(ctx context.Context, provider ProviderType, mode
 	return &pricing, nil
 }
 
+// GetPricingByModel returns the global pricing for a model name, searching
+// across all providers. When multiple providers carry the same model name the
+// first match (ordered by provider) is returned. Returns nil when not found.
+func (r *Repository) GetPricingByModel(ctx context.Context, model string) (*ProviderPricing, error) {
+	var pricing ProviderPricing
+	err := r.db.NewSelect().
+		Model(&pricing).
+		Where("model = ?", model).
+		OrderExpr("provider ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		r.log.Error("failed to get pricing by model",
+			logger.Error(err),
+			slog.String("model", model),
+		)
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &pricing, nil
+}
+
 // UpsertPricing bulk upserts global pricing entries.
 func (r *Repository) UpsertPricing(ctx context.Context, entries []ProviderPricing) error {
 	if len(entries) == 0 {

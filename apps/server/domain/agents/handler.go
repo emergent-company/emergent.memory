@@ -18,19 +18,6 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/sse"
 )
 
-// PricingLookup is a narrow interface for resolving LLM pricing by model name.
-// It is satisfied by *provider.Repository but declared here to avoid a direct
-// import of the provider package into the agents package.
-type PricingLookup interface {
-	// GetPricingByModel returns global pricing for the given model name,
-	// searching across all providers. Returns nil when not found.
-	GetPricingByModel(ctx context.Context, model string) (interface {
-		GetProvider() string
-		GetTextInputPrice() float64
-		GetOutputPrice() float64
-	}, error)
-}
-
 // Handler handles HTTP requests for agents
 type Handler struct {
 	repo         *Repository

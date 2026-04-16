@@ -71,6 +71,8 @@ func GetTokenUsageFromTrace(ctx context.Context, tempoBaseURL, traceID string) (
 	}
 
 	var totalInput, totalOutput int64
+	// Track model occurrence counts to pick the dominant model.
+	modelCounts := map[string]int{}
 
 	for _, batch := range trace.Batches {
 		for _, ss := range batch.ScopeSpans {
@@ -80,6 +82,9 @@ func GetTokenUsageFromTrace(ctx context.Context, tempoBaseURL, traceID string) (
 				}
 				totalInput += tempoAttrInt(span.Attributes, "memory.llm.response.input_tokens")
 				totalOutput += tempoAttrInt(span.Attributes, "memory.llm.response.output_tokens")
+				if m := tempoAttrStr(span.Attributes, "memory.llm.request.model"); m != "" {
+					modelCounts[m]++
+				}
 			}
 		}
 	}
@@ -88,9 +93,20 @@ func GetTokenUsageFromTrace(ctx context.Context, tempoBaseURL, traceID string) (
 		return nil, nil
 	}
 
+	// Pick the most-used model name across all call_llm spans.
+	dominantModel := ""
+	dominantCount := 0
+	for m, c := range modelCounts {
+		if c > dominantCount {
+			dominantModel = m
+			dominantCount = c
+		}
+	}
+
 	return &RunTokenUsage{
 		TotalInputTokens:  totalInput,
 		TotalOutputTokens: totalOutput,
+		Model:             dominantModel,
 	}, nil
 }
 
@@ -110,4 +126,17 @@ func tempoAttrInt(attrs []tempoAttribute, key string) int64 {
 		}
 	}
 	return 0
+}
+
+// tempoAttrStr extracts a string attribute value from a Tempo span.
+func tempoAttrStr(attrs []tempoAttribute, key string) string {
+	for _, a := range attrs {
+		if a.Key == key {
+			if a.Value.StringValue != "" {
+				return a.Value.StringValue
+			}
+			return a.Value.IntValue
+		}
+	}
+	return ""
 }
