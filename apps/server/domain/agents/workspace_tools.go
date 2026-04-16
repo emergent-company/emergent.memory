@@ -13,6 +13,7 @@ import (
 	"google.golang.org/adk/tool/functiontool"
 
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // WorkspaceToolDeps holds dependencies for building workspace tools.
@@ -178,6 +179,15 @@ Usage notes:
 - For sequential commands that depend on each other, chain with &&.
 - For long-running operations, consider whether a timeout increase is needed.
 - Avoid using echo/printf for file creation; use workspace_write instead.`,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"command":    {Type: "string", Description: "The bash command to execute"},
+					"workdir":    {Type: "string", Description: "Working directory for the command (default: /workspace)"},
+					"timeout_ms": {Type: "integer", Description: "Timeout in milliseconds (default: 120000)"},
+				},
+				Required: []string{"command"},
+			},
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			command, _ := args["command"].(string)
@@ -360,6 +370,14 @@ Attribute access (obj.name) raises AttributeError — always use dict access (ob
 
 Returns structured output: {"stdout": "...", "stderr": "...", "exit_code": N, "duration_ms": N}.
 A non-zero exit_code means the script raised an exception — check stderr for the traceback.`,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"code":       {Type: "string", Description: "The Python script source code to execute"},
+					"timeout_ms": {Type: "integer", Description: "Timeout in milliseconds (default: 120000)"},
+				},
+				Required: []string{"code"},
+			},
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			code, _ := args["code"].(string)
@@ -477,6 +495,14 @@ Credentials are injected automatically via MEMORY_API_KEY / MEMORY_API_URL.
 
 Returns structured output: {"stdout": "...", "stderr": "...", "exit_code": N, "duration_ms": N}.
 A non-zero exit_code means the program failed — check stderr for the error.`,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"code":       {Type: "string", Description: "The Go source code to execute (must include package main and func main)"},
+					"timeout_ms": {Type: "integer", Description: "Timeout in milliseconds (default: 120000)"},
+				},
+				Required: []string{"code"},
+			},
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			code, _ := args["code"].(string)
@@ -562,6 +588,15 @@ Usage:
 - Any line longer than 2000 characters is truncated.
 - Call this tool in parallel when you know there are multiple files you want to read.
 - Avoid tiny repeated slices (30-line chunks). If you need more context, read a larger window.`,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"file_path": {Type: "string", Description: "Absolute path to the file or directory to read"},
+					"offset":    {Type: "integer", Description: "Line number to start from (1-indexed)"},
+					"limit":     {Type: "integer", Description: "Maximum number of lines to return (default: 2000)"},
+				},
+				Required: []string{"file_path"},
+			},
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			filePath, _ := args["file_path"].(string)
@@ -620,6 +655,14 @@ Usage:
 - ALWAYS prefer editing existing files with workspace_edit. NEVER write new files unless explicitly required.
 - NEVER proactively create documentation files (*.md) or README files unless explicitly requested.
 - file_path should be an absolute path, e.g. /workspace/src/main.go.`,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"file_path": {Type: "string", Description: "Absolute path to the file to write"},
+					"content":   {Type: "string", Description: "The content to write to the file"},
+				},
+				Required: []string{"file_path", "content"},
+			},
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			filePath, _ := args["file_path"].(string)
@@ -664,6 +707,16 @@ Usage:
 - The edit will FAIL if old_string is not found in the file content.
 - The edit will FAIL if old_string is found multiple times and replace_all is false — provide more surrounding lines in old_string to make it unique.
 - Use replace_all to replace every occurrence (useful for renaming a variable across a file).`,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"file_path":   {Type: "string", Description: "Absolute path to the file to edit"},
+					"old_string":  {Type: "string", Description: "The exact text to find and replace"},
+					"new_string":  {Type: "string", Description: "The replacement text"},
+					"replace_all": {Type: "boolean", Description: "Replace all occurrences (default: false)"},
+				},
+				Required: []string{"file_path", "old_string", "new_string"},
+			},
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			filePath, _ := args["file_path"].(string)
@@ -743,6 +796,14 @@ func buildGlobTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 - Optionally specify a path to restrict the search to a subdirectory
 - When you are doing an open-ended search that may require multiple rounds of globbing and grepping, prefer workspace_bash with find or a combined approach
 - You can call multiple tools in a single response; it is always better to speculatively perform multiple searches in parallel`,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"pattern": {Type: "string", Description: "Glob pattern to match files (e.g. **/*.go)"},
+					"path":    {Type: "string", Description: "Directory to search in (default: /workspace)"},
+				},
+				Required: []string{"pattern"},
+			},
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			pattern, _ := args["pattern"].(string)
@@ -787,6 +848,15 @@ func buildGrepTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 - Returns file paths and line numbers with at least one match, sorted by modification time
 - Use this tool when you need to find files containing specific patterns
 - If you need to count matches or do more complex filtering, use workspace_bash with rg (ripgrep) directly`,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"pattern": {Type: "string", Description: "Regular expression pattern to search for"},
+					"path":    {Type: "string", Description: "Directory to search in (default: /workspace)"},
+					"include": {Type: "string", Description: "File glob filter (e.g. *.go, *.{ts,tsx})"},
+				},
+				Required: []string{"pattern"},
+			},
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			pattern, _ := args["pattern"].(string)
@@ -837,6 +907,18 @@ func buildGitTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 				"For commit, provide a message and optionally a list of files to stage. " +
 				"For clone, provide a url (https only) and optionally a path (destination directory) and branch. " +
 				"Push/pull are not available (credential management is server-side).",
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"action":  {Type: "string", Description: "Git action to perform", Enum: []any{"status", "diff", "commit", "checkout", "clone"}},
+					"message": {Type: "string", Description: "Commit message (for commit action)"},
+					"files":   {Type: "array", Description: "Files to stage (for commit action)", Items: &jsonschema.Schema{Type: "string"}},
+					"branch":  {Type: "string", Description: "Branch name (for checkout/clone actions)"},
+					"url":     {Type: "string", Description: "Repository URL (for clone action, HTTPS only)"},
+					"path":    {Type: "string", Description: "Destination directory (for clone action)"},
+				},
+				Required: []string{"action"},
+			},
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			action, _ := args["action"].(string)
