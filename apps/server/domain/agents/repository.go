@@ -207,6 +207,28 @@ func (r *Repository) MarkOrphanedRunsAsError(ctx context.Context) (int, error) {
 	n, _ := res.RowsAffected()
 	return int(n), nil
 }
+
+// MarkStaleRunsAsError finds runs stuck in "running" status for longer than
+// the given threshold and marks them as errored. Unlike MarkOrphanedRunsAsError
+// (which runs at startup), this runs periodically to catch runs abandoned
+// mid-execution (e.g. CLI connection drop without graceful close).
+func (r *Repository) MarkStaleRunsAsError(ctx context.Context, threshold time.Duration) (int, error) {
+	cutoff := time.Now().Add(-threshold)
+	now := time.Now()
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusError).
+		Set("completed_at = ?", now).
+		Set("error_message = ?", "run exceeded idle timeout (likely abandoned by client)").
+		Where("status = ?", RunStatusRunning).
+		Where("started_at < ?", cutoff).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
 func (r *Repository) GetRecentRuns(ctx context.Context, agentID string, limit int) ([]*AgentRun, error) {
 	if limit <= 0 {
 		limit = 10

@@ -36,6 +36,7 @@ var Module = fx.Module("agents",
 		provideMCPToolHandler,
 		provideWebhookRateLimiter,
 		provideWorkerPool,
+		provideStaleRunReaper,
 	),
 	fx.Invoke(
 		RegisterRoutes,
@@ -46,6 +47,7 @@ var Module = fx.Module("agents",
 		registerAgentToolHandler,
 		registerToolPoolInvalidator,
 		registerOrgToolPoolInvalidator,
+		registerStaleRunReaper,
 	),
 )
 
@@ -197,6 +199,23 @@ func registerWorkerPool(lc fx.Lifecycle, pool *WorkerPool) {
 		},
 		OnStop: func(ctx context.Context) error {
 			pool.Stop()
+			return nil
+		},
+	})
+}
+
+func provideStaleRunReaper(repo *Repository, log *slog.Logger) *StaleRunReaper {
+	return NewStaleRunReaper(repo, log)
+}
+
+func registerStaleRunReaper(lc fx.Lifecycle, reaper *StaleRunReaper) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			reaper.Start(ctx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			reaper.Stop()
 			return nil
 		},
 	})
