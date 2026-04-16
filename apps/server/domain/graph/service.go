@@ -809,8 +809,16 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		}
 	}
 
+	// Check if key changed
+	keyChanged := false
+	if req.Key != nil {
+		if current.Key == nil || *current.Key != *req.Key {
+			keyChanged = true
+		}
+	}
+
 	// No effective change — return existing version without creating a new one
-	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged {
+	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged {
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
