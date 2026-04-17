@@ -11,7 +11,6 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -314,51 +313,44 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 		return w.Flush()
 	}
 
-	// No provider argument: discover configured providers and list models for all
-	configPath, _ := cmd.Flags().GetString("config")
-	if configPath == "" {
-		configPath = config.DiscoverPath("")
-	}
-	cfg, err := config.LoadWithEnv(configPath)
+	// No provider argument: iterate all orgs and collect models from every
+	// configured provider. Orgs that 403 (JWT not scoped to them) are skipped
+	// silently. Providers seen in multiple orgs are deduplicated.
+	orgs, err := c.SDK.Orgs.List(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return fmt.Errorf("failed to list organizations: %w", err)
 	}
-
-	orgID := modelsOrgID
-	if orgID == "" {
-		orgID = cfg.OrgID
-	}
-	if orgID == "" {
-		// Fall back to API discovery if not in config
-		orgID, err = resolveProviderOrgID(c, "")
-		if err != nil {
-			return fmt.Errorf("failed to resolve organization: %w", err)
-		}
-	}
-
-	configs, err := c.SDK.Provider.ListOrgConfigs(ctx, orgID)
-	if err != nil {
-		return fmt.Errorf("failed to list provider configs: %w", err)
-	}
-	if len(configs) == 0 {
-		fmt.Println("No providers configured.")
-		fmt.Println("Run 'memory provider configure google --api-key <key>' to configure a provider.")
+	if len(orgs) == 0 {
+		fmt.Println("No organizations found.")
 		return nil
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "PROVIDER\tMODEL\tTYPE\tSLUG")
 
+	seenProviders := map[string]bool{}
 	anyModels := false
-	for _, pc := range configs {
-		models, err := c.SDK.Provider.ListModels(ctx, pc.Provider, modelsTypeFlag)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not fetch models for %s: %v\n", pc.Provider, err)
+
+	for _, org := range orgs {
+		configs, listErr := c.SDK.Provider.ListOrgConfigs(ctx, org.ID)
+		if listErr != nil {
+			// 403 expected for orgs not matching the JWT scope — skip silently.
 			continue
 		}
-		for _, m := range sortModelsByType(models) {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s/%s\n", pc.Provider, m.ModelName, m.ModelType, pc.Provider, m.ModelName)
-			anyModels = true
+		for _, pc := range configs {
+			if seenProviders[pc.Provider] {
+				continue
+			}
+			seenProviders[pc.Provider] = true
+			models, modelsErr := c.SDK.Provider.ListModels(ctx, pc.Provider, modelsTypeFlag)
+			if modelsErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not fetch models for %s: %v\n", pc.Provider, modelsErr)
+				continue
+			}
+			for _, m := range sortModelsByType(models) {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s/%s\n", pc.Provider, m.ModelName, m.ModelType, pc.Provider, m.ModelName)
+				anyModels = true
+			}
 		}
 	}
 
