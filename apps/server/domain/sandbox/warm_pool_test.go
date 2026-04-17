@@ -410,6 +410,92 @@ func TestWarmPool_Resize_ShrinkWithProvider(t *testing.T) {
 	_ = wp.Stop(t.Context())
 }
 
+// --- Staleness detection ---
+
+func TestWarmPool_Acquire_StaleContainer_Rejected(t *testing.T) {
+	orch := NewOrchestrator(testLogger())
+	mock := &mockProvider{name: "stale-test", providerType: ProviderGVisor, healthy: true}
+	orch.RegisterProvider(ProviderGVisor, mock)
+
+	wp := NewWarmPool(orch, testLogger(), WarmPoolConfig{Size: 2, TargetImage: "myimage:latest"})
+
+	// Inject a digest resolver that returns a "new" digest (simulating image rebuild)
+	wp.digestResolver = func(image string) string {
+		return "sha256:newdigest"
+	}
+
+	// Add a warm container booted from the OLD digest
+	wp.containers = append(wp.containers, &warmContainer{
+		providerID:   "stale-container",
+		providerType: ProviderGVisor,
+		image:        "myimage:latest",
+		imageDigest:  "sha256:olddigest",
+		createdAt:    time.Now(),
+	})
+
+	// Acquire should reject the stale container and return nil (miss)
+	result := wp.Acquire(ProviderGVisor, "myimage:latest")
+	assert.Nil(t, result, "stale container should be rejected")
+
+	metrics := wp.Metrics()
+	assert.Equal(t, int64(0), metrics.Hits)
+	assert.Equal(t, int64(1), metrics.Misses)
+
+	// Pool should be empty (stale container removed)
+	wp.mu.Lock()
+	poolSize := len(wp.containers)
+	wp.mu.Unlock()
+	assert.Equal(t, 0, poolSize, "stale container should be removed from pool")
+
+	// Give async destroy a moment
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int64(1), mock.destroyCount.Load(), "stale container should be destroyed")
+}
+
+func TestWarmPool_Acquire_FreshContainer_Accepted(t *testing.T) {
+	wp := NewWarmPool(NewOrchestrator(testLogger()), testLogger(), WarmPoolConfig{Size: 2, TargetImage: "myimage:latest"})
+
+	// Inject a digest resolver returning the SAME digest as the warm container
+	wp.digestResolver = func(image string) string {
+		return "sha256:currentdigest"
+	}
+
+	wp.containers = append(wp.containers, &warmContainer{
+		providerID:   "fresh-container",
+		providerType: ProviderGVisor,
+		image:        "myimage:latest",
+		imageDigest:  "sha256:currentdigest",
+		createdAt:    time.Now(),
+	})
+
+	result := wp.Acquire(ProviderGVisor, "myimage:latest")
+	require.NotNil(t, result, "fresh container should be accepted")
+	assert.Equal(t, "fresh-container", result.ProviderID())
+
+	metrics := wp.Metrics()
+	assert.Equal(t, int64(1), metrics.Hits)
+	assert.Equal(t, int64(0), metrics.Misses)
+}
+
+func TestWarmPool_Acquire_NoDigest_Accepted(t *testing.T) {
+	// When either digest is empty, staleness check is skipped (safe fallback)
+	wp := NewWarmPool(NewOrchestrator(testLogger()), testLogger(), WarmPoolConfig{Size: 2})
+
+	// Resolver returns empty (e.g. image not locally cached yet)
+	wp.digestResolver = func(image string) string { return "" }
+
+	wp.containers = append(wp.containers, &warmContainer{
+		providerID:   "no-digest-container",
+		providerType: ProviderGVisor,
+		imageDigest:  "", // no digest recorded at boot
+		createdAt:    time.Now(),
+	})
+
+	result := wp.Acquire(ProviderGVisor, "")
+	require.NotNil(t, result, "container with no digest should be accepted (no staleness data)")
+	assert.Equal(t, "no-digest-container", result.ProviderID())
+}
+
 // --- Constants ---
 
 func TestWarmPoolConstants(t *testing.T) {

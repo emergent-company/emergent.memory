@@ -72,6 +72,7 @@ type warmContainer struct {
 	providerID   string       // Provider-specific container ID
 	providerType ProviderType // Which provider created it
 	image        string       // Docker image the container was booted with (empty = provider default)
+	imageDigest  string       // Image digest at boot time (sha256:...) for staleness detection
 	createdAt    time.Time    // When the container was pre-booted
 }
 
@@ -90,6 +91,10 @@ type WarmPool struct {
 	config       WarmPoolConfig
 	orchestrator *Orchestrator
 	log          *slog.Logger
+
+	// digestResolver resolves the current local digest of an image without pulling.
+	// Defaults to resolving via the registered GVisorProvider. Can be overridden in tests.
+	digestResolver func(image string) string
 
 	// Pool of ready containers
 	containers []*warmContainer
@@ -219,6 +224,10 @@ func (wp *WarmPool) Stop(ctx context.Context) error {
 // A warm container matches if its image matches the requested image, or if the pool's
 // TargetImage matches the requested image (handles the case where warm containers are
 // pre-booted with the same image the caller needs).
+//
+// Staleness check: if the warm container was booted from a digest that no longer matches
+// the current local digest of the image, the container is considered stale and destroyed
+// asynchronously. The caller falls through to a cold-boot.
 func (wp *WarmPool) Acquire(providerType ProviderType, imageHint string) *warmContainer {
 	if wp.config.Size <= 0 || wp.stopped.Load() {
 		wp.misses.Add(1)
@@ -232,10 +241,13 @@ func (wp *WarmPool) Acquire(providerType ProviderType, imageHint string) *warmCo
 		wantImage = wp.config.TargetImage
 	}
 
+	// Resolve the current local digest for staleness detection (fast — no pull).
+	currentDigest := wp.resolveLocalDigest(wantImage)
+
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
 
-	// Find a matching container
+	// Find a matching, fresh container.
 	for i, wc := range wp.containers {
 		if wc.providerType != providerType {
 			continue
@@ -250,6 +262,24 @@ func (wp *WarmPool) Acquire(providerType ProviderType, imageHint string) *warmCo
 			continue
 		}
 
+		// Staleness check: if both digests are known and differ, the container
+		// was booted from an old image version — discard it and keep searching.
+		if currentDigest != "" && wc.imageDigest != "" && wc.imageDigest != currentDigest {
+			wp.log.Warn("warm container is stale — image rebuilt since boot, discarding",
+				"provider_id", wc.providerID,
+				"image", wc.image,
+				"booted_digest", wc.imageDigest,
+				"current_digest", currentDigest,
+			)
+			wp.containers = append(wp.containers[:i], wp.containers[i+1:]...)
+			go wp.destroyContainer(context.Background(), wc)
+			// Trigger replenishment so the pool refills with a fresh container.
+			go wp.replenishImage(wc.image)
+			// Miss — caller will cold-boot.
+			wp.misses.Add(1)
+			return nil
+		}
+
 		// Remove from pool
 		wp.containers = append(wp.containers[:i], wp.containers[i+1:]...)
 		wp.hits.Add(1)
@@ -258,6 +288,7 @@ func (wp *WarmPool) Acquire(providerType ProviderType, imageHint string) *warmCo
 			"provider_id", wc.providerID,
 			"provider_type", wc.providerType,
 			"image", wc.image,
+			"digest", wc.imageDigest,
 			"age", time.Since(wc.createdAt).Round(time.Millisecond),
 			"remaining", len(wp.containers),
 		)
@@ -278,6 +309,26 @@ func (wp *WarmPool) Acquire(providerType ProviderType, imageHint string) *warmCo
 	)
 
 	return nil
+}
+
+// resolveLocalDigest returns the current local digest for an image reference
+// without pulling. Returns "" if unknown or the provider doesn't support it.
+// Uses the digestResolver func if set; otherwise falls back to the GVisorProvider.
+func (wp *WarmPool) resolveLocalDigest(imgRef string) string {
+	if wp.digestResolver != nil {
+		return wp.digestResolver(imgRef)
+	}
+	p, err := wp.orchestrator.GetProvider(ProviderGVisor)
+	if err != nil {
+		return ""
+	}
+	gp, ok := p.(*GVisorProvider)
+	if !ok {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return gp.ResolveLocalDigest(ctx, imgRef)
 }
 
 // Metrics returns current warm pool usage statistics.
@@ -502,6 +553,7 @@ func (wp *WarmPool) createWarmContainer(ctx context.Context, image string) (*war
 		providerID:   result.ProviderID,
 		providerType: providerType,
 		image:        image,
+		imageDigest:  result.ImageDigest,
 		createdAt:    time.Now(),
 	}, nil
 }

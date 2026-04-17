@@ -917,6 +917,23 @@ func (p *GVisorProvider) ensureImage(ctx context.Context, imgRef string) (string
 	return digest, nil
 }
 
+// ResolveLocalDigest returns the current digest of a locally-cached Docker image
+// without pulling. Returns "" if the image is not present locally or has no digest.
+// Used by the warm pool to detect stale containers after an image rebuild.
+func (p *GVisorProvider) ResolveLocalDigest(ctx context.Context, imgRef string) string {
+	if imgRef == "" {
+		imgRef = p.defaultImage
+	}
+	inspect, _, err := p.client.ImageInspectWithRaw(ctx, imgRef)
+	if err != nil {
+		return ""
+	}
+	if len(inspect.RepoDigests) > 0 {
+		return inspect.RepoDigests[0]
+	}
+	return ""
+}
+
 // parseMemoryBytes converts a memory string like "4G", "512M" to bytes.
 func parseMemoryBytes(s string) int64 {
 	s = strings.TrimSpace(strings.ToUpper(s))
