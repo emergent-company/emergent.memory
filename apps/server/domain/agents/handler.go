@@ -1566,8 +1566,10 @@ func (h *Handler) GetRunMessages(c echo.Context) error {
 		return apperror.NewBadRequest("runId is required")
 	}
 
+	ctx := c.Request().Context()
+
 	// Verify the run belongs to this project
-	run, err := h.repo.FindRunByIDForProject(c.Request().Context(), runID, projectID)
+	run, err := h.repo.FindRunByIDForProject(ctx, runID, projectID)
 	if err != nil {
 		return apperror.NewInternal("failed to get agent run", err)
 	}
@@ -1575,14 +1577,49 @@ func (h *Handler) GetRunMessages(c echo.Context) error {
 		return apperror.NewNotFound("AgentRun", runID)
 	}
 
-	messages, err := h.repo.FindMessagesByRunID(c.Request().Context(), runID)
+	messages, err := h.repo.FindMessagesByRunID(ctx, runID)
 	if err != nil {
 		return apperror.NewInternal("failed to get run messages", err)
 	}
 
+	// Fetch tool calls and group by step number so we can attach their outputs
+	// as function_responses on the corresponding assistant message.
+	toolCalls, err := h.repo.FindToolCallsByRunID(ctx, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get run tool calls", err)
+	}
+
+	// Build a map: stepNumber -> list of function_response entries
+	type funcResponse struct {
+		Name   string         `json:"name"`
+		Output map[string]any `json:"output"`
+		Status string         `json:"status"`
+	}
+	stepResponses := make(map[int][]funcResponse)
+	for _, tc := range toolCalls {
+		stepResponses[tc.StepNumber] = append(stepResponses[tc.StepNumber], funcResponse{
+			Name:   tc.ToolName,
+			Output: tc.Output,
+			Status: tc.Status,
+		})
+	}
+
 	dtos := make([]*AgentRunMessageDTO, len(messages))
 	for i, msg := range messages {
-		dtos[i] = msg.ToDTO()
+		dto := msg.ToDTO()
+		// Inject function_responses into messages that contain function_calls
+		if _, hasCalls := dto.Content["function_calls"]; hasCalls {
+			if responses, ok := stepResponses[msg.StepNumber]; ok && len(responses) > 0 {
+				// Copy content map to avoid mutating the entity
+				enriched := make(map[string]any, len(dto.Content)+1)
+				for k, v := range dto.Content {
+					enriched[k] = v
+				}
+				enriched["function_responses"] = responses
+				dto.Content = enriched
+			}
+		}
+		dtos[i] = dto
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(dtos))

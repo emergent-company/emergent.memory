@@ -704,9 +704,40 @@ func (h *MCPToolHandler) ExecuteGetAgentRunMessages(ctx context.Context, project
 		return errResult("failed to get run messages: " + err.Error())
 	}
 
+	// Fetch tool calls and group by step number to attach outputs as function_responses.
+	toolCalls, err := h.repo.FindToolCallsByRunID(ctx, runID)
+	if err != nil {
+		return errResult("failed to get run tool calls: " + err.Error())
+	}
+
+	type funcResponse struct {
+		Name   string         `json:"name"`
+		Output map[string]any `json:"output"`
+		Status string         `json:"status"`
+	}
+	stepResponses := make(map[int][]funcResponse)
+	for _, tc := range toolCalls {
+		stepResponses[tc.StepNumber] = append(stepResponses[tc.StepNumber], funcResponse{
+			Name:   tc.ToolName,
+			Output: tc.Output,
+			Status: tc.Status,
+		})
+	}
+
 	dtos := make([]*AgentRunMessageDTO, len(messages))
 	for i, msg := range messages {
-		dtos[i] = msg.ToDTO()
+		dto := msg.ToDTO()
+		if _, hasCalls := dto.Content["function_calls"]; hasCalls {
+			if responses, ok := stepResponses[msg.StepNumber]; ok && len(responses) > 0 {
+				enriched := make(map[string]any, len(dto.Content)+1)
+				for k, v := range dto.Content {
+					enriched[k] = v
+				}
+				enriched["function_responses"] = responses
+				dto.Content = enriched
+			}
+		}
+		dtos[i] = dto
 	}
 
 	return wrapResult(dtos)
