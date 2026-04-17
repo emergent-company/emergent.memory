@@ -408,7 +408,7 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 
 	if compact {
 		for _, p := range projectList {
-			fmt.Printf("%-40s  %s\n", p.Name, p.ID)
+			fmt.Printf("%-40s  %s  %s\n", p.Name, p.ID, p.OrgID)
 		}
 		return nil
 	}
@@ -420,6 +420,9 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s:\n\n", header)
 	for i, p := range projectList {
 		fmt.Printf("%d. %s (%s)\n", i+1, p.Name, p.ID)
+		if p.OrgID != "" {
+			fmt.Printf("   Org ID:      %s\n", p.OrgID)
+		}
 		if p.ProjectInfo != nil && *p.ProjectInfo != "" {
 			fmt.Printf("   Project Info: %s\n", *p.ProjectInfo)
 		}

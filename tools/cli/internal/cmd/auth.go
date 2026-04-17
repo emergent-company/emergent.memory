@@ -31,6 +31,7 @@ type healthResponse struct {
 type projectResponse struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
+	OrgID       string `json:"orgId,omitempty"`
 	Description string `json:"description,omitempty"`
 }
 
@@ -569,6 +570,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 				fmt.Println("Active Project:")
 				fmt.Printf("  Name:        %s\n", activeProject.Name)
 				fmt.Printf("  ID:          %s\n", activeProject.ID)
+				if activeProject.OrgID != "" {
+					fmt.Printf("  Org ID:      %s\n", activeProject.OrgID)
+				}
 			} else {
 				fmt.Printf("Projects:      %d\n", len(projects))
 				for _, p := range projects {
