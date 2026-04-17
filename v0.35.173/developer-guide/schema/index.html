@@ -1,0 +1,3149 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Official documentation for the Memory Go SDK and Swift SDK">
+      
+      
+        <meta name="author" content="Emergent Company">
+      
+      
+        <link rel="canonical" href="https://emergent-company.github.io/emergent.memory/v0.35.173/developer-guide/schema/">
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.50">
+    
+    
+      
+        <title>Schemas - Memory SDK Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.a40c8224.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#schemas" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Memory SDK Documentation" class="md-header__button md-logo" aria-label="Memory SDK Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Memory SDK Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Schemas
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/emergent-company/emergent.memory" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    emergent-company/emergent.memory
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../" class="md-tabs__link">
+          
+  
+    
+  
+  Developer Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/" class="md-tabs__link">
+          
+  
+    
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../go-sdk/" class="md-tabs__link">
+          
+  
+    
+  
+  Go SDK
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../swift-sdk/" class="md-tabs__link">
+          
+  
+    
+  
+  Swift SDK
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../api-reference/" class="md-tabs__link">
+        
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Memory SDK Documentation" class="md-nav__button md-logo" aria-label="Memory SDK Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Memory SDK Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/emergent-company/emergent.memory" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    emergent-company/emergent.memory
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Developer Guide
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Developer Guide
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../provider-setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Provider Setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mcp-servers/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    MCP Servers
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../extraction/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extraction Pipeline
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../email-setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Email Setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../health-ops/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Health & Ops
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-scopes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Security Scopes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scheduler/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Background Scheduler
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../user-guide/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    User Guide
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            User Guide
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting Started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/knowledge-graph/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Knowledge Graph
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/documents/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Documents
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/chat/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Chat
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/agents/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Agents
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/branches/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Branches
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/datasources/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Data Sources
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/api-tokens/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    API Tokens
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/backups/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Backups
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/notifications/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Notifications
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/tasks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Tasks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/integrations/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Integrations
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../go-sdk/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Go SDK
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Go SDK
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/authentication/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Authentication
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/multi-tenancy/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Multi-Tenancy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/error-handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error Handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/streaming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Streaming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/graph-id-model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph ID Model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/changelog/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Changelog
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_8">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/auth/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    auth
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    errors
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/graphutil/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    graph/graphutil
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/testutil/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    testutil
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/graph/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    graph
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/documents/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    documents
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/search/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    search
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/chat/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    chat
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/chunks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    chunks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/chunking/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    chunking
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/agents/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    agents
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/agentdefinitions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    agentdefinitions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/branches/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    branches
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/projects/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    projects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/orgs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    orgs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/users/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    users
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/apitokens/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    apitokens
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/mcp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    mcp
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/mcpregistry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    mcpregistry
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/datasources/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    datasources
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/discoveryjobs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    discoveryjobs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/embeddingpolicies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    embeddingpolicies
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/integrations/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    integrations
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/notifications/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    notifications
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/tasks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    tasks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/monitoring/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    monitoring
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/useractivity/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    useractivity
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/health/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    health
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/superadmin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    superadmin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/apidocs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    apidocs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/provider/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    provider
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../swift-sdk/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Swift SDK
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Swift SDK
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../swift-sdk/api-client/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    API Client
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../swift-sdk/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../swift-sdk/errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Errors
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../swift-sdk/roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    API Reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Concepts
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema lifecycle
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-schemas-admin" class="md-nav__link">
+    <span class="md-ellipsis">
+      Managing schemas (admin)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Managing schemas (admin)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#create-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Create a schema
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Get a schema
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#update-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Update a schema
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Delete a schema
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-field-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field reference
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#assigning-schemas-to-projects" class="md-nav__link">
+    <span class="md-ellipsis">
+      Assigning schemas to projects
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Assigning schemas to projects">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#browse-available-schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      Browse available schemas
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#list-installed-schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      List installed schemas
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assign-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Assign a schema
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enable-disable-an-assignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enable / disable an assignment
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#remove-an-assignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Remove an assignment
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compiled-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compiled types
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema history
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-migrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema migrations
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema migrations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#migrations-block-yaml" class="md-nav__link">
+    <span class="md-ellipsis">
+      migrations block (YAML)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-auto-migration-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      How auto-migration works
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migrating-types-system-b-sql-renames" class="md-nav__link">
+    <span class="md-ellipsis">
+      Migrating types (System B — SQL renames)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migration-rest-api-system-a-async-schema-version-aware" class="md-nav__link">
+    <span class="md-ellipsis">
+      Migration REST API (System A — async, schema-version aware)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Migration REST API (System A — async, schema-version aware)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#preview-a-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Preview a migration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execute-a-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Execute a migration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rollback-a-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rollback a migration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#commit-prune-migration-archive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Commit (prune) migration archive
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-migration-job-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      Get migration job status
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      CLI reference
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CLI reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#yaml-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      YAML support
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#diff-two-schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      Diff two schemas
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-a-schema-with-auto-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Install a schema (with auto-migration)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-history_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema history
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migrate-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Migrate types
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Migrate types">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#system-b-sql-renames-no-version-tracking" class="md-nav__link">
+    <span class="md-ellipsis">
+      System B — SQL renames (no version tracking)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#system-a-schema-version-aware-migration-subcommands" class="md-nav__link">
+    <span class="md-ellipsis">
+      System A — Schema-version-aware migration subcommands
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bulk-uninstall" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bulk uninstall
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      MCP tools
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#blueprints" class="md-nav__link">
+    <span class="md-ellipsis">
+      Blueprints
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="schemas">Schemas<a class="headerlink" href="#schemas" title="Permanent link">&para;</a></h1>
+<p>Schemas are versioned bundles of object type schemas, relationship type schemas, UI configurations, and extraction prompts. They let you define a domain model once and apply it to many projects.</p>
+<h2 id="concepts">Concepts<a class="headerlink" href="#concepts" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Schema</strong></td>
+<td>A versioned bundle: type schemas, relationship schemas, UI configs, extraction prompts</td>
+</tr>
+<tr>
+<td><strong>Assignment</strong></td>
+<td>A link between a schema and a project</td>
+</tr>
+<tr>
+<td><strong>Compiled types</strong></td>
+<td>The merged schema registry view for a project, combining all active schemas</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="schema-lifecycle">Schema lifecycle<a class="headerlink" href="#schema-lifecycle" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>draft → published → (deprecated)
+</code></pre></div>
+<ul>
+<li><strong>Draft</strong> schemas are not visible to projects.</li>
+<li><strong>Published</strong> schemas appear in the <code>available</code> list for all projects.</li>
+<li><strong>Deprecated</strong> schemas remain installed on existing projects but cannot be newly assigned.</li>
+</ul>
+<hr />
+<h2 id="managing-schemas-admin">Managing schemas (admin)<a class="headerlink" href="#managing-schemas-admin" title="Permanent link">&para;</a></h2>
+<h3 id="create-a-schema">Create a schema<a class="headerlink" href="#create-a-schema" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="s1">    &quot;name&quot;: &quot;legal-entities&quot;,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="s1">    &quot;version&quot;: &quot;1.0.0&quot;,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="s1">    &quot;description&quot;: &quot;Object types for legal entity extraction&quot;,</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="s1">    &quot;author&quot;: &quot;Emergent Company&quot;,</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="s1">    &quot;source&quot;: &quot;official&quot;,</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="s1">    &quot;license&quot;: &quot;MIT&quot;,</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="s1">    &quot;draft&quot;: false,</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="s1">    &quot;objectTypeSchemas&quot;: {</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="s1">      &quot;Contract&quot;: {</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="s1">        &quot;type&quot;: &quot;object&quot;,</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="s1">        &quot;properties&quot;: {</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="s1">          &quot;title&quot;:       { &quot;type&quot;: &quot;string&quot; },</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="s1">          &quot;parties&quot;:     { &quot;type&quot;: &quot;array&quot;, &quot;items&quot;: { &quot;type&quot;: &quot;string&quot; } },</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="s1">          &quot;signedDate&quot;:  { &quot;type&quot;: &quot;string&quot;, &quot;format&quot;: &quot;date&quot; },</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="s1">          &quot;jurisdiction&quot;:{ &quot;type&quot;: &quot;string&quot; }</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="s1">        },</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="s1">        &quot;required&quot;: [&quot;title&quot;]</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="s1">      },</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="s1">      &quot;Clause&quot;: {</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="s1">        &quot;type&quot;: &quot;object&quot;,</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="s1">        &quot;properties&quot;: {</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="s1">          &quot;clauseType&quot;: { &quot;type&quot;: &quot;string&quot; },</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="s1">          &quot;text&quot;:       { &quot;type&quot;: &quot;string&quot; }</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="s1">        }</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="s1">      }</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="s1">    },</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="s1">    &quot;relationshipTypeSchemas&quot;: {</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="s1">      &quot;CONTAINS_CLAUSE&quot;: {</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="s1">        &quot;from&quot;: &quot;Contract&quot;,</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="s1">        &quot;to&quot;: &quot;Clause&quot;</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="s1">      }</span>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="s1">    },</span>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="s1">    &quot;uiConfigs&quot;: {</span>
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="s1">      &quot;Contract&quot;: { &quot;icon&quot;: &quot;file-text&quot;, &quot;color&quot;: &quot;#0ea5e9&quot;, &quot;displayProperty&quot;: &quot;title&quot; },</span>
+<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="s1">      &quot;Clause&quot;:    { &quot;icon&quot;: &quot;paragraph&quot;, &quot;color&quot;: &quot;#8b5cf6&quot;, &quot;displayProperty&quot;: &quot;clauseType&quot; }</span>
+<a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a><span class="s1">    },</span>
+<a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a><span class="s1">    &quot;extractionPrompts&quot;: {</span>
+<a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a><span class="s1">      &quot;Contract&quot;: {</span>
+<a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a><span class="s1">        &quot;systemPrompt&quot;: &quot;Extract contract entities from the document.&quot;,</span>
+<a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a><span class="s1">        &quot;exampleJson&quot;: &quot;{\&quot;title\&quot;: \&quot;Service Agreement\&quot;, \&quot;parties\&quot;: [\&quot;Acme\&quot;, \&quot;Widgets Inc.\&quot;]}&quot;</span>
+<a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a><span class="s1">      }</span>
+<a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a><span class="s1">    }</span>
+<a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<h3 id="get-a-schema">Get a schema<a class="headerlink" href="#get-a-schema" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/&lt;schemaId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<h3 id="update-a-schema">Update a schema<a class="headerlink" href="#update-a-schema" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/&lt;schemaId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;version&quot;: &quot;1.0.1&quot;, &quot;description&quot;: &quot;Updated description&quot;}&#39;</span>
+</code></pre></div>
+<h3 id="delete-a-schema">Delete a schema<a class="headerlink" href="#delete-a-schema" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/&lt;schemaId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">In-use schemas</p>
+<p>Deleting a schema that is currently assigned to any project returns <code>409 Conflict</code>. Remove all assignments first.</p>
+</div>
+<hr />
+<h2 id="schema-field-reference">Schema field reference<a class="headerlink" href="#schema-field-reference" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>string</td>
+<td>Unique identifier name</td>
+</tr>
+<tr>
+<td><code>version</code></td>
+<td>string</td>
+<td>Semver string, e.g. <code>1.0.0</code></td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>string</td>
+<td>Human-readable description</td>
+</tr>
+<tr>
+<td><code>author</code></td>
+<td>string</td>
+<td>Schema author</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>string</td>
+<td><code>official</code>, <code>community</code>, or custom label</td>
+</tr>
+<tr>
+<td><code>license</code></td>
+<td>string</td>
+<td>SPDX license ID, e.g. <code>MIT</code></td>
+</tr>
+<tr>
+<td><code>repositoryUrl</code></td>
+<td>string</td>
+<td>Source repository URL</td>
+</tr>
+<tr>
+<td><code>documentationUrl</code></td>
+<td>string</td>
+<td>Docs URL</td>
+</tr>
+<tr>
+<td><code>objectTypeSchemas</code></td>
+<td>object</td>
+<td>Map of type name → JSON Schema</td>
+</tr>
+<tr>
+<td><code>relationshipTypeSchemas</code></td>
+<td>object</td>
+<td>Map of relationship type → schema</td>
+</tr>
+<tr>
+<td><code>uiConfigs</code></td>
+<td>object</td>
+<td>Map of type name → UI config</td>
+</tr>
+<tr>
+<td><code>extractionPrompts</code></td>
+<td>object</td>
+<td>Map of type name → prompt config</td>
+</tr>
+<tr>
+<td><code>migrations</code></td>
+<td>object</td>
+<td>Optional migration hints block (see <a href="#schema-migrations">Schema migrations</a>)</td>
+</tr>
+<tr>
+<td><code>checksum</code></td>
+<td>string</td>
+<td>SHA-256 of canonical content (auto-computed)</td>
+</tr>
+<tr>
+<td><code>draft</code></td>
+<td>bool</td>
+<td><code>true</code> = not visible to projects</td>
+</tr>
+<tr>
+<td><code>publishedAt</code></td>
+<td>timestamp</td>
+<td>When the schema was published</td>
+</tr>
+<tr>
+<td><code>deprecatedAt</code></td>
+<td>timestamp</td>
+<td>When the schema was deprecated</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="assigning-schemas-to-projects">Assigning schemas to projects<a class="headerlink" href="#assigning-schemas-to-projects" title="Permanent link">&para;</a></h2>
+<h3 id="browse-available-schemas">Browse available schemas<a class="headerlink" href="#browse-available-schemas" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/available<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<h3 id="list-installed-schemas">List installed schemas<a class="headerlink" href="#list-installed-schemas" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/installed<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<h3 id="assign-a-schema">Assign a schema<a class="headerlink" href="#assign-a-schema" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/assign<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;schemaId&quot;: &quot;&lt;schemaId&gt;&quot;}&#39;</span>
+</code></pre></div>
+<p>This creates an assignment with <code>active: true</code> by default.</p>
+<h3 id="enable-disable-an-assignment">Enable / disable an assignment<a class="headerlink" href="#enable-disable-an-assignment" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/assignments/&lt;assignmentId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;active&quot;: false}&#39;</span>
+</code></pre></div>
+<p>Inactive assignments do not contribute types to the compiled registry.</p>
+<h3 id="remove-an-assignment">Remove an assignment<a class="headerlink" href="#remove-an-assignment" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/assignments/&lt;assignmentId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="compiled-types">Compiled types<a class="headerlink" href="#compiled-types" title="Permanent link">&para;</a></h2>
+<p>The compiled types endpoint merges all <strong>active</strong> schema assignments for a project into a single flat type map. Later-assigned schemas override earlier ones for the same type name.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/compiled-types<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<p>This is the schema registry the extraction pipeline uses. Types registered here that are not yet in the project's schema registry table are automatically added with <code>source = "template"</code> on the next extraction run.</p>
+<hr />
+<h2 id="schema-history">Schema history<a class="headerlink" href="#schema-history" title="Permanent link">&para;</a></h2>
+<p>The history endpoint returns <strong>all</strong> schema assignments for a project including ones that have been uninstalled (soft-deleted). Useful for auditing which schemas were used over time.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/history<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<p>Each item includes <code>status: "installed"</code> or <code>status: "uninstalled"</code> and an optional <code>removed_at</code> timestamp.</p>
+<hr />
+<h2 id="schema-migrations">Schema migrations<a class="headerlink" href="#schema-migrations" title="Permanent link">&para;</a></h2>
+<p>Schemas can carry an optional <code>migrations</code> block that declares how to migrate live graph data when upgrading from a previous version. The server uses this block to run an <strong>async background migration job</strong> automatically when you install the new schema version.</p>
+<h3 id="migrations-block-yaml">migrations block (YAML)<a class="headerlink" href="#migrations-block-yaml" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">legal-entities</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2.0.0&quot;</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Legal entity schema v2</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="nt">objectTypeSchemas</span><span class="p">:</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">  </span><span class="nt">Agreement</span><span class="p">:</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">object</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="nt">properties</span><span class="p">:</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">      </span><span class="nt">title</span><span class="p">:</span><span class="w">      </span><span class="p p-Indicator">{</span><span class="nt"> type</span><span class="p">:</span><span class="w"> </span><span class="nv">string</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">      </span><span class="nt">parties</span><span class="p">:</span><span class="w">    </span><span class="p p-Indicator">{</span><span class="nt"> type</span><span class="p">:</span><span class="w"> </span><span class="nv">array</span><span class="p p-Indicator">,</span><span class="nt"> items</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> type</span><span class="p">:</span><span class="w"> </span><span class="nv">string</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">      </span><span class="nt">signed_at</span><span class="p">:</span><span class="w">  </span><span class="p p-Indicator">{</span><span class="nt"> type</span><span class="p">:</span><span class="w"> </span><span class="nv">string</span><span class="p p-Indicator">,</span><span class="nt"> format</span><span class="p">:</span><span class="w"> </span><span class="nv">date</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w">      </span><span class="c1"># renamed from signedDate</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="w">      </span><span class="nt">jurisdiction</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> type</span><span class="p">:</span><span class="w"> </span><span class="nv">string</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="w">    </span><span class="nt">required</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">title</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="c1"># Optional migrations block — describes what changed since from_version</span>
+<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="nt">migrations</span><span class="p">:</span>
+<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a><span class="w">  </span><span class="nt">from_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0.0&quot;</span><span class="w">         </span><span class="c1"># previous version this schema upgrades from</span>
+<a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a><span class="w">  </span><span class="nt">type_renames</span><span class="p">:</span>
+<a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Contract</span>
+<a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a><span class="w">      </span><span class="nt">to</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Agreement</span>
+<a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a><span class="w">  </span><span class="nt">property_renames</span><span class="p">:</span>
+<a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Agreement</span>
+<a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a><span class="w">      </span><span class="nt">from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">signedDate</span>
+<a id="__codelineno-12-24" name="__codelineno-12-24" href="#__codelineno-12-24"></a><span class="w">      </span><span class="nt">to</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">signed_at</span>
+<a id="__codelineno-12-25" name="__codelineno-12-25" href="#__codelineno-12-25"></a><span class="w">  </span><span class="nt">removed_properties</span><span class="p">:</span>
+<a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Agreement</span>
+<a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a><span class="w">      </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">legacyId</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>from_version</code></td>
+<td><strong>Required.</strong> The schema version this migration upgrades from. Must match an installed schema with that name and version.</td>
+</tr>
+<tr>
+<td><code>type_renames</code></td>
+<td>List of <code>{from, to}</code> type-name renames to apply to live data.</td>
+</tr>
+<tr>
+<td><code>property_renames</code></td>
+<td>List of <code>{type_name, from, to}</code> property-key renames.</td>
+</tr>
+<tr>
+<td><code>removed_properties</code></td>
+<td>List of <code>{type_name, name}</code> properties that are intentionally removed. Data is archived, not warned.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="how-auto-migration-works">How auto-migration works<a class="headerlink" href="#how-auto-migration-works" title="Permanent link">&para;</a></h3>
+<ol>
+<li>You install the new schema version (<code>memory schemas install --file schema-v2.yaml</code>).</li>
+<li>If the schema has a <code>migrations.from_version</code> block, the server resolves a <strong>migration chain</strong> (walking backwards through <code>from_version</code> pointers, up to 10 hops).</li>
+<li>A preview runs synchronously on a sample of objects to assess risk (<code>safe</code> / <code>cautious</code> / <code>risky</code> / <code>dangerous</code>).</li>
+<li>If risk is <code>dangerous</code> and <code>--force</code> is not set, the assign returns <code>migration_status: "blocked"</code> — no job is enqueued.</li>
+<li>Otherwise an async background job is created. The job ID is returned in the assign response.</li>
+<li>The worker executes each hop sequentially, updating <code>objects_migrated</code> / <code>objects_failed</code> as it goes.</li>
+</ol>
+<p><strong>Risk levels:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>safe</code></td>
+<td>No data loss; only renames and additions.</td>
+</tr>
+<tr>
+<td><code>cautious</code></td>
+<td>Minor type coercions that could lose precision.</td>
+</tr>
+<tr>
+<td><code>risky</code></td>
+<td>1–2 properties will be dropped (not in <code>removed_properties</code>). Use <code>--force</code>.</td>
+</tr>
+<tr>
+<td><code>dangerous</code></td>
+<td>3+ properties will be dropped. Use <code>--force</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="migrating-types-system-b-sql-renames">Migrating types (System B — SQL renames)<a class="headerlink" href="#migrating-types-system-b-sql-renames" title="Permanent link">&para;</a></h3>
+<p>The original migrate endpoint performs direct SQL renames on graph data without schema-version tracking. Use this for quick, low-risk renames when you don't have schema version metadata:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/migrate<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="s1">    &quot;type_renames&quot;: [</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="s1">      {&quot;from&quot;: &quot;OldType&quot;, &quot;to&quot;: &quot;NewType&quot;}</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="s1">    ],</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="s1">    &quot;property_renames&quot;: [</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="s1">      {&quot;type_name&quot;: &quot;NewType&quot;, &quot;from&quot;: &quot;oldProp&quot;, &quot;to&quot;: &quot;newProp&quot;}</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="s1">    ],</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="s1">    &quot;dry_run&quot;: true</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<h3 id="migration-rest-api-system-a-async-schema-version-aware">Migration REST API (System A — async, schema-version aware)<a class="headerlink" href="#migration-rest-api-system-a-async-schema-version-aware" title="Permanent link">&para;</a></h3>
+<h4 id="preview-a-migration">Preview a migration<a class="headerlink" href="#preview-a-migration" title="Permanent link">&para;</a></h4>
+<p>Runs migration logic on all matching objects in dry-run mode and returns aggregated risk results without making any changes.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/migrate/preview<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;from_schema_id&quot;: &quot;&lt;fromId&gt;&quot;, &quot;to_schema_id&quot;: &quot;&lt;toId&gt;&quot;}&#39;</span>
+</code></pre></div>
+<h4 id="execute-a-migration">Execute a migration<a class="headerlink" href="#execute-a-migration" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/migrate/execute<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="s1">    &quot;from_schema_id&quot;: &quot;&lt;fromId&gt;&quot;,</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="s1">    &quot;to_schema_id&quot;: &quot;&lt;toId&gt;&quot;,</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="s1">    &quot;force&quot;: false,</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="s1">    &quot;max_objects&quot;: 0</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<h4 id="rollback-a-migration">Rollback a migration<a class="headerlink" href="#rollback-a-migration" title="Permanent link">&para;</a></h4>
+<p>Restores property data from <code>migration_archive</code>. Optionally re-installs the old schema types.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/migrate/rollback<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;to_version&quot;: &quot;1.0.0&quot;, &quot;restore_type_registry&quot;: false}&#39;</span>
+</code></pre></div>
+<h4 id="commit-prune-migration-archive">Commit (prune) migration archive<a class="headerlink" href="#commit-prune-migration-archive" title="Permanent link">&para;</a></h4>
+<p>Strips archive entries up to and including <code>through_version</code> from all project objects, freeing storage.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/migrate/commit<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;through_version&quot;: &quot;1.0.0&quot;}&#39;</span>
+</code></pre></div>
+<h4 id="get-migration-job-status">Get migration job status<a class="headerlink" href="#get-migration-job-status" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/migration-jobs/&lt;jobId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="cli-reference">CLI reference<a class="headerlink" href="#cli-reference" title="Permanent link">&para;</a></h2>
+<p>The <code>memory schemas</code> subcommands cover all schema management operations.</p>
+<h3 id="yaml-support">YAML support<a class="headerlink" href="#yaml-support" title="Permanent link">&para;</a></h3>
+<p>Schema files can be written in <strong>JSON or YAML</strong>. The CLI detects format by file extension (<code>.yaml</code> / <code>.yml</code> for YAML, otherwise JSON):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>memory<span class="w"> </span>schemas<span class="w"> </span>create<span class="w"> </span>--file<span class="w"> </span>my-schema.yaml<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>memory<span class="w"> </span>schemas<span class="w"> </span>create<span class="w"> </span>--file<span class="w"> </span>my-schema.json<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;
+</code></pre></div>
+<h3 id="diff-two-schemas">Diff two schemas<a class="headerlink" href="#diff-two-schemas" title="Permanent link">&para;</a></h3>
+<p>Compare two schema files (JSON or YAML) side-by-side without making any API calls:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>memory<span class="w"> </span>schemas<span class="w"> </span>diff<span class="w"> </span>schema-v1.yaml<span class="w"> </span>schema-v2.yaml
+</code></pre></div>
+<p>The diff output includes a property-level breakdown (added/removed/type-changed properties per type) and a suggested <code>migrations:</code> YAML block auto-populated from the detected differences. Copy this block into your new schema file as a starting point.</p>
+<h3 id="install-a-schema-with-auto-migration">Install a schema (with auto-migration)<a class="headerlink" href="#install-a-schema-with-auto-migration" title="Permanent link">&para;</a></h3>
+<p>When the schema file contains a <code>migrations</code> block, the server automatically enqueues a background migration job after the assignment is created.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="c1"># Install and auto-migrate (job ID printed; TTY streams progress)</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>memory<span class="w"> </span>schemas<span class="w"> </span>install<span class="w"> </span>--file<span class="w"> </span>schema-v2.yaml<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="c1"># Force migration even if risk level is dangerous</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>memory<span class="w"> </span>schemas<span class="w"> </span>install<span class="w"> </span>--file<span class="w"> </span>schema-v2.yaml<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span>--force
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="c1"># Uninstall the from-version schema automatically after the migration chain completes</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>memory<span class="w"> </span>schemas<span class="w"> </span>install<span class="w"> </span>--file<span class="w"> </span>schema-v2.yaml<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span>--auto-uninstall
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a>
+<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="c1"># Dry run: preview migration without installing</span>
+<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a>memory<span class="w"> </span>schemas<span class="w"> </span>install<span class="w"> </span>--file<span class="w"> </span>schema-v2.yaml<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span>--dry-run
+</code></pre></div>
+<p>If a migration job is started and stdout is a TTY, the CLI automatically polls and streams progress until the job completes. In non-TTY mode it prints:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>Migration job started: &lt;jobId&gt;
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>Run: memory schemas migrate job --job-id &lt;jobId&gt; --wait
+</code></pre></div></p>
+<p>Show the merged type registry for a project:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>memory<span class="w"> </span>schemas<span class="w"> </span>compiled-types<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="c1"># Include schema source metadata and shadow warnings</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>memory<span class="w"> </span>schemas<span class="w"> </span>compiled-types<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span>--verbose
+</code></pre></div>
+<p><code>--verbose</code> adds <code>schema_id</code>, <code>schema_name</code>, <code>schema_version</code>, and a <code>shadowed</code> flag (true when two installed schemas define the same type name).</p>
+<h3 id="schema-history_1">Schema history<a class="headerlink" href="#schema-history_1" title="Permanent link">&para;</a></h3>
+<p>List all schema assignments including uninstalled ones:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>memory<span class="w"> </span>schemas<span class="w"> </span><span class="nb">history</span><span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;
+</code></pre></div>
+<h3 id="migrate-types">Migrate types<a class="headerlink" href="#migrate-types" title="Permanent link">&para;</a></h3>
+<h4 id="system-b-sql-renames-no-version-tracking">System B — SQL renames (no version tracking)<a class="headerlink" href="#system-b-sql-renames-no-version-tracking" title="Permanent link">&para;</a></h4>
+<p>Rename types or property keys across live data in a single transaction:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># Dry run (preview only)</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>memory<span class="w"> </span>schemas<span class="w"> </span>migrate<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="w">  </span>--rename-type<span class="w"> </span><span class="nv">OldType</span><span class="o">=</span>NewType<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="w">  </span>--rename-prop<span class="w"> </span><span class="s2">&quot;NewType.oldProp=newProp&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="w">  </span>--dry-run
+<a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>
+<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="c1"># Apply</span>
+<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>memory<span class="w"> </span>schemas<span class="w"> </span>migrate<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a><span class="w">  </span>--rename-type<span class="w"> </span><span class="nv">OldType</span><span class="o">=</span>NewType<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a><span class="w">  </span>--rename-prop<span class="w"> </span><span class="s2">&quot;NewType.oldProp=newProp&quot;</span>
+</code></pre></div>
+<h4 id="system-a-schema-version-aware-migration-subcommands">System A — Schema-version-aware migration subcommands<a class="headerlink" href="#system-a-schema-version-aware-migration-subcommands" title="Permanent link">&para;</a></h4>
+<p>Preview risk before migrating:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>memory<span class="w"> </span>schemas<span class="w"> </span>migrate<span class="w"> </span>preview<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="w">  </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="w">  </span>--from<span class="w"> </span>&lt;fromSchemaId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="w">  </span>--to<span class="w"> </span>&lt;toSchemaId&gt;
+</code></pre></div>
+<p>Execute a migration (with TTY confirmation for risky/dangerous):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>memory<span class="w"> </span>schemas<span class="w"> </span>migrate<span class="w"> </span>execute<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="w">  </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="w">  </span>--from<span class="w"> </span>&lt;fromSchemaId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="w">  </span>--to<span class="w"> </span>&lt;toSchemaId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="w">  </span>--force<span class="w">            </span><span class="c1"># skip confirmation for risky/dangerous</span>
+<a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a><span class="w">  </span>--max-objects<span class="w"> </span><span class="m">500</span><span class="w">  </span><span class="c1"># limit batch size (0 = no limit)</span>
+</code></pre></div>
+<p>Rollback to a previous version:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>memory<span class="w"> </span>schemas<span class="w"> </span>migrate<span class="w"> </span>rollback<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="w">  </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="w">  </span>--to-version<span class="w"> </span><span class="m">1</span>.0.0<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="w">  </span>--restore-registry<span class="w">  </span><span class="c1"># also reinstall old schema types</span>
+</code></pre></div>
+<p>Prune migration archive entries (commit):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>memory<span class="w"> </span>schemas<span class="w"> </span>migrate<span class="w"> </span>commit<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="w">  </span>--through-version<span class="w"> </span><span class="m">1</span>.0.0
+</code></pre></div>
+<p>Poll a background migration job:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="c1"># Check status once</span>
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>memory<span class="w"> </span>schemas<span class="w"> </span>migrate<span class="w"> </span>job<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span>--job-id<span class="w"> </span>&lt;jobId&gt;
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="c1"># Block until complete, streaming progress</span>
+<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>memory<span class="w"> </span>schemas<span class="w"> </span>migrate<span class="w"> </span>job<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span>--job-id<span class="w"> </span>&lt;jobId&gt;<span class="w"> </span>--wait
+</code></pre></div>
+<h3 id="bulk-uninstall">Bulk uninstall<a class="headerlink" href="#bulk-uninstall" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="c1"># Uninstall all schemas except named ones (comma-separated)</span>
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>memory<span class="w"> </span>schemas<span class="w"> </span>uninstall<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span>--all-except<span class="w"> </span><span class="s2">&quot;core,legal-entities&quot;</span>
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>
+<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="c1"># Keep only the most recent version of each schema name</span>
+<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a>memory<span class="w"> </span>schemas<span class="w"> </span>uninstall<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span>--keep-latest
+<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a>
+<a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a><span class="c1"># Preview what would be uninstalled (no changes made)</span>
+<a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a>memory<span class="w"> </span>schemas<span class="w"> </span>uninstall<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span>--all-except<span class="w"> </span><span class="s2">&quot;core&quot;</span><span class="w"> </span>--dry-run
+</code></pre></div>
+<hr />
+<h2 id="mcp-tools">MCP tools<a class="headerlink" href="#mcp-tools" title="Permanent link">&para;</a></h2>
+<p>The following MCP tools are available for schema management:</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>schema-list-available</code></td>
+<td>Browse schemas available to install</td>
+</tr>
+<tr>
+<td><code>schema-list-installed</code></td>
+<td>List installed schemas (excludes uninstalled)</td>
+</tr>
+<tr>
+<td><code>schema-assign</code></td>
+<td>Install a schema into the project</td>
+</tr>
+<tr>
+<td><code>schema-assignment-update</code></td>
+<td>Enable/disable an assignment</td>
+</tr>
+<tr>
+<td><code>schema-uninstall</code></td>
+<td>Uninstall a schema assignment</td>
+</tr>
+<tr>
+<td><code>schema-create</code></td>
+<td>Create a new schema in the registry</td>
+</tr>
+<tr>
+<td><code>schema-delete</code></td>
+<td>Delete a schema from the registry</td>
+</tr>
+<tr>
+<td><code>schema-history</code></td>
+<td>Full installation history including uninstalled schemas</td>
+</tr>
+<tr>
+<td><code>schema-compiled-types</code></td>
+<td>Merged type registry; use <code>verbose: true</code> for shadow metadata</td>
+</tr>
+<tr>
+<td><code>schema-migrate-preview</code></td>
+<td>Preview migration risk across all objects (dry-run)</td>
+</tr>
+<tr>
+<td><code>schema-migrate-execute</code></td>
+<td>Execute a schema-version-aware migration</td>
+</tr>
+<tr>
+<td><code>schema-migrate-rollback</code></td>
+<td>Rollback live data to a previous schema version</td>
+</tr>
+<tr>
+<td><code>schema-migrate-commit</code></td>
+<td>Prune migration archive entries up to a given version</td>
+</tr>
+<tr>
+<td><code>schema-migration-job-status</code></td>
+<td>Get the status of an async migration job</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="blueprints">Blueprints<a class="headerlink" href="#blueprints" title="Permanent link">&para;</a></h2>
+<p>You can also install schemas via the CLI blueprints workflow:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>./my-schema-dir<span class="w"> </span>--project<span class="w"> </span>&lt;projectId&gt;
+</code></pre></div>
+<p>See the <a href="../../user-guide/agents/#blueprints-gitops">Agents — Blueprints</a> section for the blueprint file format. Schema blueprints use the same YAML-based declarative config.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.top", "navigation.indexes", "content.tabs.link", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.f8cc74c7.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.60a45f97.min.js"></script>
+      
+    
+  </body>
+</html>
