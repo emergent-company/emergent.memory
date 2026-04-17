@@ -17,7 +17,8 @@ import (
 )
 
 // openaiCompatibleModel implements model.LLM using the OpenAI Chat Completions wire protocol.
-// It supports any OpenAI-compatible endpoint (Ollama, llama.cpp, vLLM, LM Studio, etc.).
+// It supports any OpenAI-compatible endpoint (Ollama, llama.cpp, vLLM, LM Studio, etc.)
+// including full function/tool calling.
 type openaiCompatibleModel struct {
 	baseURL   string
 	apiKey    string
@@ -43,16 +44,42 @@ func (m *openaiCompatibleModel) Name() string {
 	return m.modelName
 }
 
-// openaiMessage is a single message in the Chat Completions request.
+// --- OpenAI wire types ---
+
 type openaiMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
+	Name       string           `json:"name,omitempty"`
 }
 
-// openaiRequest is the Chat Completions request body.
+type openaiToolCall struct {
+	ID       string             `json:"id"`
+	Type     string             `json:"type"` // "function"
+	Function openaiToolCallFunc `json:"function"`
+}
+
+type openaiToolCallFunc struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // JSON string
+}
+
+type openaiTool struct {
+	Type     string             `json:"type"` // "function"
+	Function openaiToolFunction `json:"function"`
+}
+
+type openaiToolFunction struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Parameters  any    `json:"parameters,omitempty"`
+}
+
 type openaiRequest struct {
 	Model          string          `json:"model"`
 	Messages       []openaiMessage `json:"messages"`
+	Tools          []openaiTool    `json:"tools,omitempty"`
 	MaxTokens      int32           `json:"max_tokens,omitempty"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 }
@@ -61,16 +88,18 @@ type responseFormat struct {
 	Type string `json:"type"`
 }
 
-// openaiResponse is the Chat Completions response body.
 type openaiResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string           `json:"content"`
+			ToolCalls []openaiToolCall `json:"tool_calls"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 }
 
-// mapRole converts an ADK message role to an OpenAI role.
+// --- Role mapping ---
+
 func mapRole(role string) string {
 	switch role {
 	case "model":
@@ -82,32 +111,145 @@ func mapRole(role string) string {
 	}
 }
 
-// GenerateContent implements model.LLM by calling the OpenAI Chat Completions API.
-func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		// Build messages from ADK request contents.
-		var messages []openaiMessage
-		for _, content := range req.Contents {
-			role := mapRole(content.Role)
-			// Concatenate all text parts into a single content string.
-			var parts []string
-			for _, part := range content.Parts {
-				if part.Text != "" {
-					parts = append(parts, part.Text)
+// --- Tool schema conversion ---
+
+// buildOpenAITools converts genai.Tool declarations to OpenAI tool format.
+func buildOpenAITools(tools []*genai.Tool) []openaiTool {
+	var result []openaiTool
+	for _, t := range tools {
+		for _, fd := range t.FunctionDeclarations {
+			ot := openaiTool{
+				Type: "function",
+				Function: openaiToolFunction{
+					Name:        fd.Name,
+					Description: fd.Description,
+				},
+			}
+			// Prefer ParametersJsonSchema (raw JSON schema) over Parameters (*Schema).
+			if fd.ParametersJsonSchema != nil {
+				ot.Function.Parameters = fd.ParametersJsonSchema
+			} else if fd.Parameters != nil {
+				ot.Function.Parameters = fd.Parameters
+			} else {
+				// OpenAI requires parameters to be an object schema even if empty.
+				ot.Function.Parameters = map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
 				}
 			}
-			if len(parts) > 0 {
-				messages = append(messages, openaiMessage{
-					Role:    role,
-					Content: strings.Join(parts, "\n"),
+			result = append(result, ot)
+		}
+	}
+	return result
+}
+
+// --- Message history conversion ---
+
+// buildMessages converts ADK content history to OpenAI messages, including
+// tool call / tool response turns.
+func buildMessages(contents []*genai.Content) []openaiMessage {
+	var messages []openaiMessage
+	for _, content := range contents {
+		role := mapRole(content.Role)
+
+		// Collect text parts and function calls/responses separately.
+		var textParts []string
+		var funcCalls []openaiToolCall
+		var funcResponses []struct {
+			id   string
+			name string
+			data map[string]any
+		}
+
+		for _, part := range content.Parts {
+			if part == nil {
+				continue
+			}
+			if part.Text != "" {
+				textParts = append(textParts, part.Text)
+			}
+			if part.FunctionCall != nil {
+				fc := part.FunctionCall
+				argsJSON, _ := json.Marshal(fc.Args)
+				id := fc.ID
+				if id == "" {
+					id = "call_" + fc.Name
+				}
+				funcCalls = append(funcCalls, openaiToolCall{
+					ID:   id,
+					Type: "function",
+					Function: openaiToolCallFunc{
+						Name:      fc.Name,
+						Arguments: string(argsJSON),
+					},
 				})
+			}
+			if part.FunctionResponse != nil {
+				fr := part.FunctionResponse
+				id := fr.ID
+				if id == "" {
+					id = "call_" + fr.Name
+				}
+				funcResponses = append(funcResponses, struct {
+					id   string
+					name string
+					data map[string]any
+				}{id, fr.Name, fr.Response})
 			}
 		}
 
-		// Build request body.
+		// Emit assistant message with tool_calls when present.
+		if role == "assistant" && len(funcCalls) > 0 {
+			msg := openaiMessage{
+				Role:      "assistant",
+				ToolCalls: funcCalls,
+			}
+			if len(textParts) > 0 {
+				msg.Content = strings.Join(textParts, "\n")
+			}
+			messages = append(messages, msg)
+			continue
+		}
+
+		// Emit tool result messages (one per function response).
+		if len(funcResponses) > 0 {
+			for _, fr := range funcResponses {
+				resultJSON, _ := json.Marshal(fr.data)
+				messages = append(messages, openaiMessage{
+					Role:       "tool",
+					ToolCallID: fr.id,
+					Name:       fr.name,
+					Content:    string(resultJSON),
+				})
+			}
+			continue
+		}
+
+		// Plain text message.
+		if len(textParts) > 0 {
+			messages = append(messages, openaiMessage{
+				Role:    role,
+				Content: strings.Join(textParts, "\n"),
+			})
+		}
+	}
+	return messages
+}
+
+// GenerateContent implements model.LLM by calling the OpenAI Chat Completions API,
+// including full function/tool calling support.
+func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		messages := buildMessages(req.Contents)
+
 		body := openaiRequest{
 			Model:    m.modelName,
 			Messages: messages,
+		}
+
+		// Attach tool declarations when present.
+		if req.Config != nil && len(req.Config.Tools) > 0 {
+			body.Tools = buildOpenAITools(req.Config.Tools)
 		}
 
 		// Apply generation config.
@@ -164,13 +306,41 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			return
 		}
 
-		text := result.Choices[0].Message.Content
+		choice := result.Choices[0]
+		var parts []*genai.Part
+
+		// Emit text content when present.
+		if choice.Message.Content != "" {
+			parts = append(parts, &genai.Part{Text: choice.Message.Content})
+		}
+
+		// Emit function calls when the model requested tool use.
+		for _, tc := range choice.Message.ToolCalls {
+			var args map[string]any
+			if tc.Function.Arguments != "" {
+				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+					// Fallback: wrap raw string as {"_raw": "..."}
+					args = map[string]any{"_raw": tc.Function.Arguments}
+				}
+			}
+			parts = append(parts, &genai.Part{
+				FunctionCall: &genai.FunctionCall{
+					ID:   tc.ID,
+					Name: tc.Function.Name,
+					Args: args,
+				},
+			})
+		}
+
+		if len(parts) == 0 {
+			yield(nil, fmt.Errorf("openai-compatible: response had no content or tool calls"))
+			return
+		}
+
 		yield(&model.LLMResponse{
 			Content: &genai.Content{
-				Role: "model",
-				Parts: []*genai.Part{
-					{Text: text},
-				},
+				Role:  "model",
+				Parts: parts,
 			},
 		}, nil)
 	}
