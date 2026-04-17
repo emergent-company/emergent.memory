@@ -299,8 +299,14 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 		catalogSynced = false
 	}
 
-	// Live test using a model from the freshly synced catalog (15s timeout).
-	testCtx, testCancel := context.WithTimeout(ctx, 15*time.Second)
+	// Live test using a model from the freshly synced catalog.
+	// OpenAI-compatible endpoints (especially large local models) may be slow
+	// to produce a first token, so we allow a longer timeout for them.
+	testTimeout := 15 * time.Second
+	if provider == ProviderOpenAICompatible {
+		testTimeout = 60 * time.Second
+	}
+	testCtx, testCancel := context.WithTimeout(ctx, testTimeout)
 	defer testCancel()
 	if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
 		return nil, fmt.Errorf("generative model test failed: %w", err)
@@ -485,8 +491,14 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 		catalogSynced = false
 	}
 
-	// Live test using a model from the freshly synced catalog (15s timeout).
-	testCtx, testCancel := context.WithTimeout(ctx, 15*time.Second)
+	// Live test using a model from the freshly synced catalog.
+	// OpenAI-compatible endpoints (especially large local models) may be slow
+	// to produce a first token, so we allow a longer timeout for them.
+	testTimeout2 := 15 * time.Second
+	if provider == ProviderOpenAICompatible {
+		testTimeout2 = 60 * time.Second
+	}
+	testCtx, testCancel := context.WithTimeout(ctx, testTimeout2)
 	defer testCancel()
 	if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
 		return nil, fmt.Errorf("generative model test failed: %w", err)
@@ -622,9 +634,11 @@ func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertPr
 // buildTempResolvedCred constructs a plaintext ResolvedCredential for testing/syncing.
 func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req UpsertProviderConfigRequest) *ResolvedCredential {
 	cred := &ResolvedCredential{
-		Provider:   provider,
-		GCPProject: req.GCPProject,
-		Location:   req.Location,
+		Provider:        provider,
+		GCPProject:      req.GCPProject,
+		Location:        req.Location,
+		GenerativeModel: req.GenerativeModel,
+		EmbeddingModel:  req.EmbeddingModel,
 	}
 	switch provider {
 	case ProviderGoogleAI:
