@@ -2322,38 +2322,15 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 		_, _ = s.schemaProvider.GetProjectSchemas(workerCtx, projectID.String())
 	}
 
-	type work struct {
-		i    int
-		item CreateGraphObjectRequest
-	}
-	jobs := make(chan work, len(req.Items))
 	for i, item := range req.Items {
-		jobs <- work{i, item}
+		resp, err := s.Create(workerCtx, projectID, &item, actorID)
+		if err != nil {
+			errMsg := err.Error()
+			results[i] = BulkCreateObjectResult{Index: i, Success: false, Error: &errMsg}
+		} else {
+			results[i] = BulkCreateObjectResult{Index: i, Success: true, Object: resp}
+		}
 	}
-	close(jobs)
-
-	workers := len(req.Items)
-	if workers > 50 {
-		workers = 50
-	}
-
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range jobs {
-				resp, err := s.Create(workerCtx, projectID, &j.item, actorID)
-				if err != nil {
-					errMsg := err.Error()
-					results[j.i] = BulkCreateObjectResult{Index: j.i, Success: false, Error: &errMsg}
-				} else {
-					results[j.i] = BulkCreateObjectResult{Index: j.i, Success: true, Object: resp}
-				}
-			}
-		}()
-	}
-	wg.Wait()
 
 	successCount, failedCount := 0, 0
 	byType := make(map[string]int)
@@ -2404,54 +2381,31 @@ func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, re
 		_, _ = s.schemaProvider.GetProjectSchemas(workerCtx, projectID.String())
 	}
 
-	type work struct {
-		i    int
-		item BulkUpdateObjectItem
-	}
-	jobs := make(chan work, len(req.Items))
 	for i, item := range req.Items {
-		jobs <- work{i, item}
+		id, parseErr := uuid.Parse(item.ID)
+		if parseErr != nil {
+			errMsg := "invalid id: " + parseErr.Error()
+			results[i] = BulkUpdateObjectResult{Index: i, ID: item.ID, Success: false, Error: &errMsg}
+			continue
+		}
+
+		patchReq := &PatchGraphObjectRequest{
+			Key:           item.Key,
+			Properties:    item.Properties,
+			Labels:        item.Labels,
+			ReplaceLabels: item.ReplaceLabels,
+			Status:        item.Status,
+			BranchID:      item.BranchID,
+		}
+
+		resp, err := s.Patch(workerCtx, projectID, id, patchReq, actorID)
+		if err != nil {
+			errMsg := err.Error()
+			results[i] = BulkUpdateObjectResult{Index: i, ID: item.ID, Success: false, Error: &errMsg}
+		} else {
+			results[i] = BulkUpdateObjectResult{Index: i, ID: item.ID, Success: true, Object: resp}
+		}
 	}
-	close(jobs)
-
-	workers := len(req.Items)
-	if workers > 50 {
-		workers = 50
-	}
-
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range jobs {
-				id, parseErr := uuid.Parse(j.item.ID)
-				if parseErr != nil {
-					errMsg := "invalid id: " + parseErr.Error()
-					results[j.i] = BulkUpdateObjectResult{Index: j.i, ID: j.item.ID, Success: false, Error: &errMsg}
-					continue
-				}
-
-				patchReq := &PatchGraphObjectRequest{
-					Key:           j.item.Key,
-					Properties:    j.item.Properties,
-					Labels:        j.item.Labels,
-					ReplaceLabels: j.item.ReplaceLabels,
-					Status:        j.item.Status,
-					BranchID:      j.item.BranchID,
-				}
-
-				resp, err := s.Patch(workerCtx, projectID, id, patchReq, actorID)
-				if err != nil {
-					errMsg := err.Error()
-					results[j.i] = BulkUpdateObjectResult{Index: j.i, ID: j.item.ID, Success: false, Error: &errMsg}
-				} else {
-					results[j.i] = BulkUpdateObjectResult{Index: j.i, ID: j.item.ID, Success: true, Object: resp}
-				}
-			}
-		}()
-	}
-	wg.Wait()
 
 	successCount, failedCount := 0, 0
 	for _, r := range results {
@@ -2495,43 +2449,20 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 		_, _ = s.inverseTypeProvider.GetInverseType(workerCtx, projectID.String(), "")
 	}
 
-	type work struct {
-		i    int
-		item CreateGraphRelationshipRequest
-	}
-	jobs := make(chan work, len(req.Items))
 	for i, item := range req.Items {
-		jobs <- work{i, item}
+		resp, err := s.CreateRelationship(workerCtx, projectID, &item)
+		if err != nil {
+			errMsg := err.Error()
+			s.log.Debug("bulk relationship creation failed",
+				slog.String("type", item.Type),
+				slog.String("src_id", item.SrcID.String()),
+				slog.String("dst_id", item.DstID.String()),
+				slog.String("error", errMsg))
+			results[i] = BulkCreateRelationshipResult{Index: i, Success: false, Error: &errMsg}
+		} else {
+			results[i] = BulkCreateRelationshipResult{Index: i, Success: true, Relationship: resp}
+		}
 	}
-	close(jobs)
-
-	workers := len(req.Items)
-	if workers > 50 {
-		workers = 50
-	}
-
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range jobs {
-				resp, err := s.CreateRelationship(workerCtx, projectID, &j.item)
-				if err != nil {
-					errMsg := err.Error()
-					s.log.Debug("bulk relationship creation failed",
-						slog.String("type", j.item.Type),
-						slog.String("src_id", j.item.SrcID.String()),
-						slog.String("dst_id", j.item.DstID.String()),
-						slog.String("error", errMsg))
-					results[j.i] = BulkCreateRelationshipResult{Index: j.i, Success: false, Error: &errMsg}
-				} else {
-					results[j.i] = BulkCreateRelationshipResult{Index: j.i, Success: true, Relationship: resp}
-				}
-			}
-		}()
-	}
-	wg.Wait()
 
 	successCount, failedCount := 0, 0
 	for _, r := range results {
