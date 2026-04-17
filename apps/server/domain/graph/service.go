@@ -1279,6 +1279,18 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		_, _ = s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), req.Type)
 	}
 
+	// Fetch schemas BEFORE transaction to avoid deadlock
+	var schemas *ExtractionSchemas
+	var schemaErr error
+	if s.schemaProvider != nil {
+		schemas, schemaErr = s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if schemaErr != nil {
+			s.log.Warn("failed to load schemas for relationship validation, skipping",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", schemaErr.Error()))
+		}
+	}
+
 	// Start transaction
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
@@ -1312,13 +1324,8 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	// No advisory lock needed for the common "create new" path.
 
 	// Validate relationship type, endpoint types, and properties against schema.
-	if s.schemaProvider != nil {
-		schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
-		if err != nil {
-			s.log.Warn("failed to load schemas for relationship validation, skipping",
-				slog.String("project_id", projectID.String()),
-				slog.String("error", err.Error()))
-		} else if err := validateRelationship(req.Type, srcObj.Type, dstObj.Type, req.Properties, schemas); err != nil {
+	if schemas != nil {
+		if err := validateRelationship(req.Type, srcObj.Type, dstObj.Type, req.Properties, schemas); err != nil {
 			return nil, apperror.ErrBadRequest.WithMessage(err.Error())
 		}
 	}
@@ -1657,16 +1664,45 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 		return nil, apperror.ErrBadRequest.WithMessage("no_effective_change")
 	}
 
+	// Fetch schemas BEFORE transaction to avoid deadlock
+	var schemas *ExtractionSchemas
+	var schemaErr error
+	if s.schemaProvider != nil {
+		schemas, schemaErr = s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if schemaErr != nil {
+			s.log.Warn("failed to load schemas for relationship patch validation, skipping",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", schemaErr.Error()))
+		}
+	}
+
+	tx, txErr := s.repo.BeginTx(ctx)
+	if txErr != nil {
+		return nil, apperror.ErrDatabase.WithInternal(txErr)
+	}
+	defer tx.Rollback()
+
+	// Acquire lock
+	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
+		return nil, err
+	}
+
+	// Re-fetch HEAD after lock
+	head, headErr := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	if headErr != nil {
+		return nil, headErr
+	}
+
+	// Ensure we're patching the HEAD version
+	if head.ID != current.ID {
+		return nil, apperror.ErrBadRequest.WithMessage("cannot_patch_non_head_version")
+	}
+
 	// Validate patch delta properties against schema (soft-fail on schema load error).
 	// Same delta-only approach as Patch: only validate properties being added/changed,
 	// not those already stored on the relationship from an older schema version.
-	if s.schemaProvider != nil {
-		schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
-		if err != nil {
-			s.log.Warn("failed to load schemas for relationship patch validation, skipping",
-				slog.String("project_id", projectID.String()),
-				slog.String("error", err.Error()))
-		} else if relSchema, ok := schemas.RelationshipSchemas[current.Type]; ok && (len(relSchema.Properties) > 0 || len(relSchema.Required) > 0) {
+	if schemas != nil {
+		if relSchema, ok := schemas.RelationshipSchemas[current.Type]; ok && (len(relSchema.Properties) > 0 || len(relSchema.Required) > 0) {
 			objSchema := agents.ObjectSchema{
 				Properties: relSchema.Properties,
 				Required:   relSchema.Required,
