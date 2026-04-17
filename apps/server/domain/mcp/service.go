@@ -1852,12 +1852,12 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				FROM kb.graph_relationships gr
 				JOIN kb.graph_objects dst ON dst.canonical_id = gr.dst_id
 					AND dst.supersedes_id IS NULL AND dst.branch_id IS NULL AND dst.deleted_at IS NULL
-				WHERE gr.src_id = ANY(?)
-					AND gr.deleted_at IS NULL
-					AND gr.project_id = ?
-					AND gr.supersedes_id IS NULL
-					AND gr.branch_id IS NULL
-			`, bun.In(canonicalIDs), projectUUID).Scan(ctx, &relRows)
+			WHERE gr.src_id IN (?)
+				AND gr.deleted_at IS NULL
+				AND gr.project_id = ?
+				AND gr.supersedes_id IS NULL
+				AND gr.branch_id IS NULL
+		`, bun.In(canonicalIDs), projectUUID).Scan(ctx, &relRows)
 		})
 
 		// Build an index from entity ID → edges
@@ -1968,7 +1968,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 				COALESCE(go.updated_at, go.created_at) as updated_at,
 				go.type as type_name
 			FROM kb.graph_objects go
-			WHERE go.canonical_id = ANY(?)
+			WHERE go.canonical_id IN (?)
 				AND go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
