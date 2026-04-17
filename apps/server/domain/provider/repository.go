@@ -232,6 +232,24 @@ func (r *Repository) ListSupportedModels(ctx context.Context, provider ProviderT
 	return models, nil
 }
 
+// ListAllSupportedModels returns all cached supported models across all providers, optionally filtered by type.
+func (r *Repository) ListAllSupportedModels(ctx context.Context, modelType *ModelType) ([]ProviderSupportedModel, error) {
+	var models []ProviderSupportedModel
+	q := r.db.NewSelect().
+		Model(&models).
+		Order("provider ASC", "model_name ASC")
+
+	if modelType != nil {
+		q = q.Where("model_type = ?", *modelType)
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		r.log.Error("failed to list all supported models", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return models, nil
+}
+
 // UpsertSupportedModels bulk upserts supported models for a provider.
 func (r *Repository) UpsertSupportedModels(ctx context.Context, models []ProviderSupportedModel) error {
 	if len(models) == 0 {

@@ -270,6 +270,28 @@ func (h *Handler) ListModels(c echo.Context) error {
 	return c.JSON(http.StatusOK, models)
 }
 
+// ListAllModels returns the cached model catalog across all providers.
+// @Summary List all available LLM models
+// @Tags providers
+// @Produce json
+// @Param type query string false "Filter by model type (embedding or generative)"
+// @Success 200 {array} ProviderSupportedModel
+// @Failure 401 {object} apperror.Error
+// @Router /v1/models [get]
+func (h *Handler) ListAllModels(c echo.Context) error {
+	var modelType *ModelType
+	if mt := c.QueryParam("type"); mt != "" {
+		t := ModelType(mt)
+		modelType = &t
+	}
+
+	models, err := h.catalog.ListAllModels(c.Request().Context(), modelType)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, models)
+}
+
 // --- Usage & Cost Summary ---
 
 // GetProjectUsageSummary returns aggregated token usage and estimated costs for a project.

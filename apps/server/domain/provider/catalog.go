@@ -88,6 +88,12 @@ func (s *ModelCatalogService) ListModels(ctx context.Context, provider ProviderT
 	return s.repo.ListSupportedModels(ctx, provider, modelType)
 }
 
+// ListAllModels returns the cached model catalog across all providers,
+// optionally filtered by model type.
+func (s *ModelCatalogService) ListAllModels(ctx context.Context, modelType *ModelType) ([]ProviderSupportedModel, error) {
+	return s.repo.ListAllSupportedModels(ctx, modelType)
+}
+
 // fetchModelsFromAPI calls the provider API to list available models.
 func (s *ModelCatalogService) fetchModelsFromAPI(ctx context.Context, provider ProviderType, cred *ResolvedCredential) ([]ProviderSupportedModel, error) {
 	// Apply a timeout so we don't block credential setup
