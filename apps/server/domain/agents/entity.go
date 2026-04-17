@@ -69,6 +69,9 @@ const (
 
 	// MaxTotalStepsPerRun is the global hard cap on cumulative steps across all resumes
 	MaxTotalStepsPerRun = 500
+	// DefaultMaxStepsPerRun is the default step limit when no max_steps is configured
+	// on the agent definition or trigger request.
+	DefaultMaxStepsPerRun = 30
 )
 
 // SessionStatus tracks the workspace provisioning lifecycle for an agent run.

@@ -144,10 +144,11 @@ type BatchTriggerResponseDTO struct {
 
 // TriggerRequestDTO is the request body for triggering an agent
 type TriggerRequestDTO struct {
-	Prompt  string            `json:"prompt"`
-	Context map[string]any    `json:"context,omitempty"`
-	Model   string            `json:"model,omitempty"`
-	EnvVars map[string]string `json:"env_vars,omitempty"`
+	Prompt   string            `json:"prompt"`
+	Context  map[string]any    `json:"context,omitempty"`
+	Model    string            `json:"model,omitempty"`
+	EnvVars  map[string]string `json:"env_vars,omitempty"`
+	MaxSteps *int              `json:"maxSteps,omitempty"`
 }
 
 // TriggerResponseDTO is the response for triggering an agent
@@ -483,8 +484,9 @@ type CreateAgentWebhookHookDTO struct {
 }
 
 type WebhookTriggerPayloadDTO struct {
-	Prompt  string         `json:"prompt"`
-	Context map[string]any `json:"context"`
+	Prompt   string         `json:"prompt"`
+	Context  map[string]any `json:"context"`
+	MaxSteps *int           `json:"maxSteps,omitempty"`
 }
 
 // --- Agent Question DTOs ---

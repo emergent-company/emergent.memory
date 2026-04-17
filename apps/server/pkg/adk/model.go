@@ -99,20 +99,20 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				return nil, fmt.Errorf("LLM credential resolution failed: %w", err)
 			}
 		} else if cred != nil {
-			// Prefer the DB-stored model if available; fall back to caller's modelName,
-			// then to the static config model.
-			resolvedModel := cred.GenerativeModel
+			// Prefer the caller's modelName (from agent definition or per-run override),
+			// fall back to the DB-stored credential model, then to the static config model.
+			resolvedModel := modelName
 			if resolvedModel == "" {
-				resolvedModel = modelName
+				resolvedModel = cred.GenerativeModel
 			}
 			if resolvedModel == "" {
 				resolvedModel = f.cfg.Model
 			}
 
 			if cred.IsOpenAICompatible {
-				resolvedModel := cred.GenerativeModel
+				resolvedModel := modelName
 				if resolvedModel == "" {
-					resolvedModel = modelName
+					resolvedModel = cred.GenerativeModel
 				}
 				if resolvedModel == "" {
 					resolvedModel = f.cfg.Model

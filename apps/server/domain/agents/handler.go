@@ -608,6 +608,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			TriggerMetadata: triggerReq.Context,
 			Model:           triggerReq.Model,
 			EnvVars:         triggerReq.EnvVars,
+			MaxSteps:        triggerReq.MaxSteps,
 		})
 		if execResult != nil && execResult.Cleanup != nil {
 			execResult.Cleanup()
@@ -1125,6 +1126,12 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 	orgID, _ := h.repo.GetOrgIDByProjectID(c.Request().Context(), agent.ProjectID)
 
 	// Execute
+	var maxSteps *int
+	if payload.MaxSteps != nil {
+		maxSteps = payload.MaxSteps // per-request override takes precedence
+	} else if agentDef != nil && agentDef.MaxSteps != nil {
+		maxSteps = agentDef.MaxSteps
+	}
 	req := ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: agentDef,
@@ -1133,6 +1140,7 @@ func (h *Handler) ReceiveWebhook(c echo.Context) error {
 		UserMessage:     userMessage,
 		TriggerSource:   &triggerSource,
 		TriggerMetadata: metadata,
+		MaxSteps:        maxSteps,
 	}
 
 	result, err := h.executor.Execute(c.Request().Context(), req)

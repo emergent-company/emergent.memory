@@ -266,8 +266,8 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	}
 
 	// Determine max steps for this run
-	maxSteps := MaxTotalStepsPerRun
-	if req.MaxSteps != nil && *req.MaxSteps > 0 && *req.MaxSteps < maxSteps {
+	maxSteps := DefaultMaxStepsPerRun
+	if req.MaxSteps != nil && *req.MaxSteps > 0 {
 		maxSteps = *req.MaxSteps
 	}
 
@@ -439,8 +439,8 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	}
 
 	// Determine max steps for this run
-	maxSteps := MaxTotalStepsPerRun
-	if req.MaxSteps != nil && *req.MaxSteps > 0 && *req.MaxSteps < maxSteps {
+	maxSteps := DefaultMaxStepsPerRun
+	if req.MaxSteps != nil && *req.MaxSteps > 0 {
 		maxSteps = *req.MaxSteps
 	}
 
@@ -849,6 +849,7 @@ func (ae *AgentExecutor) runPipeline(
 	var cancelRun context.CancelFunc
 	ctx, cancelRun = context.WithCancel(ctx)
 	defer cancelRun()
+	var cancelReason string // set before calling cancelRun() to give a meaningful error message
 
 	// Create the LLM model — per-run override takes precedence
 	modelName := req.Model
@@ -1008,11 +1009,19 @@ func (ae *AgentExecutor) runPipeline(
 	beforeModelCb := func(cbCtx agent.CallbackContext, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
 		// Check if context was cancelled (timeout or manual cancellation)
 		if ctx.Err() != nil {
+			msg := cancelReason
+			if msg == "" {
+				if ctx.Err() == context.DeadlineExceeded {
+					msg = "agent stopped: timeout exceeded"
+				} else {
+					msg = "agent stopped: context canceled"
+				}
+			}
 			ae.log.Warn("context cancelled, stopping agent",
 				slog.String("run_id", run.ID),
-				slog.String("reason", ctx.Err().Error()),
+				slog.String("reason", msg),
 			)
-			return nil, fmt.Errorf("agent stopped: %w", ctx.Err())
+			return nil, fmt.Errorf("%s", msg)
 		}
 
 		currentStep := tracker.increment()
@@ -1126,11 +1135,7 @@ func (ae *AgentExecutor) runPipeline(
 				slog.String("tool", toolName),
 				slog.Int("consecutive", doomDetector.consecutiveCount),
 			)
-			// Cancel the run context AND return an error from the callback so
-			// the ADK runner surfaces it immediately as an eventErr in the event
-			// loop rather than waiting for the next beforeModelCb check.
-			// Returning a non-nil error causes the framework to propagate it
-			// through r.Run(), which exits the inner loop and marks the run failed.
+			cancelReason = fmt.Sprintf("agent stopped: doom loop detected — %d consecutive identical calls to %q", doomDetector.consecutiveCount, toolName)
 			cancelRun()
 			return nil, fmt.Errorf("DOOM_LOOP_DETECTED: %d consecutive identical calls to %q — agent is stuck in a loop and has been stopped", doomDetector.consecutiveCount, toolName)
 		}
@@ -1493,6 +1498,7 @@ func (ae *AgentExecutor) runPipeline(
 						slog.String("run_id", run.ID),
 						slog.Int("consecutive_tool_only_steps", doomDetector.toolOnlySteps),
 					)
+					cancelReason = fmt.Sprintf("agent stopped: tool-only loop detected — %d consecutive steps with no assistant text", doomDetector.toolOnlySteps)
 					cancelRun()
 				}
 			}
