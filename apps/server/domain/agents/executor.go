@@ -753,10 +753,11 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 	}
 
 	if result.Degraded {
-		ae.log.Warn("workspace provisioned in degraded mode",
+		ae.log.Error("workspace provisioning degraded, failing run",
 			slog.String("run_id", runID),
 			slog.String("error", result.Error.Error()),
 		)
+		return nil, fmt.Errorf("workspace provisioning failed: %w", result.Error)
 	} else if result.Workspace != nil {
 		ae.log.Info("workspace provisioned successfully",
 			slog.String("run_id", runID),
@@ -899,13 +900,7 @@ func (ae *AgentExecutor) runPipeline(
 		resolvedTools = append(resolvedTools, coordTools...)
 	}
 
-	// Whether the agent definition requests a sandbox workspace.
-	hasSandboxConfig := req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
-
 	// Add workspace tools if a non-degraded workspace was provisioned.
-	// When provisioning failed or is degraded, register stub tools that return an
-	// error result so the model gets a proper tool response and afterToolCb fires
-	// (persisting the call to the DB) instead of a silent drop from the ADK.
 	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
 		wsTools, wsToolErr := ae.resolveWorkspaceTools(wsResult, req)
 		if wsToolErr != nil {
@@ -918,19 +913,6 @@ func (ae *AgentExecutor) runPipeline(
 			ae.log.Info("workspace tools added to agent pipeline",
 				slog.String("run_id", run.ID),
 				slog.Int("count", len(wsTools)),
-			)
-		}
-	} else if hasSandboxConfig {
-		var wsCfg *sandbox.AgentSandboxConfig
-		if req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0 {
-			wsCfg, _ = sandbox.ParseAgentSandboxConfig(req.AgentDefinition.SandboxConfig)
-		}
-		stubTools := BuildStubWorkspaceTools(wsCfg, ae.log)
-		if len(stubTools) > 0 {
-			resolvedTools = append(resolvedTools, stubTools...)
-			ae.log.Warn("workspace stub tools registered (provisioning failed/degraded)",
-				slog.String("run_id", run.ID),
-				slog.Int("count", len(stubTools)),
 			)
 		}
 	}
@@ -982,8 +964,6 @@ func (ae *AgentExecutor) runPipeline(
 	// have no registered handler (which would cause silent tool-call drops).
 	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
 		instruction = ae.augmentInstructionWithWorkspace(instruction, wsResult)
-	} else if hasSandboxConfig {
-		instruction = ae.augmentInstructionWithWorkspaceUnavailable(instruction, wsResult)
 	}
 
 	genConfig := ae.modelFactory.DefaultGenerateConfig()
@@ -1593,10 +1573,9 @@ func (ae *AgentExecutor) runPipeline(
 		}
 	}
 
-	// If workspace was required but ended up degraded (stub tools), mark as error.
+	// If workspace was required but ended up degraded, mark as error.
 	// The agent completed but could not actually use its sandbox — this is not success.
-	// (hasSandboxConfig was set earlier in this function at tool resolution time)
-	if hasSandboxConfig && wsResult != nil && wsResult.Degraded {
+	if wsResult != nil && wsResult.Degraded {
 		summary["error"] = "workspace provisioning failed: " + wsResult.Error.Error()
 		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, summary["error"].(string), steps)
 
@@ -1685,26 +1664,6 @@ Workspace tools are prefixed with workspace_ and run inside the sandboxed contai
 `
 
 	return instruction + wsContext
-}
-
-// augmentInstructionWithWorkspaceUnavailable appends a notice to the system prompt
-// when workspace provisioning was requested (SandboxConfig is set) but failed or
-// produced a degraded result. This prevents the model from calling workspace tools
-// (workspace_bash, workspace_read, etc.) that have no registered handler, which
-// would otherwise result in silent tool-call drops and confusing agent behaviour.
-func (ae *AgentExecutor) augmentInstructionWithWorkspaceUnavailable(instruction string, wsResult *sandbox.ProvisioningResult) string {
-	reason := "workspace provisioning failed"
-	if wsResult != nil && wsResult.Degraded {
-		reason = "workspace is running in degraded mode"
-	}
-	notice := "\n\n## Workspace Unavailable\n" +
-		"A sandboxed workspace was requested for this run but " + reason + ".\n" +
-		"Workspace tools (workspace_bash, workspace_read, workspace_write, workspace_edit, " +
-		"workspace_glob, workspace_grep, workspace_git, run_python, run_go) are NOT available.\n" +
-		"Do not attempt to call these tools. Accomplish the task using only the tools listed " +
-		"in your tool definitions, or explain that you are unable to complete the task without " +
-		"a working workspace.\n"
-	return instruction + notice
 }
 
 // resolveWorkspaceTools builds ADK tools that let the agent interact with its

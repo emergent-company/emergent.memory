@@ -85,65 +85,6 @@ func BuildWorkspaceTools(deps WorkspaceToolDeps) ([]tool.Tool, error) {
 	return tools, nil
 }
 
-// toolNameToWorkspaceName maps sandbox config tool names to the workspace_-prefixed
-// names the LLM sees. Matches the naming in BuildWorkspaceTools builders.
-var toolNameToWorkspaceName = map[string]string{
-	"bash":       "workspace_bash",
-	"read":       "workspace_read",
-	"write":      "workspace_write",
-	"edit":       "workspace_edit",
-	"glob":       "workspace_glob",
-	"grep":       "workspace_grep",
-	"git":        "workspace_git",
-	"run_python": "run_python",
-	"run_go":     "run_go",
-}
-
-// BuildStubWorkspaceTools creates no-op tool stubs that return an error message
-// for each workspace tool allowed by the sandbox config. Use this when workspace
-// provisioning failed or is degraded so the model gets a proper tool result
-// instead of a silent drop (which happens when the tool has no handler at all).
-func BuildStubWorkspaceTools(cfg *sandbox.AgentSandboxConfig, logger *slog.Logger) []tool.Tool {
-	var tools []tool.Tool
-	for _, name := range sandbox.ValidToolNames {
-		if cfg != nil && !cfg.IsToolAllowed(name) {
-			continue
-		}
-		wsName, ok := toolNameToWorkspaceName[name]
-		if !ok {
-			continue
-		}
-		// Capture for closure
-		toolName := wsName
-		t, err := functiontool.New(
-			functiontool.Config{
-				Name:        toolName,
-				Description: "Workspace tool (currently unavailable — sandbox provisioning failed).",
-			},
-			func(_ tool.Context, _ map[string]any) (map[string]any, error) {
-				return map[string]any{
-					"error": "Sandbox workspace is not available for this run. " +
-						"Provisioning failed. Do not retry this tool. " +
-						"Complete the task using only your other available tools, " +
-						"or explain that you cannot proceed without a workspace.",
-				}, nil
-			},
-		)
-		if err != nil {
-			logger.Warn("failed to build stub workspace tool",
-				slog.String("tool", toolName),
-				slog.String("error", err.Error()),
-			)
-			continue
-		}
-		tools = append(tools, t)
-		logger.Debug("registered stub workspace tool",
-			slog.String("tool", toolName),
-		)
-	}
-	return tools
-}
-
 // --- Individual tool builders ---
 
 const (
