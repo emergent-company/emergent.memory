@@ -56,6 +56,9 @@ type AgentRunDTO struct {
 
 	// Workspace/sandbox details for this run (when applicable).
 	Workspace *RunWorkspaceDTO `json:"workspace,omitempty"`
+
+	// TriggerMetadata is the structured metadata passed at trigger time (e.g. title, context).
+	TriggerMetadata map[string]any `json:"triggerMetadata,omitempty"`
 }
 
 // RunWorkspaceDTO exposes sandbox/workspace details on a run response.
@@ -216,6 +219,9 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 	}
 	if r.Model != nil {
 		dto.Model = *r.Model
+	}
+	if len(r.TriggerMetadata) > 0 {
+		dto.TriggerMetadata = r.TriggerMetadata
 	}
 	return dto
 }
