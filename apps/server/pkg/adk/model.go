@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"cloud.google.com/go/auth/credentials"
 	"go.uber.org/fx"
@@ -83,9 +84,23 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 		return nil, fmt.Errorf("model name is required")
 	}
 
+	// Parse optional provider prefix: "google-vertex/gemini-2.5-flash" → provider="google-vertex", model="gemini-2.5-flash"
+	// Bare model names (no slash) use ResolveAny as before.
+	providerHint, bareModel, hasPrefix := strings.Cut(modelName, "/")
+	if !hasPrefix {
+		bareModel = modelName
+		providerHint = ""
+	}
+
 	// --- 1. DB credential resolution (project/org hierarchy) ---
 	if f.resolver != nil {
-		cred, err := f.resolver.ResolveAny(ctx)
+		var cred *ResolvedCredential
+		var err error
+		if providerHint != "" {
+			cred, err = f.resolver.ResolveFor(ctx, providerHint)
+		} else {
+			cred, err = f.resolver.ResolveAny(ctx)
+		}
 		if err != nil {
 			// Only fall through to env-var config when env vars are actually
 			// configured. Otherwise the credential error (decryption failure,
@@ -99,9 +114,9 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				return nil, fmt.Errorf("LLM credential resolution failed: %w", err)
 			}
 		} else if cred != nil {
-			// Prefer the caller's modelName (from agent definition or per-run override),
+			// Prefer the caller's bareModel (from agent definition or per-run override),
 			// fall back to the DB-stored credential model, then to the static config model.
-			resolvedModel := modelName
+			resolvedModel := bareModel
 			if resolvedModel == "" {
 				resolvedModel = cred.GenerativeModel
 			}
@@ -110,13 +125,6 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 			}
 
 			if cred.IsOpenAICompatible {
-				resolvedModel := modelName
-				if resolvedModel == "" {
-					resolvedModel = cred.GenerativeModel
-				}
-				if resolvedModel == "" {
-					resolvedModel = f.cfg.Model
-				}
 				f.log.Debug("creating ADK model via OpenAI-compatible endpoint (DB cred)",
 					slog.String("model", resolvedModel),
 					slog.String("baseURL", cred.OpenAIBaseURL),
@@ -180,15 +188,15 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 	// --- 2. Static env-var fallback ---
 	// Try OpenAI-compatible env-var config first (explicit config wins).
 	if f.cfg.OpenAIBaseURL != "" {
-		modelName := f.cfg.OpenAIModel
-		if modelName == "" {
+		modelToUse := f.cfg.OpenAIModel
+		if modelToUse == "" {
 			return nil, fmt.Errorf("model name is required: set LLM_MODEL when using OPENAI_BASE_URL")
 		}
 		f.log.Debug("creating ADK model via OpenAI-compatible endpoint (env config)",
-			slog.String("model", modelName),
+			slog.String("model", modelToUse),
 			slog.String("baseURL", f.cfg.OpenAIBaseURL),
 		)
-		llm := NewOpenAICompatibleModel(f.cfg.OpenAIBaseURL, f.cfg.OpenAIAPIKey, modelName)
+		llm := NewOpenAICompatibleModel(f.cfg.OpenAIBaseURL, f.cfg.OpenAIAPIKey, modelToUse)
 		return f.wrapModel(llm, "openai-compatible"), nil
 	}
 
@@ -200,12 +208,12 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 			Location: f.cfg.VertexAILocation,
 		}
 		f.log.Debug("creating ADK Gemini model via Vertex AI (env config)",
-			slog.String("model", modelName),
+			slog.String("model", bareModel),
 			slog.String("project", f.cfg.GCPProjectID),
 			slog.String("location", f.cfg.VertexAILocation),
 		)
 
-		llm, err := gemini.NewModel(ctx, modelName, clientCfg)
+		llm, err := gemini.NewModel(ctx, bareModel, clientCfg)
 		if err == nil {
 			return f.wrapModel(llm, "google-vertex"), nil
 		}
@@ -226,10 +234,10 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 			APIKey:  f.cfg.GoogleAPIKey,
 		}
 		f.log.Debug("creating ADK Gemini model via Google AI (env config)",
-			slog.String("model", modelName),
+			slog.String("model", bareModel),
 		)
 
-		llm, err := gemini.NewModel(ctx, modelName, clientCfg)
+		llm, err := gemini.NewModel(ctx, bareModel, clientCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Gemini model via Google AI: %w", err)
 		}

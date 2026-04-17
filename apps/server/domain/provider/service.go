@@ -222,6 +222,10 @@ func (s *CredentialService) EncryptCredential(plaintext []byte) (ciphertext, non
 	return s.encryptor.Encrypt(plaintext)
 }
 
+func (s *CredentialService) ResolveFor(ctx context.Context, provider string) (*ResolvedCredential, error) {
+	return s.Resolve(ctx, ProviderType(provider))
+}
+
 // ResolveAny attempts to resolve the best available credential for the request
 // context without requiring the caller to specify a provider type.
 //

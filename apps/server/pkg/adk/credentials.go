@@ -32,6 +32,7 @@ type ResolvedCredential struct {
 // and is injected via fx.
 type CredentialResolver interface {
 	ResolveAny(ctx context.Context) (*ResolvedCredential, error)
+	ResolveFor(ctx context.Context, provider string) (*ResolvedCredential, error)
 }
 
 // ModelWrapper wraps a raw LLM with usage tracking.

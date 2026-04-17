@@ -30,6 +30,18 @@ func (a *ADKCredentialAdapter) ResolveAny(ctx context.Context) (*adk.ResolvedCre
 	return toADKCredential(cred), nil
 }
 
+// ResolveFor satisfies adk.CredentialResolver.
+func (a *ADKCredentialAdapter) ResolveFor(ctx context.Context, provider string) (*adk.ResolvedCredential, error) {
+	cred, err := a.svc.ResolveFor(ctx, provider)
+	if err != nil {
+		return nil, err
+	}
+	if cred == nil {
+		return nil, nil
+	}
+	return toADKCredential(cred), nil
+}
+
 // toADKCredential converts a domain ResolvedCredential to the adk-package type.
 func toADKCredential(c *ResolvedCredential) *adk.ResolvedCredential {
 	return &adk.ResolvedCredential{

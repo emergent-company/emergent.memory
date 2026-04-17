@@ -415,7 +415,7 @@ func TestModelFactory_OpenAICompatibleDBCred(t *testing.T) {
 	}}
 
 	factory := NewModelFactory(cfg, log, resolver, nil)
-	llm, err := factory.CreateModelWithName(context.Background(), "ignored")
+	llm, err := factory.CreateModelWithName(context.Background(), "openai-compatible/") // Prefix-only to use cred default
 	if err != nil {
 		t.Fatalf("CreateModelWithName() error = %v", err)
 	}
@@ -537,5 +537,9 @@ type staticResolver struct {
 }
 
 func (r *staticResolver) ResolveAny(_ context.Context) (*ResolvedCredential, error) {
+	return r.cred, r.err
+}
+
+func (r *staticResolver) ResolveFor(_ context.Context, _ string) (*ResolvedCredential, error) {
 	return r.cred, r.err
 }
