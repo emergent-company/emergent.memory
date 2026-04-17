@@ -307,7 +307,10 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		printModelsByType(w, models)
+		fmt.Fprintln(w, "MODEL\tTYPE\tSLUG")
+		for _, m := range sortModelsByType(models) {
+			fmt.Fprintf(w, "%s\t%s\t%s/%s\n", m.ModelName, m.ModelType, providerArg, m.ModelName)
+		}
 		return w.Flush()
 	}
 
@@ -344,7 +347,7 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PROVIDER\tMODEL\tTYPE")
+	fmt.Fprintln(w, "PROVIDER\tMODEL\tTYPE\tSLUG")
 
 	anyModels := false
 	for _, pc := range configs {
@@ -354,7 +357,7 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		for _, m := range sortModelsByType(models) {
-			fmt.Fprintf(w, "%s\t%s\t%s\n", pc.Provider, m.ModelName, m.ModelType)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s/%s\n", pc.Provider, m.ModelName, m.ModelType, pc.Provider, m.ModelName)
 			anyModels = true
 		}
 	}
@@ -958,36 +961,4 @@ func sortModelsByType(models []provider.SupportedModel) []provider.SupportedMode
 		return out[i].ModelName < out[j].ModelName
 	})
 	return out
-}
-
-// printModelsByType writes models to w grouped under "Generative" and
-// "Embedding" section headers, sorted alphabetically within each group.
-func printModelsByType(w *tabwriter.Writer, models []provider.SupportedModel) {
-	var generative, embedding []provider.SupportedModel
-	for _, m := range models {
-		switch m.ModelType {
-		case "embedding":
-			embedding = append(embedding, m)
-		default:
-			generative = append(generative, m)
-		}
-	}
-	sort.Slice(generative, func(i, j int) bool { return generative[i].ModelName < generative[j].ModelName })
-	sort.Slice(embedding, func(i, j int) bool { return embedding[i].ModelName < embedding[j].ModelName })
-
-	if len(generative) > 0 {
-		fmt.Fprintln(w, "GENERATIVE")
-		for _, m := range generative {
-			fmt.Fprintf(w, "  %s\n", m.ModelName)
-		}
-	}
-	if len(embedding) > 0 {
-		if len(generative) > 0 {
-			fmt.Fprintln(w, "")
-		}
-		fmt.Fprintln(w, "EMBEDDING")
-		for _, m := range embedding {
-			fmt.Fprintf(w, "  %s\n", m.ModelName)
-		}
-	}
 }
