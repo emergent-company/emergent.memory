@@ -52,6 +52,12 @@ func (m *TrackingModel) Name() string {
 	return m.inner.Name()
 }
 
+// ProviderName returns the provider type string for this model (e.g. "google", "openai-compatible").
+// Callers can type-assert adkmodel.LLM to *TrackingModel to access this.
+func (m *TrackingModel) ProviderName() string {
+	return string(m.provider)
+}
+
 // GenerateContent satisfies adkmodel.LLM. It proxies every response item
 // through the wrapped LLM and, on the last non-partial response that contains
 // UsageMetadata, asynchronously records an LLMUsageEvent.

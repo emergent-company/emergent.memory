@@ -1329,13 +1329,16 @@ func (r *Repository) CompleteRunWithSteps(ctx context.Context, runID string, sum
 	return err
 }
 
-// UpdateRunModel sets the model name on an agent run.
-func (r *Repository) UpdateRunModel(ctx context.Context, runID string, model string) error {
-	_, err := r.db.NewUpdate().
+// UpdateRunModel sets the model name and optional provider on an agent run.
+func (r *Repository) UpdateRunModel(ctx context.Context, runID string, model string, provider ...string) error {
+	q := r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("model = ?", model).
-		Where("id = ?", runID).
-		Exec(ctx)
+		Where("id = ?", runID)
+	if len(provider) > 0 && provider[0] != "" {
+		q = q.Set("provider = ?", provider[0])
+	}
+	_, err := q.Exec(ctx)
 	return err
 }
 

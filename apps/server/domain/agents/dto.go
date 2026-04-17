@@ -51,6 +51,9 @@ type AgentRunDTO struct {
 	// Model used for this run (resolved at execution time)
 	Model string `json:"model,omitempty"`
 
+	// Provider identifies the LLM provider used (e.g. "google", "google-vertex", "openai-compatible").
+	Provider string `json:"provider,omitempty"`
+
 	// Token usage aggregated from kb.llm_usage_events for this run.
 	TokenUsage *RunTokenUsage `json:"tokenUsage,omitempty"`
 
@@ -219,6 +222,9 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 	}
 	if r.Model != nil {
 		dto.Model = *r.Model
+	}
+	if r.Provider != nil {
+		dto.Provider = *r.Provider
 	}
 	if len(r.TriggerMetadata) > 0 {
 		dto.TriggerMetadata = r.TriggerMetadata
