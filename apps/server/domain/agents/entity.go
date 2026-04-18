@@ -161,6 +161,7 @@ type Agent struct {
 	LastRunAt           *time.Time         `bun:"last_run_at" json:"lastRunAt"`
 	LastRunStatus       *string            `bun:"last_run_status" json:"lastRunStatus"`
 	ConsecutiveFailures int                `bun:"consecutive_failures,notnull,default:0" json:"consecutiveFailures"`
+	AgentDefinitionID   *string            `bun:"agent_definition_id,type:uuid" json:"agentDefinitionId,omitempty"`
 	CreatedAt           time.Time          `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 	UpdatedAt           time.Time          `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }

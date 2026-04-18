@@ -479,17 +479,30 @@ func (r *Repository) FindDefinitionByName(ctx context.Context, projectID, name s
 }
 
 // ResolveDefinitionForAgent looks up the AgentDefinition for a runtime Agent.
-// It tries several name variants to handle common naming conventions:
-//  1. Exact match (agent name == definition name)
-//  2. Agent name + "-def" suffix (e.g. agent "foo" → definition "foo-def")
-//  3. Strip "Chat session for " prefix (legacy chat agents)
+// Resolution order:
+//  1. FK: agent.AgentDefinitionID (direct DB relationship — authoritative)
+//  2. Exact name match (agent.Name == definition.Name)
+//  3. Agent name + "-def" suffix (e.g. agent "foo" → definition "foo-def")
+//  4. Strip "Chat session for " prefix (legacy chat agents)
 //
 // Returns (nil, nil) when no definition is found.
 func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent) (*AgentDefinition, error) {
 	if agent == nil {
 		return nil, nil
 	}
-	// 1. Exact name match
+	// 1. FK lookup — authoritative, no name guessing needed
+	if agent.AgentDefinitionID != nil && *agent.AgentDefinitionID != "" {
+		var def AgentDefinition
+		err := r.db.NewSelect().Model(&def).Where("id = ?", *agent.AgentDefinitionID).Scan(ctx)
+		if err == nil {
+			return &def, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		// Definition was deleted — fall through to name-based lookup
+	}
+	// 2. Exact name match
 	def, err := r.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
 	if err != nil {
 		return nil, err
@@ -497,7 +510,7 @@ func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent
 	if def != nil {
 		return def, nil
 	}
-	// 2. Try agent name + "-def" suffix (e.g. runtime "foo" → definition "foo-def")
+	// 3. Try agent name + "-def" suffix (e.g. runtime "foo" → definition "foo-def")
 	def, err = r.FindDefinitionByName(ctx, agent.ProjectID, agent.Name+"-def")
 	if err != nil {
 		return nil, err
@@ -505,7 +518,7 @@ func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent
 	if def != nil {
 		return def, nil
 	}
-	// 3. Strip known prefixes and retry
+	// 4. Strip known prefixes and retry
 	if stripped, ok := strings.CutPrefix(agent.Name, "Chat session for "); ok && stripped != "" {
 		return r.FindDefinitionByName(ctx, agent.ProjectID, stripped)
 	}
