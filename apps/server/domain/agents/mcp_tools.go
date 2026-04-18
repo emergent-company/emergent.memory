@@ -157,6 +157,10 @@ func (h *MCPToolHandler) ExecuteCreateAgentDefinition(ctx context.Context, proje
 		def.DefaultTimeout = &v
 	}
 
+	if modelName, ok := args["model"].(string); ok && modelName != "" {
+		def.Model = &ModelConfig{Name: modelName}
+	}
+
 	if err := h.repo.CreateDefinition(ctx, def); err != nil {
 		return errResult("failed to create agent definition: " + err.Error())
 	}
@@ -214,6 +218,12 @@ func (h *MCPToolHandler) ExecuteUpdateAgentDefinition(ctx context.Context, proje
 	if dt, ok := args["default_timeout"].(float64); ok {
 		v := int(dt)
 		def.DefaultTimeout = &v
+	}
+	if modelName, ok := args["model"].(string); ok && modelName != "" {
+		if def.Model == nil {
+			def.Model = &ModelConfig{}
+		}
+		def.Model.Name = modelName
 	}
 	if c, ok := args["config"].(map[string]any); ok {
 		def.Config = c
@@ -644,11 +654,10 @@ func (h *MCPToolHandler) ExecuteGetAgentRun(ctx context.Context, projectID strin
 	}
 
 	dto := run.ToDTO()
-
-	// Attach token usage / cost — same as the HTTP handler does.
-	if usage, uErr := h.repo.GetRunTokenUsage(ctx, runID); uErr == nil {
-		dto.TokenUsage = usage
-	}
+	// Omit TokenUsage and Workspace from agent tool responses — these are
+	// observability fields not useful to the agent and add unnecessary tokens.
+	dto.TokenUsage = nil
+	dto.Workspace = nil
 
 	return wrapResult(dto)
 }
@@ -892,6 +901,10 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 						Type:        "integer",
 						Description: "Default timeout in seconds for agent runs",
 					},
+					"model": {
+						Type:        "string",
+						Description: "Model name for this agent. Supports provider/model format to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'openai-compatible/my-model'). Bare model names (e.g. 'gemini-2.5-flash') use the project/org default provider.",
+					},
 					"config": {
 						Type:        "string",
 						Description: "Additional configuration as JSON object",
@@ -943,6 +956,10 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 					"default_timeout": {
 						Type:        "integer",
 						Description: "New default timeout in seconds",
+					},
+					"model": {
+						Type:        "string",
+						Description: "Model name for this agent. Supports provider/model format to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'openai-compatible/my-model'). Bare model names (e.g. 'gemini-2.5-flash') use the project/org default provider.",
 					},
 				},
 				Required: []string{"definition_id"},

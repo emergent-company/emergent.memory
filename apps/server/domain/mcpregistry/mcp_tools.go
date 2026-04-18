@@ -56,7 +56,21 @@ func errResult(msg string) (*mcp.ToolResult, error) {
 // MCP Server Tools
 // ============================================================================
 
+// mcpServerSummary is a slim view of an MCP server for agent list responses.
+// It omits tool InputSchema to keep the agent context small.
+// Use mcp-server-get to retrieve full tool details for a specific server.
+type mcpServerSummary struct {
+	ID          string        `json:"id"`
+	Name        string        `json:"name"`
+	Description *string       `json:"description,omitempty"`
+	Enabled     bool          `json:"enabled"`
+	Type        MCPServerType `json:"type"`
+	ToolCount   int           `json:"toolCount"`
+}
+
 // ExecuteListMCPServers lists all MCP servers for a project.
+// Returns a slim summary per server (no tool schemas) to keep agent context small.
+// Use mcp-server-get to retrieve full tool details for a specific server.
 func (h *MCPRegistryToolHandler) ExecuteListMCPServers(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
 	// Ensure builtin server is registered first
 	if err := h.service.EnsureBuiltinServer(ctx, projectID); err != nil {
@@ -68,12 +82,23 @@ func (h *MCPRegistryToolHandler) ExecuteListMCPServers(ctx context.Context, proj
 		return errResult("failed to list MCP servers: " + err.Error())
 	}
 
-	dtos := make([]*MCPServerDTO, len(servers))
+	summaries := make([]mcpServerSummary, len(servers))
 	for i, s := range servers {
-		dtos[i] = s.ToDTO()
+		toolCount := 0
+		if s.Tools != nil {
+			toolCount = len(s.Tools)
+		}
+		summaries[i] = mcpServerSummary{
+			ID:          s.ID,
+			Name:        s.Name,
+			Description: s.Description,
+			Enabled:     s.Enabled,
+			Type:        s.Type,
+			ToolCount:   toolCount,
+		}
 	}
 
-	return wrapResult(dtos)
+	return wrapResult(summaries)
 }
 
 // ExecuteGetMCPServer gets a single MCP server by ID with its tools.

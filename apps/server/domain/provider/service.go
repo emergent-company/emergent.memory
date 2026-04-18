@@ -229,7 +229,8 @@ func (s *CredentialService) ResolveFor(ctx context.Context, provider string) (*R
 // ResolveAny attempts to resolve the best available credential for the request
 // context without requiring the caller to specify a provider type.
 //
-// Tries providers in order: Vertex AI first, then Google AI.
+// Tries providers in order: Vertex AI first, then Google AI, then OpenAI-compatible.
+// Cloud providers take priority over local/self-hosted endpoints.
 // Returns nil, nil when no credentials are available (neither project nor org
 // context present). Returns an error when credentials were found but could not
 // be resolved (e.g. decryption failure, DB error).
@@ -237,7 +238,7 @@ func (s *CredentialService) ResolveFor(ctx context.Context, provider string) (*R
 // This method satisfies the adk.CredentialResolver interface.
 func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential, error) {
 	var lastErr error
-	for _, provider := range []ProviderType{ProviderOpenAICompatible, ProviderVertexAI, ProviderGoogleAI} {
+	for _, provider := range []ProviderType{ProviderVertexAI, ProviderGoogleAI, ProviderOpenAICompatible} {
 		cred, err := s.Resolve(ctx, provider)
 		if err != nil {
 			s.log.Debug("provider resolution failed, trying next",

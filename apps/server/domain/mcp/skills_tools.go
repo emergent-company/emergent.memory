@@ -17,7 +17,7 @@ func skillsToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:        "skill-list",
-			Description: "List skills available to the current project. Returns an array of skill objects with id, name, description, content, scope, and metadata.",
+			Description: "List skills available to the current project. Returns id, name, description, and scope — use skill-get to retrieve full content for a specific skill.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -103,17 +103,33 @@ func skillsToolDefinitions() []ToolDefinition {
 // Skills Tool Handlers
 // ============================================================================
 
+// skillListSummary is a slim view of a skill for list responses.
+// Omits Content to keep agent context small — use skill-get for full content.
+type skillListSummary struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+}
+
 func (s *Service) executeListSkills(ctx context.Context, projectID string) (*ToolResult, error) {
 	projectIDPtr := &projectID
 	all, err := s.skillsRepo.FindAll(ctx, projectIDPtr, nil)
 	if err != nil {
 		return nil, fmt.Errorf("list_skills: %w", err)
 	}
-	dtos := make([]*skills.SkillDTO, len(all))
+	// Return slim summaries — omit Content to keep agent context small.
+	// Use skill-get to retrieve full content for a specific skill.
+	summaries := make([]skillListSummary, len(all))
 	for i, sk := range all {
-		dtos[i] = sk.ToDTO()
+		summaries[i] = skillListSummary{
+			ID:          sk.ID.String(),
+			Name:        sk.Name,
+			Description: sk.Description,
+			Scope:       sk.Scope(),
+		}
 	}
-	return s.wrapResult(dtos)
+	return s.wrapResult(summaries)
 }
 
 func (s *Service) executeGetSkill(ctx context.Context, args map[string]any) (*ToolResult, error) {
