@@ -146,7 +146,13 @@ func (s *bunService) AppendEvent(ctx context.Context, curSession session.Session
 		return fmt.Errorf("unexpected session type %T", curSession)
 	}
 
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	// Use a background context for the DB write so that a cancelled run context
+	// (server shutdown, timeout, client disconnect) does not abort session
+	// persistence mid-flight. Session writes are fire-and-forget durability
+	// operations that must complete regardless of the caller's context state.
+	dbCtx := context.Background()
+
+	err := s.db.RunInTx(dbCtx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// Update states based on event.Actions.StateDelta
 		if len(event.Actions.StateDelta) > 0 {
 			err := s.applyStateDeltas(ctx, tx, sess, event.Actions.StateDelta)
