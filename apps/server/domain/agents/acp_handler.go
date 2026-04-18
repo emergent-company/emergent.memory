@@ -53,13 +53,24 @@ func (h *ACPHandler) acpOrgID(ctx context.Context, c echo.Context, projectID str
 	return orgID
 }
 
-// resolveAgentBySlug looks up an external agent definition by ACP slug,
+// resolveAgentBySlug looks up an agent definition by ACP slug,
 // then resolves the corresponding runtime Agent record.
+// It first searches external-visibility definitions, then falls back to all
+// definitions so that agents not explicitly marked external are still reachable.
 // Returns (def, agent, error). Returns 404 apperror when not found.
 func (h *ACPHandler) resolveAgentBySlug(ctx context.Context, projectID, slug string) (*AgentDefinition, *Agent, error) {
+	// Try external-visibility first (preferred ACP agents)
 	def, err := h.repo.FindExternalAgentBySlug(ctx, projectID, slug)
 	if err != nil {
 		return nil, nil, apperror.NewInternal("failed to look up agent", err)
+	}
+	// Fall back to any visibility so agents without explicit external visibility
+	// are still accessible via ACP (fixes 404 for project/internal agents).
+	if def == nil {
+		def, err = h.repo.FindAgentDefinitionBySlug(ctx, projectID, slug)
+		if err != nil {
+			return nil, nil, apperror.NewInternal("failed to look up agent", err)
+		}
 	}
 	if def == nil {
 		return nil, nil, apperror.NewNotFound("Agent", slug)

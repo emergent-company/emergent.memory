@@ -265,10 +265,12 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		return nil, fmt.Errorf("max agent depth %d exceeded (current depth: %d)", maxDepth, req.Depth)
 	}
 
-	// Determine max steps for this run
+	// Determine max steps for this run: per-request override > definition > default
 	maxSteps := DefaultMaxStepsPerRun
 	if req.MaxSteps != nil && *req.MaxSteps > 0 {
 		maxSteps = *req.MaxSteps
+	} else if req.AgentDefinition != nil && req.AgentDefinition.MaxSteps != nil && *req.AgentDefinition.MaxSteps > 0 {
+		maxSteps = *req.AgentDefinition.MaxSteps
 	}
 
 	// Create the run record
@@ -438,10 +440,12 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		return nil, fmt.Errorf("max agent depth %d exceeded (current depth: %d)", maxDepth, req.Depth)
 	}
 
-	// Determine max steps for this run
+	// Determine max steps for this run: per-request override > definition > default
 	maxSteps := DefaultMaxStepsPerRun
 	if req.MaxSteps != nil && *req.MaxSteps > 0 {
 		maxSteps = *req.MaxSteps
+	} else if req.AgentDefinition != nil && req.AgentDefinition.MaxSteps != nil && *req.AgentDefinition.MaxSteps > 0 {
+		maxSteps = *req.AgentDefinition.MaxSteps
 	}
 
 	// Establish root_run_id: top-level runs own it; sub-agents receive it from the parent.

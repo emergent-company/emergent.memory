@@ -2271,6 +2271,28 @@ func (r *Repository) FindExternalAgentBySlug(ctx context.Context, projectID, slu
 	return nil, nil
 }
 
+// FindAgentDefinitionBySlug returns any agent definition (regardless of visibility)
+// matching the given ACP slug within a project. Used as a fallback when the agent
+// is not marked as external but should still be accessible via ACP by name.
+// Returns nil, nil when no matching agent is found.
+func (r *Repository) FindAgentDefinitionBySlug(ctx context.Context, projectID, slug string) (*AgentDefinition, error) {
+	var defs []*AgentDefinition
+	err := r.db.NewSelect().
+		Model(&defs).
+		Where("project_id = ?", projectID).
+		Order("name ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("FindAgentDefinitionBySlug: %w", err)
+	}
+	for _, def := range defs {
+		if ACPSlugFromName(def.Name) == slug {
+			return def, nil
+		}
+	}
+	return nil, nil
+}
+
 // GetAgentStatusMetrics computes live metrics for an agent definition based on
 // runs from the last 30 days: average tokens per run, average duration in seconds,
 // and success rate (fraction of terminal runs that succeeded).
