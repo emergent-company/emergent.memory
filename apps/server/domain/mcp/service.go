@@ -198,11 +198,16 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "entity-type-list",
-			Description: "List all available entity types in the knowledge graph with instance counts. Helps discover what entities can be queried.",
+			Description: "List all available entity types in the knowledge graph with instance counts and relationship types. Pass branch to see counts for a specific branch (e.g. \"plan/main\"); omit for main branch.",
 			InputSchema: InputSchema{
-				Type:       "object",
-				Properties: map[string]PropertySchema{},
-				Required:   []string{},
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"branch": {
+						Type:        "string",
+						Description: "Branch name or UUID to count entities on (e.g. \"plan/main\"). Omit for main branch.",
+					},
+				},
+				Required: []string{},
 			},
 		},
 		{
@@ -213,7 +218,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"type_name": {
 						Type:        "string",
-						Description: "Entity type to query (e.g., \"Decision\", \"Project\", \"Document\"). Required unless ids is provided.",
+						Description: "Filter by entity type (e.g. 'APIEndpoint'). Omit to return all entity types.",
 					},
 					"ids": {
 						Type:        "array",
@@ -269,13 +274,13 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "entity-history",
-			Description: "Get the version history of an entity by canonical ID. Returns a list of versions with their physical IDs, version numbers, and timestamps. Use entity-query with ids=[physical_id] to fetch the full properties of a specific historical version.",
+			Description: "Get the version history of an entity by canonical ID or key. Returns a list of versions with their physical IDs, version numbers, and timestamps. Use entity-query with ids=[physical_id] to fetch the full properties of a specific historical version.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"entity_id": {
 						Type:        "string",
-						Description: "The canonical UUID of the entity to get history for",
+						Description: "The canonical UUID or key of the entity to get history for",
 					},
 				},
 				Required: []string{"entity_id"},
@@ -314,7 +319,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"entity_id": {
 						Type:        "string",
-						Description: "The UUID of the entity to get edges for",
+						Description: "The UUID or key of the entity to get edges for",
 					},
 				},
 				Required: []string{"entity_id"},
@@ -551,7 +556,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"entity_id": {
 						Type:        "string",
-						Description: "UUID of the entity to update",
+						Description: "UUID or key of the entity to update",
 					},
 					"properties": {
 						Type:        "object",
@@ -581,7 +586,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"entity_id": {
 						Type:        "string",
-						Description: "UUID of the entity to delete",
+						Description: "UUID or key of the entity to delete",
 					},
 				},
 				Required: []string{"entity_id"},
@@ -595,7 +600,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"entity_id": {
 						Type:        "string",
-						Description: "UUID of the entity to restore",
+						Description: "UUID or key of the entity to restore",
 					},
 				},
 				Required: []string{"entity_id"},
@@ -688,7 +693,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"start_entity_id": {
 						Type:        "string",
-						Description: "UUID of the starting entity",
+						Description: "UUID or key of the starting entity (e.g. 'sc-taskify-create-task' or a full UUID)",
 					},
 					"max_depth": {
 						Type:        "number",
@@ -1168,7 +1173,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	case "schema-version":
 		return s.executeSchemaVersion(ctx)
 	case "entity-type-list":
-		return s.executeListEntityTypes(ctx, projectID)
+		return s.executeListEntityTypes(ctx, projectID, args)
 	case "entity-query":
 		return s.executeQueryEntities(ctx, projectID, args)
 	case "entity-history":
@@ -1473,10 +1478,16 @@ func (s *Service) executeGetProjectInfo(ctx context.Context, projectID string) (
 }
 
 // executeListEntityTypes returns all entity types with counts
-func (s *Service) executeListEntityTypes(ctx context.Context, projectID string) (*ToolResult, error) {
+func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	branchRef, _ := args["branch"].(string)
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, err
 	}
 
 	// Query type registry with counts
@@ -1502,6 +1513,13 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string) 
 			return err
 		}
 
+		branchClause := "AND go.branch_id IS NULL"
+		branchArgs := []any{}
+		if branchID != nil {
+			branchClause = "AND go.branch_id = ?"
+			branchArgs = []any{*branchID}
+		}
+
 		// Query entity types
 		err := tx.NewRaw(`
 			SELECT 
@@ -1513,13 +1531,43 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string) 
 				ON go.type = tr.type_name 
 				AND go.deleted_at IS NULL 
 				AND go.project_id = ?
+				AND go.supersedes_id IS NULL
+				`+branchClause+`
 			WHERE tr.enabled = true 
 				AND tr.project_id = ?
 			GROUP BY tr.type_name, tr.description
 			ORDER BY tr.type_name
-		`, projectUUID, projectUUID).Scan(ctx, &types)
+		`, append([]any{projectUUID}, append(branchArgs, projectUUID)...)...).Scan(ctx, &types)
 		if err != nil {
 			return err
+		}
+
+		// Fallback: discover types directly from graph_objects if registry empty on branch
+		if len(types) == 0 && branchID != nil {
+			err = tx.NewRaw(`
+				SELECT DISTINCT go.type as name, '' as description, COUNT(*)::int as instance_count
+				FROM kb.graph_objects go
+				WHERE go.project_id = ?
+				  AND go.deleted_at IS NULL
+				  AND go.supersedes_id IS NULL
+				  AND go.branch_id = ?
+				GROUP BY go.type
+				ORDER BY go.type
+			`, projectUUID, *branchID).Scan(ctx, &types)
+			if err != nil {
+				return err
+			}
+		}
+
+		relBranchClause := "AND gr.branch_id IS NULL"
+		srcBranchClause := "AND src.branch_id IS NULL"
+		dstBranchClause := "AND dst.branch_id IS NULL"
+		relBranchArgs := []any{projectUUID}
+		if branchID != nil {
+			relBranchClause = "AND gr.branch_id = ?"
+			srcBranchClause = "AND src.branch_id = ?"
+			dstBranchClause = "AND dst.branch_id = ?"
+			relBranchArgs = append(relBranchArgs, *branchID, *branchID, *branchID)
 		}
 
 		// Query relationship types with from/to type info
@@ -1534,11 +1582,14 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string) 
 			JOIN kb.graph_objects dst ON gr.dst_id = dst.id
 			WHERE gr.deleted_at IS NULL 
 				AND gr.project_id = ?
+				`+relBranchClause+`
 				AND src.deleted_at IS NULL
+				`+srcBranchClause+`
 				AND dst.deleted_at IS NULL
+				`+dstBranchClause+`
 			GROUP BY gr.type, src.type, dst.type
 			ORDER BY gr.type, count DESC
-		`, projectUUID).Scan(ctx, &relTypes)
+		`, relBranchArgs...).Scan(ctx, &relTypes)
 		return err
 	})
 
@@ -1615,7 +1666,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	}
 
 	if typeName == "" {
-		return nil, fmt.Errorf("missing required parameter: type_name (or provide ids[])")
+		// type_name is now optional
 	}
 
 	limit := 10
@@ -1739,6 +1790,13 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		}
 	}
 
+	type_clause := ""
+	type_args := []any{}
+	if typeName != "" {
+		type_clause = "AND go.type = ?"
+		type_args = []any{typeName}
+	}
+
 	var entities []entityRow
 	var total int
 
@@ -1770,15 +1828,15 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				COALESCE(tr.description, '') as type_description
 			FROM kb.graph_objects go
 			LEFT JOIN kb.project_object_schema_registry tr ON tr.type_name = go.type AND tr.project_id = go.project_id
-			WHERE go.type = ?
-				AND go.deleted_at IS NULL
+			WHERE go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
+				`+type_clause+`
 				`+branchClause+`
 				`+filterClause+`
 			ORDER BY `+orderExpr+`
 			LIMIT ? OFFSET ?
-		`, append([]any{typeName, projectUUID}, append(branchArgs, limit, offset)...)...).Scan(ctx, &entities)
+		`, append(append([]any{projectUUID}, type_args...), append(branchArgs, limit, offset)...)...).Scan(ctx, &entities)
 		if err != nil {
 			return err
 		}
@@ -1787,13 +1845,13 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		err = tx.NewRaw(`
 			SELECT COUNT(*)
 			FROM kb.graph_objects go
-			WHERE go.type = ?
-				AND go.deleted_at IS NULL
+			WHERE go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
+				`+type_clause+`
 				`+branchClause+`
 				`+filterClause+`
-		`, append([]any{typeName, projectUUID}, branchArgs...)...).Scan(ctx, &total)
+		`, append(append([]any{projectUUID}, type_args...), branchArgs...)...).Scan(ctx, &total)
 		return err
 	})
 
@@ -2052,7 +2110,11 @@ func (s *Service) executeEntityHistory(ctx context.Context, projectID string, ar
 	}
 	canonicalID, err := uuid.Parse(entityIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid entity_id: %w", err)
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		canonicalID = resolved
 	}
 
 	type versionRow struct {
@@ -2251,7 +2313,11 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 
 	entityID, err := uuid.Parse(entityIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid entity_id: %w", err)
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		entityID = resolved
 	}
 
 	// Resolve the canonical ID for relationship traversal
@@ -2354,6 +2420,22 @@ func (s *Service) resolveCanonicalID(ctx context.Context, projectID, entityID uu
 	return canonicalID, nil
 }
 
+// resolveEntityIDByKey looks up the canonical_id of a graph object by its key field.
+// Returns an error if no object with that key exists in the project.
+func (s *Service) resolveEntityIDByKey(ctx context.Context, projectID uuid.UUID, key string) (uuid.UUID, error) {
+	var canonicalID uuid.UUID
+	err := s.db.NewRaw(`
+		SELECT canonical_id FROM kb.graph_objects
+		WHERE key = ? AND project_id = ? AND deleted_at IS NULL
+		ORDER BY version DESC
+		LIMIT 1
+	`, key, projectID).Scan(ctx, &canonicalID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("entity with key %q not found", key)
+	}
+	return canonicalID, nil
+}
+
 // executeRestoreEntity restores a soft-deleted entity
 func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
@@ -2368,7 +2450,11 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 
 	entityID, err := uuid.Parse(entityIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid entity_id: %w", err)
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		entityID = resolved
 	}
 
 	result, err := s.graphService.Restore(ctx, projectUUID, entityID, nil)
@@ -2685,7 +2771,12 @@ func (s *Service) executeTraverseGraph(ctx context.Context, projectID string, ar
 
 	startEntityID, err := uuid.Parse(startEntityIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid start_entity_id: %w", err)
+		// Not a UUID — try resolving as an entity key.
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, startEntityIDStr)
+		if keyErr != nil {
+			return nil, fmt.Errorf("invalid start_entity_id: %q is not a UUID and key lookup failed: %w", startEntityIDStr, keyErr)
+		}
+		startEntityID = resolved
 	}
 
 	// Resolve the canonical ID for relationship traversal
@@ -4275,7 +4366,11 @@ func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, arg
 	}
 	entityID, err := uuid.Parse(entityIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid entity_id: %w", err)
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		entityID = resolved
 	}
 
 	properties, _ := args["properties"].(map[string]any)
@@ -4356,7 +4451,11 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 	}
 	entityID, err := uuid.Parse(entityIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid entity_id: %w", err)
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		entityID = resolved
 	}
 
 	err = s.graphService.Delete(ctx, projectUUID, entityID, nil)
@@ -4393,7 +4492,7 @@ func (s *Service) ReadResource(ctx context.Context, projectID, uri string) (*Res
 }
 
 func (s *Service) readEntityTypesResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
-	result, err := s.executeListEntityTypes(ctx, projectID)
+	result, err := s.executeListEntityTypes(ctx, projectID, map[string]any{})
 	if err != nil {
 		return nil, err
 	}
