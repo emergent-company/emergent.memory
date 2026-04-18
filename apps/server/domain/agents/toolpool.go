@@ -23,10 +23,27 @@ const (
 	ToolNameAskUser             = "ask_user"
 )
 
+// ACP tool names that require explicit opt-in at all agent depths.
+const (
+	ToolNameACPListAgents   = "acp-list-agents"
+	ToolNameACPTriggerRun   = "acp-trigger-run"
+	ToolNameACPGetRunStatus = "acp-get-run-status"
+)
+
 // coordinationTools is the set of tools denied to sub-agents by default.
 var coordinationTools = map[string]bool{
 	ToolNameSpawnAgents:         true,
 	ToolNameListAvailableAgents: true,
+}
+
+// acpTools is the set of ACP tools that require explicit opt-in.
+// Unlike coordinationTools (which are stripped only from sub-agents),
+// ACP tools are stripped from ALL agents unless explicitly listed in
+// the agent's Tools whitelist.
+var acpTools = map[string]bool{
+	ToolNameACPListAgents:   true,
+	ToolNameACPTriggerRun:   true,
+	ToolNameACPGetRunStatus: true,
 }
 
 // DefaultMaxDepth is the default maximum agent spawning depth.
@@ -256,6 +273,9 @@ func (tp *ToolPool) filterToolDefs(cache *projectToolCache, agentDef *AgentDefin
 		defs = tp.matchToolsByWhitelist(cache, agentDef.Tools)
 	}
 
+	// Apply ACP tool opt-in restrictions (all depths, including top-level)
+	defs = tp.applyACPRestrictions(defs, agentDef)
+
 	// Apply sub-agent tool restrictions
 	defs = tp.applyDepthRestrictions(defs, agentDef, depth, maxDepth)
 
@@ -383,6 +403,62 @@ func (tp *ToolPool) applyDepthRestrictions(defs []mcp.ToolDefinition, agentDef *
 		}
 	}
 
+	return filtered
+}
+
+// applyACPRestrictions removes ACP tools from agents that have not explicitly
+// opted in by listing them in their Tools whitelist.
+//
+// Unlike coordinationTools (which are only restricted for sub-agents), ACP tools
+// require explicit opt-in at ALL depths — including top-level agents. This prevents
+// agents from inadvertently triggering external agent runs when they have a broad
+// or empty tool whitelist.
+//
+// An agent opts in by listing the specific ACP tool name (e.g. "acp-trigger-run")
+// or a matching glob (e.g. "acp-*") in its Tools field.
+func (tp *ToolPool) applyACPRestrictions(defs []mcp.ToolDefinition, agentDef *AgentDefinition) []mcp.ToolDefinition {
+	// Build set of explicitly requested ACP tools from the whitelist
+	explicitlyRequested := make(map[string]bool)
+	if agentDef != nil {
+		for _, pattern := range agentDef.Tools {
+			if pattern == "*" {
+				// Wildcard — all tools including ACP are explicitly requested
+				return defs
+			}
+			for name := range acpTools {
+				if pattern == name {
+					explicitlyRequested[name] = true
+					continue
+				}
+				if isGlobPattern(pattern) {
+					if ok, err := path.Match(pattern, name); err == nil && ok {
+						explicitlyRequested[name] = true
+					}
+				}
+			}
+		}
+	}
+
+	var filtered []mcp.ToolDefinition
+	for _, td := range defs {
+		if !acpTools[td.Name] {
+			// Not an ACP tool — always include
+			filtered = append(filtered, td)
+			continue
+		}
+		if explicitlyRequested[td.Name] {
+			// Explicitly opted in — keep
+			tp.log.Debug("agent retains ACP tool via opt-in",
+				slog.String("tool", td.Name),
+			)
+			filtered = append(filtered, td)
+		} else {
+			// Not explicitly requested — strip
+			tp.log.Debug("removing ACP tool (no explicit opt-in)",
+				slog.String("tool", td.Name),
+			)
+		}
+	}
 	return filtered
 }
 
