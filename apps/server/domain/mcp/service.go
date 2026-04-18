@@ -1348,7 +1348,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	case "skill-list":
 		return s.executeListSkills(ctx, projectID)
 	case "skill-get":
-		return s.executeGetSkill(ctx, args)
+		return s.executeGetSkill(ctx, projectID, args)
 	case "skill-create":
 		return s.executeCreateSkill(ctx, projectID, args)
 	case "skill-update":

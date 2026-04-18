@@ -26,13 +26,13 @@ func skillsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "skill-get",
-			Description: "Get a single skill by its UUID. Returns the full skill including content, description, scope, and metadata.",
+			Description: "Get a single skill by its UUID or name. Returns the full skill including content, description, scope, and metadata.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"skill_id": {
 						Type:        "string",
-						Description: "UUID of the skill to retrieve",
+						Description: "UUID or name of the skill to retrieve (e.g. 'caveman' or a full UUID)",
 					},
 				},
 				Required: []string{"skill_id"},
@@ -132,20 +132,38 @@ func (s *Service) executeListSkills(ctx context.Context, projectID string) (*Too
 	return s.wrapResult(summaries)
 }
 
-func (s *Service) executeGetSkill(ctx context.Context, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeGetSkill(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	idStr, _ := args["skill_id"].(string)
 	if idStr == "" {
 		return nil, fmt.Errorf("get_skill: 'skill_id' is required")
 	}
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		return nil, fmt.Errorf("get_skill: invalid skill_id UUID: %w", err)
+
+	// Try UUID first.
+	if id, err := uuid.Parse(idStr); err == nil {
+		sk, err := s.skillsRepo.FindByID(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("get_skill: %w", err)
+		}
+		return s.wrapResult(sk.ToDTO())
 	}
-	sk, err := s.skillsRepo.FindByID(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("get_skill: %w", err)
+
+	// Not a UUID — treat as skill name. Search project-scoped skills first,
+	// then fall back to global skills.
+	for _, lookup := range []func() ([]*skills.Skill, error){
+		func() ([]*skills.Skill, error) { return s.skillsRepo.FindAll(ctx, &projectID, nil) },
+		func() ([]*skills.Skill, error) { return s.skillsRepo.FindAll(ctx, nil, nil) },
+	} {
+		all, err := lookup()
+		if err != nil {
+			return nil, fmt.Errorf("get_skill: %w", err)
+		}
+		for _, sk := range all {
+			if sk.Name == idStr {
+				return s.wrapResult(sk.ToDTO())
+			}
+		}
 	}
-	return s.wrapResult(sk.ToDTO())
+	return nil, fmt.Errorf("get_skill: skill %q not found", idStr)
 }
 
 func (s *Service) executeCreateSkill(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
