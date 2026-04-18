@@ -207,7 +207,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "entity-query",
-			Description: "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination).",
+			Description: "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination). Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -219,6 +219,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Type:        "array",
 						Description: "Optional list of canonical entity IDs to fetch directly. When provided, type_name and pagination params are ignored.",
 						Items:       &PropertySchema{Type: "string"},
+					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name (e.g. \"plan/main\") or branch UUID to query. Omit to query the main branch.",
 					},
 					"limit": {
 						Type:        "number",
@@ -1585,6 +1589,13 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Parse arguments
 	typeName, _ := args["type_name"].(string)
 
+	// Resolve optional branch parameter.
+	branchRef, _ := args["branch"].(string)
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, err
+	}
+
 	// ids[] fast-path: fetch specific entities by canonical ID, bypassing type/pagination.
 	if rawIDs, ok := args["ids"]; ok {
 		var idStrs []string
@@ -1599,7 +1610,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			idStrs = v
 		}
 		if len(idStrs) > 0 {
-			return s.executeQueryEntitiesByIDs(ctx, projectID, idStrs, args)
+			return s.executeQueryEntitiesByIDs(ctx, projectID, idStrs, branchID, args)
 		}
 	}
 
@@ -1731,13 +1742,20 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	var entities []entityRow
 	var total int
 
+	// Build branch filter clause: NULL = main branch, non-NULL = specific branch.
+	branchClause := "AND go.branch_id IS NULL"
+	branchArgs := []any{}
+	if branchID != nil {
+		branchClause = "AND go.branch_id = ?"
+		branchArgs = []any{*branchID}
+	}
+
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
 			return err
 		}
 
-		// Query entities (latest version only: supersedes_id IS NULL means no newer version exists,
-		// branch_id IS NULL restricts to the main branch)
+		// Query entities (latest version only: supersedes_id IS NULL means no newer version exists)
 		err := tx.NewRaw(`
 			SELECT 
 				go.id,
@@ -1756,16 +1774,16 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				AND go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
-				AND go.branch_id IS NULL
+				`+branchClause+`
 				`+filterClause+`
 			ORDER BY `+orderExpr+`
 			LIMIT ? OFFSET ?
-		`, typeName, projectUUID, limit, offset).Scan(ctx, &entities)
+		`, append([]any{typeName, projectUUID}, append(branchArgs, limit, offset)...)...).Scan(ctx, &entities)
 		if err != nil {
 			return err
 		}
 
-		// Get total count (latest version only, main branch)
+		// Get total count (latest version only)
 		err = tx.NewRaw(`
 			SELECT COUNT(*)
 			FROM kb.graph_objects go
@@ -1773,9 +1791,9 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				AND go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
-				AND go.branch_id IS NULL
+				`+branchClause+`
 				`+filterClause+`
-		`, typeName, projectUUID).Scan(ctx, &total)
+		`, append([]any{typeName, projectUUID}, branchArgs...)...).Scan(ctx, &total)
 		return err
 	})
 
@@ -1801,7 +1819,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Detect unrecognized parameters and surface them as a warning so callers
 	// know their extra keys (e.g. filter, status, entity_type) had no effect.
 	knownQueryEntitiesParams := map[string]struct{}{
-		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {},
+		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {}, "branch": {}, "filters": {},
 	}
 	var unknownParams []string
 	for k := range args {
@@ -1838,6 +1856,14 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 		}
 		var relRows []relRow
 
+		relBranchClause := "AND gr.branch_id IS NULL"
+		dstBranchClause := "AND dst.branch_id IS NULL"
+		relQueryArgs := []any{bun.In(canonicalIDs), projectUUID}
+		if branchID != nil {
+			relBranchClause = "AND gr.branch_id = ?"
+			dstBranchClause = "AND dst.branch_id = ?"
+			relQueryArgs = append(relQueryArgs, *branchID, *branchID)
+		}
 		_ = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 			if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
 				return err
@@ -1851,13 +1877,13 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 					COALESCE(dst.key, '') AS dst_key
 				FROM kb.graph_relationships gr
 				JOIN kb.graph_objects dst ON dst.canonical_id = gr.dst_id
-					AND dst.supersedes_id IS NULL AND dst.branch_id IS NULL AND dst.deleted_at IS NULL
+					AND dst.supersedes_id IS NULL `+dstBranchClause+` AND dst.deleted_at IS NULL
 			WHERE gr.src_id IN (?)
 				AND gr.deleted_at IS NULL
 				AND gr.project_id = ?
 				AND gr.supersedes_id IS NULL
-				AND gr.branch_id IS NULL
-		`, bun.In(canonicalIDs), projectUUID).Scan(ctx, &relRows)
+				`+relBranchClause+`
+		`, relQueryArgs...).Scan(ctx, &relRows)
 		})
 
 		// Build an index from entity ID → edges
@@ -1921,7 +1947,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 }
 
 // executeQueryEntitiesByIDs fetches specific entities by canonical ID list.
-func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID string, idStrs []string, args map[string]any) (*ToolResult, error) {
+func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID string, idStrs []string, branchID *uuid.UUID, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
@@ -1951,6 +1977,13 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 		UpdatedAt   time.Time      `bun:"updated_at"`
 	}
 
+	branchClause := "AND go.branch_id IS NULL"
+	branchQueryArgs := []any{bun.In(canonicalIDs), projectUUID}
+	if branchID != nil {
+		branchClause = "AND go.branch_id = ?"
+		branchQueryArgs = append(branchQueryArgs, *branchID)
+	}
+
 	var entities []entityRow
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
@@ -1972,8 +2005,8 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 				AND go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
-				AND go.branch_id IS NULL
-		`, bun.In(canonicalIDs), projectUUID).Scan(ctx, &entities)
+				`+branchClause+`
+		`, branchQueryArgs...).Scan(ctx, &entities)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("query entities by ids: %w", err)
@@ -2074,6 +2107,35 @@ func (s *Service) executeEntityHistory(ctx context.Context, projectID string, ar
 		"count":     len(versions),
 	}
 	return s.wrapResult(result)
+}
+
+// resolveBranchID resolves a branch name or UUID string to a branch UUID for the
+// given project. Returns nil when the input is empty (meaning: use main branch).
+// Returns an error when the branch cannot be found.
+func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef string) (*uuid.UUID, error) {
+	if branchRef == "" {
+		return nil, nil
+	}
+	// Try parsing as UUID first.
+	if id, err := uuid.Parse(branchRef); err == nil {
+		return &id, nil
+	}
+	// Look up by name within the project.
+	type branchRow struct {
+		ID uuid.UUID `bun:"id"`
+	}
+	var row branchRow
+	err := s.db.NewSelect().
+		TableExpr("kb.branches").
+		ColumnExpr("id").
+		Where("name = ?", branchRef).
+		Where("project_id = ?", projectID).
+		Limit(1).
+		Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("branch %q not found: %w", branchRef, err)
+	}
+	return &row.ID, nil
 }
 
 // executeSearchEntities searches entities by text
