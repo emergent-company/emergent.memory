@@ -269,12 +269,20 @@ func (tp *ToolPool) ResolveTools(projectID string, agentDef *AgentDefinition, de
 func (tp *ToolPool) filterToolDefs(cache *projectToolCache, agentDef *AgentDefinition, depth int, maxDepth int) []mcp.ToolDefinition {
 	var defs []mcp.ToolDefinition
 
-	if agentDef == nil || len(agentDef.Tools) == 0 {
-		// No tools whitelist or nil definition — return all tools
-		// (legacy agents without a definition get everything)
+	if agentDef == nil {
+		// No agent definition at all (legacy/system agents) — return all tools.
 		for _, name := range cache.toolNames {
 			defs = append(defs, cache.toolDefs[name])
 		}
+	} else if len(agentDef.Tools) == 0 {
+		// Agent definition exists but Tools list is empty — deny all tools.
+		// An explicit empty whitelist means the agent has no tool access.
+		// This prevents agents from silently inheriting the full tool set
+		// when their configuration is incomplete or intentionally tool-free.
+		tp.log.Debug("agent has empty tools whitelist — no tools granted",
+			slog.String("agent", agentDef.Name),
+		)
+		return nil
 	} else {
 		defs = tp.matchToolsByWhitelist(cache, agentDef.Tools)
 	}

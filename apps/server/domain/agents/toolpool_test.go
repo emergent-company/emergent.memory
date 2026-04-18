@@ -167,21 +167,16 @@ func TestApplyACPRestrictions_GlobPattern_KeepsMatchingACPTools(t *testing.T) {
 
 // --- filterToolDefs integration tests ---
 
-func TestFilterToolDefs_EmptyWhitelist_StripsACPTools(t *testing.T) {
+func TestFilterToolDefs_EmptyWhitelist_DeniesAllTools(t *testing.T) {
 	tp := buildTestPool(t, allTestTools)
 	cache := tp.cache["test-project"]
 
-	// Empty whitelist → gets all tools, but ACP should be stripped
+	// Empty whitelist → agent definition exists but no tools listed → deny everything.
+	// This prevents agents with incomplete configs from silently inheriting all tools.
 	agentDef := &AgentDefinition{Tools: []string{}}
 	result := tp.filterToolDefs(cache, agentDef, 0, DefaultMaxDepth)
-	names := toolNames(result)
 
-	assert.NotContains(t, names, ToolNameACPListAgents)
-	assert.NotContains(t, names, ToolNameACPTriggerRun)
-	assert.NotContains(t, names, ToolNameACPGetRunStatus)
-	assert.NotContains(t, names, ToolNameACPMCPServerList)
-	assert.NotContains(t, names, ToolNameACPMCPServerGet)
-	assert.NotContains(t, names, ToolNameACPSearchMCPRegistry)
+	assert.Empty(t, result, "empty Tools whitelist must grant zero tools")
 }
 
 func TestFilterToolDefs_NilAgentDef_StripsACPTools(t *testing.T) {
