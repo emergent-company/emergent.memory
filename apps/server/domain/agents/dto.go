@@ -63,6 +63,8 @@ type AgentRunDTO struct {
 	// TriggerMetadata is the structured metadata passed at trigger time (e.g. title, context).
 	TriggerMetadata map[string]any `json:"triggerMetadata,omitempty"`
 
+	AgentDefinitionID *string `json:"agentDefinitionId,omitempty"`
+
 	Tools []string `json:"tools,omitempty"`
 }
 
@@ -218,6 +220,7 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 		ResumedFrom:   r.ResumedFrom,
 		TraceID:       r.TraceID,
 		RootRunID:     r.RootRunID,
+		AgentDefinitionID: r.AgentDefinitionID,
 		Tools:         r.Tools,
 	}
 	if r.Agent != nil {

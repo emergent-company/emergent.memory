@@ -1235,6 +1235,7 @@ func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOpt
 		TriggerMetadata: opts.TriggerMetadata,
 		TriggerMessage:  opts.TriggerMessage,
 		Model:           opts.Model,
+		AgentDefinitionID: opts.AgentDefinitionID,
 	}
 	_, err := r.db.NewInsert().
 		Model(run).

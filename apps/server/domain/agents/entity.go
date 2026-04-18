@@ -205,6 +205,8 @@ type AgentRun struct {
 	// ACP session linkage: optional grouping of runs under an ACP session.
 	ACPSessionID *string `bun:"acp_session_id,type:uuid" json:"acpSessionId,omitempty"`
 
+	AgentDefinitionID *string `bun:"agent_definition_id,type:uuid" json:"agentDefinitionId,omitempty"`
+
 	Tools []string `bun:"tools,array" json:"tools,omitempty"`
 
 	// Relations
@@ -223,6 +225,7 @@ type CreateRunOptions struct {
 	TriggerMetadata  map[string]any
 	TriggerMessage   *string // optional message injected as user message on wakeup
 	Model            *string // model override for this run
+	AgentDefinitionID *string
 }
 
 // CreateRunQueuedOptions holds optional parameters for CreateRunQueued.

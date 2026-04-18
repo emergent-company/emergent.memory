@@ -274,13 +274,18 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	}
 
 	// Create the run record
-	run, err := ae.repo.CreateRunWithOptions(dbCtx, CreateRunOptions{
+	createOpts := CreateRunOptions{
 		AgentID:         ae.resolveAgentID(req),
 		ParentRunID:     req.ParentRunID,
 		MaxSteps:        &maxSteps,
 		TriggerSource:   req.TriggerSource,
 		TriggerMetadata: req.TriggerMetadata,
-	})
+	}
+	if req.AgentDefinition != nil {
+		createOpts.AgentDefinitionID = &req.AgentDefinition.ID
+	}
+
+	run, err := ae.repo.CreateRunWithOptions(dbCtx, createOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent run: %w", err)
 	}
