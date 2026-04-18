@@ -1,0 +1,773 @@
+name: code-structure
+version: 1.8.1
+description: >
+  General-purpose structural schema for mapping any software project.
+  Covers the architectural layer: apps, modules, pages, components, services,
+  data models, persistence, APIs, events, middleware, jobs, and supporting
+  concerns like config, patterns, and tests. Includes Domain as a first-class
+  type for grouping scenarios, modules, and services by business capability.
+
+objectTypeSchemas:
+
+  - name: App
+    label: Application
+    description: >
+      A deployable application unit — frontend, backend, mobile, desktop, CLI, or library.
+      Top-level container in the project hierarchy.
+    properties:
+      app_type:
+        type: string
+        description: "Kind of application. E.g. frontend, backend, mobile, desktop, cli, library"
+      platform:
+        type: array
+        items: string
+        description: "Target platforms. E.g. [web], [ios, android], [macos, linux]"
+      root_path:
+        type: string
+        description: "Root directory relative to the repo. E.g. apps/web, services/auth"
+      tech_stack:
+        type: array
+        items: string
+        description: "Key technologies. E.g. [react, typescript, vite]"
+      deployment_target:
+        type: string
+        description: "Where it deploys. E.g. vercel, kubernetes, app-store"
+      port:
+        type: number
+        description: "Default local development port"
+      description:
+        type: string
+
+  - name: Module
+    label: Module
+    description: >
+      A sub-package or module within an app — Go package, npm package, Python module,
+      feature folder, or any named unit of code organization below the app level.
+    properties:
+      path:
+        type: string
+        description: "Path relative to app root. E.g. internal/auth, src/features/billing"
+      purpose:
+        type: string
+        description: "What this module does"
+      description:
+        type: string
+
+  - name: SourceFile
+    label: Source File
+    description: A tracked source file within a module.
+    properties:
+      path:
+        type: string
+        description: "File path relative to repo root"
+      language:
+        type: string
+        description: "Programming language. E.g. go, typescript, python"
+      description:
+        type: string
+
+  - name: Context
+    label: Context
+    description: >
+      A screen, modal, panel, or interaction surface in the application —
+      a React page, Next.js route, SwiftUI View, modal dialog, drawer, bottom sheet,
+      or any named surface where a user interacts. Contexts use UIComponents and
+      make Actions available. Scenarios occur within Contexts.
+    properties:
+      context_type:
+        type: string
+        description: >
+          The medium or interaction paradigm this context lives in.
+          E.g. web-view, mobile-screen, desktop-window, cli, notification,
+          widget, poster, overlay, email, watch-face
+      type:
+        type: string
+        description: "Kind of surface within the medium. E.g. screen, modal, panel, drawer, bottom-sheet, toast"
+      scope:
+        type: string
+        description: "Visibility scope. E.g. internal, external"
+      route:
+        type: string
+        description: "URL route or navigation path if applicable. E.g. /dashboard, /users/:id"
+      platform:
+        type: array
+        items: string
+        description: "Target platforms. E.g. [ios], [android], [web]"
+      description:
+        type: string
+
+  - name: UIComponent
+    label: UI Component
+    description: >
+      A reusable UI component — React component, SwiftUI View, widget, form field,
+      layout primitive, or any named, self-contained piece of UI. Can be composed
+      from other UIComponents. Used by Contexts.
+    properties:
+      type:
+        type: string
+        description: "Component category. E.g. primitive, composite, layout, container"
+      description:
+        type: string
+
+  - name: Action
+    label: Action
+    description: >
+      A user action or system operation — navigation, data mutation, toggle,
+      form submission, external call. Actions are available within Contexts
+      and performed during Scenario steps.
+    properties:
+      type:
+        type: string
+        description: "Action category. E.g. navigation, mutation, trigger, toggle, external"
+      display_label:
+        type: string
+        description: "Human-readable label shown in the UI. E.g. Save Changes, Delete User"
+      description:
+        type: string
+
+  - name: Actor
+    label: Actor
+    description: >
+      A user role, persona, or system actor that executes scenarios —
+      guest, member, admin, anonymous user, external system, etc.
+    properties:
+      display_name:
+        type: string
+        description: "Human-readable name. E.g. Guest User, Admin"
+      description:
+        type: string
+
+  - name: Domain
+    label: Domain
+    description: >
+      A functional or business domain that groups related scenarios, services,
+      and modules — e.g. Authentication, Cases, Compliance, Documents.
+      Domains are the top-level conceptual partitioning of the product's
+      capabilities, independent of how the code is structured.
+
+      Use domains to answer "what area of the product does this belong to?"
+      rather than "which code package owns it?". A single domain may span
+      multiple modules and services, and a module may implement parts of
+      multiple domains.
+
+      Typical domains in a legal practice management system:
+        Auth, Organization Settings, Contacts & Companies, Cases,
+        Workflow (Milestones & Tasks), Documents, Compliance & Verification,
+        Compliance Policy Admin, Case People, Time Tracking, Emails,
+        Notifications, Audit Logs, Dashboard, Identity & External Data,
+        Background Workflows.
+    properties:
+      slug:
+        type: string
+        description: "Short machine-readable identifier. E.g. auth, cases, compliance"
+      description:
+        type: string
+
+  - name: Scenario
+    label: Scenario
+    description: >
+      A concrete, testable example of behavior — a user story expressed as
+      given/when/then. Scenarios occur within Contexts, are executed by Actors,
+      and are broken into ordered ScenarioSteps for multi-screen flows.
+
+      A Scenario tells the full story of what a user does and what the system
+      does in response. It is the top-level narrative; ScenarioSteps are the
+      individual beats of that narrative.
+
+      How to build a Scenario:
+        1. Identify the Actor — the user role performing the flow (e.g. Attorney, Admin).
+        2. Write the given/when/then — the precondition, trigger, and expected outcome.
+        3. Break the flow into ScenarioSteps — one step per meaningful screen transition
+           or user action. Each step has a sequence number, occurs in a Context, and
+           performs an Action.
+        4. For each step, the Context describes the screen or surface the user is on.
+           The Context uses UIComponents (buttons, forms, tables) that are visible and
+           interactable at that moment.
+        5. The Action the step performs describes what the user does (click, submit,
+           navigate). Actions have a type (navigation, mutation, toggle, external) and
+           a display_label matching the UI text. Actions navigate_to the next Context,
+           forming the transition chain that defines the flow.
+
+      Relationships:
+        - executed_by → Actor (who performs this scenario)
+        - has → ScenarioStep (ordered steps, one per transition)
+
+      Example — "Intake: Add Client and Open Case":
+        given: "An attorney has received a new client"
+        when: "The attorney creates the client record and opens a case"
+        then: "A new client and linked case exist in the system"
+        Steps: Clients List → Add Client Modal → Client Detail → Add Case Modal → Case Detail
+    properties:
+      title:
+        type: string
+        description: "Human-readable title. E.g. Valid Credentials Login, Intake: Add Client and Open Case"
+      given:
+        type: string
+        description: "Precondition state before the scenario begins. E.g. an attorney is logged in"
+      when:
+        type: string
+        description: "The triggering action or intent. E.g. the attorney creates a new client record"
+      then:
+        type: string
+        description: "The primary expected outcome. E.g. a new client record is created and linked to a case"
+      and_also:
+        type: array
+        items: string
+        description: "Additional outcomes or side effects. E.g. [an audit log entry is created, the client appears in the clients list]"
+      description:
+        type: string
+      planning_status:
+        type: string
+        description: "Planning workflow state. One of: idle, in_progress, done. Managed automatically by next_scenario.py --claim / --complete / --release. Do not set manually."
+      planning_started_at:
+        type: string
+        description: "ISO 8601 timestamp set automatically by next_scenario.py --claim. Do not set manually."
+      planning_finished_at:
+        type: string
+        description: "ISO 8601 timestamp set automatically by next_scenario.py --complete. Do not set manually."
+      planning_assigned_to:
+        type: string
+        description: "Identifier of who claimed this scenario. Set automatically by next_scenario.py --claim. Do not set manually."
+
+  - name: ScenarioStep
+    label: Scenario Step
+    description: >
+      An ordered step within a Scenario. Each step represents one meaningful
+      beat in the user flow — a screen the user is on, an action they take,
+      and the context they land in next.
+
+      Steps are the connective tissue of a Scenario. Together they form a
+      directed chain: Context → Action → Context → Action → ... Each step
+      pins to exactly one Context (where the user is) and one Action (what
+      they do). The Action's navigates_to relationship points to the next
+      Context, which becomes the occurs_in of the following step.
+
+      How to create a ScenarioStep:
+        1. Set sequence to the step's position in the flow (1, 2, 3, ...).
+        2. Link occurs_in → the Context the user is currently on.
+        3. Link performs → the Action the user takes in that context.
+        4. The Action links navigates_to → the next Context (start of the next step).
+        5. The Context links uses_component → the UIComponents visible and relevant
+           to this step (the button clicked, the form submitted, the table browsed).
+
+      Relationships:
+        - occurs_in → Context (the surface the user is on during this step)
+        - performs → Action (what the user does to advance the scenario)
+
+      Example step 1 of "Intake: Add Client and Open Case":
+        sequence: 1
+        description: "Attorney clicks New Client on the Clients List"
+        occurs_in → Context "Clients List"
+        performs → Action "Click New Client" (type: navigation, navigates_to → "Add Client Modal")
+    properties:
+      sequence:
+        type: number
+        description: "Step order within the scenario — 1, 2, 3, ..."
+      description:
+        type: string
+
+  - name: Service
+    label: Service
+    description: >
+      A business logic service — UserService, AuthService, PaymentService, etc.
+      Encapsulates domain operations and orchestrates data access.
+    properties:
+      struct:
+        type: string
+        description: "Go struct name. E.g. CasesService, AuthService"
+      description:
+        type: string
+
+  - name: Method
+    label: Method
+    description: >
+      A public method on a service — a named operation the service exposes
+      to callers. Captures the signature, return type, and role in the domain.
+    properties:
+      signature:
+        type: string
+        description: "Full Go signature. E.g. Create(ctx context.Context, input CreateCaseInput) (*Case, error)"
+      description:
+        type: string
+
+  - name: DataModel
+    label: Data Model
+    description: >
+      A domain data type, schema definition, or data transfer object shared
+      across the system — Go struct, TypeScript interface, Pydantic model,
+      database table schema, Protobuf message, etc.
+    properties:
+      language_type:
+        type: string
+        description: "Language-specific type name if different from the object name"
+      fields:
+        type: array
+        items: string
+        description: "Key field names"
+      description:
+        type: string
+
+  - name: Database
+    label: Database / Store
+    description: >
+      A persistence or state store — Postgres, MySQL, Redis, SQLite, S3,
+      Zustand store, Pinia store, Redux slice, etc.
+    properties:
+      kind:
+        type: string
+        description: "Type of store. E.g. relational, key-value, document, object-storage, client-state"
+      technology:
+        type: string
+        description: "Specific technology. E.g. postgres, redis, sqlite, zustand"
+      host:
+        type: string
+        description: "Hostname or connection hint for non-local stores"
+      description:
+        type: string
+
+  - name: APIEndpoint
+    label: API Endpoint
+    description: A single HTTP, gRPC, GraphQL, or WebSocket endpoint.
+    properties:
+      method:
+        type: string
+        description: "HTTP method or RPC type. E.g. GET, POST, PUT, DELETE, rpc"
+      path:
+        type: string
+        description: "URL path or RPC method name. E.g. /api/v1/users, GetUser"
+      auth_required:
+        type: boolean
+        description: "Whether authentication is required"
+      min_role:
+        type: string
+        description: "Minimum RBAC role required. E.g. employee, manager, owner, admin"
+      handler:
+        type: string
+        description: "Go function name handling this route. E.g. HandleList, HandleCreate"
+      query_params:
+        type: array
+        items: string
+        description: "Accepted query parameters. E.g. [search, status, limit, offset]"
+      description:
+        type: string
+
+  - name: APIContract
+    label: API Contract
+    description: >
+      A machine-readable API definition grouping multiple endpoints —
+      OpenAPI/Swagger file, Protobuf file, GraphQL schema, etc.
+    properties:
+      format:
+        type: string
+        description: "Specification format. E.g. openapi, protobuf, graphql"
+      version:
+        type: string
+        description: "API version. E.g. v1, v2"
+      base_url:
+        type: string
+        description: "Base URL for the API"
+      description:
+        type: string
+
+  - name: Event
+    label: Event / Message
+    description: >
+      A pub/sub event, message queue message type, WebSocket event name,
+      or domain event — anything asynchronously published and consumed.
+    properties:
+      channel:
+        type: string
+        description: "Queue name, topic, or event channel. E.g. user.created, orders-queue"
+      transport:
+        type: string
+        description: "Transport mechanism. E.g. kafka, rabbitmq, websocket, sns, in-process"
+      description:
+        type: string
+
+  - name: Middleware
+    label: Middleware
+    description: >
+      A request pipeline handler — auth middleware, logging, rate limiting,
+      CORS, tracing, error handling, etc.
+    properties:
+      kind:
+        type: string
+        description: "Category. E.g. auth, logging, rate-limiting, cors, tracing, error-handling"
+      description:
+        type: string
+
+  - name: Job
+    label: Job / Worker
+    description: >
+      A background job, cron task, or queue worker — email sender,
+      report generator, data sync worker, scheduled cleanup, etc.
+    properties:
+      kind:
+        type: string
+        description: "River job kind string — the value returned by Args.Kind(). E.g. timesheet_sync, invoice_sync"
+      schedule:
+        type: string
+        description: "Cron expression or interval for scheduled jobs. E.g. 0 * * * *"
+      description:
+        type: string
+
+  - name: ExternalDependency
+    label: External Dependency
+    description: >
+      A third-party library, SDK, or external service the project depends on —
+      npm package, Go module, Python package, SaaS API, etc.
+    properties:
+      kind:
+        type: string
+        description: "Category. E.g. library, sdk, saas-api, infrastructure"
+      version:
+        type: string
+        description: "Version or version constraint. E.g. ^18.0.0, v1.21"
+      registry:
+        type: string
+        description: "Package registry. E.g. npm, go-modules, pypi, cargo"
+      description:
+        type: string
+
+  - name: ConfigVar
+    label: Config Variable
+    description: >
+      An environment variable, feature flag, or configuration key the app
+      reads at runtime — secrets, URLs, toggles, tuning parameters, etc.
+    properties:
+      key:
+        type: string
+        description: "The variable name. E.g. DATABASE_URL, STRIPE_SECRET_KEY"
+      required:
+        type: boolean
+        description: "Whether the app fails to start without this value"
+      default_value:
+        type: string
+        description: "Default value if not set"
+      secret:
+        type: boolean
+        description: "Whether this holds a secret and should not be logged"
+      description:
+        type: string
+
+  - name: Pattern
+    label: Pattern
+    description: >
+      A recurring implementation pattern observed or mandated in the codebase —
+      repository pattern, command pattern, optimistic UI update, retry with backoff, etc.
+    properties:
+      kind:
+        type: string
+        description: "Category. E.g. architectural, ui, data-access, error-handling, concurrency"
+      scope:
+        type: string
+        description: "Where this pattern applies. E.g. backend, frontend, data-layer, global"
+      usage_guidance:
+        type: string
+        description: "When and how to apply this pattern"
+      description:
+        type: string
+
+  - name: TestSuite
+    label: Test Suite
+    description: >
+      A test file, test group, or spec file covering a component, service,
+      module, or page — unit tests, integration tests, e2e specs, etc.
+    properties:
+      kind:
+        type: string
+        description: "Test category. E.g. unit, integration, e2e, snapshot"
+      framework:
+        type: string
+        description: "Test framework. E.g. jest, vitest, go-test, pytest, xctest"
+      coverage_percent:
+        type: number
+        description: "Approximate code coverage percentage"
+      description:
+        type: string
+
+  - name: SQLQuery
+    label: SQL Query
+    description: >
+      A named SQLC query — a typed database operation generated from a .sql source file.
+      Captures the query name, operation kind, input parameters, and return type so agents
+      can find the right query without reading generated files.
+    properties:
+      operation:
+        type: string
+        description: "Query kind. E.g. select, insert, update, delete"
+      input_params:
+        type: array
+        items: string
+        description: "Input parameter names and types. E.g. [org_id int64, status CaseStatusEnum]"
+      return_type:
+        type: string
+        description: "Return type. SQLC tokens (one, many, exec) or Go types (e.g. Case, []Case, int64)"
+      description:
+        type: string
+
+relationshipTypeSchemas:
+
+  # ── Containment ──────────────────────────────────────────────────────────────
+
+  - name: contains
+    label: Contains
+    description: A parent node contains a child node (App→Module, Module→SourceFile, Scenario→ScenarioStep, UIComponent→UIComponent)
+    sourceType: App
+    targetType: Module
+
+  - name: belongs_to
+    label: Belongs To
+    description: A node belongs to a parent grouping (Scenario→Domain, Module→App, SourceFile→Module, Service→Domain, Job→Domain, APIEndpoint→Domain)
+    sourceType: Scenario
+    targetType: Domain
+
+  - name: belongs_to
+    label: Belongs To
+    description: Service belongs to a domain
+    sourceType: Service
+    targetType: Domain
+
+  - name: belongs_to
+    label: Belongs To
+    description: Job belongs to a domain
+    sourceType: Job
+    targetType: Domain
+
+  - name: belongs_to
+    label: Belongs To
+    description: APIEndpoint belongs to a domain
+    sourceType: APIEndpoint
+    targetType: Domain
+
+  - name: nested_in
+    label: Nested In
+    description: A context is nested inside another context (modal inside screen, panel inside screen)
+    sourceType: Context
+    targetType: Context
+
+  # ── Definition / Implementation ──────────────────────────────────────────────
+
+  - name: defines
+    label: Defines
+    description: A source file defines or implements a node (Service, Job, Middleware, DataModel, Context, UIComponent, Action, TestSuite, APIEndpoint, SQLQuery, APIContract)
+    sourceType: SourceFile
+    targetType: Service
+
+  - name: entry_point_of
+    label: Entry Point Of
+    description: A source file is the main entry point for an app
+    sourceType: SourceFile
+    targetType: App
+
+  # ── Exposure / Routing ───────────────────────────────────────────────────────
+
+  - name: exposes
+    label: Exposes
+    description: A service or module exposes an API endpoint
+    sourceType: Service
+    targetType: APIEndpoint
+
+  - name: handles
+    label: Handles
+    description: A source file contains the handler function for an API endpoint
+    sourceType: SourceFile
+    targetType: APIEndpoint
+
+  - name: grouped_in
+    label: Grouped In
+    description: An endpoint belongs to an API contract
+    sourceType: APIEndpoint
+    targetType: APIContract
+
+  - name: applies_to
+    label: Applies To
+    description: A middleware applies to a route, endpoint, or module
+    sourceType: Middleware
+    targetType: APIEndpoint
+
+  # ── Dependencies ─────────────────────────────────────────────────────────────
+
+  - name: depends_on
+    label: Depends On
+    description: A node depends on another node (App→App, Module→Module, Module→Service, Service→Service, Service→Module)
+    sourceType: App
+    targetType: App
+
+  - name: uses
+    label: Uses
+    description: A node uses another node (App/Module/Service→ExternalDependency, App/Module→Middleware, Context/Action/UIComponent→Service, Context/Action/UIComponent→APIEndpoint, Context/Action/UIComponent→DataModel)
+    sourceType: App
+    targetType: ExternalDependency
+
+  - name: configured_by
+    label: Configured By
+    description: A node reads a config variable at runtime (App, Module, or Service → ConfigVar)
+    sourceType: App
+    targetType: ConfigVar
+
+  # ── Data ─────────────────────────────────────────────────────────────────────
+
+  - name: reads_from
+    label: Reads From
+    description: A service or job reads data from a database or store
+    sourceType: Service
+    targetType: Database
+
+  - name: writes_to
+    label: Writes To
+    description: A service or job writes data to a database or store
+    sourceType: Service
+    targetType: Database
+
+  - name: stores
+    label: Stores
+    description: A database or store persists a data model
+    sourceType: Database
+    targetType: DataModel
+
+  - name: provides
+    label: Provides
+    description: A service or module owns and defines a data model
+    sourceType: Service
+    targetType: DataModel
+
+  - name: implements
+    label: Implements
+    description: A service or job uses a specific SQLC query to access the database
+    sourceType: Service
+    targetType: SQLQuery
+
+  # ── Scenario / Actor layer ───────────────────────────────────────────────────
+
+  - name: executed_by
+    label: Executed By
+    description: A scenario is executed by an actor
+    sourceType: Scenario
+    targetType: Actor
+
+  - name: has
+    label: Has
+    description: A parent node directly owns a child node (Scenario→ScenarioStep, Service→Method)
+    sourceType: Scenario
+    targetType: ScenarioStep
+
+  - name: variant_of
+    label: Variant Of
+    description: A scenario is an alternative path of another scenario
+    sourceType: Scenario
+    targetType: Scenario
+
+  - name: occurs_in
+    label: Occurs In
+    description: A scenario step takes place within a specific context
+    sourceType: ScenarioStep
+    targetType: Context
+
+  - name: performs
+    label: Performs
+    description: A scenario step performs a specific action
+    sourceType: ScenarioStep
+    targetType: Action
+
+  - name: inherits_from
+    label: Inherits From
+    description: An actor inherits permissions and capabilities from another actor
+    sourceType: Actor
+    targetType: Actor
+
+  - name: navigates_to
+    label: Navigates To
+    description: An action navigates to a target context
+    sourceType: Action
+    targetType: Context
+
+  - name: available_in
+    label: Available In
+    description: An action is available within a context
+    sourceType: Action
+    targetType: Context
+
+  # ── Events ───────────────────────────────────────────────────────────────────
+
+  - name: publishes
+    label: Publishes
+    description: A service, action, or job emits an event or message
+    sourceType: Service
+    targetType: Event
+
+  - name: subscribes_to
+    label: Subscribes To
+    description: A service, action, or job consumes an event or message
+    sourceType: Service
+    targetType: Event
+
+  # ── Jobs ─────────────────────────────────────────────────────────────────────
+
+  - name: triggers
+    label: Triggers
+    description: A service, action, or job enqueues or schedules a background job
+    sourceType: Service
+    targetType: Job
+
+  # ── Patterns & tests ─────────────────────────────────────────────────────────
+
+  - name: follows
+    label: Follows
+    description: A node follows a named architectural or implementation pattern
+    sourceType: Module
+    targetType: Pattern
+
+  - name: extends
+    label: Extends
+    description: One pattern builds upon or specializes another
+    sourceType: Pattern
+    targetType: Pattern
+
+  - name: exemplifies
+    label: Exemplifies
+    description: A source file is a canonical positive example of a pattern
+    sourceType: SourceFile
+    targetType: Pattern
+
+  - name: counter_exemplifies
+    label: Counter-Exemplifies
+    description: A source file is a canonical example of what NOT to do for a pattern
+    sourceType: SourceFile
+    targetType: Pattern
+
+  - name: tested_by
+    label: Tested By
+    description: A handler endpoint is covered by a test suite
+    sourceType: APIEndpoint
+    targetType: TestSuite
+
+  - name: tested_by
+    label: Tested By
+    description: A service is covered by a test suite
+    sourceType: Service
+    targetType: TestSuite
+
+  - name: tested_by
+    label: Tested By
+    description: A background job is covered by a test suite
+    sourceType: Job
+    targetType: TestSuite
+
+  - name: tested_by
+    label: Tested By
+    description: A UI component is covered by a test suite
+    sourceType: UIComponent
+    targetType: TestSuite
+
+  - name: tested_by
+    label: Tested By
+    description: A SQL query is covered by a test suite
+    sourceType: SQLQuery
+    targetType: TestSuite
+
+  - name: tested_by
+    label: Tested By
+    description: A service method is covered by a test suite
+    sourceType: ServiceMethod
+    targetType: TestSuite

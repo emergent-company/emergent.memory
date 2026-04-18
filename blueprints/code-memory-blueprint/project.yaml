@@ -1,0 +1,8 @@
+projectInfo: |
+  # Code Memory Blueprint
+
+  A general-purpose Emergent schema for mapping the structural and architectural
+  layer of any software project — what the code is, not the workflow of building it.
+  24 object types and 36 relationship types covering apps, modules, source files,
+  UI surfaces, backend services, data models, APIs, events, jobs, and tests.
+  Language-agnostic: works for Go, TypeScript, Python, Swift, Rust, and any other stack.

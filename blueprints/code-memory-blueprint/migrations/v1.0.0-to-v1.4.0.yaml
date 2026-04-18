@@ -1,0 +1,98 @@
+# Migration: v1.0.0 → v1.4.0
+# Relationship type renames — clean verb names, no type names embedded.
+# Also collapses many narrow single-type relationships into broader ones.
+#
+# Live data impact: existing edges with the old relationship type names
+# must be renamed to the new names. Object types and properties are unchanged.
+
+from: 1.0.0
+to: 1.4.0
+
+relationshipTypeSchemas:
+
+  rename:
+    # Narrow defines_* collapsed into a single polymorphic `defines`
+    - old: defines_context
+      new: defines
+    - old: defines_component
+      new: defines
+    - old: defines_service
+      new: defines
+    - old: defines_model
+      new: defines
+    - old: defines_action
+      new: defines
+    - old: defines_middleware
+      new: defines
+    - old: defines_job
+      new: defines
+    - old: defines_test_suite
+      new: defines
+    - old: defines_interface
+      new: defines
+
+    # Narrow contains_* collapsed into a single polymorphic `contains`
+    - old: contains_module
+      new: contains
+    - old: contains_file
+      new: contains
+    - old: contains_context
+      new: contains
+    - old: contains_component
+      new: contains
+    - old: contains_action
+      new: contains
+    - old: contains_service
+      new: contains
+
+    # Verb-only renames (type name removed from relationship name)
+    - old: exposes_endpoint
+      new: exposes
+    - old: handles_route
+      new: handles
+    - old: provides_model
+      new: provides
+    - old: implements_query
+      new: implements
+    - old: has_step
+      new: has
+    - old: follows_pattern
+      new: follows
+    - old: extends_pattern
+      new: extends
+    - old: stores_model
+      new: stores
+    - old: publishes_event
+      new: publishes
+    - old: triggers_job
+      new: triggers
+    - old: uses_pattern
+      new: follows
+
+    # Collapsed multi-purpose `uses_*` into a single `uses`
+    - old: uses_dependency
+      new: uses
+    - old: uses_middleware
+      new: uses
+    - old: uses_component
+      new: uses
+    - old: uses_service
+      new: uses
+    - old: calls_endpoint
+      new: uses
+    - old: consumes_model
+      new: uses
+    - old: calls_service
+      new: depends_on
+
+    # App-level depends_on_app collapsed into generic depends_on
+    - old: depends_on_app
+      new: depends_on
+
+  add: []
+  remove: []
+
+objectTypeSchemas:
+  add: []
+  remove: []
+  properties: []

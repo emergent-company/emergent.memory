@@ -1,0 +1,55 @@
+# Migration: v1.5.0 → v1.6.0
+# Additive-only: new properties added to existing object types.
+# No renames, no removals, no relationship changes.
+# Also adds SQLQuery as a new first-class object type.
+#
+# Live data impact:
+#   - No destructive changes. Existing objects are valid as-is.
+#   - APIEndpoint objects that have a min_role value in their live data
+#     but were missing the property definition are now formally covered.
+
+from: 1.5.0
+to: 1.6.0
+
+objectTypeSchemas:
+
+  add:
+    - name: SQLQuery
+      description: >
+        Added as a first-class object type. Represents a named typed database
+        query (SQLC or equivalent). Previously the query name/path was stored
+        as a string property on Service. Now it is a node linked via
+        Service --implements→ SQLQuery and SourceFile --defines→ SQLQuery.
+
+  remove: []
+
+  properties:
+
+    # APIEndpoint.min_role — was present on all live objects but missing from schema
+    - objectType: APIEndpoint
+      add:
+        - name: min_role
+          type: string
+          description: >
+            Minimum RBAC role required to call this endpoint.
+            E.g. employee, manager, owner, admin.
+            Was already present on live objects; now formally defined in schema.
+
+    # SQLQuery.return_type description clarified — SQLC tokens are the actual values
+    - objectType: SQLQuery
+      update:
+        - name: return_type
+          description: >
+            Return type. SQLC annotation tokens (one, many, exec) reflect how
+            the query was defined in the .sql file. May also be a Go type
+            (e.g. Case, []Case, int64) when the SQLC token is ambiguous.
+
+relationshipTypeSchemas:
+  add:
+    - name: implements
+      description: >
+        A service or job uses a specific SQLQuery to access the database.
+        Replaces the former pattern of storing query names as string properties
+        on Service objects.
+  rename: []
+  remove: []

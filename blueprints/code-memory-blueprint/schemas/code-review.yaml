@@ -1,0 +1,119 @@
+name: code-review
+version: 1.0.0
+description: >
+  Schema for tracking Pull Requests and Review Comments in the Memory knowledge graph.
+  Used to audit code changes against requirements and track the resolution of
+  feedback during the development lifecycle.
+
+objectTypeSchemas:
+
+  - name: PullRequest
+    label: Pull Request
+    description: A GitHub Pull Request representing a set of changes to the codebase.
+    properties:
+      number:
+        type: number
+        description: "GitHub PR number"
+      title:
+        type: string
+        description: "PR title"
+      state:
+        type: string
+        description: "PR state: open, merged, closed"
+      head_branch:
+        type: string
+        description: "Feature branch name"
+      base_branch:
+        type: string
+        description: "Target branch name"
+      url:
+        type: string
+        description: "GitHub PR URL"
+      description:
+        type: string
+        description: "One-line summary"
+
+  - name: ReviewComment
+    label: Review Comment
+    description: A comment or thread on a Pull Request.
+    properties:
+      github_id:
+        type: string
+        description: "GitHub thread node ID (used for idempotent upserts)"
+      author:
+        type: string
+        description: "Reviewer login"
+      body:
+        type: string
+        description: "Comment text (truncated to 500 chars)"
+      path:
+        type: string
+        description: "File path the comment references"
+      line:
+        type: number
+        description: "Line number (null if not line-specific)"
+      severity:
+        type: string
+        description: "Comment severity: critical, high, medium, low, info"
+      status:
+        type: string
+        description: "Comment status: open, resolved, outdated, wont_fix"
+      description:
+        type: string
+        description: "One-line human summary"
+
+relationshipTypeSchemas:
+
+  - name: delivers
+    label: Delivers
+    description: PR implements a planned scenario
+    sourceType: PullRequest
+    targetType: Scenario
+
+  - name: has
+    label: Has
+    description: PR owns its review threads
+    sourceType: PullRequest
+    targetType: ReviewComment
+
+  - name: concerns
+    label: Concerns
+    description: Comment targets this file
+    sourceType: ReviewComment
+    targetType: SourceFile
+
+  - name: concerns
+    label: Concerns
+    description: Comment targets code in this service
+    sourceType: ReviewComment
+    targetType: Service
+
+  - name: concerns
+    label: Concerns
+    description: Comment targets this UI component
+    sourceType: ReviewComment
+    targetType: UIComponent
+
+  - name: concerns
+    label: Concerns
+    description: Comment targets this endpoint
+    sourceType: ReviewComment
+    targetType: APIEndpoint
+
+  - name: concerns
+    label: Concerns
+    description: Comment targets this SQL query
+    sourceType: ReviewComment
+    targetType: SQLQuery
+
+  - name: concerns
+    label: Concerns
+    description: Comment targets this job
+    sourceType: ReviewComment
+    targetType: Job
+
+  - name: resolves
+    label: Resolves
+    description: This PR resolved this comment
+    sourceType: PullRequest
+    targetType: ReviewComment

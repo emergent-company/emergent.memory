@@ -1,0 +1,197 @@
+name: work-items
+version: 1.0.0
+description: >
+  Schema for tracking BugReports and FeatureRequests in the Memory knowledge graph.
+  Work items are sourced from external systems (GitHub, Jira, Slack, etc.) or created
+  manually. They link to PullRequests and Scenarios to provide full traceability from
+  problem/request through to implementation.
+
+objectTypeSchemas:
+
+  - name: BugReport
+    label: Bug Report
+    description: A reported defect or unexpected behaviour in the system.
+    properties:
+      title:
+        type: string
+        description: "Summary of the bug"
+      description:
+        type: string
+        description: "Full description (truncated to 1000 chars)"
+      severity:
+        type: string
+        description: "Bug severity: critical, high, medium, low"
+      status:
+        type: string
+        description: "Current status: open, in_progress, resolved, wont_fix"
+      source:
+        type: string
+        description: "Origin system: github, jira, slack, manual"
+      source_id:
+        type: string
+        description: "ID in the source system (e.g. '42')"
+      source_url:
+        type: string
+        description: "URL to the item in the source system"
+      assignee:
+        type: string
+        description: "Assignee login or name"
+
+  - name: FeatureRequest
+    label: Feature Request
+    description: A requested new capability or enhancement to the system.
+    properties:
+      title:
+        type: string
+        description: "Summary of the feature request"
+      description:
+        type: string
+        description: "Full description (truncated to 1000 chars)"
+      priority:
+        type: string
+        description: "Request priority: critical, high, medium, low"
+      status:
+        type: string
+        description: "Current status: open, in_progress, planned, delivered, wont_do"
+      source:
+        type: string
+        description: "Origin system: github, jira, slack, manual"
+      source_id:
+        type: string
+        description: "ID in the source system (e.g. '15')"
+      source_url:
+        type: string
+        description: "URL to the item in the source system"
+      assignee:
+        type: string
+        description: "Assignee login or name"
+
+relationshipTypeSchemas:
+
+  - name: fixes
+    label: Fixes
+    description: This PR fixes the referenced bug
+    sourceType: PullRequest
+    targetType: BugReport
+
+  - name: implements
+    label: Implements
+    description: This PR implements the referenced feature request
+    sourceType: PullRequest
+    targetType: FeatureRequest
+
+  - name: spawned_by
+    label: Spawned By
+    description: This PR was created in response to a bug report
+    sourceType: PullRequest
+    targetType: BugReport
+
+  - name: spawned_by
+    label: Spawned By
+    description: This PR was created in response to a feature request
+    sourceType: PullRequest
+    targetType: FeatureRequest
+
+  - name: addresses
+    label: Addresses
+    description: This scenario addresses the referenced bug
+    sourceType: Scenario
+    targetType: BugReport
+
+  - name: addresses
+    label: Addresses
+    description: This scenario addresses the referenced feature request
+    sourceType: Scenario
+    targetType: FeatureRequest
+
+  - name: affects
+    label: Affects
+    description: This bug affects the referenced component
+    sourceType: BugReport
+    targetType: Service
+
+  - name: affects
+    label: Affects
+    sourceType: BugReport
+    targetType: APIEndpoint
+
+  - name: affects
+    label: Affects
+    sourceType: BugReport
+    targetType: UIComponent
+
+  - name: affects
+    label: Affects
+    sourceType: BugReport
+    targetType: SourceFile
+
+  - name: affects
+    label: Affects
+    sourceType: BugReport
+    targetType: SQLQuery
+
+  - name: affects
+    label: Affects
+    sourceType: BugReport
+    targetType: Job
+
+  - name: affects
+    label: Affects
+    sourceType: BugReport
+    targetType: Module
+
+  - name: affects
+    label: Affects
+    sourceType: BugReport
+    targetType: DataModel
+
+  - name: affects
+    label: Affects
+    sourceType: BugReport
+    targetType: Method
+
+  - name: affects
+    label: Affects
+    description: This feature request affects the referenced component
+    sourceType: FeatureRequest
+    targetType: Service
+
+  - name: affects
+    label: Affects
+    sourceType: FeatureRequest
+    targetType: APIEndpoint
+
+  - name: affects
+    label: Affects
+    sourceType: FeatureRequest
+    targetType: UIComponent
+
+  - name: affects
+    label: Affects
+    sourceType: FeatureRequest
+    targetType: SourceFile
+
+  - name: affects
+    label: Affects
+    sourceType: FeatureRequest
+    targetType: SQLQuery
+
+  - name: affects
+    label: Affects
+    sourceType: FeatureRequest
+    targetType: Job
+
+  - name: affects
+    label: Affects
+    sourceType: FeatureRequest
+    targetType: Module
+
+  - name: affects
+    label: Affects
+    sourceType: FeatureRequest
+    targetType: DataModel
+
+  - name: affects
+    label: Affects
+    sourceType: FeatureRequest
+    targetType: Method
