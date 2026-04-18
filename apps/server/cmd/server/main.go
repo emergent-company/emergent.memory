@@ -1,7 +1,7 @@
 // Package main provides the entry point for the Memory API server
 //
 // @title Memory API
-// @version 0.35.187
+// @version 0.35.188
 // @description Memory Knowledge Base API - AI-powered knowledge management system
 // @contact.name Memory Team
 // @contact.url https://emergent-company.ai
