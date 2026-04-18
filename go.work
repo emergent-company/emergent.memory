@@ -3,6 +3,7 @@ go 1.25.6
 use (
 	./apps/server
 	./apps/server/pkg/sdk
+	./blueprints/code-memory-blueprint/tools/graph-sync
 	./tools/cli
 	./tools/opencode-test-suite
 )
