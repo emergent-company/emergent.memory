@@ -259,8 +259,15 @@ definitions:
         type: string
       maxSteps:
         type: integer
+      model:
+        description: Model used for this run (resolved at execution time)
+        type: string
       parentRunId:
         description: Multi-agent coordination fields
+        type: string
+      provider:
+        description: Provider identifies the LLM provider used (e.g. "google", "google-vertex",
+          "openai-compatible").
         type: string
       resumedFrom:
         type: string
@@ -286,6 +293,15 @@ definitions:
       traceId:
         description: Observability linkage
         type: string
+      triggerMetadata:
+        additionalProperties: {}
+        description: TriggerMetadata is the structured metadata passed at trigger
+          time (e.g. title, context).
+        type: object
+      workspace:
+        allOf:
+        - $ref: '#/definitions/domain_agents.RunWorkspaceDTO'
+        description: Workspace/sandbox details for this run (when applicable).
     type: object
   domain_agents.AgentRunStatus:
     enum:
@@ -296,8 +312,11 @@ definitions:
     - error
     - paused
     - cancelled
+    - cancelling
     type: string
     x-enum-comments:
+      RunStatusCancelling: 'ACP two-step cancel: intent acknowledged, awaiting execution
+        stop'
       RunStatusQueued: enqueued, waiting for a worker
     x-enum-descriptions:
     - enqueued, waiting for a worker
@@ -307,6 +326,7 @@ definitions:
     - ""
     - ""
     - ""
+    - 'ACP two-step cancel: intent acknowledged, awaiting execution stop'
     x-enum-varnames:
     - RunStatusQueued
     - RunStatusRunning
@@ -315,6 +335,7 @@ definitions:
     - RunStatusError
     - RunStatusPaused
     - RunStatusCancelled
+    - RunStatusCancelling
   domain_agents.AgentTriggerType:
     enum:
     - schedule
@@ -468,10 +489,28 @@ definitions:
     properties:
       estimatedCostUsd:
         type: number
+      model:
+        type: string
+      provider:
+        description: |-
+          Provider and Model identify the LLM used. Format: "<provider>/<model>",
+          e.g. "google/gemini-2.0-flash". Empty when unknown.
+        type: string
       totalInputTokens:
         type: integer
       totalOutputTokens:
         type: integer
+    type: object
+  domain_agents.RunWorkspaceDTO:
+    properties:
+      baseImage:
+        type: string
+      containerId:
+        type: string
+      imageDigest:
+        type: string
+      provider:
+        type: string
     type: object
   domain_agents.SessionStatus:
     enum:
@@ -1831,6 +1870,63 @@ definitions:
       success:
         type: integer
     type: object
+  domain_graph.BulkUpdateObjectItem:
+    properties:
+      branch_id:
+        type: string
+      id:
+        type: string
+      key:
+        type: string
+      labels:
+        items:
+          type: string
+        type: array
+      properties:
+        additionalProperties: {}
+        type: object
+      replaceLabels:
+        type: boolean
+      status:
+        type: string
+    required:
+    - id
+    type: object
+  domain_graph.BulkUpdateObjectResult:
+    properties:
+      error:
+        type: string
+      id:
+        type: string
+      index:
+        type: integer
+      object:
+        $ref: '#/definitions/domain_graph.GraphObjectResponse'
+      success:
+        type: boolean
+    type: object
+  domain_graph.BulkUpdateObjectsRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/domain_graph.BulkUpdateObjectItem'
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - items
+    type: object
+  domain_graph.BulkUpdateObjectsResponse:
+    properties:
+      failed:
+        type: integer
+      results:
+        items:
+          $ref: '#/definitions/domain_graph.BulkUpdateObjectResult'
+        type: array
+      success:
+        type: integer
+    type: object
   domain_graph.BulkUpdateStatusRequest:
     properties:
       ids:
@@ -1884,6 +1980,14 @@ definitions:
       type:
         maxLength: 64
         type: string
+      upsert:
+        description: |-
+          Upsert enables idempotent create-or-skip semantics: if a relationship with the
+          same (type, src_id, dst_id) already exists (and is not deleted), it is returned
+          as-is without modification. If the relationship was previously deleted, it is
+          restored. If properties differ, a new version is created.
+          Dedup key: (project_id, branch_id, type, src_id, dst_id).
+        type: boolean
       weight:
         type: number
     required:
@@ -1949,6 +2053,36 @@ definitions:
     required:
     - direction
     - maxDepth
+    type: object
+  domain_graph.ForkBranchRequest:
+    properties:
+      description:
+        type: string
+      filter_types:
+        description: If set, only copy objects of these types
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  domain_graph.ForkBranchResponse:
+    properties:
+      branch_id:
+        type: string
+      branch_name:
+        type: string
+      copied_objects:
+        type: integer
+      copied_relationships:
+        type: integer
+      skipped_relationships:
+        description: Relationships where one end was filtered out
+        type: integer
+      source_branch_id:
+        type: string
     type: object
   domain_graph.GraphExpandProjection:
     properties:
@@ -2507,6 +2641,26 @@ definitions:
       total:
         type: integer
     type: object
+  domain_graph.ValidateObjectRequest:
+    properties:
+      properties:
+        additionalProperties: {}
+        type: object
+      type:
+        type: string
+    type: object
+  domain_graph.ValidateObjectResponse:
+    properties:
+      coercedProperties:
+        additionalProperties: {}
+        type: object
+      errors:
+        items:
+          type: string
+        type: array
+      valid:
+        type: boolean
+    type: object
   domain_graph.VectorSearchRequest:
     properties:
       branchId:
@@ -2888,6 +3042,19 @@ definitions:
       message:
         type: string
     type: object
+  domain_mcp.MCPSnippets:
+    properties:
+      claudeCode:
+        type: string
+      claudeDesktop:
+        type: string
+      cloudCode:
+        type: string
+      cursor:
+        type: string
+      installUrl:
+        type: string
+    type: object
   domain_mcp.Request:
     properties:
       id:
@@ -2915,6 +3082,36 @@ definitions:
       jsonrpc:
         type: string
       result: {}
+    type: object
+  domain_mcp.ShareMCPAccessRequest:
+    properties:
+      emails:
+        description: Emails is an optional list of email addresses to send the MCP
+          invite to.
+        items:
+          type: string
+        type: array
+      name:
+        description: |-
+          Name is an optional display name for the generated token.
+          Defaults to "MCP Read-Only Share — <YYYY-MM-DD>".
+        type: string
+    type: object
+  domain_mcp.ShareMCPAccessResponse:
+    properties:
+      mcpUrl:
+        description: MCPURL is the fully-qualified MCP server endpoint URL.
+        type: string
+      projectId:
+        description: ProjectID is the project this token is scoped to.
+        type: string
+      snippets:
+        allOf:
+        - $ref: '#/definitions/domain_mcp.MCPSnippets'
+        description: Snippets contains ready-to-paste agent config blocks.
+      token:
+        description: Token is the raw API token value — returned only once.
+        type: string
     type: object
   domain_mcpregistry.APIResponse-array_domain_mcpregistry_MCPServerDTO:
     properties:
@@ -3623,6 +3820,8 @@ definitions:
     type: object
   domain_provider.ProjectProviderConfigResponse:
     properties:
+      baseUrl:
+        type: string
       createdAt:
         type: string
       embeddingModel:
@@ -3644,6 +3843,8 @@ definitions:
     type: object
   domain_provider.ProviderConfigResponse:
     properties:
+      baseUrl:
+        type: string
       createdAt:
         type: string
       embeddingModel:
@@ -3682,10 +3883,12 @@ definitions:
     enum:
     - google
     - google-vertex
+    - openai-compatible
     type: string
     x-enum-varnames:
     - ProviderGoogleAI
     - ProviderVertexAI
+    - ProviderOpenAICompatible
   domain_provider.TestProviderResponse:
     properties:
       latencyMs:
@@ -3700,6 +3903,8 @@ definitions:
   domain_provider.UpsertProviderConfigRequest:
     properties:
       apiKey:
+        type: string
+      baseUrl:
         type: string
       embeddingModel:
         type: string
@@ -4790,6 +4995,21 @@ definitions:
       shadowed:
         type: boolean
     type: object
+  domain_schemas.ObjectValidationResult:
+    properties:
+      entity_id:
+        type: string
+      issues:
+        items:
+          type: string
+        type: array
+      key:
+        type: string
+      schema_version:
+        type: string
+      type:
+        type: string
+    type: object
   domain_schemas.PropertyConflict:
     properties:
       existing_def:
@@ -5094,6 +5314,19 @@ definitions:
         type: array
       version:
         type: string
+    type: object
+  domain_schemas.ValidateObjectsResponse:
+    properties:
+      project_id:
+        type: string
+      results:
+        items:
+          $ref: '#/definitions/domain_schemas.ObjectValidationResult'
+        type: array
+      stale_objects:
+        type: integer
+      total_objects:
+        type: integer
     type: object
   domain_search.PreFusionCounts:
     properties:
@@ -6179,6 +6412,10 @@ definitions:
         type: boolean
       enabled:
         type: boolean
+      env_vars:
+        additionalProperties:
+          type: string
+        type: object
       provider:
         description: 'Explicit provider: "firecracker", "gvisor", "e2b", or "" (auto)'
         type: string
@@ -6263,8 +6500,24 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.35.100
+  version: 0.35.177
 paths:
+  /.well-known/oauth-protected-resource:
+    get:
+      description: Returns OAuth 2.0 Protected Resource Metadata per RFC 9728. Signals
+        that the MCP server accepts bearer token authentication without an OAuth authorization
+        flow.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Protected resource metadata
+          schema:
+            additionalProperties: true
+            type: object
+      summary: OAuth Protected Resource Metadata
+      tags:
+      - mcp
   /api/admin/agent-definitions/{id}/sandbox-config:
     get:
       consumes:
@@ -9076,6 +9329,57 @@ paths:
       summary: Update branch
       tags:
       - branches
+  /api/graph/branches/{id}/fork:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new branch and copies HEAD objects/relationships from
+        the source branch
+      parameters:
+      - description: Source branch ID (UUID or 'main' for the main graph)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fork configuration
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.ForkBranchRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Fork result
+          schema:
+            $ref: '#/definitions/domain_graph.ForkBranchResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Source branch not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Branch name already exists
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Fork a branch
+      tags:
+      - graph
   /api/graph/branches/{targetBranchId}/merge:
     post:
       consumes:
@@ -9899,6 +10203,44 @@ paths:
       summary: Bulk create objects
       tags:
       - graph
+  /api/graph/objects/bulk-update:
+    post:
+      consumes:
+      - application/json
+      description: Update multiple graph objects in a single request with partial
+        success semantics
+      parameters:
+      - description: Objects to update (max 100)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.BulkUpdateObjectsRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Update results
+          schema:
+            $ref: '#/definitions/domain_graph.BulkUpdateObjectsResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Bulk update objects
+      tags:
+      - graph
   /api/graph/objects/bulk-update-status:
     post:
       consumes:
@@ -10266,6 +10608,44 @@ paths:
       summary: Upsert graph object
       tags:
       - graph
+  /api/graph/objects/validate:
+    post:
+      consumes:
+      - application/json
+      description: Validates an object's type and properties against the project schema
+        without persisting anything. Returns coerced properties on success.
+      parameters:
+      - description: Object type and properties to validate
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.ValidateObjectRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_graph.ValidateObjectResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Validate graph object properties
+      tags:
+      - graph
   /api/graph/objects/vector-search:
     post:
       consumes:
@@ -10347,7 +10727,8 @@ paths:
       - graph
   /api/graph/relationships/{id}:
     delete:
-      description: Soft-delete a relationship (sets deleted_at timestamp)
+      description: Soft-delete a relationship (sets deleted_at timestamp). Pass branch_id
+        to scope the deletion to a specific branch.
       parameters:
       - description: Relationship ID (UUID)
         in: path
@@ -10358,6 +10739,10 @@ paths:
         in: header
         name: X-Project-ID
         required: true
+        type: string
+      - description: Branch ID to scope deletion to (omit for main branch)
+        in: query
+        name: branch_id
         type: string
       produces:
       - application/json
@@ -10644,6 +11029,52 @@ paths:
       security:
       - bearerAuth: []
       summary: List graph relationships
+      tags:
+      - graph
+  /api/graph/relationships/upsert:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Idempotent create-or-skip for relationships. Dedup key: (type, src_id, dst_id).
+        - If no relationship with the same (type, src_id, dst_id) exists, one is created (HTTP 201).
+        - If an identical relationship already exists (same properties), it is returned as-is (HTTP 200).
+        - If the relationship exists but was deleted, it is restored (HTTP 200).
+        - If properties differ, a new version is created (HTTP 200).
+      parameters:
+      - description: Relationship data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.CreateGraphRelationshipRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Relationship already existed (returned as-is or updated)
+          schema:
+            $ref: '#/definitions/domain_graph.GraphRelationshipResponse'
+        "201":
+          description: Relationship was newly created
+          schema:
+            $ref: '#/definitions/domain_graph.GraphRelationshipResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Upsert graph relationship
       tags:
       - graph
   /api/graph/search:
@@ -11312,6 +11743,63 @@ paths:
       summary: List pending invitations
       tags:
       - invites
+  /api/mcp/bundle:
+    get:
+      description: Downloads a .mcpb Claude Desktop bundle for the given read-only
+        API token. No login required — the token is the credential. Double-clicking
+        the downloaded file installs the MCP server in Claude Desktop with the project
+        already configured.
+      parameters:
+      - description: Read-only MCP API token (emt_*)
+        in: query
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/zip
+      responses:
+        "200":
+          description: Binary .mcpb file download
+        "400":
+          description: Missing token parameter
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Invalid or expired token
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Download project MCP bundle (public)
+      tags:
+      - mcp
+  /api/mcp/install:
+    get:
+      description: Redirects to the claude://install-mcp deep link for one-click Claude
+        Desktop MCP server installation. No authentication required.
+      parameters:
+      - description: MCP server URL
+        in: query
+        name: url
+        required: true
+        type: string
+      - description: 'Server name (default: memory)'
+        in: query
+        name: name
+        type: string
+      - description: API key — when present, installs via npx mcp-remote with auth
+          header
+        in: query
+        name: token
+        type: string
+      responses:
+        "302":
+          description: Redirect to claude://install-mcp deep link
+        "400":
+          description: Missing url parameter
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Claude Desktop install redirect
+      tags:
+      - mcp
   /api/mcp/rpc:
     post:
       consumes:
@@ -12500,6 +12988,81 @@ paths:
       summary: List project invitations
       tags:
       - invites
+  /api/projects/{projectId}/mcp/bundle:
+    get:
+      description: Generates a .mcpb file for one-click Claude Desktop installation.
+        The bundle includes a project-specific MCP server configuration with a pre-issued
+        read-only API key. Double-clicking the file installs the MCP server in Claude
+        Desktop.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/zip
+      responses:
+        "200":
+          description: Binary .mcpb file download
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden — project admin required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Generate Claude Desktop MCP bundle
+      tags:
+      - mcp
+  /api/projects/{projectId}/mcp/share:
+    post:
+      consumes:
+      - application/json
+      description: Generates a read-only MCP API token for a project and optionally
+        sends invite emails with agent setup instructions.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Share request (name and optional email list)
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/domain_mcp.ShareMCPAccessRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Token and agent config snippets
+          schema:
+            $ref: '#/definitions/domain_mcp.ShareMCPAccessResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden — project admin required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Invalid email address
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Share read-only MCP access
+      tags:
+      - mcp
   /api/projects/{projectId}/skills:
     get:
       description: List all skills available to agents in the project (global + org
@@ -13786,6 +14349,42 @@ paths:
       security:
       - bearerAuth: []
       summary: Get migration job status
+      tags:
+      - schemas
+  /api/schemas/projects/{projectId}/validate:
+    get:
+      consumes:
+      - application/json
+      description: Scans all graph objects in a project against the current compiled
+        schema and reports which objects have drifted (stale schema_version).
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Validation result
+          schema:
+            $ref: '#/definitions/domain_schemas.ValidateObjectsResponse'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Validate graph objects
       tags:
       - schemas
   /api/skills:
@@ -16746,6 +17345,40 @@ paths:
       summary: Get a run by ID (global)
       tags:
       - agents
+  /api/v1/runs/{runId}/logs:
+    get:
+      description: Returns the merged message + tool-call log for a run as an SSE
+        stream or plain text.
+      parameters:
+      - description: Run ID (UUID)
+        in: path
+        name: runId
+        required: true
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream of log entries
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Run not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Stream run logs
+      tags:
+      - agents
   /api/v1/settings/github:
     delete:
       produces:
@@ -17898,6 +18531,29 @@ paths:
       summary: Get user access tree
       tags:
       - user-access
+  /v1/models:
+    get:
+      parameters:
+      - description: Filter by model type (embedding or generative)
+        in: query
+        name: type
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain_provider.ProviderSupportedModel'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: List all available LLM models
+      tags:
+      - providers
 schemes:
 - http
 - https

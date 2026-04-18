@@ -22,6 +22,27 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/.well-known/oauth-protected-resource": {
+            "get": {
+                "description": "Returns OAuth 2.0 Protected Resource Metadata per RFC 9728. Signals that the MCP server accepts bearer token authentication without an OAuth authorization flow.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "OAuth Protected Resource Metadata",
+                "responses": {
+                    "200": {
+                        "description": "Protected resource metadata",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/admin/agent-definitions/{id}/sandbox-config": {
             "get": {
                 "security": [
@@ -4337,6 +4358,83 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/graph/branches/{id}/fork": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates a new branch and copies HEAD objects/relationships from the source branch",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Fork a branch",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source branch ID (UUID or 'main' for the main graph)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fork configuration",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ForkBranchRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Fork result",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ForkBranchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Source branch not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Branch name already exists",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/graph/branches/{targetBranchId}/merge": {
             "post": {
                 "security": [
@@ -5011,6 +5109,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/graph/objects/bulk-update": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Update multiple graph objects in a single request with partial success semantics",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Bulk update objects",
+                "parameters": [
+                    {
+                        "description": "Objects to update (max 100)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.BulkUpdateObjectsRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Update results",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.BulkUpdateObjectsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/graph/objects/bulk-update-status": {
             "post": {
                 "security": [
@@ -5551,6 +5707,64 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid request (key is required)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/graph/objects/validate": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Validates an object's type and properties against the project schema without persisting anything. Returns coerced properties on success.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Validate graph object properties",
+                "parameters": [
+                    {
+                        "description": "Object type and properties to validate",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ValidateObjectRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ValidateObjectResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -6412,6 +6626,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/graph/relationships/upsert": {
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Idempotent create-or-skip for relationships. Dedup key: (type, src_id, dst_id).\n- If no relationship with the same (type, src_id, dst_id) exists, one is created (HTTP 201).\n- If an identical relationship already exists (same properties), it is returned as-is (HTTP 200).\n- If the relationship exists but was deleted, it is restored (HTTP 200).\n- If properties differ, a new version is created (HTTP 200).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Upsert graph relationship",
+                "parameters": [
+                    {
+                        "description": "Relationship data",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.CreateGraphRelationshipRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Relationship already existed (returned as-is or updated)",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
+                        }
+                    },
+                    "201": {
+                        "description": "Relationship was newly created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.GraphRelationshipResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/graph/relationships/{id}": {
             "get": {
                 "security": [
@@ -6476,7 +6754,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Soft-delete a relationship (sets deleted_at timestamp)",
+                "description": "Soft-delete a relationship (sets deleted_at timestamp). Pass branch_id to scope the deletion to a specific branch.",
                 "produces": [
                     "application/json"
                 ],
@@ -6498,6 +6776,12 @@ const docTemplate = `{
                         "name": "X-Project-ID",
                         "in": "header",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Branch ID to scope deletion to (omit for main branch)",
+                        "name": "branch_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -7729,6 +8013,85 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Invitation not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/mcp/bundle": {
+            "get": {
+                "description": "Downloads a .mcpb Claude Desktop bundle for the given read-only API token. No login required — the token is the credential. Double-clicking the downloaded file installs the MCP server in Claude Desktop with the project already configured.",
+                "produces": [
+                    "application/zip"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Download project MCP bundle (public)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Read-only MCP API token (emt_*)",
+                        "name": "token",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Binary .mcpb file download"
+                    },
+                    "400": {
+                        "description": "Missing token parameter",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired token",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/mcp/install": {
+            "get": {
+                "description": "Redirects to the claude://install-mcp deep link for one-click Claude Desktop MCP server installation. No authentication required.",
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Claude Desktop install redirect",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "MCP server URL",
+                        "name": "url",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Server name (default: memory)",
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "API key — when present, installs via npx mcp-remote with auth header",
+                        "name": "token",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to claude://install-mcp deep link"
+                    },
+                    "400": {
+                        "description": "Missing url parameter",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -9543,6 +9906,118 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/projects/{projectId}/mcp/bundle": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Generates a .mcpb file for one-click Claude Desktop installation. The bundle includes a project-specific MCP server configuration with a pre-issued read-only API key. Double-clicking the file installs the MCP server in Claude Desktop.",
+                "produces": [
+                    "application/zip"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Generate Claude Desktop MCP bundle",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Binary .mcpb file download"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — project admin required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/mcp/share": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Generates a read-only MCP API token for a project and optionally sends invite emails with agent setup instructions.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Share read-only MCP access",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Share request (name and optional email list)",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.ShareMCPAccessRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Token and agent config snippets",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.ShareMCPAccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — project admin required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "422": {
+                        "description": "Invalid email address",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/projects/{projectId}/skills": {
             "get": {
                 "security": [
@@ -11309,6 +11784,61 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/validate": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Scans all graph objects in a project against the current compiled schema and reports which objects have drifted (stale schema_version).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "Validate graph objects",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Validation result",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemas.ValidateObjectsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -16042,6 +16572,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/runs/{runId}/logs": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the merged message + tool-call log for a run as an SSE stream or plain text.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Stream run logs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Run ID (UUID)",
+                        "name": "runId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "SSE stream of log entries",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Run not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/settings/github": {
             "get": {
                 "produces": [
@@ -17780,6 +18362,42 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/v1/models": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "providers"
+                ],
+                "summary": "List all available LLM models",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by model type (embedding or generative)",
+                        "name": "type",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_provider.ProviderSupportedModel"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -18173,8 +18791,16 @@ const docTemplate = `{
                 "maxSteps": {
                     "type": "integer"
                 },
+                "model": {
+                    "description": "Model used for this run (resolved at execution time)",
+                    "type": "string"
+                },
                 "parentRunId": {
                     "description": "Multi-agent coordination fields",
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "Provider identifies the LLM provider used (e.g. \"google\", \"google-vertex\", \"openai-compatible\").",
                     "type": "string"
                 },
                 "resumedFrom": {
@@ -18213,6 +18839,19 @@ const docTemplate = `{
                 "traceId": {
                     "description": "Observability linkage",
                     "type": "string"
+                },
+                "triggerMetadata": {
+                    "description": "TriggerMetadata is the structured metadata passed at trigger time (e.g. title, context).",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "workspace": {
+                    "description": "Workspace/sandbox details for this run (when applicable).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_agents.RunWorkspaceDTO"
+                        }
+                    ]
                 }
             }
         },
@@ -18225,9 +18864,11 @@ const docTemplate = `{
                 "skipped",
                 "error",
                 "paused",
-                "cancelled"
+                "cancelled",
+                "cancelling"
             ],
             "x-enum-comments": {
+                "RunStatusCancelling": "ACP two-step cancel: intent acknowledged, awaiting execution stop",
                 "RunStatusQueued": "enqueued, waiting for a worker"
             },
             "x-enum-descriptions": [
@@ -18237,7 +18878,8 @@ const docTemplate = `{
                 "",
                 "",
                 "",
-                ""
+                "",
+                "ACP two-step cancel: intent acknowledged, awaiting execution stop"
             ],
             "x-enum-varnames": [
                 "RunStatusQueued",
@@ -18246,7 +18888,8 @@ const docTemplate = `{
                 "RunStatusSkipped",
                 "RunStatusError",
                 "RunStatusPaused",
-                "RunStatusCancelled"
+                "RunStatusCancelled",
+                "RunStatusCancelling"
             ]
         },
         "domain_agents.AgentTriggerType": {
@@ -18474,11 +19117,35 @@ const docTemplate = `{
                 "estimatedCostUsd": {
                     "type": "number"
                 },
+                "model": {
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "Provider and Model identify the LLM used. Format: \"\u003cprovider\u003e/\u003cmodel\u003e\",\ne.g. \"google/gemini-2.0-flash\". Empty when unknown.",
+                    "type": "string"
+                },
                 "totalInputTokens": {
                     "type": "integer"
                 },
                 "totalOutputTokens": {
                     "type": "integer"
+                }
+            }
+        },
+        "domain_agents.RunWorkspaceDTO": {
+            "type": "object",
+            "properties": {
+                "baseImage": {
+                    "type": "string"
+                },
+                "containerId": {
+                    "type": "string"
+                },
+                "imageDigest": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
                 }
             }
         },
@@ -20496,6 +21163,92 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_graph.BulkUpdateObjectItem": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "branch_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "properties": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "replaceLabels": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_graph.BulkUpdateObjectResult": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "index": {
+                    "type": "integer"
+                },
+                "object": {
+                    "$ref": "#/definitions/domain_graph.GraphObjectResponse"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_graph.BulkUpdateObjectsRequest": {
+            "type": "object",
+            "required": [
+                "items"
+            ],
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.BulkUpdateObjectItem"
+                    }
+                }
+            }
+        },
+        "domain_graph.BulkUpdateObjectsResponse": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.BulkUpdateObjectResult"
+                    }
+                },
+                "success": {
+                    "type": "integer"
+                }
+            }
+        },
         "domain_graph.BulkUpdateStatusRequest": {
             "type": "object",
             "required": [
@@ -20575,6 +21328,10 @@ const docTemplate = `{
                 "type": {
                     "type": "string",
                     "maxLength": 64
+                },
+                "upsert": {
+                    "description": "Upsert enables idempotent create-or-skip semantics: if a relationship with the\nsame (type, src_id, dst_id) already exists (and is not deleted), it is returned\nas-is without modification. If the relationship was previously deleted, it is\nrestored. If properties differ, a new version is created.\nDedup key: (project_id, branch_id, type, src_id, dst_id).",
+                    "type": "boolean"
                 },
                 "weight": {
                     "type": "number"
@@ -20664,6 +21421,51 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "domain_graph.ForkBranchRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "filter_types": {
+                    "description": "If set, only copy objects of these types",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_graph.ForkBranchResponse": {
+            "type": "object",
+            "properties": {
+                "branch_id": {
+                    "type": "string"
+                },
+                "branch_name": {
+                    "type": "string"
+                },
+                "copied_objects": {
+                    "type": "integer"
+                },
+                "copied_relationships": {
+                    "type": "integer"
+                },
+                "skipped_relationships": {
+                    "description": "Relationships where one end was filtered out",
+                    "type": "integer"
+                },
+                "source_branch_id": {
+                    "type": "string"
                 }
             }
         },
@@ -21477,6 +22279,36 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_graph.ValidateObjectRequest": {
+            "type": "object",
+            "properties": {
+                "properties": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_graph.ValidateObjectResponse": {
+            "type": "object",
+            "properties": {
+                "coercedProperties": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "valid": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_graph.VectorSearchRequest": {
             "type": "object",
             "required": [
@@ -22054,6 +22886,26 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_mcp.MCPSnippets": {
+            "type": "object",
+            "properties": {
+                "claudeCode": {
+                    "type": "string"
+                },
+                "claudeDesktop": {
+                    "type": "string"
+                },
+                "cloudCode": {
+                    "type": "string"
+                },
+                "cursor": {
+                    "type": "string"
+                },
+                "installUrl": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_mcp.Request": {
             "type": "object",
             "properties": {
@@ -22094,6 +22946,47 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "result": {}
+            }
+        },
+        "domain_mcp.ShareMCPAccessRequest": {
+            "type": "object",
+            "properties": {
+                "emails": {
+                    "description": "Emails is an optional list of email addresses to send the MCP invite to.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "description": "Name is an optional display name for the generated token.\nDefaults to \"MCP Read-Only Share — \u003cYYYY-MM-DD\u003e\".",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcp.ShareMCPAccessResponse": {
+            "type": "object",
+            "properties": {
+                "mcpUrl": {
+                    "description": "MCPURL is the fully-qualified MCP server endpoint URL.",
+                    "type": "string"
+                },
+                "projectId": {
+                    "description": "ProjectID is the project this token is scoped to.",
+                    "type": "string"
+                },
+                "snippets": {
+                    "description": "Snippets contains ready-to-paste agent config blocks.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_mcp.MCPSnippets"
+                        }
+                    ]
+                },
+                "token": {
+                    "description": "Token is the raw API token value — returned only once.",
+                    "type": "string"
+                }
             }
         },
         "domain_mcpregistry.APIResponse-array_domain_mcpregistry_MCPServerDTO": {
@@ -23159,6 +24052,9 @@ const docTemplate = `{
         "domain_provider.ProjectProviderConfigResponse": {
             "type": "object",
             "properties": {
+                "baseUrl": {
+                    "type": "string"
+                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -23191,6 +24087,9 @@ const docTemplate = `{
         "domain_provider.ProviderConfigResponse": {
             "type": "object",
             "properties": {
+                "baseUrl": {
+                    "type": "string"
+                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -23247,11 +24146,13 @@ const docTemplate = `{
             "type": "string",
             "enum": [
                 "google",
-                "google-vertex"
+                "google-vertex",
+                "openai-compatible"
             ],
             "x-enum-varnames": [
                 "ProviderGoogleAI",
-                "ProviderVertexAI"
+                "ProviderVertexAI",
+                "ProviderOpenAICompatible"
             ]
         },
         "domain_provider.TestProviderResponse": {
@@ -23275,6 +24176,9 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "apiKey": {
+                    "type": "string"
+                },
+                "baseUrl": {
                     "type": "string"
                 },
                 "embeddingModel": {
@@ -24884,6 +25788,29 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_schemas.ObjectValidationResult": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string"
+                },
+                "issues": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "key": {
+                    "type": "string"
+                },
+                "schema_version": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_schemas.PropertyConflict": {
             "type": "object",
             "properties": {
@@ -25339,6 +26266,26 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_schemas.ValidateObjectsResponse": {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "type": "string"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.ObjectValidationResult"
+                    }
+                },
+                "stale_objects": {
+                    "type": "integer"
+                },
+                "total_objects": {
+                    "type": "integer"
                 }
             }
         },
@@ -26983,6 +27930,12 @@ const docTemplate = `{
                 "enabled": {
                     "type": "boolean"
                 },
+                "env_vars": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
                 "provider": {
                     "description": "Explicit provider: \"firecracker\", \"gvisor\", \"e2b\", or \"\" (auto)",
                     "type": "string"
@@ -27101,7 +28054,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.35.100",
+	Version:          "0.35.177",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
