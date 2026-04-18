@@ -479,14 +479,17 @@ func (r *Repository) FindDefinitionByName(ctx context.Context, projectID, name s
 }
 
 // ResolveDefinitionForAgent looks up the AgentDefinition for a runtime Agent.
-// It first tries an exact name match, then strips common prefixes like
-// "Chat session for " to handle runtime agents whose names differ from
-// their definition name. Returns (nil, nil) when no definition is found.
+// It tries several name variants to handle common naming conventions:
+//  1. Exact match (agent name == definition name)
+//  2. Agent name + "-def" suffix (e.g. agent "foo" → definition "foo-def")
+//  3. Strip "Chat session for " prefix (legacy chat agents)
+//
+// Returns (nil, nil) when no definition is found.
 func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent) (*AgentDefinition, error) {
 	if agent == nil {
 		return nil, nil
 	}
-	// Try exact name match first
+	// 1. Exact name match
 	def, err := r.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
 	if err != nil {
 		return nil, err
@@ -494,9 +497,16 @@ func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent
 	if def != nil {
 		return def, nil
 	}
-	// Strip known prefixes and retry
-	name := agent.Name
-	if stripped, ok := strings.CutPrefix(name, "Chat session for "); ok && stripped != "" {
+	// 2. Try agent name + "-def" suffix (e.g. runtime "foo" → definition "foo-def")
+	def, err = r.FindDefinitionByName(ctx, agent.ProjectID, agent.Name+"-def")
+	if err != nil {
+		return nil, err
+	}
+	if def != nil {
+		return def, nil
+	}
+	// 3. Strip known prefixes and retry
+	if stripped, ok := strings.CutPrefix(agent.Name, "Chat session for "); ok && stripped != "" {
 		return r.FindDefinitionByName(ctx, agent.ProjectID, stripped)
 	}
 	return nil, nil
