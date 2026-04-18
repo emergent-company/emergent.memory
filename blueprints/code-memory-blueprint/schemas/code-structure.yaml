@@ -1,5 +1,5 @@
 name: code-structure
-version: 1.8.1
+version: 1.8.2
 description: >
   General-purpose structural schema for mapping any software project.
   Covers the architectural layer: apps, modules, pages, components, services,
@@ -771,3 +771,9 @@ relationshipTypeSchemas:
     description: A service method is covered by a test suite
     sourceType: ServiceMethod
     targetType: TestSuite
+
+  - name: defined_in
+    label: Defined In
+    description: A TestSuite abstraction is physically defined in a SourceFile
+    sourceType: TestSuite
+    targetType: SourceFile

@@ -37,7 +37,7 @@ import (
 )
 
 // relTypes are the relationship types we track for coverage reporting.
-var relTypes = []string{"belongs_to", "defines", "handles", "imports", "tests", "depends_on"}
+var relTypes = []string{"belongs_to", "defines", "handles", "defined_in", "tested_by", "imports", "depends_on"}
 
 func main() {
 	if err := run(); err != nil {
