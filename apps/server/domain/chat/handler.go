@@ -1061,6 +1061,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 type QueryStreamRequest struct {
 	Message        string `json:"message"`
 	ConversationID string `json:"conversation_id,omitempty"` // optional: continue a previous session
+	Branch         string `json:"branch,omitempty"`
 }
 
 // QueryStream handles POST /api/projects/:projectId/query.
@@ -1088,6 +1089,9 @@ func (h *Handler) QueryStream(c echo.Context) error {
 	message := strings.TrimSpace(req.Message)
 	if message == "" {
 		return apperror.ErrBadRequest.WithMessage("message is required")
+	}
+	if req.Branch != "" {
+		message = fmt.Sprintf("[Branch: %s]\n\n%s", req.Branch, message)
 	}
 
 	ctx := c.Request().Context()

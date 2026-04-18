@@ -21,10 +21,10 @@ func queryToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name: "search-knowledge",
-			Description: "Ask a question against the project's knowledge graph. The system finds relevant entities and relationships, " +
+			Description: "Ask a natural language question against the project's knowledge graph. The system finds relevant entities and relationships, " +
 				"then generates a grounded answer using the connected LLM provider. " +
 				"Returns the assembled answer text, a truncated flag if the response was cut short, and a session_id to continue the conversation. " +
-				"Pass session_id from a prior call to continue a previous conversation.",
+				"Pass session_id from a prior call to continue a previous conversation. Pass branch to scope the query to a specific branch (e.g. \"plan/main\").",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -40,6 +40,10 @@ func queryToolDefinitions() []ToolDefinition {
 					"session_id": {
 						Type:        "string",
 						Description: "Optional session ID to continue a previous query conversation. Use the session_id returned from a prior search-knowledge call.",
+					},
+					"branch": {
+						Type:        "string",
+						Description: "Branch name or UUID to query (e.g. \"plan/main\"). When provided, the question is answered in the context of that branch. Omit for main branch.",
 					},
 				},
 				Required: []string{"question"},
@@ -60,8 +64,16 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 		return nil, fmt.Errorf("query_knowledge: 'question' is required")
 	}
 
+	// Prepend branch context so the graph-query-agent scopes its tool calls correctly.
+	if branch, ok := args["branch"].(string); ok && branch != "" {
+		question = fmt.Sprintf("[Branch: %s]\n\n%s", branch, question)
+	}
+
 	// Build the request body
 	body := map[string]any{"message": question}
+	if branch, ok := args["branch"].(string); ok && branch != "" {
+		body["branch"] = branch
+	}
 	if mode, ok := args["mode"].(string); ok && mode != "" {
 		body["mode"] = mode
 	}
