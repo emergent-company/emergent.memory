@@ -101,6 +101,7 @@ type CreateAgentDTO struct {
 	Capabilities   *AgentCapabilities `json:"capabilities"`
 	Config         map[string]any     `json:"config"`
 	Description    *string            `json:"description"`
+	AgentDefinitionID *string            `json:"agentDefinitionId,omitempty"`
 }
 
 // UpdateAgentDTO is the request DTO for updating an agent
@@ -115,6 +116,7 @@ type UpdateAgentDTO struct {
 	Capabilities   *AgentCapabilities  `json:"capabilities"`
 	Config         map[string]any      `json:"config"`
 	Description    *string             `json:"description"`
+	AgentDefinitionID *string             `json:"agentDefinitionId,omitempty"`
 }
 
 // BatchTriggerDTO is the request DTO for batch triggering an agent

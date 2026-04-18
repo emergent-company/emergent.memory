@@ -344,6 +344,7 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 		Capabilities:   dto.Capabilities,
 		Config:         config,
 		Description:    dto.Description,
+		AgentDefinitionID: dto.AgentDefinitionID,
 	}
 
 	if err := h.repo.Create(c.Request().Context(), agent); err != nil {
@@ -428,6 +429,9 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 	}
 	if dto.Description != nil {
 		agent.Description = dto.Description
+	}
+	if dto.AgentDefinitionID != nil {
+		agent.AgentDefinitionID = dto.AgentDefinitionID
 	}
 
 	// Validate cron interval if cron schedule is being changed or trigger type is schedule.
