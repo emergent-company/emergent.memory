@@ -1,1 +1,0 @@
-{"key": "mod-scheduler", "type": "Module", "name": "scheduler", "properties": {"path": "apps/server/domain/scheduler", "language": "go", "purpose": "Cron-based job scheduler using River \u2014 registers and runs periodic background tasks"}}
