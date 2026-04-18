@@ -48,6 +48,9 @@ var allTestTools = []string{
 	ToolNameACPListAgents,
 	ToolNameACPTriggerRun,
 	ToolNameACPGetRunStatus,
+	ToolNameACPMCPServerList,
+	ToolNameACPMCPServerGet,
+	ToolNameACPSearchMCPRegistry,
 }
 
 // --- applyACPRestrictions tests ---
@@ -67,6 +70,9 @@ func TestApplyACPRestrictions_NilAgentDef_StripsACPTools(t *testing.T) {
 	assert.NotContains(t, names, ToolNameACPListAgents)
 	assert.NotContains(t, names, ToolNameACPTriggerRun)
 	assert.NotContains(t, names, ToolNameACPGetRunStatus)
+	assert.NotContains(t, names, ToolNameACPMCPServerList)
+	assert.NotContains(t, names, ToolNameACPMCPServerGet)
+	assert.NotContains(t, names, ToolNameACPSearchMCPRegistry)
 	assert.Contains(t, names, "graph-query")
 	assert.Contains(t, names, "graph-create")
 }
@@ -87,6 +93,9 @@ func TestApplyACPRestrictions_EmptyWhitelist_StripsACPTools(t *testing.T) {
 	assert.NotContains(t, names, ToolNameACPListAgents)
 	assert.NotContains(t, names, ToolNameACPTriggerRun)
 	assert.NotContains(t, names, ToolNameACPGetRunStatus)
+	assert.NotContains(t, names, ToolNameACPMCPServerList)
+	assert.NotContains(t, names, ToolNameACPMCPServerGet)
+	assert.NotContains(t, names, ToolNameACPSearchMCPRegistry)
 }
 
 func TestApplyACPRestrictions_WildcardWhitelist_KeepsACPTools(t *testing.T) {
@@ -105,6 +114,9 @@ func TestApplyACPRestrictions_WildcardWhitelist_KeepsACPTools(t *testing.T) {
 	assert.Contains(t, names, ToolNameACPListAgents)
 	assert.Contains(t, names, ToolNameACPTriggerRun)
 	assert.Contains(t, names, ToolNameACPGetRunStatus)
+	assert.Contains(t, names, ToolNameACPMCPServerList)
+	assert.Contains(t, names, ToolNameACPMCPServerGet)
+	assert.Contains(t, names, ToolNameACPSearchMCPRegistry)
 }
 
 func TestApplyACPRestrictions_ExplicitACPTool_KeepsOnlyThatTool(t *testing.T) {
@@ -123,6 +135,7 @@ func TestApplyACPRestrictions_ExplicitACPTool_KeepsOnlyThatTool(t *testing.T) {
 	assert.NotContains(t, names, ToolNameACPListAgents)
 	assert.Contains(t, names, ToolNameACPTriggerRun)
 	assert.NotContains(t, names, ToolNameACPGetRunStatus)
+	assert.NotContains(t, names, ToolNameACPMCPServerList)
 	assert.Contains(t, names, "graph-query")
 }
 
@@ -135,13 +148,19 @@ func TestApplyACPRestrictions_GlobPattern_KeepsMatchingACPTools(t *testing.T) {
 		defs = append(defs, cache.toolDefs[name])
 	}
 
-	agentDef := &AgentDefinition{Tools: []string{"graph-*", "acp-*"}}
+	// "acp-*" matches the old names, but new names are "agent-list", "trigger_agent", etc.
+	// We should test with "agent-*" and "mcp-*" and "search_*" or just "*-agent" etc.
+	// Actually, the constants are what matters.
+	agentDef := &AgentDefinition{Tools: []string{"graph-*", "agent-*", "mcp-*", "search_*", "trigger_*"}}
 	result := tp.applyACPRestrictions(defs, agentDef)
 	names := toolNames(result)
 
-	assert.Contains(t, names, ToolNameACPListAgents)
-	assert.Contains(t, names, ToolNameACPTriggerRun)
-	assert.Contains(t, names, ToolNameACPGetRunStatus)
+	assert.Contains(t, names, ToolNameACPListAgents)    // "agent-list"
+	assert.Contains(t, names, ToolNameACPTriggerRun)    // "trigger_agent"
+	assert.Contains(t, names, ToolNameACPGetRunStatus)  // "agent-run-get"
+	assert.Contains(t, names, ToolNameACPMCPServerList) // "mcp-server-list"
+	assert.Contains(t, names, ToolNameACPMCPServerGet)  // "mcp-server-get"
+	assert.Contains(t, names, ToolNameACPSearchMCPRegistry)
 	assert.Contains(t, names, "graph-query")
 	assert.Contains(t, names, "graph-create")
 }
@@ -160,6 +179,9 @@ func TestFilterToolDefs_EmptyWhitelist_StripsACPTools(t *testing.T) {
 	assert.NotContains(t, names, ToolNameACPListAgents)
 	assert.NotContains(t, names, ToolNameACPTriggerRun)
 	assert.NotContains(t, names, ToolNameACPGetRunStatus)
+	assert.NotContains(t, names, ToolNameACPMCPServerList)
+	assert.NotContains(t, names, ToolNameACPMCPServerGet)
+	assert.NotContains(t, names, ToolNameACPSearchMCPRegistry)
 }
 
 func TestFilterToolDefs_NilAgentDef_StripsACPTools(t *testing.T) {
@@ -172,19 +194,23 @@ func TestFilterToolDefs_NilAgentDef_StripsACPTools(t *testing.T) {
 
 	assert.NotContains(t, names, ToolNameACPListAgents)
 	assert.NotContains(t, names, ToolNameACPGetRunStatus)
+	assert.NotContains(t, names, ToolNameACPSearchMCPRegistry)
 }
 
 func TestFilterToolDefs_ExplicitACPOptIn_KeepsACPTools(t *testing.T) {
 	tp := buildTestPool(t, allTestTools)
 	cache := tp.cache["test-project"]
 
-	agentDef := &AgentDefinition{Tools: []string{"graph-query", "acp-*"}}
+	agentDef := &AgentDefinition{Tools: []string{"graph-query", "agent-*", "mcp-*", "search_*", "trigger_*"}}
 	result := tp.filterToolDefs(cache, agentDef, 0, DefaultMaxDepth)
 	names := toolNames(result)
 
 	assert.Contains(t, names, ToolNameACPListAgents)
 	assert.Contains(t, names, ToolNameACPTriggerRun)
 	assert.Contains(t, names, ToolNameACPGetRunStatus)
+	assert.Contains(t, names, ToolNameACPMCPServerList)
+	assert.Contains(t, names, ToolNameACPMCPServerGet)
+	assert.Contains(t, names, ToolNameACPSearchMCPRegistry)
 	assert.Contains(t, names, "graph-query")
 }
 
@@ -193,7 +219,7 @@ func TestFilterToolDefs_ACPOptIn_SubAgent_StillStripsCoordinationTools(t *testin
 	cache := tp.cache["test-project"]
 
 	// Sub-agent (depth=1) with ACP opt-in but no coordination tool opt-in
-	agentDef := &AgentDefinition{Tools: []string{"graph-query", "acp-*"}}
+	agentDef := &AgentDefinition{Tools: []string{"graph-query", "agent-*", "mcp-*", "search_*", "trigger_*"}}
 	result := tp.filterToolDefs(cache, agentDef, 1, DefaultMaxDepth)
 	names := toolNames(result)
 

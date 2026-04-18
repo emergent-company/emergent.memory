@@ -25,9 +25,12 @@ const (
 
 // ACP tool names that require explicit opt-in at all agent depths.
 const (
-	ToolNameACPListAgents   = "acp-list-agents"
-	ToolNameACPTriggerRun   = "acp-trigger-run"
-	ToolNameACPGetRunStatus = "acp-get-run-status"
+	ToolNameACPListAgents        = "agent-list"
+	ToolNameACPTriggerRun        = "trigger_agent"
+	ToolNameACPGetRunStatus      = "agent-run-get"
+	ToolNameACPMCPServerList     = "mcp-server-list"
+	ToolNameACPMCPServerGet      = "mcp-server-get"
+	ToolNameACPSearchMCPRegistry = "search_mcp_registry"
 )
 
 // coordinationTools is the set of tools denied to sub-agents by default.
@@ -41,9 +44,12 @@ var coordinationTools = map[string]bool{
 // ACP tools are stripped from ALL agents unless explicitly listed in
 // the agent's Tools whitelist.
 var acpTools = map[string]bool{
-	ToolNameACPListAgents:   true,
-	ToolNameACPTriggerRun:   true,
-	ToolNameACPGetRunStatus: true,
+	ToolNameACPListAgents:        true,
+	ToolNameACPTriggerRun:        true,
+	ToolNameACPGetRunStatus:      true,
+	ToolNameACPMCPServerList:     true,
+	ToolNameACPMCPServerGet:      true,
+	ToolNameACPSearchMCPRegistry: true,
 }
 
 // DefaultMaxDepth is the default maximum agent spawning depth.

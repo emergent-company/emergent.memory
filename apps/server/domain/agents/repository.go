@@ -1342,6 +1342,16 @@ func (r *Repository) UpdateRunModel(ctx context.Context, runID string, model str
 	return err
 }
 
+// UpdateRunTools sets the tool names on an agent run.
+func (r *Repository) UpdateRunTools(ctx context.Context, runID string, tools []string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("tools = ?", tools).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
 // FindChildRuns returns all child runs of a parent run.
 func (r *Repository) FindChildRuns(ctx context.Context, parentRunID string) ([]*AgentRun, error) {
 	var runs []*AgentRun

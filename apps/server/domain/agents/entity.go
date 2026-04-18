@@ -205,6 +205,8 @@ type AgentRun struct {
 	// ACP session linkage: optional grouping of runs under an ACP session.
 	ACPSessionID *string `bun:"acp_session_id,type:uuid" json:"acpSessionId,omitempty"`
 
+	Tools []string `bun:"tools,array" json:"tools,omitempty"`
+
 	// Relations
 	Agent     *Agent    `bun:"rel:belongs-to,join:agent_id=id" json:"-"`
 	ParentRun *AgentRun `bun:"rel:belongs-to,join:parent_run_id=id" json:"-"`

@@ -838,6 +838,9 @@ func (ae *AgentExecutor) runPipeline(
 	if req.ProjectID != "" {
 		ctx = auth.ContextWithProjectID(ctx, req.ProjectID)
 	}
+	if req.AuthToken != "" {
+		ctx = auth.ContextWithRawToken(ctx, req.AuthToken)
+	}
 	if req.OrgID != "" {
 		ctx = auth.ContextWithOrgID(ctx, req.OrgID)
 	}
@@ -954,6 +957,20 @@ func (ae *AgentExecutor) runPipeline(
 		ae.log.Info("skill tool added to agent pipeline",
 			slog.String("run_id", run.ID),
 		)
+	}
+
+	// Persist the final tool list on the run record for observability
+	if len(resolvedTools) > 0 {
+		toolNames := make([]string, len(resolvedTools))
+		for i, t := range resolvedTools {
+			toolNames[i] = t.Name()
+		}
+		if err := ae.repo.UpdateRunTools(dbCtx, run.ID, toolNames); err != nil {
+			ae.log.Warn("failed to persist tools on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	// Build the LLM agent
