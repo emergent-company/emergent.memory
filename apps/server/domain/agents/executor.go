@@ -2113,11 +2113,13 @@ const (
 
 	// toolOnlyWarnThreshold is the number of consecutive tool-only steps (no
 	// assistant text produced) before issuing a warning.
-	toolOnlyWarnThreshold = 6
+	toolOnlyWarnThreshold = 10
 	// toolOnlyStopThreshold is the number of consecutive tool-only steps before
 	// aborting the run. This catches loops where different tools cycle without
 	// ever producing meaningful output — the failure mode from issue #146.
-	toolOnlyStopThreshold = 10
+	// Raised from 10→20 to accommodate legitimate multi-file write sequences
+	// (issue #172); the identical-call doom detector handles true stuck loops.
+	toolOnlyStopThreshold = 20
 )
 
 // doomLoopDetector tracks two loop patterns:
@@ -2198,6 +2200,11 @@ func (d *doomLoopDetector) recordCall(toolName string, args map[string]any) doom
 		d.lastToolName = toolName
 		d.lastArgsHash = argsHash
 		d.consecutiveCount = 1
+		// A different tool call (different name or args) is evidence of real
+		// progress — reset the tool-only step counter so legitimate multi-file
+		// write sequences (workspace_write with different paths) are not killed
+		// by the tool-only loop detector (issue #172).
+		d.toolOnlySteps = 0
 	}
 
 	if d.consecutiveCount >= doomStopThreshold {
