@@ -4458,7 +4458,7 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 		entityID = resolved
 	}
 
-	err = s.graphService.Delete(ctx, projectUUID, entityID, nil)
+	err = s.graphService.Delete(ctx, projectUUID, entityID, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("delete entity: %w", err)
 	}

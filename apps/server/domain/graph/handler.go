@@ -651,6 +651,7 @@ func (h *Handler) PatchObject(c echo.Context) error {
 // @Produce      json
 // @Param        id path string true "Object ID (UUID)"
 // @Param        X-Project-ID header string true "Project ID"
+// @Param        branch_id query string false "Branch ID (omit for main branch)"
 // @Success      200 {object} map[string]string "Deletion confirmation"
 // @Failure      400 {object} apperror.Error "Invalid ID"
 // @Failure      404 {object} apperror.Error "Object not found"
@@ -673,8 +674,18 @@ func (h *Handler) DeleteObject(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid object id")
 	}
 
+	// Parse optional branch_id query param
+	var branchID *uuid.UUID
+	if branchIDStr := c.QueryParam("branch_id"); branchIDStr != "" && branchIDStr != "null" {
+		parsed, err := uuid.Parse(branchIDStr)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+		}
+		branchID = &parsed
+	}
+
 	actorID, _ := getUserID(c)
-	if err := h.svc.Delete(c.Request().Context(), projectID, id, actorID); err != nil {
+	if err := h.svc.Delete(c.Request().Context(), projectID, id, actorID, branchID); err != nil {
 		return err
 	}
 

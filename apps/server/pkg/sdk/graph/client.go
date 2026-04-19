@@ -1080,8 +1080,12 @@ func (c *Client) UpdateObject(ctx context.Context, id string, req *UpdateObjectR
 }
 
 // DeleteObject soft-deletes a graph object.
-func (c *Client) DeleteObject(ctx context.Context, id string) error {
-	return c.doDelete(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id))
+func (c *Client) DeleteObject(ctx context.Context, id string, branchID *string) error {
+	path := c.base + "/api/graph/objects/" + url.PathEscape(id)
+	if branchID != nil && *branchID != "" {
+		path += "?branch_id=" + url.QueryEscape(*branchID)
+	}
+	return c.doDelete(ctx, path)
 }
 
 // RestoreObject restores a soft-deleted graph object.

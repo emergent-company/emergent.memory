@@ -688,7 +688,16 @@ var graphObjectsDeleteCmd = &cobra.Command{
 			return err
 		}
 
-		if err := g.DeleteObject(context.Background(), args[0]); err != nil {
+		var branchID *string
+		if graphBranchFlag != "" {
+			resolved, err := resolveBranchNameOrID(cmd, graphBranchFlag)
+			if err != nil {
+				return err
+			}
+			branchID = &resolved
+		}
+
+		if err := g.DeleteObject(context.Background(), args[0], branchID); err != nil {
 			return fmt.Errorf("failed to delete object: %w", err)
 		}
 
@@ -1666,6 +1675,8 @@ func init() {
 	graphRelationshipsListCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to scope results to (omit for main branch)")
 
 	graphRelationshipsDeleteCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch name or ID to scope deletion to (omit for main branch)")
+
+	graphObjectsDeleteCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch name or ID to scope deletion to (omit for main branch)")
 
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphRelTypeFlag, "type", "", "Relationship type (required)")
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphFromFlag, "from", "", "Source object ID (required)")

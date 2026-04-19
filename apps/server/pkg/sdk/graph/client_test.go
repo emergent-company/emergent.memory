@@ -278,7 +278,7 @@ func TestGraphDeleteObject(t *testing.T) {
 		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
 	})
 
-	err := client.Graph.DeleteObject(context.Background(), "obj_123")
+	err := client.Graph.DeleteObject(context.Background(), "obj_123", nil)
 	if err != nil {
 		t.Fatalf("DeleteObject() error = %v", err)
 	}

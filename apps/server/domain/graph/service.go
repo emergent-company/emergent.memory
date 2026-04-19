@@ -865,7 +865,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 }
 
 // Delete soft-deletes a graph object by creating a tombstone version.
-func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID) error {
+func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID, branchID *uuid.UUID) error {
 	current, err := s.repo.GetByID(ctx, projectID, id)
 	if err != nil {
 		return err
@@ -885,8 +885,12 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		return err
 	}
 
-	// Re-fetch HEAD after lock
-	current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, current.BranchID)
+	// Re-fetch HEAD after lock — use branchID if provided, else use object's own branch
+	effectiveBranchID := current.BranchID
+	if branchID != nil {
+		effectiveBranchID = branchID
+	}
+	current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, effectiveBranchID)
 	if err != nil {
 		return err
 	}
