@@ -147,6 +147,7 @@ type LLMUsageEvent struct {
 	VideoInputTokens int64         `bun:"video_input_tokens,notnull,default:0" json:"videoInputTokens"`
 	AudioInputTokens int64         `bun:"audio_input_tokens,notnull,default:0" json:"audioInputTokens"`
 	OutputTokens     int64         `bun:"output_tokens,notnull,default:0" json:"outputTokens"`
+	CachedTokens     int64         `bun:"cached_tokens,notnull,default:0" json:"cachedTokens"`
 	EstimatedCostUSD float64       `bun:"estimated_cost_usd,notnull,default:0" json:"estimatedCostUsd"`
 	RunID            *string       `bun:"run_id,type:uuid,nullzero" json:"runId,omitempty"`
 	RootRunID        *string       `bun:"root_run_id,type:uuid,nullzero" json:"rootRunId,omitempty"`

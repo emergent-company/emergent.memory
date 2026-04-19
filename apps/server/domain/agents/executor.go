@@ -982,20 +982,23 @@ func (ae *AgentExecutor) runPipeline(
 	agentName := ae.resolveAgentName(req)
 	instruction := ae.resolveInstruction(req)
 
-	// Inject TriggerMetadata as a <context> block at the top of the system instruction.
-	// Gated on non-empty metadata so runs without context see no change (backward compat).
-	if len(run.TriggerMetadata) > 0 {
-		if ctxJSON, err := json.Marshal(run.TriggerMetadata); err == nil {
-			instruction = "<context>\n" + string(ctxJSON) + "\n</context>\n\n" + instruction
-		}
-	}
-
 	// Augment system instruction with workspace context if available.
 	// If workspace was requested but provisioning failed or is degraded, inject a clear
 	// unavailability notice so the model doesn't attempt to call workspace tools that
 	// have no registered handler (which would cause silent tool-call drops).
 	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
 		instruction = ae.augmentInstructionWithWorkspace(instruction, wsResult)
+	}
+
+	// TriggerMetadata is per-run dynamic context (e.g. title, source, caller-supplied keys).
+	// It is injected as a prefix on the first user-turn message rather than the system
+	// instruction, so the system instruction remains byte-identical across runs and can
+	// be served from Gemini's implicit prompt cache (requires a stable prefix).
+	var triggerContextPrefix string
+	if len(run.TriggerMetadata) > 0 {
+		if ctxJSON, err := json.Marshal(run.TriggerMetadata); err == nil {
+			triggerContextPrefix = "<context>\n" + string(ctxJSON) + "\n</context>\n\n"
+		}
 	}
 
 	genConfig := ae.modelFactory.DefaultGenerateConfig()
@@ -1035,6 +1038,11 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Create the doom loop detector
 	doomDetector := newDoomLoopDetector(ae.log)
+
+	// Accumulate cached token counts across all LLM steps in this run.
+	// Used to surface cache hit visibility in the run summary.
+	var cachedTokensMu sync.Mutex
+	var totalCachedTokens int64
 
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.CallbackContext, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
@@ -1200,6 +1208,16 @@ func (ae *AgentExecutor) runPipeline(
 		)
 	}
 
+	// After-model callback: accumulate cached token counts for summary visibility.
+	afterModelCb := func(cbCtx agent.CallbackContext, llmResp *model.LLMResponse, llmErr error) (*model.LLMResponse, error) {
+		if llmResp != nil && llmResp.UsageMetadata != nil && llmResp.UsageMetadata.CachedContentTokenCount > 0 {
+			cachedTokensMu.Lock()
+			totalCachedTokens += int64(llmResp.UsageMetadata.CachedContentTokenCount)
+			cachedTokensMu.Unlock()
+		}
+		return nil, nil
+	}
+
 	llmAgent, err := llmagent.New(llmagent.Config{
 		Name:                  sanitizeAgentName(agentName),
 		Description:           ae.resolveDescription(req),
@@ -1208,6 +1226,7 @@ func (ae *AgentExecutor) runPipeline(
 		Tools:                 resolvedTools,
 		GenerateContentConfig: genConfig,
 		BeforeModelCallbacks:  []llmagent.BeforeModelCallback{beforeModelCb},
+		AfterModelCallbacks:   []llmagent.AfterModelCallback{afterModelCb},
 		BeforeToolCallbacks:   []llmagent.BeforeToolCallback{beforeToolCb},
 		AfterToolCallbacks:    []llmagent.AfterToolCallback{afterToolCb},
 	})
@@ -1268,8 +1287,9 @@ func (ae *AgentExecutor) runPipeline(
 		return nil, fmt.Errorf("failed to create runner: %w", err)
 	}
 
-	// Build the user message
-	userContent := genai.NewContentFromText(req.UserMessage, genai.RoleUser)
+	// Build the user message. Prepend TriggerMetadata context if present so the
+	// system instruction stays static (enabling Gemini implicit prompt caching).
+	userContent := genai.NewContentFromText(triggerContextPrefix+req.UserMessage, genai.RoleUser)
 
 	// Persist the user message
 	ae.persistMessage(dbCtx, run.ID, "user", req.UserMessage, initialSteps)
@@ -1601,6 +1621,11 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Build summary from the last event
 	summary := ae.buildSummary(lastEvent, lastTextEvent, steps)
+
+	// Include cache hit visibility — non-zero means Gemini implicit cache fired.
+	if totalCachedTokens > 0 {
+		summary["cached_tokens"] = totalCachedTokens
+	}
 
 	// Include workspace info in summary if provisioned
 	if wsResult != nil && wsResult.Workspace != nil {

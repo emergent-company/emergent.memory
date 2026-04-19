@@ -112,6 +112,7 @@ func (m *TrackingModel) recordUsage(ctx context.Context, req *adkmodel.LLMReques
 		Model:        modelName,
 		Operation:    OperationGenerate,
 		OutputTokens: int64(meta.CandidatesTokenCount),
+		CachedTokens: int64(meta.CachedContentTokenCount),
 		CreatedAt:    time.Now().UTC(),
 	}
 
