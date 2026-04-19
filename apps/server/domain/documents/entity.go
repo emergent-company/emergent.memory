@@ -42,12 +42,8 @@ type Document struct {
 
 	// Data source
 	SourceType              *string `bun:"source_type" json:"sourceType,omitempty"`
-	DataSourceIntegrationID *string `bun:"data_source_integration_id" json:"dataSourceIntegrationId,omitempty"`
-	ExternalSourceID        *string `bun:"external_source_id" json:"externalSourceId,omitempty"`
-	SyncVersion             *int    `bun:"sync_version" json:"syncVersion,omitempty"`
 
 	// Metadata
-	IntegrationMetadata map[string]any `bun:"integration_metadata,type:jsonb" json:"integrationMetadata,omitempty"`
 	Metadata            map[string]any `bun:"metadata,type:jsonb" json:"metadata,omitempty"`
 
 	// Computed fields (populated via JOIN/subquery, not stored in documents table)
@@ -71,7 +67,6 @@ type ListParams struct {
 	Limit            int
 	Cursor           *Cursor
 	SourceType       *string
-	IntegrationID    *string
 	RootOnly         bool
 	ParentDocumentID *string
 }

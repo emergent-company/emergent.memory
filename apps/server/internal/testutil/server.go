@@ -20,14 +20,12 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/chat"
 	"github.com/emergent-company/emergent.memory/domain/chunks"
-	"github.com/emergent-company/emergent.memory/domain/datasource"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/embeddingpolicies"
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/health"
-	"github.com/emergent-company/emergent.memory/domain/integrations"
 	"github.com/emergent-company/emergent.memory/domain/invites"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
@@ -183,7 +181,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	userProfileHandler := userprofile.NewHandler(userProfileSvc)
 	userprofile.RegisterRoutes(e, userProfileHandler, authMiddleware)
 
-	// Create encryption service (used by apitoken, integrations, datasource)
+	// Create encryption service (used by apitoken)
 	encryptionSvc := encryption.NewService(testDB.DB, log)
 
 	// Register apitoken routes
@@ -326,24 +324,6 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	monitoringRepo := monitoring.NewRepository(db, log)
 	monitoringHandler := monitoring.NewHandler(monitoringRepo)
 	monitoring.RegisterRoutes(e, monitoringHandler, authMiddleware)
-
-	// Register integrations routes
-	integrationsRepo := integrations.NewRepository(db, log)
-	integrationsRegistry := integrations.NewIntegrationRegistry()
-	integrationsHandler := integrations.NewHandler(integrationsRepo, integrationsRegistry, encryptionSvc)
-	integrations.RegisterRoutes(e, integrationsHandler, authMiddleware)
-
-	// Register data source integrations routes
-	datasourceRepo := datasource.NewRepository(db, log)
-	datasourceJobsSvc := datasource.NewJobsService(testDB.DB, log, testDB.Config)
-	datasourceRegistry := datasource.NewProviderRegistry()
-	// Register placeholder providers for testing
-	datasourceRegistry.Register(datasource.NewNoOpProvider("clickup"))
-	datasourceRegistry.Register(datasource.NewNoOpProvider("imap"))
-	datasourceRegistry.Register(datasource.NewNoOpProvider("gmail_oauth"))
-	datasourceRegistry.Register(datasource.NewNoOpProvider("google_drive"))
-	datasourceHandler := datasource.NewHandler(datasourceRepo, datasourceJobsSvc, datasourceRegistry, encryptionSvc, log)
-	datasource.RegisterRoutes(e, datasourceHandler, authMiddleware)
 
 	// Register provider routes (LLM credential management, model catalog, usage)
 	providerRepo := provider.NewRepository(db, log)

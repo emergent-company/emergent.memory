@@ -59,9 +59,6 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	if params.SourceType != nil {
 		query = query.Where("d.source_type = ?", *params.SourceType)
 	}
-	if params.IntegrationID != nil {
-		query = query.Where("d.data_source_integration_id = ?", *params.IntegrationID)
-	}
 	if params.RootOnly {
 		query = query.Where("d.parent_document_id IS NULL")
 	}
@@ -81,9 +78,6 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 
 	if params.SourceType != nil {
 		countQuery = countQuery.Where("source_type = ?", *params.SourceType)
-	}
-	if params.IntegrationID != nil {
-		countQuery = countQuery.Where("data_source_integration_id = ?", *params.IntegrationID)
 	}
 	if params.RootOnly {
 		countQuery = countQuery.Where("parent_document_id IS NULL")
