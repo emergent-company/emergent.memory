@@ -3172,13 +3172,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			}
 		}
 
-		// Always classify all objects for accurate counts; only gate payload append.
-		// When executing, we must append all so applyMerge can act on them.
-		if req.Execute || len(objectSummaries) < hardLimit {
-			objectSummaries = append(objectSummaries, summary)
-		} else {
-			truncated = true
-		}
+		objectSummaries = append(objectSummaries, summary)
 	}
 
 	// Enumerate relationships
@@ -3236,31 +3230,24 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			}
 		}
 
-		// Always classify all rels for accurate counts; only gate payload append.
-		if req.Execute || len(relSummaries) < hardLimit {
-			relSummaries = append(relSummaries, summary)
-		} else {
-			truncated = true
-		}
+		relSummaries = append(relSummaries, summary)
 	}
 
-	// Sort summaries: conflict -> fast_forward -> added -> unchanged
+	// Sort summaries: conflict -> deleted -> fast_forward -> added -> unchanged
+	// Sort BEFORE truncating so high-priority items always appear in the payload.
 	sortMergeObjectSummaries(objectSummaries)
 	sortMergeRelationshipSummaries(relSummaries)
 
-	// When executing, all summaries were built (no truncation during
-	// classification). Truncate the response payload now to avoid huge JSON.
+	// Truncate payload to hardLimit (after sort, so non-unchanged items are first).
 	responseObjectSummaries := objectSummaries
 	responseRelSummaries := relSummaries
-	if req.Execute {
-		if len(objectSummaries) > hardLimit {
-			responseObjectSummaries = objectSummaries[:hardLimit]
-			truncated = true
-		}
-		if len(relSummaries) > hardLimit {
-			responseRelSummaries = relSummaries[:hardLimit]
-			truncated = true
-		}
+	if len(objectSummaries) > hardLimit {
+		responseObjectSummaries = objectSummaries[:hardLimit]
+		truncated = true
+	}
+	if len(relSummaries) > hardLimit {
+		responseRelSummaries = relSummaries[:hardLimit]
+		truncated = true
 	}
 
 	response := &BranchMergeResponse{
@@ -3561,9 +3548,10 @@ func findConflictingPaths(sourceProps, targetProps map[string]any) []string {
 func sortMergeObjectSummaries(summaries []*BranchMergeObjectSummary) {
 	statusOrder := map[string]int{
 		"conflict":     0,
-		"fast_forward": 1,
-		"added":        2,
-		"unchanged":    3,
+		"deleted":      1,
+		"fast_forward": 2,
+		"added":        3,
+		"unchanged":    4,
 	}
 	sort.Slice(summaries, func(i, j int) bool {
 		return statusOrder[summaries[i].Status] < statusOrder[summaries[j].Status]
@@ -3573,9 +3561,10 @@ func sortMergeObjectSummaries(summaries []*BranchMergeObjectSummary) {
 func sortMergeRelationshipSummaries(summaries []*BranchMergeRelationshipSummary) {
 	statusOrder := map[string]int{
 		"conflict":     0,
-		"fast_forward": 1,
-		"added":        2,
-		"unchanged":    3,
+		"deleted":      1,
+		"fast_forward": 2,
+		"added":        3,
+		"unchanged":    4,
 	}
 	sort.Slice(summaries, func(i, j int) bool {
 		return statusOrder[summaries[i].Status] < statusOrder[summaries[j].Status]
