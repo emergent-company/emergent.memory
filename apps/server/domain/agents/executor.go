@@ -1776,8 +1776,14 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 		return nil, nil
 	}
 
-	// Sub-agents only get coordination tools if explicitly opted in
-	if req.Depth > 0 && req.AgentDefinition != nil {
+	// Agents with an explicit non-empty tools whitelist only get coordination tools
+	// if they explicitly opted in (i.e. whitelist contains spawn_agents or list_available_agents).
+	// This applies at all depths — top-level agents are not exempt.
+	// Agents with no definition (legacy) or empty whitelist fall through to the default behaviour:
+	//   - no definition → all tools (legacy), coordination tools included
+	//   - empty whitelist → no tools at all (filterToolDefs returns nil), but coordination
+	//     tools were still being injected here — now blocked too.
+	if req.AgentDefinition != nil && len(req.AgentDefinition.Tools) > 0 {
 		hasCoordTool := false
 		for _, t := range req.AgentDefinition.Tools {
 			if coordinationTools[t] {
