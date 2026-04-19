@@ -3104,7 +3104,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 	unchangedCount, addedCount, ffCount, conflictCount, deletedCount := 0, 0, 0, 0, 0
 
 	// Hard limit for enumeration
-	hardLimit := 500
+	hardLimit := 2000
 	if req.Limit != nil && *req.Limit > 0 {
 		hardLimit = *req.Limit
 	}
