@@ -60,10 +60,10 @@ type Document struct {
 	StorageURL    *string `json:"storageUrl,omitempty"`
 
 	// Data source
-	SourceType              *string `json:"sourceType,omitempty"`
+	SourceType *string `json:"sourceType,omitempty"`
 
 	// Metadata
-	Metadata            map[string]any `json:"metadata,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 
 	// Computed fields
 	Chunks           int     `json:"chunks"`
