@@ -139,6 +139,7 @@ func (r *Repository) CreateRun(ctx context.Context, agentID string) (*AgentRun, 
 		Status:    RunStatusRunning,
 		StartedAt: time.Now(),
 		Summary:   make(map[string]any),
+		Tools:     []string{},
 	}
 	_, err := r.db.NewInsert().
 		Model(run).
@@ -1246,19 +1247,20 @@ func (r *Repository) UpdateTraceAndRootRun(ctx context.Context, runID, traceID, 
 // CreateRunWithOptions creates a new agent run with coordination options.
 func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
 	run := &AgentRun{
-		AgentID:         opts.AgentID,
-		Status:          RunStatusRunning,
-		StartedAt:       time.Now(),
-		Summary:         make(map[string]any),
-		ParentRunID:     opts.ParentRunID,
-		MaxSteps:        opts.MaxSteps,
-		ResumedFrom:     opts.ResumedFrom,
-		StepCount:       opts.InitialStepCount,
-		TriggerSource:   opts.TriggerSource,
-		TriggerMetadata: opts.TriggerMetadata,
-		TriggerMessage:  opts.TriggerMessage,
-		Model:           opts.Model,
+		AgentID:           opts.AgentID,
+		Status:            RunStatusRunning,
+		StartedAt:         time.Now(),
+		Summary:           make(map[string]any),
+		ParentRunID:       opts.ParentRunID,
+		MaxSteps:          opts.MaxSteps,
+		ResumedFrom:       opts.ResumedFrom,
+		StepCount:         opts.InitialStepCount,
+		TriggerSource:     opts.TriggerSource,
+		TriggerMetadata:   opts.TriggerMetadata,
+		TriggerMessage:    opts.TriggerMessage,
+		Model:             opts.Model,
 		AgentDefinitionID: opts.AgentDefinitionID,
+		Tools:             []string{},
 	}
 	_, err := r.db.NewInsert().
 		Model(run).
@@ -1876,6 +1878,7 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		ParentRunID:     parentRunID,
 		TriggerMessage:  triggerMessage,
 		TriggerMetadata: triggerMetadata,
+		Tools:           []string{},
 	}
 
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
