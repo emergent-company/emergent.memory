@@ -67,15 +67,6 @@ func (s *Server) typeColor(typeName string) string {
 	return c
 }
 
-// typeIcon returns the icon for a type (resolved from registry or first letter).
-func (s *Server) typeIcon(typeName string) string {
-	for _, ot := range s.objectTypes {
-		if ot.Name == typeName && ot.Icon != "" {
-			return ot.Icon
-		}
-	}
-	return firstLetter(typeName)
-}
 
 // proxyGet makes a GET request to the Memory API server.
 // It automatically appends branch_id if the server is configured with one.
@@ -301,19 +292,19 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	_ = s.loadSchema()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	component := PageLayout(s.ProjectID, s.BranchID, s.typeColorMap)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleStaticJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(graphExploreJS)
+	_, _ = w.Write(graphExploreJS)
 }
 
 func (s *Server) handleNodeTypes(w http.ResponseWriter, r *http.Request) {
 	if err := s.loadSchema(); err != nil {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load types: %s</div>`, err.Error())))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load types: %s</div>`, err.Error())))
 		return
 	}
 
@@ -332,13 +323,13 @@ func (s *Server) handleNodeTypes(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	component := NodeTypeList(types)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleEdgeTypes(w http.ResponseWriter, r *http.Request) {
 	if err := s.loadSchema(); err != nil {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load edge types</div>`))
+		_, _ = w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load edge types</div>`))
 		return
 	}
 
@@ -353,18 +344,18 @@ func (s *Server) handleEdgeTypes(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	component := EdgeTypeList(types)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleBranches(w http.ResponseWriter, r *http.Request) {
 	body, status, err := s.proxyGet(fmt.Sprintf("/api/graph/branches?project_id=%s", s.ProjectID))
 	if err != nil || status != 200 {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[]`))
+		_, _ = w.Write([]byte(`[]`))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(body)
+	_, _ = w.Write(body)
 }
 
 func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
@@ -373,14 +364,14 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 		nodeID = r.FormValue("nodeId")
 	}
 	if nodeID == "" {
-		w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted">Select a node</div>`))
+		_, _ = w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted">Select a node</div>`))
 		return
 	}
 
 	// Fetch node data from the API
 	body, status, err := s.proxyGet(fmt.Sprintf("/api/graph/objects/%s", nodeID))
 	if err != nil || status != 200 {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load node: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load node: %v</div>`, err)))
 		return
 	}
 
@@ -394,7 +385,7 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 		Properties  map[string]interface{} `json:"properties"`
 	}
 	if err := json.Unmarshal(body, &node); err != nil {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
 		return
 	}
 
@@ -439,14 +430,14 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.URL.Query().Get("nodeId")
 	if nodeID == "" {
-		w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted italic">No relationships</div>`))
+		_, _ = w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted italic">No relationships</div>`))
 		return
 	}
 
 	// Fetch edges
 	body, status, err := s.proxyGet(fmt.Sprintf("/api/graph/objects/%s/edges", nodeID))
 	if err != nil || status != 200 {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed: %v</div>`, err)))
 		return
 	}
 
@@ -455,7 +446,7 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 		Incoming []edgeEntry `json:"incoming"`
 	}
 	if err := json.Unmarshal(body, &edgesResp); err != nil {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Parse error: %v</div>`, err)))
 		return
 	}
 
@@ -481,7 +472,7 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 				Items []json.RawMessage `json:"items"`
 				Data  []json.RawMessage `json:"data"`
 			}
-			json.Unmarshal(searchBody, &searchResp)
+			_ = json.Unmarshal(searchBody, &searchResp)
 			items := searchResp.Items
 			if len(items) == 0 {
 				items = searchResp.Data
@@ -586,12 +577,12 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSchemaTypeDetail(w http.ResponseWriter, r *http.Request) {
 	typeName := r.URL.Query().Get("type")
 	if typeName == "" {
-		w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted">Select a type</div>`))
+		_, _ = w.Write([]byte(`<div class="px-3 py-3 text-[11px] text-gh-muted">Select a type</div>`))
 		return
 	}
 
 	if err := s.loadSchema(); err != nil {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load schema: %s</div>`, err.Error())))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Failed to load schema: %s</div>`, err.Error())))
 		return
 	}
 
@@ -604,7 +595,7 @@ func (s *Server) handleSchemaTypeDetail(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if ot == nil {
-		w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Type "%s" not found</div>`, typeName)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`<div class="px-3 py-3 text-[11px] text-red-400">Type "%s" not found</div>`, typeName)))
 		return
 	}
 
@@ -735,7 +726,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
-			w.Write(buf[:n])
+			_, _ = w.Write(buf[:n])
 		}
 		if rerr != nil {
 			break

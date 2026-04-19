@@ -153,14 +153,6 @@ func countLabel(inGraph, total int) string {
 	return fmt.Sprintf("%d", total)
 }
 
-// visTitle returns the tooltip for the visibility toggle button.
-func visTitle(hidden bool, typeName string) string {
-	if hidden {
-		return "Show " + typeName + " in graph"
-	}
-	return "Hide " + typeName + " in graph"
-}
-
 // rowBg returns alternating row background style.
 func rowBg(index int) string {
 	if index%2 == 0 {
