@@ -148,50 +148,6 @@ type ObjectExtractionJob struct {
 }
 
 // ------------------------------------------------------------------
-// DataSourceSyncJob - Syncs data from external sources (ClickUp, etc.)
-// ------------------------------------------------------------------
-
-// TriggerType represents what triggered the sync
-type TriggerType string
-
-const (
-	TriggerTypeManual    TriggerType = "manual"
-	TriggerTypeScheduled TriggerType = "scheduled"
-	TriggerTypeWebhook   TriggerType = "webhook"
-)
-
-// DataSourceSyncJob represents a data source sync job in kb.data_source_sync_jobs.
-// These jobs sync data from external integrations (ClickUp, Notion, etc.).
-type DataSourceSyncJob struct {
-	bun.BaseModel `bun:"table:kb.data_source_sync_jobs,alias:dssj"`
-
-	ID                string      `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
-	IntegrationID     string      `bun:"integration_id,notnull,type:uuid"`
-	ProjectID         string      `bun:"project_id,notnull,type:uuid"`
-	ConfigurationID   *string     `bun:"configuration_id,type:uuid"`
-	ConfigurationName *string     `bun:"configuration_name"`
-	Status            JobStatus   `bun:"status,notnull,default:'pending'"`
-	TotalItems        int         `bun:"total_items,notnull,default:0"`
-	ProcessedItems    int         `bun:"processed_items,notnull,default:0"`
-	SuccessfulItems   int         `bun:"successful_items,notnull,default:0"`
-	FailedItems       int         `bun:"failed_items,notnull,default:0"`
-	SkippedItems      int         `bun:"skipped_items,notnull,default:0"`
-	CurrentPhase      *string     `bun:"current_phase"` // 'fetching', 'processing', 'embedding', etc.
-	StatusMessage     *string     `bun:"status_message"`
-	SyncOptions       JSON        `bun:"sync_options,type:jsonb,notnull,default:'{}'"`
-	DocumentIDs       JSONArray   `bun:"document_ids,type:jsonb,notnull,default:'[]'"` // Created document IDs
-	Logs              JSONArray   `bun:"logs,type:jsonb,notnull,default:'[]'"`
-	ErrorMessage      *string     `bun:"error_message"`
-	ErrorDetails      JSON        `bun:"error_details,type:jsonb"`
-	TriggeredBy       *string     `bun:"triggered_by,type:uuid"` // User who triggered
-	TriggerType       TriggerType `bun:"trigger_type,notnull,default:'manual'"`
-	CreatedAt         time.Time   `bun:"created_at,notnull,default:now()"`
-	StartedAt         *time.Time  `bun:"started_at"`
-	CompletedAt       *time.Time  `bun:"completed_at"`
-	UpdatedAt         time.Time   `bun:"updated_at,notnull,default:now()"`
-}
-
-// ------------------------------------------------------------------
 // Helper types
 // ------------------------------------------------------------------
 

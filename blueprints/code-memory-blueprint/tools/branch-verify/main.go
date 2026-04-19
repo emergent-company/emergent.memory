@@ -187,9 +187,10 @@ func verifyObjects(ctx context.Context, g *sdkgraph.Client, summaries []*sdkgrap
 
 			obj, err := g.GetObject(ctx, id)
 			if err != nil {
-				// If the object is being deleted and its head ID 404s, it's already gone — treat as pass
+				// If the object is being deleted and its head ID 404s, it's already gone on the server.
+				// We cannot perform a disk check without the object's metadata, so mark as skipped.
 				if summary.Status == "deleted" && strings.Contains(err.Error(), "404") {
-					results[idx] = verifyResult{summary: summary, skipped: false, passed: true, key: summary.CanonicalID, message: "already absent (404)"}
+					results[idx] = verifyResult{summary: summary, skipped: true, passed: false, key: summary.CanonicalID, message: "object already absent on server (404); disk check skipped"}
 					return
 				}
 				results[idx] = verifyResult{summary: summary, skipped: false, passed: false, key: summary.CanonicalID, message: fmt.Sprintf("fetch error (id=%s): %v", id, err)}
@@ -218,7 +219,11 @@ func verifyObjects(ctx context.Context, g *sdkgraph.Client, summaries []*sdkgrap
 	// Print failures after all goroutines complete (avoids interleaved output)
 	for _, r := range results {
 		if !r.skipped && !r.passed {
-			fmt.Printf("  ✗  [%-12s] %-30s %s\n", r.objType, truncate(r.key, 30), r.message)
+			objType := r.objType
+			if objType == "" {
+				objType = "unknown"
+			}
+			fmt.Printf("  ✗  [%-12s] %-30s %s\n", objType, truncate(r.key, 30), r.message)
 		}
 	}
 

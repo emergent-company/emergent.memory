@@ -54,7 +54,6 @@ func (h *MetricsHandler) JobMetrics(c echo.Context) error {
 		{"chunk_embedding", "kb.chunk_embedding_jobs"},
 		{"graph_embedding", "kb.graph_embedding_jobs"},
 		{"object_extraction", "kb.object_extraction_jobs"},
-		{"data_source_sync", "kb.data_source_sync_jobs"},
 		{"email", "kb.email_jobs"},
 	}
 

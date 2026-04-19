@@ -200,7 +200,6 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 		{table: "kb.chunk_embedding_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "last_error"},
 		{table: "kb.graph_embedding_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "last_error"},
 		{table: "kb.object_extraction_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "error_message"},
-		{table: "kb.data_source_sync_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "error_message"},
 		{table: "kb.email_jobs", hasStartedAt: false, hasCompletedAt: false, errorColumn: "last_error"},
 	}
 
