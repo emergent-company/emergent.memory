@@ -6,8 +6,6 @@
 #
 # Linters that flag panic() calls (revive) and TODO comments (godot) are
 # deferred to a future change focused on those patterns.
-version: "1"
-
 run:
   timeout: 5m
 
