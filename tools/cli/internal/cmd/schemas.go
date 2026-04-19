@@ -59,6 +59,8 @@ var (
 
 // loadSchemaFile reads a schema definition file and returns its content as JSON bytes.
 // It accepts .json, .yaml, and .yml files; YAML is converted to JSON transparently.
+// It validates that the file uses the correct top-level keys (objectTypeSchemas /
+// relationshipTypeSchemas) and returns a clear error if legacy keys are detected.
 func loadSchemaFile(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -66,22 +68,72 @@ func loadSchemaFile(path string) ([]byte, error) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(path))
+	var jsonBytes []byte
 	switch ext {
 	case ".json":
-		return data, nil
+		jsonBytes = data
 	case ".yaml", ".yml":
 		var v any
 		if err := yaml.Unmarshal(data, &v); err != nil {
 			return nil, fmt.Errorf("failed to parse YAML file %s: %w", path, err)
 		}
-		jsonBytes, err := json.Marshal(v)
+		jsonBytes, err = json.Marshal(v)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert YAML to JSON: %w", err)
 		}
-		return jsonBytes, nil
 	default:
 		return nil, fmt.Errorf("unsupported file format: must be .json, .yaml, or .yml")
 	}
+
+	// Validate top-level keys to catch common naming mistakes before sending to server.
+	// Wrong keys are silently dropped during JSON binding, resulting in null schemas stored.
+	if err := validateSchemaFileKeys(jsonBytes); err != nil {
+		return nil, fmt.Errorf("schema file %s is invalid: %w", path, err)
+	}
+
+	return jsonBytes, nil
+}
+
+// validateSchemaFileKeys checks that a schema JSON document uses the correct top-level
+// keys. Returns an error with a helpful message if legacy or misspelled keys are found.
+func validateSchemaFileKeys(data []byte) error {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("not valid JSON: %w", err)
+	}
+
+	// Required keys
+	requiredKeys := map[string]string{
+		"objectTypeSchemas": "objectTypeSchemas",
+	}
+	// Legacy / misspelled keys that map to the correct ones
+	legacyKeys := map[string]string{
+		"objectTypes":        "objectTypeSchemas",
+		"relationshipTypes":  "relationshipTypeSchemas",
+		"object_types":       "objectTypeSchemas",
+		"relationship_types": "relationshipTypeSchemas",
+	}
+
+	var errs []string
+	for key, correct := range legacyKeys {
+		if _, found := doc[key]; found {
+			errs = append(errs, fmt.Sprintf("found unsupported key %q — use %q instead", key, correct))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("incompatible schema format:\n  %s", strings.Join(errs, "\n  "))
+	}
+
+	for key := range requiredKeys {
+		if _, found := doc[key]; !found {
+			errs = append(errs, fmt.Sprintf("missing required key %q", key))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("missing required fields:\n  %s", strings.Join(errs, "\n  "))
+	}
+
+	return nil
 }
 
 // ─────────────────────────────────────────────

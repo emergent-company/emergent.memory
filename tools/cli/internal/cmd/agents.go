@@ -134,6 +134,9 @@ var (
 	getRunJSONOutput      bool
 	agentListLimit        int
 	agentListPage         int
+	listAgentsJSONOutput bool
+	getAgentJSONOutput   bool
+	runsAgentJSONOutput  bool
 	triggerInputFlag      string
 	triggerModelFlag      string
 	triggerEnvVarsFlag    []string
@@ -202,6 +205,10 @@ func runListAgents(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list agents: %w", err)
 	}
 
+	if listAgentsJSONOutput {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(result.Data)
+	}
+
 	if len(result.Data) == 0 {
 		fmt.Println("No agents found.")
 		return nil
@@ -262,6 +269,9 @@ func runGetAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	a := result.Data
+	if getAgentJSONOutput {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(a)
+	}
 	fmt.Printf("Agent: %s\n", a.Name)
 	fmt.Printf("  ID:             %s\n", a.ID)
 	fmt.Printf("  Project ID:     %s\n", a.ProjectID)
@@ -569,6 +579,47 @@ func runGetAgentRuns(cmd *cobra.Command, args []string) error {
 	usageByIdx := make(map[int]*runTokenUsage, len(result.Data))
 	for ur := range usageCh {
 		usageByIdx[ur.idx] = ur.usage
+	}
+
+	if runsAgentJSONOutput {
+		type runOut struct {
+			ID           string         `json:"id"`
+			Status       string         `json:"status"`
+			StartedAt    string         `json:"startedAt"`
+			CompletedAt  string         `json:"completedAt,omitempty"`
+			DurationMs   *int64         `json:"durationMs,omitempty"`
+			TraceID      string         `json:"traceId,omitempty"`
+			ErrorMessage string         `json:"errorMessage,omitempty"`
+			SkipReason   string         `json:"skipReason,omitempty"`
+			TokenUsage   *runTokenUsage `json:"tokenUsage,omitempty"`
+		}
+		out := make([]runOut, len(result.Data))
+		for i, r := range result.Data {
+			ro := runOut{
+				ID:        r.ID,
+				Status:    r.Status,
+				StartedAt: r.StartedAt.Format(time.RFC3339),
+			}
+			if r.CompletedAt != nil {
+				ro.CompletedAt = r.CompletedAt.Format(time.RFC3339)
+			}
+			if r.DurationMs != nil {
+				ms := int64(*r.DurationMs)
+				ro.DurationMs = &ms
+			}
+			if r.TraceID != nil {
+				ro.TraceID = *r.TraceID
+			}
+			if r.ErrorMessage != nil {
+				ro.ErrorMessage = *r.ErrorMessage
+			}
+			if r.SkipReason != nil {
+				ro.SkipReason = *r.SkipReason
+			}
+			ro.TokenUsage = usageByIdx[i]
+			out[i] = ro
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
 
 	fmt.Printf("Runs for agent: %s\n\n", agentLabel)
@@ -1018,6 +1069,10 @@ func init() {
 
 	// get-run flags
 	getRunCmd.Flags().BoolVar(&getRunJSONOutput, "json", false, "Output result as JSON")
+
+	listAgentsCmd.Flags().BoolVar(&listAgentsJSONOutput, "json", false, "Output as JSON")
+	getAgentCmd.Flags().BoolVar(&getAgentJSONOutput, "json", false, "Output as JSON")
+	runsAgentCmd.Flags().BoolVar(&runsAgentJSONOutput, "json", false, "Output as JSON")
 
 	// Questions flags
 	listProjectQuestionsCmd.Flags().StringVar(&questionStatus, "status", "", "Filter by status (pending, answered, cancelled, expired)")

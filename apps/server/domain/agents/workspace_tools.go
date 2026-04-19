@@ -46,6 +46,7 @@ func BuildWorkspaceTools(deps WorkspaceToolDeps) ([]tool.Tool, error) {
 		"git":        buildGitTool,
 		"run_python": buildRunPythonTool,
 		"run_go":     buildRunGoTool,
+		"ast_grep":   buildAstGrepTool,
 	}
 
 	var tools []tool.Tool
@@ -1473,4 +1474,135 @@ func middleLinesSimilarity(candidateLines, findLines []string) float64 {
 		total += similarity(strings.TrimSpace(cl), strings.TrimSpace(fl))
 	}
 	return total / float64(len(middle))
+}
+
+// =============================================================================
+// AST grep tool
+// =============================================================================
+
+func buildAstGrepTool(deps WorkspaceToolDeps) (tool.Tool, error) {
+	provider := deps.Provider
+	providerID := deps.ProviderID
+
+	return functiontool.New(
+		functiontool.Config{
+			Name: "workspace_ast_grep",
+			Description: `AST-aware structural code search across the workspace.
+
+Unlike workspace_grep (regex on text), this tool understands code structure.
+Use meta-variables in patterns:
+  $VAR   — matches any single AST node (expression, identifier, type, etc.)
+  $$$    — matches zero or more nodes (variadic)
+
+Examples:
+  pattern="func $NAME($$$) error"  lang="go"   — all funcs returning error
+  pattern="fmt.Errorf($$$)"        lang="go"   — all fmt.Errorf call sites
+  pattern="if err != nil { $$$ }"  lang="go"   — all nil error checks
+  pattern="console.log($$$)"       lang="javascript"
+
+Supported languages: go, python, typescript, tsx, javascript, rust, java,
+c, cpp, csharp, ruby, swift, kotlin, scala, php, bash, css, html, json,
+yaml, lua, elixir, haskell, nix, solidity
+
+- Returns file path, line, column, and matched text for each match
+- Use include to restrict to specific file patterns (e.g. "*.go")
+- Prefer this over workspace_grep for structural queries (function signatures,
+  call sites, error patterns, type usage)`,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"pattern": {Type: "string", Description: `AST pattern with $VAR/$$$ meta-variables`},
+					"lang":    {Type: "string", Description: "Language (go, python, typescript, rust, java, etc.)"},
+					"path":    {Type: "string", Description: "Directory to search (default: /workspace)"},
+					"include": {Type: "string", Description: "Glob filter, e.g. *.go or **/*.ts"},
+				},
+				Required: []string{"pattern", "lang"},
+			},
+		},
+		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+			pattern, _ := args["pattern"].(string)
+			lang, _ := args["lang"].(string)
+			if pattern == "" {
+				return map[string]any{"error": "pattern is required"}, nil
+			}
+			if lang == "" {
+				return map[string]any{"error": "lang is required"}, nil
+			}
+			searchPath, _ := args["path"].(string)
+			if searchPath == "" {
+				searchPath = workspaceDir
+			}
+			include, _ := args["include"].(string)
+
+			binary, binErr := resolveAstGrepBinary(ctx, provider, providerID)
+			if binErr != nil {
+				return map[string]any{"error": binErr.Error()}, nil
+			}
+
+			cmd := fmt.Sprintf("%s run --pattern %q --lang %q --json", binary, pattern, lang)
+			if include != "" {
+				cmd += fmt.Sprintf(" --glob %q", include)
+			}
+			cmd += fmt.Sprintf(" %q", searchPath)
+
+			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
+				Command:   cmd,
+				TimeoutMs: 60000,
+			})
+			if err != nil {
+				return map[string]any{"error": fmt.Sprintf("ast-grep execution failed: %s", err.Error())}, nil
+			}
+
+			matches := parseAstGrepOutput(result.Stdout)
+			return map[string]any{
+				"matches": matches,
+				"count":   len(matches),
+			}, nil
+		},
+	)
+}
+
+// resolveAstGrepBinary returns the name of the ast-grep binary available in the
+// sandbox, trying "ast-grep" first and falling back to "sg" (the short alias
+// used by some package managers / distros).
+func resolveAstGrepBinary(ctx tool.Context, provider sandbox.Provider, providerID string) (string, error) {
+	for _, name := range []string{"ast-grep", "sg"} {
+		result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
+			Command:   fmt.Sprintf("command -v %s 2>/dev/null", name),
+			TimeoutMs: 3000,
+		})
+		if err == nil && result.ExitCode == 0 && strings.TrimSpace(result.Stdout) != "" {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("ast-grep binary not found in sandbox (tried: ast-grep, sg). " +
+		"Install ast-grep in your sandbox image or use workspace_bash directly.")
+}
+
+// parseAstGrepOutput parses ast-grep --json newline-delimited output into
+// structured match entries with file, line, column, and matched text.
+func parseAstGrepOutput(output string) []map[string]any {
+	var matches []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			continue
+		}
+		entry := map[string]any{
+			"file": m["file"],
+			"text": m["text"],
+		}
+		if r, ok := m["range"].(map[string]any); ok {
+			if start, ok := r["start"].(map[string]any); ok {
+				entry["line"] = start["line"]
+				entry["column"] = start["column"]
+			}
+		}
+		matches = append(matches, entry)
+	}
+	return matches
 }

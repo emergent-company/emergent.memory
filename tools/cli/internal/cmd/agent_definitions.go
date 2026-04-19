@@ -86,6 +86,8 @@ var (
 	defDefaultTimeout int
 	defListLimit      int
 	defListPage       int
+	listAgentDefsJSONOutput bool
+	getAgentDefJSONOutput   bool
 )
 
 func runListAgentDefs(cmd *cobra.Command, args []string) error {
@@ -103,6 +105,10 @@ func runListAgentDefs(cmd *cobra.Command, args []string) error {
 	result, err := c.SDK.AgentDefinitions.List(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to list agent definitions: %w", err)
+	}
+
+	if listAgentDefsJSONOutput {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(result.Data)
 	}
 
 	if len(result.Data) == 0 {
@@ -204,6 +210,9 @@ func runGetAgentDef(cmd *cobra.Command, args []string) error {
 	}
 
 	d := result.Data
+	if getAgentDefJSONOutput {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(d)
+	}
 	fmt.Printf("Agent Definition: %s\n", d.Name)
 	fmt.Printf("  ID:              %s\n", d.ID)
 	fmt.Printf("  Project ID:      %s\n", d.ProjectID)
@@ -716,6 +725,9 @@ func init() {
 	// List pagination flags
 	listAgentDefsCmd.Flags().IntVar(&defListLimit, "limit", 0, "Maximum number of definitions to show (0 = all)")
 	listAgentDefsCmd.Flags().IntVar(&defListPage, "page", 1, "Page number (1-based, used with --limit)")
+	listAgentDefsCmd.Flags().BoolVar(&listAgentDefsJSONOutput, "json", false, "Output as JSON")
+
+	getAgentDefCmd.Flags().BoolVar(&getAgentDefJSONOutput, "json", false, "Output as JSON")
 
 	// Create definition flags
 	createAgentDefCmd.Flags().StringVar(&defName, "name", "", "Definition name (required)")

@@ -454,6 +454,7 @@ memory agent-definitions get [id] [flags]
 
 ```
   -h, --help   help for get
+      --json   Output as JSON
 ```
 
 ## memory agent-definitions list
@@ -475,6 +476,7 @@ memory agent-definitions list [flags]
 
 ```
   -h, --help        help for list
+      --json        Output as JSON
       --limit int   Maximum number of definitions to show (0 = all)
       --page int    Page number (1-based, used with --limit) (default 1)
 ```
@@ -776,6 +778,7 @@ memory agents get [id] [flags]
 
 ```
   -h, --help   help for get
+      --json   Output as JSON
 ```
 
 ## memory agents hooks
@@ -876,6 +879,7 @@ memory agents list [flags]
 
 ```
   -h, --help        help for list
+      --json        Output as JSON
       --limit int   Maximum number of agents to show (0 = all)
       --page int    Page number (1-based, used with --limit) (default 1)
 ```
@@ -1172,6 +1176,7 @@ memory agents runs [id] [flags]
 
 ```
   -h, --help        help for runs
+      --json        Output as JSON
       --limit int   Maximum number of runs to return (default 10)
 ```
 
@@ -2597,7 +2602,8 @@ memory graph objects delete <id> [flags]
 ### Options
 
 ```
-  -h, --help   help for delete
+      --branch string   Branch name or ID to scope deletion to (omit for main branch)
+  -h, --help            help for delete
 ```
 
 ## memory graph objects edges

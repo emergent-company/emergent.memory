@@ -72,6 +72,13 @@ RUN apk add --no-cache --no-scripts --root /rootfs --initdb \
     patch \
     diffutils || true
 
+# Install ast-grep (AST-aware structural code search, static musl binary)
+RUN wget -q "https://github.com/ast-grep/ast-grep/releases/download/v0.38.0/ast-grep-x86_64-unknown-linux-musl.tar.gz" \
+        -O /tmp/ast-grep.tar.gz && \
+    tar -C /rootfs/usr/bin -xzf /tmp/ast-grep.tar.gz ast-grep && \
+    chmod +x /rootfs/usr/bin/ast-grep && \
+    rm /tmp/ast-grep.tar.gz
+
 # Copy vm-agent
 COPY --from=agent-builder /vm-agent /rootfs/usr/bin/vm-agent
 RUN chmod +x /rootfs/usr/bin/vm-agent

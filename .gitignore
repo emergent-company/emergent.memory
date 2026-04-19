@@ -212,3 +212,31 @@ session-dump-*.md
 sdk/python/.coverage
 openspec/changes/graph-explorer-branch-diff/
 
+# auto-added by commit skill — 2026-04-19
+# Root-level compiled tool binaries (built from blueprints/code-memory-blueprint/tools/)
+/api-audit
+/context-rewire
+/coverage-audit
+/entity-seed
+/func-tree
+/graph-complexity
+/graph-fix
+/graph-logic-audit
+/graph-sync
+/graph-sync-routes
+/refactor-advisor
+/scenario-context-map
+/service-exposes-seed
+/test-coverage
+/uml-gen
+# Temp scripts and data files
+/fix.go
+/fix.patch
+/mapping.py
+/final_mapping.py
+/endpoints.json
+/scenarios.json
+/skills-lock.json
+# opencode package lock
+.opencode/package-lock.json
+

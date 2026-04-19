@@ -3,7 +3,22 @@ go 1.25.6
 use (
 	./apps/server
 	./apps/server/pkg/sdk
+	./blueprints/code-memory-blueprint/tools/api-audit
+	./blueprints/code-memory-blueprint/tools/coverage-audit
+	./blueprints/code-memory-blueprint/tools/func-tree
+	./blueprints/code-memory-blueprint/tools/graph-complexity
+	./blueprints/code-memory-blueprint/tools/graph-fix
+	./blueprints/code-memory-blueprint/tools/graph-logic-audit
 	./blueprints/code-memory-blueprint/tools/graph-sync
+	./blueprints/code-memory-blueprint/tools/graph-sync-routes
+	./blueprints/code-memory-blueprint/tools/context-rewire
+	./blueprints/code-memory-blueprint/tools/scenario-context-map
+	./blueprints/code-memory-blueprint/tools/context-action-map
+	./blueprints/code-memory-blueprint/tools/service-exposes-seed
+	./blueprints/code-memory-blueprint/tools/refactor-advisor
+	./blueprints/code-memory-blueprint/tools/test-coverage
+	./blueprints/code-memory-blueprint/tools/entity-seed
+	./blueprints/code-memory-blueprint/tools/uml-gen
 	./tools/cli
 	./tools/opencode-test-suite
 )

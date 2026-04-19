@@ -152,7 +152,14 @@ func (s *Service) DeleteAssignment(ctx context.Context, projectID, assignmentID 
 // CreatePack creates a new schema scoped to the given project and org.
 // If migration hints are present, they are validated before persisting.
 func (s *Service) CreatePack(ctx context.Context, projectID, orgID string, req *CreatePackRequest) (*GraphMemorySchema, error) {
-	// Task 3.5: Validate migration hints if present
+	// Validate objectTypeSchemas structure — each entry must have a non-empty "name" field.
+	// This catches the common mistake of using the wrong top-level key (e.g. "objectTypes"
+	// instead of "objectTypeSchemas"), which causes silent data loss during JSON binding.
+	if errs := validateSchemaDefinitions(req.GetObjectTypeSchemas(), req.GetRelationshipTypeSchemas()); len(errs) > 0 {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid schema definitions: " + strings.Join(errs, "; "))
+	}
+
+	// Validate migration hints if present
 	if req.Migrations != nil {
 		errs := validateMigrationHints(req.Migrations, req.GetObjectTypeSchemas(), req.GetRelationshipTypeSchemas())
 		if len(errs) > 0 {
@@ -160,6 +167,58 @@ func (s *Service) CreatePack(ctx context.Context, projectID, orgID string, req *
 		}
 	}
 	return s.repo.CreatePack(ctx, projectID, orgID, req)
+}
+
+// validateSchemaDefinitions checks that objectTypeSchemas and relationshipTypeSchemas
+// contain valid entries. Each object type must have a non-empty "name". Each relationship
+// type must have non-empty "name", "sourceType", and "targetType".
+// Returns a list of validation error strings (empty = valid).
+func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.RawMessage) []string {
+	var errs []string
+
+	// Validate object types
+	if len(objectTypeSchemas) > 0 {
+		var entries []struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(objectTypeSchemas, &entries); err != nil {
+			errs = append(errs, fmt.Sprintf("objectTypeSchemas is not a valid JSON array: %v", err))
+		} else if len(entries) == 0 {
+			errs = append(errs, "objectTypeSchemas array is empty — did you use 'objectTypes' instead of 'objectTypeSchemas'?")
+		} else {
+			for i, e := range entries {
+				if e.Name == "" {
+					errs = append(errs, fmt.Sprintf("objectTypeSchemas[%d] is missing required field 'name'", i))
+				}
+			}
+		}
+	}
+
+	// Validate relationship types (optional but if present must be well-formed)
+	if len(relationshipTypeSchemas) > 0 {
+		var entries []struct {
+			Name       string `json:"name"`
+			SourceType string `json:"sourceType"`
+			TargetType string `json:"targetType"`
+		}
+		if err := json.Unmarshal(relationshipTypeSchemas, &entries); err != nil {
+			errs = append(errs, fmt.Sprintf("relationshipTypeSchemas is not a valid JSON array: %v", err))
+		} else {
+			for i, e := range entries {
+				if e.Name == "" {
+					errs = append(errs, fmt.Sprintf("relationshipTypeSchemas[%d] is missing required field 'name'", i))
+				}
+				if e.SourceType == "" {
+					errs = append(errs, fmt.Sprintf("relationshipTypeSchemas[%d] (%q) is missing required field 'sourceType'", i, e.Name))
+				}
+				if e.TargetType == "" {
+					errs = append(errs, fmt.Sprintf("relationshipTypeSchemas[%d] (%q) is missing required field 'targetType'", i, e.Name))
+				}
+			}
+		}
+	}
+
+	return errs
 }
 
 // GetPack returns a schema by ID if the caller has access (same project or same org with org visibility)

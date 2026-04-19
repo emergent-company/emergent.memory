@@ -1,5 +1,5 @@
 name: code-structure
-version: 1.8.2
+version: 1.9.0
 description: >
   General-purpose structural schema for mapping any software project.
   Covers the architectural layer: apps, modules, pages, components, services,
@@ -190,7 +190,7 @@ objectTypeSchemas:
 
       Relationships:
         - executed_by → Actor (who performs this scenario)
-        - has → ScenarioStep (ordered steps, one per transition)
+        - has_step → ScenarioStep (ordered steps, one per transition)
 
       Example — "Intake: Add Client and Open Case":
         given: "An attorney has received a new client"
@@ -243,28 +243,32 @@ objectTypeSchemas:
       Context, which becomes the occurs_in of the following step.
 
       How to create a ScenarioStep:
-        1. Set sequence to the step's position in the flow (1, 2, 3, ...).
+        1. Set order to the step's position in the flow (1, 2, 3, ...).
         2. Link occurs_in → the Context the user is currently on.
-        3. Link performs → the Action the user takes in that context.
+        3. Link has_action → the Action the user takes in that context.
         4. The Action links navigates_to → the next Context (start of the next step).
         5. The Context links uses_component → the UIComponents visible and relevant
            to this step (the button clicked, the form submitted, the table browsed).
 
       Relationships:
         - occurs_in → Context (the surface the user is on during this step)
-        - performs → Action (what the user does to advance the scenario)
+        - has_action → Action (what the user does to advance the scenario)
 
       Example step 1 of "Intake: Add Client and Open Case":
-        sequence: 1
+        order: 1
         description: "Attorney clicks New Client on the Clients List"
         occurs_in → Context "Clients List"
-        performs → Action "Click New Client" (type: navigation, navigates_to → "Add Client Modal")
+        has_action → Action "Click New Client" (type: navigation, navigates_to → "Add Client Modal")
     properties:
-      sequence:
+      order:
         type: number
         description: "Step order within the scenario — 1, 2, 3, ..."
+      name:
+        type: string
+        description: "Short label for the step. E.g. 'Run delete command', 'View confirmation'"
       description:
         type: string
+        description:
 
   - name: Service
     label: Service
@@ -344,6 +348,9 @@ objectTypeSchemas:
       handler:
         type: string
         description: "Go function name handling this route. E.g. HandleList, HandleCreate"
+      file:
+        type: string
+        description: "Source file path relative to repo root where this endpoint is registered. E.g. apps/server/domain/agents/routes.go"
       query_params:
         type: array
         items: string
@@ -483,6 +490,92 @@ objectTypeSchemas:
       coverage_percent:
         type: number
         description: "Approximate code coverage percentage"
+      description:
+        type: string
+
+  - name: Entity
+    label: DB Entity
+    description: >
+      A database-mapped Go struct (Bun ORM model) representing a table.
+      DB-agnostic: captures the logical model, not SQL DDL.
+      One Entity per table. Fields are separate Field objects linked via has_field.
+    properties:
+      name:
+        type: string
+        description: "Go struct name. E.g. Document, AgentRun"
+      table:
+        type: string
+        description: "DB table name without schema prefix. E.g. documents, agent_runs"
+      db_schema:
+        type: string
+        description: "DB schema namespace. E.g. kb, core, public"
+      go_package:
+        type: string
+        description: "Go package import path. E.g. github.com/.../domain/documents"
+      source_file:
+        type: string
+        description: "Relative path to the file defining this struct. E.g. apps/server/domain/documents/entity.go"
+      description:
+        type: string
+
+  - name: Field
+    label: Entity Field
+    description: >
+      A single field on an Entity — either a DB column or an ORM relation field.
+      Captures Go type, DB column name, nullability, PK/FK flags, and raw bun tags.
+      Relation fields (bun:"rel:...") are also modeled as Fields with is_fk=true.
+    properties:
+      name:
+        type: string
+        description: "Go field name. E.g. ProjectID, CreatedAt"
+      column:
+        type: string
+        description: "DB column name. E.g. project_id, created_at. Empty for relation-only fields."
+      go_type:
+        type: string
+        description: "Go type as written in source. E.g. uuid.UUID, *string, []Chunk, time.Time"
+      db_type:
+        type: string
+        description: "DB type hint from bun tag. E.g. uuid, text, timestamptz, jsonb, tsvector"
+      nullable:
+        type: boolean
+        description: "True if the field is a pointer type or bun tag lacks notnull"
+      is_pk:
+        type: boolean
+        description: "True if bun tag contains pk"
+      is_fk:
+        type: boolean
+        description: "True if field is a FK column (*_id pattern) or ORM relation (bun:rel:...)"
+      default_val:
+        type: string
+        description: "Default value from bun tag. E.g. now(), gen_random_uuid(), false"
+      bun_tags:
+        type: string
+        description: "Raw bun struct tag string for full fidelity. E.g. id,pk,type:uuid,default:uuid_generate_v4()"
+      ordinal:
+        type: number
+        description: "Field position in the struct (1-based) for diagram ordering"
+      description:
+        type: string
+
+  - name: Index
+    label: DB Index
+    description: >
+      A database index on one or more columns of an Entity.
+      Modeled as a separate object (not a Field property) to support composite indexes.
+    properties:
+      name:
+        type: string
+        description: "Index name. E.g. idx_documents_project_id"
+      unique:
+        type: boolean
+        description: "Whether this is a unique index"
+      columns:
+        type: string
+        description: "Comma-separated column names. E.g. project_id,created_at"
+      partial:
+        type: string
+        description: "WHERE clause for partial indexes. E.g. deleted_at IS NULL"
       description:
         type: string
 
@@ -646,9 +739,9 @@ relationshipTypeSchemas:
     sourceType: Scenario
     targetType: Actor
 
-  - name: has
-    label: Has
-    description: A parent node directly owns a child node (Scenario→ScenarioStep, Service→Method)
+  - name: has_step
+    label: Has Step
+    description: A scenario directly owns an ordered step
     sourceType: Scenario
     targetType: ScenarioStep
 
@@ -664,11 +757,17 @@ relationshipTypeSchemas:
     sourceType: ScenarioStep
     targetType: Context
 
-  - name: performs
-    label: Performs
-    description: A scenario step performs a specific action
+  - name: has_action
+    label: Has Action
+    description: A scenario step performs an action
     sourceType: ScenarioStep
     targetType: Action
+
+  - name: performed_by
+    label: Performed By
+    description: A scenario step is performed by a specific actor
+    sourceType: ScenarioStep
+    targetType: Actor
 
   - name: inherits_from
     label: Inherits From
@@ -777,3 +876,54 @@ relationshipTypeSchemas:
     description: A TestSuite abstraction is physically defined in a SourceFile
     sourceType: TestSuite
     targetType: SourceFile
+
+  # ── Entity / DB model layer ───────────────────────────────────────────────────
+
+  - name: owned_by
+    label: Owned By
+    description: An Entity belongs to a Domain (inferred from source file path)
+    sourceType: Entity
+    targetType: Domain
+
+  - name: has_field
+    label: Has Field
+    description: An Entity has a Field (column or ORM relation field)
+    sourceType: Entity
+    targetType: Field
+
+  - name: references
+    label: References
+    description: >
+      An Entity references another Entity via a FK or ORM relation.
+      Properties capture the relation type and join condition.
+    sourceType: Entity
+    targetType: Entity
+    properties:
+      via_field:
+        type: string
+        description: "FK field name on the source entity. E.g. project_id"
+      relation:
+        type: string
+        description: "ORM relation kind. E.g. has-many, belongs-to, has-one, m2m"
+      join:
+        type: string
+        description: "Raw bun join clause. E.g. project_id=id"
+      nullable:
+        type: boolean
+        description: "Whether the FK is nullable"
+
+  - name: has_index
+    label: Has Index
+    description: An Entity has a DB index
+    sourceType: Entity
+    targetType: Index
+
+  - name: operates_on
+    label: Operates On
+    description: A Service operates on an Entity (reads, writes, or both)
+    sourceType: Service
+    targetType: Entity
+    properties:
+      access:
+        type: string
+        description: "Access pattern. E.g. read, write, read-write"
