@@ -43,7 +43,6 @@ func NewHandler(
 // @Param        limit query int false "Maximum number of results (1-500)" minimum(1) maximum(500)
 // @Param        cursor query string false "Pagination cursor (opaque, from previous response)"
 // @Param        sourceType query string false "Filter by source type"
-// @Param        integrationId query string false "Filter by integration ID"
 // @Param        rootOnly query bool false "Filter to root documents only (no parent)"
 // @Param        parentDocumentId query string false "Filter by parent document ID"
 // @Success      200 {object} ListResult
@@ -87,9 +86,6 @@ func (h *Handler) List(c echo.Context) error {
 	// Filters
 	if sourceType := c.QueryParam("sourceType"); sourceType != "" {
 		params.SourceType = &sourceType
-	}
-	if integrationID := c.QueryParam("integrationId"); integrationID != "" {
-		params.IntegrationID = &integrationID
 	}
 	if rootOnly := c.QueryParam("rootOnly"); rootOnly == "true" {
 		params.RootOnly = true

@@ -33,7 +33,6 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/chat"
 	"github.com/emergent-company/emergent.memory/domain/chunking"
 	"github.com/emergent-company/emergent.memory/domain/chunks"
-	"github.com/emergent-company/emergent.memory/domain/datasource"
 	"github.com/emergent-company/emergent.memory/domain/devtools"
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
 	"github.com/emergent-company/emergent.memory/domain/docs"
@@ -42,10 +41,8 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/embeddingpolicies"
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
-	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/health"
-	"github.com/emergent-company/emergent.memory/domain/integrations"
 	"github.com/emergent-company/emergent.memory/domain/invites"
 	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
@@ -154,7 +151,6 @@ func main() {
 		useractivity.Module,
 		invites.Module,
 		events.Module,
-		integrations.Module,
 		discoveryjobs.Module,
 
 		// Provider module (credential resolution, model catalog, LLM usage tracking)
@@ -165,9 +161,6 @@ func main() {
 
 		// Email module (email job queue and worker)
 		email.Module,
-
-		// Data source sync module (syncs from external sources like ClickUp, Gmail)
-		datasource.Module,
 
 		// Scheduler module (cron-based scheduled tasks)
 		scheduler.Module,
@@ -183,9 +176,6 @@ func main() {
 
 		// Workspace image catalog (built-in rootfs + custom Docker images)
 		sandboximages.Module,
-
-		// GitHub App integration (repository access, credential management)
-		githubapp.Module,
 
 		// Cross-domain wiring: give projects.Service access to revoke tokens on member removal
 		fx.Invoke(func(svc *projects.Service, tokenRepo *apitoken.Repository) {

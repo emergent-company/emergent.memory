@@ -47,12 +47,6 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.POST("/document-parsing-jobs/delete", h.DeleteDocumentParsingJobs)
 	g.POST("/document-parsing-jobs/retry", h.RetryDocumentParsingJobs)
 
-	// Sync jobs management
-	g.GET("/sync-jobs", h.ListSyncJobs)
-	g.GET("/sync-jobs/:id/logs", h.GetSyncJobLogs)
-	g.POST("/sync-jobs/delete", h.DeleteSyncJobs)
-	g.POST("/sync-jobs/cancel", h.CancelSyncJobs)
-
 	// Service tokens (machine-to-machine access)
 	g.POST("/service-tokens", h.CreateServiceToken)
 }

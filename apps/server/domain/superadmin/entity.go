@@ -213,39 +213,3 @@ type DocumentParsingJob struct {
 	Project      *Project `bun:"rel:belongs-to,join:project_id=id" json:"project,omitempty"`
 	Organization *Org     `bun:"rel:belongs-to,join:organization_id=id" json:"organization,omitempty"`
 }
-
-// DataSourceSyncJob for superadmin queries (kb.data_source_sync_jobs)
-type DataSourceSyncJob struct {
-	bun.BaseModel `bun:"table:kb.data_source_sync_jobs,alias:dssj"`
-
-	ID              string     `bun:"id,pk,type:uuid" json:"id"`
-	IntegrationID   string     `bun:"integration_id,type:uuid" json:"integrationId"`
-	ProjectID       string     `bun:"project_id,type:uuid" json:"projectId"`
-	Status          string     `bun:"status" json:"status"`
-	TotalItems      int        `bun:"total_items" json:"totalItems"`
-	ProcessedItems  int        `bun:"processed_items" json:"processedItems"`
-	SuccessfulItems int        `bun:"successful_items" json:"successfulItems"`
-	FailedItems     int        `bun:"failed_items" json:"failedItems"`
-	SkippedItems    int        `bun:"skipped_items" json:"skippedItems"`
-	CurrentPhase    *string    `bun:"current_phase" json:"currentPhase,omitempty"`
-	StatusMessage   *string    `bun:"status_message" json:"statusMessage,omitempty"`
-	ErrorMessage    *string    `bun:"error_message" json:"errorMessage,omitempty"`
-	TriggerType     string     `bun:"trigger_type" json:"triggerType"`
-	Logs            any        `bun:"logs,type:jsonb" json:"logs,omitempty"`
-	CreatedAt       time.Time  `bun:"created_at" json:"createdAt"`
-	StartedAt       *time.Time `bun:"started_at" json:"startedAt,omitempty"`
-	CompletedAt     *time.Time `bun:"completed_at" json:"completedAt,omitempty"`
-
-	// Relations
-	Project     *Project               `bun:"rel:belongs-to,join:project_id=id" json:"project,omitempty"`
-	Integration *DataSourceIntegration `bun:"rel:belongs-to,join:integration_id=id" json:"integration,omitempty"`
-}
-
-// DataSourceIntegration for join purposes
-type DataSourceIntegration struct {
-	bun.BaseModel `bun:"table:kb.data_source_integrations,alias:dsi"`
-
-	ID           string `bun:"id,pk,type:uuid" json:"id"`
-	Name         string `bun:"name" json:"name"`
-	ProviderType string `bun:"provider_type" json:"providerType"`
-}

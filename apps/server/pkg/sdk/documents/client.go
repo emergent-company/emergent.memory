@@ -61,12 +61,8 @@ type Document struct {
 
 	// Data source
 	SourceType              *string `json:"sourceType,omitempty"`
-	DataSourceIntegrationID *string `json:"dataSourceIntegrationId,omitempty"`
-	ExternalSourceID        *string `json:"externalSourceId,omitempty"`
-	SyncVersion             *int    `json:"syncVersion,omitempty"`
 
 	// Metadata
-	IntegrationMetadata map[string]any `json:"integrationMetadata,omitempty"`
 	Metadata            map[string]any `json:"metadata,omitempty"`
 
 	// Computed fields
@@ -91,7 +87,6 @@ type ListOptions struct {
 	Limit            int
 	Cursor           string
 	SourceType       string
-	IntegrationID    string
 	RootOnly         bool
 	ParentDocumentID string
 }
@@ -293,9 +288,6 @@ func (c *Client) List(ctx context.Context, opts *ListOptions) (*ListResult, erro
 		}
 		if opts.SourceType != "" {
 			q.Set("sourceType", opts.SourceType)
-		}
-		if opts.IntegrationID != "" {
-			q.Set("integrationId", opts.IntegrationID)
 		}
 		if opts.RootOnly {
 			q.Set("rootOnly", "true")

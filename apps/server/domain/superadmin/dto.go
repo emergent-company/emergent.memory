@@ -324,59 +324,6 @@ type RetryJobsResponse struct {
 	Message      string `json:"message"`
 }
 
-// SyncJobDTO represents a data source sync job
-type SyncJobDTO struct {
-	ID              string     `json:"id"`
-	IntegrationID   string     `json:"integrationId"`
-	IntegrationName *string    `json:"integrationName,omitempty"`
-	ProjectID       string     `json:"projectId"`
-	ProjectName     *string    `json:"projectName,omitempty"`
-	ProviderType    *string    `json:"providerType,omitempty"`
-	Status          string     `json:"status"`
-	TotalItems      int        `json:"totalItems"`
-	ProcessedItems  int        `json:"processedItems"`
-	SuccessfulItems int        `json:"successfulItems"`
-	FailedItems     int        `json:"failedItems"`
-	SkippedItems    int        `json:"skippedItems"`
-	CurrentPhase    *string    `json:"currentPhase,omitempty"`
-	StatusMessage   *string    `json:"statusMessage,omitempty"`
-	ErrorMessage    *string    `json:"errorMessage,omitempty"`
-	TriggerType     string     `json:"triggerType"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	StartedAt       *time.Time `json:"startedAt,omitempty"`
-	CompletedAt     *time.Time `json:"completedAt,omitempty"`
-}
-
-// SyncJobStatsDTO contains stats for sync jobs
-type SyncJobStatsDTO struct {
-	Total              int `json:"total"`
-	Pending            int `json:"pending"`
-	Running            int `json:"running"`
-	Completed          int `json:"completed"`
-	Failed             int `json:"failed"`
-	Cancelled          int `json:"cancelled"`
-	WithErrors         int `json:"withErrors"`
-	TotalItemsImported int `json:"totalItemsImported"`
-}
-
-// ListSyncJobsResponse is the response for GET /api/superadmin/sync-jobs
-type ListSyncJobsResponse struct {
-	Jobs  []SyncJobDTO    `json:"jobs"`
-	Stats SyncJobStatsDTO `json:"stats"`
-	Meta  PaginationMeta  `json:"meta"`
-}
-
-// SyncJobLogsResponse is the response for GET /api/superadmin/sync-jobs/:id/logs
-type SyncJobLogsResponse struct {
-	ID           string     `json:"id"`
-	Status       string     `json:"status"`
-	Logs         any        `json:"logs"`
-	ErrorMessage *string    `json:"errorMessage,omitempty"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	StartedAt    *time.Time `json:"startedAt,omitempty"`
-	CompletedAt  *time.Time `json:"completedAt,omitempty"`
-}
-
 // SuccessResponse is a generic success response
 type SuccessResponse struct {
 	Success bool   `json:"success"`

@@ -346,7 +346,6 @@ type TestDocument struct {
 	MimeType                *string
 	Content                 *string
 	SourceType              *string
-	DataSourceIntegrationID *string
 	ParentDocumentID        *string
 }
 
@@ -361,15 +360,15 @@ func CreateTestDocument(ctx context.Context, db bun.IDB, doc TestDocument) error
 	_, err := db.NewRaw(`
 		INSERT INTO kb.documents (
 			id, project_id, filename, source_url, mime_type, content,
-			source_type, data_source_integration_id, parent_document_id,
+			source_type, parent_document_id,
 			created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
 		ON CONFLICT (id) DO UPDATE SET
 			filename = EXCLUDED.filename,
 			updated_at = NOW()
 	`, doc.ID, doc.ProjectID, doc.Filename, doc.SourceURL, doc.MimeType,
-		doc.Content, sourceType, doc.DataSourceIntegrationID, doc.ParentDocumentID).Exec(ctx)
+		doc.Content, sourceType, doc.ParentDocumentID).Exec(ctx)
 
 	return err
 }
@@ -385,15 +384,15 @@ func CreateTestDocumentWithTimestamp(ctx context.Context, db bun.IDB, doc TestDo
 	_, err := db.NewRaw(`
 		INSERT INTO kb.documents (
 			id, project_id, filename, source_url, mime_type, content,
-			source_type, data_source_integration_id, parent_document_id,
+			source_type, parent_document_id,
 			created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
 			filename = EXCLUDED.filename,
 			updated_at = NOW()
 	`, doc.ID, doc.ProjectID, doc.Filename, doc.SourceURL, doc.MimeType,
-		doc.Content, sourceType, doc.DataSourceIntegrationID, doc.ParentDocumentID, createdAt, createdAt).Exec(ctx)
+		doc.Content, sourceType, doc.ParentDocumentID, createdAt, createdAt).Exec(ctx)
 
 	return err
 }
