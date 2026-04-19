@@ -116,6 +116,33 @@ else
 fi
 
 # ============================================================================
+# golangci-lint Config Verify
+# Catches invalid .golangci.yml before CI rejects it.
+# ============================================================================
+echo ""
+echo "Checking golangci-lint config..."
+
+GOLANGCI_CONFIG_STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^apps/server/\.golangci\.ya?ml$' || true)
+
+if [ -z "$GOLANGCI_CONFIG_STAGED" ]; then
+  echo "  No golangci config files to check"
+else
+  if ! command -v golangci-lint > /dev/null 2>&1; then
+    echo "  golangci-lint not found, skipping (install via: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)"
+  else
+    echo "  Running golangci-lint config verify on apps/server..."
+    if ! (cd apps/server && golangci-lint config verify 2>&1); then
+      echo ""
+      echo "ERROR: golangci-lint config verify failed for apps/server/.golangci.yml"
+      echo "  Fix the config errors above before committing."
+      ERRORS=$((ERRORS + 1))
+    else
+      echo "  golangci-lint config OK"
+    fi
+  fi
+fi
+
+# ============================================================================
 # Swagger Annotation Check
 # Ensures handler files have @Router annotations for API documentation.
 # ============================================================================
