@@ -17,7 +17,7 @@ ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Re-declare ARGs after FROM to use them in this stage
 ARG VERSION

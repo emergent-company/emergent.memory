@@ -15,7 +15,7 @@ ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
 # ── Stage 1: Server + Migration + Swagger ──────────────────────────
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS server-builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS server-builder
 
 ARG TARGETPLATFORM
 ARG TARGETOS
@@ -72,7 +72,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     ./cmd/migrate
 
 # ── Stage 2: CLI ───────────────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS cli-builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS cli-builder
 
 ARG TARGETPLATFORM
 ARG TARGETOS
