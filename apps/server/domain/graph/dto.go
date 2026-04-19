@@ -784,6 +784,7 @@ type BranchMergeResponse struct {
 	AddedCount       int                         `json:"added_count"`
 	FastForwardCount int                         `json:"fast_forward_count"`
 	ConflictCount    int                         `json:"conflict_count"`
+	DeletedCount     *int                        `json:"deleted_count,omitempty"`
 	Objects          []*BranchMergeObjectSummary `json:"objects"`
 	Truncated        bool                        `json:"truncated,omitempty"`
 	HardLimit        *int                        `json:"hard_limit,omitempty"`
@@ -801,7 +802,7 @@ type BranchMergeResponse struct {
 // BranchMergeObjectSummary represents merge status for a single object.
 type BranchMergeObjectSummary struct {
 	CanonicalID  uuid.UUID  `json:"canonical_id"`
-	Status       string     `json:"status"` // "unchanged", "added", "fast_forward", "conflict"
+	Status       string     `json:"status"` // "unchanged", "added", "fast_forward", "conflict", "deleted"
 	SourceHeadID *uuid.UUID `json:"source_head_id,omitempty"`
 	TargetHeadID *uuid.UUID `json:"target_head_id,omitempty"`
 	SourcePaths  []string   `json:"source_paths,omitempty"`

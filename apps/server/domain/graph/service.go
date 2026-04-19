@@ -3101,7 +3101,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 
 	// Enumerate objects: classify each canonical_id
 	objectSummaries := make([]*BranchMergeObjectSummary, 0)
-	unchangedCount, addedCount, ffCount, conflictCount := 0, 0, 0, 0
+	unchangedCount, addedCount, ffCount, conflictCount, deletedCount := 0, 0, 0, 0, 0
 
 	// Hard limit for enumeration
 	hardLimit := 500
@@ -3144,6 +3144,16 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 
 		if sourceHead == nil && targetHead != nil {
 			// Exists only on target - unchanged (nothing to merge from source)
+			summary.Status = "unchanged"
+			unchangedCount++
+		} else if sourceHead != nil && sourceHead.DeletedAt != nil && targetHead != nil {
+			// Deleted on source branch, exists on target — classify as "deleted"
+			summary.Status = "deleted"
+			// For now count as fast_forward (it's a change that needs to be applied)
+			ffCount++
+			deletedCount++
+		} else if sourceHead != nil && sourceHead.DeletedAt != nil && targetHead == nil {
+			// Deleted on source, doesn't exist on target — nothing to do
 			summary.Status = "unchanged"
 			unchangedCount++
 		} else if sourceHead != nil && targetHead == nil {
@@ -3263,6 +3273,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		UnchangedCount:                unchangedCount,
 		AddedCount:                    addedCount,
 		FastForwardCount:              ffCount,
+		DeletedCount:                  &deletedCount,
 		ConflictCount:                 conflictCount,
 		Objects:                       responseObjectSummaries,
 		Truncated:                     truncated,
@@ -3424,6 +3435,17 @@ func (s *Service) applyMerge(
 			}
 			appliedCount++
 			defer s.enqueueEmbedding(ctx, cid.String())
+
+		case "deleted":
+			// Soft delete on target branch
+			targetHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, summary.CanonicalID, targetBranchID)
+			if err != nil {
+				return 0, fmt.Errorf("get target head for delete %s: %w", summary.CanonicalID, err)
+			}
+			if err := s.repo.SoftDelete(ctx, tx.Tx, targetHead, nil); err != nil {
+				return 0, fmt.Errorf("delete object %s: %w", summary.CanonicalID, err)
+			}
+			appliedCount++
 		}
 	}
 

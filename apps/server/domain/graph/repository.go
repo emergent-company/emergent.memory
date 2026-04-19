@@ -2289,6 +2289,7 @@ type BranchObjectHead struct {
 	Status      *string
 	Labels      []string
 	Properties  map[string]any
+	DeletedAt   *time.Time
 }
 
 // GetBranchObjectHeads returns HEAD versions of all objects on a branch.
@@ -2298,10 +2299,9 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 
 	q := r.db.NewSelect().
 		Model(&objects).
-		Column("id", "canonical_id", "content_hash", "type", "key", "status", "labels", "properties").
+		Column("id", "canonical_id", "content_hash", "type", "key", "status", "labels", "properties", "deleted_at").
 		Where("project_id = ?", projectID).
-		Where("supersedes_id IS NULL").
-		Where("deleted_at IS NULL")
+		Where("supersedes_id IS NULL")
 
 	if branchID != nil {
 		q = q.Where("branch_id = ?", *branchID)
@@ -2325,6 +2325,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 			Status:      obj.Status,
 			Labels:      obj.Labels,
 			Properties:  obj.Properties,
+			DeletedAt:   obj.DeletedAt,
 		}
 	}
 
