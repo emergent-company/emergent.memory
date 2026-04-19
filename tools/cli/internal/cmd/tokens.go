@@ -110,7 +110,7 @@ Example:
 		if !tokenCleanupForce {
 			fmt.Printf("\nRevoke all %d token(s)? [y/N] ", len(matches))
 			var answer string
-			fmt.Scanln(&answer)
+			_, _ = fmt.Scanln(&answer)
 			if strings.ToLower(strings.TrimSpace(answer)) != "y" {
 				fmt.Println("Aborted.")
 				return nil

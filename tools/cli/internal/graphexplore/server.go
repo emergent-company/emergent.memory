@@ -424,7 +424,7 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	component := NodeDetailContent(detail)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
@@ -571,7 +571,7 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	component := NodeRelationsContent(groups)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleSchemaTypeDetail(w http.ResponseWriter, r *http.Request) {
@@ -682,7 +682,7 @@ func (s *Server) handleSchemaTypeDetail(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "text/html")
 	component := SchemaTypeDetailContent(detail)
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
@@ -737,7 +737,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 // RenderPartial is a helper to render a templ component to an http.ResponseWriter.
 func RenderPartial(w http.ResponseWriter, r *http.Request, component templ.Component) {
 	w.Header().Set("Content-Type", "text/html")
-	component.Render(r.Context(), w)
+	_ = component.Render(r.Context(), w)
 }
 
 // ── Internal types for JSON parsing ──────────────────────────────────────
