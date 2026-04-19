@@ -116,6 +116,41 @@ else
 fi
 
 # ============================================================================
+# gofmt Check
+# Catches unformatted Go files before CI rejects them.
+# ============================================================================
+echo ""
+echo "Checking Go formatting..."
+
+ALL_STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.go$' || true)
+
+if [ -z "$ALL_STAGED_GO_FILES" ]; then
+  echo "  No Go files to check"
+else
+  if ! command -v gofmt > /dev/null 2>&1; then
+    echo "  gofmt not found, skipping"
+  else
+    GOFMT_ERRORS=0
+    for file in $ALL_STAGED_GO_FILES; do
+      if [ -f "$file" ]; then
+        if [ -n "$(gofmt -l "$file")" ]; then
+          echo "ERROR: $file is not gofmt-formatted"
+          echo "  Run: gofmt -w $file"
+          GOFMT_ERRORS=$((GOFMT_ERRORS + 1))
+        fi
+      fi
+    done
+    if [ "$GOFMT_ERRORS" -gt 0 ]; then
+      echo ""
+      echo "  $GOFMT_ERRORS file(s) need formatting. Run: gofmt -w <file>"
+      ERRORS=$((ERRORS + GOFMT_ERRORS))
+    else
+      echo "  All Go files properly formatted"
+    fi
+  fi
+fi
+
+# ============================================================================
 # golangci-lint Config Verify
 # Catches invalid .golangci.yml before CI rejects it.
 # ============================================================================
