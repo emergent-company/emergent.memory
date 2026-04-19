@@ -535,7 +535,7 @@ func concurrentDelete(ctx context.Context, g *sdkgraph.Client, paths []string, g
 			defer wg.Done()
 			for j := range jobs {
 				obj := graphFiles[j.path]
-				if err := g.DeleteObject(ctx, obj.EntityID); err != nil {
+				if err := g.DeleteObject(ctx, obj.EntityID, nil); err != nil {
 					fmt.Fprintf(os.Stderr, "  delete error %s: %v\n", j.path, err)
 					mu.Lock()
 					failed++
