@@ -385,7 +385,7 @@ type TemporalFilter struct {
 
 // BranchMergeRequest is the request for branch merge.
 type BranchMergeRequest struct {
-	SourceBranchID string `json:"sourceBranchId"`
+	SourceBranchID string `json:"source_branch_id"`
 	Execute        bool   `json:"execute,omitempty"`
 	Limit          *int   `json:"limit,omitempty"`
 }
@@ -801,6 +801,7 @@ type BranchMergeResponse struct {
 	TotalObjects     int                         `json:"total_objects"`
 	UnchangedCount   int                         `json:"unchanged_count"`
 	AddedCount       int                         `json:"added_count"`
+	DeletedCount     *int                        `json:"deleted_count,omitempty"`
 	FastForwardCount int                         `json:"fast_forward_count"`
 	ConflictCount    int                         `json:"conflict_count"`
 	Objects          []*BranchMergeObjectSummary `json:"objects"`
