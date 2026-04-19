@@ -10,6 +10,11 @@
 //  2. Handler + domain match across all APIEndpoint objects
 //  3. Handler-only match (cross-domain, flagged as ambiguous)
 //
+// Deduplication:
+// If a handler is registered on multiple paths (e.g. REST and ACP), the tool
+// picks a canonical route (preferring /api/, shorter paths, then alphabetical)
+// and marks others as aliases to prevent oscillation.
+//
 // Unmatched code routes are reported as candidates for new APIEndpoint objects.
 // Unmatched graph endpoints (no code route found) are reported as stale.
 //
@@ -121,9 +126,9 @@ func run() error {
 	fmt.Fprintf(os.Stderr, "  Found %d APIEndpoint objects\n", len(graphEPs))
 
 	// Build lookup indexes
-	byKey := make(map[string]*sdkgraph.GraphObject)          // key → object
+	byKey := make(map[string]*sdkgraph.GraphObject)             // key → object
 	byDomainHandler := make(map[string][]*sdkgraph.GraphObject) // "domain:handler" → objects
-	byHandler := make(map[string][]*sdkgraph.GraphObject)    // handler → objects
+	byHandler := make(map[string][]*sdkgraph.GraphObject)       // handler → objects
 
 	for _, ep := range graphEPs {
 		if derefKey(ep.Key) != "" {
@@ -165,11 +170,47 @@ func run() error {
 	}
 	fmt.Fprintf(os.Stderr, "  Found %d code routes\n", len(codeRoutes))
 
-	// ── 3. Match code routes to graph endpoints ───────────────────────────────
+	// ── 3. Deduplicate routes (handle dual-registered handlers) ───────────────
+	var canonicalRoutes []CodeRoute
+	var aliasRoutes []CodeRoute
+	groups := make(map[string][]CodeRoute)
+	for _, r := range codeRoutes {
+		key := r.Domain + ":" + strings.ToLower(r.Handler)
+		groups[key] = append(groups[key], r)
+	}
+
+	for _, group := range groups {
+		if len(group) == 1 {
+			canonicalRoutes = append(canonicalRoutes, group[0])
+			continue
+		}
+
+		// Pick canonical
+		sort.Slice(group, func(i, j int) bool {
+			r1, r2 := group[i], group[j]
+			// 1. Prefer /api/
+			p1Api := strings.HasPrefix(r1.Path, "/api/")
+			p2Api := strings.HasPrefix(r2.Path, "/api/")
+			if p1Api != p2Api {
+				return p1Api
+			}
+			// 2. Shorter paths
+			if len(r1.Path) != len(r2.Path) {
+				return len(r1.Path) < len(r2.Path)
+			}
+			// 3. Alphabetical
+			return r1.Path < r2.Path
+		})
+
+		canonicalRoutes = append(canonicalRoutes, group[0])
+		aliasRoutes = append(aliasRoutes, group[1:]...)
+	}
+
+	// ── 4. Match code routes to graph endpoints ───────────────────────────────
 	var results []MatchResult
 	matchedGraphIDs := make(map[string]bool)
 
-	for _, r := range codeRoutes {
+	for _, r := range canonicalRoutes {
 		res := MatchResult{Route: r}
 
 		// Try key match: ep-<domain>-<handler-lower>
@@ -233,7 +274,7 @@ func run() error {
 		results = append(results, res)
 	}
 
-	// ── 4. Find stale graph endpoints (no code route matched) ─────────────────
+	// ── 5. Find stale graph endpoints (no code route matched) ─────────────────
 	var stale []*sdkgraph.GraphObject
 	for _, ep := range graphEPs {
 		if !matchedGraphIDs[ep.EntityID] {
@@ -243,7 +284,7 @@ func run() error {
 		}
 	}
 
-	// ── 5. Build update list ──────────────────────────────────────────────────
+	// ── 6. Build update list ──────────────────────────────────────────────────
 	var updates []UpdateRecord
 	var skipped []MatchResult
 
@@ -272,7 +313,7 @@ func run() error {
 
 	sort.Slice(updates, func(i, j int) bool { return updates[i].Key < updates[j].Key })
 
-	// ── 6. Apply updates via bulk API ─────────────────────────────────────────
+	// ── 7. Apply updates via bulk API ─────────────────────────────────────────
 	applied := 0
 	failed := 0
 	if !*dryRun && len(updates) > 0 {
@@ -310,13 +351,14 @@ func run() error {
 		fmt.Fprintf(os.Stderr, "  Applied: %d, Failed: %d\n", applied, failed)
 	}
 
-	// ── 7. Output ─────────────────────────────────────────────────────────────
+	// ── 8. Output ─────────────────────────────────────────────────────────────
 	switch *format {
 	case "json":
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{
 			"summary": map[string]any{
 				"graph_endpoints": len(graphEPs),
 				"code_routes":     len(codeRoutes),
+				"aliases":         len(aliasRoutes),
 				"updates_needed":  len(updates),
 				"applied":         applied,
 				"failed":          failed,
@@ -329,13 +371,13 @@ func run() error {
 			"stale":   staleKeys(stale),
 		})
 	default:
-		return printTable(updates, skipped, stale, applied, failed, *dryRun, len(graphEPs), len(codeRoutes))
+		return printTable(updates, skipped, stale, applied, failed, *dryRun, len(graphEPs), len(codeRoutes), len(aliasRoutes))
 	}
 }
 
 // ── Output ────────────────────────────────────────────────────────────────────
 
-func printTable(updates []UpdateRecord, skipped []MatchResult, stale []*sdkgraph.GraphObject, applied, failed int, dryRun bool, graphTotal, codeTotal int) error {
+func printTable(updates []UpdateRecord, skipped []MatchResult, stale []*sdkgraph.GraphObject, applied, failed int, dryRun bool, graphTotal, codeTotal, aliasTotal int) error {
 	now := time.Now().Format("2006-01-02")
 	dryTag := ""
 	if dryRun {
@@ -347,6 +389,7 @@ func printTable(updates []UpdateRecord, skipped []MatchResult, stale []*sdkgraph
 	fmt.Printf("┌─ SUMMARY\n")
 	fmt.Printf("  Graph endpoints : %d\n", graphTotal)
 	fmt.Printf("  Code routes     : %d\n", codeTotal)
+	fmt.Printf("  Aliases skipped : %d  (same handler, multiple paths)\n", aliasTotal)
 	fmt.Printf("  Updates needed  : %d\n", len(updates))
 	if !dryRun {
 		fmt.Printf("  Applied         : %d\n", applied)
