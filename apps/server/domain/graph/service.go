@@ -3120,14 +3120,6 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 	}
 
 	for cid := range allCanonicalIDs {
-		// When executing, never truncate — we must classify every object so
-		// applyMerge can act on all of them. Truncation is only for the
-		// response payload (dry-run preview).
-		if !req.Execute && len(objectSummaries) >= hardLimit {
-			truncated = true
-			break
-		}
-
 		sourceHead := sourceObjects[cid]
 		targetHead := targetObjects[cid]
 
@@ -3180,7 +3172,13 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			}
 		}
 
-		objectSummaries = append(objectSummaries, summary)
+		// Always classify all objects for accurate counts; only gate payload append.
+		// When executing, we must append all so applyMerge can act on them.
+		if req.Execute || len(objectSummaries) < hardLimit {
+			objectSummaries = append(objectSummaries, summary)
+		} else {
+			truncated = true
+		}
 	}
 
 	// Enumerate relationships
@@ -3196,11 +3194,6 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 	}
 
 	for cid := range allRelCanonicalIDs {
-		if !req.Execute && len(relSummaries) >= hardLimit {
-			truncated = true
-			break
-		}
-
 		sourceHead := sourceRels[cid]
 		targetHead := targetRels[cid]
 
@@ -3243,7 +3236,12 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			}
 		}
 
-		relSummaries = append(relSummaries, summary)
+		// Always classify all rels for accurate counts; only gate payload append.
+		if req.Execute || len(relSummaries) < hardLimit {
+			relSummaries = append(relSummaries, summary)
+		} else {
+			truncated = true
+		}
 	}
 
 	// Sort summaries: conflict -> fast_forward -> added -> unchanged
