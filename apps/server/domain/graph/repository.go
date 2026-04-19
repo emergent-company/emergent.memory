@@ -563,6 +563,39 @@ func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject
 	return r.CreateVersion(ctx, tx, obj, tombstone)
 }
 
+// SoftDeleteOnBranch creates a branch-local tombstone for an object that only exists on main.
+// Unlike SoftDelete (which inherits branch from prevHead), this inserts a new HEAD directly
+// on the target branch with deleted_at set, without modifying the main-branch HEAD.
+func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead *GraphObject, branchID *uuid.UUID, actorID *uuid.UUID) error {
+	now := time.Now()
+	actorType := "user"
+	tombstone := &GraphObject{
+		ID:          uuid.New(),
+		CanonicalID: mainHead.CanonicalID,
+		ProjectID:   mainHead.ProjectID,
+		BranchID:    branchID,
+		Type:        mainHead.Type,
+		Key:         mainHead.Key,
+		Status:      mainHead.Status,
+		Properties:  mainHead.Properties,
+		Labels:      mainHead.Labels,
+		DeletedAt:   &now,
+		ActorID:     actorID,
+		ActorType:   &actorType,
+		Version:     mainHead.Version + 1,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	tombstone.ContentHash = computeContentHash(tombstone.Properties, tombstone.Status, tombstone.Key, tombstone.Labels)
+
+	_, err := tx.NewInsert().Model(tombstone).Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to create branch tombstone", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
 // Restore removes the deleted_at flag by creating a new non-deleted version.
 func (r *Repository) Restore(ctx context.Context, tx bun.Tx, obj *GraphObject, actorID *uuid.UUID) error {
 	restored := &GraphObject{

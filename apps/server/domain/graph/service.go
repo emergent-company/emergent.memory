@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -885,18 +886,39 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		return err
 	}
 
-	// Re-fetch HEAD after lock — use branchID if provided, else use object's own branch
-	effectiveBranchID := current.BranchID
 	if branchID != nil {
-		effectiveBranchID = branchID
-	}
-	current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, effectiveBranchID)
-	if err != nil {
-		return err
-	}
-
-	if err := s.repo.SoftDelete(ctx, tx.Tx, current, actorID); err != nil {
-		return err
+		// Branch-scoped delete: try to get branch-local HEAD first.
+		// If none exists, fall back to main HEAD and create a branch-local tombstone.
+		branchHead, err := s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, branchID)
+		if err != nil {
+			var appErr *apperror.Error
+			if !errors.As(err, &appErr) || appErr.HTTPStatus != 404 {
+				return err
+			}
+			// No branch-local HEAD — fetch main HEAD and create tombstone directly on branch.
+			mainHead, merr := s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, nil)
+			if merr != nil {
+				return merr
+			}
+			if err := s.repo.SoftDeleteOnBranch(ctx, tx.Tx, mainHead, branchID, actorID); err != nil {
+				return err
+			}
+			current = mainHead
+		} else {
+			if err := s.repo.SoftDelete(ctx, tx.Tx, branchHead, actorID); err != nil {
+				return err
+			}
+			current = branchHead
+		}
+	} else {
+		// Main branch delete: re-fetch HEAD after lock.
+		current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, nil)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.SoftDelete(ctx, tx.Tx, current, actorID); err != nil {
+			return err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
