@@ -485,7 +485,10 @@ func (p *E2BProvider) ListFiles(ctx context.Context, providerID string, req *Fil
 		searchPath = "/home/user"
 	}
 
-	cmd := fmt.Sprintf("find %q -name %q -printf '%%T@ %%y %%s %%p\\n' 2>/dev/null | sort -rn | head -1000", searchPath, req.Pattern)
+	// Use -path instead of -name to support ** glob patterns (e.g. **/*.go, **/*).
+	// -path matches the full path; "*" crosses directory boundaries so "**" → "*".
+	findPattern := strings.ReplaceAll(req.Pattern, "**", "*")
+	cmd := fmt.Sprintf("find %q -path %q -printf '%%T@ %%y %%s %%p\\n' 2>/dev/null | sort -rn | head -1000", searchPath, findPattern)
 	result, err := p.envdExecCommand(ctx, sandbox, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list files: %w", err)

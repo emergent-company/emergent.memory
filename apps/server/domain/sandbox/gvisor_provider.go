@@ -783,8 +783,15 @@ func (p *GVisorProvider) ListFiles(ctx context.Context, providerID string, req *
 		searchPath = workspaceDir
 	}
 
-	// Use find with glob pattern
-	cmd := fmt.Sprintf("find %q -name %q -printf '%%T@ %%y %%s %%p\\n' 2>/dev/null | sort -rn", searchPath, req.Pattern)
+	// Use find with -path to support ** glob patterns (e.g. **/*.go, **/*).
+	// -name only matches the filename component and does not support ** patterns.
+	// -path matches the full path including directory separators; "*" in -path
+	// already crosses directory boundaries, so "**" and "*" are equivalent here.
+	// Examples: "**/*.go" → "*.go" matches /workspace/pkg/foo.go ✓
+	//           "**/*"    → "*"   matches all files ✓
+	//           "*.go"    → "*.go" matches /workspace/main.go ✓
+	findPattern := strings.ReplaceAll(req.Pattern, "**", "*")
+	cmd := fmt.Sprintf("find %q -path %q -printf '%%T@ %%y %%s %%p\\n' 2>/dev/null | sort -rn", searchPath, findPattern)
 	result, err := p.Exec(ctx, providerID, &ExecRequest{Command: cmd})
 	if err != nil {
 		return nil, err
