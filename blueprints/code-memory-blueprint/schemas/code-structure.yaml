@@ -1,5 +1,5 @@
 name: code-structure
-version: 1.9.0
+version: 1.12.0
 description: >
   General-purpose structural schema for mapping any software project.
   Covers the architectural layer: apps, modules, pages, components, services,
@@ -109,6 +109,21 @@ objectTypeSchemas:
       description:
         type: string
 
+  - name: Helper
+    label: Helper
+    description: >
+      A reusable logic unit consumed by UI components or services — encapsulates
+      state, side effects, or data-fetching without being a visual component.
+      Language-agnostic: React hooks, Vue composables, Svelte stores/runes,
+      PHP traits, Go embedded helper structs, utility modules.
+      Distinguished from UIComponent (no render output) and Service (not infrastructure).
+    properties:
+      type:
+        type: string
+        description: "Helper category. E.g. hook, composable, store, trait, mixin, utility"
+      description:
+        type: string
+
   - name: Action
     label: Action
     description: >
@@ -160,6 +175,12 @@ objectTypeSchemas:
       slug:
         type: string
         description: "Short machine-readable identifier. E.g. auth, cases, compliance"
+      name:
+        type: string
+        description: "Human-readable name of the domain"
+      app:
+        type: string
+        description: "The application this domain belongs to (e.g. web, api)"
       description:
         type: string
 
@@ -609,29 +630,64 @@ relationshipTypeSchemas:
     sourceType: App
     targetType: Module
 
+  - name: has_member
+    label: Has Member
+    description: >
+      Inverse of belongs_to — a Domain (or parent grouping) has a member object.
+      Auto-created when belongs_to is created. Enables outbound traversal from Domain
+      to all its members without reversing the belongs_to direction.
+    sourceType: Domain
+    targetType: Scenario
+    inverseType: belongs_to
+
   - name: belongs_to
     label: Belongs To
     description: A node belongs to a parent grouping (Scenario→Domain, Module→App, SourceFile→Module, Service→Domain, Job→Domain, APIEndpoint→Domain)
     sourceType: Scenario
     targetType: Domain
+    inverseType: has_member
 
   - name: belongs_to
     label: Belongs To
     description: Service belongs to a domain
     sourceType: Service
     targetType: Domain
+    inverseType: has_member
 
   - name: belongs_to
     label: Belongs To
     description: Job belongs to a domain
     sourceType: Job
     targetType: Domain
+    inverseType: has_member
 
   - name: belongs_to
     label: Belongs To
     description: APIEndpoint belongs to a domain
     sourceType: APIEndpoint
     targetType: Domain
+    inverseType: has_member
+
+  - name: belongs_to
+    label: Belongs To
+    description: UIComponent belongs to a domain
+    sourceType: UIComponent
+    targetType: Domain
+    inverseType: has_member
+
+  - name: belongs_to
+    label: Belongs To
+    description: Helper belongs to a domain
+    sourceType: Helper
+    targetType: Domain
+    inverseType: has_member
+
+  - name: belongs_to
+    label: Belongs To
+    description: Context belongs to a domain
+    sourceType: Context
+    targetType: Domain
+    inverseType: has_member
 
   - name: nested_in
     label: Nested In
@@ -641,11 +697,21 @@ relationshipTypeSchemas:
 
   # ── Definition / Implementation ──────────────────────────────────────────────
 
+  - name: defined_in
+    label: Defined In
+    description: >
+      Inverse of defines — a node (Service, UIComponent, Action, etc.) is defined in a SourceFile.
+      Auto-created when defines is created. Enables outbound traversal from any object to its source file.
+    sourceType: Service
+    targetType: SourceFile
+    inverseType: defines
+
   - name: defines
     label: Defines
     description: A source file defines or implements a node (Service, Job, Middleware, DataModel, Context, UIComponent, Action, TestSuite, APIEndpoint, SQLQuery, APIContract)
     sourceType: SourceFile
     targetType: Service
+    inverseType: defined_in
 
   - name: entry_point_of
     label: Entry Point Of
@@ -739,11 +805,21 @@ relationshipTypeSchemas:
     sourceType: Scenario
     targetType: Actor
 
+  - name: step_of
+    label: Step Of
+    description: >
+      Inverse of has_step — a ScenarioStep belongs to its parent Scenario.
+      Auto-created when has_step is created.
+    sourceType: ScenarioStep
+    targetType: Scenario
+    inverseType: has_step
+
   - name: has_step
     label: Has Step
     description: A scenario directly owns an ordered step
     sourceType: Scenario
     targetType: ScenarioStep
+    inverseType: step_of
 
   - name: variant_of
     label: Variant Of
@@ -751,11 +827,21 @@ relationshipTypeSchemas:
     sourceType: Scenario
     targetType: Scenario
 
+  - name: hosts_step
+    label: Hosts Step
+    description: >
+      Inverse of occurs_in — a Context hosts ScenarioSteps that take place within it.
+      Auto-created when occurs_in is created. Enables querying "which steps happen in this context?"
+    sourceType: Context
+    targetType: ScenarioStep
+    inverseType: occurs_in
+
   - name: occurs_in
     label: Occurs In
     description: A scenario step takes place within a specific context
     sourceType: ScenarioStep
     targetType: Context
+    inverseType: hosts_step
 
   - name: has_action
     label: Has Action
@@ -873,9 +959,10 @@ relationshipTypeSchemas:
 
   - name: defined_in
     label: Defined In
-    description: A TestSuite abstraction is physically defined in a SourceFile
+    description: A TestSuite abstraction is physically defined in a SourceFile (also auto-created as inverse of defines)
     sourceType: TestSuite
     targetType: SourceFile
+    inverseType: defines
 
   # ── Entity / DB model layer ───────────────────────────────────────────────────
 
