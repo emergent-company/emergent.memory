@@ -2603,6 +2603,7 @@ memory graph objects delete <id> [flags]
 
 ```
       --branch string   Branch name or ID to scope deletion to (omit for main branch)
+  -f, --force           Skip confirmation prompt (accepted for scripting compatibility)
   -h, --help            help for delete
 ```
 
@@ -2662,6 +2663,7 @@ memory graph objects get <id|key> [flags]
 ```
       --branch string   Branch ID or name to resolve the key against (omit for main branch)
   -h, --help            help for get
+      --json            Output as JSON (shorthand for --output json)
       --output string   Output format: table or json (default "table")
 ```
 

@@ -423,10 +423,6 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 		if p.OrgID != "" {
 			fmt.Printf("   Org ID:      %s\n", p.OrgID)
 		}
-		if p.ProjectInfo != nil && *p.ProjectInfo != "" {
-			fmt.Printf("   Project Info: %s\n", *p.ProjectInfo)
-		}
-
 		// Print stats if requested
 		if projectStatsFlag && p.Stats != nil {
 			printProjectStats(p.Stats)
@@ -467,10 +463,6 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Project: %s (%s)\n", project.Name, project.ID)
 	fmt.Printf("  Org ID:     %s\n", project.OrgID)
-	if project.ProjectInfo != nil && *project.ProjectInfo != "" {
-		fmt.Printf("  Project Info: %s\n", *project.ProjectInfo)
-	}
-
 	// Print stats if requested
 	if projectStatsFlag && project.Stats != nil {
 		fmt.Println()
