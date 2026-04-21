@@ -192,6 +192,38 @@ func (r *Repository) IsUserMember(ctx context.Context, orgID, userID string) (bo
 	return exists, nil
 }
 
+// ListMembers returns all members of an organization with their user profile info.
+func (r *Repository) ListMembers(ctx context.Context, orgID string) ([]OrgMemberDTO, error) {
+	var members []OrgMemberDTO
+
+	err := r.db.NewSelect().
+		TableExpr("kb.organization_memberships AS om").
+		ColumnExpr("up.id").
+		ColumnExpr("COALESCE(ue.email, '') AS email").
+		ColumnExpr("up.display_name").
+		ColumnExpr("up.first_name").
+		ColumnExpr("up.last_name").
+		ColumnExpr("om.role").
+		ColumnExpr("om.created_at AS joined_at").
+		Join("INNER JOIN core.user_profiles AS up ON up.id = om.user_id").
+		Join(`LEFT JOIN LATERAL (
+			SELECT email FROM core.user_emails
+			WHERE user_id = up.id
+			ORDER BY verified DESC, created_at ASC
+			LIMIT 1
+		) AS ue ON true`).
+		Where("om.organization_id = ?", orgID).
+		Order("om.created_at ASC").
+		Scan(ctx, &members)
+
+	if err != nil {
+		r.log.Error("failed to list org members", logger.Error(err), slog.String("orgID", orgID))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return members, nil
+}
+
 // Helper functions to check PostgreSQL error codes
 func isUniqueViolation(err error) bool {
 	return containsErrorCode(err, "23505")

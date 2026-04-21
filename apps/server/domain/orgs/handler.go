@@ -119,3 +119,25 @@ func (h *Handler) Delete(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
 }
+
+// ListMembers returns all members of an organization
+// @Summary      List organization members
+// @Description  Returns all members of an organization with their roles
+// @Tags         organizations
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Success      200 {array} OrgMemberDTO "List of members"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id}/members [get]
+// @Security     bearerAuth
+func (h *Handler) ListMembers(c echo.Context) error {
+	id := c.Param("id")
+
+	members, err := h.svc.ListMembers(c.Request().Context(), id)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, members)
+}

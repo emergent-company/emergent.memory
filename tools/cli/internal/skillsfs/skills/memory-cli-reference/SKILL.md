@@ -3291,7 +3291,8 @@ memory orgs list [flags]
 ### Options
 
 ```
-  -h, --help   help for list
+  -h, --help      help for list
+      --members   Include members with roles
 ```
 
 ## memory projects

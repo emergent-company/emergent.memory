@@ -105,3 +105,8 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	s.log.Info("organization deleted", slog.String("orgID", id))
 	return nil
 }
+
+// ListMembers returns all members of an organization
+func (s *Service) ListMembers(ctx context.Context, orgID string) ([]OrgMemberDTO, error) {
+	return s.repo.ListMembers(ctx, orgID)
+}

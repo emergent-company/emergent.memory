@@ -24,6 +24,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Delete organization (authenticated)
 	g.DELETE("/:id", h.Delete)
 
+	g.GET("/:id/members", h.ListMembers)
+
 	// Org tool settings — admin routes
 	admin := e.Group("/api/admin/orgs")
 	admin.Use(authMiddleware.RequireAuth())

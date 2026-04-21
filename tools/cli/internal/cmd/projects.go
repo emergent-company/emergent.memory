@@ -413,23 +413,62 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Build org name lookup map
+	orgNames := map[string]string{}
+	if orgList, err := c.SDK.Orgs.List(context.Background()); err == nil {
+		for _, o := range orgList {
+			orgNames[o.ID] = o.Name
+		}
+	}
+
 	header := fmt.Sprintf("Found %d project(s)", total)
 	if limitFlag > 0 || offsetFlag > 0 {
 		header = fmt.Sprintf("Showing %d–%d of %d project(s)", offsetFlag+1, offsetFlag+len(projectList), total)
 	}
-	fmt.Printf("%s:\n\n", header)
-	for i, p := range projectList {
-		fmt.Printf("%d. %s (%s)\n", i+1, p.Name, p.ID)
-		if p.OrgID != "" {
-			fmt.Printf("   Org ID:      %s\n", p.OrgID)
-		}
-		// Print stats if requested
-		if projectStatsFlag && p.Stats != nil {
-			printProjectStats(p.Stats)
-		}
+	fmt.Printf("%s:\n", header)
 
-		fmt.Println()
+	// Group projects by org, preserving first-seen order
+	type orgGroup struct {
+		name     string
+		id       string
+		projects []struct {
+			idx int
+			p   projects.Project
+		}
 	}
+	var orgOrder []string
+	orgMap := map[string]*orgGroup{}
+	for i, p := range projectList {
+		if _, seen := orgMap[p.OrgID]; !seen {
+			orgOrder = append(orgOrder, p.OrgID)
+			name := orgNames[p.OrgID]
+			orgMap[p.OrgID] = &orgGroup{name: name, id: p.OrgID}
+		}
+		orgMap[p.OrgID].projects = append(orgMap[p.OrgID].projects, struct {
+			idx int
+			p   projects.Project
+		}{i + 1, p})
+	}
+
+	for _, orgID := range orgOrder {
+		g := orgMap[orgID]
+		fmt.Println()
+		if g.name != "" {
+			fmt.Printf("  %s (%s)\n", g.name, g.id)
+		} else {
+			fmt.Printf("  %s\n", g.id)
+		}
+		fmt.Println()
+		for _, entry := range g.projects {
+			prefix := fmt.Sprintf("%d.", entry.idx)
+			fmt.Printf("    %-4s %s\n", prefix, entry.p.Name)
+			fmt.Printf("         %s\n", entry.p.ID)
+			if projectStatsFlag && entry.p.Stats != nil {
+				printProjectStats(entry.p.Stats)
+			}
+		}
+	}
+	fmt.Println()
 
 	return nil
 }
@@ -462,7 +501,16 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Project: %s (%s)\n", project.Name, project.ID)
-	fmt.Printf("  Org ID:     %s\n", project.OrgID)
+	orgDisplay := project.OrgID
+	if orgList, err2 := c.SDK.Orgs.List(context.Background()); err2 == nil {
+		for _, o := range orgList {
+			if o.ID == project.OrgID {
+				orgDisplay = fmt.Sprintf("%s (%s)", o.Name, project.OrgID)
+				break
+			}
+		}
+	}
+	fmt.Printf("  Org:        %s\n", orgDisplay)
 	// Print stats if requested
 	if projectStatsFlag && project.Stats != nil {
 		fmt.Println()

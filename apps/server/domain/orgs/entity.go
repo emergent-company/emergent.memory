@@ -38,6 +38,17 @@ type OrgDTO struct {
 	Name string `json:"name"`
 }
 
+// OrgMemberDTO is the response DTO for org member endpoints
+type OrgMemberDTO struct {
+	ID          string  `json:"id"`
+	Email       string  `json:"email"`
+	DisplayName *string `json:"displayName,omitempty"`
+	FirstName   *string `json:"firstName,omitempty"`
+	LastName    *string `json:"lastName,omitempty"`
+	Role        string  `json:"role"`
+	JoinedAt    string  `json:"joinedAt"`
+}
+
 // CreateOrgRequest is the request body for creating an organization
 type CreateOrgRequest struct {
 	Name string `json:"name" validate:"required,min=1,max=120"`

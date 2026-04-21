@@ -53,6 +53,7 @@ var deleteOrgCmd = &cobra.Command{
 }
 
 var orgName string
+var orgMembersFlag bool
 
 func runListOrgs(cmd *cobra.Command, args []string) error {
 	c, err := getAccountClient(cmd)
@@ -83,6 +84,20 @@ func runListOrgs(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Found %d organization(s):\n\n", len(orgList))
 	for i, o := range orgList {
 		fmt.Printf("%d. %s (%s)\n", i+1, o.Name, o.ID)
+		if orgMembersFlag {
+			members, err := c.SDK.Orgs.ListMembers(context.Background(), o.ID)
+			if err == nil && len(members) > 0 {
+				for _, m := range members {
+					name := m.Email
+					if m.DisplayName != nil && *m.DisplayName != "" {
+						name = *m.DisplayName
+					} else if m.FirstName != nil && m.LastName != nil {
+						name = *m.FirstName + " " + *m.LastName
+					}
+					fmt.Printf("   • %-30s  %-20s  %s\n", name, m.Email, m.Role)
+				}
+			}
+		}
 	}
 
 	return nil
@@ -159,6 +174,8 @@ func runDeleteOrg(cmd *cobra.Command, args []string) error {
 func init() {
 	createOrgCmd.Flags().StringVar(&orgName, "name", "", "Organization name (required)")
 	_ = createOrgCmd.MarkFlagRequired("name")
+
+	listOrgsCmd.Flags().BoolVar(&orgMembersFlag, "members", false, "Include members with roles")
 
 	orgsCmd.AddCommand(listOrgsCmd)
 	orgsCmd.AddCommand(getOrgCmd)

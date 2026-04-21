@@ -36,6 +36,17 @@ type Organization struct {
 	Name string `json:"name"`
 }
 
+// OrgMember represents a member of an organization
+type OrgMember struct {
+	ID          string  `json:"id"`
+	Email       string  `json:"email"`
+	DisplayName *string `json:"displayName,omitempty"`
+	FirstName   *string `json:"firstName,omitempty"`
+	LastName    *string `json:"lastName,omitempty"`
+	Role        string  `json:"role"`
+	JoinedAt    string  `json:"joinedAt"`
+}
+
 // CreateOrganizationRequest represents an organization creation request
 type CreateOrganizationRequest struct {
 	Name string `json:"name"`
@@ -175,4 +186,33 @@ func (c *Client) Delete(ctx context.Context, id string) error {
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	return nil
+}
+
+// ListMembers returns all members of an organization.
+func (c *Client) ListMembers(ctx context.Context, orgID string) ([]OrgMember, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/orgs/"+url.PathEscape(orgID)+"/members", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("failed to apply auth: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list org members: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var members []OrgMember
+	if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return members, nil
 }
