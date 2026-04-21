@@ -542,6 +542,32 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 		return nil, apperror.ErrInvalidToken.WithInternal(err)
 	}
 
+	// If email is missing, lazily fetch it from Zitadel management API and sync it.
+	// This handles users who have only ever authenticated via API tokens (never via browser OAuth).
+	if user.Email == "" && user.ZitadelUserID != "" {
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			email, err := m.zitadelSvc.GetUserEmailByZitadelID(bgCtx, user.ZitadelUserID)
+			if err != nil {
+				m.log.Warn("failed to fetch email from Zitadel for API token user",
+					slog.String("user_id", user.ID),
+					slog.String("zitadel_user_id", user.ZitadelUserID),
+					logger.Error(err),
+				)
+				return
+			}
+			if email != "" {
+				if syncErr := m.userSvc.syncEmail(bgCtx, user.ID, email); syncErr != nil {
+					m.log.Warn("failed to sync email for API token user",
+						slog.String("user_id", user.ID),
+						logger.Error(syncErr),
+					)
+				}
+			}
+		}()
+	}
+
 	return &AuthUser{
 		ID:                user.ID,
 		Sub:               user.ZitadelUserID,
