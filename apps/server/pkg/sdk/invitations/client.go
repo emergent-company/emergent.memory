@@ -53,6 +53,19 @@ type SentInvite struct {
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
+// PendingInvite represents an invitation received by the current user
+type PendingInvite struct {
+	ID               string     `json:"id"`
+	ProjectID        *string    `json:"projectId,omitempty"`
+	ProjectName      *string    `json:"projectName,omitempty"`
+	OrganizationID   string     `json:"organizationId"`
+	OrganizationName *string    `json:"organizationName,omitempty"`
+	Role             string     `json:"role"`
+	Token            string     `json:"token"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	ExpiresAt        *time.Time `json:"expiresAt,omitempty"`
+}
+
 // CreateRequest is the request to create a new invitation
 type CreateRequest struct {
 	OrgID       string `json:"orgId"`
@@ -134,6 +147,70 @@ func (c *Client) Revoke(ctx context.Context, inviteID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// ListPending returns all pending invitations for the current user.
+func (c *Client) ListPending(ctx context.Context) ([]PendingInvite, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/invites/pending", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var invites []PendingInvite
+	if err := json.NewDecoder(resp.Body).Decode(&invites); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return invites, nil
+}
+
+// Accept accepts a pending invitation by token.
+func (c *Client) Accept(ctx context.Context, token string) error {
+	reqBody := struct {
+		Token string `json:"token"`
+	}{Token: token}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/invites/accept", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 
 	if err := c.auth.Authenticate(req); err != nil {
 		return fmt.Errorf("authentication failed: %w", err)

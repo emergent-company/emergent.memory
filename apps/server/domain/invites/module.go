@@ -16,8 +16,9 @@ var Module = fx.Module("invites",
 
 // RegisterRoutes registers the invites routes
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
-	// GET /invites/accept?token=... — email invite link target (requires auth)
-	e.GET("/invites/accept", h.AcceptViaLink, authMiddleware.RequireAuth())
+	// GET /invites/accept?token=... — email invite link target
+	// Auth is handled inside the handler: unauthenticated users are redirected to login.
+	e.GET("/invites/accept", h.AcceptViaLink)
 
 	// Invites routes (require authentication)
 	g := e.Group("/api/invites", authMiddleware.RequireAuth())

@@ -244,11 +244,104 @@ func initTeamCmd() {
 	teamInviteCmd.Flags().StringVar(&teamInviteRole, "role", "project_viewer",
 		"Role to assign (project_viewer, project_user, project_admin)")
 
+	// team invites flags
+	teamInvitesCmd.Flags().BoolVar(&teamInvitesJSON, "json", false, "Output as JSON")
+
 	// team remove flags
 	teamRemoveCmd.Flags().BoolVarP(&teamRemoveYes, "yes", "y", false, "Skip confirmation prompt")
 
 	// Assemble subcommand tree
 	teamCmd.AddCommand(teamListCmd)
 	teamCmd.AddCommand(teamInviteCmd)
+	teamCmd.AddCommand(teamInvitesCmd)
+	teamCmd.AddCommand(teamAcceptCmd)
 	teamCmd.AddCommand(teamRemoveCmd)
+}
+
+// ─── team invites ────────────────────────────────────────────────────────────
+
+var teamInvitesCmd = &cobra.Command{
+	Use:   "invites",
+	Short: "List pending invitations",
+	Long:  "List all pending invitations sent to your account.",
+	Args:  cobra.NoArgs,
+	RunE:  runTeamInvites,
+}
+
+var teamInvitesJSON bool
+
+func runTeamInvites(cmd *cobra.Command, args []string) error {
+	c, err := getAccountClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	invites, err := c.SDK.Invitations.ListPending(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to list invitations: %w", err)
+	}
+
+	if teamInvitesJSON {
+		return json.NewEncoder(os.Stdout).Encode(invites)
+	}
+
+	if len(invites) == 0 {
+		fmt.Println("No pending invitations.")
+		return nil
+	}
+
+	for i, inv := range invites {
+		projectName := "unknown project"
+		if inv.ProjectName != nil && *inv.ProjectName != "" {
+			projectName = *inv.ProjectName
+		}
+
+		orgName := inv.OrganizationID
+		if inv.OrganizationName != nil && *inv.OrganizationName != "" {
+			orgName = *inv.OrganizationName
+		}
+
+		role := roleLabelForCLI(inv.Role)
+
+		expiry := "no expiry"
+		if inv.ExpiresAt != nil {
+			expiry = "expires " + inv.ExpiresAt.Format("2006-01-02")
+		}
+
+		tokenDisplay := inv.Token
+		if len(tokenDisplay) > 12 {
+			tokenDisplay = tokenDisplay[:12] + "..."
+		}
+
+		fmt.Printf("%d. Project %q (org: %s) — %s  %s  token: %s\n",
+			i+1, projectName, orgName, role, expiry, tokenDisplay)
+	}
+
+	return nil
+}
+
+// ─── team accept ─────────────────────────────────────────────────────────────
+
+var teamAcceptCmd = &cobra.Command{
+	Use:   "accept <token>",
+	Short: "Accept a pending invitation",
+	Long:  "Accept a pending invitation using the token from the invitation email.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runTeamAccept,
+}
+
+func runTeamAccept(cmd *cobra.Command, args []string) error {
+	token := args[0]
+
+	c, err := getAccountClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	if err := c.SDK.Invitations.Accept(context.Background(), token); err != nil {
+		return err
+	}
+
+	fmt.Println("Invitation accepted.")
+	return nil
 }

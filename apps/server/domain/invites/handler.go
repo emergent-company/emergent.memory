@@ -1,10 +1,13 @@
 package invites
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -12,11 +15,12 @@ import (
 // Handler handles HTTP requests for invitations
 type Handler struct {
 	svc *Service
+	cfg *config.Config
 }
 
 // NewHandler creates a new invites handler
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, cfg *config.Config) *Handler {
+	return &Handler{svc: svc, cfg: cfg}
 }
 
 // ListPending returns pending invitations for the current user
@@ -149,27 +153,31 @@ func (h *Handler) Accept(c echo.Context) error {
 }
 
 // AcceptViaLink accepts an invitation via GET with token as query parameter.
-// This is the target of the email invite link — the user must be authenticated.
+// If the user is not authenticated, redirects to the Zitadel login page.
 // @Summary      Accept invitation via link
-// @Description  Accepts a pending invitation using a token passed as a query parameter. Designed for email invite links. Requires authentication.
+// @Description  Accepts a pending invitation using a token passed as a query parameter. Designed for email invite links. Redirects to login if not authenticated.
 // @Tags         invites
 // @Produce      json
 // @Param        token query string true "Invitation token"
 // @Success      200 {object} map[string]string "Acceptance confirmation"
+// @Success      302 "Redirect to login"
 // @Failure      400 {object} apperror.Error "Missing token"
-// @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Invitation not found or expired"
 // @Router       /invites/accept [get]
-// @Security     bearerAuth
 func (h *Handler) AcceptViaLink(c echo.Context) error {
-	user := auth.GetUser(c)
-	if user == nil {
-		return apperror.ErrUnauthorized
-	}
-
 	token := c.QueryParam("token")
 	if token == "" {
 		return apperror.ErrBadRequest.WithMessage("token is required")
+	}
+
+	user := auth.GetUser(c)
+	if user == nil {
+		// Redirect to Zitadel login; pass the full invite URL as login_hint so
+		// the user lands back here after authenticating.
+		issuer := h.cfg.Zitadel.GetIssuer()
+		returnURL := fmt.Sprintf("%s/invites/accept?token=%s", h.cfg.AppURL, url.QueryEscape(token))
+		loginURL := fmt.Sprintf("%s/ui/login?redirect_uri=%s", issuer, url.QueryEscape(returnURL))
+		return c.Redirect(http.StatusFound, loginURL)
 	}
 
 	if err := h.svc.Accept(c.Request().Context(), user.ID, token); err != nil {
