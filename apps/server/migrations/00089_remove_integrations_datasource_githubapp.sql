@@ -17,7 +17,7 @@ DROP TABLE IF EXISTS kb.data_source_sync_jobs;
 
 -- 4. Drop data_source_integrations + its trigger
 DROP TRIGGER IF EXISTS update_data_source_integrations_updated_at ON kb.data_source_integrations;
-DROP FUNCTION IF EXISTS kb.update_data_source_integrations_updated_at();
+DROP FUNCTION IF EXISTS kb.update_data_source_integrations_updated_at() CASCADE;
 DROP TABLE IF EXISTS kb.data_source_integrations;
 
 -- 5. Drop integrations table
