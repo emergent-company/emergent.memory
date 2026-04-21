@@ -80,6 +80,20 @@ type Project struct {
 	Organization *Org `bun:"rel:belongs-to,join:organization_id=id" json:"organization,omitempty"`
 }
 
+// ProjectMembership for superadmin queries (kb.project_memberships)
+type ProjectMembership struct {
+	bun.BaseModel `bun:"table:kb.project_memberships,alias:pm"`
+
+	ID        string    `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProjectID string    `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	UserID    string    `bun:"user_id,notnull,type:uuid" json:"userId"`
+	Role      string    `bun:"role,notnull" json:"role"`
+	CreatedAt time.Time `bun:"created_at,notnull,default:now()" json:"createdAt"`
+
+	// Relations
+	User *UserProfile `bun:"rel:belongs-to,join:user_id=id" json:"user,omitempty"`
+}
+
 // OrganizationMembership for superadmin queries
 type OrganizationMembership struct {
 	bun.BaseModel `bun:"table:kb.organization_memberships,alias:om"`

@@ -894,3 +894,42 @@ func (r *Repository) GrantSuperadminToUser(ctx context.Context, userID, grantedB
 	_, err := r.db.NewInsert().Model(sa).Exec(ctx)
 	return err
 }
+
+// ListProjectMembers returns all members of a project with their user profiles.
+func (r *Repository) ListProjectMembers(ctx context.Context, projectID string) ([]ProjectMembership, error) {
+	var members []ProjectMembership
+	err := r.db.NewSelect().
+		Model(&members).
+		Relation("User").
+		Where("pm.project_id = ?", projectID).
+		Order("pm.created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+// AddProjectMember upserts a user into a project with the given role.
+func (r *Repository) AddProjectMember(ctx context.Context, projectID, userID, role string) error {
+	membership := &ProjectMembership{
+		ProjectID: projectID,
+		UserID:    userID,
+		Role:      role,
+	}
+	_, err := r.db.NewInsert().
+		Model(membership).
+		On("CONFLICT (project_id, user_id) DO UPDATE SET role = EXCLUDED.role").
+		Exec(ctx)
+	return err
+}
+
+// RemoveProjectMember removes a user from a project.
+func (r *Repository) RemoveProjectMember(ctx context.Context, projectID, userID string) error {
+	_, err := r.db.NewDelete().
+		Model((*ProjectMembership)(nil)).
+		Where("project_id = ?", projectID).
+		Where("user_id = ?", userID).
+		Exec(ctx)
+	return err
+}

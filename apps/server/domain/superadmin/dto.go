@@ -329,3 +329,25 @@ type SuccessResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
+
+// ProjectMemberDTO is the response DTO for a project member
+type ProjectMemberDTO struct {
+	UserID      string    `json:"userId"`
+	Role        string    `json:"role"`
+	JoinedAt    time.Time `json:"joinedAt"`
+	Email       *string   `json:"email,omitempty"`
+	DisplayName *string   `json:"displayName,omitempty"`
+	FirstName   *string   `json:"firstName,omitempty"`
+	LastName    *string   `json:"lastName,omitempty"`
+}
+
+// ListProjectMembersResponse is the response for GET /api/superadmin/projects/:id/members
+type ListProjectMembersResponse struct {
+	Members []ProjectMemberDTO `json:"members"`
+}
+
+// AddProjectMemberRequest is the request body for POST /api/superadmin/projects/:id/members
+type AddProjectMemberRequest struct {
+	UserID string `json:"userId"`
+	Role   string `json:"role"`
+}

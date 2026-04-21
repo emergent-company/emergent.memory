@@ -416,6 +416,129 @@ func (h *Handler) DeleteProject(c echo.Context) error {
 	})
 }
 
+// ListProjectMembers handles GET /api/superadmin/projects/:id/members
+// @Summary      List project members (superadmin only)
+// @Description  Returns all members of a project with their user profiles and roles.
+// @Tags         superadmin
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Success      200 {object} ListProjectMembersResponse "Project members"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin)"
+// @Router       /api/superadmin/projects/{id}/members [get]
+// @Security     bearerAuth
+func (h *Handler) ListProjectMembers(c echo.Context) error {
+	if _, err := h.requireSuperadmin(c); err != nil {
+		return err
+	}
+
+	projectID := c.Param("id")
+	if projectID == "" {
+		return apperror.ErrBadRequest
+	}
+
+	members, err := h.repo.ListProjectMembers(c.Request().Context(), projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to list project members", err)
+	}
+
+	dtos := make([]ProjectMemberDTO, len(members))
+	for i, m := range members {
+		dto := ProjectMemberDTO{
+			UserID:   m.UserID,
+			Role:     m.Role,
+			JoinedAt: m.CreatedAt,
+		}
+		if m.User != nil {
+			dto.DisplayName = m.User.DisplayName
+			dto.FirstName = m.User.FirstName
+			dto.LastName = m.User.LastName
+			if len(m.User.Emails) > 0 {
+				dto.Email = &m.User.Emails[0].Email
+			}
+		}
+		dtos[i] = dto
+	}
+
+	return c.JSON(http.StatusOK, ListProjectMembersResponse{Members: dtos})
+}
+
+// AddProjectMember handles POST /api/superadmin/projects/:id/members
+// @Summary      Add a member to a project (superadmin only)
+// @Description  Adds a user to a project with the specified role. If the user is already a member, their role is updated.
+// @Tags         superadmin
+// @Accept       json
+// @Produce      json
+// @Param        id   path string                  true "Project ID (UUID)"
+// @Param        body body AddProjectMemberRequest true "Member to add"
+// @Success      200 {object} SuccessResponse "Member added successfully"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin_full)"
+// @Router       /api/superadmin/projects/{id}/members [post]
+// @Security     bearerAuth
+func (h *Handler) AddProjectMember(c echo.Context) error {
+	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+		return err
+	}
+
+	projectID := c.Param("id")
+	if projectID == "" {
+		return apperror.ErrBadRequest
+	}
+
+	var req AddProjectMemberRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest
+	}
+	if req.UserID == "" || req.Role == "" {
+		return apperror.ErrBadRequest
+	}
+
+	if err := h.repo.AddProjectMember(c.Request().Context(), projectID, req.UserID, req.Role); err != nil {
+		return apperror.NewInternal("failed to add project member", err)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse{
+		Success: true,
+		Message: fmt.Sprintf("User %s added to project as %s", req.UserID, req.Role),
+	})
+}
+
+// RemoveProjectMember handles DELETE /api/superadmin/projects/:id/members/:userId
+// @Summary      Remove a member from a project (superadmin only)
+// @Description  Removes a user from a project. The user loses all access to the project.
+// @Tags         superadmin
+// @Produce      json
+// @Param        id     path string true "Project ID (UUID)"
+// @Param        userId path string true "User ID (UUID)"
+// @Success      200 {object} SuccessResponse "Member removed successfully"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden (not superadmin_full)"
+// @Router       /api/superadmin/projects/{id}/members/{userId} [delete]
+// @Security     bearerAuth
+func (h *Handler) RemoveProjectMember(c echo.Context) error {
+	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+		return err
+	}
+
+	projectID := c.Param("id")
+	userID := c.Param("userId")
+	if projectID == "" || userID == "" {
+		return apperror.ErrBadRequest
+	}
+
+	if err := h.repo.RemoveProjectMember(c.Request().Context(), projectID, userID); err != nil {
+		return apperror.NewInternal("failed to remove project member", err)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse{
+		Success: true,
+		Message: fmt.Sprintf("User %s removed from project", userID),
+	})
+}
+
 // ListEmailJobs handles GET /api/superadmin/email-jobs
 // @Summary      List email job queue (superadmin only)
 // @Description  Returns paginated list of email jobs with status, delivery info, and error details. Supports filtering by status, recipient, and date range.

@@ -26,6 +26,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Projects management
 	g.GET("/projects", h.ListProjects)
 	g.DELETE("/projects/:id", h.DeleteProject)
+	g.GET("/projects/:id/members", h.ListProjectMembers)
+	g.POST("/projects/:id/members", h.AddProjectMember)
+	g.DELETE("/projects/:id/members/:userId", h.RemoveProjectMember)
 
 	// Email jobs management
 	g.GET("/email-jobs", h.ListEmailJobs)
