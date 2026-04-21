@@ -14,6 +14,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/email"
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -26,11 +27,11 @@ type Service struct {
 }
 
 // NewService creates a new invites service
-func NewService(db bun.IDB, emailSvc *email.JobsService, log *slog.Logger) *Service {
+func NewService(db bun.IDB, emailSvc *email.JobsService, cfg *config.Config, log *slog.Logger) *Service {
 	return &Service{
 		db:       db,
 		emailSvc: emailSvc,
-		baseURL:  "https://app.emergent.memory", // overridden via env in production
+		baseURL:  cfg.AppURL,
 		log:      log,
 	}
 }

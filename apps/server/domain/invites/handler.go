@@ -113,7 +113,7 @@ func (h *Handler) Create(c echo.Context) error {
 	return c.JSON(http.StatusCreated, invite)
 }
 
-// Accept accepts an invitation
+// Accept accepts an invitation via POST (JSON body with token)
 // @Summary      Accept invitation
 // @Description  Accepts a pending invitation using the provided token, granting the user access to the project with specified role
 // @Tags         invites
@@ -142,6 +142,37 @@ func (h *Handler) Accept(c echo.Context) error {
 	}
 
 	if err := h.svc.Accept(c.Request().Context(), user.ID, req.Token); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "accepted"})
+}
+
+// AcceptViaLink accepts an invitation via GET with token as query parameter.
+// This is the target of the email invite link — the user must be authenticated.
+// @Summary      Accept invitation via link
+// @Description  Accepts a pending invitation using a token passed as a query parameter. Designed for email invite links. Requires authentication.
+// @Tags         invites
+// @Produce      json
+// @Param        token query string true "Invitation token"
+// @Success      200 {object} map[string]string "Acceptance confirmation"
+// @Failure      400 {object} apperror.Error "Missing token"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Invitation not found or expired"
+// @Router       /invites/accept [get]
+// @Security     bearerAuth
+func (h *Handler) AcceptViaLink(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	token := c.QueryParam("token")
+	if token == "" {
+		return apperror.ErrBadRequest.WithMessage("token is required")
+	}
+
+	if err := h.svc.Accept(c.Request().Context(), user.ID, token); err != nil {
 		return err
 	}
 

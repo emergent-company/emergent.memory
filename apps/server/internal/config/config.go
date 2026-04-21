@@ -71,6 +71,10 @@ type Config struct {
 	// Graph knowledge base configuration
 	Graph GraphConfig
 
+	// AppURL is the base URL of the application frontend (used for invite links in emails).
+	// In production this is https://memory.emergent-company.ai; set APP_URL to override.
+	AppURL string `env:"APP_URL" envDefault:"https://memory.emergent-company.ai"`
+
 	// AskV2 enables the code-generation variant of the CLI assistant agent.
 	// When true, POST /api/ask and /api/projects/:id/ask use EnsureCliAssistantAgentV2
 	// which generates Python SDK scripts instead of calling 57 individual MCP tools.
