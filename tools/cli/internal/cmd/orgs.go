@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/orgs"
+	"github.com/juju/ansiterm"
 	"github.com/spf13/cobra"
 )
 
@@ -81,23 +82,38 @@ func runListOrgs(cmd *cobra.Command, args []string) error {
 		return enc.Encode(orgList)
 	}
 
-	fmt.Printf("Found %d organization(s):\n\n", len(orgList))
+	fmt.Printf("%s:\n\n", cHeader(fmt.Sprintf("Found %d organization(s)", len(orgList))))
 	for i, o := range orgList {
-		fmt.Printf("%d. %s (%s)\n", i+1, o.Name, o.ID)
+		fmt.Printf("%d. %s  %s\n", i+1, cBold(o.Name), cDim(o.ID))
 		if orgMembersFlag {
 			members, err := c.SDK.Orgs.ListMembers(context.Background(), o.ID)
 			if err == nil && len(members) > 0 {
+				tw := ansiterm.NewTabWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				for _, m := range members {
-					name := m.Email
+					var displayName string
 					if m.DisplayName != nil && *m.DisplayName != "" {
-						name = *m.DisplayName
-					} else if m.FirstName != nil && m.LastName != nil {
-						name = *m.FirstName + " " + *m.LastName
+						displayName = *m.DisplayName
+					} else if m.FirstName != nil && *m.FirstName != "" {
+						if m.LastName != nil && *m.LastName != "" {
+							displayName = *m.FirstName + " " + *m.LastName
+						} else {
+							displayName = *m.FirstName
+						}
 					}
-					fmt.Printf("   • %-30s  %-20s  %s\n", name, m.Email, m.Role)
+					email := m.Email
+					if email == "" {
+						email = cDim("(unknown)")
+					}
+					fmt.Fprintf(tw, "   %s\t%s\t%s\n",
+						email,
+						cDim(displayName),
+						colorRole(m.Role),
+					)
 				}
+				tw.Flush()
 			}
 		}
+		fmt.Println()
 	}
 
 	return nil

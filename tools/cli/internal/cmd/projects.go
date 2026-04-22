@@ -19,6 +19,7 @@ import (
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/completion"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/joho/godotenv"
+	"github.com/juju/ansiterm"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -282,6 +283,7 @@ var (
 	projectDescription string
 	projectOrgID       string
 	projectStatsFlag   bool
+	projectMembersFlag bool
 	// Query flags
 	filterFlag string
 	sortFlag   string
@@ -425,7 +427,7 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 	if limitFlag > 0 || offsetFlag > 0 {
 		header = fmt.Sprintf("Showing %d–%d of %d project(s)", offsetFlag+1, offsetFlag+len(projectList), total)
 	}
-	fmt.Printf("%s:\n", header)
+	fmt.Printf("%s:\n", cHeader(header))
 
 	// Group projects by org, preserving first-seen order
 	type orgGroup struct {
@@ -454,15 +456,42 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 		g := orgMap[orgID]
 		fmt.Println()
 		if g.name != "" {
-			fmt.Printf("  %s (%s)\n", g.name, g.id)
+			fmt.Printf("  %s  %s\n", cBold(g.name), cDim(g.id))
 		} else {
-			fmt.Printf("  %s\n", g.id)
+			fmt.Printf("  %s\n", cDim(g.id))
 		}
-		fmt.Println()
 		for _, entry := range g.projects {
+			fmt.Println()
 			prefix := fmt.Sprintf("%d.", entry.idx)
-			fmt.Printf("    %-4s %s\n", prefix, entry.p.Name)
-			fmt.Printf("         %s\n", entry.p.ID)
+			fmt.Printf("    %-4s %s  %s\n", prefix, cBold(entry.p.Name), cDim(entry.p.ID))
+			if projectMembersFlag {
+				members, merr := c.SDK.Projects.ListMembers(context.Background(), entry.p.ID)
+				if merr == nil && len(members) > 0 {
+					tw := ansiterm.NewTabWriter(os.Stdout, 0, 0, 2, ' ', 0)
+					for _, m := range members {
+						var displayName string
+						if m.DisplayName != nil && *m.DisplayName != "" {
+							displayName = *m.DisplayName
+						} else if m.FirstName != nil && *m.FirstName != "" {
+							if m.LastName != nil && *m.LastName != "" {
+								displayName = *m.FirstName + " " + *m.LastName
+							} else {
+								displayName = *m.FirstName
+							}
+						}
+						email := m.Email
+						if email == "" {
+							email = cDim("(unknown)")
+						}
+						fmt.Fprintf(tw, "         %s\t%s\t%s\n",
+							email,
+							cDim(displayName),
+							colorRole(m.Role),
+						)
+					}
+					tw.Flush()
+				}
+			}
 			if projectStatsFlag && entry.p.Stats != nil {
 				printProjectStats(entry.p.Stats)
 			}
@@ -969,6 +998,7 @@ func init() {
 	_ = createProjectCmd.MarkFlagRequired("name")
 
 	listProjectsCmd.Flags().BoolVar(&projectStatsFlag, "stats", false, "Include project statistics (documents, objects, jobs, schemas)")
+	listProjectsCmd.Flags().BoolVar(&projectMembersFlag, "members", false, "Include project members with roles")
 	listProjectsCmd.Flags().StringVar(&filterFlag, "filter", "", "Filter results (e.g., 'name=MyProject,status=active')")
 	listProjectsCmd.Flags().StringVar(&sortFlag, "sort", "", "Sort results (e.g., 'name:asc' or 'updated_at:desc')")
 	listProjectsCmd.Flags().IntVar(&limitFlag, "limit", 0, "Maximum number of results (default from config)")
