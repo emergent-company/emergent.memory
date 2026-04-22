@@ -13,7 +13,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.Use(authMiddleware.RequireAuth())
 	g.Use(authMiddleware.RequireAPITokenScopes("project:read"))
 
-	g.POST("", h.Create)
+	// Creating a token only requires auth + project membership (checked in service layer).
+	// The project:read scope guard is intentionally omitted here — a project_admin
+	// authenticated via a token without project:read should still be able to bootstrap
+	// new tokens for their project.
+	e.POST("/api/projects/:projectId/tokens", h.Create, authMiddleware.RequireAuth())
+
 	g.GET("", h.List)
 	g.GET("/:tokenId", h.Get)
 	g.DELETE("/:tokenId", h.Revoke)
