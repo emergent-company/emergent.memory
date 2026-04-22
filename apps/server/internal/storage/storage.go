@@ -412,3 +412,119 @@ func (s *Service) GetSignedDownloadURL(ctx context.Context, key string, opts Get
 
 	return presignedReq.URL, nil
 }
+
+func (s *Service) EnsureBucket(ctx context.Context, bucket string) error {
+	if !s.Enabled() {
+		return fmt.Errorf("storage service not enabled")
+	}
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(bucket),
+	})
+	if err == nil {
+		return nil
+	}
+	errStr := err.Error()
+	if strings.Contains(errStr, "NoSuchBucket") || strings.Contains(errStr, "404") || strings.Contains(errStr, "NotFound") {
+		_, createErr := s.client.CreateBucket(ctx, &s3.CreateBucketInput{
+			Bucket: aws.String(bucket),
+		})
+		if createErr != nil {
+			return fmt.Errorf("create bucket %q: %w", bucket, createErr)
+		}
+		s.log.Info("created bucket", slog.String("bucket", bucket))
+		return nil
+	}
+	return fmt.Errorf("head bucket %q: %w", bucket, err)
+}
+
+func (s *Service) UploadToBucket(ctx context.Context, bucket, key string, data io.Reader, size int64, opts UploadOptions) (*UploadResult, error) {
+	if !s.Enabled() {
+		return nil, fmt.Errorf("storage service not enabled")
+	}
+	input := &s3.PutObjectInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		Body:          data,
+		ContentLength: aws.Int64(size),
+	}
+	if opts.ContentType != "" {
+		input.ContentType = aws.String(opts.ContentType)
+	}
+	if opts.ContentDisposition != "" {
+		input.ContentDisposition = aws.String(opts.ContentDisposition)
+	}
+	result, err := s.client.PutObject(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("upload to bucket %q key %q: %w", bucket, key, err)
+	}
+	etag := ""
+	if result.ETag != nil {
+		etag = strings.Trim(*result.ETag, "\"")
+	}
+	return &UploadResult{
+		Key:    key,
+		Bucket: bucket,
+		ETag:   etag,
+		Size:   size,
+	}, nil
+}
+
+func (s *Service) DeleteFromBucket(ctx context.Context, bucket, key string) error {
+	if !s.Enabled() {
+		return fmt.Errorf("storage service not enabled")
+	}
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("delete from bucket %q key %q: %w", bucket, key, err)
+	}
+	return nil
+}
+
+func (s *Service) ListBucket(ctx context.Context, bucket, prefix string) ([]string, error) {
+	if !s.Enabled() {
+		return nil, fmt.Errorf("storage service not enabled")
+	}
+	var keys []string
+	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+		Prefix: aws.String(prefix),
+	})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list bucket %q: %w", bucket, err)
+		}
+		for _, obj := range page.Contents {
+			if obj.Key != nil {
+				keys = append(keys, *obj.Key)
+			}
+		}
+	}
+	return keys, nil
+}
+
+func (s *Service) GetSignedDownloadURLFromBucket(ctx context.Context, bucket, key string, opts GetSignedDownloadURLOptions) (string, error) {
+	if !s.Enabled() {
+		return "", fmt.Errorf("storage service not enabled")
+	}
+	if opts.ExpiresIn == 0 {
+		opts.ExpiresIn = time.Hour
+	}
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	}
+	if opts.ResponseContentDisposition != "" {
+		input.ResponseContentDisposition = aws.String(opts.ResponseContentDisposition)
+	}
+	presignedReq, err := s.presignClient.PresignGetObject(ctx, input, func(po *s3.PresignOptions) {
+		po.Expires = opts.ExpiresIn
+	})
+	if err != nil {
+		return "", fmt.Errorf("presign bucket %q key %q: %w", bucket, key, err)
+	}
+	return presignedReq.URL, nil
+}
