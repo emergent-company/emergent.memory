@@ -251,19 +251,12 @@ func (s *UserProfileService) syncEmail(ctx context.Context, userID, email string
 	}
 
 	// Insert new email (unique constraint is on email only, not user_id+email)
-	_, err = s.db.NewInsert().
-		TableExpr("core.user_emails").
-		Model(&struct {
-			UserID   string `bun:"user_id,type:uuid"`
-			Email    string `bun:"email"`
-			Verified bool   `bun:"verified"`
-		}{
-			UserID:   userID,
-			Email:    email,
-			Verified: true,
-		}).
-		On("CONFLICT (email) DO NOTHING").
-		Exec(ctx)
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO core.user_emails (id, user_id, email, verified)
+		 VALUES (gen_random_uuid(), ?, ?, true)
+		 ON CONFLICT (email) DO NOTHING`,
+		userID, email,
+	)
 
 	return err
 }
