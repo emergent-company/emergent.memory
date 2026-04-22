@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -38,8 +39,9 @@ type UserProfileInfo struct {
 
 // UserProfileService handles user profile operations
 type UserProfileService struct {
-	db  bun.IDB
-	log *slog.Logger
+	db         bun.IDB
+	log        *slog.Logger
+	zitadelMgr *ZitadelManagementClient // nil when ZITADEL_ADMIN_PAT not configured
 }
 
 // NewUserProfileService creates a new user profile service
@@ -48,6 +50,11 @@ func NewUserProfileService(db bun.IDB, log *slog.Logger) *UserProfileService {
 		db:  db,
 		log: log.With(logger.Scope("user-profile")),
 	}
+}
+
+// SetManagementClient wires in the Zitadel management client (called during fx setup).
+func (s *UserProfileService) SetManagementClient(c *ZitadelManagementClient) {
+	s.zitadelMgr = c
 }
 
 // GetByID retrieves a user profile by internal ID
@@ -214,6 +221,12 @@ func (s *UserProfileService) getEmail(ctx context.Context, userID string) (strin
 	return email, nil
 }
 
+// SyncEmail is the public wrapper for syncing a user's email.
+// Call this when the email is known (e.g. at API token creation time).
+func (s *UserProfileService) SyncEmail(ctx context.Context, userID, email string) error {
+	return s.syncEmail(ctx, userID, email)
+}
+
 // syncEmail syncs the user's email to the user_emails table
 func (s *UserProfileService) syncEmail(ctx context.Context, userID, email string) error {
 	if email == "" {
@@ -253,4 +266,51 @@ func (s *UserProfileService) syncEmail(ctx context.Context, userID, email string
 		Exec(ctx)
 
 	return err
+}
+
+// SyncFromZitadel fetches a user's profile from Zitadel and syncs email + name fields.
+// No-op if the management client is not configured.
+func (s *UserProfileService) SyncFromZitadel(ctx context.Context, userID, zitadelUserID string) error {
+	if s.zitadelMgr == nil {
+		return nil
+	}
+
+	info, err := s.zitadelMgr.GetUser(ctx, zitadelUserID)
+	if err != nil {
+		return fmt.Errorf("fetch user from zitadel: %w", err)
+	}
+	if info == nil {
+		return nil
+	}
+
+	// Sync email
+	if info.Email != "" {
+		if err := s.syncEmail(ctx, userID, info.Email); err != nil {
+			return fmt.Errorf("sync email: %w", err)
+		}
+	}
+
+	// Upsert name fields (only overwrite if Zitadel has values)
+	if info.FirstName != "" || info.LastName != "" || info.DisplayName != "" {
+		q := s.db.NewUpdate().
+			TableExpr("core.user_profiles").
+			Set("updated_at = NOW()").
+			Where("id = ?", userID)
+
+		if info.FirstName != "" {
+			q = q.Set("first_name = ?", info.FirstName)
+		}
+		if info.LastName != "" {
+			q = q.Set("last_name = ?", info.LastName)
+		}
+		if info.DisplayName != "" {
+			q = q.Set("display_name = ?", info.DisplayName)
+		}
+
+		if _, err := q.Exec(ctx); err != nil {
+			return fmt.Errorf("update profile names: %w", err)
+		}
+	}
+
+	return nil
 }

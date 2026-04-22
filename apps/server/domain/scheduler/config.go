@@ -37,6 +37,15 @@ type Config struct {
 	TagCleanupSchedule           string
 	CacheCleanupSchedule         string
 	StaleJobCleanupSchedule      string
+
+	// DatabaseBackupSchedule is the cron schedule for full database backups
+	// Standard cron format with seconds: "second minute hour day-of-month month day-of-week"
+	// Default: "0 0 7 * * *" (daily at 7am)
+	DatabaseBackupSchedule string
+
+	// ZitadelProfileSyncSchedule is the cron schedule for syncing user profiles from Zitadel.
+	// Default: "0 0 * * * *" (every hour)
+	ZitadelProfileSyncSchedule string
 }
 
 // NewConfig creates a new Config from environment variables
@@ -54,6 +63,8 @@ func NewConfig() *Config {
 		TagCleanupSchedule:           getEnvString("TAG_CLEANUP_SCHEDULE", ""),
 		CacheCleanupSchedule:         getEnvString("CACHE_CLEANUP_SCHEDULE", ""),
 		StaleJobCleanupSchedule:      getEnvString("STALE_JOB_CLEANUP_SCHEDULE", ""),
+		DatabaseBackupSchedule:       getEnvString("DATABASE_BACKUP_SCHEDULE", "0 0 7 * * *"),
+		ZitadelProfileSyncSchedule:   getEnvString("ZITADEL_PROFILE_SYNC_SCHEDULE", "0 0 * * * *"),
 	}
 }
 

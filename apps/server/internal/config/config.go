@@ -149,6 +149,10 @@ type ZitadelConfig struct {
 
 	// Insecure mode (HTTP instead of HTTPS)
 	Insecure bool `env:"ZITADEL_INSECURE" envDefault:"false"`
+
+	// AdminPAT is a personal access token for an IAM_OWNER service user.
+	// Used by the backend to call the Zitadel Management API (e.g. fetch user profiles).
+	AdminPAT string `env:"ZITADEL_ADMIN_PAT"`
 }
 
 // EmbeddingsConfig holds embedding service configuration

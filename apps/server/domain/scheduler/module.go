@@ -5,6 +5,9 @@ import (
 	"log/slog"
 	"time"
 
+	appcfg "github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/storage"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 )
@@ -44,6 +47,9 @@ type TaskParams struct {
 	Log          *slog.Logger
 	Cfg          *Config
 	StaleJobTask *StaleJobCleanupTask
+	Storage      *storage.Service
+	AppCfg       *appcfg.Config
+	UserSvc      *auth.UserProfileService
 }
 
 // RegisterTasks registers all scheduled tasks
@@ -81,6 +87,22 @@ func RegisterTasks(p TaskParams) error {
 	if err := addScheduledTask(p.Scheduler, p.Log, "stale_job_cleanup",
 		p.Cfg.StaleJobCleanupSchedule, p.Cfg.StaleJobCleanupInterval, p.StaleJobTask.Run); err != nil {
 		p.Log.Error("failed to register stale job cleanup task",
+			slog.String("error", err.Error()))
+	}
+
+	// Register database backup task (daily at 7am by default)
+	dbBackupTask := NewDatabaseBackupTask(p.DB, p.Storage, p.AppCfg, p.Log)
+	if err := addScheduledTask(p.Scheduler, p.Log, "database_backup",
+		p.Cfg.DatabaseBackupSchedule, 0, dbBackupTask.Run); err != nil {
+		p.Log.Error("failed to register database backup task",
+			slog.String("error", err.Error()))
+	}
+
+	// Register Zitadel profile sync task (hourly by default)
+	zitadelSyncTask := NewZitadelProfileSyncTask(p.DB, p.UserSvc, p.Log)
+	if err := addScheduledTask(p.Scheduler, p.Log, "zitadel_profile_sync",
+		p.Cfg.ZitadelProfileSyncSchedule, 0, zitadelSyncTask.Run); err != nil {
+		p.Log.Error("failed to register zitadel profile sync task",
 			slog.String("error", err.Error()))
 	}
 
