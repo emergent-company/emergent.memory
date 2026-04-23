@@ -187,7 +187,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register apitoken routes
 	apitokenRepo := apitoken.NewRepository(db, log)
 	apitokenSvc := apitoken.NewService(apitokenRepo, encryptionSvc, log)
-	apitokenHandler := apitoken.NewHandler(apitokenSvc)
+	apitokenHandler := apitoken.NewHandler(apitokenSvc, userSvc)
 	apitoken.RegisterRoutes(e, apitokenHandler, authMiddleware)
 
 	// Register graph routes
@@ -263,7 +263,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register invites routes (nil email service in test mode — emails are no-op)
 	invitesSvc := invites.NewService(db, nil, &config.Config{}, log)
-	invitesHandler := invites.NewHandler(invitesSvc)
+	invitesHandler := invites.NewHandler(invitesSvc, &config.Config{})
 	invites.RegisterRoutes(e, invitesHandler, authMiddleware)
 
 	// Register events routes
@@ -312,7 +312,8 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register agents routes
 	agentsRepo := agents.NewRepository(db)
 	sandboxStore := sandbox.NewStore(db)
-	agentsHandler := agents.NewHandler(agentsRepo, nil, nil, "", nil, sandboxStore)
+	providerRepo := provider.NewRepository(db, log)
+	agentsHandler := agents.NewHandler(agentsRepo, nil, nil, "", nil, nil, providerRepo, sandboxStore)
 	agents.RegisterRoutes(e, agentsHandler, authMiddleware)
 
 	// Register extraction admin routes
@@ -326,7 +327,6 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	monitoring.RegisterRoutes(e, monitoringHandler, authMiddleware)
 
 	// Register provider routes (LLM credential management, model catalog, usage)
-	providerRepo := provider.NewRepository(db, log)
 	providerRegistry := provider.NewRegistry()
 	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log)
 	providerCredSvc := provider.NewCredentialService(providerRepo, providerRegistry, providerCatalogSvc, testDB.Config, log)

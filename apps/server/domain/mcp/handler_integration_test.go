@@ -18,7 +18,7 @@ func TestMCPSessionWithAPIKey(t *testing.T) {
 	e := echo.New()
 	svc := &Service{}
 	logger := slog.Default()
-	h := NewHandler(svc, logger)
+	h := NewHandler(svc, logger, nil)
 
 	testUser := &auth.AuthUser{
 		ID:        "test-user-id",
