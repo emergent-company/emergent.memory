@@ -295,6 +295,8 @@ type Entity struct {
 	Properties map[string]any `json:"properties"`
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at,omitempty"`
+	BranchID   *string        `json:"branch_id,omitempty"`
+	BranchName *string        `json:"branch_name,omitempty"`
 }
 
 // PaginationInfo contains pagination metadata

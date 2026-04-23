@@ -1,3 +1,4 @@
+// Deprecated: use `codebase check coverage` instead. Run `codebase --help` for details.
 package main
 
 import (

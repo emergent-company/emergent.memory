@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/google/uuid"
 )
 
@@ -13,14 +14,16 @@ import (
 type Service struct {
 	repo    *Repository
 	creator *Creator
+	storage *storage.Service
 	log     *slog.Logger
 }
 
 // NewService creates a new backup service
-func NewService(repo *Repository, creator *Creator, log *slog.Logger) *Service {
+func NewService(repo *Repository, creator *Creator, storageSvc *storage.Service, log *slog.Logger) *Service {
 	return &Service{
 		repo:    repo,
 		creator: creator,
+		storage: storageSvc,
 		log:     log.With(slog.String("component", "backups.service")),
 	}
 }
@@ -205,4 +208,49 @@ func GenerateStorageKey(orgID, backupID string) string {
 // GenerateMetadataKey generates a MinIO storage key for backup metadata
 func GenerateMetadataKey(orgID, backupID string) string {
 	return fmt.Sprintf("backups/%s/%s/metadata.json", orgID, backupID)
+}
+
+// ListDatabaseBackups returns all database backup records ordered by created_at DESC
+func (s *Service) ListDatabaseBackups(ctx context.Context) ([]*DatabaseBackup, error) {
+	var backups []*DatabaseBackup
+	err := s.repo.db.NewSelect().
+		Model(&backups).
+		OrderExpr("created_at DESC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list database backups: %w", err)
+	}
+	return backups, nil
+}
+
+// GetDatabaseBackupDownloadURL generates a presigned URL for downloading a database backup
+func (s *Service) GetDatabaseBackupDownloadURL(ctx context.Context, id string) (string, error) {
+	var backup DatabaseBackup
+	err := s.repo.db.NewSelect().
+		Model(&backup).
+		Where("id = ?", id).
+		Scan(ctx)
+	if err != nil {
+		return "", fmt.Errorf("get database backup: %w", err)
+	}
+	if backup.StorageKey == nil {
+		return "", fmt.Errorf("backup has no storage key")
+	}
+
+	url, err := s.storage.GetSignedDownloadURLFromBucket(
+		ctx,
+		"database-backups",
+		*backup.StorageKey,
+		storage.GetSignedDownloadURLOptions{
+			ExpiresIn: 15 * time.Minute,
+			ResponseContentDisposition: fmt.Sprintf(
+				`attachment; filename="db-backup-%s.dump"`,
+				backup.CreatedAt.UTC().Format("2006-01-02_15-04-05"),
+			),
+		},
+	)
+	if err != nil {
+		return "", fmt.Errorf("generate presigned URL: %w", err)
+	}
+	return url, nil
 }

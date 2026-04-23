@@ -127,6 +127,8 @@ var (
 	graphFilterFlag   []string
 	graphFilterOpFlag string
 	graphIDsFlag      string
+	graphJSONFlag     bool
+	graphForceFlag    bool
 )
 
 // ─────────────────────────────────────────────
@@ -867,8 +869,12 @@ Examples:
 			}
 			return fmt.Errorf("failed to move object: %w", err)
 		}
-
 		out := cmd.OutOrStdout()
+
+		if graphJSONFlag {
+			graphOutputFlag = "json"
+		}
+
 		if graphOutputFlag == "json" {
 			return json.NewEncoder(out).Encode(result)
 		}
@@ -1648,6 +1654,7 @@ func init() {
 	graphObjectsListCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Filter by object key (direct key-based lookup)")
 
 	graphObjectsGetCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
+	graphObjectsGetCmd.Flags().BoolVar(&graphJSONFlag, "json", false, "Output as JSON (shorthand for --output json)")
 	graphObjectsGetCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID or name to resolve the key against (omit for main branch)")
 
 	graphObjectsCreateCmd.Flags().StringVar(&graphTypeFlag, "type", "", "Object type (required)")
@@ -1677,6 +1684,7 @@ func init() {
 	graphRelationshipsDeleteCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch name or ID to scope deletion to (omit for main branch)")
 
 	graphObjectsDeleteCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch name or ID to scope deletion to (omit for main branch)")
+	graphObjectsDeleteCmd.Flags().BoolVarP(&graphForceFlag, "force", "f", false, "Skip confirmation prompt (accepted for scripting compatibility)")
 
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphRelTypeFlag, "type", "", "Relationship type (required)")
 	graphRelationshipsCreateCmd.Flags().StringVar(&graphFromFlag, "from", "", "Source object ID (required)")

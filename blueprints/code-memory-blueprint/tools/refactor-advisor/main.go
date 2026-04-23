@@ -1,3 +1,4 @@
+// Deprecated: use `codebase check complexity --recommendations` instead. Run `codebase --help` for details.
 // refactor-advisor: cross-joins complexity and test coverage data from the
 // Memory knowledge graph to produce prioritized refactoring recommendations.
 //

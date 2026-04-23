@@ -29,6 +29,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	agentsWrite.Use(authMiddleware.RequireAPITokenScopes("agents:write"))
 	agentsWrite.POST("", h.CreateAgent)
 	agentsWrite.PATCH("/:id", h.UpdateAgent)
+	agentsWrite.POST("/:id/enable", h.EnableAgent)
 	agentsWrite.DELETE("/:id", h.DeleteAgent)
 	agentsWrite.POST("/:id/trigger", h.TriggerAgent)
 	agentsWrite.POST("/:id/batch-trigger", h.BatchTrigger)
@@ -91,6 +92,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	globalRuns.Use(authMiddleware.RequireAuth())
 	globalRuns.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	globalRuns.GET("/:runId", h.GetRunByID)
+	globalRuns.GET("/:runId/steps", h.GetRunStepsStream)
 	globalRuns.GET("/:runId/logs", h.GetRunLogs)
 
 	// --- Project-scoped ADK session routes ---

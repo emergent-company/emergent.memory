@@ -92,6 +92,14 @@ type RunTokenUsage struct {
 	EstimatedCostUSD  float64 `json:"estimatedCostUsd"`
 }
 
+// AgentRunWorkspace holds sandbox container info for a run.
+type AgentRunWorkspace struct {
+	Provider    string `json:"provider"`
+	ContainerID string `json:"containerId"`
+	BaseImage   string `json:"baseImage"`
+	Digest      string `json:"digest"`
+}
+
 // AgentRun represents an agent run record.
 type AgentRun struct {
 	ID           string         `json:"id"`
@@ -104,6 +112,13 @@ type AgentRun struct {
 	Summary      map[string]any `json:"summary"`
 	ErrorMessage *string        `json:"errorMessage"`
 	SkipReason   *string        `json:"skipReason"`
+
+	// Model and provider used for this run
+	Model    *string `json:"model,omitempty"`
+	Provider *string `json:"provider,omitempty"`
+
+	// Workspace info (sandbox container)
+	Workspace *AgentRunWorkspace `json:"workspace,omitempty"`
 
 	// Execution metrics
 	StepCount int  `json:"stepCount"`

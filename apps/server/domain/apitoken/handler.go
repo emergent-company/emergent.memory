@@ -11,12 +11,13 @@ import (
 
 // Handler handles HTTP requests for API tokens
 type Handler struct {
-	svc *Service
+	svc         *Service
+	userProfile *auth.UserProfileService
 }
 
 // NewHandler creates a new API token handler
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, userProfile *auth.UserProfileService) *Handler {
+	return &Handler{svc: svc, userProfile: userProfile}
 }
 
 // Create creates a new API token
@@ -63,6 +64,11 @@ func (h *Handler) Create(c echo.Context) error {
 	result, err := h.svc.Create(c.Request().Context(), projectID, user.ID, req.Name, req.Scopes)
 	if err != nil {
 		return err
+	}
+
+	// Sync email while we have it (browser session has email; API token auth does not)
+	if user.Email != "" && h.userProfile != nil {
+		_ = h.userProfile.SyncEmail(c.Request().Context(), user.ID, user.Email)
 	}
 
 	return c.JSON(http.StatusCreated, result)
@@ -208,6 +214,11 @@ func (h *Handler) CreateAccountToken(c echo.Context) error {
 	result, err := h.svc.CreateAccountToken(c.Request().Context(), user.ID, req.Name, req.Scopes)
 	if err != nil {
 		return err
+	}
+
+	// Sync email while we have it (browser session has email; API token auth does not)
+	if user.Email != "" && h.userProfile != nil {
+		_ = h.userProfile.SyncEmail(c.Request().Context(), user.ID, user.Email)
 	}
 
 	return c.JSON(http.StatusCreated, result)

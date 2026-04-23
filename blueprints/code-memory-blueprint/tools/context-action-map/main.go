@@ -1,3 +1,4 @@
+// Deprecated: use `codebase analyze contexts` instead. Run `codebase --help` for details.
 // context-action-map: lists every Context with its reachable Actions.
 //
 // Traversal (pure graph, no file scanning):

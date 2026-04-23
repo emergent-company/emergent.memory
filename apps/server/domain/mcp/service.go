@@ -296,6 +296,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Type:        "string",
 						Description: "Search query text",
 					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name (e.g. \"plan/main\") or branch UUID to query. Omit to query across all branches.",
+					},
 					"type_name": {
 						Type:        "string",
 						Description: "Optional entity type filter",
@@ -2215,6 +2219,13 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 
 	typeName, _ := args["type_name"].(string)
 
+	// Resolve optional branch parameter.
+	branchRef, _ := args["branch"].(string)
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, err
+	}
+
 	limit := 10
 	if l, ok := args["limit"].(float64); ok {
 		limit = int(l)
@@ -2233,6 +2244,8 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 		TypeName   string         `bun:"type_name"`
 		Properties map[string]any `bun:"properties,type:jsonb"`
 		CreatedAt  time.Time      `bun:"created_at"`
+		BranchID   *uuid.UUID     `bun:"branch_id"`
+		BranchName *string        `bun:"branch_name"`
 	}
 
 	var entities []entityRow
@@ -2243,6 +2256,13 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			return err
 		}
 
+		branchFilter := ""
+		branchArgs := []any{}
+		if branchID != nil {
+			branchFilter = " AND go.branch_id = ?"
+			branchArgs = []any{*branchID}
+		}
+
 		baseQuery := `
 			SELECT 
 				go.id,
@@ -2250,8 +2270,11 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 				COALESCE(go.properties->>'name', '') as name,
 				go.properties,
 				go.type as type_name,
-				go.created_at
+				go.created_at,
+				go.branch_id,
+				b.name as branch_name
 			FROM kb.graph_objects go
+			LEFT JOIN kb.branches b ON b.id = go.branch_id
 			WHERE go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND (
@@ -2259,8 +2282,9 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 					OR go.properties->>'name' ILIKE ?
 					OR go.properties->>'description' ILIKE ?
 				)
+				` + branchFilter + `
 		`
-		queryArgs := []any{projectUUID, searchPattern, searchPattern, searchPattern}
+		queryArgs := append([]any{projectUUID, searchPattern, searchPattern, searchPattern}, branchArgs...)
 
 		if typeName != "" {
 			baseQuery += " AND go.type = ?"
@@ -2280,6 +2304,11 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 	// Transform to response format
 	resultEntities := make([]Entity, len(entities))
 	for i, e := range entities {
+		var branchIDStr *string
+		if e.BranchID != nil {
+			s := e.BranchID.String()
+			branchIDStr = &s
+		}
 		resultEntities[i] = Entity{
 			ID:         e.ID.String(),
 			Key:        e.Key,
@@ -2287,6 +2316,8 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			Type:       e.TypeName,
 			Properties: e.Properties,
 			CreatedAt:  e.CreatedAt,
+			BranchID:   branchIDStr,
+			BranchName: e.BranchName,
 		}
 	}
 

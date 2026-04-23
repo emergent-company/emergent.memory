@@ -335,6 +335,74 @@ func (c *Client) Delete(ctx context.Context, definitionID string) error {
 	return nil
 }
 
+// --- Workspace Config Methods ---
+
+// GetWorkspaceConfig returns the workspace configuration for an agent definition.
+// GET /api/projects/:projectId/agent-definitions/:id/workspace
+func (c *Client) GetWorkspaceConfig(ctx context.Context, definitionID string) (*APIResponse[map[string]any], error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.projectPath()+"/agent-definitions/"+url.PathEscape(definitionID)+"/workspace", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[map[string]any]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// SetWorkspaceConfig updates the workspace configuration for an agent definition.
+// PUT /api/projects/:projectId/agent-definitions/:id/workspace
+func (c *Client) SetWorkspaceConfig(ctx context.Context, definitionID string, config map[string]any) (*APIResponse[map[string]any], error) {
+	body, err := json.Marshal(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT", c.projectPath()+"/agent-definitions/"+url.PathEscape(definitionID)+"/workspace", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[map[string]any]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // --- Agent Override Types ---
 
 // AgentOverride represents a partial agent definition override.

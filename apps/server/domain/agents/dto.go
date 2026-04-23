@@ -20,6 +20,9 @@ type AgentDTO struct {
 	LastRunAt           *time.Time         `json:"lastRunAt"`
 	LastRunStatus       *string            `json:"lastRunStatus"`
 	ConsecutiveFailures int                `json:"consecutiveFailures"`
+	DisabledReason      *string            `json:"disabledReason,omitempty"`
+	BudgetUSD           *float64           `json:"budgetUsd,omitempty"`
+	CurrentMonthSpend   *float64           `json:"currentMonthSpend,omitempty"`
 	CreatedAt           time.Time          `json:"createdAt"`
 	UpdatedAt           time.Time          `json:"updatedAt"`
 }
@@ -198,6 +201,7 @@ func (a *Agent) ToDTO() *AgentDTO {
 		LastRunAt:           a.LastRunAt,
 		LastRunStatus:       a.LastRunStatus,
 		ConsecutiveFailures: a.ConsecutiveFailures,
+		DisabledReason:      a.DisabledReason,
 		CreatedAt:           a.CreatedAt,
 		UpdatedAt:           a.UpdatedAt,
 	}
@@ -298,6 +302,7 @@ type AgentDefinitionDTO struct {
 	SystemPrompt   *string           `json:"systemPrompt,omitempty"`
 	Model          *ModelConfig      `json:"model,omitempty"`
 	Tools          []string          `json:"tools"`
+	BannedTools    []string          `json:"bannedTools,omitempty"`
 	FlowType       AgentFlowType     `json:"flowType"`
 	IsDefault      bool              `json:"isDefault"`
 	MaxSteps       *int              `json:"maxSteps,omitempty"`
@@ -333,6 +338,7 @@ type CreateAgentDefinitionDTO struct {
 	SystemPrompt   *string           `json:"systemPrompt"`
 	Model          *ModelConfig      `json:"model"`
 	Tools          []string          `json:"tools"`
+	BannedTools    []string          `json:"bannedTools,omitempty"`
 	Skills         []string          `json:"skills"`
 	FlowType       AgentFlowType     `json:"flowType"`
 	IsDefault      *bool             `json:"isDefault"`
@@ -352,6 +358,7 @@ type UpdateAgentDefinitionDTO struct {
 	SystemPrompt   *string            `json:"systemPrompt"`
 	Model          *ModelConfig       `json:"model"`
 	Tools          []string           `json:"tools"`
+	BannedTools    []string           `json:"bannedTools,omitempty"`
 	Skills         []string           `json:"skills"`
 	FlowType       *AgentFlowType     `json:"flowType"`
 	IsDefault      *bool              `json:"isDefault"`
@@ -411,6 +418,7 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		SystemPrompt:   d.SystemPrompt,
 		Model:          d.Model,
 		Tools:          d.Tools,
+		BannedTools:    d.BannedTools,
 		FlowType:       d.FlowType,
 		IsDefault:      d.IsDefault,
 		MaxSteps:       d.MaxSteps,

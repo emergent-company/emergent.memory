@@ -1,3 +1,4 @@
+// Deprecated: use `codebase check api` instead. Run `codebase --help` for details.
 // api-audit: graph-only quality checker for APIEndpoint objects.
 //
 // Checks performed (all graph-only, no file scanning):

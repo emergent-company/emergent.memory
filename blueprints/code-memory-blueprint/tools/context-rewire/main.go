@@ -1,3 +1,4 @@
+// Deprecated: use `codebase fix rewire` instead. Run `codebase --help` for details.
 // context-rewire: splits coarse Context objects by rewiring occurs_in relationships.
 //
 // For each ScenarioStep that occurs_in a coarse context, determines the correct

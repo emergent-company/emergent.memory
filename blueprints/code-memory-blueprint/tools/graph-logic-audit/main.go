@@ -1,3 +1,4 @@
+// Deprecated: use `codebase check logic` instead. Run `codebase --help` for details.
 // graph-logic-audit: cross-object consistency checker for the Memory knowledge graph.
 // Pure graph analysis — no file scanning.
 //

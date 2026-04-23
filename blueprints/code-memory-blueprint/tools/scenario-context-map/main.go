@@ -1,3 +1,4 @@
+// Deprecated: use `codebase analyze scenarios` instead. Run `codebase --help` for details.
 // scenario-context-map: per-scenario scoped view of Context→Action relationships.
 //
 // Problem solved: global Context→Action aggregation is noisy because many scenarios

@@ -1,3 +1,4 @@
+// Deprecated: use `codebase check coverage` instead. Run `codebase --help` for details.
 // coverage-audit: graph-only tool reporting test coverage gaps across domains/services.
 // Reads tested_by rels, Services, Domains, APIEndpoints, Methods from the graph.
 // No file scanning — pure graph analysis.

@@ -307,3 +307,59 @@ func (h *Handler) GetRestoreStatus(c echo.Context) error {
 		"message": "restore functionality coming in next phase",
 	})
 }
+
+// ListDatabaseBackups lists all database-level backups (superadmin only)
+// @Summary      List database backups
+// @Description  Returns all full database backup records ordered by creation date descending
+// @Tags         superadmin
+// @Produce      json
+// @Success      200 {array} DatabaseBackup "List of database backups"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/superadmin/database-backups [get]
+// @Security     bearerAuth
+func (h *Handler) ListDatabaseBackups(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	backups, err := h.service.ListDatabaseBackups(c.Request().Context())
+	if err != nil {
+		h.log.Error("failed to list database backups", slog.Any("error", err))
+		return apperror.NewInternal("failed to list database backups", err)
+	}
+
+	return c.JSON(http.StatusOK, backups)
+}
+
+// DownloadDatabaseBackup generates a presigned URL and redirects to it (superadmin only)
+// @Summary      Download database backup
+// @Description  Generates a 15-minute presigned URL for downloading a database backup dump file and redirects to it
+// @Tags         superadmin
+// @Produce      json
+// @Param        id path string true "Database Backup ID (UUID)"
+// @Success      302 "Redirect to presigned download URL"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Backup not found"
+// @Failure      500 {object} apperror.Error "Failed to generate download URL"
+// @Router       /api/superadmin/database-backups/{id}/download [get]
+// @Security     bearerAuth
+func (h *Handler) DownloadDatabaseBackup(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	url, err := h.service.GetDatabaseBackupDownloadURL(c.Request().Context(), id)
+	if err != nil {
+		h.log.Error("failed to get database backup download URL",
+			slog.String("id", id),
+			slog.Any("error", err),
+		)
+		return apperror.NewInternal("failed to generate download URL", err)
+	}
+
+	return c.Redirect(http.StatusFound, url)
+}

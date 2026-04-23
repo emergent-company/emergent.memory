@@ -1,0 +1,17 @@
+plan_branch_name: plan/next-gen
+
+github_owner: emergent-company
+github_repo: emergent.memory
+
+flow_token: flt_73641b5a53c46097573d7286d2763611124b0331
+
+provider:
+  default: memory
+
+providers:
+  - name: emergent.memory
+    type: memory
+
+workspace:
+  prepare: "go mod tidy"
+plan_branch_id: 5902be5d-4a2e-4bcd-ba33-4b4a3e2279cb

@@ -1,3 +1,4 @@
+// Deprecated: use `codebase sync files` instead. Run `codebase --help` for details.
 // graph-sync checks whether the SourceFile objects in the Memory knowledge graph
 // are in sync with the actual source files on disk (respecting .gitignore),
 // and reports relationship coverage (orphan detection) for each tracked file.

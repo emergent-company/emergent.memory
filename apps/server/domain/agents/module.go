@@ -88,12 +88,12 @@ func provideAgentExecutor(
 }
 
 // provideHandler creates a Handler with both repo and executor.
-func provideHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, cfg *config.Config, providerRepo *provider.Repository, sandboxStore *sandbox.Store) *Handler {
+func provideHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, cfg *config.Config, providerRepo *provider.Repository, usageSvc *provider.UsageService, sandboxStore *sandbox.Store) *Handler {
 	tempoURL := ""
 	if cfg.Otel.Enabled() {
 		tempoURL = cfg.Otel.InternalTempoQueryURL()
 	}
-	return NewHandler(repo, executor, rateLimiter, tempoURL, &providerPricingAdapter{repo: providerRepo}, sandboxStore)
+	return NewHandler(repo, executor, rateLimiter, tempoURL, &providerPricingAdapter{repo: providerRepo}, usageSvc, providerRepo, sandboxStore)
 }
 
 // providerPricingAdapter wraps *provider.Repository to satisfy the pricingLookup

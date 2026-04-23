@@ -103,6 +103,13 @@ tasks:
     cmds:
       - memory traces get {{.CLI_ARGS}}
 
+  codebase:install:
+    desc: Build and install codebase CLI to /usr/local/bin/codebase
+    dir: blueprints/code-memory-blueprint/cmd/codebase
+    cmds:
+      - GOWORK=off go build -o /usr/local/bin/codebase .
+      - echo "Installed codebase CLI → /usr/local/bin/codebase"
+
   release:
     desc: "Cut a release: bump VERSION, commit, tag, push. Usage: task release VERSION=0.X.Y"
     requires:

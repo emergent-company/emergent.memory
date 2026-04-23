@@ -161,6 +161,7 @@ type Agent struct {
 	LastRunAt           *time.Time         `bun:"last_run_at" json:"lastRunAt"`
 	LastRunStatus       *string            `bun:"last_run_status" json:"lastRunStatus"`
 	ConsecutiveFailures int                `bun:"consecutive_failures,notnull,default:0" json:"consecutiveFailures"`
+	DisabledReason      *string            `bun:"disabled_reason" json:"disabledReason,omitempty"`
 	AgentDefinitionID   *string            `bun:"agent_definition_id,type:uuid" json:"agentDefinitionId,omitempty"`
 	CreatedAt           time.Time          `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 	UpdatedAt           time.Time          `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
@@ -311,6 +312,7 @@ type AgentDefinition struct {
 	SystemPrompt   *string           `bun:"system_prompt" json:"systemPrompt,omitempty"`
 	Model          *ModelConfig      `bun:"model,type:jsonb,default:'{}'" json:"model,omitempty"`
 	Tools          []string          `bun:"tools,array" json:"tools"`
+	BannedTools    []string          `bun:"banned_tools,array" json:"bannedTools,omitempty"`
 	Skills         []string          `bun:"skills,array" json:"skills"`
 	FlowType       AgentFlowType     `bun:"flow_type,notnull,default:'single'" json:"flowType"`
 	IsDefault      bool              `bun:"is_default,notnull,default:false" json:"isDefault"`

@@ -3430,6 +3430,7 @@ memory projects list [flags]
       --filter string   Filter results (e.g., 'name=MyProject,status=active')
   -h, --help            help for list
       --limit int       Maximum number of results (default from config)
+      --members         Include project members with roles
       --offset int      Number of results to skip
       --search string   Search projects by name or description
       --sort string     Sort results (e.g., 'name:asc' or 'updated_at:desc')
@@ -3599,6 +3600,24 @@ Commands for listing, inviting, and removing members of a project
   -h, --help   help for team
 ```
 
+## memory projects team accept
+
+Accept a pending invitation
+
+### Synopsis
+
+Accept a pending invitation using the token from the invitation email.
+
+```
+memory projects team accept <token> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for accept
+```
+
 ## memory projects team invite
 
 Invite someone to the project
@@ -3624,6 +3643,25 @@ memory projects team invite <email> [project-name-or-id] [flags]
 ```
   -h, --help          help for invite
       --role string   Role to assign (project_viewer, project_user, project_admin) (default "project_viewer")
+```
+
+## memory projects team invites
+
+List pending invitations
+
+### Synopsis
+
+List all pending invitations sent to your account.
+
+```
+memory projects team invites [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for invites
+      --json   Output as JSON
 ```
 
 ## memory projects team list

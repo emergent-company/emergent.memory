@@ -737,7 +737,12 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 		return nil, fmt.Errorf("sandbox image not ready: %w", err)
 	}
 
-	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.SandboxConfig, nil, req.AuthToken, req.EnvVars)
+	// Convert TriggerMetadata (map[string]any) to pass as taskMetadata
+	taskMeta := make(map[string]any, len(req.TriggerMetadata))
+	for k, v := range req.TriggerMetadata {
+		taskMeta[k] = v
+	}
+	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.SandboxConfig, taskMeta, req.AuthToken, req.EnvVars)
 	if err != nil {
 		ae.log.Error("workspace provisioning failed, failing run",
 			slog.String("run_id", runID),
@@ -906,6 +911,21 @@ func (ae *AgentExecutor) runPipeline(
 	resolvedTools, err := ae.toolPool.ResolveTools(req.ProjectID, req.AgentDefinition, req.Depth, maxDepth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve tools: %w", err)
+	}
+
+	// Filter out banned tools
+	if req.AgentDefinition != nil && len(req.AgentDefinition.BannedTools) > 0 {
+		banned := make(map[string]bool)
+		for _, name := range req.AgentDefinition.BannedTools {
+			banned[name] = true
+		}
+		filtered := make([]tool.Tool, 0, len(resolvedTools))
+		for _, t := range resolvedTools {
+			if !banned[t.Name()] {
+				filtered = append(filtered, t)
+			}
+		}
+		resolvedTools = filtered
 	}
 
 	// Add coordination tools (spawn_agents, list_available_agents) for top-level or opted-in agents
@@ -2160,9 +2180,9 @@ const (
 	doomActionStop
 
 	// doomWarnThreshold is the number of consecutive identical calls before warning.
-	doomWarnThreshold = 3
+	doomWarnThreshold = 5
 	// doomStopThreshold is the number of consecutive identical calls before stopping.
-	doomStopThreshold = 5
+	doomStopThreshold = 10
 
 	// toolOnlyWarnThreshold is the number of consecutive tool-only steps (no
 	// assistant text produced) before issuing a warning.

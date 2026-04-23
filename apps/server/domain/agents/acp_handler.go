@@ -59,21 +59,9 @@ func (h *ACPHandler) acpOrgID(ctx context.Context, c echo.Context, projectID str
 // definitions so that agents not explicitly marked external are still reachable.
 // Returns (def, agent, error). Returns 404 apperror when not found.
 func (h *ACPHandler) resolveAgentBySlug(ctx context.Context, projectID, slug string) (*AgentDefinition, *Agent, error) {
-	// Try external-visibility first (preferred ACP agents)
-	def, err := h.repo.FindExternalAgentBySlug(ctx, projectID, slug)
+	def, err := h.resolveAgentDefinitionBySlug(ctx, projectID, slug)
 	if err != nil {
-		return nil, nil, apperror.NewInternal("failed to look up agent", err)
-	}
-	// Fall back to any visibility so agents without explicit external visibility
-	// are still accessible via ACP (fixes 404 for project/internal agents).
-	if def == nil {
-		def, err = h.repo.FindAgentDefinitionBySlug(ctx, projectID, slug)
-		if err != nil {
-			return nil, nil, apperror.NewInternal("failed to look up agent", err)
-		}
-	}
-	if def == nil {
-		return nil, nil, apperror.NewNotFound("Agent", slug)
+		return nil, nil, err
 	}
 
 	agent, err := h.repo.FindByName(ctx, projectID, def.Name)
@@ -85,6 +73,27 @@ func (h *ACPHandler) resolveAgentBySlug(ctx context.Context, projectID, slug str
 	}
 
 	return def, agent, nil
+}
+
+// resolveAgentDefinitionBySlug looks up an agent definition by ACP slug.
+func (h *ACPHandler) resolveAgentDefinitionBySlug(ctx context.Context, projectID, slug string) (*AgentDefinition, error) {
+	// Try external-visibility first (preferred ACP agents)
+	def, err := h.repo.FindExternalAgentBySlug(ctx, projectID, slug)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to look up agent", err)
+	}
+	// Fall back to any visibility so agents without explicit external visibility
+	// are still accessible via ACP (fixes 404 for project/internal agents).
+	if def == nil {
+		def, err = h.repo.FindAgentDefinitionBySlug(ctx, projectID, slug)
+		if err != nil {
+			return nil, apperror.NewInternal("failed to look up agent", err)
+		}
+	}
+	if def == nil {
+		return nil, apperror.NewNotFound("Agent", slug)
+	}
+	return def, nil
 }
 
 // acpUserMessageFromParts converts ACP message parts to a plain-text user message string.
@@ -762,7 +771,7 @@ func (h *ACPHandler) ResumeRun(c echo.Context) error {
 
 	ctx := c.Request().Context()
 
-	def, agent, err := h.resolveAgentBySlug(ctx, projectID, slug)
+	def, err := h.resolveAgentDefinitionBySlug(ctx, projectID, slug)
 	if err != nil {
 		return err
 	}
@@ -828,7 +837,7 @@ func (h *ACPHandler) ResumeRun(c echo.Context) error {
 	orgID := h.acpOrgID(ctx, c, projectID)
 
 	execReq := ExecuteRequest{
-		Agent:           agent,
+		Agent:           run.Agent, // Use the agent record from the run if it exists
 		AgentDefinition: def,
 		ProjectID:       projectID,
 		OrgID:           orgID,

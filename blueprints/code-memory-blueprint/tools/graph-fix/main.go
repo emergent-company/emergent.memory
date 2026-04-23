@@ -1,3 +1,4 @@
+// Deprecated: use `codebase fix stale` instead. Run `codebase --help` for details.
 
 
 package main

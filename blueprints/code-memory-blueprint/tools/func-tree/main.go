@@ -1,3 +1,4 @@
+// Deprecated: use `codebase analyze tree` instead. Run `codebase --help` for details.
 // func-tree: builds a functionality map from the Memory knowledge graph.
 //
 // For each Domain, shows:

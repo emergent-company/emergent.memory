@@ -1,3 +1,4 @@
+// Deprecated: use `codebase sync routes` instead. Run `codebase --help` for details.
 // graph-sync-routes: populates APIEndpoint graph objects with route metadata
 // extracted from framework route registration files.
 //

@@ -1,3 +1,4 @@
+// Deprecated: use `codebase seed exposes` instead. Run `codebase --help` for details.
 // service-exposes-seed: wires Service→exposes→APIEndpoint relationships.
 //
 // Steps:

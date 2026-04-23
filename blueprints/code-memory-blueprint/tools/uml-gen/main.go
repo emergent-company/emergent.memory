@@ -1,3 +1,4 @@
+// Deprecated: use `codebase analyze uml` instead. Run `codebase --help` for details.
 package main
 
 import (

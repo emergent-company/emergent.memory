@@ -15,7 +15,6 @@ import (
 
 	"github.com/uptrace/bun"
 	"github.com/zitadel/oidc/v3/pkg/client"
-	"github.com/zitadel/oidc/v3/pkg/client/profile"
 	"github.com/zitadel/oidc/v3/pkg/client/rs"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -424,75 +423,4 @@ func (z *ZitadelService) GetUserInfo(ctx context.Context, accessToken string) (*
 	)
 
 	return &result, nil
-}
-
-// GetUserEmailByZitadelID fetches a user's email from the Zitadel management API
-// using a machine-to-machine JWT profile token. Used to backfill email for users
-// who have only ever authenticated via API tokens (never via browser OAuth).
-func (z *ZitadelService) GetUserEmailByZitadelID(ctx context.Context, zitadelUserID string) (string, error) {
-	if z.cfg.Zitadel.ClientJWT == "" && z.cfg.Zitadel.ClientJWTPath == "" {
-		return "", fmt.Errorf("no Zitadel client JWT configured")
-	}
-
-	issuer := z.cfg.Zitadel.GetIssuer()
-
-	// Get M2M token via JWT profile
-	var tokenSource profile.TokenSource
-	var err error
-	if z.cfg.Zitadel.ClientJWT != "" {
-		tokenSource, err = profile.NewJWTProfileTokenSourceFromKeyFileData(
-			ctx, issuer, []byte(z.cfg.Zitadel.ClientJWT),
-			[]string{"openid", "urn:zitadel:iam:org:project:id:zitadel:aud"},
-		)
-	} else {
-		tokenSource, err = profile.NewJWTProfileTokenSourceFromKeyFile(
-			ctx, issuer, z.cfg.Zitadel.ClientJWTPath,
-			[]string{"openid", "urn:zitadel:iam:org:project:id:zitadel:aud"},
-		)
-	}
-	if err != nil {
-		return "", fmt.Errorf("create JWT profile token source: %w", err)
-	}
-
-	token, err := tokenSource.Token()
-	if err != nil {
-		return "", fmt.Errorf("get M2M token: %w", err)
-	}
-
-	// Call Zitadel management API to get user email
-	url := fmt.Sprintf("%s/management/v1/users/%s/email", issuer, zitadelUserID)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("management API request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("management API failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		Email struct {
-			Email           string `json:"email"`
-			IsEmailVerified bool   `json:"isEmailVerified"`
-		} `json:"email"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode management API response: %w", err)
-	}
-
-	z.log.Debug("fetched user email from Zitadel management API",
-		slog.String("zitadel_user_id", zitadelUserID),
-		slog.String("email", result.Email.Email),
-	)
-
-	return result.Email.Email, nil
 }

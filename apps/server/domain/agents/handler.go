@@ -12,6 +12,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -25,7 +26,14 @@ type Handler struct {
 	rateLimiter  *WebhookRateLimiter
 	tempoBaseURL string        // internal Tempo query URL; empty when tracing disabled
 	pricing      pricingLookup // optional; nil when provider repo not available
+	usage        usageLookup   // optional; nil when provider repo not available
+	providerRepo *provider.Repository
 	sandboxStore sandboxStoreLookup
+}
+
+// usageLookup is the internal interface for looking up project spend.
+type usageLookup interface {
+	CheckBudgetExceeded(ctx context.Context, projectID string) (bool, error)
 }
 
 // sandboxStoreLookup is the internal interface for looking up sandbox records by session ID.
@@ -40,8 +48,8 @@ type pricingLookup interface {
 }
 
 // NewHandler creates a new agents handler
-func NewHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, tempoBaseURL string, pricing pricingLookup, sandboxStore sandboxStoreLookup) *Handler {
-	return &Handler{repo: repo, executor: executor, rateLimiter: rateLimiter, tempoBaseURL: tempoBaseURL, pricing: pricing, sandboxStore: sandboxStore}
+func NewHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, tempoBaseURL string, pricing pricingLookup, usage usageLookup, providerRepo *provider.Repository, sandboxStore sandboxStoreLookup) *Handler {
+	return &Handler{repo: repo, executor: executor, rateLimiter: rateLimiter, tempoBaseURL: tempoBaseURL, pricing: pricing, usage: usage, providerRepo: providerRepo, sandboxStore: sandboxStore}
 }
 
 // getWorkspaceInfo loads sandbox details for a run, returning nil if unavailable.
@@ -187,7 +195,31 @@ func (h *Handler) GetAgent(c echo.Context) error {
 		return apperror.NewNotFound("Agent", id)
 	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(agent.ToDTO()))
+	dto := agent.ToDTO()
+
+	// Enrich with budget info if available
+	if h.providerRepo != nil {
+		// Get project budget
+		var project struct {
+			BudgetUSD *float64 `bun:"budget_usd"`
+		}
+		err := h.repo.db.NewSelect().
+			TableExpr("kb.projects").
+			ColumnExpr("budget_usd").
+			Where("id = ?", agent.ProjectID).
+			Scan(c.Request().Context(), &project)
+		if err == nil {
+			dto.BudgetUSD = project.BudgetUSD
+		}
+
+		// Get current spend
+		spend, err := h.providerRepo.GetProjectCurrentMonthSpend(c.Request().Context(), agent.ProjectID)
+		if err == nil {
+			dto.CurrentMonthSpend = &spend
+		}
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dto))
 }
 
 // GetAgentRuns handles GET /api/admin/agents/:id/runs
@@ -451,6 +483,55 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 		return apperror.NewInternal("failed to update agent", err)
 	}
 
+	return c.JSON(http.StatusOK, SuccessResponse(agent.ToDTO()))
+}
+
+// EnableAgent handles POST /api/projects/:projectId/agents/:id/enable
+// @Summary      Enable an agent
+// @Description  Enables an agent and clears any disabled reason (e.g. spending cap exceeded)
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID"
+// @Param        id path string true "Agent ID (UUID)"
+// @Success      200 {object} APIResponse[AgentDTO] "Enabled agent"
+// @Failure      400 {object} apperror.Error "Invalid agent ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Agent not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/agents/{id}/enable [post]
+// @Security     bearerAuth
+func (h *Handler) EnableAgent(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		return apperror.NewBadRequest("agent id is required")
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+
+	// Verify agent exists and belongs to project
+	agent, err := h.repo.FindByID(c.Request().Context(), id, &projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent", err)
+	}
+	if agent == nil {
+		return apperror.NewNotFound("Agent", id)
+	}
+
+	if err := h.repo.EnableAgent(c.Request().Context(), id); err != nil {
+		return apperror.NewInternal("failed to enable agent", err)
+	}
+
+	// Re-fetch to get updated state
+	agent, _ = h.repo.FindByID(c.Request().Context(), id, &projectID)
 	return c.JSON(http.StatusOK, SuccessResponse(agent.ToDTO()))
 }
 
@@ -1290,6 +1371,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		SystemPrompt:   dto.SystemPrompt,
 		Model:          dto.Model,
 		Tools:          tools,
+		BannedTools:    dto.BannedTools,
 		Skills:         skillNames,
 		FlowType:       flowType,
 		IsDefault:      isDefault,
@@ -1354,6 +1436,9 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.Tools != nil {
 		def.Tools = dto.Tools
+	}
+	if dto.BannedTools != nil {
+		def.BannedTools = dto.BannedTools
 	}
 	if dto.Skills != nil {
 		def.Skills = dto.Skills
@@ -1745,6 +1830,55 @@ func (h *Handler) GetRunSteps(c echo.Context) error {
 	})
 
 	return c.JSON(http.StatusOK, SuccessResponse(steps))
+}
+
+// GetRunStepsStream handles GET /api/v1/runs/:runId/steps
+// It returns run messages and tool calls as newline-delimited JSON (NDJSON).
+// This allows flow-server's LogStreamer to stream agent run output.
+func (h *Handler) GetRunStepsStream(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	runID := c.Param("runId")
+	if runID == "" {
+		return apperror.NewBadRequest("runId is required")
+	}
+
+	ctx := c.Request().Context()
+
+	// Verify the run exists (global lookup)
+	run, err := h.repo.FindRunByID(ctx, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent run", err)
+	}
+	if run == nil {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	entries, err := h.repo.FindRunLogEntries(ctx, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get run log entries", err)
+	}
+
+	// Set headers for NDJSON
+	c.Response().Header().Set(echo.HeaderContentType, "application/x-ndjson")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("Connection", "keep-alive")
+	c.Response().WriteHeader(http.StatusOK)
+
+	for _, entry := range entries {
+		if err := c.JSON(0, entry); err != nil {
+			return err
+		}
+		if _, err := c.Response().Write([]byte("\n")); err != nil {
+			return err
+		}
+		c.Response().Flush()
+	}
+
+	return nil
 }
 
 // GetRunLogs handles GET /api/v1/runs/:runId/logs

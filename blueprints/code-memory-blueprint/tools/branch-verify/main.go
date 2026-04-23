@@ -1,3 +1,4 @@
+// Deprecated: use `codebase branch verify` instead. Run `codebase --help` for details.
 package main
 
 import (

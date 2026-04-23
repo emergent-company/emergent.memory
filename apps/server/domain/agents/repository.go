@@ -2258,15 +2258,30 @@ func (r *Repository) ResetFailureCounter(ctx context.Context, agentID string) er
 }
 
 // DisableAgent sets enabled=false for the given agent. The reason is logged by
-// the caller; this method only performs the database update.
+// the caller and persisted to the disabled_reason column.
 func (r *Repository) DisableAgent(ctx context.Context, agentID string, reason string) error {
 	_, err := r.db.NewUpdate().
 		TableExpr("kb.agents").
 		Set("enabled = false").
+		Set("disabled_reason = ?", reason).
 		Where("id = ?", agentID).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("DisableAgent(%s): %w", reason, err)
+	}
+	return nil
+}
+
+// EnableAgent sets enabled=true and clears disabled_reason for the given agent.
+func (r *Repository) EnableAgent(ctx context.Context, agentID string) error {
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.agents").
+		Set("enabled = true").
+		Set("disabled_reason = NULL").
+		Where("id = ?", agentID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("EnableAgent: %w", err)
 	}
 	return nil
 }

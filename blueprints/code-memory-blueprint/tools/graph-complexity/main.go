@@ -1,3 +1,4 @@
+// Deprecated: use `codebase check complexity` instead. Run `codebase --help` for details.
 // graph-complexity: analyze structural complexity of a Memory knowledge graph.
 //
 // Scores each domain by:

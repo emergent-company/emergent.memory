@@ -1,3 +1,4 @@
+// Deprecated: use `codebase seed entities` instead. Run `codebase --help` for details.
 package main
 
 import (

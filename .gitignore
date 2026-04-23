@@ -240,3 +240,4 @@ openspec/changes/graph-explorer-branch-diff/
 # opencode package lock
 .opencode/package-lock.json
 
+blueprints/code-memory-blueprint/cmd/codebase/codebase
