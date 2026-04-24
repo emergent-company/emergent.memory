@@ -508,9 +508,26 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Issuer:      %s\n", creds.IssuerURL)
 	}
 	if creds.IsExpired() {
-		fmt.Println("  Status:      ⚠️  EXPIRED")
-		fmt.Println("\nYour session has expired. Run 'memory login' to re-authenticate.")
-		return nil
+		const oauthClientID = "362800068257972227"
+		refreshed := false
+		if creds.RefreshToken != "" && creds.IssuerURL != "" {
+			if oidcConfig, err := auth.DiscoverOIDC(creds.IssuerURL); err == nil {
+				if tokenResp, err := auth.RefreshToken(oidcConfig, creds.RefreshToken, oauthClientID); err == nil {
+					creds.AccessToken = tokenResp.AccessToken
+					creds.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+					if tokenResp.RefreshToken != "" {
+						creds.RefreshToken = tokenResp.RefreshToken
+					}
+					_ = auth.Save(creds, credsPath)
+					refreshed = true
+				}
+			}
+		}
+		if !refreshed {
+			fmt.Println("  Status:      ⚠️  EXPIRED")
+			fmt.Println("\nYour session has expired. Run 'memory login' to re-authenticate.")
+			return nil
+		}
 	}
 	fmt.Println("  Status:      ✓ Authenticated")
 	if !creds.ExpiresAt.IsZero() {
