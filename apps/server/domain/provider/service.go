@@ -177,6 +177,10 @@ func (s *CredentialService) decryptOrgConfig(cfg *OrgProviderConfig) (*ResolvedC
 		resolved.IsOpenAICompatible = true
 		resolved.BaseURL = cfg.BaseURL
 		resolved.APIKey = string(plaintext) // plaintext is the api_key (may be empty)
+	case ProviderDeepSeek:
+		resolved.IsOpenAICompatible = true
+		resolved.BaseURL = "https://api.deepseek.com/v1"
+		resolved.APIKey = string(plaintext)
 	}
 	return resolved, nil
 }
@@ -210,6 +214,10 @@ func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*R
 		resolved.IsOpenAICompatible = true
 		resolved.BaseURL = cfg.BaseURL
 		resolved.APIKey = string(plaintext)
+	case ProviderDeepSeek:
+		resolved.IsOpenAICompatible = true
+		resolved.BaseURL = "https://api.deepseek.com/v1"
+		resolved.APIKey = string(plaintext)
 	}
 	return resolved, nil
 }
@@ -238,7 +246,7 @@ func (s *CredentialService) ResolveFor(ctx context.Context, provider string) (*R
 // This method satisfies the adk.CredentialResolver interface.
 func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential, error) {
 	var lastErr error
-	for _, provider := range []ProviderType{ProviderVertexAI, ProviderGoogleAI, ProviderOpenAICompatible} {
+	for _, provider := range []ProviderType{ProviderVertexAI, ProviderGoogleAI, ProviderOpenAICompatible, ProviderDeepSeek} {
 		cred, err := s.Resolve(ctx, provider)
 		if err != nil {
 			s.log.Debug("provider resolution failed, trying next",
@@ -304,7 +312,7 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 	// OpenAI-compatible endpoints (especially large local models) may be slow
 	// to produce a first token, so we allow a longer timeout for them.
 	testTimeout := 15 * time.Second
-	if provider == ProviderOpenAICompatible {
+	if provider == ProviderOpenAICompatible || provider == ProviderDeepSeek {
 		testTimeout = 60 * time.Second
 	}
 	testCtx, testCancel := context.WithTimeout(ctx, testTimeout)
@@ -312,8 +320,13 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 	if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
 		return nil, fmt.Errorf("generative model test failed: %w", err)
 	}
-	if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
-		return nil, fmt.Errorf("embedding model test failed: %w", err)
+	// DeepSeek has no embedding API — skip the embed test and log a warning.
+	if provider == ProviderDeepSeek {
+		s.log.Warn("DeepSeek provider configured without embeddings — configure a separate embedding provider for document indexing")
+	} else {
+		if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
+			return nil, fmt.Errorf("embedding model test failed: %w", err)
+		}
 	}
 
 	// Auto-select models if not explicitly provided.
@@ -496,7 +509,7 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	// OpenAI-compatible endpoints (especially large local models) may be slow
 	// to produce a first token, so we allow a longer timeout for them.
 	testTimeout2 := 15 * time.Second
-	if provider == ProviderOpenAICompatible {
+	if provider == ProviderOpenAICompatible || provider == ProviderDeepSeek {
 		testTimeout2 = 60 * time.Second
 	}
 	testCtx, testCancel := context.WithTimeout(ctx, testTimeout2)
@@ -504,8 +517,13 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
 		return nil, fmt.Errorf("generative model test failed: %w", err)
 	}
-	if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
-		return nil, fmt.Errorf("embedding model test failed: %w", err)
+	// DeepSeek has no embedding API — skip the embed test and log a warning.
+	if provider == ProviderDeepSeek {
+		s.log.Warn("DeepSeek provider configured without embeddings — configure a separate embedding provider for document indexing")
+	} else {
+		if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
+			return nil, fmt.Errorf("embedding model test failed: %w", err)
+		}
 	}
 
 	generativeModel := req.GenerativeModel
@@ -627,6 +645,11 @@ func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertPr
 		}
 		// APIKey is optional (keyless local servers); encrypt empty string if not provided
 		return []byte(req.APIKey), nil
+	case ProviderDeepSeek:
+		if req.APIKey == "" {
+			return nil, apperror.NewBadRequest("apiKey is required for deepseek")
+		}
+		return []byte(req.APIKey), nil
 	default:
 		return nil, apperror.NewBadRequest(fmt.Sprintf("unsupported provider: %s", provider))
 	}
@@ -649,6 +672,10 @@ func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req Ups
 	case ProviderOpenAICompatible:
 		cred.IsOpenAICompatible = true
 		cred.BaseURL = req.BaseURL
+		cred.APIKey = req.APIKey
+	case ProviderDeepSeek:
+		cred.IsOpenAICompatible = true
+		cred.BaseURL = "https://api.deepseek.com/v1"
 		cred.APIKey = req.APIKey
 	}
 	return cred

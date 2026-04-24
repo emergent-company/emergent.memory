@@ -51,6 +51,11 @@ func (s *ModelCatalogService) SyncModels(ctx context.Context, provider ProviderT
 		return s.repo.UpsertSupportedModels(ctx, models)
 	}
 
+	// DeepSeek: use static model list (no catalog API).
+	if provider == ProviderDeepSeek {
+		return s.repo.UpsertSupportedModels(ctx, staticModels(provider))
+	}
+
 	models, err := s.fetchModelsFromAPI(ctx, provider, cred)
 	if err != nil {
 		return fmt.Errorf("failed to fetch model catalog from %s API: %w", provider, err)
@@ -213,6 +218,15 @@ func staticModels(p ProviderType) []ProviderSupportedModel {
 		{"gemini-embedding-2-preview", "Gemini Embedding 2 Preview", ModelTypeEmbedding},
 	}
 
+	if p == ProviderDeepSeek {
+		known = []entry{
+			{"deepseek-v4-flash", "DeepSeek V4 Flash", ModelTypeGenerative},
+			{"deepseek-v4-pro", "DeepSeek V4 Pro", ModelTypeGenerative},
+			{"deepseek-chat", "DeepSeek Chat", ModelTypeGenerative},
+			{"deepseek-reasoner", "DeepSeek Reasoner", ModelTypeGenerative},
+		}
+	}
+
 	models := make([]ProviderSupportedModel, 0, len(known))
 	for _, e := range known {
 		models = append(models, ProviderSupportedModel{
@@ -265,8 +279,8 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 		model = s.pickCheapTestModel(models)
 	}
 
-	// OpenAI-compatible: use direct HTTP call instead of genai client.
-	if provider == ProviderOpenAICompatible {
+	// OpenAI-compatible and DeepSeek: use direct HTTP call instead of genai client.
+	if provider == ProviderOpenAICompatible || provider == ProviderDeepSeek {
 		if cred.BaseURL == "" {
 			return "", "", fmt.Errorf("openai-compatible provider requires base_url")
 		}
@@ -400,6 +414,10 @@ func (s *ModelCatalogService) TestEmbed(ctx context.Context, provider ProviderTy
 		// Return the model name as "not supported" — non-fatal.
 		return "not supported", nil
 
+	case ProviderDeepSeek:
+		// DeepSeek has no embedding API.
+		return "not supported", nil
+
 	default:
 		return "", fmt.Errorf("unsupported provider for embedding test: %s", provider)
 	}
@@ -471,6 +489,9 @@ func buildClientConfig(provider ProviderType, cred *ResolvedCredential) (*genai.
 
 	case ProviderOpenAICompatible:
 		return nil, fmt.Errorf("openai-compatible provider does not use genai client — use the HTTP adapter directly")
+
+	case ProviderDeepSeek:
+		return nil, fmt.Errorf("deepseek provider does not use genai client — use the HTTP adapter directly")
 
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)

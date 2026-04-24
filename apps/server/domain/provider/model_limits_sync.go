@@ -37,22 +37,32 @@ var staticModelLimits = map[string]int{
 	"gemini-3.1-flash-lite-preview": 65536,
 	"gemini-3.1-flash":              65536,
 	"gemini-3.1-pro":                65536,
+	// DeepSeek models
+	"deepseek-v4-flash": 393216, // 384K output
+	"deepseek-v4-pro":   393216, // 384K output
+	"deepseek-chat":     8192,
+	"deepseek-reasoner": 65536,
 }
 
 // modelsDevResponse is the top-level shape of the models.dev /api.json response.
-// It maps provider slug → list of model entries.
-type modelsDevResponse map[string][]modelsDevModel
+// It maps provider slug → provider entry (which contains a models map).
+type modelsDevResponse map[string]modelsDevProviderEntry
+
+// modelsDevProviderEntry is a single provider entry in the models.dev response.
+type modelsDevProviderEntry struct {
+	Models map[string]modelsDevModel `json:"models"`
+}
 
 // modelsDevModel is a single model entry from models.dev.
 type modelsDevModel struct {
-	ID    string         `json:"id"`
 	Type  string         `json:"type"` // "generative" or "embed"
 	Limit modelsDevLimit `json:"limit"`
 }
 
 // modelsDevLimit contains the model's token limits.
 type modelsDevLimit struct {
-	Output int `json:"output"`
+	Context int `json:"context"`
+	Output  int `json:"output"`
 }
 
 // ModelLimitsSyncService fetches the latest per-model output token limits from
@@ -147,15 +157,15 @@ func (s *ModelLimitsSyncService) fetchRemoteLimits(ctx context.Context) (map[str
 // google and google-vertex), so we deduplicate by model ID.
 func parseModelLimits(raw modelsDevResponse) map[string]int {
 	limits := make(map[string]int)
-	for _, models := range raw {
-		for _, m := range models {
+	for _, providerEntry := range raw {
+		for modelID, m := range providerEntry.Models {
 			if m.Type != "generative" {
 				continue
 			}
-			if m.ID == "" || m.Limit.Output <= 0 {
+			if modelID == "" || m.Limit.Output <= 0 {
 				continue
 			}
-			limits[m.ID] = m.Limit.Output
+			limits[modelID] = m.Limit.Output
 		}
 	}
 	return limits

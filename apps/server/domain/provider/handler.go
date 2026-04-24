@@ -524,8 +524,9 @@ type TestProviderResponse struct {
 func (h *Handler) TestProvider(c echo.Context) error {
 	providerParam := c.Param("provider")
 	if providerParam != string(ProviderGoogleAI) &&
-		providerParam != string(ProviderVertexAI) {
-		return apperror.ErrBadRequest.WithMessage("provider must be google or google-vertex")
+		providerParam != string(ProviderVertexAI) &&
+		providerParam != string(ProviderDeepSeek) {
+		return apperror.ErrBadRequest.WithMessage("provider must be google, google-vertex, or deepseek")
 	}
 	p := ProviderType(providerParam)
 
