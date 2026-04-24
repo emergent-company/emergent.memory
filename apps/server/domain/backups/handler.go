@@ -313,7 +313,7 @@ func (h *Handler) GetRestoreStatus(c echo.Context) error {
 // @Description  Returns all full database backup records ordered by creation date descending
 // @Tags         superadmin
 // @Produce      json
-// @Success      200 {array} domain_backups.DatabaseBackup "List of database backups"
+// @Success      200 {array} backups.DatabaseBackupResponse "List of database backups"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      500 {object} apperror.Error "Internal server error"
 // @Router       /api/superadmin/database-backups [get]

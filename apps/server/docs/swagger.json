@@ -1,0 +1,31 @@
+{
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "Memory Knowledge Base API - AI-powered knowledge management system",
+        "title": "Memory API",
+        "contact": {
+            "name": "Memory Team",
+            "url": "https://emergent-company.ai",
+            "email": "support@emergent-company.ai"
+        },
+        "license": {
+            "name": "Proprietary"
+        },
+        "version": "0.35.212"
+    },
+    "host": "localhost:5300",
+    "basePath": "/",
+    "paths": {},
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "OAuth 2.0 access token (format: \"Bearer \u003ctoken\u003e\")",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}

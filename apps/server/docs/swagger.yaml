@@ -1,0 +1,23 @@
+basePath: /
+host: localhost:5300
+info:
+  contact:
+    email: support@emergent-company.ai
+    name: Memory Team
+    url: https://emergent-company.ai
+  description: Memory Knowledge Base API - AI-powered knowledge management system
+  license:
+    name: Proprietary
+  title: Memory API
+  version: 0.35.212
+paths: {}
+schemes:
+- http
+- https
+securityDefinitions:
+  BearerAuth:
+    description: 'OAuth 2.0 access token (format: "Bearer <token>")'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
