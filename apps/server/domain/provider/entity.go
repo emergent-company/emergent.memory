@@ -13,6 +13,7 @@ const (
 	ProviderGoogleAI         ProviderType = "google"
 	ProviderVertexAI         ProviderType = "google-vertex"
 	ProviderOpenAICompatible ProviderType = "openai-compatible"
+	ProviderDeepSeek         ProviderType = "deepseek"
 )
 
 // ModelType classifies a model as embedding or generative.

@@ -24,10 +24,10 @@ type Registry struct {
 }
 
 // NewRegistry creates and returns a Registry pre-populated with the
-// supported providers: Google AI and Vertex AI.
+// supported providers: Google AI, Vertex AI, OpenAI-compatible, and DeepSeek.
 func NewRegistry() *Registry {
 	r := &Registry{
-		providers: make(map[ProviderType]*ProviderDefinition, 2),
+		providers: make(map[ProviderType]*ProviderDefinition, 4),
 	}
 
 	r.providers[ProviderGoogleAI] = &ProviderDefinition{
@@ -57,6 +57,15 @@ func NewRegistry() *Registry {
 		CredentialFields: []CredentialField{
 			{Name: "base_url", Description: "Base URL of the OpenAI-compatible API (e.g. http://localhost:11434/v1)", Required: true, Secret: false},
 			{Name: "api_key", Description: "API key (use any value for keyless local servers)", Required: false, Secret: true},
+		},
+	}
+
+	r.providers[ProviderDeepSeek] = &ProviderDefinition{
+		Type:        ProviderDeepSeek,
+		DisplayName: "DeepSeek",
+		Description: "DeepSeek AI models (deepseek-v4-flash, deepseek-v4-pro, deepseek-chat, deepseek-reasoner) via API key. Note: DeepSeek does not provide embeddings — configure a separate embedding provider.",
+		CredentialFields: []CredentialField{
+			{Name: "api_key", Description: "DeepSeek API key", Required: true, Secret: true},
 		},
 	}
 

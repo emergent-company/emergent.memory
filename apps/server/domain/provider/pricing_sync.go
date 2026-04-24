@@ -62,6 +62,11 @@ var staticPricing = []ProviderPricing{
 	{Provider: ProviderVertexAI, Model: "gemini-3.1-flash-lite-preview", TextInputPrice: 0.10, ImageInputPrice: 0.10, AudioInputPrice: 0.10, OutputPrice: 0.40},
 	{Provider: ProviderVertexAI, Model: "gemini-3.1-flash", TextInputPrice: 0.15, ImageInputPrice: 0.15, AudioInputPrice: 0.15, OutputPrice: 0.60},
 	{Provider: ProviderVertexAI, Model: "gemini-3.1-pro", TextInputPrice: 1.25, ImageInputPrice: 1.25, AudioInputPrice: 1.25, OutputPrice: 5.00},
+	// DeepSeek — generative only, no embeddings. Prices per 1M tokens USD.
+	{Provider: ProviderDeepSeek, Model: "deepseek-v4-flash", TextInputPrice: 0.14, OutputPrice: 0.28},
+	{Provider: ProviderDeepSeek, Model: "deepseek-v4-pro", TextInputPrice: 1.74, OutputPrice: 3.48},
+	{Provider: ProviderDeepSeek, Model: "deepseek-chat", TextInputPrice: 0.28, OutputPrice: 0.42},
+	{Provider: ProviderDeepSeek, Model: "deepseek-reasoner", TextInputPrice: 0.28, OutputPrice: 0.42},
 }
 
 // PricingSyncService fetches the latest retail pricing from an external registry
