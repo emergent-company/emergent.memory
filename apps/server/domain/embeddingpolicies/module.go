@@ -9,6 +9,8 @@ var Module = fx.Module("embeddingpolicies",
 		NewStore,
 		NewService,
 		NewHandler,
+		NewSystemPolicySeeder,
 	),
 	fx.Invoke(RegisterRoutes),
+	fx.Invoke(RegisterSystemPolicySeederLifecycle),
 )

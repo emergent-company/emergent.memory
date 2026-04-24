@@ -20,6 +20,7 @@ type EmbeddingPolicy struct {
 	ExcludedLabels   pq.StringArray `bun:"excluded_labels,type:text[],notnull,default:'{}'" json:"excludedLabels"`
 	RelevantPaths    pq.StringArray `bun:"relevant_paths,type:text[],notnull,default:'{}'" json:"relevantPaths"`
 	ExcludedStatuses pq.StringArray `bun:"excluded_statuses,type:text[],notnull,default:'{}'" json:"excludedStatuses"`
+	IsSystem         bool           `bun:"is_system,notnull,default:false" json:"isSystem"`
 	CreatedAt        time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
 	UpdatedAt        time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }

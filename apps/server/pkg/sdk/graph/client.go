@@ -1761,3 +1761,141 @@ func (c *Client) HasRelationship(ctx context.Context, relType, srcID, dstID stri
 	}
 	return len(resp.Items) > 0, nil
 }
+
+// =============================================================================
+// Bulk Action by Filter
+// =============================================================================
+
+// BulkActionFilter defines what objects to target in a bulk operation.
+type BulkActionFilter struct {
+	Types           []string         `json:"types,omitempty"`
+	PropertyFilters []PropertyFilter `json:"property_filters,omitempty"`
+	Labels          []string         `json:"labels,omitempty"`
+}
+
+// BulkActionRequest is the request body for a filter-then-action bulk operation.
+type BulkActionRequest struct {
+	Filter     BulkActionFilter `json:"filter"`
+	Action     string           `json:"action"`
+	Value      string           `json:"value,omitempty"`
+	Properties map[string]any   `json:"properties,omitempty"`
+	Labels     []string         `json:"labels,omitempty"`
+	Limit      int              `json:"limit,omitempty"`
+	DryRun     bool             `json:"dry_run,omitempty"`
+}
+
+// BulkActionResponse is the response from a bulk action operation.
+type BulkActionResponse struct {
+	Matched  int  `json:"matched"`
+	Affected int  `json:"affected"`
+	Errors   int  `json:"errors"`
+	DryRun   bool `json:"dry_run"`
+}
+
+// BulkAction executes a filter-then-action operation on graph objects.
+func (c *Client) BulkAction(ctx context.Context, req *BulkActionRequest) (*BulkActionResponse, error) {
+	var result BulkActionResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/bulk-action", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Session API
+// =============================================================================
+
+// CreateSessionRequest is the request body for creating a session.
+type CreateSessionRequest struct {
+	Title        string  `json:"title"`
+	Summary      *string `json:"summary,omitempty"`
+	AgentVersion *string `json:"agentVersion,omitempty"`
+}
+
+// AppendMessageRequest is the request body for appending a message to a session.
+type AppendMessageRequest struct {
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	TokenCount *int           `json:"tokenCount,omitempty"`
+	ToolCalls  []any          `json:"toolCalls,omitempty"`
+	ExtraProps map[string]any `json:"extraProps,omitempty"`
+}
+
+// ListSessionsResponse is the paginated response for listing sessions.
+type ListSessionsResponse struct {
+	Items      []*GraphObject `json:"items"`
+	NextCursor *string        `json:"nextCursor,omitempty"`
+	Total      int            `json:"total"`
+}
+
+// ListMessagesResponse is the paginated response for listing messages.
+type ListMessagesResponse struct {
+	Items      []*GraphObject `json:"items"`
+	NextCursor *string        `json:"nextCursor,omitempty"`
+	Total      int            `json:"total"`
+}
+
+// CreateSession creates a new Session graph object.
+func (c *Client) CreateSession(ctx context.Context, req *CreateSessionRequest) (*GraphObject, error) {
+	var result GraphObject
+	if err := c.postJSON(ctx, c.base+"/api/graph/sessions", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetSession retrieves a session by ID.
+func (c *Client) GetSession(ctx context.Context, id string) (*GraphObject, error) {
+	var result GraphObject
+	if err := c.getJSON(ctx, c.base+"/api/graph/sessions/"+url.PathEscape(id), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListSessions returns a paginated list of sessions.
+func (c *Client) ListSessions(ctx context.Context, limit int, cursor string) (*ListSessionsResponse, error) {
+	u, _ := url.Parse(c.base + "/api/graph/sessions")
+	q := u.Query()
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	u.RawQuery = q.Encode()
+
+	var result ListSessionsResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// AppendMessage appends a message to a session.
+func (c *Client) AppendMessage(ctx context.Context, sessionID string, req *AppendMessageRequest) (*GraphObject, error) {
+	var result GraphObject
+	if err := c.postJSON(ctx, c.base+"/api/graph/sessions/"+url.PathEscape(sessionID)+"/messages", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListMessages returns a paginated list of messages for a session.
+func (c *Client) ListMessages(ctx context.Context, sessionID string, limit int, cursor string) (*ListMessagesResponse, error) {
+	u, _ := url.Parse(c.base + "/api/graph/sessions/" + url.PathEscape(sessionID) + "/messages")
+	q := u.Query()
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	u.RawQuery = q.Encode()
+
+	var result ListMessagesResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}

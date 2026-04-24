@@ -2653,3 +2653,343 @@ func (r *Repository) BulkCopyRelationshipsToBranch(ctx context.Context, projectI
 
 	return copied, skipped, nil
 }
+
+// =============================================================================
+// Bulk Action by Filter
+// =============================================================================
+
+// BulkActionParams contains all inputs for the BulkActionByFilter repository method.
+type BulkActionParams struct {
+	ProjectID  uuid.UUID
+	Filter     BulkActionFilter
+	Action     string
+	Value      string         // for update_status
+	Properties map[string]any // for merge/replace_properties
+	Labels     []string       // for add/remove/set_labels
+	Limit      int
+	DryRun     bool
+	ActorID    *uuid.UUID
+}
+
+// BulkActionByFilter executes a filter-then-action bulk operation on graph objects.
+// Supports dry_run (returns count without mutating) and all BulkAction* action types.
+func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionParams) (matched int, affected int, err error) {
+	// Pre-process property filters: resolve relative time values.
+	resolvedFilters := make([]PropertyFilter, 0, len(params.Filter.PropertyFilters))
+	for _, pf := range params.Filter.PropertyFilters {
+		if strVal, ok := pf.Value.(string); ok && isRelativeTime(strVal) {
+			t, parseErr := parseRelativeTime(strVal)
+			if parseErr != nil {
+				return 0, 0, apperror.ErrBadRequest.WithMessage("invalid relative time: " + strVal)
+			}
+			pf.Value = t.Format(time.RFC3339)
+		}
+		resolvedFilters = append(resolvedFilters, pf)
+	}
+
+	// Build a base select to count matched objects.
+	countQ := r.db.NewSelect().
+		TableExpr("kb.graph_objects").
+		ColumnExpr("COUNT(*) AS cnt").
+		Where("project_id = ?", params.ProjectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL")
+
+	if len(params.Filter.Types) > 0 {
+		countQ = countQ.Where("type IN (?)", bun.In(params.Filter.Types))
+	}
+	if len(params.Filter.Labels) > 0 {
+		countQ = countQ.Where("labels && ?::text[]", formatTextArray(params.Filter.Labels))
+	}
+	// Apply property filters to count query.
+	if len(resolvedFilters) > 0 {
+		countQ = applyBulkPropertyFilters(countQ, resolvedFilters)
+	}
+
+	var cntResult struct{ Cnt int }
+	if err := countQ.Scan(ctx, &cntResult); err != nil {
+		return 0, 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	matched = cntResult.Cnt
+
+	if params.DryRun || matched == 0 {
+		return matched, 0, nil
+	}
+
+	// Cap at limit.
+	limit := params.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+
+	// Execute the action.
+	now := time.Now().UTC()
+
+	switch params.Action {
+	case BulkActionUpdateStatus:
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("status = ?", params.Value).
+			Set("updated_at = ?", now).
+			Where("project_id = ?", params.ProjectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionSoftDelete:
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("deleted_at = ?", now).
+			Set("updated_at = ?", now).
+			Where("project_id = ?", params.ProjectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionHardDelete:
+		subQ := r.db.NewSelect().
+			TableExpr("kb.graph_objects").
+			ColumnExpr("id").
+			Where("project_id = ?", params.ProjectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL").
+			Limit(limit)
+		if len(params.Filter.Types) > 0 {
+			subQ = subQ.Where("type IN (?)", bun.In(params.Filter.Types))
+		}
+		if len(params.Filter.Labels) > 0 {
+			subQ = subQ.Where("labels && ?::text[]", formatTextArray(params.Filter.Labels))
+		}
+		subQ = applyBulkPropertyFilters(subQ, resolvedFilters)
+		result, qErr := r.db.NewDelete().
+			TableExpr("kb.graph_objects").
+			Where("id IN (?)", subQ).
+			Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionMergeProperties:
+		propsJSON, jsonErr := json.Marshal(params.Properties)
+		if jsonErr != nil {
+			return matched, 0, apperror.ErrBadRequest.WithMessage("invalid properties")
+		}
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("properties = properties || ?::jsonb", string(propsJSON)).
+			Set("updated_at = ?", now).
+			Where("project_id = ?", params.ProjectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionReplaceProperties:
+		propsJSON, jsonErr := json.Marshal(params.Properties)
+		if jsonErr != nil {
+			return matched, 0, apperror.ErrBadRequest.WithMessage("invalid properties")
+		}
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("properties = ?::jsonb", string(propsJSON)).
+			Set("updated_at = ?", now).
+			Where("project_id = ?", params.ProjectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionSetLabels:
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("labels = ?::text[]", formatTextArray(params.Labels)).
+			Set("updated_at = ?", now).
+			Where("project_id = ?", params.ProjectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionAddLabels:
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("labels = ARRAY(SELECT DISTINCT unnest(labels || ?::text[]))", formatTextArray(params.Labels)).
+			Set("updated_at = ?", now).
+			Where("project_id = ?", params.ProjectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	case BulkActionRemoveLabels:
+		q := r.db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("labels = ARRAY(SELECT unnest(labels) EXCEPT SELECT unnest(?::text[]))", formatTextArray(params.Labels)).
+			Set("updated_at = ?", now).
+			Where("project_id = ?", params.ProjectID).
+			Where("supersedes_id IS NULL").
+			Where("deleted_at IS NULL")
+		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		result, qErr := q.Exec(ctx)
+		if qErr != nil {
+			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
+		}
+		rows, _ := result.RowsAffected()
+		affected = int(rows)
+
+	default:
+		return matched, 0, apperror.ErrBadRequest.WithMessage("unsupported action: " + params.Action)
+	}
+
+	return matched, affected, nil
+}
+
+// applyBulkPropertyFilters applies property filters to a raw select query (used for counting).
+func applyBulkPropertyFilters(q *bun.SelectQuery, filters []PropertyFilter) *bun.SelectQuery {
+	for _, f := range filters {
+		segments := strings.Split(f.Path, ".")
+		if len(segments) == 0 {
+			continue
+		}
+		var textAccessor, jsonAccessor string
+		if len(segments) == 1 {
+			textAccessor = "properties->>'" + segments[0] + "'"
+			jsonAccessor = "properties->'" + segments[0] + "'"
+		} else {
+			var builder strings.Builder
+			builder.WriteString("properties")
+			for _, seg := range segments[:len(segments)-1] {
+				builder.WriteString("->'" + seg + "'")
+			}
+			jsonAccessor = builder.String() + "->'" + segments[len(segments)-1] + "'"
+			textAccessor = builder.String() + "->>'" + segments[len(segments)-1] + "'"
+		}
+
+		switch f.Op {
+		case "eq":
+			q = q.Where(textAccessor+" = ?", fmt.Sprintf("%v", f.Value))
+		case "neq":
+			q = q.Where("("+textAccessor+" IS NULL OR "+textAccessor+" != ?)", fmt.Sprintf("%v", f.Value))
+		case "gt":
+			q = q.Where("("+textAccessor+")::numeric > ?::numeric", f.Value)
+		case "gte":
+			q = q.Where("("+textAccessor+")::numeric >= ?::numeric", f.Value)
+		case "lt":
+			q = q.Where("("+textAccessor+")::numeric < ?::numeric", f.Value)
+		case "lte":
+			q = q.Where("("+textAccessor+")::numeric <= ?::numeric", f.Value)
+		case "contains":
+			q = q.Where(textAccessor+" ILIKE ?", "%"+fmt.Sprintf("%v", f.Value)+"%")
+		case "exists":
+			q = q.Where(jsonAccessor + " IS NOT NULL")
+		case "in":
+			if arr, ok := f.Value.([]interface{}); ok {
+				strVals := make([]string, 0, len(arr))
+				for _, v := range arr {
+					strVals = append(strVals, fmt.Sprintf("%v", v))
+				}
+				q = q.Where(textAccessor+" IN (?)", bun.In(strVals))
+			}
+		}
+	}
+	return q
+}
+
+// applyBulkPropertyFiltersUpdate applies property filters to a Bun update query.
+func applyBulkPropertyFiltersUpdate(q *bun.UpdateQuery, filters []PropertyFilter) *bun.UpdateQuery {
+	for _, f := range filters {
+		segments := strings.Split(f.Path, ".")
+		if len(segments) == 0 {
+			continue
+		}
+		var textAccessor, jsonAccessor string
+		if len(segments) == 1 {
+			textAccessor = "properties->>'" + segments[0] + "'"
+			jsonAccessor = "properties->'" + segments[0] + "'"
+		} else {
+			var builder strings.Builder
+			builder.WriteString("properties")
+			for _, seg := range segments[:len(segments)-1] {
+				builder.WriteString("->'" + seg + "'")
+			}
+			jsonAccessor = builder.String() + "->'" + segments[len(segments)-1] + "'"
+			textAccessor = builder.String() + "->>'" + segments[len(segments)-1] + "'"
+		}
+		_ = jsonAccessor
+
+		switch f.Op {
+		case "eq":
+			q = q.Where(textAccessor+" = ?", fmt.Sprintf("%v", f.Value))
+		case "neq":
+			q = q.Where("("+textAccessor+" IS NULL OR "+textAccessor+" != ?)", fmt.Sprintf("%v", f.Value))
+		case "gt":
+			q = q.Where("("+textAccessor+")::numeric > ?::numeric", f.Value)
+		case "gte":
+			q = q.Where("("+textAccessor+")::numeric >= ?::numeric", f.Value)
+		case "lt":
+			q = q.Where("("+textAccessor+")::numeric < ?::numeric", f.Value)
+		case "lte":
+			q = q.Where("("+textAccessor+")::numeric <= ?::numeric", f.Value)
+		case "contains":
+			q = q.Where(textAccessor+" ILIKE ?", "%"+fmt.Sprintf("%v", f.Value)+"%")
+		case "exists":
+			q = q.Where("properties->'" + segments[0] + "' IS NOT NULL")
+		case "in":
+			if arr, ok := f.Value.([]interface{}); ok {
+				strVals := make([]string, 0, len(arr))
+				for _, v := range arr {
+					strVals = append(strVals, fmt.Sprintf("%v", v))
+				}
+				q = q.Where(textAccessor+" IN (?)", bun.In(strVals))
+			}
+		}
+	}
+	return q
+}
+
+// applyBulkFilterToUpdate applies the BulkActionFilter (types, labels, property filters, limit)
+// to a Bun update query. Uses a subquery for limit support.
+func applyBulkFilterToUpdate(q *bun.UpdateQuery, filter BulkActionFilter, resolvedFilters []PropertyFilter, limit int) *bun.UpdateQuery {
+	q = applyBulkPropertyFiltersUpdate(q, resolvedFilters)
+	if len(filter.Types) > 0 {
+		q = q.Where("type IN (?)", bun.In(filter.Types))
+	}
+	if len(filter.Labels) > 0 {
+		q = q.Where("labels && ?::text[]", formatTextArray(filter.Labels))
+	}
+	return q
+}

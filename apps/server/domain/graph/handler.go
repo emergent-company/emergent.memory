@@ -2189,3 +2189,49 @@ func (h *Handler) ForkBranch(c echo.Context) error {
 
 	return c.JSON(http.StatusCreated, result)
 }
+
+// =============================================================================
+// Bulk Action by Filter
+// =============================================================================
+
+// BulkAction executes a filter-then-action operation on graph objects matching a filter.
+// @Summary      Bulk action by filter
+// @Description  Execute an action (update_status, soft_delete, hard_delete, merge_properties, replace_properties, add_labels, remove_labels, set_labels) on all graph objects matching the given filter. Supports dry_run mode.
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        request body BulkActionRequest true "Filter and action definition"
+// @Success      200 {object} BulkActionResponse "Matched and affected counts"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/bulk-action [post]
+// @Security     bearerAuth
+func (h *Handler) BulkAction(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req BulkActionRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Action == "" {
+		return apperror.ErrBadRequest.WithMessage("action is required")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkAction(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}

@@ -10,6 +10,8 @@ var Module = fx.Module("schemas",
 	fx.Provide(NewService),
 	fx.Provide(NewHandler),
 	fx.Provide(NewSchemaMigrationJobWorker),
+	fx.Provide(NewBuiltinSeeder),
 	fx.Invoke(RegisterRoutes),
 	fx.Invoke(RegisterSchemaMigrationWorkerLifecycle),
+	fx.Invoke(RegisterBuiltinSeederLifecycle),
 )

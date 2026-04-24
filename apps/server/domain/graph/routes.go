@@ -7,7 +7,7 @@ import (
 )
 
 // RegisterRoutes registers all graph routes.
-func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
+func RegisterRoutes(e *echo.Echo, h *Handler, sh *SessionHandler, authMiddleware *auth.Middleware) {
 	// All graph routes require authentication and project context
 	g := e.Group("/api/graph")
 	g.Use(authMiddleware.RequireAuth())
@@ -22,6 +22,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	objects.POST("/bulk-update-status", h.BulkUpdateStatus)
 	objects.POST("/bulk", h.BulkCreateObjects)
 	objects.POST("/bulk-update", h.BulkUpdateObjects)
+	objects.POST("/bulk-action", h.BulkAction)
 	objects.POST("/validate", h.ValidateObject)
 	objects.PUT("/upsert", h.UpsertObject)
 	objects.GET("/:id", h.GetObject)
@@ -69,4 +70,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	relationships.DELETE("/:id", h.DeleteRelationship)
 	relationships.POST("/:id/restore", h.RestoreRelationship)
 	relationships.GET("/:id/history", h.GetRelationshipHistory)
+
+	// Session routes
+	sessions := g.Group("/sessions")
+	sessions.POST("", sh.CreateSession)
+	sessions.GET("", sh.ListSessions)
+	sessions.GET("/:id", sh.GetSession)
+	sessions.POST("/:id/messages", sh.AppendMessage)
+	sessions.GET("/:id/messages", sh.ListMessages)
 }

@@ -153,6 +153,18 @@ func (s *Service) Delete(ctx context.Context, projectID, policyID string) error 
 		return apperror.ErrBadRequest.WithMessage("Invalid policy ID format")
 	}
 
+	// Prevent deletion of system-managed policies
+	policy, err := s.store.GetByID(ctx, projectID, policyID)
+	if err != nil {
+		return err
+	}
+	if policy == nil {
+		return apperror.ErrNotFound.WithMessage("Embedding policy not found")
+	}
+	if policy.IsSystem {
+		return apperror.ErrForbidden.WithMessage("System embedding policies cannot be deleted")
+	}
+
 	deleted, err := s.store.Delete(ctx, projectID, policyID)
 	if err != nil {
 		return err
