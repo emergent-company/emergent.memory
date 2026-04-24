@@ -1,0 +1,363 @@
+name: competitive-landscape
+version: "1.0.0"
+description: >
+  Schema for tracking competitors, market landscape, and strategic analysis
+  for Diane as a personal AI agent. Covers competitor projects, positioning,
+  feature comparison, and strategic initiatives. Links to Agent, Project,
+  Scenario, and other existing domain types for full traceability.
+author: Emergent
+license: MIT
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OBJECT TYPES
+# ─────────────────────────────────────────────────────────────────────────────
+
+objectTypes:
+
+  # ── Competitor ────────────────────────────────────────────────────────────
+
+  - name: Competitor
+    label: Competitor
+    description: >
+      A project, product, or platform that competes with Diane as a personal
+      AI agent. Can be open-source, commercial, or internal (e.g., Day-N).
+      Represents the highest-level entity for competitive tracking.
+    properties:
+      name:
+        type: string
+        description: "Project/product name. E.g. 'Hermes', 'Day-N', 'ChatGPT Personal'"
+      description:
+        type: string
+        description: "What this competitor does (truncated to 1000 chars)"
+      status:
+        type: string
+        description: "Current status: active, alpha, beta, mature, deprecated, unknown"
+      category:
+        type: string
+        description: "Competitor category: personal-agent, enterprise-agent, chat-ui, mcp-server, full-stack"
+      maturity:
+        type: string
+        description: "Market maturity: experimental, growing, established, dominant"
+      is_open_source:
+        type: boolean
+        description: "Whether the project is open source"
+      license:
+        type: string
+        description: "License type if open source. E.g. MIT, Apache-2.0, AGPL"
+      repo_url:
+        type: string
+        description: "GitHub/repository URL"
+      website_url:
+        type: string
+        description: "Project website URL"
+      launch_date:
+        type: string
+        description: "ISO 8601 date when the project was launched (approximate)"
+      target_audience:
+        type: array
+        items: string
+        description: "Target users. E.g. [developers, enterprises, consumers]"
+      tech_stack:
+        type: array
+        items: string
+        description: "Key technologies. E.g. [Go, TypeScript, SwiftUI, React]"
+      notes:
+        type: string
+        description: "Additional notes about this competitor"
+
+  # ── Competitor Feature ────────────────────────────────────────────────────
+
+  - name: CompetitorFeature
+    label: Competitor Feature
+    description: >
+      A specific feature or capability of a competitor project.
+      Used for granular feature-by-feature comparison.
+    properties:
+      name:
+        type: string
+        description: "Feature name. E.g. 'MCP Proxy', 'Agent Runner', 'Knowledge Graph', 'Chat UI'"
+      description:
+        type: string
+        description: "What this feature does"
+      capability_area:
+        type: string
+        description: "Area: agent-runner, mcp-proxy, chat-ui, memory, skills, tool-guard, notification, scheduling"
+      is_core:
+        type: boolean
+        description: "Whether this is a core/differentiating feature vs. nice-to-have"
+      maturity_level:
+        type: string
+        description: "How mature this feature is: experimental, beta, production, deprecated"
+
+  # ── Comparison Point ──────────────────────────────────────────────────────
+
+  - name: ComparisonPoint
+    label: Comparison Point
+    description: >
+      A direct comparison between Diane and a specific competitor on a
+      specific feature or capability. Captures the assessment of relative
+      strength and the reasoning.
+    properties:
+      assessment:
+        type: string
+        description: "Diane's relative strength: stronger, equal, weaker, missing"
+      reasoning:
+        type: string
+        description: "Why this assessment. E.g. 'Diane has 69+ tools, Hermes has 12'"
+      evidence:
+        type: string
+        description: "Concrete evidence or data point supporting the assessment"
+      priority:
+        type: string
+        description: "How critical this gap is: critical, high, medium, low, informational"
+
+  # ── Strategic Initiative ──────────────────────────────────────────────────
+
+  - name: StrategicInitiative
+    label: Strategic Initiative
+    description: >
+      A strategic response to competitive pressure — a feature, product area,
+      or pivot that Diane should pursue to maintain or gain advantage.
+    properties:
+      title:
+        type: string
+        description: "Initiative title. E.g. 'Add temporal graph support', 'Build Day-N UI'"
+      description:
+        type: string
+        description: "What this initiative entails"
+      competitive_driver:
+        type: string
+        description: "Which competitor or gap drives this initiative"
+      status:
+        type: string
+        description: "Status: ideation, research, planned, in_progress, delivered, shelved"
+      priority:
+        type: string
+        description: "Priority: critical, high, medium, low"
+      target_date:
+        type: string
+        description: "Target completion date (ISO 8601)"
+      owner:
+        type: string
+        description: "Person or team responsible"
+
+  # ── Market Trend ──────────────────────────────────────────────────────────
+
+  - name: MarketTrend
+    label: Market Trend
+    description: >
+      A broader market trend or shift that affects Diane's competitive position.
+      Tracks industry movements, not just direct competitors.
+    properties:
+      name:
+        type: string
+        description: "Trend name. E.g. 'Agent-to-Agent Communication', 'MCP Protocol Standardization'"
+      description:
+        type: string
+        description: "What the trend is"
+      impact_on_diane:
+        type: string
+        description: "How this trend affects Diane: opportunity, threat, neutral"
+      impact_level:
+        type: string
+        description: "Severity: critical, high, medium, low"
+      source:
+        type: string
+        description: "Source of this trend observation"
+      observed_date:
+        type: string
+        description: "ISO 8601 date the trend was observed"
+
+  # ── Capability Matrix ─────────────────────────────────────────────────────
+
+  - name: CapabilityMatrix
+    label: Capability Matrix
+    description: >
+      A structured comparison of capabilities across multiple competitors.
+      Represents a point-in-time snapshot of the competitive landscape.
+    properties:
+      title:
+        type: string
+        description: "Matrix title. E.g. 'Q2 2026 Personal Agent Comparison'"
+      analysis_date:
+        type: string
+        description: "ISO 8601 date of this analysis"
+      competitors_analyzed:
+        type: array
+        items: string
+        description: "List of competitor names included in this matrix"
+      summary:
+        type: string
+        description: "Overall summary of findings"
+
+  # ── Feature Gap ───────────────────────────────────────────────────────────
+
+  - name: FeatureGap
+    label: Feature Gap
+    description: >
+      A capability that Diane lacks but competitors have. Used for
+      prioritizing development work to close competitive gaps.
+    properties:
+      gap_name:
+        type: string
+        description: "What Diane is missing. E.g. 'Native chat UI', 'Agent runner layer'"
+      description:
+        type: string
+        description: "Detailed description of the gap"
+      competitors_have_it:
+        type: array
+        items: string
+        description: "Which competitors have this capability"
+      impact:
+        type: string
+        description: "Impact of not having this: critical, high, medium, low"
+      effort_to_add:
+        type: string
+        description: "Estimated effort: low, medium, high, very_high"
+      is_being_worked_on:
+        type: boolean
+        description: "Whether this gap is currently being addressed"
+
+  # ── Pricing Model ─────────────────────────────────────────────────────────
+
+  - name: PricingModel
+    label: Pricing Model
+    description: >
+      Pricing and monetization model for a competitor. Used for
+      commercial competitive analysis.
+    properties:
+      model_type:
+        type: string
+        description: "Model: free, freemium, subscription, enterprise, open_source, self_hosted"
+      price_range:
+        type: string
+        description: "Price range. E.g. '$0', '$20/mo', '$500+/mo', 'Free (self-hosted)'"
+      currency:
+        type: string
+        description: "Currency code. Default: USD"
+      notes:
+        type: string
+        description: "Additional pricing details"
+
+  # ── Integration ───────────────────────────────────────────────────────────
+
+  - name: Integration
+    label: Integration
+    description: >
+      An external integration or ecosystem connection that a competitor
+      provides (or lacks). Used for ecosystem competitive analysis.
+    properties:
+      name:
+        type: string
+        description: "Integration name. E.g. 'Slack', 'Discord', 'Telegram', 'GitHub', 'Cron'"
+      integration_type:
+        type: string
+        description: "Type: notification, tool, platform, protocol"
+      maturity_level:
+        type: string
+        description: "How well integrated: native, first-party, community, none"
+      notes:
+        type: string
+        description: "Additional details about the integration"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RELATIONSHIP TYPES
+# ─────────────────────────────────────────────────────────────────────────────
+
+relationshipTypes:
+
+  # ── Competitor → Feature ─────────────────────────────────────────────────
+
+  - name: has_feature
+    label: Has Feature
+    description: Competitor offers this feature
+    sourceType: Competitor
+    targetType: CompetitorFeature
+
+  # ── Competitor → Comparison ──────────────────────────────────────────────
+
+  - name: compares_on
+    label: Compares On
+    description: This comparison point evaluates Diane vs this competitor
+    sourceType: Competitor
+    targetType: ComparisonPoint
+
+  - name: evaluated_by
+    label: Evaluated By
+    description: This comparison point is about this feature
+    sourceType: ComparisonPoint
+    targetType: CompetitorFeature
+
+  # ── Competitor → Pricing ─────────────────────────────────────────────────
+
+  - name: uses_pricing
+    label: Uses Pricing
+    description: Competitor uses this pricing model
+    sourceType: Competitor
+    targetType: PricingModel
+
+  # ── Competitor → Integration ─────────────────────────────────────────────
+
+  - name: provides_integration
+    label: Provides Integration
+    description: Competitor supports this integration
+    sourceType: Competitor
+    targetType: Integration
+
+  # ── Competitor → Feature Gap ─────────────────────────────────────────────
+
+  - name: exposes_gap
+    label: Exposes Gap
+    description: This competitor has a feature Diane lacks
+    sourceType: Competitor
+    targetType: FeatureGap
+
+  # ── Strategic Initiative ─────────────────────────────────────────────────
+
+  - name: responds_to
+    label: Responds To
+    description: This initiative is a response to competitive pressure from this competitor
+    sourceType: StrategicInitiative
+    targetType: Competitor
+
+  - name: closes_gap
+    label: Closes Gap
+    description: This initiative addresses this feature gap
+    sourceType: StrategicInitiative
+    targetType: FeatureGap
+
+  - name: captures_trend
+    label: Captures Trend
+    description: This initiative leverages this market trend
+    sourceType: StrategicInitiative
+    targetType: MarketTrend
+
+  # ── Market Trend ─────────────────────────────────────────────────────────
+
+  - name: impacts
+    label: Impacts
+    description: This trend affects this competitor
+    sourceType: MarketTrend
+    targetType: Competitor
+
+  # ── Comparison Point → Competitor ────────────────────────────────────────
+
+  - name: compares_against
+    label: Compares Against
+    description: The other competitor in this comparison
+    sourceType: ComparisonPoint
+    targetType: Competitor
+
+  # ── Capability Matrix ────────────────────────────────────────────────────
+
+  - name: includes
+    label: Includes
+    description: This matrix covers this comparison point
+    sourceType: CapabilityMatrix
+    targetType: ComparisonPoint
+
+  # ── Cross-cutting: link to existing domain types ─────────────────────────
+  # NOTE: These relationships target types defined in other packs (Agent,
+  # Project, Scenario). They will resolve once those packs are installed
+  # in the same project. The validator flags them here because the types
+  # are not defined within this pack — this is expected and harmless.
