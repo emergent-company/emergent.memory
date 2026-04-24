@@ -129,6 +129,15 @@ var (
 	graphIDsFlag      string
 	graphJSONFlag     bool
 	graphForceFlag    bool
+
+	// bulk action flags
+	graphBulkActionFlag string
+	graphBulkValueFlag  string
+	graphBulkLabelsFlag []string
+	graphBulkDryRunFlag bool
+	graphBulkLimitFlag  int
+
+	graphMoveTargetBranchFlag string
 )
 
 // ─────────────────────────────────────────────
@@ -829,10 +838,172 @@ Examples:
 }
 
 // ─────────────────────────────────────────────
-// graph objects move
+// graph objects bulk-update
 // ─────────────────────────────────────────────
 
-var graphMoveTargetBranchFlag string
+var graphObjectsBulkUpdateCmd = &cobra.Command{
+	Use:   "bulk-update",
+	Short: "Bulk update graph objects matching a filter",
+	Long: `Execute a bulk action on all graph objects matching the given filter.
+
+The --action flag controls what operation is performed. Use --dry-run to preview
+the number of matching objects without making any changes.
+
+Supported actions:
+  update_status        Set status field (requires --value)
+  soft_delete          Set deleted_at timestamp
+  hard_delete          Permanently remove objects
+  merge_properties     Deep-merge --properties into existing JSONB properties
+  replace_properties   Replace the entire properties object
+  add_labels           Add labels (--labels)
+  remove_labels        Remove labels (--labels)
+  set_labels           Replace all labels (--labels)
+
+Examples:
+  memory graph objects bulk-update --type Message --action update_status --value archived
+  memory graph objects bulk-update --type Document --filter "days_since_access>365" --action soft_delete --dry-run
+  memory graph objects bulk-update --action merge_properties --properties '{"verified":true}' --limit 500`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		g, err := getGraphClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		req := &sdkgraph.BulkActionRequest{
+			Action: graphBulkActionFlag,
+			Value:  graphBulkValueFlag,
+			DryRun: graphBulkDryRunFlag,
+			Limit:  graphBulkLimitFlag,
+		}
+
+		// Build filter
+		if graphTypeFlag != "" {
+			req.Filter.Types = strings.Split(graphTypeFlag, ",")
+		}
+
+		// Property filters from --filter key=value pairs
+		if len(graphFilterFlag) > 0 {
+			op := graphFilterOpFlag
+			if op == "" {
+				op = "eq"
+			}
+			for _, f := range graphFilterFlag {
+				parts := strings.SplitN(f, "=", 2)
+				pf := sdkgraph.PropertyFilter{Op: op}
+				if len(parts) == 2 {
+					pf.Path = parts[0]
+					pf.Value = parts[1]
+				} else {
+					pf.Path = f
+					pf.Op = "exists"
+				}
+				req.Filter.PropertyFilters = append(req.Filter.PropertyFilters, pf)
+			}
+		}
+
+		// Label filters
+		if len(graphBulkLabelsFlag) > 0 {
+			req.Labels = graphBulkLabelsFlag
+		}
+
+		// Properties JSON for merge/replace actions
+		if graphPropsFlag != "" {
+			var props map[string]any
+			if err := json.Unmarshal([]byte(graphPropsFlag), &props); err != nil {
+				return fmt.Errorf("invalid --properties JSON: %w", err)
+			}
+			req.Properties = props
+		}
+
+		resp, err := g.BulkAction(context.Background(), req)
+		if err != nil {
+			return fmt.Errorf("bulk action failed: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+		if graphBulkDryRunFlag {
+			fmt.Fprintf(out, "Dry run — matched: %d (no changes made)\n", resp.Matched)
+		} else {
+			fmt.Fprintf(out, "matched: %d  affected: %d\n", resp.Matched, resp.Affected)
+			if resp.Matched > resp.Affected {
+				fmt.Fprintf(out, "Warning: limit was applied — %d objects matched but only %d were affected.\n", resp.Matched, resp.Affected)
+			}
+		}
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
+// graph objects bulk-delete
+// ─────────────────────────────────────────────
+
+var graphObjectsBulkDeleteCmd = &cobra.Command{
+	Use:   "bulk-delete",
+	Short: "Bulk delete graph objects matching a filter",
+	Long: `Permanently delete all graph objects matching the given filter.
+
+This is a shorthand for bulk-update --action hard_delete. Use --dry-run to
+preview the number of matching objects without deleting any.
+
+Examples:
+  memory graph objects bulk-delete --type Message --dry-run
+  memory graph objects bulk-delete --type Log --filter "created_at=90d" --filter-op lt --limit 5000`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		g, err := getGraphClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		req := &sdkgraph.BulkActionRequest{
+			Action: "hard_delete",
+			DryRun: graphBulkDryRunFlag,
+			Limit:  graphBulkLimitFlag,
+		}
+
+		if graphTypeFlag != "" {
+			req.Filter.Types = strings.Split(graphTypeFlag, ",")
+		}
+
+		if len(graphFilterFlag) > 0 {
+			op := graphFilterOpFlag
+			if op == "" {
+				op = "eq"
+			}
+			for _, f := range graphFilterFlag {
+				parts := strings.SplitN(f, "=", 2)
+				pf := sdkgraph.PropertyFilter{Op: op}
+				if len(parts) == 2 {
+					pf.Path = parts[0]
+					pf.Value = parts[1]
+				} else {
+					pf.Path = f
+					pf.Op = "exists"
+				}
+				req.Filter.PropertyFilters = append(req.Filter.PropertyFilters, pf)
+			}
+		}
+
+		resp, err := g.BulkAction(context.Background(), req)
+		if err != nil {
+			return fmt.Errorf("bulk delete failed: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+		if graphBulkDryRunFlag {
+			fmt.Fprintf(out, "Dry run — matched: %d (no objects deleted)\n", resp.Matched)
+		} else {
+			fmt.Fprintf(out, "matched: %d  deleted: %d\n", resp.Matched, resp.Affected)
+			if resp.Matched > resp.Affected {
+				fmt.Fprintf(out, "Warning: limit was applied — %d objects matched but only %d were deleted.\n", resp.Matched, resp.Affected)
+			}
+		}
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
+// graph objects move
+// ─────────────────────────────────────────────
 
 var graphObjectsMoveCmd = &cobra.Command{
 	Use:   "move <id>",
@@ -1708,6 +1879,25 @@ func init() {
 	graphObjectsUpdateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "Path to JSON file containing array of object updates (required)")
 	graphObjectsUpdateBatchCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
 
+	// bulk-update flags
+	graphObjectsBulkUpdateCmd.Flags().StringVar(&graphBulkActionFlag, "action", "", "Action to perform: update_status, soft_delete, hard_delete, merge_properties, replace_properties, add_labels, remove_labels, set_labels (required)")
+	graphObjectsBulkUpdateCmd.Flags().StringVar(&graphBulkValueFlag, "value", "", "Value for update_status action")
+	graphObjectsBulkUpdateCmd.Flags().StringArrayVar(&graphBulkLabelsFlag, "labels", nil, "Labels for add_labels/remove_labels/set_labels actions")
+	graphObjectsBulkUpdateCmd.Flags().BoolVar(&graphBulkDryRunFlag, "dry-run", false, "Preview matched count without making changes")
+	graphObjectsBulkUpdateCmd.Flags().IntVar(&graphBulkLimitFlag, "limit", 0, "Maximum number of objects to affect (default 1000, max 100000; 0 = server default)")
+	graphObjectsBulkUpdateCmd.Flags().StringArrayVar(&graphFilterFlag, "filter", nil, "Property filter key=value (repeatable)")
+	graphObjectsBulkUpdateCmd.Flags().StringVar(&graphFilterOpFlag, "filter-op", "eq", "Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists")
+	graphObjectsBulkUpdateCmd.Flags().StringVar(&graphTypeFlag, "type", "", "Filter by object type (comma-separated)")
+	graphObjectsBulkUpdateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties for merge_properties/replace_properties actions")
+	_ = graphObjectsBulkUpdateCmd.MarkFlagRequired("action")
+
+	// bulk-delete flags
+	graphObjectsBulkDeleteCmd.Flags().BoolVar(&graphBulkDryRunFlag, "dry-run", false, "Preview matched count without deleting")
+	graphObjectsBulkDeleteCmd.Flags().IntVar(&graphBulkLimitFlag, "limit", 0, "Maximum number of objects to delete (default 1000, max 100000; 0 = server default)")
+	graphObjectsBulkDeleteCmd.Flags().StringArrayVar(&graphFilterFlag, "filter", nil, "Property filter key=value (repeatable)")
+	graphObjectsBulkDeleteCmd.Flags().StringVar(&graphFilterOpFlag, "filter-op", "eq", "Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists")
+	graphObjectsBulkDeleteCmd.Flags().StringVar(&graphTypeFlag, "type", "", "Filter by object type (comma-separated)")
+
 	graphObjectsCmd.AddCommand(graphObjectsListCmd)
 	graphObjectsCmd.AddCommand(graphObjectsGetCmd)
 	graphObjectsCmd.AddCommand(graphObjectsCreateCmd)
@@ -1718,6 +1908,10 @@ func init() {
 	graphObjectsCmd.AddCommand(graphObjectsEdgesCmd)
 	graphObjectsCmd.AddCommand(graphObjectsSimilarCmd)
 	graphObjectsCmd.AddCommand(graphObjectsMoveCmd)
+	graphObjectsCmd.AddCommand(graphObjectsBulkUpdateCmd)
+	graphObjectsCmd.AddCommand(graphObjectsBulkDeleteCmd)
+	graphObjectsCmd.AddCommand(graphObjectsBulkUpdateCmd)
+	graphObjectsCmd.AddCommand(graphObjectsBulkDeleteCmd)
 
 	// Assemble relationships subcommands
 	graphRelationshipsCmd.AddCommand(graphRelationshipsListCmd)

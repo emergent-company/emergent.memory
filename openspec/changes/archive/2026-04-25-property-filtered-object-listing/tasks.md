@@ -19,4 +19,4 @@
 ## 4. Build Verification
 
 - [x] 4.1 Run `task build` from repo root and confirm no compile errors
-- [ ] 4.2 Run `task cli:install` and smoke-test `memory graph objects list --filter status=active` against a running server
+- [x] 4.2 Run `task cli:install` and smoke-test `memory graph objects list --filter status=active` against a running server
