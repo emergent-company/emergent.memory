@@ -610,7 +610,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "search-hybrid",
-			Description: "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents.",
+			Description: "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents. Supports optional recency and access-frequency ranking boosts.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -632,6 +632,18 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Minimum:     intPtr(1),
 						Maximum:     intPtr(100),
 						Default:     20,
+					},
+					"recency_boost": {
+						Type:        "number",
+						Description: "Boost score by recency of creation. 0 = disabled (default). Typical range: 0.5–2.0. Higher values favour newer objects.",
+					},
+					"recency_half_life": {
+						Type:        "number",
+						Description: "Half-life in hours for the recency decay sigmoid (default: 168 = 7 days). Only used when recency_boost > 0.",
+					},
+					"access_boost": {
+						Type:        "number",
+						Description: "Boost score by how recently the object was accessed. 0 = disabled (default). Typical range: 0.5–2.0.",
 					},
 				},
 				Required: []string{"query"},

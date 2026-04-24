@@ -54,6 +54,9 @@ type UnifiedSearchRequest struct {
 	IncludeDebug        bool                              `json:"includeDebug,omitempty"`
 	MaxTokenBudget      int                               `json:"maxTokenBudget,omitempty"`
 	BranchID            *string                           `json:"branch_id,omitempty"` // nil = main graph
+	RecencyBoost        *float32                          `json:"recencyBoost,omitempty"`
+	RecencyHalfLife     *float32                          `json:"recencyHalfLife,omitempty"`
+	AccessBoost         *float32                          `json:"accessBoost,omitempty"`
 }
 
 // =============================================================================

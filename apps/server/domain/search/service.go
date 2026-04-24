@@ -50,112 +50,31 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 	startTime := time.Now()
 
 	// Apply defaults
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-	if limit > 100 {
-		limit = 100
-	}
-
-	resultTypes := req.ResultTypes
-	if resultTypes == "" {
-		resultTypes = ResultTypeBoth
-	}
-
-	fusionStrategy := req.FusionStrategy
-	if fusionStrategy == "" {
-		fusionStrategy = FusionStrategyWeighted
-	}
+	limit := s.clampLimit(req.Limit)
+	resultTypes := s.defaultResultType(req.ResultTypes)
+	fusionStrategy := s.defaultFusionStrategy(req.FusionStrategy)
 
 	// Pre-compute query embedding once for all search goroutines (D1: embedding deduplication)
-	var queryVector []float32
-	if s.embeddings != nil {
-		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
-		if err != nil {
-			s.log.Warn("failed to generate query embedding, falling back to lexical-only search", logger.Error(err))
-		} else {
-			queryVector = vec
-		}
+	queryVector := s.embedQuery(ctx, req.Query)
+
+	// Execute graph, text, and relationship searches in parallel
+	graphRes, textRes, relationshipRes := s.runParallelSearches(ctx, projectID, req, searchCtx, queryVector, resultTypes)
+
+	// Validate no search errors
+	if err := graphRes.err; err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
 	}
-
-	// Execute graph and text searches in parallel
-	type graphResult struct {
-		results  []*UnifiedSearchGraphResult
-		elapsed  time.Duration
-		rawDebug any
-		err      error
+	if err := textRes.err; err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
 	}
-	type textResult struct {
-		results  []*TextSearchResult
-		mode     string
-		elapsed  time.Duration
-		rawDebug any
-		err      error
-	}
-	type relationshipResult struct {
-		results  []*RelationshipSearchResult
-		elapsed  time.Duration
-		rawDebug any
-		err      error
-	}
-
-	graphCh := make(chan graphResult, 1)
-	textCh := make(chan textResult, 1)
-	relationshipCh := make(chan relationshipResult, 1)
-
-	// Execute graph search
-	go func() {
-		if resultTypes == ResultTypeText {
-			graphCh <- graphResult{results: nil, elapsed: 0}
-			return
-		}
-		start := time.Now()
-		results, rawDebug, err := s.executeGraphSearch(ctx, projectID, req, searchCtx, queryVector)
-		graphCh <- graphResult{results: results, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
-	}()
-
-	// Execute text search
-	go func() {
-		if resultTypes == ResultTypeGraph {
-			textCh <- textResult{results: nil, elapsed: 0}
-			return
-		}
-		start := time.Now()
-		results, mode, rawDebug, err := s.executeTextSearch(ctx, projectID, req, queryVector)
-		textCh <- textResult{results: results, mode: mode, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
-	}()
-
-	// Execute relationship search
-	go func() {
-		if resultTypes == ResultTypeText {
-			relationshipCh <- relationshipResult{results: nil, elapsed: 0}
-			return
-		}
-		start := time.Now()
-		results, rawDebug, err := s.executeRelationshipSearch(ctx, projectID, req, queryVector)
-		relationshipCh <- relationshipResult{results: results, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
-	}()
-
-	// Wait for all searches
-	graphRes := <-graphCh
-	textRes := <-textCh
-	relationshipRes := <-relationshipCh
-
-	if graphRes.err != nil {
-		span.RecordError(graphRes.err)
-		span.SetStatus(codes.Error, graphRes.err.Error())
-		return nil, graphRes.err
-	}
-	if textRes.err != nil {
-		span.RecordError(textRes.err)
-		span.SetStatus(codes.Error, textRes.err.Error())
-		return nil, textRes.err
-	}
-	if relationshipRes.err != nil {
-		span.RecordError(relationshipRes.err)
-		span.SetStatus(codes.Error, relationshipRes.err.Error())
-		return nil, relationshipRes.err
+	if err := relationshipRes.err; err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
 	}
 
 	// Expand relationships for graph results if enabled
@@ -170,52 +89,13 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 	span.SetAttributes(attribute.String("memory.search.strategy", string(fusionStrategy)))
 
 	// Fuse results
-	fusionStart := time.Now()
-	fusedResults := s.fuseResults(graphResults, textRes.results, relationshipRes.results, fusionStrategy, req.Weights, limit)
-	fusionElapsed := time.Since(fusionStart)
+	fusedResults, fusionElapsed := s.fuse(graphResults, textRes.results, relationshipRes.results, fusionStrategy, req.Weights, limit)
 
 	// Count result types
-	graphCount := 0
-	textCount := 0
-	relationshipCount := 0
-	for _, r := range fusedResults {
-		if r.Type == ItemTypeGraph {
-			graphCount++
-		} else if r.Type == ItemTypeText {
-			textCount++
-		} else if r.Type == ItemTypeRelationship {
-			relationshipCount++
-		}
-	}
+	graphCount, textCount, relationshipCount := s.countTypes(fusedResults)
 
 	// Build metadata
-	metadata := UnifiedSearchMetadata{
-		TotalResults:            len(fusedResults),
-		GraphResultCount:        graphCount,
-		TextResultCount:         textCount,
-		RelationshipResultCount: relationshipCount,
-		FusionStrategy:          fusionStrategy,
-		ExecutionTime: UnifiedSearchExecutionTime{
-			FusionMs: int(fusionElapsed.Milliseconds()),
-			TotalMs:  int(time.Since(startTime).Milliseconds()),
-		},
-	}
-
-	if resultTypes != ResultTypeText {
-		graphMs := int(graphRes.elapsed.Milliseconds())
-		metadata.ExecutionTime.GraphSearchMs = &graphMs
-
-		relationshipMs := int(relationshipRes.elapsed.Milliseconds())
-		metadata.ExecutionTime.RelationshipSearchMs = &relationshipMs
-	}
-	if resultTypes != ResultTypeGraph {
-		textMs := int(textRes.elapsed.Milliseconds())
-		metadata.ExecutionTime.TextSearchMs = &textMs
-	}
-	if relationshipElapsed > 0 {
-		relMs := int(relationshipElapsed.Milliseconds())
-		metadata.ExecutionTime.RelationshipExpansionMs = &relMs
-	}
+	metadata := s.makeMetadata(fusedResults, graphCount, textCount, relationshipCount, fusionStrategy, fusionElapsed, graphRes, textRes, relationshipRes, resultTypes, relationshipElapsed, startTime)
 
 	// Build debug info if requested
 	var debug *UnifiedSearchDebug
@@ -231,6 +111,184 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 		Metadata: metadata,
 		Debug:    debug,
 	}, nil
+}
+
+// searchOutcome holds the result of a single search goroutine
+type searchOutcome struct {
+	results  any
+	elapsed  time.Duration
+	rawDebug any
+	err      error
+}
+
+// graphOutcome wraps graph search results with timing and debug data
+type graphOutcome struct {
+	results  []*UnifiedSearchGraphResult
+	elapsed  time.Duration
+	rawDebug any
+	err      error
+}
+
+// textOutcome wraps text search results with timing, mode, and debug data
+type textOutcome struct {
+	results  []*TextSearchResult
+	mode     string
+	elapsed  time.Duration
+	rawDebug any
+	err      error
+}
+
+// relationshipOutcome wraps relationship search results with timing and debug data
+type relationshipOutcome struct {
+	results  []*RelationshipSearchResult
+	elapsed  time.Duration
+	rawDebug any
+	err      error
+}
+
+// clampLimit returns limit clamped to [1, 100]
+func (s *Service) clampLimit(limit int) int {
+	if limit <= 0 {
+		return 20
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
+}
+
+// defaultResultType returns ResultTypeBoth when input is empty
+func (s *Service) defaultResultType(t UnifiedSearchResultType) UnifiedSearchResultType {
+	if t == "" {
+		return ResultTypeBoth
+	}
+	return t
+}
+
+// defaultFusionStrategy returns FusionStrategyWeighted when input is empty
+func (s *Service) defaultFusionStrategy(strat UnifiedSearchFusionStrategy) UnifiedSearchFusionStrategy {
+	if strat == "" {
+		return FusionStrategyWeighted
+	}
+	return strat
+}
+
+// embedQuery generates a single embedding for all search goroutines
+func (s *Service) embedQuery(ctx context.Context, query string) []float32 {
+	if s.embeddings == nil {
+		return nil
+	}
+	vec, err := s.embeddings.EmbedQuery(ctx, query)
+	if err != nil {
+		s.log.Warn("failed to generate query embedding, falling back to lexical-only search", logger.Error(err))
+		return nil
+	}
+	return vec
+}
+
+// runParallelSearches executes graph, text, and relationship searches concurrently
+func (s *Service) runParallelSearches(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, searchCtx *SearchContext, queryVector []float32, resultTypes UnifiedSearchResultType) (graphOutcome, textOutcome, relationshipOutcome) {
+	graphCh := make(chan graphOutcome, 1)
+	textCh := make(chan textOutcome, 1)
+	relCh := make(chan relationshipOutcome, 1)
+
+	// Graph search
+	go func() {
+		if resultTypes == ResultTypeText {
+			graphCh <- graphOutcome{results: nil, elapsed: 0}
+			return
+		}
+		start := time.Now()
+		results, rawDebug, err := s.executeGraphSearch(ctx, projectID, req, searchCtx, queryVector)
+		graphCh <- graphOutcome{results: results, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
+	}()
+
+	// Text search
+	go func() {
+		if resultTypes == ResultTypeGraph {
+			textCh <- textOutcome{results: nil, mode: "", elapsed: 0}
+			return
+		}
+		start := time.Now()
+		results, mode, rawDebug, err := s.executeTextSearch(ctx, projectID, req, queryVector)
+		textCh <- textOutcome{results: results, mode: mode, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
+	}()
+
+	// Relationship search
+	go func() {
+		if resultTypes == ResultTypeText {
+			relCh <- relationshipOutcome{results: nil, elapsed: 0}
+			return
+		}
+		start := time.Now()
+		results, rawDebug, err := s.executeRelationshipSearch(ctx, projectID, req, queryVector)
+		relCh <- relationshipOutcome{results: results, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
+	}()
+
+	return <-graphCh, <-textCh, <-relCh
+}
+
+// fuse combines results using the specified strategy, returning fused slice and elapsed time
+func (s *Service) fuse(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, strategy UnifiedSearchFusionStrategy, weights *UnifiedSearchWeights, limit int) ([]UnifiedSearchResultItem, time.Duration) {
+	start := time.Now()
+	fusedResults := s.fuseResults(graphResults, textResults, relationshipResults, strategy, weights, limit)
+	return fusedResults, time.Since(start)
+}
+
+// countTypes counts graph, text, and relationship results in a fused result slice
+func (s *Service) countTypes(results []UnifiedSearchResultItem) (graph, text, relationship int) {
+	for _, r := range results {
+		switch r.Type {
+		case ItemTypeGraph:
+			graph++
+		case ItemTypeText:
+			text++
+		case ItemTypeRelationship:
+			relationship++
+		}
+	}
+	return graph, text, relationship
+}
+
+// makeMetadata assembles the search execution metadata
+func (s *Service) makeMetadata(
+	fusedResults []UnifiedSearchResultItem,
+	graphCount, textCount, relationshipCount int,
+	fusionStrategy UnifiedSearchFusionStrategy,
+	fusionElapsed time.Duration,
+	graphRes graphOutcome, textRes textOutcome, relRes relationshipOutcome,
+	resultTypes UnifiedSearchResultType,
+	relationshipElapsed time.Duration,
+	startTime time.Time,
+) UnifiedSearchMetadata {
+	metadata := UnifiedSearchMetadata{
+		TotalResults:            len(fusedResults),
+		GraphResultCount:        graphCount,
+		TextResultCount:         textCount,
+		RelationshipResultCount: relationshipCount,
+		FusionStrategy:          fusionStrategy,
+		ExecutionTime: UnifiedSearchExecutionTime{
+			FusionMs: int(fusionElapsed.Milliseconds()),
+			TotalMs:  int(time.Since(startTime).Milliseconds()),
+		},
+	}
+
+	if resultTypes != ResultTypeText {
+		gMs := int(graphRes.elapsed.Milliseconds())
+		metadata.ExecutionTime.GraphSearchMs = &gMs
+		rMs := int(relRes.elapsed.Milliseconds())
+		metadata.ExecutionTime.RelationshipSearchMs = &rMs
+	}
+	if resultTypes != ResultTypeGraph {
+		tMs := int(textRes.elapsed.Milliseconds())
+		metadata.ExecutionTime.TextSearchMs = &tMs
+	}
+	if relationshipElapsed > 0 {
+		reMs := int(relationshipElapsed.Milliseconds())
+		metadata.ExecutionTime.RelationshipExpansionMs = &reMs
+	}
+
+	return metadata
 }
 
 // executeGraphSearch runs the graph search using the graph service.
@@ -250,9 +308,12 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 
 	// Build hybrid search request
 	hybridReq := &graph.HybridSearchRequest{
-		Query:  req.Query,
-		Vector: vector,
-		Limit:  req.Limit,
+		Query:           req.Query,
+		Vector:          vector,
+		Limit:           req.Limit,
+		RecencyBoost:    req.RecencyBoost,
+		RecencyHalfLife: req.RecencyHalfLife,
+		AccessBoost:     req.AccessBoost,
 	}
 	if req.BranchID != nil {
 		branchUUID, err := uuid.Parse(*req.BranchID)

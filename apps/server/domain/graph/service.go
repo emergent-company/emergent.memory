@@ -2063,6 +2063,22 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 		vectorWeight = *req.VectorWeight
 	}
 
+	// Boost parameters — default RecencyHalfLife to 168h (7 days) when RecencyBoost > 0
+	var recencyBoost, accessBoost, recencyHalfLife float32
+	if req.RecencyBoost != nil {
+		recencyBoost = *req.RecencyBoost
+	}
+	if req.AccessBoost != nil {
+		accessBoost = *req.AccessBoost
+	}
+	if recencyBoost > 0 {
+		if req.RecencyHalfLife != nil {
+			recencyHalfLife = *req.RecencyHalfLife
+		} else {
+			recencyHalfLife = 168.0
+		}
+	}
+
 	// Normalize weights
 	totalWeight := lexicalWeight + vectorWeight
 	if totalWeight > 0 {
@@ -2223,6 +2239,20 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 
 		// Weighted combination
 		fusedScore := lexicalWeight*normLexical + vectorWeight*normVector
+
+		// Apply recency boost if requested
+		if recencyBoost > 0 && obj != nil {
+			hoursOld := float32(time.Since(obj.CreatedAt).Hours())
+			recencyScore := float32(1.0 / (1.0 + math.Exp(float64((hoursOld-recencyHalfLife)/(recencyHalfLife/4.0)))))
+			fusedScore += recencyBoost * recencyScore
+		}
+
+		// Apply access boost if requested
+		if accessBoost > 0 && obj != nil && obj.LastAccessedAt != nil {
+			daysSinceAccess := float32(time.Since(*obj.LastAccessedAt).Hours() / 24)
+			accessScore := float32(math.Max(0, float64(1.0-daysSinceAccess/365.0)))
+			fusedScore += accessBoost * accessScore
+		}
 
 		fusedResults = append(fusedResults, fusedResult{
 			id:           id,
@@ -4064,4 +4094,81 @@ func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBra
 // GetRepository exposes the underlying Repository for use by cross-domain orchestrators.
 func (s *Service) GetRepository() *Repository {
 	return s.repo
+}
+
+// =============================================================================
+// Bulk Action by Filter
+// =============================================================================
+
+const (
+	bulkActionDefaultLimit = 1000
+	bulkActionMaxLimit     = 100_000
+)
+
+// BulkAction executes a filter-then-action bulk operation on graph objects.
+// Validates limits, applies defaults, calls the repository, and logs a journal entry.
+func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *BulkActionRequest, actorID *uuid.UUID) (*BulkActionResponse, error) {
+	// Validate action
+	switch req.Action {
+	case BulkActionUpdateStatus, BulkActionSoftDelete, BulkActionHardDelete,
+		BulkActionMergeProperties, BulkActionReplaceProperties,
+		BulkActionSetLabels, BulkActionAddLabels, BulkActionRemoveLabels:
+		// valid
+	default:
+		return nil, apperror.ErrBadRequest.WithMessage("unknown action: " + req.Action)
+	}
+
+	// Apply default and max limit
+	limit := req.Limit
+	if limit <= 0 {
+		limit = bulkActionDefaultLimit
+	}
+	if limit > bulkActionMaxLimit {
+		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("limit exceeds maximum of %d", bulkActionMaxLimit))
+	}
+
+	matched, affected, err := s.repo.BulkActionByFilter(ctx, BulkActionParams{
+		ProjectID:  projectID,
+		Filter:     req.Filter,
+		Action:     req.Action,
+		Value:      req.Value,
+		Properties: req.Properties,
+		Labels:     req.Labels,
+		Limit:      limit,
+		DryRun:     req.DryRun,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &BulkActionResponse{
+		Matched:  matched,
+		Affected: affected,
+		DryRun:   req.DryRun,
+	}
+
+	// Write journal entry for non-dry-run operations
+	if !req.DryRun && s.journal != nil {
+		actorType := journal.ActorSystem
+		if actorID != nil {
+			actorType = journal.ActorUser
+		}
+		entityType := entityTypeObject
+		s.journal.Log(ctx, journal.LogParams{
+			ProjectID:  projectID,
+			EventType:  journal.EventTypeBatch,
+			EntityType: &entityType,
+			ActorType:  actorType,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"action":   req.Action,
+				"filter":   req.Filter,
+				"matched":  matched,
+				"affected": affected,
+				"limit":    limit,
+			},
+		})
+	}
+
+	return resp, nil
 }

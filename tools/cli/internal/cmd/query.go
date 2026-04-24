@@ -44,18 +44,21 @@ Examples:
 }
 
 var (
-	queryProjectID      string
-	queryBranchID       string
-	queryLimit          int
-	queryResultTypes    string
-	queryFusionStrategy string
-	queryJSON           bool
-	queryDebug          bool
-	queryMode           string
-	queryShowTools      bool
-	queryShowScores     bool
-	queryShowTime       bool
-	querySessionID      string
+	queryProjectID       string
+	queryBranchID        string
+	queryLimit           int
+	queryResultTypes     string
+	queryFusionStrategy  string
+	queryJSON            bool
+	queryDebug           bool
+	queryMode            string
+	queryShowTools       bool
+	queryShowScores      bool
+	queryShowTime        bool
+	querySessionID       string
+	queryRecencyBoost    float32
+	queryRecencyHalfLife float32
+	queryAccessBoost     float32
 )
 
 func init() {
@@ -73,6 +76,9 @@ func init() {
 	queryCmd.Flags().BoolVar(&queryShowScores, "show-scores", false, "Show relevance scores for each result (search mode only)")
 	queryCmd.Flags().BoolVar(&queryShowTime, "show-time", false, "Show elapsed query time")
 	queryCmd.Flags().StringVar(&querySessionID, "session", "", "Continue a previous query session (use the session ID printed after a query)")
+	queryCmd.Flags().Float32Var(&queryRecencyBoost, "recency-boost", 0, "Boost score by recency (0 = disabled; try 0.5-2.0) (search mode only)")
+	queryCmd.Flags().Float32Var(&queryRecencyHalfLife, "recency-half-life", 168, "Half-life in hours for recency decay (default 168 = 7 days) (search mode only)")
+	queryCmd.Flags().Float32Var(&queryAccessBoost, "access-boost", 0, "Boost score by access recency (0 = disabled; try 0.5-2.0) (search mode only)")
 }
 
 func runQuery(cmd *cobra.Command, args []string) error {
@@ -248,6 +254,15 @@ func runSearchQuery(ctx context.Context, c *client.Client, query, projectID stri
 	}
 	if queryBranchID != "" {
 		searchReq.BranchID = &queryBranchID
+	}
+	if queryRecencyBoost > 0 {
+		searchReq.RecencyBoost = &queryRecencyBoost
+		if queryRecencyHalfLife > 0 {
+			searchReq.RecencyHalfLife = &queryRecencyHalfLife
+		}
+	}
+	if queryAccessBoost > 0 {
+		searchReq.AccessBoost = &queryAccessBoost
 	}
 	response, err := c.SDK.Search.Search(ctx, searchReq)
 	elapsed := time.Since(start)

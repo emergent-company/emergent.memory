@@ -31,6 +31,9 @@ memory query --show-tools "what are the key relationships between X and Y?"
 memory query --mode=search "fight club"
 memory query --mode=search --result-types=graph --limit=20 "authentication"
 memory query --mode=search --result-types=text "API rate limiting"
+memory query --mode=search --recency-boost 1.0 "recent decisions"
+memory query --mode=search --recency-boost 0.5 --recency-half-life 720 "recent changes"
+memory query --mode=search --access-boost 0.5 "frequently referenced patterns"
 ```
 
 ## Session Continuation
@@ -64,6 +67,9 @@ Sessions are scoped to the project. Only supported in `--mode=agent`.
 | `--limit` | 10 | Max results (search mode only) |
 | `--result-types` | `both` | `graph`, `text`, or `both` (search mode only) |
 | `--fusion-strategy` | `weighted` | `weighted`, `rrf`, `interleave`, `graph_first`, `text_first` |
+| `--recency-boost` | 0 | Boost score by creation recency (0 = off; try 0.5–2.0) (search mode only) |
+| `--recency-half-life` | 168 | Half-life in hours for recency decay (default 168 = 7 days) (search mode only) |
+| `--access-boost` | 0 | Boost score by access recency (0 = off; try 0.5–2.0) (search mode only) |
 
 ## Workflow
 

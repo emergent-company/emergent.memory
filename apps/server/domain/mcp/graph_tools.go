@@ -58,6 +58,19 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 			Limit: limit,
 		}
 
+		if rb, ok := args["recency_boost"].(float64); ok && rb > 0 {
+			v := float32(rb)
+			unifiedReq.RecencyBoost = &v
+		}
+		if rhl, ok := args["recency_half_life"].(float64); ok && rhl > 0 {
+			v := float32(rhl)
+			unifiedReq.RecencyHalfLife = &v
+		}
+		if ab, ok := args["access_boost"].(float64); ok && ab > 0 {
+			v := float32(ab)
+			unifiedReq.AccessBoost = &v
+		}
+
 		res, err := s.searchSvc.Search(ctx, projectUUID, unifiedReq, nil)
 		if err != nil {
 			s.log.WarnContext(ctx, "unified search failed, falling back to graph search",
@@ -74,6 +87,19 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 		Types:  types,
 		Labels: labels,
 		Limit:  limit,
+	}
+
+	if rb, ok := args["recency_boost"].(float64); ok && rb > 0 {
+		v := float32(rb)
+		req.RecencyBoost = &v
+	}
+	if rhl, ok := args["recency_half_life"].(float64); ok && rhl > 0 {
+		v := float32(rhl)
+		req.RecencyHalfLife = &v
+	}
+	if ab, ok := args["access_boost"].(float64); ok && ab > 0 {
+		v := float32(ab)
+		req.AccessBoost = &v
 	}
 
 	results, err := s.graphService.HybridSearch(ctx, projectUUID, req, nil)

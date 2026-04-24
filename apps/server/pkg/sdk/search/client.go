@@ -25,13 +25,16 @@ type Client struct {
 
 // SearchRequest represents a search query.
 type SearchRequest struct {
-	Query          string  `json:"query"`
-	Limit          int     `json:"limit,omitempty"`
-	Strategy       string  `json:"strategy,omitempty"`       // hybrid, semantic, keyword
-	ResultTypes    string  `json:"resultTypes,omitempty"`    // graph, text, both
-	FusionStrategy string  `json:"fusionStrategy,omitempty"` // weighted, rrf, interleave, graph_first, text_first
-	IncludeDebug   bool    `json:"includeDebug,omitempty"`
-	BranchID       *string `json:"branch_id,omitempty"` // nil = main graph
+	Query           string   `json:"query"`
+	Limit           int      `json:"limit,omitempty"`
+	Strategy        string   `json:"strategy,omitempty"`       // hybrid, semantic, keyword
+	ResultTypes     string   `json:"resultTypes,omitempty"`    // graph, text, both
+	FusionStrategy  string   `json:"fusionStrategy,omitempty"` // weighted, rrf, interleave, graph_first, text_first
+	IncludeDebug    bool     `json:"includeDebug,omitempty"`
+	BranchID        *string  `json:"branch_id,omitempty"` // nil = main graph
+	RecencyBoost    *float32 `json:"recencyBoost,omitempty"`
+	RecencyHalfLife *float32 `json:"recencyHalfLife,omitempty"`
+	AccessBoost     *float32 `json:"accessBoost,omitempty"`
 }
 
 // SearchResult represents a unified search result item (can be graph, text, or relationship).

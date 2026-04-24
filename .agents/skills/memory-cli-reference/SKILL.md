@@ -3451,18 +3451,22 @@ memory query <question> [flags]
 ### Options
 
 ```
-      --branch string            Branch ID to search (search mode only; omit to search the main graph)
-      --debug                    Include debug information in output
-      --fusion-strategy string   Fusion strategy: weighted, rrf, interleave, graph_first, text_first (search mode only) (default "weighted")
-  -h, --help                     help for query
-      --json                     Output results as JSON
-      --limit int                Maximum number of results to return (search mode only) (default 10)
-      --mode string              Query mode: agent (default, AI reasoning) or search (direct hybrid search) (default "agent")
-      --project string           Project ID to query (uses default project if not specified)
-      --result-types string      Types of results: graph, text, or both (search mode only) (default "both")
-      --show-scores              Show relevance scores for each result (search mode only)
-      --show-time                Show elapsed query time
-      --show-tools               Show tool calls made by the agent (agent mode only)
+      --access-boost float32       Boost score by access recency (0 = disabled; try 0.5-2.0) (search mode only)
+      --branch string              Branch ID to search (search mode only; omit to search the main graph)
+      --debug                      Include debug information in output
+      --fusion-strategy string     Fusion strategy: weighted, rrf, interleave, graph_first, text_first (search mode only) (default "weighted")
+  -h, --help                       help for query
+      --json                       Output results as JSON
+      --limit int                  Maximum number of results to return (search mode only) (default 10)
+      --mode string                Query mode: agent (default, AI reasoning) or search (direct hybrid search) (default "agent")
+      --project string             Project ID to query (uses default project if not specified)
+      --recency-boost float32      Boost score by recency (0 = disabled; try 0.5-2.0) (search mode only)
+      --recency-half-life float32  Half-life in hours for recency decay (default 168 = 7 days) (search mode only) (default 168)
+      --result-types string        Types of results: graph, text, or both (search mode only) (default "both")
+      --show-scores                Show relevance scores for each result (search mode only)
+      --show-time                  Show elapsed query time
+      --show-tools                 Show tool calls made by the agent (agent mode only)
+      --session string             Continue a previous query session (use the session ID printed after a query)
 ```
 
 ## memory schemas

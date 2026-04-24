@@ -423,18 +423,21 @@ type VectorSearchRequest struct {
 
 // HybridSearchRequest is the request for hybrid (FTS + vector) search.
 type HybridSearchRequest struct {
-	Query          string     `json:"query" validate:"required"`
-	Vector         []float32  `json:"vector,omitempty"`
-	Types          []string   `json:"types,omitempty"`
-	Labels         []string   `json:"labels,omitempty"`
-	Status         *string    `json:"status,omitempty"`
-	BranchID       *uuid.UUID `json:"branchId,omitempty"`
-	IncludeDeleted bool       `json:"includeDeleted,omitempty"`
-	LexicalWeight  *float32   `json:"lexicalWeight,omitempty"`
-	VectorWeight   *float32   `json:"vectorWeight,omitempty"`
-	Limit          int        `json:"limit,omitempty"`
-	Offset         int        `json:"offset,omitempty"`
-	IncludeDebug   bool       `json:"includeDebug,omitempty"` // Can also use ?debug=true query param
+	Query           string     `json:"query" validate:"required"`
+	Vector          []float32  `json:"vector,omitempty"`
+	Types           []string   `json:"types,omitempty"`
+	Labels          []string   `json:"labels,omitempty"`
+	Status          *string    `json:"status,omitempty"`
+	BranchID        *uuid.UUID `json:"branchId,omitempty"`
+	IncludeDeleted  bool       `json:"includeDeleted,omitempty"`
+	LexicalWeight   *float32   `json:"lexicalWeight,omitempty"`
+	VectorWeight    *float32   `json:"vectorWeight,omitempty"`
+	RecencyBoost    *float32   `json:"recencyBoost,omitempty"`
+	RecencyHalfLife *float32   `json:"recencyHalfLife,omitempty"`
+	AccessBoost     *float32   `json:"accessBoost,omitempty"`
+	Limit           int        `json:"limit,omitempty"`
+	Offset          int        `json:"offset,omitempty"`
+	IncludeDebug    bool       `json:"includeDebug,omitempty"` // Can also use ?debug=true query param
 }
 
 // SearchResultItem represents a single search result with scores.
@@ -907,4 +910,46 @@ type ForkBranchResponse struct {
 	CopiedObjects        int    `json:"copied_objects"`
 	CopiedRelationships  int    `json:"copied_relationships"`
 	SkippedRelationships int    `json:"skipped_relationships"` // Relationships where one end was filtered out
+}
+
+// =============================================================================
+// Bulk Action by Filter DTOs
+// =============================================================================
+
+// BulkAction constants define the supported bulk operation types.
+const (
+	BulkActionUpdateStatus      = "update_status"
+	BulkActionSoftDelete        = "soft_delete"
+	BulkActionHardDelete        = "hard_delete"
+	BulkActionMergeProperties   = "merge_properties"
+	BulkActionReplaceProperties = "replace_properties"
+	BulkActionSetLabels         = "set_labels"
+	BulkActionAddLabels         = "add_labels"
+	BulkActionRemoveLabels      = "remove_labels"
+)
+
+// BulkActionFilter defines what objects to target in a bulk operation.
+type BulkActionFilter struct {
+	Types           []string         `json:"types,omitempty"`
+	PropertyFilters []PropertyFilter `json:"property_filters,omitempty"`
+	Labels          []string         `json:"labels,omitempty"`
+}
+
+// BulkActionRequest is the request body for a filter-then-action bulk operation.
+type BulkActionRequest struct {
+	Filter     BulkActionFilter `json:"filter" validate:"required"`
+	Action     string           `json:"action" validate:"required"`
+	Value      string           `json:"value,omitempty"`      // For update_status
+	Properties map[string]any   `json:"properties,omitempty"` // For merge/replace_properties
+	Labels     []string         `json:"labels,omitempty"`     // For add/remove/set_labels
+	Limit      int              `json:"limit,omitempty"`      // Default 1000, max 100000
+	DryRun     bool             `json:"dry_run,omitempty"`
+}
+
+// BulkActionResponse is the response from a bulk action operation.
+type BulkActionResponse struct {
+	Matched  int  `json:"matched"`
+	Affected int  `json:"affected"`
+	Errors   int  `json:"errors"`
+	DryRun   bool `json:"dry_run"`
 }
