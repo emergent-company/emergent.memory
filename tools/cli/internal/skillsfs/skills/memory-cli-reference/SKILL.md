@@ -2490,6 +2490,81 @@ Manage graph objects
   -h, --help   help for objects
 ```
 
+## memory graph objects bulk-delete
+
+Bulk delete graph objects matching a filter
+
+### Synopsis
+
+Permanently delete all graph objects matching the given filter.
+
+This is a shorthand for bulk-update --action hard_delete. Use --dry-run to
+preview the number of matching objects without deleting any.
+
+Examples:
+  memory graph objects bulk-delete --type Message --dry-run
+  memory graph objects bulk-delete --type Log --filter "created_at=90d" --filter-op lt --limit 5000
+
+```
+memory graph objects bulk-delete [flags]
+```
+
+### Options
+
+```
+      --dry-run              Preview matched count without deleting
+      --filter stringArray   Property filter key=value (repeatable)
+      --filter-op string     Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists (default "eq")
+  -h, --help                 help for bulk-delete
+      --limit int            Maximum number of objects to delete (default 1000, max 100000; 0 = server default)
+      --type string          Filter by object type (comma-separated)
+```
+
+## memory graph objects bulk-update
+
+Bulk update graph objects matching a filter
+
+### Synopsis
+
+Execute a bulk action on all graph objects matching the given filter.
+
+The --action flag controls what operation is performed. Use --dry-run to preview
+the number of matching objects without making any changes.
+
+Supported actions:
+  update_status        Set status field (requires --value)
+  soft_delete          Set deleted_at timestamp
+  hard_delete          Permanently remove objects
+  merge_properties     Deep-merge --properties into existing JSONB properties
+  replace_properties   Replace the entire properties object
+  add_labels           Add labels (--labels)
+  remove_labels        Remove labels (--labels)
+  set_labels           Replace all labels (--labels)
+
+Examples:
+  memory graph objects bulk-update --type Message --action update_status --value archived
+  memory graph objects bulk-update --type Document --filter "days_since_access>365" --action soft_delete --dry-run
+  memory graph objects bulk-update --action merge_properties --properties '{"verified":true}' --limit 500
+
+```
+memory graph objects bulk-update [flags]
+```
+
+### Options
+
+```
+      --action string        Action to perform: update_status, soft_delete, hard_delete, merge_properties, replace_properties, add_labels, remove_labels, set_labels (required)
+      --dry-run              Preview matched count without making changes
+      --filter stringArray   Property filter key=value (repeatable)
+      --filter-op string     Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists (default "eq")
+  -h, --help                 help for bulk-update
+      --labels stringArray   Labels for add_labels/remove_labels/set_labels actions
+      --limit int            Maximum number of objects to affect (default 1000, max 100000; 0 = server default)
+      --properties string    JSON properties for merge_properties/replace_properties actions
+      --type string          Filter by object type (comma-separated)
+      --value string         Value for update_status action
+```
+
 ## memory graph objects create-batch
 
 Batch-create graph objects (and optionally relationships) from a JSON file
@@ -3997,19 +4072,22 @@ memory query <question> [flags]
 ### Options
 
 ```
-      --branch string            Branch ID to search (search mode only; omit to search the main graph)
-      --debug                    Include debug information in output
-      --fusion-strategy string   Fusion strategy: weighted, rrf, interleave, graph_first, text_first (search mode only) (default "weighted")
-  -h, --help                     help for query
-      --json                     Output results as JSON
-      --limit int                Maximum number of results to return (search mode only) (default 10)
-      --mode string              Query mode: agent (default, AI reasoning) or search (direct hybrid search) (default "agent")
-      --project string           Project ID to query (uses default project if not specified)
-      --result-types string      Types of results: graph, text, or both (search mode only) (default "both")
-      --session string           Continue a previous query session (use the session ID printed after a query)
-      --show-scores              Show relevance scores for each result (search mode only)
-      --show-time                Show elapsed query time
-      --show-tools               Show tool calls made by the agent (agent mode only)
+      --access-boost float32        Boost score by access recency (0 = disabled; try 0.5-2.0) (search mode only)
+      --branch string               Branch ID to search (search mode only; omit to search the main graph)
+      --debug                       Include debug information in output
+      --fusion-strategy string      Fusion strategy: weighted, rrf, interleave, graph_first, text_first (search mode only) (default "weighted")
+  -h, --help                        help for query
+      --json                        Output results as JSON
+      --limit int                   Maximum number of results to return (search mode only) (default 10)
+      --mode string                 Query mode: agent (default, AI reasoning) or search (direct hybrid search) (default "agent")
+      --project string              Project ID to query (uses default project if not specified)
+      --recency-boost float32       Boost score by recency (0 = disabled; try 0.5-2.0) (search mode only)
+      --recency-half-life float32   Half-life in hours for recency decay (default 168 = 7 days) (search mode only) (default 168)
+      --result-types string         Types of results: graph, text, or both (search mode only) (default "both")
+      --session string              Continue a previous query session (use the session ID printed after a query)
+      --show-scores                 Show relevance scores for each result (search mode only)
+      --show-time                   Show elapsed query time
+      --show-tools                  Show tool calls made by the agent (agent mode only)
 ```
 
 ## memory schemas
@@ -4757,6 +4835,111 @@ memory server upgrade [flags]
       --dir string   Installation directory (default "/root/.memory")
   -f, --force        Force upgrade without confirmation
   -h, --help         help for upgrade
+```
+
+## memory sessions
+
+Manage AI agent sessions and messages
+
+### Options
+
+```
+  -h, --help             help for sessions
+      --project string   Project name or ID
+```
+
+## memory sessions create
+
+Create a new session
+
+### Synopsis
+
+Creates a new Session graph object to track an AI agent conversation.
+
+```
+memory sessions create [flags]
+```
+
+### Options
+
+```
+      --agent-version string   Optional agent version
+  -h, --help                   help for create
+      --summary string         Optional session summary
+      --title string           Session title (required)
+```
+
+## memory sessions get
+
+Get a session by ID
+
+```
+memory sessions get [session-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory sessions list
+
+List sessions in the project
+
+```
+memory sessions list [flags]
+```
+
+### Options
+
+```
+      --cursor string   Pagination cursor
+  -h, --help            help for list
+      --limit int       Max sessions to return (default 20)
+```
+
+## memory sessions messages
+
+Manage messages in a session
+
+### Options
+
+```
+  -h, --help   help for messages
+```
+
+## memory sessions messages add
+
+Append a message to a session
+
+```
+memory sessions messages add [session-id] [flags]
+```
+
+### Options
+
+```
+      --content string   Message content (required)
+  -h, --help             help for add
+      --role string      Message role: user|assistant|system (required)
+      --tokens int       Token count (optional)
+```
+
+## memory sessions messages list
+
+List messages in a session
+
+```
+memory sessions messages list [session-id] [flags]
+```
+
+### Options
+
+```
+      --cursor string   Pagination cursor
+  -h, --help            help for list
+      --limit int       Max messages to return (default 50)
 ```
 
 ## memory set-token

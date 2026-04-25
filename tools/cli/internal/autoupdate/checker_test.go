@@ -116,6 +116,43 @@ func TestCheckForUpdate_DevBuild(t *testing.T) {
 	}
 }
 
+func TestSemverGreater(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"0.36.1", "0.35.212", true},  // higher minor: IS greater
+		{"0.35.212", "0.36.1", false}, // lower minor: NOT greater
+		{"0.36.0", "0.35.0", true},
+		{"0.35.212", "0.35.50", true},
+		{"0.36.1", "0.36.1", false}, // equal: NOT greater
+		{"1.0.0", "0.99.99", true},
+		{"0.35.50", "0.36.0", false}, // downgrade should NOT be reported as upgrade
+	}
+	for _, c := range cases {
+		got := semverGreater(c.a, c.b)
+		if got != c.want {
+			t.Errorf("semverGreater(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestCheckForUpdate_NoUpgradeWhenDowngrade(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "latest-version.json")
+
+	// Cache says latest is 0.35.212, but current is 0.36.1 (newer).
+	_ = SaveCache(cachePath, &VersionCache{
+		Version:   "0.35.212",
+		CheckedAt: time.Now(),
+	})
+
+	result := CheckForUpdate("0.36.1", cachePath, 24*time.Hour, &http.Client{})
+	if result.Available {
+		t.Fatal("should NOT report upgrade available when current version is newer than latest in cache")
+	}
+}
+
 // checkForUpdateWithURL is a test-only variant that accepts an explicit API URL
 // so we can point to a mock server without patching the package-level constant.
 func checkForUpdateWithURL(currentVersion, cachePath string, checkInterval time.Duration, httpClient *http.Client, apiURL string) *CheckResult {
@@ -129,7 +166,7 @@ func checkForUpdateWithURL(currentVersion, cachePath string, checkInterval time.
 	cache, _ := LoadCache(cachePath)
 	if IsFresh(cache, checkInterval) {
 		latest := NormalizeVersion(cache.Version)
-		if latest != "" && latest != norm {
+		if latest != "" && semverGreater(latest, norm) {
 			result.Available = true
 			result.LatestVersion = latest
 			result.ReleaseBody = cache.ReleaseBody
@@ -160,7 +197,7 @@ func checkForUpdateWithURL(currentVersion, cachePath string, checkInterval time.
 		ReleaseURL:  release.HTMLURL,
 	})
 
-	if latest != "" && latest != norm {
+	if latest != "" && semverGreater(latest, norm) {
 		result.Available = true
 		result.LatestVersion = latest
 		result.ReleaseBody = release.Body

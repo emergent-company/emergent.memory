@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -70,6 +71,39 @@ func NormalizeVersion(v string) string {
 	return v
 }
 
+// semverGreater returns true if version a is strictly greater than version b.
+// Both a and b should be normalized bare semver strings like "0.35.212".
+// Non-numeric segments are compared lexicographically as a fallback.
+func semverGreater(a, b string) bool {
+	aParts := strings.Split(a, ".")
+	bParts := strings.Split(b, ".")
+	n := len(aParts)
+	if len(bParts) > n {
+		n = len(bParts)
+	}
+	for i := 0; i < n; i++ {
+		var ap, bp string
+		if i < len(aParts) {
+			ap = aParts[i]
+		}
+		if i < len(bParts) {
+			bp = bParts[i]
+		}
+		ai, aerr := strconv.Atoi(ap)
+		bi, berr := strconv.Atoi(bp)
+		if aerr == nil && berr == nil {
+			if ai != bi {
+				return ai > bi
+			}
+		} else {
+			if ap != bp {
+				return ap > bp
+			}
+		}
+	}
+	return false
+}
+
 // CheckForUpdate checks whether a newer version is available.
 //
 // It first consults the on-disk cache at cachePath; if the cache is still
@@ -93,7 +127,7 @@ func CheckForUpdate(currentVersion string, cachePath string, checkInterval time.
 	cache, _ := LoadCache(cachePath)
 	if IsFresh(cache, checkInterval) {
 		latest := NormalizeVersion(cache.Version)
-		if latest != "" && latest != norm {
+		if latest != "" && semverGreater(latest, norm) {
 			result.Available = true
 			result.LatestVersion = latest
 			result.ReleaseBody = cache.ReleaseBody
@@ -120,7 +154,7 @@ func CheckForUpdate(currentVersion string, cachePath string, checkInterval time.
 		ReleaseURL:  release.HTMLURL,
 	})
 
-	if latest != "" && latest != norm {
+	if latest != "" && semverGreater(latest, norm) {
 		result.Available = true
 		result.LatestVersion = latest
 		result.ReleaseBody = release.Body
