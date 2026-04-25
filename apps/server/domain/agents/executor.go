@@ -1006,7 +1006,9 @@ func (ae *AgentExecutor) runPipeline(
 	// If workspace was requested but provisioning failed or is degraded, inject a clear
 	// unavailability notice so the model doesn't attempt to call workspace tools that
 	// have no registered handler (which would cause silent tool-call drops).
-	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
+	// Skip injection when contextInjection is set to "never" — the agent owns its prompt.
+	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded &&
+		contextInjectionMode(req.AgentDefinition) != "never" {
 		instruction = ae.augmentInstructionWithWorkspace(instruction, wsResult)
 	}
 
@@ -1746,6 +1748,20 @@ Workspace tools are prefixed with workspace_ and run inside the sandboxed contai
 `
 
 	return instruction + wsContext
+}
+
+// contextInjectionMode returns the context_injection setting from the agent
+// definition's Config map. Valid values: "full" (default) and "never".
+// When set to "never", automatic workspace/bootstrap context is not appended
+// to the system instruction — the agent fully owns its prompt lifecycle.
+func contextInjectionMode(def *AgentDefinition) string {
+	if def == nil {
+		return "full"
+	}
+	if v, ok := def.Config["contextInjection"].(string); ok && v != "" {
+		return v
+	}
+	return "full"
 }
 
 // resolveWorkspaceTools builds ADK tools that let the agent interact with its
