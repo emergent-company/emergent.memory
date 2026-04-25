@@ -78,7 +78,7 @@ var sessionsCreateCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Session created\n")
-		fmt.Printf("  ID:    %s\n", session.ID)
+		fmt.Printf("  ID:    %s\n", session.VersionID)
 		fmt.Printf("  Title: %s\n", titleFromProps(session.Properties))
 		return nil
 	},
@@ -121,7 +121,7 @@ var sessionsListCmd = &cobra.Command{
 		fmt.Println(strings.Repeat("-", 90))
 		for _, s := range resp.Items {
 			title := titleFromProps(s.Properties)
-			fmt.Printf("%-36s  %-40s  %s\n", s.ID, title, s.CreatedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("%-36s  %-40s  %s\n", s.VersionID, title, s.CreatedAt.Format("2006-01-02 15:04:05"))
 		}
 
 		if resp.NextCursor != nil {
@@ -158,7 +158,7 @@ var sessionsGetCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("ID:         %s\n", session.ID)
+		fmt.Printf("ID:         %s\n", session.VersionID)
 		fmt.Printf("Title:      %s\n", titleFromProps(session.Properties))
 		fmt.Printf("Created:    %s\n", session.CreatedAt.Format("2006-01-02 15:04:05"))
 		if v, ok := session.Properties["agent_version"]; ok {
@@ -219,33 +219,12 @@ as a snapshot at spawn time. The child then operates independently — no live s
 
 		sess := result.Session
 		fmt.Printf("Session spawned\n")
-		fmt.Printf("  ID:              %s\n", sess.CanonicalID)
+		fmt.Printf("  ID:              %s\n", sess.EntityID)
 		fmt.Printf("  Title:           %s\n", titleFromProps(sess.Properties))
 		fmt.Printf("  Parent:          %s\n", parentID)
 		fmt.Printf("  Forked messages: %d\n", result.ForkedMessages)
 		return nil
 	},
-}
-
-func isJSON(cmd *cobra.Command) bool {
-	v, _ := cmd.Flags().GetBool("json")
-	if v {
-		return true
-	}
-	root := cmd.Root()
-	if root != nil {
-		v, _ = root.PersistentFlags().GetBool("json")
-	}
-	return v
-}
-
-func printJSON(v any) error {
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	fmt.Println(string(b))
-	return nil
 }
 
 // ─────────────────────────────────────────────
@@ -302,7 +281,7 @@ var messagesAddCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Message appended\n")
-		fmt.Printf("  ID:   %s\n", msg.ID)
+		fmt.Printf("  ID:   %s\n", msg.VersionID)
 		fmt.Printf("  Role: %s\n", messagesAddRole)
 		if seq, ok := msg.Properties["sequence_number"]; ok {
 			fmt.Printf("  Seq:  %v\n", seq)
