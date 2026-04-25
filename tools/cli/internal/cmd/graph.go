@@ -571,6 +571,19 @@ var graphObjectsUpdateCmd = &cobra.Command{
 			req.Properties = props
 		}
 
+		if graphNameFlag != "" {
+			if req.Properties == nil {
+				req.Properties = make(map[string]any)
+			}
+			req.Properties["name"] = graphNameFlag
+		}
+		if graphDescFlag != "" {
+			if req.Properties == nil {
+				req.Properties = make(map[string]any)
+			}
+			req.Properties["description"] = graphDescFlag
+		}
+
 		obj, err := g.UpdateObject(context.Background(), args[0], req)
 		if err != nil {
 			return fmt.Errorf("failed to update object: %w", err)
@@ -1832,8 +1845,8 @@ func init() {
 	graphObjectsGetCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID or name to resolve the key against (omit for main branch)")
 
 	graphObjectsCreateCmd.Flags().StringVar(&graphTypeFlag, "type", "", "Object type (required)")
-	graphObjectsCreateCmd.Flags().StringVar(&graphNameFlag, "name", "", "Set properties.name")
-	graphObjectsCreateCmd.Flags().StringVar(&graphDescFlag, "description", "", "Set properties.description")
+	graphObjectsCreateCmd.Flags().StringVar(&graphNameFlag, "name", "", "Shorthand for --properties '{\"name\": \"...\"}' (subject to schema validation)")
+	graphObjectsCreateCmd.Flags().StringVar(&graphDescFlag, "description", "", "Shorthand for --properties '{\"description\": \"...\"}' (subject to schema validation)")
 	graphObjectsCreateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object")
 	graphObjectsCreateCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Stable key for idempotent operations")
 	graphObjectsCreateCmd.Flags().StringVar(&graphStatusFlag, "status", "", "Object status (e.g. active, planned, deprecated)")
@@ -1843,6 +1856,8 @@ func init() {
 	graphObjectsCreateBatchCmd.Flags().StringVar(&graphBatchFile, "file", "", "Path to JSON file containing array of objects (required)")
 
 	graphObjectsUpdateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object to merge")
+	graphObjectsUpdateCmd.Flags().StringVar(&graphNameFlag, "name", "", "Shorthand for --properties '{\"name\": \"...\"}' (subject to schema validation)")
+	graphObjectsUpdateCmd.Flags().StringVar(&graphDescFlag, "description", "", "Shorthand for --properties '{\"description\": \"...\"}' (subject to schema validation)")
 	graphObjectsUpdateCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Set a stable key on the object (enables cross-session src_key/dst_key references)")
 	graphObjectsUpdateCmd.Flags().StringVar(&graphStatusFlag, "status", "", "Set object status (e.g. active, planned, deprecated)")
 	graphObjectsUpdateCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID to update the object on (omit for main branch)")
