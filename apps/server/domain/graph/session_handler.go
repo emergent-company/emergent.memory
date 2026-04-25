@@ -191,6 +191,51 @@ func (h *SessionHandler) AppendMessage(c echo.Context) error {
 	return c.JSON(http.StatusCreated, result)
 }
 
+// SpawnSession spawns a child session from a parent, optionally forking context.
+// @Summary      Spawn a child session
+// @Description  Creates a child session linked to the parent via a spawned_from relationship. When forkContext is true, the parent's message history is copied into the child as a snapshot.
+// @Tags         sessions
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Parent Session ID"
+// @Param        request body SpawnSessionRequest true "Spawn parameters"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} SpawnSessionResponse
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Parent session not found"
+// @Router       /api/graph/sessions/{id}/spawn [post]
+// @Security     bearerAuth
+func (h *SessionHandler) SpawnSession(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	parentID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid session id")
+	}
+
+	var req SpawnSessionRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.SpawnSession(c.Request().Context(), projectID, parentID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
 // ListMessages lists messages for a session.
 // @Summary      List messages in a session
 // @Description  Returns a paginated list of Message objects belonging to a session, ordered by sequence_number ascending.

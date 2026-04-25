@@ -4942,6 +4942,31 @@ memory sessions messages list [session-id] [flags]
       --limit int       Max messages to return (default 50)
 ```
 
+## memory sessions spawn
+
+Spawn a child session from a parent
+
+### Synopsis
+
+Creates a new child session linked to the parent via a spawned_from relationship.
+
+When --fork-context is set, the parent's message history is copied into the child
+as a snapshot at spawn time. The child then operates independently — no live sync.
+
+```
+memory sessions spawn <parent-session-id> [flags]
+```
+
+### Options
+
+```
+      --fork-context       Copy parent message history into child session
+  -h, --help               help for spawn
+      --max-messages int   Max parent messages to copy when --fork-context is set (default 50)
+      --summary string     Optional session summary
+      --title string       Child session title (required)
+```
+
 ## memory set-token
 
 Save a static Bearer token as CLI credentials

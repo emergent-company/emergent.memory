@@ -251,6 +251,144 @@ func (s *SessionService) AppendMessage(ctx context.Context, projectID uuid.UUID,
 	return &MessageResponse{GraphObjectResponse: msgObj.ToResponse()}, nil
 }
 
+// SpawnSessionRequest is the request body for spawning a child session.
+type SpawnSessionRequest struct {
+	Title       string  `json:"title"`
+	ForkContext bool    `json:"forkContext"`
+	MaxMessages int     `json:"maxMessages,omitempty"` // 0 = use default (50)
+	Summary     *string `json:"summary,omitempty"`
+}
+
+// SpawnSessionResponse is the response for a spawned child session.
+type SpawnSessionResponse struct {
+	Session        *SessionResponse `json:"session"`
+	ForkedMessages int              `json:"forkedMessages"`
+}
+
+// SpawnSession creates a child session optionally pre-populated with the parent's
+// message history (snapshot at spawn time, no live sync). The child is linked to
+// the parent via a "spawned_from" relationship.
+//
+// Design:
+//   - opt-in: ForkContext=false (default) creates a clean isolated session
+//   - snapshot semantics: parent messages are copied as new Message objects into the child
+//   - size limit: MaxMessages caps the number of messages copied (most recent N)
+func (s *SessionService) SpawnSession(ctx context.Context, projectID, parentID uuid.UUID, req *SpawnSessionRequest, actorID *uuid.UUID) (*SpawnSessionResponse, error) {
+	if req.Title == "" {
+		return nil, apperror.ErrBadRequest.WithMessage("title is required")
+	}
+
+	maxMessages := req.MaxMessages
+	if maxMessages <= 0 {
+		maxMessages = 50
+	}
+
+	// Verify parent session exists.
+	parentObj, err := s.repo.GetByID(ctx, projectID, parentID)
+	if err != nil || parentObj == nil {
+		return nil, apperror.ErrNotFound.WithMessage("parent session not found")
+	}
+	if parentObj.Type != "Session" {
+		return nil, apperror.ErrNotFound.WithMessage("parent session not found")
+	}
+
+	// Create the child session.
+	now := time.Now().UTC()
+	childProps := map[string]any{
+		"title":         req.Title,
+		"started_at":    now.Format(time.RFC3339),
+		"message_count": 0,
+		"parent_id":     parentObj.CanonicalID.String(),
+	}
+	if req.Summary != nil {
+		childProps["summary"] = *req.Summary
+	}
+
+	childObj, err := s.graphSvc.Create(ctx, projectID, &CreateGraphObjectRequest{
+		Type:       "Session",
+		Properties: childProps,
+	}, actorID)
+	if err != nil {
+		return nil, err
+	}
+
+	childID := childObj.CanonicalID
+
+	// Link child to parent via spawned_from relationship.
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	spawnRel := &GraphRelationship{
+		ProjectID: projectID,
+		Type:      "spawned_from",
+		SrcID:     childID,
+		DstID:     parentObj.CanonicalID,
+	}
+	if _, err := s.repo.CreateRelationship(ctx, tx.Tx, spawnRel); err != nil {
+		return nil, err
+	}
+
+	forkedCount := 0
+
+	if req.ForkContext {
+		// Fetch parent messages (most recent maxMessages, ordered asc for correct sequence).
+		msgType := "Message"
+		msgResult, err := s.graphSvc.List(ctx, ListParams{
+			ProjectID:   projectID,
+			Type:        &msgType,
+			RelatedToID: &parentObj.CanonicalID,
+			Limit:       maxMessages,
+			Order:       "asc",
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// Copy each parent message into the child session as a new Message object.
+		for i, msg := range msgResult.Items {
+			// Deep-copy properties, override sequence_number.
+			props := make(map[string]any, len(msg.Properties)+1)
+			for k, v := range msg.Properties {
+				props[k] = v
+			}
+			props["sequence_number"] = i + 1
+			props["forked_from"] = msg.ID
+
+			childMsg := &GraphObject{
+				ProjectID:  projectID,
+				Type:       "Message",
+				Properties: props,
+			}
+			if err := s.repo.CreateInTx(ctx, tx.Tx, childMsg); err != nil {
+				return nil, err
+			}
+
+			msgRel := &GraphRelationship{
+				ProjectID: projectID,
+				Type:      "has_message",
+				SrcID:     childID,
+				DstID:     childMsg.CanonicalID,
+			}
+			if _, err := s.repo.CreateRelationship(ctx, tx.Tx, msgRel); err != nil {
+				return nil, err
+			}
+			forkedCount++
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return &SpawnSessionResponse{
+		Session:        &SessionResponse{GraphObjectResponse: childObj},
+		ForkedMessages: forkedCount,
+	}, nil
+}
+
 // ListMessages returns messages for a session, ordered by sequence_number ascending.
 func (s *SessionService) ListMessages(ctx context.Context, projectID, sessionID uuid.UUID, limit int, cursor *string) (*ListMessagesResponse, error) {
 	if limit <= 0 {

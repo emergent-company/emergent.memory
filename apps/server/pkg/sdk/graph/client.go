@@ -1899,3 +1899,27 @@ func (c *Client) ListMessages(ctx context.Context, sessionID string, limit int, 
 	}
 	return &result, nil
 }
+
+// SpawnSessionRequest is the request body for spawning a child session.
+type SpawnSessionRequest struct {
+	Title       string  `json:"title"`
+	ForkContext bool    `json:"forkContext"`
+	MaxMessages int     `json:"maxMessages,omitempty"`
+	Summary     *string `json:"summary,omitempty"`
+}
+
+// SpawnSessionResponse is returned by the spawn endpoint.
+type SpawnSessionResponse struct {
+	Session        *GraphObject `json:"session"`
+	ForkedMessages int          `json:"forkedMessages"`
+}
+
+// SpawnSession creates a child session from a parent session.
+// When forkContext is true, the parent's message history is copied into the child.
+func (c *Client) SpawnSession(ctx context.Context, parentID string, req *SpawnSessionRequest) (*SpawnSessionResponse, error) {
+	var result SpawnSessionResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/sessions/"+url.PathEscape(parentID)+"/spawn", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}

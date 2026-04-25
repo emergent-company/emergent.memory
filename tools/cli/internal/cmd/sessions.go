@@ -169,6 +169,86 @@ var sessionsGetCmd = &cobra.Command{
 }
 
 // ─────────────────────────────────────────────
+// sessions spawn
+// ─────────────────────────────────────────────
+
+var sessionsSpawnTitle string
+var sessionsSpawnForkContext bool
+var sessionsSpawnMaxMessages int
+var sessionsSpawnSummary string
+
+var sessionsSpawnCmd = &cobra.Command{
+	Use:   "spawn <parent-session-id>",
+	Short: "Spawn a child session from a parent",
+	Long: `Creates a new child session linked to the parent via a spawned_from relationship.
+
+When --fork-context is set, the parent's message history is copied into the child
+as a snapshot at spawn time. The child then operates independently — no live sync.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if sessionsSpawnTitle == "" {
+			return fmt.Errorf("--title is required")
+		}
+		parentID := args[0]
+
+		ctx := context.Background()
+		g, err := getSessionsGraphClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		req := &sdkgraph.SpawnSessionRequest{
+			Title:       sessionsSpawnTitle,
+			ForkContext: sessionsSpawnForkContext,
+			MaxMessages: sessionsSpawnMaxMessages,
+		}
+		if sessionsSpawnSummary != "" {
+			req.Summary = &sessionsSpawnSummary
+		}
+
+		result, err := g.SpawnSession(ctx, parentID, req)
+		if err != nil {
+			return err
+		}
+
+		if jsonFlag || output == "json" {
+			b, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(b))
+			return nil
+		}
+
+		sess := result.Session
+		fmt.Printf("Session spawned\n")
+		fmt.Printf("  ID:              %s\n", sess.CanonicalID)
+		fmt.Printf("  Title:           %s\n", titleFromProps(sess.Properties))
+		fmt.Printf("  Parent:          %s\n", parentID)
+		fmt.Printf("  Forked messages: %d\n", result.ForkedMessages)
+		return nil
+	},
+}
+
+func isJSON(cmd *cobra.Command) bool {
+	v, _ := cmd.Flags().GetBool("json")
+	if v {
+		return true
+	}
+	root := cmd.Root()
+	if root != nil {
+		v, _ = root.PersistentFlags().GetBool("json")
+	}
+	return v
+}
+
+func printJSON(v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
+}
+
+// ─────────────────────────────────────────────
 // sessions messages
 // ─────────────────────────────────────────────
 
@@ -319,6 +399,13 @@ func init() {
 
 	// sessions get
 	sessionsCmd.AddCommand(sessionsGetCmd)
+
+	// sessions spawn
+	sessionsSpawnCmd.Flags().StringVar(&sessionsSpawnTitle, "title", "", "Child session title (required)")
+	sessionsSpawnCmd.Flags().BoolVar(&sessionsSpawnForkContext, "fork-context", false, "Copy parent message history into child session")
+	sessionsSpawnCmd.Flags().IntVar(&sessionsSpawnMaxMessages, "max-messages", 50, "Max parent messages to copy when --fork-context is set")
+	sessionsSpawnCmd.Flags().StringVar(&sessionsSpawnSummary, "summary", "", "Optional session summary")
+	sessionsCmd.AddCommand(sessionsSpawnCmd)
 
 	// sessions messages add
 	messagesAddCmd.Flags().StringVar(&messagesAddRole, "role", "", "Message role: user|assistant|system (required)")

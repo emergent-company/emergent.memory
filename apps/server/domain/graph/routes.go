@@ -76,6 +76,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sh *SessionHandler, authMiddleware
 	sessions.POST("", sh.CreateSession)
 	sessions.GET("", sh.ListSessions)
 	sessions.GET("/:id", sh.GetSession)
+	sessions.POST("/:id/spawn", sh.SpawnSession)
 	sessions.POST("/:id/messages", sh.AppendMessage)
 	sessions.GET("/:id/messages", sh.ListMessages)
 }
