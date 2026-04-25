@@ -383,6 +383,81 @@ func titleFromProps(props map[string]any) string {
 	return ""
 }
 
+// ─────────────────────────────────────────────
+// sessions recount — backfill message_count + total_tokens
+// ─────────────────────────────────────────────
+
+var sessionsRecountCmd = &cobra.Command{
+	Use:   "recount <session-id>",
+	Short: "Recount message_count and total_tokens for a session",
+	Long:  "Scans all messages for a session and updates message_count and total_tokens on the Session object. Useful for backfilling existing sessions.",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		sessionID := args[0]
+		g, err := getSessionsGraphClient(cmd)
+		if err != nil {
+			return err
+		}
+		ctx := context.Background()
+
+		// Paginate all messages.
+		var totalTokens int
+		var msgCount int
+		cursor := ""
+		for {
+			resp, err := g.ListMessages(ctx, sessionID, 200, cursor)
+			if err != nil {
+				return fmt.Errorf("list messages: %w", err)
+			}
+			for _, msg := range resp.Items {
+				msgCount++
+				if tc, ok := msg.Properties["token_count"]; ok {
+					switch v := tc.(type) {
+					case float64:
+						totalTokens += int(v)
+					case int:
+						totalTokens += v
+					}
+				}
+			}
+			if resp.NextCursor == nil || *resp.NextCursor == "" {
+				break
+			}
+			cursor = *resp.NextCursor
+		}
+
+		// Update Session via BulkAction merge_properties targeting by canonical ID.
+		_, err = g.BulkAction(ctx, &sdkgraph.BulkActionRequest{
+			Filter: sdkgraph.BulkActionFilter{
+				Types: []string{"Session"},
+				PropertyFilters: []sdkgraph.PropertyFilter{
+					{Path: "id", Op: "eq", Value: sessionID},
+				},
+			},
+			Action: "merge_properties",
+			Properties: map[string]any{
+				"message_count": msgCount,
+				"total_tokens":  totalTokens,
+			},
+		})
+		if err != nil {
+			// Fallback: patch via UpdateObject.
+			props := map[string]any{
+				"message_count": msgCount,
+				"total_tokens":  totalTokens,
+			}
+			if _, patchErr := g.UpdateObject(ctx, sessionID, &sdkgraph.UpdateObjectRequest{
+				Properties: props,
+			}); patchErr != nil {
+				return fmt.Errorf("update session: %w", patchErr)
+			}
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "session %s: message_count=%d total_tokens=%d\n", sessionID, msgCount, totalTokens)
+		return nil
+	},
+}
+
 func init() {
 	sessionsCmd.PersistentFlags().StringVar(&sessionsProjectFlag, "project", "", "Project name or ID")
 
@@ -419,5 +494,6 @@ func init() {
 	sessionsMessagesCmd.AddCommand(messagesListCmd)
 
 	sessionsCmd.AddCommand(sessionsMessagesCmd)
+	sessionsCmd.AddCommand(sessionsRecountCmd)
 	rootCmd.AddCommand(sessionsCmd)
 }

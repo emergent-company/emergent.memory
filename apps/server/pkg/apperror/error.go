@@ -107,8 +107,9 @@ var (
 	ErrValidation = New(http.StatusUnprocessableEntity, "validation_error", "Validation failed")
 
 	// Server errors
-	ErrInternal = New(http.StatusInternalServerError, "internal_error", "An internal error occurred")
-	ErrDatabase = New(http.StatusInternalServerError, "database_error", "Database operation failed")
+	ErrInternal           = New(http.StatusInternalServerError, "internal_error", "An internal error occurred")
+	ErrDatabase           = New(http.StatusInternalServerError, "database_error", "Database operation failed")
+	ErrServiceUnavailable = New(http.StatusServiceUnavailable, "service_unavailable", "Service temporarily unavailable")
 )
 
 // ToHTTPError converts an app error to an HTTP-friendly format

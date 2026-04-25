@@ -1,7 +1,7 @@
 // Package main provides the entry point for the Memory API server
 //
 // @title Memory API
-// @version 0.38.0
+// @version 0.39.0
 // @description Memory Knowledge Base API - AI-powered knowledge management system
 // @contact.name Memory Team
 // @contact.url https://emergent-company.ai
@@ -47,6 +47,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 	"github.com/emergent-company/emergent.memory/domain/monitoring"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
@@ -176,6 +177,9 @@ func main() {
 
 		// Workspace image catalog (built-in rootfs + custom Docker images)
 		sandboximages.Module,
+
+		// MCP Relay — lets remote MCP providers register over WebSocket
+		mcprelay.Module,
 
 		// Cross-domain wiring: give projects.Service access to revoke tokens on member removal
 		fx.Invoke(func(svc *projects.Service, tokenRepo *apitoken.Repository) {

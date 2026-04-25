@@ -240,6 +240,16 @@ func (s *SessionService) AppendMessage(ctx context.Context, projectID uuid.UUID,
 		return nil, err
 	}
 
+	// Auto-increment message_count and total_tokens on the Session.
+	tokenDelta := 0
+	if req.TokenCount != nil {
+		tokenDelta = *req.TokenCount
+	}
+	if err := s.repo.IncrementSessionCounters(ctx, tx.Tx, projectID, sessionObj.CanonicalID, tokenDelta); err != nil {
+		s.log.Warn("failed to increment session counters", logger.Error(err))
+		// Non-fatal: message still committed, counters can be recount-ed via CLI.
+	}
+
 	// Commit transaction.
 	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)

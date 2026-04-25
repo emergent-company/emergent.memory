@@ -3002,3 +3002,27 @@ func applyBulkFilterToUpdate(q *bun.UpdateQuery, filter BulkActionFilter, resolv
 	}
 	return q
 }
+
+// IncrementSessionCounters atomically increments message_count by 1 and total_tokens
+// by tokenDelta (0 = no change) on the HEAD version of the Session object identified
+// by its canonical ID.  Must be called within an open transaction.
+func (r *Repository) IncrementSessionCounters(ctx context.Context, tx bun.Tx, projectID, sessionCanonicalID uuid.UUID, tokenDelta int) error {
+	_, err := tx.NewRaw(`
+		UPDATE kb.graph_objects
+		SET properties = jsonb_set(
+			jsonb_set(
+				properties,
+				'{message_count}',
+				to_jsonb(COALESCE((properties->>'message_count')::int, 0) + 1)
+			),
+			'{total_tokens}',
+			to_jsonb(COALESCE((properties->>'total_tokens')::int, 0) + ?)
+		),
+		updated_at = NOW()
+		WHERE project_id = ?
+		  AND canonical_id = ?
+		  AND supersedes_id IS NULL
+		  AND deleted_at IS NULL
+	`, tokenDelta, projectID, sessionCanonicalID).Exec(ctx)
+	return err
+}
