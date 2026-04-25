@@ -143,6 +143,8 @@ definitions:
     type: object
   domain_agents.AgentDTO:
     properties:
+      budgetUsd:
+        type: number
       capabilities:
         $ref: '#/definitions/domain_agents.AgentCapabilities'
       config:
@@ -154,7 +156,11 @@ definitions:
         type: string
       cronSchedule:
         type: string
+      currentMonthSpend:
+        type: number
       description:
+        type: string
+      disabledReason:
         type: string
       enabled:
         type: boolean
@@ -245,6 +251,8 @@ definitions:
     - QuestionStatusCancelled
   domain_agents.AgentRunDTO:
     properties:
+      agentDefinitionId:
+        type: string
       agentId:
         type: string
       agentName:
@@ -290,6 +298,10 @@ definitions:
         allOf:
         - $ref: '#/definitions/domain_agents.RunTokenUsage'
         description: Token usage aggregated from kb.llm_usage_events for this run.
+      tools:
+        items:
+          type: string
+        type: array
       traceId:
         description: Observability linkage
         type: string
@@ -318,15 +330,6 @@ definitions:
       RunStatusCancelling: 'ACP two-step cancel: intent acknowledged, awaiting execution
         stop'
       RunStatusQueued: enqueued, waiting for a worker
-    x-enum-descriptions:
-    - enqueued, waiting for a worker
-    - ""
-    - ""
-    - ""
-    - ""
-    - ""
-    - ""
-    - 'ACP two-step cancel: intent acknowledged, awaiting execution stop'
     x-enum-varnames:
     - RunStatusQueued
     - RunStatusRunning
@@ -385,6 +388,8 @@ definitions:
     - ConcurrencyParallel
   domain_agents.CreateAgentDTO:
     properties:
+      agentDefinitionId:
+        type: string
       capabilities:
         $ref: '#/definitions/domain_agents.AgentCapabilities'
       config:
@@ -524,11 +529,6 @@ definitions:
       SessionStatusCompleted: Run finished successfully
       SessionStatusError: Run or provisioning failed
       SessionStatusProvisioning: Workspace being set up
-    x-enum-descriptions:
-    - Workspace being set up
-    - Workspace ready, agent executing
-    - Run finished successfully
-    - Run or provisioning failed
     x-enum-varnames:
     - SessionStatusProvisioning
     - SessionStatusActive
@@ -547,6 +547,8 @@ definitions:
     type: object
   domain_agents.UpdateAgentDTO:
     properties:
+      agentDefinitionId:
+        type: string
       capabilities:
         $ref: '#/definitions/domain_agents.AgentCapabilities'
       config:
@@ -782,6 +784,25 @@ definitions:
       createdAt:
         type: string
       id:
+        type: string
+    type: object
+  domain_backups.DatabaseBackupResponse:
+    properties:
+      completedAt:
+        type: string
+      createdAt:
+        type: string
+      error:
+        type: string
+      id:
+        type: string
+      sizeBytes:
+        type: integer
+      startedAt:
+        type: string
+      status:
+        type: string
+      storageKey:
         type: string
     type: object
   domain_backups.ListResult:
@@ -1132,182 +1153,6 @@ definitions:
       totalCount:
         type: integer
     type: object
-  domain_datasource.CreateDataSourceIntegrationDTO:
-    properties:
-      config:
-        additionalProperties: true
-        type: object
-      description:
-        type: string
-      name:
-        type: string
-      providerType:
-        type: string
-      sourceType:
-        type: string
-      syncIntervalMinutes:
-        type: integer
-      syncMode:
-        type: string
-    type: object
-  domain_datasource.DataSourceIntegrationDTO:
-    properties:
-      createdAt:
-        type: string
-      description:
-        type: string
-      errorCount:
-        type: integer
-      errorMessage:
-        type: string
-      id:
-        type: string
-      lastSyncedAt:
-        type: string
-      name:
-        type: string
-      nextSyncAt:
-        type: string
-      projectId:
-        type: string
-      providerType:
-        type: string
-      sourceType:
-        type: string
-      status:
-        type: string
-      syncIntervalMinutes:
-        type: integer
-      syncMode:
-        type: string
-      updatedAt:
-        type: string
-    type: object
-  domain_datasource.ProviderDTO:
-    properties:
-      available:
-        type: boolean
-      description:
-        type: string
-      iconUrl:
-        type: string
-      name:
-        type: string
-      sourceType:
-        type: string
-      type:
-        type: string
-    type: object
-  domain_datasource.ProviderSchemaDTO:
-    properties:
-      properties:
-        additionalProperties: true
-        type: object
-      required:
-        items:
-          type: string
-        type: array
-      type:
-        type: string
-    type: object
-  domain_datasource.SourceTypeDTO:
-    properties:
-      documentCount:
-        type: integer
-      sourceType:
-        type: string
-    type: object
-  domain_datasource.SyncJobDTO:
-    properties:
-      completedAt:
-        type: string
-      configurationId:
-        type: string
-      configurationName:
-        type: string
-      createdAt:
-        type: string
-      currentPhase:
-        type: string
-      errorMessage:
-        type: string
-      failedItems:
-        type: integer
-      id:
-        type: string
-      integrationId:
-        type: string
-      maxRetries:
-        type: integer
-      processedItems:
-        type: integer
-      retryCount:
-        type: integer
-      skippedItems:
-        type: integer
-      startedAt:
-        type: string
-      status:
-        type: string
-      statusMessage:
-        type: string
-      successfulItems:
-        type: integer
-      totalItems:
-        type: integer
-      triggerType:
-        type: string
-    type: object
-  domain_datasource.TestConfigDTO:
-    properties:
-      config:
-        additionalProperties: true
-        type: object
-      providerType:
-        type: string
-    type: object
-  domain_datasource.TestConnectionResponseDTO:
-    properties:
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  domain_datasource.TriggerSyncDTO:
-    properties:
-      configurationId:
-        type: string
-      fullSync:
-        type: boolean
-      options:
-        additionalProperties: true
-        type: object
-    type: object
-  domain_datasource.TriggerSyncResponseDTO:
-    properties:
-      jobId:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  domain_datasource.UpdateDataSourceIntegrationDTO:
-    properties:
-      config:
-        additionalProperties: true
-        type: object
-      description:
-        type: string
-      enabled:
-        type: boolean
-      name:
-        type: string
-      syncIntervalMinutes:
-        type: integer
-      syncMode:
-        type: string
-    type: object
   domain_discoveryjobs.CancelJobResponse:
     properties:
       message:
@@ -1555,12 +1400,8 @@ definitions:
       createdAt:
         description: Timestamps
         type: string
-      dataSourceIntegrationId:
-        type: string
       embeddedChunks:
         type: integer
-      externalSourceId:
-        type: string
       extractionStatus:
         type: string
       fileHash:
@@ -1572,16 +1413,13 @@ definitions:
         type: string
       id:
         type: string
-      integrationMetadata:
-        additionalProperties: {}
-        description: Metadata
-        type: object
       lastExtractionAt:
         description: Compact extraction summary (from most recent completed extraction
           job)
         type: string
       metadata:
         additionalProperties: {}
+        description: Metadata
         type: object
       mimeType:
         type: string
@@ -1608,8 +1446,6 @@ definitions:
         type: string
       storageUrl:
         type: string
-      syncVersion:
-        type: integer
       totalChars:
         type: integer
       updatedAt:
@@ -1792,6 +1628,21 @@ definitions:
       type:
         type: string
     type: object
+  domain_graph.AppendMessageRequest:
+    properties:
+      content:
+        type: string
+      extraProps:
+        additionalProperties: {}
+        type: object
+      role:
+        type: string
+      tokenCount:
+        type: integer
+      toolCalls:
+        items: {}
+        type: array
+    type: object
   domain_graph.BranchMergeRequest:
     properties:
       execute:
@@ -1803,6 +1654,59 @@ definitions:
         type: string
     required:
     - source_branch_id
+    type: object
+  domain_graph.BulkActionFilter:
+    properties:
+      labels:
+        items:
+          type: string
+        type: array
+      property_filters:
+        items:
+          $ref: '#/definitions/domain_graph.PropertyFilter'
+        type: array
+      types:
+        items:
+          type: string
+        type: array
+    type: object
+  domain_graph.BulkActionRequest:
+    properties:
+      action:
+        type: string
+      dry_run:
+        type: boolean
+      filter:
+        $ref: '#/definitions/domain_graph.BulkActionFilter'
+      labels:
+        description: For add/remove/set_labels
+        items:
+          type: string
+        type: array
+      limit:
+        description: Default 1000, max 100000
+        type: integer
+      properties:
+        additionalProperties: {}
+        description: For merge/replace_properties
+        type: object
+      value:
+        description: For update_status
+        type: string
+    required:
+    - action
+    - filter
+    type: object
+  domain_graph.BulkActionResponse:
+    properties:
+      affected:
+        type: integer
+      dry_run:
+        type: boolean
+      errors:
+        type: integer
+      matched:
+        type: integer
     type: object
   domain_graph.BulkCreateObjectResult:
     properties:
@@ -1994,6 +1898,15 @@ definitions:
     - dst_id
     - src_id
     - type
+    type: object
+  domain_graph.CreateSessionRequest:
+    properties:
+      agentVersion:
+        type: string
+      summary:
+        type: string
+      title:
+        type: string
     type: object
   domain_graph.CreateSubgraphRequest:
     properties:
@@ -2367,6 +2280,8 @@ definitions:
     type: object
   domain_graph.HybridSearchRequest:
     properties:
+      accessBoost:
+        type: number
       branchId:
         type: string
       includeDebug:
@@ -2386,6 +2301,10 @@ definitions:
         type: integer
       query:
         type: string
+      recencyBoost:
+        type: number
+      recencyHalfLife:
+        type: number
       status:
         type: string
       types:
@@ -2400,6 +2319,86 @@ definitions:
         type: number
     required:
     - query
+    type: object
+  domain_graph.ListMessagesResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/domain_graph.GraphObjectResponse'
+        type: array
+      nextCursor:
+        type: string
+      total:
+        type: integer
+    type: object
+  domain_graph.ListSessionsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/domain_graph.GraphObjectResponse'
+        type: array
+      nextCursor:
+        type: string
+      total:
+        type: integer
+    type: object
+  domain_graph.MessageResponse:
+    properties:
+      branch_id:
+        type: string
+      canonical_id:
+        type: string
+      change_summary:
+        additionalProperties: {}
+        type: object
+      content_hash:
+        type: string
+      created_at:
+        type: string
+      deleted_at:
+        type: string
+      external_id:
+        type: string
+      external_parent_id:
+        type: string
+      external_source:
+        description: External source fields for data sync
+        type: string
+      external_updated_at:
+        type: string
+      external_url:
+        type: string
+      id:
+        type: string
+      key:
+        type: string
+      labels:
+        items:
+          type: string
+        type: array
+      org_id:
+        type: string
+      project_id:
+        type: string
+      properties:
+        additionalProperties: {}
+        type: object
+      relationship_count:
+        type: integer
+      revision_count:
+        type: integer
+      schema_version:
+        type: string
+      status:
+        type: string
+      supersedes_id:
+        type: string
+      synced_at:
+        type: string
+      type:
+        type: string
+      version:
+        type: integer
     type: object
   domain_graph.MostAccessedResponse:
     properties:
@@ -2480,6 +2479,17 @@ definitions:
     - operator
     - path
     type: object
+  domain_graph.PropertyFilter:
+    properties:
+      op:
+        description: 'Operator: eq, neq, gt, gte, lt, lte, contains, exists, in'
+        type: string
+      path:
+        description: Property path (dot-notation for nested, e.g. "address.city")
+        type: string
+      value:
+        description: Filter value (omitted for "exists" operator)
+    type: object
   domain_graph.SearchWithNeighborsRequest:
     properties:
       branchId:
@@ -2504,6 +2514,83 @@ definitions:
         type: array
     required:
     - query
+    type: object
+  domain_graph.SessionResponse:
+    properties:
+      branch_id:
+        type: string
+      canonical_id:
+        type: string
+      change_summary:
+        additionalProperties: {}
+        type: object
+      content_hash:
+        type: string
+      created_at:
+        type: string
+      deleted_at:
+        type: string
+      external_id:
+        type: string
+      external_parent_id:
+        type: string
+      external_source:
+        description: External source fields for data sync
+        type: string
+      external_updated_at:
+        type: string
+      external_url:
+        type: string
+      id:
+        type: string
+      key:
+        type: string
+      labels:
+        items:
+          type: string
+        type: array
+      org_id:
+        type: string
+      project_id:
+        type: string
+      properties:
+        additionalProperties: {}
+        type: object
+      relationship_count:
+        type: integer
+      revision_count:
+        type: integer
+      schema_version:
+        type: string
+      status:
+        type: string
+      supersedes_id:
+        type: string
+      synced_at:
+        type: string
+      type:
+        type: string
+      version:
+        type: integer
+    type: object
+  domain_graph.SpawnSessionRequest:
+    properties:
+      forkContext:
+        type: boolean
+      maxMessages:
+        description: 0 = use default (50)
+        type: integer
+      summary:
+        type: string
+      title:
+        type: string
+    type: object
+  domain_graph.SpawnSessionResponse:
+    properties:
+      forkedMessages:
+        type: integer
+      session:
+        $ref: '#/definitions/domain_graph.SessionResponse'
     type: object
   domain_graph.SubgraphObjectRequest:
     properties:
@@ -2720,155 +2807,6 @@ definitions:
         type: boolean
       traces_url:
         type: string
-    type: object
-  domain_integrations.AvailableIntegrationDTO:
-    properties:
-      capabilities:
-        $ref: '#/definitions/domain_integrations.IntegrationCapabilitiesDTO'
-      description:
-        type: string
-      displayName:
-        type: string
-      name:
-        type: string
-      optionalSettings:
-        additionalProperties: true
-        type: object
-      requiredSettings:
-        items:
-          type: string
-        type: array
-    type: object
-  domain_integrations.CreateIntegrationDTO:
-    properties:
-      created_by:
-        type: string
-      description:
-        type: string
-      display_name:
-        type: string
-      enabled:
-        type: boolean
-      logo_url:
-        type: string
-      name:
-        type: string
-      settings:
-        additionalProperties: true
-        type: object
-    required:
-    - display_name
-    - name
-    type: object
-  domain_integrations.IntegrationCapabilitiesDTO:
-    properties:
-      requiresOAuth:
-        type: boolean
-      supportsBidirectionalSync:
-        type: boolean
-      supportsImport:
-        type: boolean
-      supportsIncrementalSync:
-        type: boolean
-      supportsWebhooks:
-        type: boolean
-    type: object
-  domain_integrations.IntegrationDTO:
-    properties:
-      created_at:
-        type: string
-      description:
-        type: string
-      display_name:
-        type: string
-      enabled:
-        type: boolean
-      error_message:
-        type: string
-      id:
-        type: string
-      last_sync_at:
-        type: string
-      last_sync_status:
-        type: string
-      logo_url:
-        type: string
-      name:
-        type: string
-      org_id:
-        type: string
-      project_id:
-        type: string
-      settings:
-        additionalProperties: true
-        type: object
-      updated_at:
-        type: string
-    type: object
-  domain_integrations.PublicIntegrationDTO:
-    properties:
-      description:
-        type: string
-      display_name:
-        type: string
-      enabled:
-        type: boolean
-      has_configuration:
-        type: boolean
-      logo_url:
-        type: string
-      name:
-        type: string
-    type: object
-  domain_integrations.TestConnectionResponseDTO:
-    properties:
-      details:
-        additionalProperties: true
-        type: object
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  domain_integrations.TriggerSyncConfigDTO:
-    properties:
-      batchSize:
-        type: integer
-      full_sync:
-        type: boolean
-      includeArchived:
-        type: boolean
-      source_types:
-        items:
-          type: string
-        type: array
-      space_ids:
-        items:
-          type: string
-        type: array
-    type: object
-  domain_integrations.TriggerSyncResponseDTO:
-    properties:
-      job_id:
-        type: string
-      message:
-        type: string
-      success:
-        type: boolean
-    type: object
-  domain_integrations.UpdateIntegrationDTO:
-    properties:
-      description:
-        type: string
-      display_name:
-        type: string
-      enabled:
-        type: boolean
-      logo_url:
-        type: string
-      settings:
-        additionalProperties: true
-        type: object
     type: object
   domain_invites.AcceptInviteRequest:
     properties:
@@ -3322,6 +3260,32 @@ definitions:
       url:
         type: string
     type: object
+  domain_mcprelay.CallToolRequest:
+    properties:
+      arguments:
+        additionalProperties: {}
+        type: object
+      name:
+        type: string
+    type: object
+  domain_mcprelay.ListSessionsResponse:
+    properties:
+      sessions:
+        items:
+          $ref: '#/definitions/domain_mcprelay.SessionInfo'
+        type: array
+    type: object
+  domain_mcprelay.SessionInfo:
+    properties:
+      connected_at:
+        type: string
+      instance_id:
+        type: string
+      tool_count:
+        type: integer
+      version:
+        type: string
+    type: object
   domain_monitoring.ExtractionJobDetailDTO:
     properties:
       completed_at:
@@ -3607,6 +3571,23 @@ definitions:
       name:
         type: string
     type: object
+  domain_orgs.OrgMemberDTO:
+    properties:
+      displayName:
+        type: string
+      email:
+        type: string
+      firstName:
+        type: string
+      id:
+        type: string
+      joinedAt:
+        type: string
+      lastName:
+        type: string
+      role:
+        type: string
+    type: object
   domain_orgs.OrgToolSettingDTO:
     properties:
       config:
@@ -3884,11 +3865,13 @@ definitions:
     - google
     - google-vertex
     - openai-compatible
+    - deepseek
     type: string
     x-enum-varnames:
     - ProviderGoogleAI
     - ProviderVertexAI
     - ProviderOpenAICompatible
+    - ProviderDeepSeek
   domain_provider.TestProviderResponse:
     properties:
       latencyMs:
@@ -5451,6 +5434,8 @@ definitions:
     type: object
   domain_search.UnifiedSearchRequest:
     properties:
+      accessBoost:
+        type: number
       branch_id:
         description: nil = main graph
         type: string
@@ -5465,6 +5450,10 @@ definitions:
       query:
         maxLength: 800
         type: string
+      recencyBoost:
+        type: number
+      recencyHalfLife:
+        type: number
       relationshipOptions:
         $ref: '#/definitions/domain_search.UnifiedSearchRelationshipOptions'
       resultTypes:
@@ -5629,6 +5618,13 @@ definitions:
         type: string
       metadata:
         $ref: '#/definitions/domain_skills.SkillMetadata'
+    type: object
+  domain_superadmin.AddProjectMemberRequest:
+    properties:
+      role:
+        type: string
+      userId:
+        type: string
     type: object
   domain_superadmin.CancelJobsRequest:
     properties:
@@ -5950,6 +5946,13 @@ definitions:
           $ref: '#/definitions/domain_superadmin.SuperadminOrgDTO'
         type: array
     type: object
+  domain_superadmin.ListProjectMembersResponse:
+    properties:
+      members:
+        items:
+          $ref: '#/definitions/domain_superadmin.ProjectMemberDTO'
+        type: array
+    type: object
   domain_superadmin.ListProjectsResponse:
     properties:
       meta:
@@ -5958,17 +5961,6 @@ definitions:
         items:
           $ref: '#/definitions/domain_superadmin.SuperadminProjectDTO'
         type: array
-    type: object
-  domain_superadmin.ListSyncJobsResponse:
-    properties:
-      jobs:
-        items:
-          $ref: '#/definitions/domain_superadmin.SyncJobDTO'
-        type: array
-      meta:
-        $ref: '#/definitions/domain_superadmin.PaginationMeta'
-      stats:
-        $ref: '#/definitions/domain_superadmin.SyncJobStatsDTO'
     type: object
   domain_superadmin.ListUsersResponse:
     properties:
@@ -5993,6 +5985,23 @@ definitions:
         type: integer
       totalPages:
         type: integer
+    type: object
+  domain_superadmin.ProjectMemberDTO:
+    properties:
+      displayName:
+        type: string
+      email:
+        type: string
+      firstName:
+        type: string
+      joinedAt:
+        type: string
+      lastName:
+        type: string
+      role:
+        type: string
+      userId:
+        type: string
     type: object
   domain_superadmin.ResetDeadLetterResponse:
     properties:
@@ -6124,82 +6133,6 @@ definitions:
         type: string
       zitadelUserId:
         type: string
-    type: object
-  domain_superadmin.SyncJobDTO:
-    properties:
-      completedAt:
-        type: string
-      createdAt:
-        type: string
-      currentPhase:
-        type: string
-      errorMessage:
-        type: string
-      failedItems:
-        type: integer
-      id:
-        type: string
-      integrationId:
-        type: string
-      integrationName:
-        type: string
-      processedItems:
-        type: integer
-      projectId:
-        type: string
-      projectName:
-        type: string
-      providerType:
-        type: string
-      skippedItems:
-        type: integer
-      startedAt:
-        type: string
-      status:
-        type: string
-      statusMessage:
-        type: string
-      successfulItems:
-        type: integer
-      totalItems:
-        type: integer
-      triggerType:
-        type: string
-    type: object
-  domain_superadmin.SyncJobLogsResponse:
-    properties:
-      completedAt:
-        type: string
-      createdAt:
-        type: string
-      errorMessage:
-        type: string
-      id:
-        type: string
-      logs: {}
-      startedAt:
-        type: string
-      status:
-        type: string
-    type: object
-  domain_superadmin.SyncJobStatsDTO:
-    properties:
-      cancelled:
-        type: integer
-      completed:
-        type: integer
-      failed:
-        type: integer
-      pending:
-        type: integer
-      running:
-        type: integer
-      total:
-        type: integer
-      totalItemsImported:
-        type: integer
-      withErrors:
-        type: integer
     type: object
   domain_superadmin.UserOrgMembershipDTO:
     properties:
@@ -6453,10 +6386,6 @@ definitions:
       RepoSourceFixed: Use a fixed repo URL from config
       RepoSourceNone: Empty workspace, no repo checkout
       RepoSourceTaskContext: Use repo URL from task metadata
-    x-enum-descriptions:
-    - Use repo URL from task metadata
-    - Use a fixed repo URL from config
-    - Empty workspace, no repo checkout
     x-enum-varnames:
     - RepoSourceTaskContext
     - RepoSourceFixed
@@ -6500,7 +6429,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.35.179
+  version: 0.40.0
 paths:
   /.well-known/oauth-protected-resource:
     get:
@@ -7795,661 +7724,6 @@ paths:
       summary: Stream chat completion
       tags:
       - chat
-  /api/data-source-integrations:
-    get:
-      consumes:
-      - application/json
-      description: Returns all integrations for the current project with optional
-        filtering
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      - description: Filter by provider type
-        in: query
-        name: providerType
-        type: string
-      - description: Filter by source type
-        in: query
-        name: sourceType
-        type: string
-      - description: Filter by status
-        in: query
-        name: status
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: List of integrations
-          schema:
-            items:
-              $ref: '#/definitions/domain_datasource.DataSourceIntegrationDTO'
-            type: array
-        "400":
-          description: X-Project-ID header required
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List data source integrations
-      tags:
-      - datasource
-    post:
-      consumes:
-      - application/json
-      description: Creates a new data source integration with encrypted configuration
-      parameters:
-      - description: Integration data
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_datasource.CreateDataSourceIntegrationDTO'
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created integration
-          schema:
-            $ref: '#/definitions/domain_datasource.DataSourceIntegrationDTO'
-        "400":
-          description: Invalid request or validation error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Create data source integration
-      tags:
-      - datasource
-  /api/data-source-integrations/{id}:
-    delete:
-      consumes:
-      - application/json
-      description: Deletes a data source integration by ID
-      parameters:
-      - description: Integration ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: Integration deleted successfully
-        "400":
-          description: Invalid integration ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Delete data source integration
-      tags:
-      - datasource
-    get:
-      consumes:
-      - application/json
-      description: Returns a specific data source integration by ID
-      parameters:
-      - description: Integration ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Integration details
-          schema:
-            $ref: '#/definitions/domain_datasource.DataSourceIntegrationDTO'
-        "400":
-          description: Invalid integration ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get integration by ID
-      tags:
-      - datasource
-    patch:
-      consumes:
-      - application/json
-      description: Updates an existing integration (partial update with encrypted
-        config)
-      parameters:
-      - description: Integration ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Integration update data
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_datasource.UpdateDataSourceIntegrationDTO'
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Updated integration
-          schema:
-            $ref: '#/definitions/domain_datasource.DataSourceIntegrationDTO'
-        "400":
-          description: Invalid request or validation error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Update data source integration
-      tags:
-      - datasource
-  /api/data-source-integrations/{id}/sync:
-    post:
-      consumes:
-      - application/json
-      description: Triggers a sync job for an integration (manual or full sync)
-      parameters:
-      - description: Integration ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Sync options (configurationId, fullSync, options)
-        in: body
-        name: request
-        schema:
-          $ref: '#/definitions/domain_datasource.TriggerSyncDTO'
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Sync job created or already running
-          schema:
-            $ref: '#/definitions/domain_datasource.TriggerSyncResponseDTO'
-        "400":
-          description: Invalid request or integration disabled
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Trigger data source sync
-      tags:
-      - datasource
-  /api/data-source-integrations/{id}/sync-jobs:
-    get:
-      consumes:
-      - application/json
-      description: Returns all sync jobs for a specific integration with optional
-        status filter
-      parameters:
-      - description: Integration ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Filter by job status
-        in: query
-        name: status
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Sync jobs list with total count
-          schema:
-            properties:
-              items:
-                items:
-                  $ref: '#/definitions/domain_datasource.SyncJobDTO'
-                type: array
-              total:
-                type: integer
-            type: object
-        "400":
-          description: Invalid integration ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List sync jobs for integration
-      tags:
-      - datasource
-  /api/data-source-integrations/{id}/sync-jobs/{jobId}:
-    get:
-      consumes:
-      - application/json
-      description: Returns a specific sync job by ID
-      parameters:
-      - description: Integration ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Sync job ID (UUID)
-        in: path
-        name: jobId
-        required: true
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Sync job details
-          schema:
-            $ref: '#/definitions/domain_datasource.SyncJobDTO'
-        "400":
-          description: Invalid integration ID or job ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration or sync job not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get sync job by ID
-      tags:
-      - datasource
-  /api/data-source-integrations/{id}/sync-jobs/{jobId}/cancel:
-    post:
-      consumes:
-      - application/json
-      description: Cancels a running or pending sync job
-      parameters:
-      - description: Integration ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Sync job ID (UUID)
-        in: path
-        name: jobId
-        required: true
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Job cancelled successfully
-          schema:
-            properties:
-              message:
-                type: string
-              success:
-                type: boolean
-            type: object
-        "400":
-          description: Invalid ID or job cannot be cancelled
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration or sync job not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Cancel sync job
-      tags:
-      - datasource
-  /api/data-source-integrations/{id}/sync-jobs/latest:
-    get:
-      consumes:
-      - application/json
-      description: Returns the most recent sync job for an integration
-      parameters:
-      - description: Integration ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Latest sync job (null if no jobs exist)
-          schema:
-            $ref: '#/definitions/domain_datasource.SyncJobDTO'
-        "400":
-          description: Invalid integration ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get latest sync job
-      tags:
-      - datasource
-  /api/data-source-integrations/{id}/test-connection:
-    post:
-      consumes:
-      - application/json
-      description: Tests the connection for an existing integration using stored config
-      parameters:
-      - description: Integration ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Connection test result
-          schema:
-            $ref: '#/definitions/domain_datasource.TestConnectionResponseDTO'
-        "400":
-          description: Invalid integration ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Test integration connection
-      tags:
-      - datasource
-  /api/data-source-integrations/providers:
-    get:
-      consumes:
-      - application/json
-      description: Returns all available data source providers (ClickUp, IMAP, Gmail,
-        Google Drive)
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: List of available providers
-          schema:
-            items:
-              $ref: '#/definitions/domain_datasource.ProviderDTO'
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List data source providers
-      tags:
-      - datasource
-  /api/data-source-integrations/providers/{providerType}/schema:
-    get:
-      consumes:
-      - application/json
-      description: Returns the JSON schema for configuring a specific provider type
-      parameters:
-      - description: Provider type
-        enum:
-        - clickup
-        - imap
-        - gmail_oauth
-        - google_drive
-        in: path
-        name: providerType
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Provider configuration schema
-          schema:
-            $ref: '#/definitions/domain_datasource.ProviderSchemaDTO'
-        "400":
-          description: Invalid provider type
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Provider not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get provider configuration schema
-      tags:
-      - datasource
-  /api/data-source-integrations/source-types:
-    get:
-      consumes:
-      - application/json
-      description: Returns document counts grouped by source type for the current
-        project
-      parameters:
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Source types with counts
-          schema:
-            items:
-              $ref: '#/definitions/domain_datasource.SourceTypeDTO'
-            type: array
-        "400":
-          description: X-Project-ID header required
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get source type document counts
-      tags:
-      - datasource
-  /api/data-source-integrations/test-config:
-    post:
-      consumes:
-      - application/json
-      description: Tests a provider configuration without creating an integration
-      parameters:
-      - description: Provider type and config to test
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_datasource.TestConfigDTO'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Test result
-          schema:
-            $ref: '#/definitions/domain_datasource.TestConnectionResponseDTO'
-        "400":
-          description: Invalid request or unknown provider
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Test provider configuration
-      tags:
-      - datasource
   /api/diagnostics:
     get:
       responses: {}
@@ -8514,10 +7788,6 @@ paths:
       - description: Filter by source type
         in: query
         name: sourceType
-        type: string
-      - description: Filter by integration ID
-        in: query
-        name: integrationId
         type: string
       - description: Filter to root documents only (no parent)
         in: query
@@ -9795,6 +9065,10 @@ paths:
         name: X-Project-ID
         required: true
         type: string
+      - description: Branch ID (omit for main branch)
+        in: query
+        name: branch_id
+        type: string
       produces:
       - application/json
       responses:
@@ -10201,6 +9475,45 @@ paths:
       security:
       - bearerAuth: []
       summary: Bulk create objects
+      tags:
+      - graph
+  /api/graph/objects/bulk-action:
+    post:
+      consumes:
+      - application/json
+      description: Execute an action (update_status, soft_delete, hard_delete, merge_properties,
+        replace_properties, add_labels, remove_labels, set_labels) on all graph objects
+        matching the given filter. Supports dry_run mode.
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Filter and action definition
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.BulkActionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Matched and affected counts
+          schema:
+            $ref: '#/definitions/domain_graph.BulkActionResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Bulk action by filter
       tags:
       - graph
   /api/graph/objects/bulk-update:
@@ -11163,6 +10476,258 @@ paths:
       summary: Search with graph neighbors
       tags:
       - graph
+  /api/graph/sessions:
+    get:
+      description: Returns a paginated list of Session objects for the project.
+      parameters:
+      - description: 'Max results (default: 20)'
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_graph.ListSessionsResponse'
+        "400":
+          description: Invalid parameters
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List sessions
+      tags:
+      - sessions
+    post:
+      consumes:
+      - application/json
+      description: Creates a new Session graph object to track an AI agent conversation.
+      parameters:
+      - description: Session creation parameters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.CreateSessionRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_graph.SessionResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create a session
+      tags:
+      - sessions
+  /api/graph/sessions/{id}:
+    get:
+      description: Returns a Session graph object by its ID.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_graph.SessionResponse'
+        "400":
+          description: Invalid ID
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Session not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get a session
+      tags:
+      - sessions
+  /api/graph/sessions/{id}/messages:
+    get:
+      description: Returns a paginated list of Message objects belonging to a session,
+        ordered by sequence_number ascending.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 'Max results (default: 50)'
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_graph.ListMessagesResponse'
+        "400":
+          description: Invalid parameters
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Session not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List messages in a session
+      tags:
+      - sessions
+    post:
+      consumes:
+      - application/json
+      description: Atomically creates a Message object and links it to the session
+        via a has_message relationship. Assigns sequence_number automatically.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Message parameters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.AppendMessageRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_graph.MessageResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Session not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Append a message to a session
+      tags:
+      - sessions
+  /api/graph/sessions/{id}/spawn:
+    post:
+      consumes:
+      - application/json
+      description: Creates a child session linked to the parent via a spawned_from
+        relationship. When forkContext is true, the parent's message history is copied
+        into the child as a snapshot.
+      parameters:
+      - description: Parent Session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Spawn parameters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.SpawnSessionRequest'
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_graph.SpawnSessionResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Parent session not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Spawn a child session
+      tags:
+      - sessions
   /api/graph/subgraph:
     post:
       consumes:
@@ -11240,347 +10805,6 @@ paths:
       summary: Traverse graph from root nodes
       tags:
       - graph
-  /api/integrations:
-    get:
-      description: Get all configured integrations for the current project with optional
-        filtering
-      parameters:
-      - description: Filter by integration name
-        in: query
-        name: name
-        type: string
-      - description: Filter by enabled status
-        in: query
-        name: enabled
-        type: boolean
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Configured integrations
-          schema:
-            items:
-              $ref: '#/definitions/domain_integrations.IntegrationDTO'
-            type: array
-        "400":
-          description: Missing project ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List project integrations
-      tags:
-      - integrations
-    post:
-      consumes:
-      - application/json
-      description: Create a new integration configuration with encrypted settings
-      parameters:
-      - description: Integration data (settings will be encrypted)
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_integrations.CreateIntegrationDTO'
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created integration
-          schema:
-            $ref: '#/definitions/domain_integrations.IntegrationDTO'
-        "400":
-          description: Invalid request or integration already exists
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Create integration
-      tags:
-      - integrations
-  /api/integrations/{name}:
-    delete:
-      description: Delete an integration configuration (permanent deletion)
-      parameters:
-      - description: Integration name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: Integration deleted successfully
-        "400":
-          description: Missing name or project ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Delete integration
-      tags:
-      - integrations
-    get:
-      description: Retrieve a specific integration configuration by name (includes
-        decrypted settings with masked secrets)
-      parameters:
-      - description: Integration name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Integration details
-          schema:
-            $ref: '#/definitions/domain_integrations.IntegrationDTO'
-        "400":
-          description: Missing name or project ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get integration
-      tags:
-      - integrations
-    put:
-      consumes:
-      - application/json
-      description: Update an existing integration configuration (partial updates supported,
-        settings will be re-encrypted if provided)
-      parameters:
-      - description: Integration name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Update data
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_integrations.UpdateIntegrationDTO'
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Updated integration
-          schema:
-            $ref: '#/definitions/domain_integrations.IntegrationDTO'
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Update integration
-      tags:
-      - integrations
-  /api/integrations/{name}/public:
-    get:
-      description: Retrieve public (non-sensitive) integration information without
-        decrypted settings
-      parameters:
-      - description: Integration name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Public integration info
-          schema:
-            $ref: '#/definitions/domain_integrations.PublicIntegrationDTO'
-        "400":
-          description: Missing name or project ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get public integration info
-      tags:
-      - integrations
-  /api/integrations/{name}/sync:
-    post:
-      consumes:
-      - application/json
-      description: Manually trigger a synchronization job for an integration (integration
-        must be enabled)
-      parameters:
-      - description: Integration name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Optional sync configuration
-        in: body
-        name: config
-        schema:
-          $ref: '#/definitions/domain_integrations.TriggerSyncConfigDTO'
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Sync job triggered
-          schema:
-            $ref: '#/definitions/domain_integrations.TriggerSyncResponseDTO'
-        "400":
-          description: Integration disabled or invalid request
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Trigger integration sync
-      tags:
-      - integrations
-  /api/integrations/{name}/test:
-    post:
-      description: Test the connectivity and authentication for an integration (validates
-        configured settings)
-      parameters:
-      - description: Integration name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Connection test result
-          schema:
-            $ref: '#/definitions/domain_integrations.TestConnectionResponseDTO'
-        "400":
-          description: Missing name or project ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Integration not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Test integration connection
-      tags:
-      - integrations
-  /api/integrations/available:
-    get:
-      description: Get all available integration types that can be configured
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Available integration types
-          schema:
-            items:
-              $ref: '#/definitions/domain_integrations.AvailableIntegrationDTO'
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List available integrations
-      tags:
-      - integrations
   /api/invites:
     post:
       consumes:
@@ -11743,6 +10967,112 @@ paths:
       summary: List pending invitations
       tags:
       - invites
+  /api/mcp-relay/connect:
+    get:
+      consumes:
+      - application/json
+      description: Remote MCP providers (e.g. Diane) open an outbound WebSocket here.
+        First frame must be a register frame with instance_id and tools list.
+      parameters:
+      - description: Project ID
+        in: query
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "101":
+          description: Switching Protocols
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Connect MCP relay (WebSocket)
+      tags:
+      - mcp-relay
+  /api/mcp-relay/sessions:
+    get:
+      description: Returns all currently connected MCP relay instances for the project.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcprelay.ListSessionsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: List relay sessions
+      tags:
+      - mcp-relay
+  /api/mcp-relay/sessions/{instanceId}/call:
+    post:
+      consumes:
+      - application/json
+      description: Forwards an MCP tool call to the specified relay instance and returns
+        the response.
+      parameters:
+      - description: Instance ID
+        in: path
+        name: instanceId
+        required: true
+        type: string
+      - description: Tool call request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_mcprelay.CallToolRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Call tool on relay instance
+      tags:
+      - mcp-relay
+  /api/mcp-relay/sessions/{instanceId}/tools:
+    get:
+      description: Returns the MCP tools/list result for a connected relay instance.
+      parameters:
+      - description: Instance ID
+        in: path
+        name: instanceId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Get relay instance tools
+      tags:
+      - mcp-relay
   /api/mcp/bundle:
     get:
       description: Downloads a .mcpb Claude Desktop bundle for the given read-only
@@ -12390,6 +11720,37 @@ paths:
       summary: Get organization by ID
       tags:
       - organizations
+  /api/orgs/{id}/members:
+    get:
+      description: Returns all members of an organization with their roles
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of members
+          schema:
+            items:
+              $ref: '#/definitions/domain_orgs.OrgMemberDTO'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List organization members
+      tags:
+      - organizations
   /api/orgs/{orgId}/skills:
     get:
       description: List all org-scoped skills for the given organization
@@ -12956,6 +12317,51 @@ paths:
       summary: List questions for an agent run
       tags:
       - agent-questions
+  /api/projects/{projectId}/agents/{id}/enable:
+    post:
+      consumes:
+      - application/json
+      description: Enables an agent and clears any disabled reason (e.g. spending
+        cap exceeded)
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Agent ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Enabled agent
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_AgentDTO'
+        "400":
+          description: Invalid agent ID
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Agent not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Enable an agent
+      tags:
+      - agents
   /api/projects/{projectId}/invites:
     get:
       description: Returns all invitations (pending, accepted, declined, revoked)
@@ -14549,6 +13955,64 @@ paths:
       summary: Update a skill
       tags:
       - skills
+  /api/superadmin/database-backups:
+    get:
+      description: Returns all full database backup records ordered by creation date
+        descending
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of database backups
+          schema:
+            items:
+              $ref: '#/definitions/domain_backups.DatabaseBackupResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List database backups
+      tags:
+      - superadmin
+  /api/superadmin/database-backups/{id}/download:
+    get:
+      description: Generates a 15-minute presigned URL for downloading a database
+        backup dump file and redirects to it
+      parameters:
+      - description: Database Backup ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "302":
+          description: Redirect to presigned download URL
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Backup not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Failed to generate download URL
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Download database backup
+      tags:
+      - superadmin
   /api/superadmin/document-parsing-jobs:
     get:
       description: Returns paginated list of document parsing jobs with status, error
@@ -15197,6 +14661,115 @@ paths:
       summary: Soft-delete a project (superadmin only)
       tags:
       - superadmin
+  /api/superadmin/projects/{id}/members:
+    get:
+      description: Returns all members of a project with their user profiles and roles.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Project members
+          schema:
+            $ref: '#/definitions/domain_superadmin.ListProjectMembersResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden (not superadmin)
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List project members (superadmin only)
+      tags:
+      - superadmin
+    post:
+      consumes:
+      - application/json
+      description: Adds a user to a project with the specified role. If the user is
+        already a member, their role is updated.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Member to add
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_superadmin.AddProjectMemberRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Member added successfully
+          schema:
+            $ref: '#/definitions/domain_superadmin.SuccessResponse'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden (not superadmin_full)
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Add a member to a project (superadmin only)
+      tags:
+      - superadmin
+  /api/superadmin/projects/{id}/members/{userId}:
+    delete:
+      description: Removes a user from a project. The user loses all access to the
+        project.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: User ID (UUID)
+        in: path
+        name: userId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Member removed successfully
+          schema:
+            $ref: '#/definitions/domain_superadmin.SuccessResponse'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden (not superadmin_full)
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Remove a member from a project (superadmin only)
+      tags:
+      - superadmin
   /api/superadmin/service-tokens:
     post:
       consumes:
@@ -15233,165 +14806,6 @@ paths:
       security:
       - bearerAuth: []
       summary: Create a machine-to-machine service token (superadmin_full only)
-      tags:
-      - superadmin
-  /api/superadmin/sync-jobs:
-    get:
-      description: Returns paginated list of data source sync jobs with status, progress,
-        error details, and aggregate statistics. Supports filtering by status, project,
-        and error state.
-      parameters:
-      - description: 'Page number (default: 1)'
-        in: query
-        minimum: 1
-        name: page
-        type: integer
-      - description: 'Results per page (default: 20, max: 100)'
-        in: query
-        maximum: 100
-        minimum: 1
-        name: limit
-        type: integer
-      - description: Filter by status (pending, running, completed, failed)
-        in: query
-        name: status
-        type: string
-      - description: Filter by project ID (UUID)
-        in: query
-        name: projectId
-        type: string
-      - description: Filter jobs with errors
-        in: query
-        name: hasError
-        type: boolean
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Sync job list with stats and pagination
-          schema:
-            $ref: '#/definitions/domain_superadmin.ListSyncJobsResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "403":
-          description: Forbidden (not superadmin)
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List data source sync job queue (superadmin only)
-      tags:
-      - superadmin
-  /api/superadmin/sync-jobs/{id}/logs:
-    get:
-      description: Returns detailed logs and execution info for a specific data source
-        sync job.
-      parameters:
-      - description: Sync job ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Sync job logs and metadata
-          schema:
-            $ref: '#/definitions/domain_superadmin.SyncJobLogsResponse'
-        "400":
-          description: Invalid job ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "403":
-          description: Forbidden (not superadmin)
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Sync job not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get data source sync job logs (superadmin only)
-      tags:
-      - superadmin
-  /api/superadmin/sync-jobs/cancel:
-    post:
-      consumes:
-      - application/json
-      description: Cancels multiple running/pending data source sync jobs by ID.
-      parameters:
-      - description: Job IDs to cancel
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_superadmin.CancelJobsRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Cancellation summary
-          schema:
-            $ref: '#/definitions/domain_superadmin.CancelJobsResponse'
-        "400":
-          description: Invalid request body
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "403":
-          description: Forbidden (not superadmin)
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Bulk cancel data source sync jobs (superadmin only)
-      tags:
-      - superadmin
-  /api/superadmin/sync-jobs/delete:
-    post:
-      consumes:
-      - application/json
-      description: Deletes multiple data source sync jobs by ID.
-      parameters:
-      - description: Job IDs to delete
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_superadmin.DeleteJobsRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Deletion summary
-          schema:
-            $ref: '#/definitions/domain_superadmin.DeleteJobsResponse'
-        "400":
-          description: Invalid request body
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "403":
-          description: Forbidden (not superadmin)
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Bulk delete data source sync jobs (superadmin only)
       tags:
       - superadmin
   /api/superadmin/users:
@@ -17379,77 +16793,6 @@ paths:
       summary: Stream run logs
       tags:
       - agents
-  /api/v1/settings/github:
-    delete:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-      summary: Disconnect GitHub App
-      tags:
-      - github
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-      summary: Get GitHub App connection status
-      tags:
-      - github
-  /api/v1/settings/github/callback:
-    get:
-      parameters:
-      - description: Temporary code from GitHub
-        in: query
-        name: code
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-      summary: Handle GitHub App manifest callback
-      tags:
-      - github
-  /api/v1/settings/github/cli:
-    post:
-      consumes:
-      - application/json
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-      summary: Configure GitHub App via CLI
-      tags:
-      - github
-  /api/v1/settings/github/connect:
-    post:
-      consumes:
-      - application/json
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-      summary: Start GitHub App connection flow
-      tags:
-      - github
-  /api/v1/settings/github/webhook:
-    post:
-      consumes:
-      - application/json
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-      summary: Handle GitHub webhook events
-      tags:
-      - github
   /chunks:
     delete:
       consumes:
@@ -17974,6 +17317,38 @@ paths:
       summary: Liveness probe
       tags:
       - health
+  /invites/accept:
+    get:
+      description: Accepts a pending invitation using a token passed as a query parameter.
+        Designed for email invite links. Redirects to login if not authenticated.
+      parameters:
+      - description: Invitation token
+        in: query
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Acceptance confirmation
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "302":
+          description: Redirect to login
+        "400":
+          description: Missing token
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Invitation not found or expired
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Accept invitation via link
+      tags:
+      - invites
   /openapi.json:
     get:
       description: Returns the generated OpenAPI/Swagger JSON spec (or minimal spec
