@@ -13,15 +13,15 @@ var adkSessionsProjectID string
 
 func newADKSessionsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "adk-sessions",
-		Short:   "Manage and inspect ADK sessions",
+		Use:   "adk-sessions",
+		Short: "Manage and inspect ADK sessions",
 		Long: `Manage and inspect Google ADK (Agent Development Kit) sessions.
 
 ADK sessions represent individual agent conversation threads, including the full
 event history of messages and tool calls. Use the list subcommand to browse
 sessions for a project, and the get subcommand to inspect a specific session in
 detail.`,
-		Aliases: []string{"sessions"},
+		Aliases: []string{},
 		GroupID: "ai",
 	}
 
@@ -85,7 +85,7 @@ func newGetADKSessionCmd() *cobra.Command {
 
 Outputs the entire session record as indented JSON, including all events (user
 messages, agent responses, and tool calls) in the session history.`,
-		Args:  cobra.ExactArgs(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			client, err := getClient(cmd)

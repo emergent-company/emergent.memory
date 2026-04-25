@@ -455,6 +455,9 @@ When --key is given, the object is keyed for idempotent operations:
 		if graphTypeFlag == "" {
 			return fmt.Errorf("--type is required")
 		}
+		if strings.EqualFold(graphTypeFlag, "Relationship") {
+			return fmt.Errorf("cannot create a Relationship via 'graph objects create'.\n\nRelationships are graph edges and require explicit source and destination entity IDs.\nUse instead:\n  memory graph relationships create --type <rel-type> --from <src-entity-id> --to <dst-entity-id>\n\nTo find entity IDs: memory graph objects list --type <type>")
+		}
 		if graphUpsertFlag && graphKeyFlag == "" {
 			return fmt.Errorf("--upsert requires --key")
 		}

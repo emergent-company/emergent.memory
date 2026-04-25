@@ -283,6 +283,15 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 		subq = applyPropertyFilters(subq, params.PropertyFilters)
 	}
 
+	// Filter by related object: only return objects that are dst_id in a relationship
+	// where src_id = RelatedToID and the relationship is a HEAD (supersedes_id IS NULL).
+	if params.RelatedToID != nil {
+		subq = subq.Where(`canonical_id IN (
+			SELECT dst_id FROM kb.graph_relationships
+			WHERE src_id = ? AND supersedes_id IS NULL AND deleted_at IS NULL AND project_id = ?
+		)`, *params.RelatedToID, params.ProjectID)
+	}
+
 	// Pagination via cursor (created_at, id)
 	if params.Cursor != nil {
 		// Decode cursor: base64(json({"created_at": "...", "id": "..."}))
