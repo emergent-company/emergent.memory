@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -78,6 +79,7 @@ type Service struct {
 	relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer
 	journal              *journal.Service
 	branchStore          branchStoreIface
+	events               *events.Service
 
 	// Metrics
 	metricsMu          sync.RWMutex
@@ -87,7 +89,7 @@ type Service struct {
 }
 
 // NewService creates a new graph service.
-func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer, journalSvc *journal.Service, branchStore branchStoreIface) *Service {
+func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer, journalSvc *journal.Service, branchStore branchStoreIface, eventsSvc *events.Service) *Service {
 	return &Service{
 		repo:                 repo,
 		log:                  log.With(logger.Scope("graph.svc")),
@@ -98,7 +100,40 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 		relEmbeddingEnqueuer: relEmbeddingEnqueuer,
 		journal:              journalSvc,
 		branchStore:          branchStore,
+		events:               eventsSvc,
 	}
+}
+
+// emitObjectCreated emits a graph_object entity.created event (no-op if events not wired).
+func (s *Service) emitObjectCreated(obj *GraphObjectResponse) {
+	if s.events == nil {
+		return
+	}
+	s.events.EmitCreated(events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
+		Version:    &obj.Version,
+		ObjectType: obj.Type,
+	})
+}
+
+// emitObjectUpdated emits a graph_object entity.updated event (no-op if events not wired).
+func (s *Service) emitObjectUpdated(obj *GraphObjectResponse) {
+	if s.events == nil {
+		return
+	}
+	s.events.EmitUpdated(events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
+		Version:    &obj.Version,
+		ObjectType: obj.Type,
+	})
+}
+
+// emitObjectDeleted emits a graph_object entity.deleted event (no-op if events not wired).
+func (s *Service) emitObjectDeleted(projectID, canonicalID, objType string) {
+	if s.events == nil {
+		return
+	}
+	s.events.EmitDeleted(events.EntityGraphObject, canonicalID, projectID, &events.EmitOptions{
+		ObjectType: objType,
+	})
 }
 
 // nameFromProps extracts the "name" property from a properties map, or returns an empty string.
@@ -438,7 +473,9 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		})
 	}
 
-	return obj.ToResponse(), nil
+	resp := obj.ToResponse()
+	s.emitObjectCreated(resp)
+	return resp, nil
 }
 
 // CreateOrUpdate implements upsert semantics for graph objects identified by (type, key).
@@ -522,7 +559,9 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 		s.enqueueEmbedding(ctx, obj.ID.String())
 
-		return obj.ToResponse(), true, nil
+		resp := obj.ToResponse()
+		s.emitObjectCreated(resp)
+		return resp, true, nil
 	}
 
 	// Object exists - check if it was deleted
@@ -550,7 +589,9 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 		s.enqueueEmbedding(ctx, newVersion.ID.String())
 
-		return newVersion.ToResponse(), false, nil
+		resp := newVersion.ToResponse()
+		s.emitObjectUpdated(resp)
+		return resp, false, nil
 	}
 
 	// Build the merged state to compare - check if properties, status, and labels changed
@@ -632,6 +673,8 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	s.enqueueEmbedding(ctx, newVersion.ID.String())
+
+	s.emitObjectUpdated(newVersion.ToResponse())
 
 	return newVersion.ToResponse(), false, nil
 }
@@ -862,6 +905,8 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		})
 	}
 
+	s.emitObjectUpdated(newVersion.ToResponse())
+
 	return newVersion.ToResponse(), nil
 }
 
@@ -944,6 +989,8 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		})
 	}
 
+	s.emitObjectDeleted(current.ProjectID.String(), current.CanonicalID.String(), current.Type)
+
 	return nil
 }
 
@@ -1006,6 +1053,8 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 			},
 		})
 	}
+
+	s.emitObjectUpdated(restored.ToResponse())
 
 	return restored.ToResponse(), nil
 }

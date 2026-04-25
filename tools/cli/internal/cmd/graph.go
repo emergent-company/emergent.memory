@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1821,6 +1822,50 @@ Output (one line per relationship): <entity-id>  <type>  <from> -> <to>`,
 }
 
 // ─────────────────────────────────────────────
+// graph events — stream SSE graph object events
+// ─────────────────────────────────────────────
+
+var graphEventsCmd = &cobra.Command{
+	Use:   "events",
+	Short: "Stream real-time graph object events via SSE",
+	Long:  "Opens a Server-Sent Events stream and prints graph object create/update/delete events as they occur.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		g, err := getGraphClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		ctx, cancel := context.WithCancel(cmd.Context())
+		defer cancel()
+
+		stream, err := g.StreamEvents(ctx)
+		if err != nil {
+			return err
+		}
+		defer stream.Close()
+
+		reader := bufio.NewReader(stream)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					return nil
+				}
+				return fmt.Errorf("stream error: %w", err)
+			}
+			line = strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(line, "data: ") {
+				data := strings.TrimPrefix(line, "data: ")
+				if data == "" || data == "heartbeat" {
+					continue
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), data)
+			}
+		}
+	},
+}
+
+// ─────────────────────────────────────────────
 // init — wire up the command tree
 // ─────────────────────────────────────────────
 
@@ -1942,6 +1987,7 @@ func init() {
 	graphCmd.AddCommand(graphObjectsCmd)
 	graphCmd.AddCommand(graphRelationshipsCmd)
 	graphCmd.AddCommand(graphBranchesCmd)
+	graphCmd.AddCommand(graphEventsCmd)
 
 	rootCmd.AddCommand(graphCmd)
 

@@ -1923,3 +1923,40 @@ func (c *Client) SpawnSession(ctx context.Context, parentID string, req *SpawnSe
 	}
 	return &result, nil
 }
+
+// StreamEvents opens the SSE event stream for the current project and returns
+// the raw response body as an io.ReadCloser. The caller is responsible for
+// closing it when done.
+//
+// The stream emits Server-Sent Events with data fields containing JSON-encoded
+// entity update payloads. Use bufio.Scanner to read line by line.
+//
+// GET /api/events/stream?projectId=<id>
+func (c *Client) StreamEvents(ctx context.Context) (io.ReadCloser, error) {
+	c.mu.RLock()
+	projectID := c.projectID
+	c.mu.RUnlock()
+
+	u := c.base + "/api/events/stream?projectId=" + url.QueryEscape(projectID)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	return resp.Body, nil
+}
