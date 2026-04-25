@@ -301,8 +301,8 @@ func runSearchQuery(ctx context.Context, c *client.Client, query, projectID stri
 	}
 
 	if queryShowScores {
-		fmt.Printf("| # | type | details | id | score |\n")
-		fmt.Printf("|---|------|---------|-----|-------|\n")
+		fmt.Printf("| # | type | details | id | score | lexical | vector |\n")
+		fmt.Printf("|---|------|---------|-----|-------|---------|--------|\n")
 	} else {
 		fmt.Printf("| # | type | details | id |\n")
 		fmt.Printf("|---|------|---------|----|\n")
@@ -374,7 +374,15 @@ func runSearchQuery(ctx context.Context, c *client.Client, query, projectID stri
 		details = strings.ReplaceAll(details, "|", "\\|")
 
 		if queryShowScores {
-			fmt.Printf("| %s | %s | %s | %s | %.4f |\n", num, resultType, details, id, result.Score)
+			lexical := "-"
+			if result.LexicalScore != nil {
+				lexical = fmt.Sprintf("%.4f", *result.LexicalScore)
+			}
+			vector := "-"
+			if result.VectorScore != nil {
+				vector = fmt.Sprintf("%.4f", *result.VectorScore)
+			}
+			fmt.Printf("| %s | %s | %s | %s | %.4f | %s | %s |\n", num, resultType, details, id, result.Score, lexical, vector)
 		} else {
 			fmt.Printf("| %s | %s | %s | %s |\n", num, resultType, details, id)
 		}
