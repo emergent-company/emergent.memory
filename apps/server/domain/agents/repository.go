@@ -482,9 +482,10 @@ func (r *Repository) FindDefinitionByName(ctx context.Context, projectID, name s
 // ResolveDefinitionForAgent looks up the AgentDefinition for a runtime Agent.
 // Resolution order:
 //  1. FK: agent.AgentDefinitionID (direct DB relationship — authoritative)
-//  2. Exact name match (agent.Name == definition.Name)
-//  3. Agent name + "-def" suffix (e.g. agent "foo" → definition "foo-def")
-//  4. Strip "Chat session for " prefix (legacy chat agents)
+//  2. StrategyType: parse "chat-session:{defID}" to extract definition ID
+//  3. Exact name match (agent.Name == definition.Name)
+//  4. Agent name + "-def" suffix (e.g. agent "foo" → definition "foo-def")
+//  5. Strip "Chat session for " prefix (legacy chat agents)
 //
 // Returns (nil, nil) when no definition is found.
 func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent) (*AgentDefinition, error) {
@@ -503,7 +504,18 @@ func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent
 		}
 		// Definition was deleted — fall through to name-based lookup
 	}
-	// 2. Exact name match
+	// 2. Parse "chat-session:{defID}" from StrategyType — CLI-triggered agents use this pattern
+	if defID, ok := strings.CutPrefix(agent.StrategyType, "chat-session:"); ok && defID != "" {
+		projectID := agent.ProjectID
+		def, err := r.FindDefinitionByID(ctx, defID, &projectID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if def != nil {
+			return def, nil
+		}
+	}
+	// 3. Exact name match
 	def, err := r.FindDefinitionByName(ctx, agent.ProjectID, agent.Name)
 	if err != nil {
 		return nil, err
@@ -511,7 +523,7 @@ func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent
 	if def != nil {
 		return def, nil
 	}
-	// 3. Try agent name + "-def" suffix (e.g. runtime "foo" → definition "foo-def")
+	// 4. Try agent name + "-def" suffix (e.g. runtime "foo" → definition "foo-def")
 	def, err = r.FindDefinitionByName(ctx, agent.ProjectID, agent.Name+"-def")
 	if err != nil {
 		return nil, err
@@ -519,7 +531,7 @@ func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent
 	if def != nil {
 		return def, nil
 	}
-	// 4. Strip known prefixes and retry
+	// 5. Strip known prefixes and retry
 	if stripped, ok := strings.CutPrefix(agent.Name, "Chat session for "); ok && stripped != "" {
 		return r.FindDefinitionByName(ctx, agent.ProjectID, stripped)
 	}

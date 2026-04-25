@@ -219,18 +219,19 @@ type APIResponse[T any] struct {
 
 // CreateAgentRequest is the request body for creating an agent.
 type CreateAgentRequest struct {
-	ProjectID      string             `json:"projectId"`
-	Name           string             `json:"name"`
-	StrategyType   string             `json:"strategyType"`
-	Prompt         *string            `json:"prompt,omitempty"`
-	CronSchedule   string             `json:"cronSchedule"`
-	Enabled        *bool              `json:"enabled,omitempty"`
-	TriggerType    string             `json:"triggerType,omitempty"`
-	ReactionConfig *ReactionConfig    `json:"reactionConfig,omitempty"`
-	ExecutionMode  string             `json:"executionMode,omitempty"`
-	Capabilities   *AgentCapabilities `json:"capabilities,omitempty"`
-	Config         map[string]any     `json:"config,omitempty"`
-	Description    *string            `json:"description,omitempty"`
+	ProjectID         string             `json:"projectId"`
+	Name              string             `json:"name"`
+	StrategyType      string             `json:"strategyType"`
+	Prompt            *string            `json:"prompt,omitempty"`
+	CronSchedule      string             `json:"cronSchedule"`
+	Enabled           *bool              `json:"enabled,omitempty"`
+	TriggerType       string             `json:"triggerType,omitempty"`
+	ReactionConfig    *ReactionConfig    `json:"reactionConfig,omitempty"`
+	ExecutionMode     string             `json:"executionMode,omitempty"`
+	Capabilities      *AgentCapabilities `json:"capabilities,omitempty"`
+	Config            map[string]any     `json:"config,omitempty"`
+	Description       *string            `json:"description,omitempty"`
+	AgentDefinitionID *string            `json:"agentDefinitionId,omitempty"`
 }
 
 // UpdateAgentRequest is the request body for updating an agent.

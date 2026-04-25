@@ -9,7 +9,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.36.1
+  version: 0.37.2
 paths: {}
 schemes:
 - http
