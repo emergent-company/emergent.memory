@@ -1998,14 +1998,74 @@ func (ae *AgentExecutor) resolveDescription(req ExecuteRequest) string {
 }
 
 // resolveInstruction returns the system prompt for the agent.
+// If the agent definition declares skills, an <available_skills> index is
+// appended so the agent sees all bound skills before it starts reasoning
+// (zero-turn discovery) rather than only through the skill tool description.
 func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
+	inst := ""
 	if req.AgentDefinition != nil && req.AgentDefinition.SystemPrompt != nil {
-		return *req.AgentDefinition.SystemPrompt
+		inst = *req.AgentDefinition.SystemPrompt
+	} else if req.Agent != nil && req.Agent.Prompt != nil {
+		inst = *req.Agent.Prompt
+	} else {
+		inst = "You are a helpful assistant."
 	}
-	if req.Agent != nil && req.Agent.Prompt != nil {
-		return *req.Agent.Prompt
+
+	if appendix := ae.buildSkillsSystemPrompt(req); appendix != "" {
+		inst += "\n\n" + appendix
 	}
-	return "You are a helpful assistant."
+
+	return inst
+}
+
+// buildSkillsSystemPrompt builds the <available_skills> block that is appended
+// to the system instruction when the agent definition declares bound skills.
+// Returns an empty string when there are no skills to inject.
+func (ae *AgentExecutor) buildSkillsSystemPrompt(req ExecuteRequest) string {
+	if req.AgentDefinition == nil || len(req.AgentDefinition.Skills) == 0 {
+		return ""
+	}
+
+	ctx := context.Background()
+	all, err := ae.skillRepo.FindForAgent(ctx, req.ProjectID, req.OrgID)
+	if err != nil || len(all) == 0 {
+		return ""
+	}
+
+	// Filter to declared skill names; "*" or wildcard means all.
+	declared := req.AgentDefinition.Skills
+	isWildcard := len(declared) == 1 && declared[0] == "*"
+	var matched []*skills.Skill
+	if isWildcard {
+		matched = all
+	} else {
+		nameSet := make(map[string]struct{}, len(declared))
+		for _, n := range declared {
+			nameSet[n] = struct{}{}
+		}
+		for _, s := range all {
+			if _, ok := nameSet[s.Name]; ok {
+				matched = append(matched, s)
+			}
+		}
+	}
+	if len(matched) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("## Skills (mandatory)\n")
+	b.WriteString("Before replying, scan the skills below. If a skill matches or is even partially ")
+	b.WriteString("relevant to your task, you MUST load it with the skill tool and follow its ")
+	b.WriteString("instructions. Err on the side of loading.\n\n")
+	b.WriteString("<available_skills>\n")
+	for _, s := range matched {
+		fmt.Fprintf(&b, "  - %s: %s\n", s.Name, s.Description)
+	}
+	b.WriteString("</available_skills>\n\n")
+	b.WriteString("Only proceed without loading a skill if genuinely none are relevant to the task.")
+
+	return b.String()
 }
 
 // persistMessage persists a single message to the database.
