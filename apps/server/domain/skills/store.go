@@ -199,8 +199,9 @@ func (r *Repository) Create(ctx context.Context, s *Skill, embedding []float32) 
 		return q.OrderExpr("s.created_at DESC").Limit(1).Scan(ctx)
 	}
 
-	// No embedding: use Bun ORM insert
-	_, err := r.db.NewInsert().Model(s).Exec(ctx)
+	// No embedding: use Bun ORM insert, explicitly excluding the vector column
+	// to avoid Bun trying to bind a nil []byte to a vector(768) column (causes 500).
+	_, err := r.db.NewInsert().Model(s).ExcludeColumn("description_embedding").Exec(ctx)
 	if err != nil {
 		return r.wrapDBError("failed to create skill", err)
 	}

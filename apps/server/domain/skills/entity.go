@@ -20,7 +20,7 @@ type Skill struct {
 	Description          string         `bun:"description,notnull"                       json:"description"`
 	Content              string         `bun:"content,notnull"                           json:"content"`
 	Metadata             *SkillMetadata `bun:"metadata,type:jsonb"                       json:"metadata,omitempty"`
-	DescriptionEmbedding []byte         `bun:"description_embedding,type:vector(768)"    json:"-"`
+	DescriptionEmbedding []byte         `bun:"description_embedding,type:vector(768),nullzero" json:"-"`
 	ProjectID            *string        `bun:"project_id,type:uuid"                      json:"projectId,omitempty"`
 	OrgID                *string        `bun:"org_id,type:uuid"                          json:"orgId,omitempty"`
 	CreatedAt            time.Time      `bun:"created_at,notnull,default:now()"          json:"createdAt"`
