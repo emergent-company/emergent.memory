@@ -164,7 +164,7 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 	}
 
 	if !includeDeprecated {
-		query = query.Where("deprecated = false")
+		query = query.Where("deprecated_at IS NULL")
 	}
 
 	query = query.Order("updated_at DESC").Limit(limit).Offset(offset)
@@ -202,7 +202,7 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 		countQuery = countQuery.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
 	}
 	if !includeDeprecated {
-		countQuery = countQuery.Where("deprecated = false")
+		countQuery = countQuery.Where("deprecated_at IS NULL")
 	}
 	err = countQuery.Scan(ctx, &total)
 	if err != nil {
@@ -230,7 +230,7 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 
 	var schema SchemaInfo
 	err := s.db.NewRaw(`
-		SELECT id, name, version, description, visibility, project_id, org_id, source, created_at, updated_at, deprecated
+		SELECT id, name, version, description, visibility, project_id, org_id, source, created_at, updated_at
 		FROM kb.graph_schemas
 		WHERE id = ? AND (project_id = ? OR (org_id = ? AND visibility = 'organization'))
 	`, schemaID, projectID, orgID).Scan(ctx, &schema)
@@ -241,7 +241,7 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 	// Get object types
 	type objectTypeRow struct {
 		TypeName      string         `bun:"type_name"`
-		TypeSchema    map[string]any `bun:"type_schema,type:jsonb"`
+		TypeSchema    map[string]any `bun:"json_schema,type:jsonb"`
 		SchemaID      string         `bun:"schema_id"`
 		SchemaName    string         `bun:"schema_name"`
 		SchemaVersion string         `bun:"schema_version"`
@@ -254,7 +254,7 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 		}
 
 		return tx.NewRaw(`
-			SELECT por.type_name, por.type_schema, por.schema_id, gs.name AS schema_name, gs.version AS schema_version
+			SELECT por.type_name, por.json_schema, por.schema_id, gs.name AS schema_name, gs.version AS schema_version
 			FROM kb.project_object_schema_registry por
 			JOIN kb.project_schemas ps ON por.schema_id = ps.schema_id AND ps.project_id = por.project_id
 			JOIN kb.graph_schemas gs ON por.schema_id = gs.id
@@ -369,7 +369,7 @@ func (s *Service) executeGetAvailableTemplates(ctx context.Context, projectID st
 	}
 
 	query = query.Where("source = 'template'").
-		Where("deprecated = false").
+		Where("deprecated_at IS NULL").
 		Order("created_at DESC").
 		Limit(limit)
 
@@ -389,7 +389,7 @@ func (s *Service) executeGetAvailableTemplates(ctx context.Context, projectID st
 	err = s.db.NewRaw(`
 		SELECT id, name, version, categories
 		FROM kb.graph_schemas
-		WHERE source = 'template' AND deprecated = false
+		WHERE source = 'template' AND deprecated_at IS NULL
 		ORDER BY created_at DESC
 		LIMIT 100
 	`).Scan(ctx, &templateRows)
@@ -1132,7 +1132,7 @@ func (s *Service) executeSchemaCompiledTypes(ctx context.Context, projectID stri
 
 	type objectTypeRow struct {
 		TypeName      string         `bun:"type_name"`
-		TypeSchema    map[string]any `bun:"type_schema,type:jsonb"`
+		TypeSchema    map[string]any `bun:"json_schema,type:jsonb"`
 		SchemaID      string         `bun:"schema_id"`
 		SchemaName    string         `bun:"schema_name"`
 		SchemaVersion string         `bun:"schema_version"`
@@ -1156,7 +1156,7 @@ func (s *Service) executeSchemaCompiledTypes(ctx context.Context, projectID stri
 		if err := tx.NewRaw(`
 			SELECT
 				por.type_name,
-				por.type_schema,
+				por.json_schema,
 				por.schema_id,
 				gs.name  AS schema_name,
 				gs.version AS schema_version
