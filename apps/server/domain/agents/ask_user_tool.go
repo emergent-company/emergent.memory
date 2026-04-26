@@ -103,20 +103,27 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 				slog.Int("options_count", len(options)),
 			)
 
-			// Create a notification for the user
+			// Create a notification for the user (requires valid UserID).
+			// For API-token-triggered runs UserID may be empty — skip the DB notification
+			// but still emit the SSE event so connected clients (Discord bot) receive it.
+			var notifID string
 			if deps.UserID != "" {
-				notificationID := createQuestionNotification(ctx, deps, q)
-				if notificationID != "" {
-					// Link notification to question
-					if err := deps.Repo.UpdateQuestionNotificationID(ctx, q.ID, notificationID); err != nil {
-						deps.Logger.Warn("failed to link notification to question",
-							slog.String("question_id", q.ID),
-							slog.String("notification_id", notificationID),
-							slog.String("error", err.Error()),
-						)
-					}
+				notifID = createQuestionNotification(ctx, deps, q)
+			}
+			if notifID != "" {
+				// Link notification to question
+				if err := deps.Repo.UpdateQuestionNotificationID(ctx, q.ID, notifID); err != nil {
+					deps.Logger.Warn("failed to link notification to question",
+						slog.String("question_id", q.ID),
+						slog.String("notification_id", notifID),
+						slog.String("error", err.Error()),
+					)
 				}
 			}
+
+			// Always emit the SSE event so connected clients (Discord bot, admin UI)
+			// receive the question in real-time, even without a DB notification.
+			emitQuestionSSEEvent(ctx, deps, q)
 
 			// Signal the executor to pause on the next beforeModelCb
 			deps.PauseState.RequestPause(q.ID)
@@ -187,25 +194,33 @@ func createQuestionNotification(ctx tool.Context, deps AskUserToolDeps, q *Agent
 		slog.String("notification_id", notifID),
 	)
 
-	// Emit real-time SSE event so connected clients (Diane bot, admin UI) are notified instantly.
-	if deps.EventsSvc != nil {
-		deps.EventsSvc.EmitCreated(
-			events.EntityNotification,
-			notifID,
-			deps.ProjectID,
-			&events.EmitOptions{
-				Data: map[string]any{
-					"type":        "agent_question",
-					"question_id": q.ID,
-					"run_id":      q.RunID,
-					"question":    q.Question,
-					"status":      "pending",
-				},
-			},
-		)
-	}
+	// NOTE: SSE event is emitted unconditionally by the caller (emitQuestionSSEEvent).
+	// No need to emit it here as well — that would create duplicates.
 
 	return notifID
+}
+
+// emitQuestionSSEEvent sends a real-time SSE notification for a question.
+// This runs unconditionally so connected clients (Discord bot, admin UI) receive
+// the question even when no DB notification was created (e.g. API-token-triggered runs).
+func emitQuestionSSEEvent(ctx tool.Context, deps AskUserToolDeps, q *AgentQuestion) {
+	if deps.EventsSvc == nil {
+		return
+	}
+	deps.EventsSvc.EmitCreated(
+		events.EntityNotification,
+		q.ID, // use question ID as entity ID since there may be no notification
+		deps.ProjectID,
+		&events.EmitOptions{
+			Data: map[string]any{
+				"type":        "agent_question",
+				"question_id": q.ID,
+				"run_id":      q.RunID,
+				"question":    q.Question,
+				"status":      "pending",
+			},
+		},
+	)
 }
 
 // parseQuestionOptions extracts the options array from tool call args.
