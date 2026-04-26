@@ -3874,7 +3874,9 @@ func parseJournalSince(s string) (time.Time, error) {
 
 // executeSetSessionTitle is the hidden built-in tool that updates the title of the
 // current ACP session. It reads the session ID from context (injected by the agent
-// executor) and updates the title in the database.
+// executor) and updates the title in the database. If no session ID is found in
+// context, it falls back to the optional "session_id" argument so agents that
+// receive the session ID via a [Session: <id>] prompt tag can pass it explicitly.
 func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	title, _ := args["title"].(string)
 	if title == "" {
@@ -3890,9 +3892,13 @@ func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, 
 		}, nil
 	}
 
+	// Prefer context-injected session ID; fall back to explicit arg.
 	sessionID := ACPSessionIDFromContext(ctx)
 	if sessionID == "" {
-		// No session in context — silently succeed so agents don't fail when called
+		sessionID, _ = args["session_id"].(string)
+	}
+	if sessionID == "" {
+		// No session in context or args — silently succeed so agents don't fail when called
 		// outside of an ACP session (e.g. direct MCP tool invocation).
 		return &ToolResult{
 			Content: []ContentBlock{{Type: "text", Text: `{"ok":true,"note":"no active session"}`}},

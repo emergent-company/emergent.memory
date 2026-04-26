@@ -279,6 +279,10 @@ func (tp *ToolPool) ResolveTools(projectID string, agentDef *AgentDefinition, de
 						"type":        "string",
 						"description": "The display title for the session, e.g. '🐛 Login Timeout Bug' or '✨ Export to PDF Feature'",
 					},
+					"session_id": map[string]any{
+						"type":        "string",
+						"description": "Optional ACP session ID to update. Only needed when the session ID is not already available in context (e.g. when the agent received it via a [Session: <id>] tag in the prompt). If omitted, the active session from context is used.",
+					},
 				},
 			},
 		))
