@@ -304,28 +304,29 @@ type ModelConfig struct {
 type AgentDefinition struct {
 	bun.BaseModel `bun:"table:kb.agent_definitions,alias:ad"`
 
-	ID             string            `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	ProductID      *string           `bun:"product_id,type:uuid" json:"productId,omitempty"`
-	ProjectID      string            `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	Name           string            `bun:"name,notnull" json:"name"`
-	Description    *string           `bun:"description" json:"description,omitempty"`
-	SystemPrompt   *string           `bun:"system_prompt" json:"systemPrompt,omitempty"`
-	Model          *ModelConfig      `bun:"model,type:jsonb,default:'{}'" json:"model,omitempty"`
-	Tools          []string          `bun:"tools,array" json:"tools"`
-	BannedTools    []string          `bun:"banned_tools,array" json:"bannedTools,omitempty"`
-	Skills         []string          `bun:"skills,array" json:"skills"`
-	AutoLoadSkills bool              `bun:"auto_load_skills,notnull,default:false" json:"autoLoadSkills"`
-	FlowType       AgentFlowType     `bun:"flow_type,notnull,default:'single'" json:"flowType"`
-	IsDefault      bool              `bun:"is_default,notnull,default:false" json:"isDefault"`
-	MaxSteps       *int              `bun:"max_steps" json:"maxSteps,omitempty"`
-	DefaultTimeout *int              `bun:"default_timeout" json:"defaultTimeout,omitempty"`
-	Visibility     AgentVisibility   `bun:"visibility,notnull,default:'project'" json:"visibility"`
-	ACPConfig      *ACPConfig        `bun:"acp_config,type:jsonb" json:"acpConfig,omitempty"`
-	Config         map[string]any    `bun:"config,type:jsonb,default:'{}'" json:"config,omitempty"`
-	SandboxConfig  map[string]any    `bun:"sandbox_config,type:jsonb" json:"sandboxConfig,omitempty"`
-	DispatchMode   AgentDispatchMode `bun:"dispatch_mode,notnull,default:'sync'" json:"dispatchMode"`
-	CreatedAt      time.Time         `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt      time.Time         `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	ID               string            `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProductID        *string           `bun:"product_id,type:uuid" json:"productId,omitempty"`
+	ProjectID        string            `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	Name             string            `bun:"name,notnull" json:"name"`
+	Description      *string           `bun:"description" json:"description,omitempty"`
+	SystemPrompt     *string           `bun:"system_prompt" json:"systemPrompt,omitempty"`
+	Model            *ModelConfig      `bun:"model,type:jsonb,default:'{}'" json:"model,omitempty"`
+	Tools            []string          `bun:"tools,array" json:"tools"`
+	BannedTools      []string          `bun:"banned_tools,array" json:"bannedTools,omitempty"`
+	Skills           []string          `bun:"skills,array" json:"skills"`
+	AutoLoadSkills   bool              `bun:"auto_load_skills,notnull,default:false" json:"autoLoadSkills"`
+	FlowType         AgentFlowType     `bun:"flow_type,notnull,default:'single'" json:"flowType"`
+	IsDefault        bool              `bun:"is_default,notnull,default:false" json:"isDefault"`
+	MaxSteps         *int              `bun:"max_steps" json:"maxSteps,omitempty"`
+	DefaultTimeout   *int              `bun:"default_timeout" json:"defaultTimeout,omitempty"`
+	MaxSessionEvents *int              `bun:"max_session_events" json:"maxSessionEvents,omitempty"`
+	Visibility       AgentVisibility   `bun:"visibility,notnull,default:'project'" json:"visibility"`
+	ACPConfig        *ACPConfig        `bun:"acp_config,type:jsonb" json:"acpConfig,omitempty"`
+	Config           map[string]any    `bun:"config,type:jsonb,default:'{}'" json:"config,omitempty"`
+	SandboxConfig    map[string]any    `bun:"sandbox_config,type:jsonb" json:"sandboxConfig,omitempty"`
+	DispatchMode     AgentDispatchMode `bun:"dispatch_mode,notnull,default:'sync'" json:"dispatchMode"`
+	CreatedAt        time.Time         `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt        time.Time         `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }
 
 // AgentRunMessage stores a single LLM message exchanged during an agent run.

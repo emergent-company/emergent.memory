@@ -1387,11 +1387,20 @@ func (ae *AgentExecutor) runPipeline(
 	var sess session.Session
 
 	if sessionID != run.ID {
-		// It's a resumed run, attempt to load the existing session
+		// It's a resumed run, attempt to load the existing session.
+		// Apply a sliding window so long-lived sessions don't exceed the model's
+		// context window. Prefer the agent definition's MaxSessionEvents; fall
+		// back to a safe default of 50 when a shared sessionID is in use.
+		const defaultMaxSessionEvents = 50
+		numRecentEvents := defaultMaxSessionEvents
+		if req.AgentDefinition != nil && req.AgentDefinition.MaxSessionEvents != nil && *req.AgentDefinition.MaxSessionEvents > 0 {
+			numRecentEvents = *req.AgentDefinition.MaxSessionEvents
+		}
 		getResp, err := sessionService.Get(ctx, &session.GetRequest{
-			AppName:   "agents",
-			UserID:    "system",
-			SessionID: sessionID,
+			AppName:         "agents",
+			UserID:          "system",
+			SessionID:       sessionID,
+			NumRecentEvents: numRecentEvents,
 		})
 		if err == nil && getResp != nil && getResp.Session != nil {
 			sess = getResp.Session
