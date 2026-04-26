@@ -106,6 +106,14 @@ func RegisterTasks(p TaskParams) error {
 			slog.String("error", err.Error()))
 	}
 
+	// Register session cleanup task (daily at 3am by default)
+	sessionCleanupTask := NewSessionCleanupTask(p.DB, p.Log, p.Cfg.SessionRetentionDays)
+	if err := addScheduledTask(p.Scheduler, p.Log, "session_cleanup",
+		p.Cfg.SessionCleanupSchedule, 24*time.Hour, sessionCleanupTask.Run); err != nil {
+		p.Log.Error("failed to register session cleanup task",
+			slog.String("error", err.Error()))
+	}
+
 	p.Log.Info("registered scheduled tasks",
 		slog.Any("tasks", p.Scheduler.ListTasks()))
 

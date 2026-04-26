@@ -46,6 +46,14 @@ type Config struct {
 	// ZitadelProfileSyncSchedule is the cron schedule for syncing user profiles from Zitadel.
 	// Default: "0 0 * * * *" (every hour)
 	ZitadelProfileSyncSchedule string
+
+	// SessionCleanupSchedule is the cron schedule for deleting ADK session data
+	// for old completed runs. Default: "0 0 3 * * *" (daily at 3am).
+	SessionCleanupSchedule string
+
+	// SessionRetentionDays is the minimum age (in days) of a completed run before
+	// its ADK session data (events, states, session rows) is deleted. Default: 90.
+	SessionRetentionDays int
 }
 
 // NewConfig creates a new Config from environment variables
@@ -65,6 +73,8 @@ func NewConfig() *Config {
 		StaleJobCleanupSchedule:      getEnvString("STALE_JOB_CLEANUP_SCHEDULE", ""),
 		DatabaseBackupSchedule:       getEnvString("DATABASE_BACKUP_SCHEDULE", "0 0 7 * * *"),
 		ZitadelProfileSyncSchedule:   getEnvString("ZITADEL_PROFILE_SYNC_SCHEDULE", "0 0 * * * *"),
+		SessionCleanupSchedule:       getEnvString("SESSION_CLEANUP_SCHEDULE", "0 0 3 * * *"),
+		SessionRetentionDays:         getEnvInt("SESSION_RETENTION_DAYS", 90),
 	}
 }
 
