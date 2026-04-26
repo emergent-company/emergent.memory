@@ -85,6 +85,10 @@ type Service struct {
 	// Session title handler (injected to break import cycle with agents domain)
 	sessionTitleHandler SessionTitleHandler
 
+	// graphObjectTitlePatcher patches graph object Properties.title when set_session_title runs.
+	// Stored as a func to avoid a circular import (mcp already imports graph).
+	graphObjectTitlePatcher func(ctx context.Context, projectID, objectID, title string) error
+
 	// Tempo base URL for trace proxy (empty when tracing disabled)
 	tempoBaseURL string
 
@@ -151,6 +155,12 @@ func (s *Service) SetAgentToolHandler(h AgentToolHandler) {
 // SetSessionTitleHandler sets the session title handler (called after construction to break circular init)
 func (s *Service) SetSessionTitleHandler(h SessionTitleHandler) {
 	s.sessionTitleHandler = h
+}
+
+// SetGraphObjectPatcher sets the func used to patch graph object Properties.title
+// when set_session_title is called. Called after construction to avoid circular init.
+func (s *Service) SetGraphObjectPatcher(fn func(ctx context.Context, projectID, objectID, title string) error) {
+	s.graphObjectTitlePatcher = fn
 }
 
 // SetMCPRegistryToolHandler sets the MCP registry tool handler (called after construction to break circular init)
@@ -3877,6 +3887,10 @@ func parseJournalSince(s string) (time.Time, error) {
 // executor) and updates the title in the database. If no session ID is found in
 // context, it falls back to the optional "session_id" argument so agents that
 // receive the session ID via a [Session: <id>] prompt tag can pass it explicitly.
+//
+// In addition to updating the ACP session record (kb.acp_sessions.title), it also
+// patches the session's graph object Properties.title so external integrations that
+// read sessions via the graph API (GET /api/graph/objects/:id) see the updated title.
 func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	title, _ := args["title"].(string)
 	if title == "" {
@@ -3917,6 +3931,17 @@ func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, 
 			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf(`{"error":"failed to update session title: %s"}`, err.Error())}},
 			IsError: true,
 		}, nil
+	}
+
+	// Also patch the graph object so callers using the graph API can read the title.
+	// Best-effort: log but don't fail if the graph object doesn't exist or patcher not wired.
+	if s.graphObjectTitlePatcher != nil {
+		if err := s.graphObjectTitlePatcher(ctx, projectID, sessionID, title); err != nil {
+			s.log.Warn("set_session_title: failed to patch graph object title (non-fatal)",
+				slog.String("session_id", sessionID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	return &ToolResult{

@@ -185,5 +185,11 @@ func main() {
 		fx.Invoke(func(svc *projects.Service, tokenRepo *apitoken.Repository) {
 			svc.SetTokenRevoker(tokenRepo)
 		}),
+
+		// Cross-domain wiring: set_session_title writes title to graph object Properties
+		// so clients using the graph API can read the updated title.
+		fx.Invoke(func(mcpSvc *mcp.Service, graphSvc *graph.Service) {
+			mcpSvc.SetGraphObjectPatcher(graphSvc.PatchGraphObjectTitle)
+		}),
 	).Run()
 }

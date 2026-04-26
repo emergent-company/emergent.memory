@@ -4221,3 +4221,30 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 
 	return resp, nil
 }
+
+// PatchGraphObjectTitle merges {"title": title} into the graph object's Properties.
+// Implements mcp.GraphObjectPatcher. Best-effort: returns an error only if the object
+// exists and the patch fails; a missing object is silently ignored.
+func (s *Service) PatchGraphObjectTitle(ctx context.Context, projectID, objectID, title string) error {
+	pid, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf("PatchGraphObjectTitle: invalid project_id %q: %w", projectID, err)
+	}
+	oid, err := uuid.Parse(objectID)
+	if err != nil {
+		return fmt.Errorf("PatchGraphObjectTitle: invalid object_id %q: %w", objectID, err)
+	}
+
+	_, err = s.Patch(ctx, pid, oid, &PatchGraphObjectRequest{
+		Properties: map[string]any{"title": title},
+	}, nil)
+	if err != nil {
+		// Object not found is non-fatal — session may not yet exist as a graph object.
+		var appErr *apperror.Error
+		if errors.As(err, &appErr) && appErr.HTTPStatus == 404 {
+			return nil
+		}
+		return fmt.Errorf("PatchGraphObjectTitle: %w", err)
+	}
+	return nil
+}
