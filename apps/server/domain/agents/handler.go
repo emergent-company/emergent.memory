@@ -683,6 +683,10 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 	// Launch execution asynchronously — manual triggers are fire-and-forget
 	// from the caller's perspective. We use context.Background() so the run
 	// is not cancelled when the HTTP response is sent.
+	// Capture the auth token now (before the HTTP context is gone) so that
+	// internal loopback calls (e.g. search-knowledge → /query) can authenticate
+	// from within the background goroutine.
+	triggerAuthToken := auth.RawTokenFromContext(c.Request().Context())
 	go func() {
 		bgCtx := context.Background()
 		execResult, execErr := h.executor.ExecuteWithRun(bgCtx, run, ExecuteRequest{
@@ -695,6 +699,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			Model:           triggerReq.Model,
 			EnvVars:         triggerReq.EnvVars,
 			MaxSteps:        triggerReq.MaxSteps,
+			AuthToken:       triggerAuthToken,
 		})
 		if execResult != nil && execResult.Cleanup != nil {
 			execResult.Cleanup()
@@ -2567,6 +2572,7 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 			question.Question, req.Response,
 		)
 
+		resumeAuthToken := auth.RawTokenFromContext(c.Request().Context())
 		go func() {
 			ctx := context.Background()
 			result, err := h.executor.Resume(ctx, run, ExecuteRequest{
@@ -2574,6 +2580,7 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 				AgentDefinition: agentDef,
 				ProjectID:       agent.ProjectID,
 				UserMessage:     userMessage,
+				AuthToken:       resumeAuthToken,
 			})
 			if result != nil && result.Cleanup != nil {
 				result.Cleanup()
