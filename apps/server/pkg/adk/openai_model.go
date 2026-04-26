@@ -47,11 +47,12 @@ func (m *openaiCompatibleModel) Name() string {
 // --- OpenAI wire types ---
 
 type openaiMessage struct {
-	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
-	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
-	Name       string           `json:"name,omitempty"`
+	Role             string           `json:"role"`
+	Content          string           `json:"content,omitempty"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
+	ToolCalls        []openaiToolCall `json:"tool_calls,omitempty"`
+	Name             string           `json:"name,omitempty"`
 }
 
 type openaiToolCall struct {
@@ -91,8 +92,9 @@ type responseFormat struct {
 type openaiResponse struct {
 	Choices []struct {
 		Message struct {
-			Content   string           `json:"content"`
-			ToolCalls []openaiToolCall `json:"tool_calls"`
+			Content          string           `json:"content"`
+			ToolCalls        []openaiToolCall `json:"tool_calls"`
+			ReasoningContent string           `json:"reasoning_content"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -154,6 +156,7 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 
 		// Collect text parts and function calls/responses separately.
 		var textParts []string
+		var reasoningParts []string
 		var funcCalls []openaiToolCall
 		var funcResponses []struct {
 			id   string
@@ -165,7 +168,10 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 			if part == nil {
 				continue
 			}
-			if part.Text != "" {
+			if part.Thought && part.Text != "" {
+				// Thought parts are DeepSeek reasoning_content — echo back separately.
+				reasoningParts = append(reasoningParts, part.Text)
+			} else if part.Text != "" {
 				textParts = append(textParts, part.Text)
 			}
 			if part.FunctionCall != nil {
@@ -207,6 +213,9 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 			if len(textParts) > 0 {
 				msg.Content = strings.Join(textParts, "\n")
 			}
+			if len(reasoningParts) > 0 {
+				msg.ReasoningContent = strings.Join(reasoningParts, "\n")
+			}
 			messages = append(messages, msg)
 			continue
 		}
@@ -225,12 +234,18 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 			continue
 		}
 
-		// Plain text message.
-		if len(textParts) > 0 {
-			messages = append(messages, openaiMessage{
-				Role:    role,
-				Content: strings.Join(textParts, "\n"),
-			})
+		// Plain text message (assistant with reasoning, or user/system).
+		if len(textParts) > 0 || len(reasoningParts) > 0 {
+			msg := openaiMessage{
+				Role: role,
+			}
+			if len(textParts) > 0 {
+				msg.Content = strings.Join(textParts, "\n")
+			}
+			if role == "assistant" && len(reasoningParts) > 0 {
+				msg.ReasoningContent = strings.Join(reasoningParts, "\n")
+			}
+			messages = append(messages, msg)
 		}
 	}
 	return messages
