@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
 
@@ -487,6 +488,7 @@ func (r *Repository) CreateType(ctx context.Context, projectID, userID string, r
 
 	now := time.Now()
 	entry := &ProjectObjectSchemaRegistry{
+		ID:               uuid.New().String(),
 		ProjectID:        projectID,
 		TypeName:         req.TypeName,
 		Source:           "custom",
