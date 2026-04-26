@@ -695,6 +695,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			ProjectID:       agent.ProjectID,
 			OrgID:           orgID,
 			UserMessage:     userMessage,
+			UserID:          user.ID, // propagate for ask_user notifications
 			TriggerMetadata: triggerReq.Context,
 			Model:           triggerReq.Model,
 			EnvVars:         triggerReq.EnvVars,
@@ -2581,6 +2582,7 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 				AgentDefinition: agentDef,
 				ProjectID:       agent.ProjectID,
 				UserMessage:     userMessage,
+				UserID:          user.ID, // propagate for ask_user notifications
 				AuthToken:       resumeAuthToken,
 			})
 			if result != nil && result.Cleanup != nil {
