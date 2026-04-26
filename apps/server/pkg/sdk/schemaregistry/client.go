@@ -50,6 +50,7 @@ type SchemaRegistryEntry struct {
 	ID                    string                 `json:"id"`
 	Type                  string                 `json:"type"`
 	Source                string                 `json:"source"`
+	Namespace             *string                `json:"namespace,omitempty"`
 	SchemaID              *string                `json:"schema_id,omitempty"`
 	SchemaName            *string                `json:"schema_name,omitempty"`
 	SchemaVersion         int                    `json:"schema_version"`
@@ -92,11 +93,16 @@ type ListTypesOptions struct {
 	EnabledOnly *bool  // Filter enabled types only (default true on server)
 	Source      string // Filter by source: "template", "custom", "discovered", "all"
 	Search      string // Search in type names
+	// Namespace filters by namespace. Empty = only NULL-namespace types (default).
+	// Set to "all" to return all types regardless of namespace.
+	// Set to a specific value to return types in that namespace.
+	Namespace string
 }
 
 // CreateTypeRequest is the request to register a custom object type for a project.
 type CreateTypeRequest struct {
 	TypeName         string          `json:"type_name"`
+	Namespace        *string         `json:"namespace,omitempty"`
 	Description      *string         `json:"description,omitempty"`
 	JSONSchema       json.RawMessage `json:"json_schema"`
 	UIConfig         json.RawMessage `json:"ui_config,omitempty"`
@@ -106,6 +112,7 @@ type CreateTypeRequest struct {
 
 // UpdateTypeRequest is the request to update a registered type.
 type UpdateTypeRequest struct {
+	Namespace        *string         `json:"namespace,omitempty"` // set to "" to clear namespace
 	Description      *string         `json:"description,omitempty"`
 	JSONSchema       json.RawMessage `json:"json_schema,omitempty"`
 	UIConfig         json.RawMessage `json:"ui_config,omitempty"`
@@ -148,6 +155,9 @@ func (c *Client) GetProjectTypes(ctx context.Context, projectID string, opts *Li
 		}
 		if opts.Search != "" {
 			q.Set("search", opts.Search)
+		}
+		if opts.Namespace != "" {
+			q.Set("namespace", opts.Namespace)
 		}
 	}
 	u.RawQuery = q.Encode()
