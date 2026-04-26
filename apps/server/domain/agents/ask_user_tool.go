@@ -81,12 +81,38 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 				switch AgentQuestionInteractionType(interactionTypeStr) {
 				case QuestionInteractionButtons, QuestionInteractionSelect, QuestionInteractionMultiSelect, QuestionInteractionText:
 					interactionType = AgentQuestionInteractionType(interactionTypeStr)
+				default:
+					deps.Logger.Warn("ask_user: unsupported interaction_type, defaulting to buttons",
+						slog.String("interaction_type", interactionTypeStr),
+					)
 				}
 			}
 
 			// Parse placeholder and max_length (for text interaction type)
 			placeholder, _ := args["placeholder"].(string)
-			maxLength, _ := args["max_length"].(float64)
+			var maxLength int
+			if raw, ok := args["max_length"]; ok {
+				switch v := raw.(type) {
+				case float64:
+					maxLength = int(v)
+				case int:
+					maxLength = v
+				case int64:
+					maxLength = int(v)
+				case json.Number:
+					if n, err := v.Int64(); err == nil {
+						maxLength = int(n)
+					} else {
+						deps.Logger.Warn("ask_user: invalid json.Number max_length, ignoring", slog.Any("max_length", raw))
+					}
+				default:
+					deps.Logger.Warn("ask_user: unsupported max_length type, ignoring", slog.Any("max_length", raw))
+				}
+				if maxLength < 0 {
+					deps.Logger.Warn("ask_user: negative max_length is invalid, ignoring", slog.Int("max_length", maxLength))
+					maxLength = 0
+				}
+			}
 
 			// Cancel any existing pending questions for this run
 			if err := deps.Repo.CancelPendingQuestionsForRun(ctx, deps.RunID); err != nil {
@@ -105,7 +131,7 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 				Options:         options,
 				InteractionType: interactionType,
 				Placeholder:     placeholder,
-				MaxLength:       int(maxLength),
+				MaxLength:       maxLength,
 				Status:          QuestionStatusPending,
 			}
 
