@@ -566,7 +566,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 	// Branch: agent-backed vs direct-LLM flow
 	if conv.AgentDefinitionID != nil {
-		agentResult := h.streamAgentChat(ctx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter)
+		agentResult := h.streamAgentChat(ctx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "")
 		sseWriter.WriteData(sse.NewDoneEvent())
 		sseWriter.Close()
 		if agentResult != nil && agentResult.Cleanup != nil {
@@ -835,7 +835,7 @@ func friendlyProviderError(err error) string {
 // streamAgentChat handles the agent-backed chat flow. It loads the agent definition,
 // builds conversation history, calls the agent executor with a StreamCallback, and
 // maps streaming events to SSE events. Final assistant text is persisted to kb.chat_messages.
-func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, message, projectID, orgID, userID string, sseWriter *sse.Writer) *agents.ExecuteResult {
+func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, message, projectID, orgID, userID string, sseWriter *sse.Writer, parentRunID, rootRunID string) *agents.ExecuteResult {
 	agentDefID := conv.AgentDefinitionID.String()
 
 	// Load the agent definition
@@ -996,7 +996,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		}
 
 		// Execute the real agent
-		result, err = h.agentExecutor.Execute(ctx, agents.ExecuteRequest{
+		execReq := agents.ExecuteRequest{
 			Agent:            dummyAgent,
 			AgentDefinition:  def,
 			ProjectID:        projectID,
@@ -1005,7 +1005,14 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			StreamCallback:   streamCallback,
 			AuthToken:        authToken,
 			EphemeralTokenID: ephemeralTokenID,
-		})
+		}
+		if parentRunID != "" {
+			execReq.ParentRunID = &parentRunID
+		}
+		if rootRunID != "" {
+			execReq.RootRunID = &rootRunID
+		}
+		result, err = h.agentExecutor.Execute(ctx, execReq)
 	}
 
 	if err != nil {
@@ -1062,6 +1069,8 @@ type QueryStreamRequest struct {
 	Message        string `json:"message"`
 	ConversationID string `json:"conversation_id,omitempty"` // optional: continue a previous session
 	Branch         string `json:"branch,omitempty"`
+	ParentRunID    string `json:"parent_run_id,omitempty"` // optional: calling agent's run ID for parent→child linkage
+	RootRunID      string `json:"root_run_id,omitempty"`   // optional: top-level orchestration run ID
 }
 
 // QueryStream handles POST /api/projects/:projectId/query.
@@ -1092,6 +1101,16 @@ func (h *Handler) QueryStream(c echo.Context) error {
 	}
 	if req.Branch != "" {
 		message = fmt.Sprintf("[Branch: %s]\n\n%s", req.Branch, message)
+	}
+
+	// Accept parent/root run IDs from headers as well (for MCP tool callers that can't modify the body).
+	parentRunID := req.ParentRunID
+	if parentRunID == "" {
+		parentRunID = c.Request().Header.Get("X-Parent-Run-Id")
+	}
+	rootRunID := req.RootRunID
+	if rootRunID == "" {
+		rootRunID = c.Request().Header.Get("X-Root-Run-Id")
 	}
 
 	ctx := c.Request().Context()
@@ -1203,9 +1222,14 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		return nil
 	}
 
-	queryResult := h.streamAgentChat(ctx, conv, message, projectID, user.OrgID, user.ID, sseWriter)
+	queryResult := h.streamAgentChat(ctx, conv, message, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID)
 	span.SetStatus(codes.Ok, "")
-	sseWriter.WriteData(sse.NewDoneEvent())
+	// Emit done event with run_id so callers (e.g. search-knowledge MCP tool) can trace the internal run.
+	var queryRunID string
+	if queryResult != nil {
+		queryRunID = queryResult.RunID
+	}
+	sseWriter.WriteData(sse.NewDoneEventWithRun(queryRunID))
 	sseWriter.Close()
 	if queryResult != nil && queryResult.Cleanup != nil {
 		go queryResult.Cleanup()
@@ -1379,7 +1403,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 		return nil
 	}
 
-	askResult := h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, user.OrgID, user.ID, sseWriter)
+	askResult := h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, user.OrgID, user.ID, sseWriter, "", "")
 	span.SetStatus(codes.Ok, "")
 	sseWriter.WriteData(sse.NewDoneEvent())
 	sseWriter.Close()

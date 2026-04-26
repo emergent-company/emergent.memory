@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -106,6 +107,13 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	if projectID != "" {
 		req.Header.Set("X-Project-ID", projectID)
 	}
+	// Forward caller run IDs so QueryStream can set parent_run_id on the internal agent run.
+	if callerRunID := provider.RunIDFromContext(ctx); callerRunID != "" {
+		req.Header.Set("X-Parent-Run-Id", callerRunID)
+	}
+	if rootRunID := provider.RootRunIDFromContext(ctx); rootRunID != "" {
+		req.Header.Set("X-Root-Run-Id", rootRunID)
+	}
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -128,6 +136,7 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	// Collect SSE token events and capture the session ID from the meta event.
 	var parts []string
 	var returnedSessionID string
+	var returnedRunID string
 	truncated := false
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -152,6 +161,10 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 			if id, ok := chunk["conversationId"].(string); ok && id != "" {
 				returnedSessionID = id
 			}
+		case "done":
+			if rid, ok := chunk["runId"].(string); ok && rid != "" {
+				returnedRunID = rid
+			}
 		case "error":
 			if errMsg, ok := chunk["error"].(string); ok && errMsg != "" {
 				return nil, fmt.Errorf("query_knowledge: agent error: %s", errMsg)
@@ -174,6 +187,9 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	}
 	if returnedSessionID != "" {
 		result["session_id"] = returnedSessionID
+	}
+	if returnedRunID != "" {
+		result["run_id"] = returnedRunID
 	}
 	return s.wrapResult(result)
 }

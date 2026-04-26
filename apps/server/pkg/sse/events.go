@@ -24,6 +24,7 @@ const (
 type MetaEvent struct {
 	Type           string `json:"type"`
 	ConversationID string `json:"conversationId"`
+	RunID          string `json:"runId,omitempty"`
 	Citations      []any  `json:"citations"`
 	GraphObjects   []any  `json:"graphObjects,omitempty"`
 	GraphNeighbors any    `json:"graphNeighbors,omitempty"`
@@ -34,6 +35,16 @@ func NewMetaEvent(conversationID string) MetaEvent {
 	return MetaEvent{
 		Type:           string(EventMeta),
 		ConversationID: conversationID,
+		Citations:      []any{},
+	}
+}
+
+// NewMetaEventWithRun creates a meta event that also carries the agent run ID.
+func NewMetaEventWithRun(conversationID, runID string) MetaEvent {
+	return MetaEvent{
+		Type:           string(EventMeta),
+		ConversationID: conversationID,
+		RunID:          runID,
 		Citations:      []any{},
 	}
 }
@@ -88,12 +99,21 @@ func NewErrorEvent(errMsg string) ErrorEvent {
 
 // DoneEvent is the final event signaling end of stream.
 type DoneEvent struct {
-	Type string `json:"type"`
+	Type  string `json:"type"`
+	RunID string `json:"runId,omitempty"`
 }
 
 // NewDoneEvent creates a new done event.
 func NewDoneEvent() DoneEvent {
 	return DoneEvent{
 		Type: string(EventDone),
+	}
+}
+
+// NewDoneEventWithRun creates a done event that also carries the agent run ID.
+func NewDoneEventWithRun(runID string) DoneEvent {
+	return DoneEvent{
+		Type:  string(EventDone),
+		RunID: runID,
 	}
 }
