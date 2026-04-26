@@ -23,6 +23,7 @@ type ProjectObjectSchemaRegistry struct {
 	Enabled             bool            `bun:"enabled,notnull,default:true" json:"enabled"`
 	DiscoveryConfidence *float64        `bun:"discovery_confidence" json:"discoveryConfidence,omitempty"`
 	Description         *string         `bun:"description" json:"description,omitempty"`
+	Namespace           *string         `bun:"namespace" json:"namespace,omitempty"`
 	CreatedBy           *string         `bun:"created_by,type:uuid" json:"createdBy,omitempty"`
 	CreatedAt           time.Time       `bun:"created_at,notnull,default:now()" json:"createdAt"`
 	UpdatedAt           time.Time       `bun:"updated_at,notnull,default:now()" json:"updatedAt"`

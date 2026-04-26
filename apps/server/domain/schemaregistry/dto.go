@@ -19,6 +19,7 @@ type SchemaRegistryEntryDTO struct {
 	Enabled               bool                   `json:"enabled"`
 	DiscoveryConfidence   *float64               `json:"discovery_confidence,omitempty"`
 	Description           *string                `json:"description,omitempty"`
+	Namespace             *string                `json:"namespace,omitempty"`
 	ObjectCount           int                    `json:"object_count,omitempty"`
 	CreatedAt             time.Time              `json:"created_at"`
 	UpdatedAt             time.Time              `json:"updated_at"`
@@ -53,6 +54,7 @@ type ListTypesQuery struct {
 	EnabledOnly bool   `query:"enabled_only"`
 	Source      string `query:"source"` // 'template', 'custom', 'discovered', 'all'
 	Search      string `query:"search"`
+	Namespace   string `query:"namespace"` // filter by namespace; "all" returns everything; default returns only namespace=NULL
 }
 
 // SchemaRegistryRowDTO represents a row from the complex SQL query with joins
@@ -68,6 +70,7 @@ type SchemaRegistryRowDTO struct {
 	Enabled             bool            `bun:"enabled"`
 	DiscoveryConfidence *float64        `bun:"discovery_confidence"`
 	Description         *string         `bun:"description"`
+	Namespace           *string         `bun:"namespace"`
 	CreatedBy           *string         `bun:"created_by"`
 	CreatedAt           time.Time       `bun:"created_at"`
 	UpdatedAt           time.Time       `bun:"updated_at"`
@@ -107,6 +110,7 @@ func (r *SchemaRegistryRowDTO) ToDTO() SchemaRegistryEntryDTO {
 		Enabled:             r.Enabled,
 		DiscoveryConfidence: r.DiscoveryConfidence,
 		Description:         r.Description,
+		Namespace:           r.Namespace,
 		ObjectCount:         r.ObjectCount,
 		CreatedAt:           r.CreatedAt,
 		UpdatedAt:           r.UpdatedAt,
@@ -181,6 +185,7 @@ func (rs *RelationshipSchema) GetTargetTypes() []string {
 type CreateTypeRequest struct {
 	TypeName         string          `json:"type_name"`
 	Description      *string         `json:"description,omitempty"`
+	Namespace        *string         `json:"namespace,omitempty"`
 	JSONSchema       json.RawMessage `json:"json_schema"`
 	UIConfig         json.RawMessage `json:"ui_config,omitempty"`
 	ExtractionConfig json.RawMessage `json:"extraction_config,omitempty"`
@@ -190,6 +195,7 @@ type CreateTypeRequest struct {
 // UpdateTypeRequest is the request to update a registered type
 type UpdateTypeRequest struct {
 	Description      *string         `json:"description,omitempty"`
+	Namespace        *string         `json:"namespace,omitempty"`
 	JSONSchema       json.RawMessage `json:"json_schema,omitempty"`
 	UIConfig         json.RawMessage `json:"ui_config,omitempty"`
 	ExtractionConfig json.RawMessage `json:"extraction_config,omitempty"`

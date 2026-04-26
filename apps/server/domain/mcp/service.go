@@ -196,13 +196,17 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "entity-type-list",
-			Description: "List all available entity types in the knowledge graph with instance counts and relationship types. Pass branch to see counts for a specific branch (e.g. \"plan/main\"); omit for main branch.",
+			Description: "List all available entity types in the knowledge graph with instance counts and relationship types. Pass branch to see counts for a specific branch (e.g. \"plan/main\"); omit for main branch. By default only returns types with no namespace set. Pass namespace to filter by a specific namespace, or namespace=\"all\" to see all types regardless of namespace.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"branch": {
 						Type:        "string",
 						Description: "Branch name or UUID to count entities on (e.g. \"plan/main\"). Omit for main branch.",
+					},
+					"namespace": {
+						Type:        "string",
+						Description: "Namespace filter. Omit to see only types with no namespace. Pass a specific namespace (e.g. \"system\") to see only that namespace. Pass \"all\" to see all types regardless of namespace.",
 					},
 				},
 				Required: []string{},
@@ -286,7 +290,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "entity-search",
-			Description: "Search entities by text query across name, key, and description fields.",
+			Description: "Search entities by text query across name, key, and description fields. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -301,6 +305,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					"type_name": {
 						Type:        "string",
 						Description: "Optional entity type filter",
+					},
+					"namespace": {
+						Type:        "string",
+						Description: "Namespace filter. Omit for types with no namespace. Pass specific namespace (e.g. \"system\") or \"all\" to include all namespaces.",
 					},
 					"limit": {
 						Type:        "number",
@@ -610,7 +618,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "search-hybrid",
-			Description: "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents. Supports optional recency and access-frequency ranking boosts.",
+			Description: "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents. Supports optional recency and access-frequency ranking boosts. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -625,6 +633,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					"labels": {
 						Type:        "array",
 						Description: "Optional label filters",
+					},
+					"namespace": {
+						Type:        "string",
+						Description: "Namespace filter. Omit for types with no namespace. Pass specific namespace (e.g. \"system\") or \"all\" to include all namespaces.",
 					},
 					"limit": {
 						Type:        "number",
@@ -651,7 +663,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "search-semantic",
-			Description: "Search entities by semantic meaning using vector embeddings. Finds conceptually similar entities even with different wording.",
+			Description: "Search entities by semantic meaning using vector embeddings. Finds conceptually similar entities even with different wording. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -662,6 +674,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					"types": {
 						Type:        "array",
 						Description: "Optional entity type filters",
+					},
+					"namespace": {
+						Type:        "string",
+						Description: "Namespace filter. Omit for types with no namespace. Pass specific namespace (e.g. \"system\") or \"all\" to include all namespaces.",
 					},
 					"limit": {
 						Type:        "number",
@@ -1476,6 +1492,8 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 		return nil, err
 	}
 
+	namespaceFilter, _ := args["namespace"].(string)
+
 	// Query type registry with counts
 	type typeRow struct {
 		Name          string `bun:"name"`
@@ -1506,7 +1524,21 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 			branchArgs = []any{*branchID}
 		}
 
+		// Build namespace clause
+		namespaceClause := "AND tr.namespace IS NULL"
+		var namespaceArgs []any
+		if namespaceFilter == "all" {
+			namespaceClause = ""
+		} else if namespaceFilter != "" {
+			namespaceClause = "AND tr.namespace = ?"
+			namespaceArgs = []any{namespaceFilter}
+		}
+
 		// Query entity types
+		queryArgs := []any{projectUUID}
+		queryArgs = append(queryArgs, branchArgs...)
+		queryArgs = append(queryArgs, projectUUID)
+		queryArgs = append(queryArgs, namespaceArgs...)
 		err := tx.NewRaw(`
 			SELECT 
 				tr.type_name as name,
@@ -1521,9 +1553,10 @@ func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, 
 				`+branchClause+`
 			WHERE tr.enabled = true 
 				AND tr.project_id = ?
+				`+namespaceClause+`
 			GROUP BY tr.type_name, tr.description
 			ORDER BY tr.type_name
-		`, append([]any{projectUUID}, append(branchArgs, projectUUID)...)...).Scan(ctx, &types)
+		`, queryArgs...).Scan(ctx, &types)
 		if err != nil {
 			return err
 		}
@@ -2245,6 +2278,15 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			branchArgs = []any{*branchID}
 		}
 
+		namespaceFilter, _ := args["namespace"].(string)
+		namespaceJoin := `LEFT JOIN kb.project_object_schema_registry tr ON tr.type_name = go.type AND tr.project_id = go.project_id`
+		namespaceClause := "AND (tr.namespace IS NULL OR tr.id IS NULL)"
+		if namespaceFilter == "all" {
+			namespaceClause = ""
+		} else if namespaceFilter != "" {
+			namespaceClause = "AND tr.namespace = ?"
+		}
+
 		baseQuery := `
 			SELECT 
 				go.id,
@@ -2257,6 +2299,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 				b.name as branch_name
 			FROM kb.graph_objects go
 			LEFT JOIN kb.branches b ON b.id = go.branch_id
+			` + namespaceJoin + `
 			WHERE go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND (
@@ -2265,8 +2308,12 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 					OR go.properties->>'description' ILIKE ?
 				)
 				` + branchFilter + `
+				` + namespaceClause + `
 		`
 		queryArgs := append([]any{projectUUID, searchPattern, searchPattern, searchPattern}, branchArgs...)
+		if namespaceFilter != "all" && namespaceFilter != "" {
+			queryArgs = append(queryArgs, namespaceFilter)
+		}
 
 		if typeName != "" {
 			baseQuery += " AND go.type = ?"

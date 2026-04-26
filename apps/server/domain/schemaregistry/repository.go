@@ -45,6 +45,7 @@ func (r *Repository) GetProjectTypes(ctx context.Context, projectID string, quer
 			ptr.enabled,
 			ptr.discovery_confidence,
 			ptr.description,
+			ptr.namespace,
 			ptr.created_by,
 			ptr.created_at,
 			ptr.updated_at,
@@ -77,11 +78,21 @@ func (r *Repository) GetProjectTypes(ctx context.Context, projectID string, quer
 		argIdx++
 	}
 
+	// Namespace filtering: default hides namespaced types; pass specific namespace to see only that ns; "all" shows everything
+	if query.Namespace == "" {
+		sql += " AND ptr.namespace IS NULL"
+	} else if query.Namespace != "all" {
+		sql += fmt.Sprintf(" AND ptr.namespace = $%d", argIdx)
+		args = append(args, query.Namespace)
+		argIdx++
+	}
+	// "all" → no namespace filter
+
 	sql += `
 		GROUP BY ptr.id, ptr.type_name, ptr.source, ptr.schema_id, 
 			ptr.schema_version, ptr.json_schema, ptr.ui_config, 
 			ptr.extraction_config, ptr.enabled, ptr.discovery_confidence, 
-			ptr.description, ptr.created_by, ptr.created_at, ptr.updated_at, tp.name
+			ptr.description, ptr.namespace, ptr.created_by, ptr.created_at, ptr.updated_at, tp.name
 		ORDER BY ptr.type_name
 	`
 
@@ -276,6 +287,7 @@ func (r *Repository) GetTypeByName(ctx context.Context, projectID, typeName stri
 			ptr.enabled,
 			ptr.discovery_confidence,
 			ptr.description,
+			ptr.namespace,
 			ptr.created_by,
 			ptr.created_at,
 			ptr.updated_at,
@@ -290,7 +302,7 @@ func (r *Repository) GetTypeByName(ctx context.Context, projectID, typeName stri
 		GROUP BY ptr.id, ptr.type_name, ptr.source, ptr.schema_id, 
 			ptr.schema_version, ptr.json_schema, ptr.ui_config, 
 			ptr.extraction_config, ptr.enabled, ptr.discovery_confidence, 
-			ptr.description, ptr.created_by, ptr.created_at, ptr.updated_at, tp.name
+			ptr.description, ptr.namespace, ptr.created_by, ptr.created_at, ptr.updated_at, tp.name
 	`
 
 	var rows []SchemaRegistryRowDTO
@@ -484,6 +496,7 @@ func (r *Repository) CreateType(ctx context.Context, projectID, userID string, r
 		ExtractionConfig: req.ExtractionConfig,
 		Enabled:          enabled,
 		Description:      req.Description,
+		Namespace:        req.Namespace,
 		CreatedBy:        &userID,
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -519,6 +532,14 @@ func (r *Repository) UpdateType(ctx context.Context, projectID, typeName string,
 
 	if req.Description != nil {
 		q = q.Set("description = ?", *req.Description)
+		hasUpdates = true
+	}
+	if req.Namespace != nil {
+		if *req.Namespace == "" {
+			q = q.Set("namespace = NULL")
+		} else {
+			q = q.Set("namespace = ?", *req.Namespace)
+		}
 		hasUpdates = true
 	}
 	if len(req.JSONSchema) > 0 {

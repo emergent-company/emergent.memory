@@ -30,6 +30,7 @@ func NewHandler(repo *Repository) *Handler {
 // @Param        enabled_only query boolean false "Filter enabled types only (default true)" default(true)
 // @Param        source query string false "Filter by source" Enums(template,custom,discovered,all)
 // @Param        search query string false "Search in type names"
+// @Param        namespace query string false "Namespace filter: omit for default (null-namespace only), specific value for that namespace, 'all' for all namespaces"
 // @Success      200 {array} SchemaRegistryEntryDTO "List of types"
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
@@ -52,6 +53,7 @@ func (h *Handler) GetProjectTypes(c echo.Context) error {
 		EnabledOnly: c.QueryParam("enabled_only") == "true",
 		Source:      c.QueryParam("source"),
 		Search:      c.QueryParam("search"),
+		Namespace:   c.QueryParam("namespace"),
 	}
 
 	// Default enabled_only to true if not specified

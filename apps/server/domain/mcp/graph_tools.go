@@ -11,6 +11,47 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/search"
 )
 
+// getTypesForNamespace returns the set of type names allowed by the namespace filter.
+// Returns nil when namespace is "all" (no filtering needed).
+// When namespace is "" (default), returns types where namespace IS NULL.
+// When namespace is a specific value, returns types with that namespace.
+func (s *Service) getTypesForNamespace(ctx context.Context, projectID string, namespaceFilter string) (map[string]bool, error) {
+	if namespaceFilter == "all" {
+		return nil, nil
+	}
+
+	type row struct {
+		TypeName string `bun:"type_name"`
+	}
+	var rows []row
+
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	if namespaceFilter == "" {
+		_, err = s.db.NewRaw(`
+			SELECT type_name FROM kb.project_object_schema_registry
+			WHERE project_id = ? AND namespace IS NULL AND enabled = true
+		`, projectUUID).Exec(ctx, &rows)
+	} else {
+		_, err = s.db.NewRaw(`
+			SELECT type_name FROM kb.project_object_schema_registry
+			WHERE project_id = ? AND namespace = ? AND enabled = true
+		`, projectUUID, namespaceFilter).Exec(ctx, &rows)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("namespace type lookup: %w", err)
+	}
+
+	allowed := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		allowed[r.TypeName] = true
+	}
+	return allowed, nil
+}
+
 // executeHybridSearch performs hybrid search (FTS + vector + graph context + relationship embeddings)
 func (s *Service) executeHybridSearch(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
@@ -52,6 +93,12 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 		}
 	}
 
+	namespaceFilter, _ := args["namespace"].(string)
+	allowedTypes, err := s.getTypesForNamespace(ctx, projectID, namespaceFilter)
+	if err != nil {
+		return nil, err
+	}
+
 	if s.searchSvc != nil {
 		unifiedReq := &search.UnifiedSearchRequest{
 			Query: query,
@@ -78,7 +125,7 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 				"project_id", projectID,
 			)
 		} else {
-			return s.wrapResult(s.mapUnifiedToSearchResponse(res, types, labels))
+			return s.wrapResult(s.mapUnifiedToSearchResponse(res, types, labels, allowedTypes))
 		}
 	}
 
@@ -107,19 +154,34 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 		return nil, fmt.Errorf("hybrid search: %w", err)
 	}
 
+	// Post-hoc namespace filter for fallback path
+	if allowedTypes != nil {
+		filtered := results.Data[:0]
+		for _, item := range results.Data {
+			if item.Object != nil && allowedTypes[item.Object.Type] {
+				filtered = append(filtered, item)
+			}
+		}
+		results.Data = filtered
+		results.Total = len(filtered)
+	}
+
 	return s.wrapResult(results)
 }
 
 // mapUnifiedToSearchResponse converts unified search results back to graph.SearchResponse
 // for backward compatibility with existing MCP consumers. Relationship results are included
 // as additional items with a synthetic object wrapper.
-func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, types, labels []string) *graph.SearchResponse {
+func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, types, labels []string, allowedTypes map[string]bool) *graph.SearchResponse {
 	var items []*graph.SearchResultItem
 
 	for _, r := range res.Results {
 		switch r.Type {
 		case search.ItemTypeGraph:
 			if len(types) > 0 && !containsStr(types, r.ObjectType) {
+				continue
+			}
+			if allowedTypes != nil && !allowedTypes[r.ObjectType] {
 				continue
 			}
 
@@ -236,6 +298,12 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 		}
 	}
 
+	namespaceFilter, _ := args["namespace"].(string)
+	allowedTypes, err := s.getTypesForNamespace(ctx, projectID, namespaceFilter)
+	if err != nil {
+		return nil, err
+	}
+
 	// Prefer search.Service which auto-embeds the query text, giving the vector
 	// leg full signal even for multi-word queries that FTS can't match well.
 	if s.searchSvc != nil {
@@ -248,7 +316,7 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 			s.log.WarnContext(ctx, "unified search failed in semantic_search, falling back",
 				"error", err, "project_id", projectID)
 		} else {
-			return s.wrapResult(s.mapUnifiedToSearchResponse(res, types, nil))
+			return s.wrapResult(s.mapUnifiedToSearchResponse(res, types, nil, allowedTypes))
 		}
 	}
 
@@ -264,6 +332,19 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 	if err != nil {
 		return nil, fmt.Errorf("semantic search: %w", err)
 	}
+
+	// Post-hoc namespace filter for fallback path
+	if allowedTypes != nil {
+		filtered := results.Data[:0]
+		for _, item := range results.Data {
+			if item.Object != nil && allowedTypes[item.Object.Type] {
+				filtered = append(filtered, item)
+			}
+		}
+		results.Data = filtered
+		results.Total = len(filtered)
+	}
+
 	return s.wrapResult(results)
 }
 
