@@ -1412,74 +1412,109 @@ func (ae *AgentExecutor) runPipeline(
 		if err == nil && getResp != nil && getResp.Session != nil {
 			sess = getResp.Session
 
-			// --- Token-aware trim (Pass 2) ---
+			// --- Token-aware trim (Pass 2) and LLM compression (Phase 2) ---
+			//
+			// Pass 2a: sliding-window trim — discard the oldest events so
+			//   the session fits within 75 % of the model's context window.
+			// Pass 2b: LLM compression — if the session is still over the
+			//   threshold (or the context window is unknown and event count
+			//   is large), summarise the oldest half of events via an LLM
+			//   and replace them with a compact placeholder.
+			var contextWindow int
 			trimmed := false
 			if ae.modelLimits != nil && modelName != "" {
-				contextWindow, limErr := ae.modelLimits.GetModelInputLimit(ctx, modelName)
+				var limErr error
+				contextWindow, limErr = ae.modelLimits.GetModelInputLimit(ctx, modelName)
 				if limErr != nil {
 					ae.log.Warn("failed to look up model context window, skipping token trim",
 						slog.String("model", modelName), logger.Error(limErr))
-				} else if contextWindow > 0 {
-					events := sess.Events()
-					n := events.Len()
+				}
+			}
 
-					// Find most recent LLM event that has usage metadata.
-					var lastPromptTokens int32
+			if contextWindow > 0 {
+				events := sess.Events()
+				n := events.Len()
+
+				// Find most recent LLM event that has usage metadata.
+				var lastPromptTokens int32
+				for i := n - 1; i >= 0; i-- {
+					ev := events.At(i)
+					if ev.UsageMetadata != nil && ev.UsageMetadata.PromptTokenCount > 0 {
+						lastPromptTokens = ev.UsageMetadata.PromptTokenCount
+						break
+					}
+				}
+
+				highWatermark := int32(float64(contextWindow) * 0.80)
+				if lastPromptTokens > 0 && lastPromptTokens >= highWatermark {
+					// Pass 2a: sliding-window trim.
+					targetTokens := int32(float64(contextWindow) * 0.75)
+
+					numKeep := 0
 					for i := n - 1; i >= 0; i-- {
 						ev := events.At(i)
 						if ev.UsageMetadata != nil && ev.UsageMetadata.PromptTokenCount > 0 {
-							lastPromptTokens = ev.UsageMetadata.PromptTokenCount
-							break
-						}
-					}
-
-					highWatermark := int32(float64(contextWindow) * 0.80)
-					if lastPromptTokens > 0 && lastPromptTokens >= highWatermark {
-						// Need to trim. Find N trailing events whose cumulative
-						// token budget fits within 75 % of the context window.
-						targetTokens := int32(float64(contextWindow) * 0.75)
-
-						// Walk backwards accumulating token counts until we
-						// exceed the target; the answer is the number of events
-						// from that point to the end.
-						numKeep := 0
-						for i := n - 1; i >= 0; i-- {
-							ev := events.At(i)
-							if ev.UsageMetadata != nil && ev.UsageMetadata.PromptTokenCount > 0 {
-								if ev.UsageMetadata.PromptTokenCount <= targetTokens {
-									numKeep = n - i
-									break
-								}
+							if ev.UsageMetadata.PromptTokenCount <= targetTokens {
+								numKeep = n - i
+								break
 							}
 						}
-						if numKeep < 1 {
-							numKeep = defaultMaxSessionEvents
-						}
+					}
+					if numKeep < 1 {
+						numKeep = defaultMaxSessionEvents
+					}
 
-						// Pass 2: re-fetch with the computed event count.
-						trimResp, trimErr := sessionService.Get(ctx, &session.GetRequest{
-							AppName:         "agents",
-							UserID:          "system",
-							SessionID:       sessionID,
-							NumRecentEvents: numKeep,
-						})
-						if trimErr == nil && trimResp != nil && trimResp.Session != nil {
-							sess = trimResp.Session
-							trimmed = true
-							ae.log.Info("token-aware session trim applied",
-								slog.String("session_id", sessionID),
-								slog.String("model", modelName),
-								slog.Int("context_window", contextWindow),
-								slog.Int("prompt_tokens_before", int(lastPromptTokens)),
-								slog.Int("events_kept", numKeep),
-								slog.Int("events_total", n),
-							)
+					trimResp, trimErr := sessionService.Get(ctx, &session.GetRequest{
+						AppName:         "agents",
+						UserID:          "system",
+						SessionID:       sessionID,
+						NumRecentEvents: numKeep,
+					})
+					if trimErr == nil && trimResp != nil && trimResp.Session != nil {
+						sess = trimResp.Session
+						trimmed = true
+						ae.log.Info("token-aware session trim applied",
+							slog.String("session_id", sessionID),
+							slog.String("model", modelName),
+							slog.Int("context_window", contextWindow),
+							slog.Int("prompt_tokens_before", int(lastPromptTokens)),
+							slog.Int("events_kept", numKeep),
+							slog.Int("events_total", n),
+						)
+					} else {
+						ae.log.Warn("token-aware session re-fetch failed, using full history",
+							slog.String("session_id", sessionID),
+							logger.Error(trimErr),
+						)
+					}
+
+					// Pass 2b: LLM compression — summarise the dropped head.
+					// Only runs when the trim was successful and a significant
+					// portion of history was dropped (i.e. we're genuinely
+					// near the limit, not just a precautionary trim).
+					if trimmed && numKeep < n/2 {
+						compressed, compErr := ae.compressSession(ctx, sess, sessionID, contextWindow, modelName)
+						if compErr != nil {
+							ae.log.Warn("session compression failed, proceeding with trimmed session",
+								slog.String("session_id", sessionID), logger.Error(compErr))
 						} else {
-							ae.log.Warn("token-aware session re-fetch failed, using full history",
-								slog.String("session_id", sessionID),
-								logger.Error(trimErr),
-							)
+							sess = compressed
 						}
+					}
+				}
+			} else {
+				// Context window unknown — fall back to event-count guard.
+				// Compress if session is very long (>200 events) to prevent
+				// unbounded growth even without token data.
+				const largeSessionThreshold = 200
+				if sess.Events().Len() > largeSessionThreshold {
+					compressed, compErr := ae.compressSession(ctx, sess, sessionID, 0, modelName)
+					if compErr != nil {
+						ae.log.Warn("session compression (no context window) failed, proceeding",
+							slog.String("session_id", sessionID), logger.Error(compErr))
+					} else {
+						sess = compressed
+						trimmed = true
 					}
 				}
 			}
