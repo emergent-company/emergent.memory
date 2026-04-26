@@ -4464,6 +4464,8 @@ definitions:
         items:
           type: integer
         type: array
+      namespace:
+        type: string
       type_name:
         type: string
       ui_config:
@@ -4516,6 +4518,8 @@ definitions:
         allOf:
         - $ref: '#/definitions/domain_schemaregistry.GraphMemorySchema'
         description: Relations - for joining
+      namespace:
+        type: string
       projectId:
         type: string
       schemaId:
@@ -4581,6 +4585,8 @@ definitions:
         items:
           type: integer
         type: array
+      namespace:
+        type: string
       object_count:
         type: integer
       outgoing_relationships:
@@ -4635,6 +4641,8 @@ definitions:
         items:
           type: integer
         type: array
+      namespace:
+        type: string
       ui_config:
         items:
           type: integer
@@ -6429,7 +6437,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.40.0
+  version: 0.40.5
 paths:
   /.well-known/oauth-protected-resource:
     get:
@@ -12810,6 +12818,11 @@ paths:
       - description: Search in type names
         in: query
         name: search
+        type: string
+      - description: 'Namespace filter: omit for default (null-namespace only), specific
+          value for that namespace, ''all'' for all namespaces'
+        in: query
+        name: namespace
         type: string
       produces:
       - application/json

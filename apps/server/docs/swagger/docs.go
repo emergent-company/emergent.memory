@@ -9736,6 +9736,12 @@ const docTemplate = `{
                         "description": "Search in type names",
                         "name": "search",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Namespace filter: omit for default (null-namespace only), specific value for that namespace, 'all' for all namespaces",
+                        "name": "namespace",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -24156,6 +24162,9 @@ const docTemplate = `{
                         "type": "integer"
                     }
                 },
+                "namespace": {
+                    "type": "string"
+                },
                 "type_name": {
                     "type": "string"
                 },
@@ -24236,6 +24245,9 @@ const docTemplate = `{
                             "$ref": "#/definitions/domain_schemaregistry.GraphMemorySchema"
                         }
                     ]
+                },
+                "namespace": {
+                    "type": "string"
                 },
                 "projectId": {
                     "type": "string"
@@ -24333,6 +24345,9 @@ const docTemplate = `{
                         "type": "integer"
                     }
                 },
+                "namespace": {
+                    "type": "string"
+                },
                 "object_count": {
                     "type": "integer"
                 },
@@ -24413,6 +24428,9 @@ const docTemplate = `{
                     "items": {
                         "type": "integer"
                     }
+                },
+                "namespace": {
+                    "type": "string"
                 },
                 "ui_config": {
                     "type": "array",
@@ -27085,7 +27103,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.40.0",
+	Version:          "0.40.5",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

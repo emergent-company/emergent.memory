@@ -15,7 +15,7 @@
         "license": {
             "name": "Proprietary"
         },
-        "version": "0.40.0"
+        "version": "0.40.5"
     },
     "host": "localhost:5300",
     "basePath": "/",
@@ -9732,6 +9732,12 @@
                         "type": "string",
                         "description": "Search in type names",
                         "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Namespace filter: omit for default (null-namespace only), specific value for that namespace, 'all' for all namespaces",
+                        "name": "namespace",
                         "in": "query"
                     }
                 ],
@@ -24153,6 +24159,9 @@
                         "type": "integer"
                     }
                 },
+                "namespace": {
+                    "type": "string"
+                },
                 "type_name": {
                     "type": "string"
                 },
@@ -24233,6 +24242,9 @@
                             "$ref": "#/definitions/domain_schemaregistry.GraphMemorySchema"
                         }
                     ]
+                },
+                "namespace": {
+                    "type": "string"
                 },
                 "projectId": {
                     "type": "string"
@@ -24330,6 +24342,9 @@
                         "type": "integer"
                     }
                 },
+                "namespace": {
+                    "type": "string"
+                },
                 "object_count": {
                     "type": "integer"
                 },
@@ -24410,6 +24425,9 @@
                     "items": {
                         "type": "integer"
                     }
+                },
+                "namespace": {
+                    "type": "string"
                 },
                 "ui_config": {
                     "type": "array",
