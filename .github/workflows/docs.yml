@@ -66,16 +66,20 @@ jobs:
 
       - name: Sync root-level files to gh-pages
         run: |
-          # mike deploys versioned docs but root-level raw files need to be at /
-          # (swagger.json, swagger.yaml, openapi.json, llms*.md)
+          # Copy files before switching branches so they survive the checkout
+          cp apps/server/docs/swagger/swagger.json /tmp/swagger.json
+          cp apps/server/docs/swagger/swagger.yaml /tmp/swagger.yaml
+          cp docs/llms.md /tmp/llms.md
+          cp docs/llms-go-sdk.md /tmp/llms-go-sdk.md
+          cp docs/llms-swift-sdk.md /tmp/llms-swift-sdk.md
           git fetch origin gh-pages
           git checkout gh-pages
-          cp apps/server/docs/swagger/swagger.json swagger.json
-          cp apps/server/docs/swagger/swagger.yaml swagger.yaml
-          cp apps/server/docs/swagger/swagger.json openapi.json
-          cp docs/llms.md llms.md
-          cp docs/llms-go-sdk.md llms-go-sdk.md
-          cp docs/llms-swift-sdk.md llms-swift-sdk.md
+          cp /tmp/swagger.json swagger.json
+          cp /tmp/swagger.yaml swagger.yaml
+          cp /tmp/swagger.json openapi.json
+          cp /tmp/llms.md llms.md
+          cp /tmp/llms-go-sdk.md llms-go-sdk.md
+          cp /tmp/llms-swift-sdk.md llms-swift-sdk.md
           git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-swift-sdk.md
           git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
           git push origin gh-pages
@@ -118,14 +122,20 @@ jobs:
 
       - name: Sync root-level files to gh-pages
         run: |
+          # Copy files before switching branches so they survive the checkout
+          cp apps/server/docs/swagger/swagger.json /tmp/swagger.json
+          cp apps/server/docs/swagger/swagger.yaml /tmp/swagger.yaml
+          cp docs/llms.md /tmp/llms.md
+          cp docs/llms-go-sdk.md /tmp/llms-go-sdk.md
+          cp docs/llms-swift-sdk.md /tmp/llms-swift-sdk.md
           git fetch origin gh-pages
           git checkout gh-pages
-          cp apps/server/docs/swagger/swagger.json swagger.json
-          cp apps/server/docs/swagger/swagger.yaml swagger.yaml
-          cp apps/server/docs/swagger/swagger.json openapi.json
-          cp docs/llms.md llms.md
-          cp docs/llms-go-sdk.md llms-go-sdk.md
-          cp docs/llms-swift-sdk.md llms-swift-sdk.md
+          cp /tmp/swagger.json swagger.json
+          cp /tmp/swagger.yaml swagger.yaml
+          cp /tmp/swagger.json openapi.json
+          cp /tmp/llms.md llms.md
+          cp /tmp/llms-go-sdk.md llms-go-sdk.md
+          cp /tmp/llms-swift-sdk.md llms-swift-sdk.md
           git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-swift-sdk.md
           git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
           git push origin gh-pages
