@@ -2031,8 +2031,8 @@ func (ae *AgentExecutor) buildSkillTool(ctx context.Context, run *AgentRun, req 
 		return nil, nil
 	}
 
-	// Opt-in check: inject skill tool when skills field is non-empty, OR legacy "skill" in tools list.
-	hasSkillsField := len(req.AgentDefinition.Skills) > 0
+	// Opt-in check: inject skill tool when skills field is non-empty, autoLoadSkills is set, OR legacy "skill" in tools list.
+	hasSkillsField := len(req.AgentDefinition.Skills) > 0 || req.AgentDefinition.AutoLoadSkills
 	hasSkillInTools := false
 	for _, t := range req.AgentDefinition.Tools {
 		if t == "skill" {
@@ -2141,7 +2141,12 @@ func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
 // to the system instruction when the agent definition declares bound skills.
 // Returns an empty string when there are no skills to inject.
 func (ae *AgentExecutor) buildSkillsSystemPrompt(req ExecuteRequest) string {
-	if req.AgentDefinition == nil || len(req.AgentDefinition.Skills) == 0 {
+	if req.AgentDefinition == nil {
+		return ""
+	}
+	hasExplicit := len(req.AgentDefinition.Skills) > 0
+	hasAutoLoad := req.AgentDefinition.AutoLoadSkills
+	if !hasExplicit && !hasAutoLoad {
 		return ""
 	}
 
@@ -2151,13 +2156,16 @@ func (ae *AgentExecutor) buildSkillsSystemPrompt(req ExecuteRequest) string {
 		return ""
 	}
 
-	// Filter to declared skill names; "*" or wildcard means all.
+	// Build the set of matched skills.
+	// Explicit "*" means all; otherwise merge explicit names + auto-prefix matches.
 	declared := req.AgentDefinition.Skills
 	isWildcard := len(declared) == 1 && declared[0] == "*"
 	var matched []*skills.Skill
 	if isWildcard {
 		matched = all
 	} else {
+		seen := make(map[string]struct{})
+		// Explicit names first (they take precedence for deduplication).
 		nameSet := make(map[string]struct{}, len(declared))
 		for _, n := range declared {
 			nameSet[n] = struct{}{}
@@ -2165,6 +2173,17 @@ func (ae *AgentExecutor) buildSkillsSystemPrompt(req ExecuteRequest) string {
 		for _, s := range all {
 			if _, ok := nameSet[s.Name]; ok {
 				matched = append(matched, s)
+				seen[s.Name] = struct{}{}
+			}
+		}
+		// Auto-load: prefix match — any skill named "{agentName}.{anything}".
+		if hasAutoLoad && req.AgentDefinition.Name != "" {
+			prefix := req.AgentDefinition.Name + "."
+			for _, s := range all {
+				if _, already := seen[s.Name]; !already && strings.HasPrefix(s.Name, prefix) {
+					matched = append(matched, s)
+					seen[s.Name] = struct{}{}
+				}
 			}
 		}
 	}

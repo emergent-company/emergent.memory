@@ -314,6 +314,7 @@ type AgentDefinition struct {
 	Tools          []string          `bun:"tools,array" json:"tools"`
 	BannedTools    []string          `bun:"banned_tools,array" json:"bannedTools,omitempty"`
 	Skills         []string          `bun:"skills,array" json:"skills"`
+	AutoLoadSkills bool              `bun:"auto_load_skills,notnull,default:false" json:"autoLoadSkills"`
 	FlowType       AgentFlowType     `bun:"flow_type,notnull,default:'single'" json:"flowType"`
 	IsDefault      bool              `bun:"is_default,notnull,default:false" json:"isDefault"`
 	MaxSteps       *int              `bun:"max_steps" json:"maxSteps,omitempty"`
