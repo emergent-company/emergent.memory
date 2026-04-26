@@ -201,3 +201,13 @@ type UpdateTypeRequest struct {
 	ExtractionConfig json.RawMessage `json:"extraction_config,omitempty"`
 	Enabled          *bool           `json:"enabled,omitempty"`
 }
+
+// CreateRelationshipTypeRequest is the request body for creating or updating a relationship type.
+type CreateRelationshipTypeRequest struct {
+	Name         string `json:"name"`
+	Label        string `json:"label,omitempty"`
+	InverseLabel string `json:"inverse_label,omitempty"`
+	Description  string `json:"description,omitempty"`
+	SourceType   string `json:"source_type,omitempty"`
+	TargetType   string `json:"target_type,omitempty"`
+}

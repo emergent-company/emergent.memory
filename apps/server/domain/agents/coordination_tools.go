@@ -139,11 +139,12 @@ type ListAvailableAgentsArgs struct {
 
 // AgentSummary is a single agent entry in the list_available_agents response.
 type AgentSummary struct {
-	Name        string        `json:"name"`
-	Description string        `json:"description,omitempty"`
-	Tools       []string      `json:"tools,omitempty"`
-	FlowType    AgentFlowType `json:"flow_type"`
-	Visibility  string        `json:"visibility"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Tools       []string       `json:"tools,omitempty"`
+	FlowType    AgentFlowType  `json:"flow_type"`
+	Visibility  string         `json:"visibility"`
+	Config      map[string]any `json:"config,omitempty"`
 }
 
 // ListAvailableAgentsResult is the response from list_available_agents.
@@ -182,6 +183,7 @@ func BuildListAvailableAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) 
 					Tools:       filterWorkspaceToolNames(def.Tools),
 					FlowType:    def.FlowType,
 					Visibility:  string(def.Visibility),
+					Config:      def.Config,
 				})
 			}
 

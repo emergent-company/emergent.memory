@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
@@ -51,6 +52,9 @@ type AskUserToolDeps struct {
 	// UserID is the user who triggered the agent (for notification targeting).
 	// If empty, the notification cannot be created.
 	UserID string
+	// EventsSvc is used to emit a real-time SSE event after notification creation.
+	// nil is safe — event emission is best-effort.
+	EventsSvc *events.Service
 }
 
 // BuildAskUserTool creates the ask_user ADK tool.
@@ -182,6 +186,24 @@ func createQuestionNotification(ctx tool.Context, deps AskUserToolDeps, q *Agent
 		slog.String("question_id", q.ID),
 		slog.String("notification_id", notifID),
 	)
+
+	// Emit real-time SSE event so connected clients (Diane bot, admin UI) are notified instantly.
+	if deps.EventsSvc != nil {
+		deps.EventsSvc.EmitCreated(
+			events.EntityNotification,
+			notifID,
+			deps.ProjectID,
+			&events.EmitOptions{
+				Data: map[string]any{
+					"type":        "agent_question",
+					"question_id": q.ID,
+					"run_id":      q.RunID,
+					"question":    q.Question,
+					"status":      "pending",
+				},
+			},
+		)
+	}
 
 	return notifID
 }

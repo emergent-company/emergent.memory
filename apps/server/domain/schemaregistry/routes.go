@@ -29,4 +29,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Delete a registered type (requires schema:write scope for API tokens)
 	g.DELETE("/projects/:projectId/types/:typeName", h.DeleteType, authMiddleware.RequireAPITokenScopes("schema:write"))
+
+	// Relationship type CRUD (requires schema:write scope for API tokens)
+	g.GET("/projects/:projectId/relationship-types", h.ListRelationshipTypes)
+	g.POST("/projects/:projectId/relationship-types", h.CreateRelationshipType, authMiddleware.RequireAPITokenScopes("schema:write"))
+	g.PUT("/projects/:projectId/relationship-types/:name", h.UpdateRelationshipType, authMiddleware.RequireAPITokenScopes("schema:write"))
+	g.DELETE("/projects/:projectId/relationship-types/:name", h.DeleteRelationshipType, authMiddleware.RequireAPITokenScopes("schema:write"))
 }

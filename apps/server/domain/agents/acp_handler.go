@@ -291,6 +291,11 @@ func (h *ACPHandler) CreateRun(c echo.Context) error {
 		EnvVars:         req.EnvVars,
 	}
 
+	// Propagate the authenticated user ID so ask_user notifications target them.
+	if u := auth.GetUser(c); u != nil {
+		execReq.UserID = u.ID
+	}
+
 	switch mode {
 	case "async":
 		return h.createRunAsync(c, ctx, run, execReq, def)

@@ -21,6 +21,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
@@ -152,6 +153,10 @@ type ExecuteRequest struct {
 	// ACPSessionID links this run to an ACP session so built-in tools like
 	// set_session_title can update session metadata during execution.
 	ACPSessionID string
+
+	// UserID is the authenticated user who initiated this run (empty for system/background runs).
+	// Passed to ask_user tool so notifications target the correct user.
+	UserID string
 }
 
 // ExecuteResult is the outcome of an agent execution.
@@ -192,6 +197,7 @@ type AgentExecutor struct {
 	modelLimits    ModelLimitsLookup // nil if provider module is not registered
 	apiTokenSvc    *apitoken.Service // nil if not configured; used for ephemeral sandbox tokens
 	usageService   *provider.UsageService
+	eventsSvc      *events.Service // nil if events module not registered; used by ask_user SSE notification
 	safeguards     config.AgentSafeguardsConfig
 	log            *slog.Logger
 }
@@ -209,6 +215,7 @@ func NewAgentExecutor(
 	modelLimits ModelLimitsLookup,
 	apiTokenSvc *apitoken.Service,
 	usageService *provider.UsageService,
+	eventsSvc *events.Service,
 	log *slog.Logger,
 ) *AgentExecutor {
 	wsEnabled := cfg.Sandbox.IsEnabled()
@@ -227,6 +234,7 @@ func NewAgentExecutor(
 		modelLimits:    modelLimits,
 		apiTokenSvc:    apiTokenSvc,
 		usageService:   usageService,
+		eventsSvc:      eventsSvc,
 		safeguards:     cfg.AgentSafeguards,
 		log:            log.With(logger.Scope("agents.executor")),
 	}
@@ -2018,6 +2026,8 @@ func (ae *AgentExecutor) buildAskUserTool(req ExecuteRequest, runID string, paus
 		AgentID:    agentID,
 		RunID:      runID,
 		PauseState: pauseState,
+		UserID:     req.UserID,
+		EventsSvc:  ae.eventsSvc,
 	}
 
 	return BuildAskUserTool(deps)

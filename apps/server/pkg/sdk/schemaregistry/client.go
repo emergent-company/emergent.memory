@@ -344,3 +344,120 @@ func (c *Client) DeleteType(ctx context.Context, projectID, typeName string) err
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
+
+// CreateRelationshipTypeRequest is the request to create or update a relationship type.
+type CreateRelationshipTypeRequest struct {
+	Name         string `json:"name"`
+	Label        string `json:"label,omitempty"`
+	InverseLabel string `json:"inverse_label,omitempty"`
+	Description  string `json:"description,omitempty"`
+	SourceType   string `json:"source_type,omitempty"`
+	TargetType   string `json:"target_type,omitempty"`
+}
+
+// ListRelationshipTypes returns all relationship types for a project.
+// GET /api/schema-registry/projects/:projectId/relationship-types
+func (c *Client) ListRelationshipTypes(ctx context.Context, projectID string) ([]RelationshipTypeInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/schema-registry/projects/"+url.PathEscape(projectID)+"/relationship-types", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+	var types []RelationshipTypeInfo
+	if err := json.NewDecoder(resp.Body).Decode(&types); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return types, nil
+}
+
+// CreateRelationshipType registers a new relationship type for a project.
+// POST /api/schema-registry/projects/:projectId/relationship-types
+func (c *Client) CreateRelationshipType(ctx context.Context, projectID string, req *CreateRelationshipTypeRequest) (*RelationshipTypeInfo, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/schema-registry/projects/"+url.PathEscape(projectID)+"/relationship-types", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(httpReq); err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+	var info RelationshipTypeInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &info, nil
+}
+
+// UpdateRelationshipType updates an existing relationship type for a project.
+// PUT /api/schema-registry/projects/:projectId/relationship-types/:name
+func (c *Client) UpdateRelationshipType(ctx context.Context, projectID, name string, req *CreateRelationshipTypeRequest) (*RelationshipTypeInfo, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "PUT", c.base+"/api/schema-registry/projects/"+url.PathEscape(projectID)+"/relationship-types/"+url.PathEscape(name), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(httpReq); err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+	var info RelationshipTypeInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &info, nil
+}
+
+// DeleteRelationshipType removes a relationship type from a project.
+// DELETE /api/schema-registry/projects/:projectId/relationship-types/:name
+func (c *Client) DeleteRelationshipType(ctx context.Context, projectID, name string) error {
+	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/schema-registry/projects/"+url.PathEscape(projectID)+"/relationship-types/"+url.PathEscape(name), nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.setHeaders(httpReq); err != nil {
+		return err
+	}
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}

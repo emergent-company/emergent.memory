@@ -294,3 +294,96 @@ func (h *Handler) DeleteType(c echo.Context) error {
 
 	return c.NoContent(http.StatusNoContent)
 }
+
+// ListRelationshipTypes handles GET /api/schema-registry/projects/:projectId/relationship-types
+func (h *Handler) ListRelationshipTypes(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+	types, err := h.repo.ListRelationshipTypes(c.Request().Context(), projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to list relationship types", err)
+	}
+	return c.JSON(http.StatusOK, types)
+}
+
+// CreateRelationshipType handles POST /api/schema-registry/projects/:projectId/relationship-types
+func (h *Handler) CreateRelationshipType(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+	var req CreateRelationshipTypeRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	if req.Name == "" {
+		return apperror.NewBadRequest("name is required")
+	}
+	entry, err := h.repo.UpsertRelationshipType(c.Request().Context(), projectID, &req)
+	if err != nil {
+		if strings.Contains(err.Error(), "no active schema") {
+			return apperror.NewBadRequest("no active schema found for project")
+		}
+		return apperror.NewInternal("failed to create relationship type", err)
+	}
+	return c.JSON(http.StatusCreated, entry)
+}
+
+// UpdateRelationshipType handles PUT /api/schema-registry/projects/:projectId/relationship-types/:name
+func (h *Handler) UpdateRelationshipType(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+	projectID := c.Param("projectId")
+	name := c.Param("name")
+	if projectID == "" || name == "" {
+		return apperror.NewBadRequest("projectId and name are required")
+	}
+	var req CreateRelationshipTypeRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	req.Name = name // ensure name from path takes precedence
+	entry, err := h.repo.UpsertRelationshipType(c.Request().Context(), projectID, &req)
+	if err != nil {
+		if strings.Contains(err.Error(), "no active schema") {
+			return apperror.NewBadRequest("no active schema found for project")
+		}
+		return apperror.NewInternal("failed to update relationship type", err)
+	}
+	return c.JSON(http.StatusOK, entry)
+}
+
+// DeleteRelationshipType handles DELETE /api/schema-registry/projects/:projectId/relationship-types/:name
+func (h *Handler) DeleteRelationshipType(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+	projectID := c.Param("projectId")
+	name := c.Param("name")
+	if projectID == "" || name == "" {
+		return apperror.NewBadRequest("projectId and name are required")
+	}
+	if err := h.repo.DeleteRelationshipType(c.Request().Context(), projectID, name); err != nil {
+		if strings.Contains(err.Error(), "relationship type not found") {
+			return apperror.NewNotFound("RelationshipType", name)
+		}
+		if strings.Contains(err.Error(), "no active schema") {
+			return apperror.NewBadRequest("no active schema found for project")
+		}
+		return apperror.NewInternal("failed to delete relationship type", err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}

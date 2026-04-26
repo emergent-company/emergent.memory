@@ -615,3 +615,150 @@ func (r *Repository) DeleteType(ctx context.Context, projectID, typeName string)
 
 	return nil
 }
+
+// ListRelationshipTypes returns all relationship types from all active schemas for a project.
+func (r *Repository) ListRelationshipTypes(ctx context.Context, projectID string) ([]RelationshipTypeInfo, error) {
+	sql := `
+		SELECT gs.relationship_type_schemas
+		FROM kb.project_schemas ps
+		JOIN kb.graph_schemas gs ON ps.schema_id = gs.id
+		WHERE ps.project_id = ? AND ps.active = true
+	`
+	var results []struct {
+		RelationshipTypeSchemas json.RawMessage `bun:"relationship_type_schemas"`
+	}
+	_, err := r.db.NewRaw(sql, projectID).Exec(ctx, &results)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query relationship types: %w", err)
+	}
+
+	seen := make(map[string]bool)
+	out := []RelationshipTypeInfo{}
+	for _, row := range results {
+		if row.RelationshipTypeSchemas == nil {
+			continue
+		}
+		var schemas map[string]RelationshipSchema
+		if err := json.Unmarshal(row.RelationshipTypeSchemas, &schemas); err != nil {
+			continue
+		}
+		for name, schema := range schemas {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			info := RelationshipTypeInfo{Type: name}
+			if schema.Label != "" {
+				info.Label = &schema.Label
+			}
+			if schema.InverseLabel != "" {
+				info.InverseLabel = &schema.InverseLabel
+			}
+			if schema.InverseType != "" {
+				info.InverseType = &schema.InverseType
+			}
+			if schema.Description != "" {
+				info.Description = &schema.Description
+			}
+			info.TargetTypes = schema.GetTargetTypes()
+			info.SourceTypes = schema.GetSourceTypes()
+			out = append(out, info)
+		}
+	}
+	return out, nil
+}
+
+// UpsertRelationshipType creates or replaces a single relationship type in all active schemas for a project.
+// It writes into the first active schema found (or returns an error if none).
+func (r *Repository) UpsertRelationshipType(ctx context.Context, projectID string, req *CreateRelationshipTypeRequest) (*RelationshipTypeInfo, error) {
+	schemaID, schemas, err := r.loadActiveSchemaRelationships(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	rs := RelationshipSchema{
+		Label:        req.Label,
+		InverseLabel: req.InverseLabel,
+		Description:  req.Description,
+	}
+	if req.SourceType != "" {
+		rs.SourceTypes = []string{req.SourceType}
+	}
+	if req.TargetType != "" {
+		rs.TargetTypes = []string{req.TargetType}
+	}
+	schemas[req.Name] = rs
+
+	if err := r.saveSchemaRelationships(ctx, schemaID, schemas); err != nil {
+		return nil, err
+	}
+
+	info := RelationshipTypeInfo{Type: req.Name}
+	if rs.Label != "" {
+		info.Label = &rs.Label
+	}
+	if rs.InverseLabel != "" {
+		info.InverseLabel = &rs.InverseLabel
+	}
+	if rs.Description != "" {
+		info.Description = &rs.Description
+	}
+	info.SourceTypes = rs.SourceTypes
+	info.TargetTypes = rs.TargetTypes
+	return &info, nil
+}
+
+// DeleteRelationshipType removes a relationship type from all active schemas for a project.
+func (r *Repository) DeleteRelationshipType(ctx context.Context, projectID, name string) error {
+	schemaID, schemas, err := r.loadActiveSchemaRelationships(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if _, ok := schemas[name]; !ok {
+		return fmt.Errorf("relationship type not found: %s", name)
+	}
+	delete(schemas, name)
+	return r.saveSchemaRelationships(ctx, schemaID, schemas)
+}
+
+// loadActiveSchemaRelationships fetches the first active schema's relationship_type_schemas for a project.
+func (r *Repository) loadActiveSchemaRelationships(ctx context.Context, projectID string) (string, map[string]RelationshipSchema, error) {
+	sql := `
+		SELECT gs.id, gs.relationship_type_schemas
+		FROM kb.project_schemas ps
+		JOIN kb.graph_schemas gs ON ps.schema_id = gs.id
+		WHERE ps.project_id = ? AND ps.active = true
+		LIMIT 1
+	`
+	var row struct {
+		ID                      string          `bun:"id"`
+		RelationshipTypeSchemas json.RawMessage `bun:"relationship_type_schemas"`
+	}
+	if err := r.db.NewRaw(sql, projectID).Scan(ctx, &row); err != nil {
+		return "", nil, fmt.Errorf("no active schema for project: %w", err)
+	}
+
+	schemas := make(map[string]RelationshipSchema)
+	if row.RelationshipTypeSchemas != nil {
+		if err := json.Unmarshal(row.RelationshipTypeSchemas, &schemas); err != nil {
+			return "", nil, fmt.Errorf("failed to parse relationship_type_schemas: %w", err)
+		}
+	}
+	return row.ID, schemas, nil
+}
+
+// saveSchemaRelationships writes updated relationship_type_schemas back to kb.graph_schemas.
+func (r *Repository) saveSchemaRelationships(ctx context.Context, schemaID string, schemas map[string]RelationshipSchema) error {
+	data, err := json.Marshal(schemas)
+	if err != nil {
+		return fmt.Errorf("failed to marshal relationship_type_schemas: %w", err)
+	}
+	_, err = r.db.NewRaw(
+		"UPDATE kb.graph_schemas SET relationship_type_schemas = ?, updated_at = ? WHERE id = ?",
+		data, time.Now(), schemaID,
+	).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to save relationship_type_schemas: %w", err)
+	}
+	return nil
+}
