@@ -271,6 +271,7 @@ var scopeImplies = map[string][]string{
 		"tasks:write",
 		"user-activity:write",
 		"notifications:write",
+		"schema:write",
 	},
 	"agents:read": {
 		"chat:use",
