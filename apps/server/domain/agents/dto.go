@@ -524,39 +524,45 @@ type WebhookTriggerPayloadDTO struct {
 
 // --- Agent Question DTOs ---
 
-// AgentQuestionDTO is the response DTO for an agent question.
+// AgentQuestionDTO is the API response format for an agent question.
 type AgentQuestionDTO struct {
-	ID             string                `json:"id"`
-	RunID          string                `json:"runId"`
-	AgentID        string                `json:"agentId"`
-	ProjectID      string                `json:"projectId"`
-	Question       string                `json:"question"`
-	Options        []AgentQuestionOption `json:"options"`
-	Response       *string               `json:"response,omitempty"`
-	RespondedBy    *string               `json:"respondedBy,omitempty"`
-	RespondedAt    *time.Time            `json:"respondedAt,omitempty"`
-	Status         AgentQuestionStatus   `json:"status"`
-	NotificationID *string               `json:"notificationId,omitempty"`
-	CreatedAt      time.Time             `json:"createdAt"`
-	UpdatedAt      time.Time             `json:"updatedAt"`
+	ID              string                         `json:"id"`
+	RunID           string                         `json:"runId"`
+	AgentID         string                         `json:"agentId"`
+	ProjectID       string                         `json:"projectId"`
+	Question        string                         `json:"question"`
+	Options         []AgentQuestionOption          `json:"options"`
+	InteractionType AgentQuestionInteractionType   `json:"interactionType"`
+	Placeholder     string                         `json:"placeholder,omitempty"`
+	MaxLength       int                            `json:"maxLength,omitempty"`
+	Response        *string                        `json:"response,omitempty"`
+	RespondedBy     *string                        `json:"respondedBy,omitempty"`
+	RespondedAt     *time.Time                     `json:"respondedAt,omitempty"`
+	Status          AgentQuestionStatus            `json:"status"`
+	NotificationID  *string                        `json:"notificationId,omitempty"`
+	CreatedAt       time.Time                      `json:"createdAt"`
+	UpdatedAt       time.Time                      `json:"updatedAt"`
 }
 
 // ToDTO converts an AgentQuestion entity to a DTO.
 func (q *AgentQuestion) ToDTO() *AgentQuestionDTO {
 	return &AgentQuestionDTO{
-		ID:             q.ID,
-		RunID:          q.RunID,
-		AgentID:        q.AgentID,
-		ProjectID:      q.ProjectID,
-		Question:       q.Question,
-		Options:        q.Options,
-		Response:       q.Response,
-		RespondedBy:    q.RespondedBy,
-		RespondedAt:    q.RespondedAt,
-		Status:         q.Status,
-		NotificationID: q.NotificationID,
-		CreatedAt:      q.CreatedAt,
-		UpdatedAt:      q.UpdatedAt,
+		ID:              q.ID,
+		RunID:           q.RunID,
+		AgentID:         q.AgentID,
+		ProjectID:       q.ProjectID,
+		Question:        q.Question,
+		Options:         q.Options,
+		InteractionType: q.InteractionType,
+		Placeholder:     q.Placeholder,
+		MaxLength:       q.MaxLength,
+		Response:        q.Response,
+		RespondedBy:     q.RespondedBy,
+		RespondedAt:     q.RespondedAt,
+		Status:          q.Status,
+		NotificationID:  q.NotificationID,
+		CreatedAt:       q.CreatedAt,
+		UpdatedAt:       q.UpdatedAt,
 	}
 }
 

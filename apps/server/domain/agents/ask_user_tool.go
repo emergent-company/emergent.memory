@@ -62,7 +62,7 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 	return functiontool.New(
 		functiontool.Config{
 			Name:        ToolNameAskUser,
-			Description: "Ask the user a question and pause execution until they respond. Use this when you encounter ambiguity, need clarification, or require a decision from the user. You can provide structured options for the user to choose from, or leave options empty for a free-text response. After calling this tool, execution will pause and resume automatically when the user responds.",
+			Description: "Ask the user a question and pause execution until they respond. Use this when you encounter ambiguity, need clarification, or require a decision from the user. You can provide structured options for the user to choose from, or leave options empty for a free-text response. Set interaction_type to 'buttons' (default, 2-5 options), 'select' (5+ options), 'multi_select' (multi-pick dropdown), or 'text' (free-text input with optional placeholder and max_length). After calling this tool, execution will pause and resume automatically when the user responds.",
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			// Parse question (required)
@@ -74,6 +74,46 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 			// Parse options (optional array of {label, value})
 			options := parseQuestionOptions(args)
 
+			// Parse interaction_type (optional, defaults to "buttons")
+			interactionTypeStr, _ := args["interaction_type"].(string)
+			interactionType := QuestionInteractionButtons
+			if interactionTypeStr != "" {
+				switch AgentQuestionInteractionType(interactionTypeStr) {
+				case QuestionInteractionButtons, QuestionInteractionSelect, QuestionInteractionMultiSelect, QuestionInteractionText:
+					interactionType = AgentQuestionInteractionType(interactionTypeStr)
+				default:
+					deps.Logger.Warn("ask_user: unsupported interaction_type, defaulting to buttons",
+						slog.String("interaction_type", interactionTypeStr),
+					)
+				}
+			}
+
+			// Parse placeholder and max_length (for text interaction type)
+			placeholder, _ := args["placeholder"].(string)
+			var maxLength int
+			if raw, ok := args["max_length"]; ok {
+				switch v := raw.(type) {
+				case float64:
+					maxLength = int(v)
+				case int:
+					maxLength = v
+				case int64:
+					maxLength = int(v)
+				case json.Number:
+					if n, err := v.Int64(); err == nil {
+						maxLength = int(n)
+					} else {
+						deps.Logger.Warn("ask_user: invalid json.Number max_length, ignoring", slog.Any("max_length", raw))
+					}
+				default:
+					deps.Logger.Warn("ask_user: unsupported max_length type, ignoring", slog.Any("max_length", raw))
+				}
+				if maxLength < 0 {
+					deps.Logger.Warn("ask_user: negative max_length is invalid, ignoring", slog.Int("max_length", maxLength))
+					maxLength = 0
+				}
+			}
+
 			// Cancel any existing pending questions for this run
 			if err := deps.Repo.CancelPendingQuestionsForRun(ctx, deps.RunID); err != nil {
 				deps.Logger.Warn("failed to cancel prior pending questions",
@@ -84,12 +124,15 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 
 			// Create the question record
 			q := &AgentQuestion{
-				RunID:     deps.RunID,
-				AgentID:   deps.AgentID,
-				ProjectID: deps.ProjectID,
-				Question:  question,
-				Options:   options,
-				Status:    QuestionStatusPending,
+				RunID:           deps.RunID,
+				AgentID:         deps.AgentID,
+				ProjectID:       deps.ProjectID,
+				Question:        question,
+				Options:         options,
+				InteractionType: interactionType,
+				Placeholder:     placeholder,
+				MaxLength:       maxLength,
+				Status:          QuestionStatusPending,
 			}
 
 			if err := deps.Repo.CreateQuestion(ctx, q); err != nil {
@@ -213,11 +256,15 @@ func emitQuestionSSEEvent(ctx tool.Context, deps AskUserToolDeps, q *AgentQuesti
 		deps.ProjectID,
 		&events.EmitOptions{
 			Data: map[string]any{
-				"type":        "agent_question",
-				"question_id": q.ID,
-				"run_id":      q.RunID,
-				"question":    q.Question,
-				"status":      "pending",
+				"type":             "agent_question",
+				"question_id":      q.ID,
+				"run_id":           q.RunID,
+				"question":         q.Question,
+				"options":          q.Options,
+				"interaction_type": q.InteractionType,
+				"placeholder":      q.Placeholder,
+				"max_length":       q.MaxLength,
+				"status":           "pending",
 			},
 		},
 	)
