@@ -848,8 +848,16 @@ func (ae *AgentExecutor) runPipeline(
 	if req.ProjectID != "" {
 		ctx = auth.ContextWithProjectID(ctx, req.ProjectID)
 	}
-	if req.AuthToken != "" {
-		ctx = auth.ContextWithRawToken(ctx, req.AuthToken)
+	// Prefer explicitly supplied token; fall back to one already in context (e.g.
+	// when the executor is called from a trigger, worker pool, or spawned agent
+	// where the caller doesn't set AuthToken but the context carries a token from
+	// the auth middleware or a parent executor call).
+	effectiveToken := req.AuthToken
+	if effectiveToken == "" {
+		effectiveToken = auth.RawTokenFromContext(ctx)
+	}
+	if effectiveToken != "" {
+		ctx = auth.ContextWithRawToken(ctx, effectiveToken)
 	}
 	if req.OrgID != "" {
 		ctx = auth.ContextWithOrgID(ctx, req.OrgID)
